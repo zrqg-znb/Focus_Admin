@@ -1,5 +1,5 @@
 <script setup>
-import { h, reactive, ref } from 'vue'
+import { h, reactive, ref, watch } from 'vue'
 import { NButton, NDynamicInput, NFormItemGi, NGrid, NInputNumber, NPopconfirm, NTag } from 'naive-ui'
 import CrudTable from '@/components/table/CrudTable.vue'
 import CrudModal from '@/components/table/CrudModal.vue'
@@ -371,16 +371,20 @@ function createParameter() {
   }
 }
 
-// 更新参数
-function updateParameters(value) {
-  const params = {}
-  value.forEach((item) => {
-    if (item.key) {
-      params[item.key] = item.description || ''
-    }
-  })
-  formData.parameters = params
-}
+// 监听参数列表变化，更新 formData
+watch(
+  parameterList,
+  (value) => {
+    const params = {}
+    value.forEach((item) => {
+      if (item.key) {
+        params[item.key] = item.description || ''
+      }
+    })
+    formData.parameters = params
+  },
+  { deep: true },
+)
 </script>
 
 <template>
@@ -497,7 +501,6 @@ function updateParameters(value) {
             <NDynamicInput
               v-model:value="parameterList"
               :on-create="createParameter"
-              @update:value="updateParameters"
             >
               <template #default="{ value }">
                 <div style="display: flex; align-items: center; width: 100%">
