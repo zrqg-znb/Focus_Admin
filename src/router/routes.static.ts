@@ -85,4 +85,16 @@ export const staticRoutes: AppRoute.RowRoute[] = [
     id: 14,
     pid: 10,
   },
+  {
+    name: 'data_product_category',
+    path: '/data/product/categories',
+    title: 'Gap-产品分类页面',
+    requiresAuth: true,
+    icon: 'carbon:category-new-each',
+    pinTab: false,
+    menuType: 'page',
+    componentPath: '/data/product/categories.vue',
+    id: 15,
+    pid: 10,
+  },
 ]

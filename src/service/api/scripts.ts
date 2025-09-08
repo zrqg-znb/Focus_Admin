@@ -27,7 +27,7 @@ export const scriptApi = {
   },
 
   // 执行脚本
-  executeScript(id, parameters = {}) {
+  executeScript(id: string, parameters = {}) {
     return request.Post(`/system/scripts/${id}/execute/`, { parameters })
   },
 }
