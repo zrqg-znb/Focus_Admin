@@ -85,4 +85,16 @@ export const staticRoutes: AppRoute.RowRoute[] = [
     id: 14,
     pid: 10,
   },
+  {
+    name: 'data_dts',
+    path: '/data/dts',
+    title: 'dts单',
+    requiresAuth: true,
+    icon: 'icon-park-outline:doc-detail',
+    pinTab: false,
+    menuType: 'page',
+    componentPath: '/data/dts/DtsQUery.vue',
+    id: 15,
+    pid: 10,
+  },
 ]

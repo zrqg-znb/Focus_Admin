@@ -51,6 +51,7 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.12",
+    "@unocss/vite": "^66.5.4",
     "@vueuse/core": "^12.3.0",
     "alova": "^3.2.7",
     "colord": "^2.9.3",
