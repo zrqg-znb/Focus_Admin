@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>项目生命周期管理系统</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Microsoft YaHei', Arial, sans-serif;
+      background: #f5f7fa;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    .header {
+      background: white;
+      padding: 20px 30px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .header h1 {
+      color: #2c3e50;
+      font-size: 28px;
+      margin-bottom: 10px;
+    }
+
+    .header .subtitle {
+      color: #7f8c8d;
+      font-size: 14px;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+
+    .stat-card {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      border-left: 4px solid;
+    }
+
+    .stat-card.charter { border-left-color: #5470c6; }
+    .stat-card.qg1 { border-left-color: #91cc75; }
+    .stat-card.qg2 { border-left-color: #fac858; }
+    .stat-card.qg3 { border-left-color: #ee6666; }
+    .stat-card.qg4 { border-left-color: #73c0de; }
+    .stat-card.qg5 { border-left-color: #3ba272; }
+
+    .stat-card .label {
+      color: #7f8c8d;
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+
+    .stat-card .value {
+      font-size: 32px;
+      font-weight: bold;
+      color: #2c3e50;
+    }
+
+    .chart-container {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .chart-title {
+      font-size: 18px;
+      color: #2c3e50;
+      margin-bottom: 15px;
+      font-weight: bold;
+    }
+
+    #ganttChart {
+      width: 100%;
+      height: 500px;
+    }
+
+    #radarChart {
+      width: 100%;
+      height: 400px;
+    }
+
+    .two-charts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    #progressChart, #statusChart {
+      width: 100%;
+      height: 400px;
+    }
+
+    .filters {
+      background: white;
+      padding: 15px 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      display: flex;
+      gap: 15px;
+      align-items: center;
+    }
+
+    .filters label {
+      color: #2c3e50;
+      font-weight: bold;
+    }
+
+    .filters select {
+      padding: 8px 12px;
+      border: 1px solid #dcdfe6;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .legend {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+      margin-top: 15px;
+      padding-top: 15px;
+      border-top: 1px solid #eee;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+    }
+
+    .legend-color {
+      width: 20px;
+      height: 12px;
+      border-radius: 2px;
+    }
+
+    @media (max-width: 768px) {
+      .two-charts {
+        grid-template-columns: 1fr;
+      }
+      .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <!-- 头部 -->
+  <div class="header">
+    <h1>📊 项目生命周期管理系统</h1>
+    <div class="subtitle">实时监控项目进度 · QG节点可视化</div>
+  </div>
+
+  <!-- 统计卡片 -->
+  <div class="stats-grid">
+    <div class="stat-card charter">
+      <div class="label">Charter阶段</div>
+      <div class="value">2</div>
+    </div>
+    <div class="stat-card qg1">
+      <div class="label">QG1阶段</div>
+      <div class="value">3</div>
+    </div>
+    <div class="stat-card qg2">
+      <div class="label">QG2阶段</div>
+      <div class="value">4</div>
+    </div>
+    <div class="stat-card qg3">
+      <div class="label">QG3阶段</div>
+      <div class="value">2</div>
+    </div>
+    <div class="stat-card qg4">
+      <div class="label">QG4阶段</div>
+      <div class="value">1</div>
+    </div>
+    <div class="stat-card qg5">
+      <div class="label">已完成(QG5)</div>
+      <div class="value">3</div>
+    </div>
+  </div>
+
+  <!-- 筛选器 -->
+  <div class="filters">
+    <label>筛选条件：</label>
+    <select id="stageFilter">
+      <option value="all">全部阶段</option>
+      <option value="charter">Charter</option>
+      <option value="qg1">QG1</option>
+      <option value="qg2">QG2</option>
+      <option value="qg3">QG3</option>
+      <option value="qg4">QG4</option>
+      <option value="qg5">QG5</option>
+    </select>
+    <select id="statusFilter">
+      <option value="all">全部状态</option>
+      <option value="normal">正常</option>
+      <option value="warning">预警</option>
+      <option value="delay">延期</option>
+    </select>
+  </div>
+
+  <!-- 甘特图 -->
+  <div class="chart-container">
+    <div class="chart-title">🗓️ 项目时间线与QG节点</div>
+    <div id="ganttChart"></div>
+    <div class="legend">
+      <div class="legend-item">
+        <div class="legend-color" style="background: #5470c6;"></div>
+        <span>Charter</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #91cc75;"></div>
+        <span>QG1</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #fac858;"></div>
+        <span>QG2</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #ee6666;"></div>
+        <span>QG3</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #73c0de;"></div>
+        <span>QG4</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #3ba272;"></div>
+        <span>QG5</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #ff4444;"></div>
+        <span>延期</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 雷达图 -->
+  <div class="chart-container">
+    <div class="chart-title">📈 项目进度对比雷达图</div>
+    <div id="radarChart"></div>
+  </div>
+
+  <!-- 双图表 -->
+  <div class="two-charts">
+    <div class="chart-container">
+      <div class="chart-title">📊 项目完成度排名</div>
+      <div id="progressChart"></div>
+    </div>
+    <div class="chart-container">
+      <div class="chart-title">🎯 各阶段项目分布</div>
+      <div id="statusChart"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // 模拟项目数据
+  const projectData = [
+    {
+      name: '智能制造系统',
+      stages: [
+        { stage: 'Charter', start: '2024-01-01', end: '2024-02-01', progress: 100, color: '#5470c6' },
+        { stage: 'QG1', start: '2024-02-01', end: '2024-04-01', progress: 100, color: '#91cc75' },
+        { stage: 'QG2', start: '2024-04-01', end: '2024-06-01', progress: 100, color: '#fac858' },
+        { stage: 'QG3', start: '2024-06-01', end: '2024-08-01', progress: 75, color: '#ee6666' }
+      ],
+      currentStage: 'QG3',
+      status: 'normal'
+    },
+    {
+      name: 'ERP升级项目',
+      stages: [
+        { stage: 'Charter', start: '2024-02-01', end: '2024-03-01', progress: 100, color: '#5470c6' },
+        { stage: 'QG1', start: '2024-03-01', end: '2024-05-01', progress: 100, color: '#91cc75' },
+        { stage: 'QG2', start: '2024-05-01', end: '2024-07-01', progress: 60, color: '#fac858' }
+      ],
+      currentStage: 'QG2',
+      status: 'warning'
+    },
+    {
+      name: '数据中台建设',
+      stages: [
+        { stage: 'Charter', start: '2024-03-01', end: '2024-04-01', progress: 100, color: '#5470c6' },
+        { stage: 'QG1', start: '2024-04-01', end: '2024-06-01', progress: 100, color: '#91cc75' },
+        { stage: 'QG2', start: '2024-06-01', end: '2024-08-01', progress: 100, color: '#fac858' },
+        { stage: 'QG3', start: '2024-08-01', end: '2024-10-01', progress: 100, color: '#ee6666' },
+        { stage: 'QG4', start: '2024-10-01', end: '2024-11-15', progress: 45, color: '#73c0de' }
+      ],
+      currentStage: 'QG4',
+      status: 'normal'
+    },
+    {
+      name: '移动办公平台',
+      stages: [
+        { stage: 'Charter', start: '2024-01-15', end: '2024-02-15', progress: 100, color: '#5470c6' },
+        { stage: 'QG1', start: '2024-02-15', end: '2024-04-15', progress: 100, color: '#91cc75' },
+        { stage: 'QG2', start: '2024-04-15', end: '2024-06-15', progress: 100, color: '#fac858' },
+        { stage: 'QG3', start: '2024-06-15', end: '2024-08-15', progress: 100, color: '#ee6666' },
+        { stage: 'QG4', start: '2024-08-15', end: '2024-10-15', progress: 100, color: '#73c0de' },
+        { stage: 'QG5', start: '2024-10-15', end: '2024-11-01', progress: 100, color: '#3ba272' }
+      ],
+      currentStage: 'QG5',
+      status: 'normal'
+    },
+    {
+      name: '供应链优化',
+      stages: [
+        { stage: 'Charter', start: '2024-04-01', end: '2024-05-01', progress: 100, color: '#5470c6' },
+        { stage: 'QG1', start: '2024-05-01', end: '2024-07-01', progress: 85, color: '#91cc75' }
+      ],
+      currentStage: 'QG1',
+      status: 'delay'
+    },
+    {
+      name: '客户关系管理',
+      stages: [
+        { stage: 'Charter', start: '2024-05-01', end: '2024-06-01', progress: 100, color: '#5470c6' },
+        { stage: 'QG1', start: '2024-06-01', end: '2024-08-01', progress: 100, color: '#91cc75' },
+        { stage: 'QG2', start: '2024-08-01', end: '2024-10-01', progress: 30, color: '#fac858' }
+      ],
+      currentStage: 'QG2',
+      status: 'warning'
+    }
+  ];
+
+  // 1. 甘特图
+  function renderGanttChart() {
+    const chart = echarts.init(document.getElementById('ganttChart'));
+
+    const projects = projectData.map(p => p.name);
+    const seriesData = [];
+    const milestones = [];
+
+    projectData.forEach((project, idx) => {
+      project.stages.forEach((stage, stageIdx) => {
+        const startTime = new Date(stage.start).getTime();
+        const endTime = new Date(stage.end).getTime();
+        const isDelay = stage.progress < 100 && new Date() > new Date(stage.end);
+
+        seriesData.push({
+          name: project.name,
+          value: [
+            idx,
+            startTime,
+            endTime,
+            stage.progress,
+            stage.stage
+          ],
+          itemStyle: {
+            color: isDelay ? '#ff4444' : stage.color,
+            opacity: stage.progress / 100
+          }
+        });
+
+        // 添加里程碑
+        if (stageIdx < project.stages.length - 1) {
+          milestones.push({
+            value: [endTime, idx],
+            symbol: 'diamond',
+            symbolSize: 15,
+            itemStyle: { color: stage.color },
+            label: {
+              show: true,
+              position: 'top',
+              formatter: stage.stage,
+              fontSize: 10
+            }
+          });
+        }
+      });
+    });
+
+    const option = {
+      tooltip: {
+        formatter: function(params) {
+          if (params.componentType === 'series' && params.seriesType === 'custom') {
+            const data = params.data.value;
+            return `
+                                <strong>${params.data.name}</strong><br/>
+                                阶段: ${data[4]}<br/>
+                                开始: ${new Date(data[1]).toLocaleDateString()}<br/>
+                                结束: ${new Date(data[2]).toLocaleDateString()}<br/>
+                                完成度: ${data[3]}%
+                            `;
+          }
+          return params.name;
+        }
+      },
+      grid: {
+        left: '15%',
+        right: '8%',
+        top: '10%',
+        bottom: '10%'
+      },
+      xAxis: {
+        type: 'time',
+        axisLabel: {
+          formatter: '{MM}-{dd}'
+        },
+        splitLine: {
+          show: true,
+          lineStyle: {
+            type: 'dashed'
+          }
+        }
+      },
+      yAxis: {
+        type: 'category',
+        data: projects,
+        axisLabel: {
+          fontSize: 12
+        }
+      },
+      series: [
+        {
+          type: 'custom',
+          renderItem: function(params, api) {
+            const categoryIndex = api.value(0);
+            const start = api.coord([api.value(1), categoryIndex]);
+            const end = api.coord([api.value(2), categoryIndex]);
+            const height = api.size([0, 1])[1] * 0.6;
+
+            return {
+              type: 'rect',
+              shape: {
+                x: start[0],
+                y: start[1] - height / 2,
+                width: end[0] - start[0],
+                height: height
+              },
+              style: api.style()
+            };
+          },
+          encode: {
+            x: [1, 2],
+            y: 0
+          },
+          data: seriesData
+        },
+        {
+          type: 'scatter',
+          data: milestones,
+          z: 10
+        },
+        {
+          // 今日线
+          type: 'line',
+          markLine: {
+            symbol: 'none',
+            label: {
+              show: true,
+              formatter: '今日',
+              position: 'end'
+            },
+            lineStyle: {
+              color: '#ff4444',
+              type: 'solid',
+              width: 2
+            },
+            data: [{
+              xAxis: new Date().getTime()
+            }]
+          }
+        }
+      ]
+    };
+
+    chart.setOption(option);
+    window.addEventListener('resize', () => chart.resize());
+  }
+
+  // 2. 雷达图
+  function renderRadarChart() {
+    const chart = echarts.init(document.getElementById('radarChart'));
+
+    const radarData = projectData.map(project => {
+      const values = [0, 0, 0, 0, 0, 0]; // Charter, QG1-5
+      project.stages.forEach(stage => {
+        const stageMap = {
+          'Charter': 0, 'QG1': 1, 'QG2': 2,
+          'QG3': 3, 'QG4': 4, 'QG5': 5
+        };
+        values[stageMap[stage.stage]] = stage.progress;
+      });
+      return {
+        name: project.name,
+        value: values
+      };
+    });
+
+    const option = {
+      tooltip: {},
+      legend: {
+        data: projectData.map(p => p.name),
+        bottom: 0
+      },
+      radar: {
+        indicator: [
+          { name: 'Charter', max: 100 },
+          { name: 'QG1', max: 100 },
+          { name: 'QG2', max: 100 },
+          { name: 'QG3', max: 100 },
+          { name: 'QG4', max: 100 },
+          { name: 'QG5', max: 100 }
+        ],
+        radius: '60%'
+      },
+      series: [{
+        type: 'radar',
+        data: radarData.map(item => ({
+          ...item,
+          areaStyle: { opacity: 0.2 }
+        }))
+      }]
+    };
+
+    chart.setOption(option);
+    window.addEventListener('resize', () => chart.resize());
+  }
+
+  // 3. 进度条图
+  function renderProgressChart() {
+    const chart = echarts.init(document.getElementById('progressChart'));
+
+    const progressData = projectData.map(project => {
+      const totalStages = 6;
+      const completedStages = project.stages.filter(s => s.progress === 100).length;
+      const currentProgress = project.stages[project.stages.length - 1].progress;
+      const overallProgress = ((completedStages + currentProgress / 100) / totalStages * 100).toFixed(1);
+
+      return {
+        name: project.name,
+        value: parseFloat(overallProgress)
+      };
+    }).sort((a, b) => b.value - a.value);
+
+    const option = {
+      grid: {
+        left: '20%',
+        right: '10%',
+        top: '5%',
+        bottom: '5%'
+      },
+      xAxis: {
+        type: 'value',
+        max: 100,
+        axisLabel: {
+          formatter: '{value}%'
+        }
+      },
+      yAxis: {
+        type: 'category',
+        data: progressData.map(d => d.name),
+        axisLabel: {
+          fontSize: 11
+        }
+      },
+      series: [{
+        type: 'bar',
+        data: progressData.map(d => ({
+          value: d.value,
+          itemStyle: {
+            color: d.value >= 80 ? '#3ba272' :
+              d.value >= 50 ? '#fac858' : '#ee6666'
+          }
+        })),
+        label: {
+          show: true,
+          position: 'right',
+          formatter: '{c}%'
+        },
+        barWidth: '50%'
+      }]
+    };
+
+    chart.setOption(option);
+    window.addEventListener('resize', () => chart.resize());
+  }
+
+  // 4. 状态分布饼图
+  function renderStatusChart() {
+    const chart = echarts.init(document.getElementById('statusChart'));
+
+    const stageCount = {
+      'Charter': 0, 'QG1': 0, 'QG2': 0,
+      'QG3': 0, 'QG4': 0, 'QG5': 0
+    };
+
+    projectData.forEach(project => {
+      stageCount[project.currentStage]++;
+    });
+
+    const option = {
+      tooltip: {
+        trigger: 'item',
+        formatter: '{b}: {c} 个项目 ({d}%)'
+      },
+      legend: {
+        orient: 'vertical',
+        right: '10%',
+        top: 'center'
+      },
+      series: [{
+        type: 'pie',
+        radius: ['40%', '70%'],
+        center: ['40%', '50%'],
+        data: [
+          { value: stageCount.Charter, name: 'Charter', itemStyle: { color: '#5470c6' } },
+          { value: stageCount.QG1, name: 'QG1', itemStyle: { color: '#91cc75' } },
+          { value: stageCount.QG2, name: 'QG2', itemStyle: { color: '#fac858' } },
+          { value: stageCount.QG3, name: 'QG3', itemStyle: { color: '#ee6666' } },
+          { value: stageCount.QG4, name: 'QG4', itemStyle: { color: '#73c0de' } },
+          { value: stageCount.QG5, name: 'QG5', itemStyle: { color: '#3ba272' } }
+        ],
+        label: {
+          formatter: '{b}\n{c} 个'
+        },
+        emphasis: {
+          itemStyle: {
+            shadowBlur: 10,
+            shadowOffsetX: 0,
+            shadowColor: 'rgba(0, 0, 0, 0.5)'
+          }
+        }
+      }]
+    };
+
+    chart.setOption(option);
+    window.addEventListener('resize', () => chart.resize());
+  }
+
+  // 初始化所有图表
+  window.onload = function() {
+    renderGanttChart();
+    renderRadarChart();
+    renderProgressChart();
+    renderStatusChart();
+  };
+
+  // 筛选功能（简化版）
+  document.getElementById('stageFilter').addEventListener('change', function() {
+    console.log('筛选阶段:', this.value);
+    // 这里可以添加筛选逻辑，重新渲染图表
+  });
+
+  document.getElementById('statusFilter').addEventListener('change', function() {
+    console.log('筛选状态:', this.value);
+    // 这里可以添加筛选逻辑，重新渲染图表
+  });
+</script>
+</body>
+</html>
