@@ -415,7 +415,6 @@ def get_user_by_token(request, token_type="access"):
         # 提取 Authorization header
         auth_header = request.META.get('HTTP_AUTHORIZATION', '')
         if not auth_header:
-            logger.error("未找到授权头")
             return None
         
         # 确保格式正确
