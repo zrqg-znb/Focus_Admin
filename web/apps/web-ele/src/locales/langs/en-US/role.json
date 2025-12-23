@@ -1,0 +1,57 @@
+{
+  "name": "Role",
+  "title": "Role Management",
+  "roleName": "Role Name",
+  "roleCode": "Role Code",
+  "roleType": "Role Type",
+  "dataScope": "Data Scope",
+  "priority": "Role Priority",
+  "priorityHelp": "Higher value means higher priority",
+  "description": "Role Description",
+  "descriptionPlaceholder": "Please enter role description",
+  "remark": "Remark",
+  "remarkPlaceholder": "Please enter remark",
+  "status": "Status",
+  "operation": "Operation",
+  "edit": "Edit",
+  "codeFormatError": "Role code can only contain letters, numbers and underscores",
+  "types": {
+    "system": "System Role",
+    "custom": "Custom Role"
+  },
+  "dataScopes": {
+    "self": "Own Data Only",
+    "dept": "Department Data",
+    "deptAndSub": "Department and Sub-departments Data",
+    "deptAndSubShort": "Dept & Sub",
+    "all": "All Data",
+    "custom": "Custom Data",
+    "unknown": "Unknown"
+  },
+  "permissions": {
+    "title": "Permission Assignment",
+    "save": "Save",
+    "selectRoleFirst": "Please select a role first",
+    "noRoleSelected": "No role selected",
+    "menuList": "Menu List",
+    "selectAll": "Select All",
+    "unselectAll": "Unselect All",
+    "selectMenuPrompt": "Please select a menu from the left to view permissions",
+    "noPermissionData": "No permission data",
+    "loading": "Loading...",
+    "noPermissions": "No permissions",
+    "permissionCount": "permissions",
+    "loadMenuFailed": "Failed to load menu list",
+    "loadPermissionsFailed": "Failed to load permissions",
+    "saveSuccess": "Menu and permissions assigned successfully",
+    "saveFailed": "Failed to save menu and permission assignments",
+    "getRoleDetailFailed": "Failed to get role details",
+    "types": {
+      "button": "Button Permission",
+      "api": "API Permission",
+      "data": "Data Permission",
+      "other": "Other Permission"
+    }
+  }
+}
+

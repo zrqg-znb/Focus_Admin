@@ -1,0 +1,76 @@
+{
+  "operation": "Operation",
+  "next": "Next",
+  "previous": "Previous",
+  "cancel": "Cancel",
+  "confirm": "Confirm",
+  "save": "Save",
+  "add": "Add",
+  "delete": "Delete",
+  "edit": "Edit",
+  "update": "Update",
+  "reset": "Reset",
+  "status": "Status",
+  "enabled": "Enabled",
+  "disabled": "Disabled",
+  "selected": "Selected",
+  "noData": "No Data",
+  "loading": "Loading...",
+  "noMore": "No more data",
+  "tips": "Tips",
+  "search": "Search",
+  "clear": "Clear",
+  "copy": "Copy",
+  "format": "Format",
+  "compress": "Compress",
+  "jsonEditor": {
+    "placeholder": "Enter or paste JSON",
+    "valid": "✓ Valid",
+    "invalid": "✗ Invalid",
+    "format": "Format",
+    "compress": "Compress",
+    "copy": "Copy",
+    "clear": "Clear",
+    "copiedSuccess": "Copied to clipboard",
+    "copyFailed": "Copy failed",
+    "noContent": "No content to copy",
+    "formatSuccess": "Format successful",
+    "formatFailed": "Format failed: {0}",
+    "compressSuccess": "Compress successful",
+    "compressFailed": "Compress failed: {0}",
+    "invalidJson": "Invalid JSON format",
+    "emptyContent": "Please enter JSON content",
+    "stats": "Lines: {0} | Characters: {1}"
+  },
+  "ui": {
+    "placeholder": {
+      "select": "Please select",
+      "search": "Please enter search content"
+    },
+    "actionTitle": {
+      "create": "Create {0}",
+      "add": "Add {0}",
+      "edit": "Edit {0}",
+      "view": "View {0}",
+      "delete": "Delete {0}"
+    },
+    "actionMessage": {
+      "createSuccess": "Created successfully",
+      "createError": "Create failed",
+      "updateSuccess": "Updated successfully",
+      "updateError": "Update failed",
+      "deleteSuccess": "Deleted successfully",
+      "deleteConfirm": "Are you sure you want to delete {0}?",
+      "deleteError": "Delete failed",
+      "loadError": "Load failed"
+    },
+    "formRules": {
+      "required": "{0} is required",
+      "minLength": "{0} must be at least {1} characters",
+      "maxLength": "{0} must be at most {1} characters",
+      "alreadyExists": "{0} {1} already exists",
+      "startWith": "{0} must start with {1}",
+      "invalidURL": "Please enter a valid URL"
+    }
+  }
+}

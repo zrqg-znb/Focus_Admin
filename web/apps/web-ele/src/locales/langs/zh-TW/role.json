@@ -1,0 +1,57 @@
+{
+  "name": "角色",
+  "title": "角色管理",
+  "roleName": "角色名稱",
+  "roleCode": "角色編碼",
+  "roleType": "角色類型",
+  "dataScope": "數據範圍",
+  "priority": "角色優先級",
+  "priorityHelp": "數字越大優先級越高",
+  "description": "角色描述",
+  "descriptionPlaceholder": "請輸入角色描述",
+  "remark": "備註",
+  "remarkPlaceholder": "請輸入備註信息",
+  "status": "狀態",
+  "operation": "操作",
+  "edit": "編輯",
+  "codeFormatError": "角色編碼只能包含字母、數字和下劃線",
+  "types": {
+    "system": "系統角色",
+    "custom": "自定義角色"
+  },
+  "dataScopes": {
+    "self": "僅本人數據",
+    "dept": "本部門數據",
+    "deptAndSub": "本部門及下級部門數據",
+    "deptAndSubShort": "本部門及下級",
+    "all": "全部數據",
+    "custom": "自定義數據",
+    "unknown": "未知"
+  },
+  "permissions": {
+    "title": "權限分配",
+    "save": "保存",
+    "selectRoleFirst": "請先選擇角色",
+    "noRoleSelected": "未選擇角色",
+    "menuList": "菜單列表",
+    "selectAll": "全選",
+    "unselectAll": "反選",
+    "selectMenuPrompt": "請從左側選擇菜單查看權限",
+    "noPermissionData": "暫無權限數據",
+    "loading": "加載中...",
+    "noPermissions": "暫無權限",
+    "permissionCount": "項權限",
+    "loadMenuFailed": "加載菜單列表失敗",
+    "loadPermissionsFailed": "加載權限失敗",
+    "saveSuccess": "菜單和權限分配成功",
+    "saveFailed": "保存菜單和權限分配失敗",
+    "getRoleDetailFailed": "獲取角色詳情失敗",
+    "types": {
+      "button": "按鈕權限",
+      "api": "API權限",
+      "data": "數據權限",
+      "other": "其他權限"
+    }
+  }
+}
+
