@@ -317,14 +317,12 @@ class User(RootModel):
     )
     
     # 直属上级
-    manager = models.ForeignKey(
-        to="self",
-        on_delete=models.SET_NULL,
-        db_constraint=False,
+    manager = models.CharField(
+        max_length=64,
         null=True,
         blank=True,
-        related_name="subordinates",
-        help_text="直属上级",
+        help_text="直属上级（外部同步）",
+        db_index=True,
     )
     
     class Meta:
@@ -376,6 +374,10 @@ class User(RootModel):
         """获取用户的所有岗位名称"""
         return [post.name for post in self.post.all()]
     
+    def can_delete(self):
+        """判断用户是否可以删除（系统用户和超级管理员不能删除）"""
+        return self.user_type != 0 and not self.is_superuser
+
     def has_permission(self, permission_code):
         """检查用户是否拥有指定权限"""
         # 超级管理员拥有所有权限
@@ -399,17 +401,6 @@ class User(RootModel):
         return Permission.objects.filter(
             roles__in=self.core_roles.filter(status=True)
         ).distinct()
-    
-    def get_subordinate_users(self, include_self=False):
-        """获取下属用户列表"""
-        users = list(self.subordinates.all())
-        if include_self:
-            users.insert(0, self)
-        return users
-    
-    def can_delete(self):
-        """判断用户是否可以删除（系统用户和超级管理员不能删除）"""
-        return self.user_type != 0 and not self.is_superuser
     
     def set_password(self, raw_password):
         """设置密码（加密）"""

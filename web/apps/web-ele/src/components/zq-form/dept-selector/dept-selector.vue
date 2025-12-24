@@ -84,7 +84,7 @@ const getDeptPath = (deptId: string): string => {
   
   while (currentId) {
     const dept = deptMap.get(currentId);
-    if (dept && dept.id !== '0') { // 跳过根节点"全部部门"
+    if (dept) { 
       path.unshift(dept.name);
     }
     currentId = parentMap.get(currentId);
@@ -131,8 +131,8 @@ const tempSelectedDeptsWithPath = computed(() => {
 
 // 加载顶级部门数据
 const loadDepartments = async () => {
-  // 如果已经加载过根节点，则不重复加载
-  if (departments.value.length > 0 && departments.value[0].id === '0') {
+  // 如果已经加载过部门数据，则不重复加载
+  if (departments.value.length > 0) {
     return;
   }
   
@@ -140,17 +140,8 @@ const loadDepartments = async () => {
     deptLoading.value = true;
     const result = await getDeptByParentApi(null);
 
-    // 添加"全部部门"根节点
-    const rootNode = {
-      id: '0',
-      name: $t('system.user.allDept') || 'All Departments',
-      children: Array.isArray(result) ? result : [],
-      parent_id: null,
-      status: 1,
-    };
-
-    departments.value = [rootNode];
-    expandedDeptIds.value.add('0');
+    // 直接使用接口返回的数据作为根节点列表
+    departments.value = Array.isArray(result) ? result : [];
 
     deptLoading.value = false;
   } catch (error) {
@@ -189,25 +180,8 @@ const loadDepartmentsByIds = async (ids: string[]) => {
         }
       };
       
-      // 确保根节点存在，然后合并数据
-      if (departments.value.length > 0 && departments.value[0].id === '0') {
-        // 根节点已存在，直接合并
-        if (!departments.value[0].children) {
-          departments.value[0].children = [];
-        }
-        mergeTree(departments.value[0].children, result);
-      } else {
-        // 根节点不存在，创建根节点并添加数据
-        const rootNode = {
-          id: '0',
-          name: $t('system.user.allDept') || 'All Departments',
-          children: result,
-          parent_id: null,
-          status: 1,
-        };
-        departments.value = [rootNode];
-        expandedDeptIds.value.add('0');
-      }
+      // 直接合并数据到 departments.value
+      mergeTree(departments.value, result);
     }
     
     hasLoadedDepts.value = true;

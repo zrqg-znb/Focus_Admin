@@ -127,20 +127,12 @@ const loadDepartments = async () => {
     deptLoading.value = true;
     const result = await getDeptByParentApi(undefined);
 
-    // 添加"全部部门"根节点
-    const rootNode = {
-      id: '0',
-      name: $t('system.user.allDept') || 'All Departments',
-      children: Array.isArray(result) ? result : [],
-      parent_id: null,
-      status: 1,
-    };
-
-    departments.value = [rootNode];
-    expandedDeptIds.value.add('0');
-
+    // 直接使用接口返回的数据作为根节点列表
+    departments.value = Array.isArray(result) ? result : [];
+    
+    // 如果没有选中的部门，清除选中状态（不再默认选中'0'）
     if (!selectedDeptId.value) {
-      selectedDeptId.value = '0';
+      selectedDeptId.value = '';
     }
 
     deptLoading.value = false;

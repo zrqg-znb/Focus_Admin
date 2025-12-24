@@ -6,7 +6,7 @@ Dept API - 部门管理接口
 """
 from typing import List
 from django.shortcuts import get_object_or_404
-from django.db.models import Q, Count
+from django.db.models import Q, Count, Max
 from django.core.cache import cache
 from ninja import Router, Query
 from ninja.errors import HttpError
@@ -213,7 +213,7 @@ def list_dept_tree(request, use_cache: bool = Query(True)):
             return cached_tree
     
     # 从数据库查询
-    dept_queryset = Dept.objects.all().select_related('lead')
+    dept_queryset = Dept.objects.all()
     
     # 构建部门字典列表
     dept_list = []
@@ -222,19 +222,12 @@ def list_dept_tree(request, use_cache: bool = Query(True)):
             'id': str(dept.id),
             'name': dept.name,
             'code': dept.code,
-            'dept_type': dept.dept_type,
             'status': dept.status,
             'level': dept.level,
             'parent_id': str(dept.parent_id) if dept.parent_id else None,
-            'lead_id': str(dept.lead_id) if dept.lead_id else None,
-            'lead_name': dept.lead.name if dept.lead else None,
-            'phone': dept.phone,
-            'email': dept.email,
-            'description': dept.description,
             'sort': dept.sort,
             'child_count': dept.get_child_count(),
             'user_count': dept.get_user_count(),
-            'dept_type_display': dept.get_dept_type_display_name(),
         }
         dept_list.append(dept_dict)
     
@@ -260,7 +253,7 @@ def list_dept(request, filters: DeptFilters = Query(...)):
     """
     from common.fu_crud import retrieve
     query_set = retrieve(request, Dept, filters)
-    query_set = query_set.select_related('parent', 'lead')
+    query_set = query_set.select_related('parent')
     return query_set
 
 
@@ -279,7 +272,7 @@ def list_all_dept(request):
 def get_dept(request, dept_id: str):
     """获取单个部门的详细信息"""
     dept = get_object_or_404(
-        Dept.objects.select_related('parent', 'lead'),
+        Dept.objects.select_related('parent'),
         id=dept_id
     )
     return dept
@@ -297,7 +290,7 @@ def get_dept_by_parent(request, parent_id: str):
     if parent_id == "null":
         parent_id = None
     
-    query_set = Dept.objects.filter(parent_id=parent_id).select_related('lead')
+    query_set = Dept.objects.filter(parent_id=parent_id)
     
     result = []
     for dept in query_set:
@@ -305,17 +298,10 @@ def get_dept_by_parent(request, parent_id: str):
             'id': str(dept.id),
             'name': dept.name,
             'code': dept.code,
-            'dept_type': dept.dept_type,
-            'dept_type_display': dept.get_dept_type_display_name(),
             'status': dept.status,
             'level': dept.level,
             'path': dept.path,
             'parent_id': str(dept.parent_id) if dept.parent_id else None,
-            'lead_id': str(dept.lead_id) if dept.lead_id else None,
-            'lead_name': dept.lead.name if dept.lead else None,
-            'phone': dept.phone,
-            'email': dept.email,
-            'description': dept.description,
             'sort': dept.sort,
             'child_count': dept.get_child_count(),
             'user_count': dept.get_user_count(),
@@ -352,7 +338,7 @@ def search_dept(request, keyword: str):
             dept_ids_to_include.add(ancestor.id)
     
     # 获取所有需要的部门
-    all_depts = Dept.objects.filter(id__in=dept_ids_to_include).select_related('lead')
+    all_depts = Dept.objects.filter(id__in=dept_ids_to_include)
     
     # 构建部门字典
     dept_dict_map = {}
@@ -361,17 +347,10 @@ def search_dept(request, keyword: str):
             'id': str(dept.id),
             'name': dept.name,
             'code': dept.code,
-            'dept_type': dept.dept_type,
-            'dept_type_display': dept.get_dept_type_display_name(),
             'status': dept.status,
             'level': dept.level,
             'path': dept.path,
             'parent_id': str(dept.parent_id) if dept.parent_id else None,
-            'lead_id': str(dept.lead_id) if dept.lead_id else None,
-            'lead_name': dept.lead.name if dept.lead else None,
-            'phone': dept.phone,
-            'email': dept.email,
-            'description': dept.description,
             'sort': dept.sort,
             'child_count': Dept.objects.filter(
                 parent_id=dept.id,
@@ -421,7 +400,7 @@ def get_depts_by_ids(request, ids: str):
             dept_ids_to_include.add(str(ancestor.id))
     
     # 获取所有需要的部门
-    all_depts = Dept.objects.filter(id__in=dept_ids_to_include).select_related('lead')
+    all_depts = Dept.objects.filter(id__in=dept_ids_to_include)
     
     # 构建字典和树形结构（同 search_dept）
     dept_dict_map = {}
@@ -430,7 +409,6 @@ def get_depts_by_ids(request, ids: str):
             'id': str(dept.id),
             'name': dept.name,
             'code': dept.code,
-            'dept_type': dept.dept_type,
             'status': dept.status,
             'level': dept.level,
             'parent_id': str(dept.parent_id) if dept.parent_id else None,
@@ -623,19 +601,12 @@ def get_dept_stats(request):
     active_count = Dept.objects.filter(status=True).count()
     root_count = Dept.objects.filter(parent__isnull=True).count()
     
-    # 按类型统计
-    type_stats = {}
-    for type_code, type_name in Dept.DEPT_TYPE_CHOICES:
-        count = Dept.objects.filter(dept_type=type_code).count()
-        type_stats[type_name] = count
-    
     return {
         'total_count': total_count,
         'active_count': active_count,
         'inactive_count': total_count - active_count,
         'root_count': root_count,
-        'type_stats': type_stats,
-        'max_level': Dept.objects.aggregate(max_level=models.Max('level'))['max_level'] or 0,
+        'max_level': Dept.objects.aggregate(max_level=Max('level'))['max_level'] or 0,
     }
 
 

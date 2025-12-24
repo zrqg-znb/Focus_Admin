@@ -12,6 +12,7 @@ from django.conf import settings
 from core.user.user_model import User
 from core.role.role_model import Role
 from core.auth.auth_service import AuthService
+from core.dept.dept_sync_service import sync_user_dept_info
 from common.fu_crud import get_or_none
 
 logger = logging.getLogger(__name__)
@@ -262,6 +263,9 @@ class BaseOAuthService(ABC):
             }
             user = User.objects.create(**create_kwargs)
             logger.info(f"{cls.PROVIDER_NAME} 用户创建成功: {unique_username}")
+            
+            # 同步部门信息
+            sync_user_dept_info(user)
         
         # 确保用户至少有一个角色（如果没有角色，无法获取菜单）
         if not user.core_roles.exists():

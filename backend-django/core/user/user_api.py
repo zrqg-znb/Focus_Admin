@@ -217,7 +217,25 @@ def update_user(request, user_id: str, data: UserSchemaIn):
     
     # 更新用户信息
     role_changed = False
-    for attr, value in data.dict().items():
+    user_data = data.dict()
+    
+    # 处理 manager/manager_id 字段
+    # 优先使用 manager_id (如果存在且非空)，否则使用 manager
+    # 这是为了兼容前端可能传递 manager_id 的情况
+    manager_val = user_data.pop('manager', None)
+    manager_id_val = user_data.pop('manager_id', None)
+    
+    final_manager = manager_id_val if manager_id_val else manager_val
+    
+    # 特殊处理 manager 字段，如果是 ID 则转换为姓名
+    if final_manager and isinstance(final_manager, str) and len(final_manager) > 30:
+        manager_user = User.objects.filter(id=final_manager).first()
+        if manager_user:
+            final_manager = manager_user.name or manager_user.username
+            
+    setattr(user, 'manager', final_manager)
+
+    for attr, value in user_data.items():
         if attr == "core_roles":
             user.core_roles.set(value)
             role_changed = True
@@ -281,6 +299,25 @@ def patch_user(request, user_id: str, data: UserSchemaPatch):
     
     # 更新字段
     role_changed = False
+    
+    # 处理 manager/manager_id
+    # 只要其中一个在 update_data 中，就说明需要更新
+    if 'manager' in update_data or 'manager_id' in update_data:
+        manager_val = update_data.pop('manager', None)
+        manager_id_val = update_data.pop('manager_id', None)
+        
+        # 优先使用 manager_id (如果存在)，否则使用 manager
+        # 注意这里与 PUT 不同，PATCH 只有在 key 存在时才处理
+        final_manager = manager_id_val if manager_id_val is not None else manager_val
+        
+        # ID 转姓名
+        if final_manager and isinstance(final_manager, str) and len(final_manager) > 30:
+            manager_user = User.objects.filter(id=final_manager).first()
+            if manager_user:
+                final_manager = manager_user.name or manager_user.username
+        
+        setattr(user, 'manager', final_manager)
+
     for attr, value in update_data.items():
         if attr == "core_roles":
             user.core_roles.set(value)
@@ -312,7 +349,7 @@ def list_user(request, filters: UserFilters = Query(...)):
     """
     query_set = retrieve(request, User, filters)
     # 优化查询：预加载关联数据
-    query_set = query_set.select_related('dept', 'manager').prefetch_related('post', 'core_roles')
+    query_set = query_set.select_related('dept').prefetch_related('post', 'core_roles')
     return query_set
 
 
@@ -459,7 +496,7 @@ def search_user(request, keyword: str = Query(None)):
             Q(mobile__icontains=keyword)
         )
     
-    query_set = query_set.select_related('dept', 'manager').prefetch_related('post', 'core_roles')
+    query_set = query_set.select_related('dept').prefetch_related('post', 'core_roles')
     return query_set
 
 
@@ -472,7 +509,7 @@ def get_current_user_profile(request):
     - 返回完整的用户信息，包括权限
     """
     user = get_object_or_404(
-        User.objects.select_related('dept', 'manager').prefetch_related('post', 'core_roles'),
+        User.objects.select_related('dept').prefetch_related('post', 'core_roles'),
         id=request.auth.id
     )
     return user
@@ -505,7 +542,9 @@ def get_user_subordinates(request, user_id: str, include_self: bool = Query(Fals
     - 支持包含自己的选项
     """
     user = get_object_or_404(User, id=user_id)
-    subordinates = user.get_subordinate_users(include_self=include_self)
+    # 由于 manager 字段已改为存储静态字符串，无法通过数据库关系获取下属
+    # subordinates = user.get_subordinate_users(include_self=include_self)
+    subordinates = []
     return UserSubordinatesOut(subordinates=subordinates)
 
 

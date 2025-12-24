@@ -28,7 +28,8 @@ class UserFilters(FuFilters):
 class UserSchemaIn(ModelSchema):
     """用户输入模式"""
     dept_id: Optional[str] = Field(None, alias="dept_id")
-    manager_id: Optional[str] = Field(None, alias="manager_id")
+    manager: Optional[str] = Field(None, alias="manager")
+    manager_id: Optional[str] = Field(None, alias="manager_id") # 兼容前端可能传递的 manager_id
     post: List[str] = Field(default=[], description="岗位ID列表")
     core_roles: List[str] = Field(default=[], description="角色ID列表")
     
@@ -105,7 +106,8 @@ class UserSchemaPatch(Schema):
     user_status: Optional[int] = None
     is_active: Optional[bool] = None
     dept_id: Optional[str] = None
-    manager_id: Optional[str] = None
+    manager: Optional[str] = None
+    manager_id: Optional[str] = None # 兼容前端可能传递的 manager_id
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     employee_no: Optional[str] = None
@@ -166,8 +168,8 @@ class UserSchemaOut(ModelSchema):
     """用户输出模式"""
     dept_id: Optional[str] = Field(None, alias="dept_id")
     dept_name: Optional[str] = Field(None, alias="dept.name")
-    manager_id: Optional[str] = Field(None, alias="manager_id")
-    manager_name: Optional[str] = Field(None, alias="manager.name")
+    manager: Optional[str] = Field(None, alias="manager")
+    manager_name: Optional[str] = Field(None, alias="manager") # 兼容前端可能使用的 manager_name 字段
     user_type_display: Optional[str] = None
     user_status_display: Optional[str] = None
     gender_display: Optional[str] = None
