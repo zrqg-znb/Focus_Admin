@@ -19,15 +19,15 @@ def mock_get_user_dept_info(username: str) -> Dict:
     # This is the structure provided by user
     return {
         "l0_dept_code": "022471",
-        "l0_name": "华为技术",
+        "l0_name": "11",
         "l1_dept_code": "048459",
-        "l1_name": "智能汽车解决方案 bu",
+        "l1_name": "22",
         "l2_dept_code": "068620",
-        "l2_name": "研发管理部",
+        "l2_name": "33",
         "l3_dept_code": "068647",
-        "l3_name": "硬件平台部",
+        "l3_name": "44",
         "l4_dept_code": "069507",
-        "l4_name": "底层软件开发部",
+        "l4_name": "55",
         "orgainzation_manager": "张瑞清"
     }
 

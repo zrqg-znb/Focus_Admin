@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'channels',
     'core',
     'scheduler',
+    'apps.performance',
 ]
 
 TEMPLATES = [

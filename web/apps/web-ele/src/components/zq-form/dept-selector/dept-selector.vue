@@ -61,7 +61,7 @@ const displayValue = computed({
 const getDeptPath = (deptId: string): string => {
   const deptMap = new Map();
   const parentMap = new Map();
-  
+
   function buildMaps(nodes: any[], parentId: string | null = null) {
     nodes.forEach(node => {
       deptMap.set(node.id, node);
@@ -71,25 +71,25 @@ const getDeptPath = (deptId: string): string => {
       }
     });
   }
-  
+
   // 同时从 departments 和 searchResults 构建映射
   // 这样可以处理搜索结果中的深层部门
   buildMaps(departments.value);
   if (searchResults.value.length > 0) {
     buildMaps(searchResults.value);
   }
-  
+
   const path: string[] = [];
   let currentId: string | null = deptId;
-  
+
   while (currentId) {
     const dept = deptMap.get(currentId);
-    if (dept) { 
+    if (dept) {
       path.unshift(dept.name);
     }
     currentId = parentMap.get(currentId);
   }
-  
+
   return path.join(' / ');
 };
 
@@ -97,11 +97,11 @@ const getDeptPath = (deptId: string): string => {
 const selectedDeptsWithPath = computed(() => {
   const result = [];
   const seenIds = new Set<string>(); // 用于去重
-  
+
   for (const deptId of selectedDepts.value) {
     // 避免重复添加
     if (seenIds.has(deptId)) continue;
-    
+
     seenIds.add(deptId);
     result.push({
       id: deptId,
@@ -115,11 +115,11 @@ const selectedDeptsWithPath = computed(() => {
 const tempSelectedDeptsWithPath = computed(() => {
   const result = [];
   const seenIds = new Set<string>(); // 用于去重
-  
+
   for (const deptId of tempSelectedDepts.value) {
     // 避免重复添加
     if (seenIds.has(deptId)) continue;
-    
+
     seenIds.add(deptId);
     result.push({
       id: deptId,
@@ -135,7 +135,7 @@ const loadDepartments = async () => {
   if (departments.value.length > 0) {
     return;
   }
-  
+
   try {
     deptLoading.value = true;
     const result = await getDeptByParentApi(null);
@@ -154,11 +154,11 @@ const loadDepartments = async () => {
 // 这个函数用于加载选中部门的路径信息，并将其合并到现有的部门树中
 const loadDepartmentsByIds = async (ids: string[]) => {
   if (!ids || ids.length === 0) return;
-  
+
   try {
     // 调用批量获取部门API，返回包含目标部门及其所有祖先的树形结构
     const result = await getDeptsByIds(ids);
-    
+
     if (result && result.length > 0) {
       // 合并数据到现有的部门树中
       // 需要将获取的树形数据合并到 departments 中
@@ -179,11 +179,11 @@ const loadDepartmentsByIds = async (ids: string[]) => {
           }
         }
       };
-      
+
       // 直接合并数据到 departments.value
       mergeTree(departments.value, result);
     }
-    
+
     hasLoadedDepts.value = true;
   } catch (error) {
     console.error('Failed to load departments by ids:', error);
@@ -342,9 +342,9 @@ const handleModalOpened = async () => {
 const handleConfirm = () => {
   // 将临时选择的值保存到 selectedDepts（已确认）
   selectedDepts.value = new Set(tempSelectedDepts.value);
-  
-  const value = props.multiple 
-    ? Array.from(selectedDepts.value) 
+
+  const value = props.multiple
+    ? Array.from(selectedDepts.value)
     : (selectedDepts.value.size > 0 ? Array.from(selectedDepts.value)[0] : '');
 
   emit('update:modelValue', value);
@@ -367,8 +367,8 @@ const handleClear = (e?: MouseEvent) => {
 // 删除单个选中项（多选模式下点击标签删除按钮）
 const handleRemoveTag = (deptId: string) => {
   selectedDepts.value.delete(deptId);
-  const value = props.multiple 
-    ? Array.from(selectedDepts.value) 
+  const value = props.multiple
+    ? Array.from(selectedDepts.value)
     : '';
   emit('update:modelValue', value);
   emit('change', value);
@@ -392,14 +392,14 @@ const updateInternalValue = () => {
 // 监听 modelValue 变化，如果有值且部门数据未加载，则加载
 watch(() => props.modelValue, async (newValue) => {
   updateInternalValue();
-  
+
   // 如果有选中值且部门数据未加载，则需要加载部门数据
-  if ((Array.isArray(newValue) && newValue.length > 0) || 
+  if ((Array.isArray(newValue) && newValue.length > 0) ||
       (typeof newValue === 'string' && newValue)) {
     if (!hasLoadedDepts.value) {
       // 先加载完整的根级部门树
       await loadDepartments();
-      
+
       // 然后加载选中部门的路径信息，用于展开和标记
       const ids = Array.isArray(newValue) ? newValue : [newValue];
       await loadDepartmentsByIds(ids);
@@ -413,7 +413,7 @@ onMounted(async () => {
       (typeof props.modelValue === 'string' && props.modelValue)) {
     // 先加载完整的根级部门树
     await loadDepartments();
-    
+
     // 然后加载选中部门的路径信息，用于展开和标记
     const ids = Array.isArray(props.modelValue) ? props.modelValue : [props.modelValue];
     await loadDepartmentsByIds(ids);
@@ -448,7 +448,7 @@ defineExpose({
           :value="item.id"
         />
       </ElSelect>
-      
+
       <!-- Loading 提示 -->
       <div v-if="deptLoading" class="loading-indicator">
         <Loader class="size-4 animate-spin" />

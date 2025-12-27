@@ -13,6 +13,7 @@ from ninja.responses import NinjaJSONEncoder
 from common.fu_auth import BearerAuth, ApiKey
 from core.router import core_router
 from scheduler.router import scheduler_router
+from apps.router import router as apps_router
 
 
 class MyJsonEncoder(NinjaJSONEncoder):
@@ -40,3 +41,4 @@ api = NinjaAPI(auth=[BearerAuth(), ApiKey()], renderer=MyJsonRenderer())
 
 api.add_router('/core', core_router)
 api.add_router('/scheduler', scheduler_router)
+api.add_router('', apps_router)
