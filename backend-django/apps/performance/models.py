@@ -1,5 +1,6 @@
 from django.db import models
 from common.fu_model import RootModel
+from core.user.user_model import User
 
 class PerformanceIndicator(RootModel):
     code = models.CharField(max_length=100, unique=True, null=True, blank=True, verbose_name="业务唯一标识", help_text="业务唯一标识")
@@ -26,7 +27,7 @@ class PerformanceIndicator(RootModel):
     )
     fluctuation_direction = models.CharField(max_length=20, choices=DIRECTION_CHOICES, default='none', verbose_name="浮动方向", help_text="浮动方向")
     
-    owner = models.CharField(max_length=100, null=True, blank=True, verbose_name="责任人", help_text="责任人")
+    owner = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="责任人", help_text="责任人", related_name="performance_indicators")
 
     class Meta:
         db_table = 'performance_indicator'

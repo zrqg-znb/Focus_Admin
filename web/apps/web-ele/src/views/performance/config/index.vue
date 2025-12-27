@@ -1,10 +1,16 @@
 <script lang="ts" setup>
-import { ref, onMounted, reactive } from 'vue';
+import { ref, onMounted, reactive, computed } from 'vue';
 import { Page } from '@vben/common-ui';
+import { useUserStore } from '@vben/stores';
 import { ElButton, ElTable, ElTableColumn, ElPagination, ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElInputNumber, ElUpload } from 'element-plus';
 import { getIndicatorListApi, createIndicatorApi, updateIndicatorApi, deleteIndicatorApi, importIndicatorsApi, type PerformanceIndicator } from '#/api/core/performance';
+import { UserSelector } from '#/components/zq-form/user-selector';
 
 defineOptions({ name: 'PerformanceConfig' });
+
+const userStore = useUserStore();
+const currentUserId = computed(() => userStore.userInfo?.id);
+const isSuperuser = computed(() => userStore.userInfo?.is_superuser || userStore.userInfo?.username === 'admin');
 
 const loading = ref(false);
 const tableData = ref<PerformanceIndicator[]>([]);
@@ -29,7 +35,7 @@ const formData = reactive<Partial<PerformanceIndicator>>({
   baseline_unit: '',
   fluctuation_range: 0,
   fluctuation_direction: 'none',
-  owner: ''
+  owner_id: ''
 });
 
 const importDialogVisible = ref(false);
@@ -67,14 +73,19 @@ function handleAdd() {
     baseline_unit: '',
     fluctuation_range: 0,
     fluctuation_direction: 'none',
-    owner: ''
+    owner_id: ''
   });
   dialogVisible.value = true;
 }
 
 function handleEdit(row: PerformanceIndicator) {
   dialogTitle.value = '编辑指标';
+  // Note: row contains owner_id and owner_name from API
   Object.assign(formData, row);
+  // Ensure owner_id is set for UserSelector
+  if (!formData.owner_id && (row as any).owner) {
+     formData.owner_id = (row as any).owner.id;
+  }
   dialogVisible.value = true;
 }
 
@@ -119,6 +130,12 @@ async function handleImportRequest(options: any) {
   }
 }
 
+function canEdit(row: PerformanceIndicator) {
+    // Permission check: Owner or Superuser
+    if (isSuperuser.value) return true;
+    return row.owner_id === currentUserId.value;
+}
+
 onMounted(() => {
   loadData();
 });
@@ -155,10 +172,11 @@ onMounted(() => {
                 {{ row.fluctuation_direction === 'up' ? '越大越好' : (row.fluctuation_direction === 'down' ? '越小越好' : '-') }}
             </template>
         </ElTableColumn>
+        <ElTableColumn prop="owner_name" label="责任人" width="120" />
         <ElTableColumn label="操作" width="150" fixed="right">
           <template #default="{ row }">
-            <ElButton link type="primary" @click="handleEdit(row)">编辑</ElButton>
-            <ElButton link type="danger" @click="handleDelete(row)">删除</ElButton>
+            <ElButton v-if="canEdit(row)" link type="primary" @click="handleEdit(row)">编辑</ElButton>
+            <ElButton v-if="canEdit(row)" link type="danger" @click="handleDelete(row)">删除</ElButton>
           </template>
         </ElTableColumn>
       </ElTable>
@@ -207,8 +225,8 @@ onMounted(() => {
                 <ElOption label="无方向" value="none" />
             </ElSelect>
           </ElFormItem>
-           <ElFormItem label="责任人" prop="owner">
-            <ElInput v-model="formData.owner" />
+           <ElFormItem label="责任人" prop="owner_id">
+             <UserSelector v-model="formData.owner_id" placeholder="请选择责任人" />
           </ElFormItem>
         </ElForm>
         <template #footer>

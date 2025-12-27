@@ -1,5 +1,6 @@
 from ninja import Router, UploadedFile, File
 from ninja.pagination import paginate
+from ninja.errors import HttpError
 from typing import List
 from .schemas import (
     PerformanceIndicatorSchema, 
@@ -28,17 +29,33 @@ def create_indicator(request, payload: PerformanceIndicatorCreateSchema):
 
 @router.delete("/indicators/{id}")
 def delete_indicator(request, id: str):
+    instance = get_object_or_404(PerformanceIndicator, id=id)
+    # 权限检查：只有责任人或超级管理员可以删除
+    user_id = request.auth.id
+    is_superuser = getattr(request.auth, 'is_superuser', False)
+    
+    if str(instance.owner_id) != str(user_id) and not is_superuser:
+        raise HttpError(403, "只有责任人才能删除该指标")
+        
     delete(id, PerformanceIndicator)
     return {"success": True}
 
 @router.put("/indicators/{id}", response=PerformanceIndicatorSchema)
 def update_indicator(request, id: str, payload: PerformanceIndicatorUpdateSchema):
+    instance = get_object_or_404(PerformanceIndicator, id=id)
+    # 权限检查：只有责任人或超级管理员可以编辑
+    user_id = request.auth.id
+    is_superuser = getattr(request.auth, 'is_superuser', False)
+    
+    if str(instance.owner_id) != str(user_id) and not is_superuser:
+        raise HttpError(403, "只有责任人才能编辑该指标")
+
     return update(request, id, payload, PerformanceIndicator)
 
 @router.get("/indicators", response=List[PerformanceIndicatorSchema])
 @paginate(MyPagination)
 def list_indicators(request, search: str = None):
-    qs = PerformanceIndicator.objects.all()
+    qs = PerformanceIndicator.objects.select_related('owner').all()
     if search:
         qs = qs.filter(Q(name__icontains=search) | Q(code__icontains=search) | Q(module__icontains=search))
     return qs
@@ -65,7 +82,7 @@ def import_indicators(request, file: UploadedFile = File(...)):
         "单位": "baseline_unit",
         "允许浮动范围": "fluctuation_range",
         "浮动方向": "fluctuation_direction",
-        "责任人": "owner"
+        # "责任人": "owner" # Owner import might need username matching logic, skipped for simple import for now or need username->id lookup
     }
     
     data_list = []
@@ -113,7 +130,7 @@ def dashboard_data(request, project: str = None, module: str = None, chip_type: 
     # The requirement says: Filters: Project, Module, Chip Type, Date.
     # Table: Indicator Name, Baseline, Current Value, Fluctuation.
     
-    qs = PerformanceIndicator.objects.all()
+    qs = PerformanceIndicator.objects.select_related('owner').all()
     if project:
         qs = qs.filter(project=project)
     if module:
@@ -151,7 +168,8 @@ def dashboard_data(request, project: str = None, module: str = None, chip_type: 
             "fluctuation_direction": indicator.fluctuation_direction,
             "current_value": data_obj.value if data_obj else None,
             "fluctuation_value": data_obj.fluctuation_value if data_obj else None,
-            "data_date": data_obj.date if data_obj else None
+            "data_date": data_obj.date if data_obj else None,
+            "owner_name": indicator.owner.name if indicator.owner else None
         }
         result.append(row)
         

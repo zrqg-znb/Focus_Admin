@@ -1,12 +1,22 @@
-from ninja import Schema, ModelSchema
+from ninja import Schema, ModelSchema, Field
 from typing import List, Optional
 from datetime import date
 from .models import PerformanceIndicator, PerformanceIndicatorData
 
 class PerformanceIndicatorSchema(ModelSchema):
+    owner_id: Optional[str] = Field(None, alias="owner.id")
+    owner_name: Optional[str] = Field(None, alias="owner.name") # Assuming User model has 'name' or 'username'
+    
     class Meta:
         model = PerformanceIndicator
         fields = '__all__'
+        exclude = ['owner'] # Exclude the default owner field which might be an object
+
+    @staticmethod
+    def resolve_owner_name(obj):
+        if obj.owner:
+            return obj.owner.name or obj.owner.username
+        return None
 
 class PerformanceIndicatorCreateSchema(Schema):
     code: Optional[str] = None
@@ -19,7 +29,7 @@ class PerformanceIndicatorCreateSchema(Schema):
     baseline_unit: str
     fluctuation_range: float
     fluctuation_direction: str
-    owner: Optional[str] = None
+    owner_id: Optional[str] = None
 
 class PerformanceIndicatorUpdateSchema(Schema):
     code: Optional[str] = None
@@ -32,7 +42,7 @@ class PerformanceIndicatorUpdateSchema(Schema):
     baseline_unit: Optional[str] = None
     fluctuation_range: Optional[float] = None
     fluctuation_direction: Optional[str] = None
-    owner: Optional[str] = None
+    owner_id: Optional[str] = None
 
 class PerformanceDataUploadItem(Schema):
     code: Optional[str] = None

@@ -12,7 +12,8 @@ export interface PerformanceIndicator {
   baseline_unit: string;
   fluctuation_range: number;
   fluctuation_direction: 'up' | 'down' | 'none';
-  owner?: string;
+  owner_id?: string;
+  owner_name?: string;
   sys_create_datetime?: string;
 }
 
@@ -38,6 +39,7 @@ export interface PerformanceDashboardItem {
   current_value?: number;
   fluctuation_value?: number;
   data_date?: string;
+  owner_name?: string;
 }
 
 export interface PerformanceDataUploadItem {
