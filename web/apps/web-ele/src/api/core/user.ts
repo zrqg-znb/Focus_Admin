@@ -218,7 +218,16 @@ export async function getUserSubordinatesApi(userId: string) {
  * 获取简单用户列表（用于选择器）
  */
 export async function getSimpleUserListApi() {
-  return requestClient.get<User[]>('/api/core/user/simple');
+  return requestClient.get<User[]>('/api/core/user/all');
+}
+
+/**
+ * 搜索用户（支持分页和关键词）
+ */
+export async function searchUserApi(keyword: string) {
+  return requestClient.get<PaginatedResponse<User>>('/api/core/user/search', {
+    params: { keyword, page: 1, pageSize: 20 },
+  });
 }
 
 /**

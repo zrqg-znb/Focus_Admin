@@ -54,13 +54,19 @@ def update_indicator(request, id: str, payload: PerformanceIndicatorUpdateSchema
 
 @router.get("/indicators", response=List[PerformanceIndicatorSchema])
 @paginate(MyPagination)
-def list_indicators(request, search: str = None):
+def list_indicators(request, search: str = None, module: str = None, chip_type: str = None, project: str = None):
     qs = PerformanceIndicator.objects.select_related('owner').all()
     if search:
-        qs = qs.filter(Q(name__icontains=search) | Q(code__icontains=search) | Q(module__icontains=search))
+        qs = qs.filter(name__icontains=search)
+    if module:
+        qs = qs.filter(module__icontains=module)
+    if chip_type:
+        qs = qs.filter(chip_type__icontains=chip_type)
+    if project:
+        qs = qs.filter(project__icontains=project)
     return qs
 
-@router.post("/indicators/import")
+@router.post("/indicators/import", url_name="import_indicators")
 def import_indicators(request, file: UploadedFile = File(...)):
     # Read Excel file
     wb = openpyxl.load_workbook(filename=BytesIO(file.read()))
@@ -82,7 +88,20 @@ def import_indicators(request, file: UploadedFile = File(...)):
         "单位": "baseline_unit",
         "允许浮动范围": "fluctuation_range",
         "浮动方向": "fluctuation_direction",
-        # "责任人": "owner" # Owner import might need username matching logic, skipped for simple import for now or need username->id lookup
+        "责任人": "owner",
+        
+        # English headers support
+        "Code": "code",
+        "Name": "name",
+        "Module": "module",
+        "Project": "project",
+        "Chip Type": "chip_type",
+        "Value Type": "value_type",
+        "Baseline Value": "baseline_value",
+        "Baseline Unit": "baseline_unit",
+        "Fluctuation Range": "fluctuation_range",
+        "Fluctuation Direction": "fluctuation_direction",
+        "Owner": "owner"
     }
     
     data_list = []

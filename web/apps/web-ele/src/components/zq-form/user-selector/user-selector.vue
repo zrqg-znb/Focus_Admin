@@ -599,10 +599,10 @@ defineExpose({
 
         <!-- 右侧：用户列表 -->
         <UserListPanel
-          :data-source="selectedDeptId === '0' ? 'all' : 'dept'"
+          :data-source="selectedDeptId ? (selectedDeptId === '0' ? 'all' : 'dept') : 'all'"
           :source-id="selectedDeptId === '0' ? undefined : selectedDeptId"
           :temp-selected-users="tempSelectedUsers"
-          :filterable="filterable"
+          :filterable="true"
           :multiple="multiple"
           :selectable="true"
           :show-border="true"

@@ -55,6 +55,8 @@ def upload_performance_data(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {"success_count": success_count, "errors": errors}
 
 def import_indicators_service(data_list: List[Dict]) -> Dict[str, Any]:
+    from core.user.user_model import User
+    
     success_count = 0
     errors = []
     with transaction.atomic():
@@ -77,6 +79,13 @@ def import_indicators_service(data_list: List[Dict]) -> Dict[str, Any]:
                 if 'project' in defaults: del defaults['project']
                 if 'module' in defaults: del defaults['module']
                 if 'chip_type' in defaults: del defaults['chip_type']
+                
+                # Handle Owner field (username to user_id)
+                owner_username = defaults.pop('owner', None)
+                if owner_username:
+                    owner_user = User.objects.filter(username=owner_username).first()
+                    if owner_user:
+                        defaults['owner'] = owner_user
                 
                 # Ensure value_type is valid
                 if 'value_type' not in defaults:

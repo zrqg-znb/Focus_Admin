@@ -353,6 +353,33 @@ def list_user(request, filters: UserFilters = Query(...)):
     return query_set
 
 
+@router.get("/user/search", response=List[UserSchemaOut], summary="搜索用户")
+@paginate(MyPagination)
+def search_user(request, keyword: str = Query(None)):
+    """
+    搜索用户
+    
+    改进点：
+    - 支持关键词搜索（用户名、姓名、邮箱、手机号）
+    """
+    query_set = User.objects.all()
+    
+    if keyword:
+        # 移除 URL 编码字符（虽然框架通常会自动处理，但为了保险起见）
+        import urllib.parse
+        decoded_keyword = urllib.parse.unquote(keyword)
+        
+        query_set = query_set.filter(
+            Q(username__icontains=decoded_keyword) |
+            Q(name__icontains=decoded_keyword) |
+            Q(email__icontains=decoded_keyword) |
+            Q(mobile__icontains=decoded_keyword)
+        )
+    
+    query_set = query_set.select_related('dept').prefetch_related('post', 'core_roles')
+    return query_set
+
+
 @router.get("/user/all", response=List[UserSchemaSimple], summary="获取所有用户（简化版）")
 def list_all_user(request):
     """
@@ -390,7 +417,7 @@ def get_user(request, user_id: str):
     - 使用 prefetch_related 优化关联查询
     """
     user = get_object_or_404(
-        User.objects.select_related('dept', 'manager').prefetch_related('post', 'core_roles'),
+        User.objects.select_related('dept').prefetch_related('post', 'core_roles'),
         id=user_id
     )
     return user
@@ -475,29 +502,6 @@ def batch_update_user_status(request, data: UserBatchUpdateStatusIn):
     
     count = users.update(user_status=data.user_status)
     return UserBatchUpdateStatusOut(count=count)
-
-
-@router.get("/user/search", response=List[UserSchemaOut], summary="搜索用户")
-@paginate(MyPagination)
-def search_user(request, keyword: str = Query(None)):
-    """
-    搜索用户
-    
-    改进点：
-    - 支持关键词搜索（用户名、姓名、邮箱、手机号）
-    """
-    query_set = User.objects.all()
-    
-    if keyword:
-        query_set = query_set.filter(
-            Q(username__icontains=keyword) |
-            Q(name__icontains=keyword) |
-            Q(email__icontains=keyword) |
-            Q(mobile__icontains=keyword)
-        )
-    
-    query_set = query_set.select_related('dept').prefetch_related('post', 'core_roles')
-    return query_set
 
 
 @router.get("/user/profile/me", response=UserSchemaDetail, summary="获取当前用户信息")

@@ -2,9 +2,9 @@
 import { ref, onMounted, reactive, computed } from 'vue';
 import { Page } from '@vben/common-ui';
 import { useUserStore } from '@vben/stores';
-import { ElButton, ElTable, ElTableColumn, ElPagination, ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElInputNumber, ElUpload } from 'element-plus';
+import { ElButton, ElTable, ElTableColumn, ElPagination, ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElInputNumber, ElUpload, ElLink } from 'element-plus';
 import { getIndicatorListApi, createIndicatorApi, updateIndicatorApi, deleteIndicatorApi, importIndicatorsApi, type PerformanceIndicator } from '#/api/core/performance';
-import { UserSelector } from '#/components/zq-form/user-selector';
+import { getSimpleUserListApi, searchUserApi } from '#/api/core/user';
 
 defineOptions({ name: 'PerformanceConfig' });
 
@@ -18,7 +18,10 @@ const total = ref(0);
 const queryParams = reactive({
   page: 1,
   pageSize: 10,
-  search: ''
+  search: '',
+  module: '',
+  chip_type: '',
+  project: ''
 });
 
 const dialogVisible = ref(false);
@@ -39,6 +42,8 @@ const formData = reactive<Partial<PerformanceIndicator>>({
 });
 
 const importDialogVisible = ref(false);
+const userOptions = ref<any[]>([]);
+const userLoading = ref(false);
 
 const rules = {
   name: [{ required: true, message: '请输入指标名称', trigger: 'blur' }],
@@ -59,6 +64,34 @@ async function loadData() {
   }
 }
 
+async function searchUsers(query: string) {
+    if (!query) {
+        // userOptions.value = []; // Don't clear options to keep previous selection visible if needed
+        return;
+    }
+
+    // Check if query meets the minimum length requirements
+    // At least 1 Chinese character OR at least 5 English letters
+    const hasChinese = /[\u4e00-\u9fa5]/.test(query);
+    if (!hasChinese && query.length < 5) {
+        return; // Do not trigger search
+    }
+
+    userLoading.value = true;
+    try {
+        const res = await searchUserApi(query);
+        userOptions.value = res.items || res; // 兼容分页响应或直接列表
+    } finally {
+        userLoading.value = false;
+    }
+}
+
+// Initial load of users (optional, or load on focus)
+async function loadAllUsers() {
+    const res = await getSimpleUserListApi();
+    userOptions.value = res;
+}
+
 function handleAdd() {
   dialogTitle.value = '新增指标';
   Object.assign(formData, {
@@ -76,17 +109,24 @@ function handleAdd() {
     owner_id: ''
   });
   dialogVisible.value = true;
+  loadAllUsers(); // Preload users for better UX
 }
 
+// Ensure options are loaded when editing to show the current owner correctly
 function handleEdit(row: PerformanceIndicator) {
   dialogTitle.value = '编辑指标';
-  // Note: row contains owner_id and owner_name from API
   Object.assign(formData, row);
-  // Ensure owner_id is set for UserSelector
   if (!formData.owner_id && (row as any).owner) {
      formData.owner_id = (row as any).owner.id;
   }
+
+  // If owner_id is present, make sure it's in the options or load all options
+  // Ideally, we should add the current owner to options if not present, but loading all is simpler for small datasets.
+  // Or fetch the specific user details if list is large.
+  // For now, loadAllUsers() covers it.
+
   dialogVisible.value = true;
+  loadAllUsers();
 }
 
 async function handleDelete(row: PerformanceIndicator) {
@@ -136,6 +176,21 @@ function canEdit(row: PerformanceIndicator) {
     return row.owner_id === currentUserId.value;
 }
 
+function downloadTemplate() {
+    const csvContent = "Code,Name,Module,Project,Chip Type,Value Type,Baseline Value,Baseline Unit,Fluctuation Range,Fluctuation Direction,Owner\nTEST_001,示例指标1,load,ProjA,ChipA,avg,100,ms,10,down,UserA";
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    if (link.download !== undefined) {
+        const url = URL.createObjectURL(blob);
+        link.setAttribute("href", url);
+        link.setAttribute("download", "performance_indicator_template.csv");
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+}
+
 onMounted(() => {
   loadData();
 });
@@ -146,7 +201,10 @@ onMounted(() => {
     <div class="p-4">
       <div class="mb-4 flex justify-between">
         <div class="flex gap-2">
-          <ElInput v-model="queryParams.search" placeholder="搜索名称/代码/模块" style="width: 200px" @keyup.enter="loadData" />
+          <ElInput v-model="queryParams.search" placeholder="指标名称" style="width: 150px" @keyup.enter="loadData" clearable />
+          <ElInput v-model="queryParams.module" placeholder="所属模块" style="width: 150px" @keyup.enter="loadData" clearable />
+          <ElInput v-model="queryParams.chip_type" placeholder="芯片类型" style="width: 150px" @keyup.enter="loadData" clearable />
+          <ElInput v-model="queryParams.project" placeholder="所属项目" style="width: 150px" @keyup.enter="loadData" clearable />
           <ElButton type="primary" @click="loadData">查询</ElButton>
         </div>
         <div class="flex gap-2">
@@ -173,10 +231,12 @@ onMounted(() => {
             </template>
         </ElTableColumn>
         <ElTableColumn prop="owner_name" label="责任人" width="120" />
-        <ElTableColumn label="操作" width="150" fixed="right">
+        <ElTableColumn label="操作" width="180" fixed="right" align="center">
           <template #default="{ row }">
-            <ElButton v-if="canEdit(row)" link type="primary" @click="handleEdit(row)">编辑</ElButton>
-            <ElButton v-if="canEdit(row)" link type="danger" @click="handleDelete(row)">删除</ElButton>
+            <div class="flex justify-center gap-2">
+                <ElButton :disabled="!canEdit(row)" type="primary" size="small" @click="handleEdit(row)">编辑</ElButton>
+                <ElButton :disabled="!canEdit(row)" type="danger" size="small" @click="handleDelete(row)">删除</ElButton>
+            </div>
           </template>
         </ElTableColumn>
       </ElTable>
@@ -226,7 +286,22 @@ onMounted(() => {
             </ElSelect>
           </ElFormItem>
            <ElFormItem label="责任人" prop="owner_id">
-             <UserSelector v-model="formData.owner_id" placeholder="请选择责任人" />
+             <ElSelect
+                v-model="formData.owner_id"
+                filterable
+                remote
+                placeholder="请输入用户名或姓名搜索"
+                :remote-method="searchUsers"
+                :loading="userLoading"
+                clearable
+             >
+                <ElOption
+                    v-for="item in userOptions"
+                    :key="item.id"
+                    :label="`${item.name} (${item.username})`"
+                    :value="item.id"
+                />
+             </ElSelect>
           </ElFormItem>
         </ElForm>
         <template #footer>
@@ -237,6 +312,9 @@ onMounted(() => {
 
       <!-- Import Dialog -->
       <ElDialog v-model="importDialogVisible" title="导入指标" width="400px">
+        <div class="mb-4 text-right">
+            <ElLink type="primary" :underline="false" @click="downloadTemplate">下载模板 CSV</ElLink>
+        </div>
         <ElUpload
           class="upload-demo"
           drag
