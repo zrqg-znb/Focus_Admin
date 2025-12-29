@@ -23,6 +23,7 @@ class LoginOut(Schema):
     expireTime: int = Field(..., description="过期时间戳")
     username: str = Field(..., description="用户名")
     realName: str = Field(..., description="真实姓名")
+    is_superuser: bool = Field(False, description="是否为超级管理员")
 
 
 class RefreshTokenIn(Schema):
@@ -36,6 +37,7 @@ class UserInfoOut(Schema):
     id: str = Field(..., description="用户ID")
     username: str = Field(..., description="用户名")
     realName: str = Field(..., description="真实姓名")
+    is_superuser: bool = Field(False, description="是否为超级管理员")
 
 
 class LogoutOut(Schema):
@@ -46,4 +48,3 @@ class LogoutOut(Schema):
 class PermissionCodeOut(Schema):
     """权限代码响应 Schema"""
     codes: list[str] = Field(..., description="权限代码列表")
-

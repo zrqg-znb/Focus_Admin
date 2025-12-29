@@ -6,6 +6,7 @@ import { getTrendDataApi } from '#/api/core/performance';
 
 const props = defineProps<{
     indicatorId: string;
+    baselineValue?: number;
 }>();
 
 const chartRef = ref<EchartsUIType>();
@@ -44,7 +45,23 @@ async function fetchDataAndRender() {
                     data: values,
                     type: 'line',
                     smooth: true,
-                    areaStyle: {}
+                    areaStyle: {},
+                    markLine: props.baselineValue !== undefined ? {
+                        data: [
+                            { 
+                                yAxis: props.baselineValue, 
+                                name: '基线值',
+                                lineStyle: {
+                                    color: '#ff0000',
+                                    type: 'dashed'
+                                },
+                                label: {
+                                    formatter: '基线: {c}'
+                                }
+                            }
+                        ],
+                        symbol: 'none'
+                    } : undefined
                 }
             ]
         });

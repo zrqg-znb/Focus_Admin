@@ -62,9 +62,10 @@ def login(request, data: LoginIn):
             id=str(user.pk),
             accessToken=access_token,
             username=user.username,
-            realName=user.name,
+            realName=user.name or "",
             refreshToken=refresh_token,
             expireTime=expire_time,
+            is_superuser=user.is_superuser
         )
     except ValueError as e:
         # 根据错误信息返回对应的HTTP状态码
@@ -93,9 +94,10 @@ def refresh_token(request):
             id=str(user.pk),
             accessToken=access_token,
             username=user.username,
-            realName=user.name,
+            realName=user.name or "",
             refreshToken=refresh_token,
             expireTime=access_token_expire,
+            is_superuser=user.is_superuser
         )
     except ValueError as e:
         error_msg = str(e)
@@ -135,7 +137,8 @@ def get_userinfo(request):
     return UserInfoOut(
         id=str(user.pk),
         username=user.username,
-        realName=user.name,
+        realName=user.name or "",
+        is_superuser=user.is_superuser
     )
 
 
@@ -159,4 +162,3 @@ def get_permission_codes(request):
         raise HttpError(message="用户不存在", status_code=404)
     
     return AuthService.get_user_permission_codes(user)
-
