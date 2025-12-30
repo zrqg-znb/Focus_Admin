@@ -6,6 +6,7 @@ import type {
 import type {
   DatasetComponentOption,
   GridComponentOption,
+  MarkLineComponentOption,
   // 组件类型的定义后缀都为 ComponentOption
   TitleComponentOption,
   TooltipComponentOption,
@@ -18,6 +19,7 @@ import {
   DatasetComponent,
   GridComponent,
   LegendComponent,
+  MarkLineComponent,
   TitleComponent,
   ToolboxComponent,
   TooltipComponent,
@@ -34,6 +36,7 @@ export type ECOption = ComposeOption<
   | DatasetComponentOption
   | GridComponentOption
   | LineSeriesOption
+  | MarkLineComponentOption
   | TitleComponentOption
   | TooltipComponentOption
 >;
@@ -54,6 +57,7 @@ echarts.use([
   CanvasRenderer,
   LegendComponent,
   ToolboxComponent,
+  MarkLineComponent,
 ]);
 
 export default echarts;
