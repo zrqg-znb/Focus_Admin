@@ -1,10 +1,10 @@
 <script lang="ts" setup>
+import type { PerformanceIndicator } from '#/api/core/performance';
+
 import { computed, ref } from 'vue';
 
 import { useVbenDrawer } from '@vben/common-ui';
-import { $t } from '@vben/locales';
 
-import type { PerformanceIndicator } from '#/api/core/performance';
 import { useVbenForm } from '#/adapter/form';
 import { createIndicatorApi, updateIndicatorApi } from '#/api/core/performance';
 
@@ -36,10 +36,9 @@ const [Drawer, drawerApi] = useVbenDrawer({
       const data = drawerApi.getData<PerformanceIndicator>();
       if (data) {
         formData.value = data;
-        // Transform owner object to owner_id if needed
         const values = { ...data };
         if (!values.owner_id && data.owner) {
-            values.owner_id = data.owner.id;
+          values.owner_id = data.owner.id;
         }
         formApi.setValues(values);
       } else {
@@ -51,9 +50,7 @@ const [Drawer, drawerApi] = useVbenDrawer({
 });
 
 const getDrawerTitle = computed(() =>
-  formData.value?.id
-    ? '编辑指标'
-    : '新增指标',
+  formData.value?.id ? '编辑指标' : '新增指标',
 );
 
 async function onSubmit() {
@@ -65,7 +62,7 @@ async function onSubmit() {
       await (formData.value?.id
         ? updateIndicatorApi(formData.value.id, data)
         : createIndicatorApi(data));
-      drawerApi.close();
+      await drawerApi.close();
       emit('success');
     } finally {
       drawerApi.unlock();

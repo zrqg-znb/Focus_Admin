@@ -151,8 +151,6 @@ export function useColumns(
   onActionClick?: OnActionClickFn<PerformanceIndicator>,
 ): VxeTableGridOptions<PerformanceIndicator>['columns'] {
   const userStore = useUserStore();
-  const currentUserId = userStore.userInfo?.id;
-  const isSuperuser = userStore.userInfo?.is_superuser || userStore.userInfo?.username === 'admin';
 
   return [
     {
@@ -212,13 +210,14 @@ export function useColumns(
       title: '责任人',
       minWidth: 100,
       formatter: ({ row }) => {
-          return row.owner_name || (row.owner ? (row.owner.name || row.owner.username) : '-');
+          return row.owner_name || '-';
       },
     },
     {
       field: 'action',
       title: '操作',
       fixed: 'right',
+      align: 'center',
       width: 150,
       cellRender: {
         name: 'CellOperation',
@@ -230,8 +229,11 @@ export function useColumns(
                 code: 'edit',
                 text: '编辑',
                 disabled: (row: PerformanceIndicator) => {
-                    const rowOwnerId = row.owner_id || (row.owner && row.owner.id);
-                    return !isSuperuser && String(rowOwnerId) !== String(currentUserId);
+                    const currentUserId = userStore.userInfo?.id;
+                    const isSuperuser = userStore.userInfo?.is_superuser || userStore.userInfo?.username === 'admin';
+                    const rowOwnerId = row.owner_id;
+                    // 如果是超级管理员，或者当前用户是责任人，则不禁用
+                    return !(isSuperuser || String(rowOwnerId) === String(currentUserId));
                 }
             },
             {
@@ -239,8 +241,10 @@ export function useColumns(
                 text: '删除',
                 status: 'danger',
                 disabled: (row: PerformanceIndicator) => {
-                    const rowOwnerId = row.owner_id || (row.owner && row.owner.id);
-                    return !isSuperuser && String(rowOwnerId) !== String(currentUserId);
+                    const currentUserId = userStore.userInfo?.id;
+                    const isSuperuser = userStore.userInfo?.is_superuser || userStore.userInfo?.username === 'admin';
+                    const rowOwnerId = row.owner_id;
+                    return !(isSuperuser || String(rowOwnerId) === String(currentUserId));
                 }
             }
         ],

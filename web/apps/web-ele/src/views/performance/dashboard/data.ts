@@ -1,5 +1,5 @@
 import type { VbenFormSchema } from '#/adapter/form';
-import type { OnActionClickFn, VxeTableGridOptions } from '#/adapter/vxe-table';
+import type { VxeTableGridOptions } from '#/adapter/vxe-table';
 import type { PerformanceDashboardItem } from '#/api/core/performance';
 
 /**
@@ -47,29 +47,28 @@ export function useSearchFormSchema(): VbenFormSchema[] {
  * Get status tag type based on fluctuation
  */
 export function getStatusType(row: PerformanceDashboardItem) {
-    if (row.current_value === undefined || row.current_value === null) return 'info';
-    
-    const fVal = row.fluctuation_value || 0;
-    const range = row.fluctuation_range || 0;
-    
-    if (row.fluctuation_direction === 'up') {
-        if (fVal < -range) return 'danger';
-        return 'success';
-    } else if (row.fluctuation_direction === 'down') {
-        if (fVal > range) return 'danger';
-        return 'success';
-    } else {
-        if (Math.abs(fVal) > range) return 'warning';
-        return 'success';
-    }
+  if (row.current_value === undefined || row.current_value === null)
+    return 'info';
+
+  const fVal = row.fluctuation_value || 0;
+  const range = row.fluctuation_range || 0;
+
+  if (row.fluctuation_direction === 'up') {
+    if (fVal < -range) return 'danger';
+    return 'success';
+  } else if (row.fluctuation_direction === 'down') {
+    if (fVal > range) return 'danger';
+    return 'success';
+  } else {
+    if (Math.abs(fVal) > range) return 'warning';
+    return 'success';
+  }
 }
 
 /**
  * Get table columns configuration
  */
-export function useColumns(
-  onActionClick?: OnActionClickFn<PerformanceDashboardItem>,
-): VxeTableGridOptions<PerformanceDashboardItem>['columns'] {
+export function useColumns(): VxeTableGridOptions<PerformanceDashboardItem>['columns'] {
   return [
     {
       field: 'data_date',
@@ -101,13 +100,13 @@ export function useColumns(
       field: 'baseline_value',
       title: '基线值',
       minWidth: 120,
-      formatter: ({ row }) => `${row.baseline_value} ${row.baseline_unit || ''}`,
+      formatter: ({ row }) =>
+        `${row.baseline_value} ${row.baseline_unit || ''}`,
     },
     {
       field: 'current_value',
       title: '当前值',
       minWidth: 120,
-      formatter: ({ row }) => row.current_value !== null ? row.current_value?.toFixed(2) : '-',
     },
     {
       field: 'fluctuation_value',

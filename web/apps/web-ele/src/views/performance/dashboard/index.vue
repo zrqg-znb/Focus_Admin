@@ -3,13 +3,16 @@ import type { VxeTableGridOptions } from '#/adapter/vxe-table';
 import type { PerformanceDashboardItem } from '#/api/core/performance';
 
 import { ref } from 'vue';
+
 import { Page } from '@vben/common-ui';
+
 import { ElButton, ElDialog, ElTag } from 'element-plus';
+
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import { getDashboardDataApi } from '#/api/core/performance';
 
-import { getStatusType, useColumns, useSearchFormSchema } from './data';
 import TrendChart from './components/TrendChart.vue';
+import { getStatusType, useColumns, useSearchFormSchema } from './data';
 
 defineOptions({ name: 'PerformanceDashboard' });
 
@@ -53,10 +56,10 @@ const [Grid] = useVbenVxeGrid({
 });
 
 function showTrend(row: PerformanceDashboardItem) {
-    currentIndicatorId.value = row.id;
-    currentIndicatorName.value = row.name;
-    currentBaselineValue.value = row.baseline_value;
-    trendVisible.value = true;
+  currentIndicatorId.value = row.id;
+  currentIndicatorName.value = row.name;
+  currentBaselineValue.value = row.baseline_value;
+  trendVisible.value = true;
 }
 </script>
 
@@ -65,26 +68,28 @@ function showTrend(row: PerformanceDashboardItem) {
     <Grid>
       <template #fluctuation="{ row }">
         <ElTag :type="getStatusType(row)" v-if="row.fluctuation_value !== null">
-           {{ row.fluctuation_value?.toFixed(2) }}
+          {{ row.fluctuation_value?.toFixed(2) }}
         </ElTag>
       </template>
-      
+
       <template #action="{ row }">
-        <ElButton type="primary" size="small" @click="showTrend(row)">趋势</ElButton>
+        <ElButton type="primary" size="small" @click="showTrend(row)">
+          趋势
+        </ElButton>
       </template>
     </Grid>
 
-    <ElDialog 
-      v-model="trendVisible" 
-      :title="`趋势图 - ${currentIndicatorName}`" 
-      width="800px" 
+    <ElDialog
+      v-model="trendVisible"
+      :title="`趋势图 - ${currentIndicatorName}`"
+      width="800px"
       destroy-on-close
     >
-        <TrendChart 
-          :indicator-id="currentIndicatorId" 
-          :baseline-value="currentBaselineValue"
-          v-if="trendVisible" 
-        />
+      <TrendChart
+        :indicator-id="currentIndicatorId"
+        :baseline-value="currentBaselineValue"
+        v-if="trendVisible"
+      />
     </ElDialog>
   </Page>
 </template>

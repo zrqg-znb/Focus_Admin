@@ -71,20 +71,14 @@ function openEdit(row: PerformanceIndicator) {
   formDrawerApi.setData(row).open();
 }
 
-function handleDelete(row: PerformanceIndicator) {
-  ElMessageBox.confirm('确认删除该指标吗？', '提示', {
-    type: 'warning',
-    confirmButtonText: '确定',
-    cancelButtonText: '取消'
-  }).then(async () => {
-    try {
-      await deleteIndicatorApi(row.id);
-      ElMessage.success('删除成功');
-      gridApi.query();
-    } catch (error) {
-      // Error handled by global interceptor usually
-    }
-  });
+async function handleDelete(row: PerformanceIndicator) {
+  try {
+    await deleteIndicatorApi(row.id);
+    ElMessage.success('删除成功');
+    gridApi.query();
+  } catch (error) {
+    // Error handled by global interceptor usually
+  }
 }
 
 async function handleImportRequest(options: any) {
@@ -117,7 +111,7 @@ function downloadTemplate() {
 <template>
   <Page auto-content-height>
     <FormDrawer @success="gridApi.query()" />
-    
+
     <Grid>
       <template #toolbar-actions>
          <ElButton type="primary" @click="openCreate">

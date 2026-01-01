@@ -67,6 +67,7 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
+    'common.middleware.DevCorsMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -312,11 +313,10 @@ EMAIL_HOST_PASSWORD = ''  # 发件人邮箱密码
 
 # 接口白名单，不需要授权直接访问 - 修复：缩小范围
 API_WHITE_LIST = [
-    # '/api/core/login',  # 登录接口
-    # '/api/core/login_v5',  # V5登录接口
-    # '/api/core/register',  # 注册接口
-    # '/api/core/menu/route/tree',  # 菜单路由树
-    # '/api/syscoretem/server_monitor/*',  # 服务器监控
+    '/api/core/menu/route/tree',
+    '/api/core/menu/get/tree',
+    '/api/core/permCode',
+    '/api/core/userinfo',
 ]
 
 API_LOG_ENABLE = True

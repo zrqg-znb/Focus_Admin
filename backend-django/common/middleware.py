@@ -1,6 +1,4 @@
-"""
-日志 django中间件
-"""
+from django.http import HttpResponse
 import json
 
 from django.conf import settings
@@ -37,11 +35,30 @@ class SecurityHeadersMiddleware(MiddlewareMixin):
         return response
 
 
-class ApiLoggingMiddleware(MiddlewareMixin):
-    """
-    用于记录API访问日志中间件
-    """
+class DevCorsMiddleware(MiddlewareMixin):
+    def process_request(self, request):
+        if getattr(settings, 'DEBUG', False) and request.method == 'OPTIONS':
+            resp = HttpResponse()
+            origin = request.headers.get('Origin', '*')
+            req_headers = request.headers.get('Access-Control-Request-Headers', 'Authorization, Content-Type')
+            resp['Access-Control-Allow-Origin'] = origin
+            resp['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+            resp['Access-Control-Allow-Headers'] = req_headers
+            resp['Access-Control-Allow-Credentials'] = 'true'
+            resp['Access-Control-Max-Age'] = '86400'
+            return resp
+        return None
 
+    def process_response(self, request, response):
+        if getattr(settings, 'DEBUG', False):
+            origin = request.headers.get('Origin')
+            response['Access-Control-Allow-Origin'] = origin or '*'
+            response['Access-Control-Allow-Credentials'] = 'true'
+            response['Vary'] = 'Origin'
+        return response
+
+
+class ApiLoggingMiddleware(MiddlewareMixin):
     def __init__(self, get_response=None):
         super().__init__(get_response)
         self.enable = getattr(settings, 'API_LOG_ENABLE', None) or False

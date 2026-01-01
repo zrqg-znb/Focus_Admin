@@ -71,6 +71,21 @@ def create_user(request, data: UserSchemaIn):
     post_ids = data_dic.pop("post", [])
     role_ids = data_dic.pop("core_roles", [])
     
+    # 处理 manager/manager_id 字段
+    # 优先使用 manager_id (如果存在且非空)，否则使用 manager
+    manager_val = data_dic.pop('manager', None)
+    manager_id_val = data_dic.pop('manager_id', None)
+    
+    final_manager = manager_id_val if manager_id_val else manager_val
+    
+    # 特殊处理 manager 字段，如果是 ID 则转换为姓名
+    if final_manager and isinstance(final_manager, str) and len(final_manager) > 30:
+        manager_user = User.objects.filter(id=final_manager).first()
+        if manager_user:
+            final_manager = manager_user.name or manager_user.username
+            
+    data_dic['manager'] = final_manager
+    
     # 创建用户
     user = create(request, data_dic, User)
     
