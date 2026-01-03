@@ -52,7 +52,7 @@ const [Grid, gridApi] = useVbenVxeGrid({
 async function fetchData() {
   try {
     // 获取项目信息（为了展示项目名）
-    const projectRes = await getProjectList({ page: 1, pageSize: 1, keyword: '', type: '', domain: '' }); 
+    const projectRes = await getProjectList({ page: 1, pageSize: 1, keyword: '', type: '', domain: '' });
     // 注意：这里为了简单直接取了列表，实际应该有个 getProjectDetail API，暂时先遍历查找或假定上个页面传参
     // 更好的方式是后端补充 getProjectDetail API。这里我们先 Mock 一下或只展示 ID
     // 为了严谨，我们先通过 ID 筛选
@@ -69,7 +69,7 @@ async function fetchData() {
     // 获取迭代列表
     iterationList.value = await getProjectIterations(projectId);
     gridApi.setGridOptions({ data: iterationList.value });
-    
+
     updateChart();
   } catch (error) {
     console.error(error);
@@ -80,7 +80,7 @@ function updateChart() {
   if (!chartRef.value) return;
 
   // 按开始时间排序
-  const sortedList = [...iterationList.value].sort((a, b) => 
+  const sortedList = [...iterationList.value].sort((a, b) =>
     new Date(a.start_date).getTime() - new Date(b.start_date).getTime()
   );
 

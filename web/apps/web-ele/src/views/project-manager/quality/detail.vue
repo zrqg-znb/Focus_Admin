@@ -47,7 +47,7 @@ async function fetchData() {
     if (moduleDetails.value.length > 0 && !currentModule.value) {
       activeModuleIndex.value = '0';
     }
-    
+
     updateCharts();
   } catch (error) {
     console.error(error);
@@ -117,7 +117,7 @@ onMounted(() => {
 <template>
   <Page auto-content-height>
     <Modal @success="fetchData" />
-    
+
     <div class="h-full flex flex-col gap-4">
       <ElCard shadow="never">
         <h2 class="text-lg font-bold">{{ projectInfo.name }} - 代码质量详情</h2>
@@ -146,7 +146,7 @@ onMounted(() => {
           <div v-if="!currentModule" class="h-full flex items-center justify-center">
             <ElEmpty description="请选择模块查看详情" />
           </div>
-          
+
           <div v-else class="flex flex-col gap-6">
             <div class="flex justify-between items-center border-b pb-4">
               <ElDescriptions :column="2">

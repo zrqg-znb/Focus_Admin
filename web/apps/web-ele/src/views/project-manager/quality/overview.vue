@@ -21,24 +21,24 @@ const [Grid, gridApi] = useVbenVxeGrid({
       { field: 'project_name', title: '项目名称', minWidth: 150 },
       { field: 'module_count', title: '模块数', width: 100 },
       { field: 'total_loc', title: '总代码行数', width: 120 },
-      { 
-        field: 'avg_duplication_rate', 
-        title: '平均重复率', 
+      {
+        field: 'avg_duplication_rate',
+        title: '平均重复率',
         width: 120,
         formatter: ({ cellValue }) => `${cellValue}%`
       },
-      { 
-        field: 'total_dangerous_func_count', 
-        title: '危险函数', 
+      {
+        field: 'total_dangerous_func_count',
+        title: '危险函数',
         width: 100,
         slots: { default: 'dangerous' }
       },
-      { 
-        field: 'action', 
-        title: '操作', 
-        width: 200, 
-        fixed: 'right', 
-        slots: { default: 'action' } 
+      {
+        field: 'action',
+        title: '操作',
+        width: 200,
+        fixed: 'right',
+        slots: { default: 'action' }
       },
     ],
     height: 'auto',

@@ -36,10 +36,10 @@ onMounted(() => {
   <Page auto-content-height>
     <div v-loading="loading" class="h-full">
       <ElEmpty v-if="!loading && overviewList.length === 0" description="暂无开启迭代管理的项目" />
-      
+
       <ElRow :gutter="16" v-else>
-        <ElCol 
-          v-for="item in overviewList" 
+        <ElCol
+          v-for="item in overviewList"
           :key="item.project_id"
           :xs="24" :sm="12" :md="8" :lg="6"
           class="mb-4"
@@ -53,7 +53,7 @@ onMounted(() => {
                 </ElButton>
               </div>
             </template>
-            
+
             <div class="flex-1">
               <div class="mb-4">
                 <div class="text-gray-500 text-sm mb-1">当前迭代</div>
@@ -69,8 +69,8 @@ onMounted(() => {
 
               <div class="mb-4">
                 <div class="text-gray-500 text-sm mb-1">需求完成率</div>
-                <ElProgress 
-                  :percentage="item.latest_metric?.req_completion_rate || 0" 
+                <ElProgress
+                  :percentage="item.latest_metric?.req_completion_rate || 0"
                   :status="!item.current_iteration ? 'warning' : (item.latest_metric?.req_completion_rate === 100 ? 'success' : '')"
                 />
               </div>
