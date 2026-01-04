@@ -48,4 +48,4 @@ def update_project(request, id: str, data: ProjectUpdateSchema):
     return project
 
 def delete_project(request, id: str):
-    return fu_crud.delete(request, id, Project)
+    return fu_crud.delete(id, Project)

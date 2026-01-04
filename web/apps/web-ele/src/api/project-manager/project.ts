@@ -1,23 +1,22 @@
-import { requestClient } from '../request';
+import { requestClient } from '#/api/request';
 
-export interface Project {
+export interface ProjectOut {
   id: string;
   name: string;
   domain: string;
   type: string;
   code: string;
-  managers: { id: string; name: string }[];
+  managers_info: { id: string; name: string }[];
   is_closed: boolean;
   repo_url?: string;
   remark?: string;
   enable_milestone: boolean;
   enable_iteration: boolean;
   enable_quality: boolean;
-  sys_create_datetime: string;
-  sys_update_datetime: string;
+  sys_create_datetime?: string;
 }
 
-export interface ProjectCreate {
+export interface ProjectCreatePayload {
   name: string;
   domain: string;
   type: string;
@@ -31,11 +30,21 @@ export interface ProjectCreate {
   enable_quality?: boolean;
 }
 
-export interface ProjectUpdate extends Partial<ProjectCreate> {}
+export interface ProjectUpdatePayload {
+  name?: string;
+  domain?: string;
+  type?: string;
+  code?: string;
+  manager_ids?: string[];
+  is_closed?: boolean;
+  repo_url?: string;
+  remark?: string;
+  enable_milestone?: boolean;
+  enable_iteration?: boolean;
+  enable_quality?: boolean;
+}
 
-export interface ProjectFilter {
-  page?: number;
-  pageSize?: number;
+export interface ProjectFilterParams {
   keyword?: string;
   domain?: string;
   type?: string;
@@ -44,29 +53,31 @@ export interface ProjectFilter {
   enable_milestone?: boolean;
   enable_iteration?: boolean;
   enable_quality?: boolean;
+  page?: number;
+  pageSize?: number;
 }
 
-export interface ProjectListResult {
-  items: Project[];
+export interface PaginatedResponse<T> {
+  items: T[];
   total: number;
+  page: number;
+  limit: number;
 }
 
-enum Api {
-  Project = '/project-manager/projects',
+const listEndpoint = '/api/project-manager/projects/';
+
+export async function listProjectsApi(params?: ProjectFilterParams) {
+  return requestClient.get<PaginatedResponse<ProjectOut>>(listEndpoint, { params });
 }
 
-export const getProjectList = (params?: ProjectFilter) => {
-  return requestClient.get<ProjectListResult>(Api.Project, { params });
-};
+export async function createProjectApi(data: ProjectCreatePayload) {
+  return requestClient.post<ProjectOut>(listEndpoint, data);
+}
 
-export const createProject = (data: ProjectCreate) => {
-  return requestClient.post<Project>(Api.Project, data);
-};
+export async function updateProjectApi(id: string, data: ProjectUpdatePayload) {
+  return requestClient.put<ProjectOut>(`/api/project-manager/projects/${id}`, data);
+}
 
-export const updateProject = (id: string, data: ProjectUpdate) => {
-  return requestClient.put<Project>(`${Api.Project}/${id}`, data);
-};
-
-export const deleteProject = (id: string) => {
-  return requestClient.delete(`${Api.Project}/${id}`);
-};
+export async function deleteProjectApi(id: string) {
+  return requestClient.delete(`/api/project-manager/projects/${id}`);
+}

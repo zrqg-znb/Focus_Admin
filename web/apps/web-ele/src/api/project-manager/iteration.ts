@@ -1,6 +1,6 @@
-import { requestClient } from '../request';
+import { requestClient } from '#/api/request';
 
-export interface Iteration {
+export interface IterationOut {
   id: string;
   project_id: string;
   name: string;
@@ -11,7 +11,7 @@ export interface Iteration {
   is_healthy: boolean;
 }
 
-export interface IterationMetric {
+export interface IterationMetricOut {
   id: string;
   iteration_id: string;
   record_date: string;
@@ -22,18 +22,7 @@ export interface IterationMetric {
   completed_workload: number;
 }
 
-export interface IterationDetail extends Iteration {
-  latest_metric?: IterationMetric;
-}
-
-export interface IterationOverview {
-  project_id: string;
-  project_name: string;
-  current_iteration?: Iteration;
-  latest_metric?: IterationMetric;
-}
-
-export interface IterationCreate {
+export interface IterationCreatePayload {
   project_id: string;
   name: string;
   code: string;
@@ -43,8 +32,7 @@ export interface IterationCreate {
   is_healthy?: boolean;
 }
 
-export interface IterationMetricCreate {
-  iteration_id: string;
+export interface IterationMetricPayload {
   record_date: string;
   req_decomposition_rate: number;
   req_drift_rate: number;
@@ -53,24 +41,31 @@ export interface IterationMetricCreate {
   completed_workload: number;
 }
 
-enum Api {
-  Overview = '/project-manager/iterations/overview',
-  ProjectIterations = '/project-manager/iterations/project',
-  Base = '/project-manager/iterations',
+export interface IterationOverviewItem {
+  project_id: string;
+  project_name: string;
+  current_iteration?: IterationOut | null;
+  latest_metric?: IterationMetricOut | null;
 }
 
-export const getIterationOverview = () => {
-  return requestClient.get<IterationOverview[]>(Api.Overview);
-};
+export interface IterationDetailItem extends IterationOut {
+  latest_metric?: IterationMetricOut | null;
+}
 
-export const getProjectIterations = (projectId: string) => {
-  return requestClient.get<IterationDetail[]>(`${Api.ProjectIterations}/${projectId}`);
-};
+const base = '/api/project-manager/iterations';
 
-export const createIteration = (data: IterationCreate) => {
-  return requestClient.post<Iteration>(Api.Base, data);
-};
+export async function getIterationOverviewApi() {
+  return requestClient.get<IterationOverviewItem[]>(`${base}/overview`);
+}
 
-export const recordIterationMetric = (iterationId: string, data: IterationMetricCreate) => {
-  return requestClient.post<IterationMetric>(`${Api.Base}/${iterationId}/metrics`, data);
-};
+export async function listProjectIterationsApi(projectId: string) {
+  return requestClient.get<IterationDetailItem[]>(`${base}/project/${projectId}`);
+}
+
+export async function createIterationApi(data: IterationCreatePayload) {
+  return requestClient.post<IterationOut>(`${base}/`, data);
+}
+
+export async function recordIterationMetricApi(iterationId: string, data: IterationMetricPayload) {
+  return requestClient.post<IterationMetricOut>(`${base}/${iterationId}/metrics`, data);
+}

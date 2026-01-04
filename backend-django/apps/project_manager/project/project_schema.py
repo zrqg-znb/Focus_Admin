@@ -39,7 +39,7 @@ class ProjectFilterSchema(Schema):
     enable_quality: Optional[bool] = None
 
 class ProjectOut(ModelSchema):
-    managers_info: List[dict] = Field([], alias="managers", description="项目经理详情")
+    managers_info: List[dict] = Field([], description="项目经理详情")
     
     class Meta:
         model = Project
@@ -49,3 +49,6 @@ class ProjectOut(ModelSchema):
     @staticmethod
     def resolve_managers_info(obj):
         return [{"id": m.id, "name": m.name or m.username} for m in obj.managers.all()]
+
+    class Config:
+        from_attributes = True

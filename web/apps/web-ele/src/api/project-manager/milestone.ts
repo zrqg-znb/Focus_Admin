@@ -1,6 +1,17 @@
-import { requestClient } from '../request';
+import { requestClient } from '#/api/request';
 
-export interface MilestoneBoard {
+export interface MilestoneUpdatePayload {
+  qg1_date?: string;
+  qg2_date?: string;
+  qg3_date?: string;
+  qg4_date?: string;
+  qg5_date?: string;
+  qg6_date?: string;
+  qg7_date?: string;
+  qg8_date?: string;
+}
+
+export interface MilestoneBoardItem {
   project_id: string;
   project_name: string;
   project_domain: string;
@@ -15,32 +26,16 @@ export interface MilestoneBoard {
   qg8_date?: string;
 }
 
-export interface MilestoneUpdate {
-  qg1_date?: string;
-  qg2_date?: string;
-  qg3_date?: string;
-  qg4_date?: string;
-  qg5_date?: string;
-  qg6_date?: string;
-  qg7_date?: string;
-  qg8_date?: string;
-}
+const base = '/api/project-manager/milestones';
 
-export interface MilestoneFilter {
+export async function getMilestoneBoardApi(params?: {
   keyword?: string;
   project_type?: string;
   manager_id?: string;
+}) {
+  return requestClient.get<MilestoneBoardItem[]>(`${base}/overview`, { params });
 }
 
-enum Api {
-  Overview = '/project-manager/milestones/overview',
-  Update = '/project-manager/milestones/project',
+export async function updateMilestoneApi(projectId: string, data: MilestoneUpdatePayload) {
+  return requestClient.put(`${base}/project/${projectId}`, data);
 }
-
-export const getMilestoneOverview = (params?: MilestoneFilter) => {
-  return requestClient.get<MilestoneBoard[]>(Api.Overview, { params });
-};
-
-export const updateMilestone = (projectId: string, data: MilestoneUpdate) => {
-  return requestClient.put(`${Api.Update}/${projectId}`, data);
-};
