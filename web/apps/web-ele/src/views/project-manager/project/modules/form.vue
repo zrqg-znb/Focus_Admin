@@ -3,10 +3,10 @@ import { computed, ref } from 'vue';
 
 import { useVbenDrawer } from '@vben/common-ui';
 import { useVbenForm } from '#/adapter/form';
-import { ElButton, ElInput, ElMessage, ElTable, ElTableColumn, ElDatePicker, ElForm, ElFormItem } from 'element-plus';
+import { ElButton, ElInput, ElMessage, ElTable, ElTableColumn, ElDatePicker, ElForm, ElFormItem, ElSwitch } from 'element-plus';
 
 import { createProjectApi, updateProjectApi } from '#/api/project-manager/project';
-import { updateMilestoneApi } from '#/api/project-manager/milestone';
+import { getMilestoneBoardApi, updateMilestoneApi } from '#/api/project-manager/milestone';
 import { createIterationApi } from '#/api/project-manager/iteration';
 import { configModuleApi } from '#/api/project-manager/code_quality';
 import { getProjectFormSchema } from '../data';
@@ -26,14 +26,14 @@ const milestoneForm = ref({
   qg7_date: '',
   qg8_date: '',
 });
-const iterationForm = ref({
-  name: '',
-  code: '',
-  start_date: '',
-  end_date: '',
-  is_current: true,
-  is_healthy: true,
+const iterationConfig = ref({
+  design_id: '',
+  sub_teams: [] as string[],
 });
+const enableMilestone = ref(false);
+const enableIteration = ref(false);
+const enableQuality = ref(false);
+const newSubTeam = ref('');
 type ModuleRow = { name: string; owner_id?: string };
 const moduleRows = ref<ModuleRow[]>([]);
 
@@ -51,7 +51,7 @@ const [Form, formApi] = useVbenForm({
 
 const [Drawer, drawerApi] = useVbenDrawer({
   onConfirm: onSubmit,
-  onOpenChange(isOpen) {
+  async onOpenChange(isOpen) {
     if (isOpen) {
       const data = drawerApi.getData<any>();
       if (data) {
@@ -62,9 +62,47 @@ const [Drawer, drawerApi] = useVbenDrawer({
             ? formData.value.managers_info.map((m: any) => m.id)
             : [],
         };
+        // 初始化开关状态
+        enableMilestone.value = !!data.enable_milestone;
+        enableIteration.value = !!data.enable_iteration;
+        enableQuality.value = !!data.enable_quality;
+
+        // 回填配置项（无条件回填，确保开关开启时有数据）
+        iterationConfig.value.design_id = data.design_id || '';
+        iterationConfig.value.sub_teams = Array.isArray(data.sub_teams) ? data.sub_teams : [];
+        
+        // 回填里程碑数据
+        try {
+          const milestones = await getMilestoneBoardApi({ keyword: data.name });
+          const current = milestones.find((m) => m.project_id === data.id);
+          if (current) {
+            milestoneForm.value = {
+              qg1_date: current.qg1_date || '',
+              qg2_date: current.qg2_date || '',
+              qg3_date: current.qg3_date || '',
+              qg4_date: current.qg4_date || '',
+              qg5_date: current.qg5_date || '',
+              qg6_date: current.qg6_date || '',
+              qg7_date: current.qg7_date || '',
+              qg8_date: current.qg8_date || '',
+            };
+          }
+        } catch (e) {
+          console.error('Failed to fetch milestone data', e);
+        }
+        
         formApi.setValues(normalized);
       } else {
         formApi.resetForm();
+        iterationConfig.value = { design_id: '', sub_teams: [] };
+        moduleRows.value = [];
+        milestoneForm.value = {
+          qg1_date: '', qg2_date: '', qg3_date: '', qg4_date: '',
+          qg5_date: '', qg6_date: '', qg7_date: '', qg8_date: ''
+        };
+        enableMilestone.value = false;
+        enableIteration.value = false;
+        enableQuality.value = false;
       }
     }
   },
@@ -80,24 +118,30 @@ async function onSubmit() {
     drawerApi.lock();
     const data = await formApi.getValues<any>();
     try {
+      // 准备提交数据
+      const payload = {
+        ...data,
+        enable_milestone: enableMilestone.value,
+        enable_iteration: enableIteration.value,
+        enable_quality: enableQuality.value,
+        design_id: enableIteration.value ? iterationConfig.value.design_id : undefined,
+        sub_teams: enableIteration.value ? iterationConfig.value.sub_teams : undefined,
+      };
+
       if (formData.value?.id) {
         const projectId = formData.value.id;
-        await updateProjectApi(projectId, data);
-        if (data.enable_milestone) {
-          await updateMilestoneApi(projectId, milestoneForm.value);
+        await updateProjectApi(projectId, payload);
+        if (enableMilestone.value) {
+          // 过滤空日期字符串
+          const milestonePayload = Object.fromEntries(
+            Object.entries(milestoneForm.value).filter(([_, v]) => v && v !== '')
+          );
+          await updateMilestoneApi(projectId, milestonePayload);
         }
-        if (data.enable_iteration && iterationForm.value.name && iterationForm.value.code && iterationForm.value.start_date && iterationForm.value.end_date) {
-          await createIterationApi({
-            project_id: projectId,
-            name: iterationForm.value.name,
-            code: iterationForm.value.code,
-            start_date: iterationForm.value.start_date,
-            end_date: iterationForm.value.end_date,
-            is_current: iterationForm.value.is_current,
-            is_healthy: iterationForm.value.is_healthy,
-          });
+        if (enableIteration.value) {
+          // 迭代数据仅通过项目属性(design_id, sub_teams)由后端联动更新，无需直接调用 iteration API
         }
-        if (data.enable_quality && moduleRows.value.length) {
+        if (enableQuality.value && moduleRows.value.length) {
           for (const row of moduleRows.value) {
             await configModuleApi({
               project_id: projectId,
@@ -113,15 +157,15 @@ async function onSubmit() {
         if (data.enable_milestone) {
           await updateMilestoneApi(projectId, milestoneForm.value);
         }
-        if (data.enable_iteration && iterationForm.value.name && iterationForm.value.code && iterationForm.value.start_date && iterationForm.value.end_date) {
+        if (data.enable_iteration) {
           await createIterationApi({
             project_id: projectId,
-            name: iterationForm.value.name,
-            code: iterationForm.value.code,
-            start_date: iterationForm.value.start_date,
-            end_date: iterationForm.value.end_date,
-            is_current: iterationForm.value.is_current,
-            is_healthy: iterationForm.value.is_healthy,
+            name: '', // 兼容接口，实际可能不需要
+            code: '',
+            start_date: '',
+            end_date: '',
+            is_current: false,
+            is_healthy: true,
           });
         }
         if (data.enable_quality && moduleRows.value.length) {
@@ -148,8 +192,11 @@ async function onSubmit() {
   <Drawer class="w-full max-w-[700px]" :title="getDrawerTitle">
     <Form class="mx-4" />
     <div class="mx-4 mt-4">
-      <div class="text-sm font-medium mb-2">里程碑配置</div>
-      <ElForm label-width="120px">
+      <div class="flex items-center gap-2 mb-2">
+        <div class="text-sm font-medium">里程碑配置</div>
+        <ElSwitch v-model="enableMilestone" inline-prompt active-text="开" inactive-text="关" />
+      </div>
+      <ElForm label-width="120px" v-if="enableMilestone">
         <ElFormItem label="QG1"><ElDatePicker v-model="milestoneForm.qg1_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
         <ElFormItem label="QG2"><ElDatePicker v-model="milestoneForm.qg2_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
         <ElFormItem label="QG3"><ElDatePicker v-model="milestoneForm.qg3_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
@@ -161,36 +208,55 @@ async function onSubmit() {
       </ElForm>
     </div>
     <div class="mx-4 mt-6">
-      <div class="text-sm font-medium mb-2">健康迭代配置</div>
-      <ElForm label-width="120px">
-        <ElFormItem label="迭代名称"><ElInput v-model="iterationForm.name" /></ElFormItem>
-        <ElFormItem label="迭代编号"><ElInput v-model="iterationForm.code" /></ElFormItem>
-        <ElFormItem label="开始时间"><ElDatePicker v-model="iterationForm.start_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
-        <ElFormItem label="结束时间"><ElDatePicker v-model="iterationForm.end_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
+      <div class="flex items-center gap-2 mb-2">
+        <div class="text-sm font-medium">健康迭代配置</div>
+        <ElSwitch v-model="enableIteration" inline-prompt active-text="开" inactive-text="关" />
+      </div>
+      <ElForm label-width="120px" v-if="enableIteration">
+        <ElFormItem label="中台配置ID">
+          <ElInput v-model="iterationConfig.design_id" placeholder="请输入迭代中台配置 ID" />
+        </ElFormItem>
+        <ElFormItem label="迭代责任团队">
+          <div class="flex gap-2 mb-2">
+            <ElInput v-model="newSubTeam" placeholder="输入团队名称" @keyup.enter="() => { if(newSubTeam) { iterationConfig.sub_teams.push(newSubTeam); newSubTeam = ''; } }" />
+            <ElButton @click="() => { if(newSubTeam) { iterationConfig.sub_teams.push(newSubTeam); newSubTeam = ''; } }">添加</ElButton>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <div v-for="(team, index) in iterationConfig.sub_teams" :key="index" class="bg-gray-100 px-2 py-1 rounded flex items-center gap-1">
+              <span>{{ team }}</span>
+              <span class="cursor-pointer text-red-500 font-bold" @click="iterationConfig.sub_teams.splice(index, 1)">×</span>
+            </div>
+          </div>
+        </ElFormItem>
       </ElForm>
     </div>
     <div class="mx-4 mt-6">
-      <div class="text-sm font-medium mb-2">代码质量模块配置</div>
-      <div class="mb-2">
-        <ElButton type="primary" @click="moduleRows.push({ name: '', owner_id: '' })">新增模块</ElButton>
+      <div class="flex items-center gap-2 mb-2">
+        <div class="text-sm font-medium">代码质量模块配置</div>
+        <ElSwitch v-model="enableQuality" inline-prompt active-text="开" inactive-text="关" />
       </div>
-      <ElTable :data="moduleRows">
-        <ElTableColumn label="模块名">
-          <template #default="{ row }">
-            <ElInput v-model="row.name" placeholder="模块名" />
-          </template>
-        </ElTableColumn>
-        <ElTableColumn label="责任人ID">
-          <template #default="{ row }">
-            <ElInput v-model="row.owner_id" placeholder="责任人ID" />
-          </template>
-        </ElTableColumn>
-        <ElTableColumn label="操作" width="120">
-          <template #default="{ $index }">
-            <ElButton type="danger" link @click="moduleRows.splice($index, 1)">删除</ElButton>
-          </template>
-        </ElTableColumn>
-      </ElTable>
+      <div v-if="enableQuality">
+        <div class="mb-2">
+          <ElButton type="primary" @click="moduleRows.push({ name: '', owner_id: '' })">新增模块</ElButton>
+        </div>
+        <ElTable :data="moduleRows">
+          <ElTableColumn label="模块名">
+            <template #default="{ row }">
+              <ElInput v-model="row.name" placeholder="模块名" />
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="责任人ID">
+            <template #default="{ row }">
+              <ElInput v-model="row.owner_id" placeholder="责任人ID" />
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="操作" width="120">
+            <template #default="{ $index }">
+              <ElButton type="danger" link @click="moduleRows.splice($index, 1)">删除</ElButton>
+            </template>
+          </ElTableColumn>
+        </ElTable>
+      </div>
     </div>
   </Drawer>
   </template>

@@ -187,44 +187,5 @@ export function getProjectFormSchema(): VbenFormSchema[] {
       },
       rules: z.string().min(1, '请输入备注'),
     },
-    {
-      component: 'RadioGroup',
-      fieldName: 'enable_milestone',
-      label: '统计里程碑',
-      defaultValue: false,
-      componentProps: {
-        isButton: true,
-        options: [
-          { label: '开启', value: true, type: 'success' },
-          { label: '关闭', value: false, type: 'danger' },
-        ],
-      },
-    },
-    {
-      component: 'RadioGroup',
-      fieldName: 'enable_iteration',
-      label: '统计迭代数据',
-      defaultValue: false,
-      componentProps: {
-        isButton: true,
-        options: [
-          { label: '开启', value: true, type: 'success' },
-          { label: '关闭', value: false, type: 'danger' },
-        ],
-      },
-    },
-    {
-      component: 'RadioGroup',
-      fieldName: 'enable_quality',
-      label: '统计代码质量',
-      defaultValue: false,
-      componentProps: {
-        isButton: true,
-        options: [
-          { label: '开启', value: true, type: 'success' },
-          { label: '关闭', value: false, type: 'danger' },
-        ],
-      },
-    },
   ];
 }

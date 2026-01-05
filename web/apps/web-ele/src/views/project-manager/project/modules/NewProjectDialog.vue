@@ -152,7 +152,11 @@ async function handleSave() {
     const projectId = project.id;
 
     if (enableMilestone.value) {
-      await updateMilestoneApi(projectId, milestoneForm.value);
+      // 过滤空字符串日期，只传递有效值
+      const milestonePayload = Object.fromEntries(
+        Object.entries(milestoneForm.value).filter(([_, v]) => v && v !== '')
+      );
+      await updateMilestoneApi(projectId, milestonePayload);
     }
     // 迭代数据由后端根据 design_id 和 sub_teams 自动同步，无需前端调用 createIterationApi
 
@@ -235,84 +239,90 @@ function handleClose() {
         </div>
       </div>
       <!-- 步骤2：里程碑 -->
-      <div v-show="currentStep === 1" class="h-full overflow-hidden p-6">
-        <div class="w-[700px]">
-          <ElForm label-width="120px">
-            <ElFormItem label="开启里程碑统计">
-              <ElSwitch v-model="enableMilestone" />
-            </ElFormItem>
-            <div v-if="enableMilestone">
-              <div class="text-sm font-medium mb-2">填写 QG 节点时间</div>
-              <div class="grid grid-cols-2 gap-4">
-                <ElFormItem label="QG1"><ElDatePicker v-model="milestoneForm.qg1_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
-                <ElFormItem label="QG2"><ElDatePicker v-model="milestoneForm.qg2_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
-                <ElFormItem label="QG3"><ElDatePicker v-model="milestoneForm.qg3_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
-                <ElFormItem label="QG4"><ElDatePicker v-model="milestoneForm.qg4_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
-                <ElFormItem label="QG5"><ElDatePicker v-model="milestoneForm.qg5_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
-                <ElFormItem label="QG6"><ElDatePicker v-model="milestoneForm.qg6_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
-                <ElFormItem label="QG7"><ElDatePicker v-model="milestoneForm.qg7_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
-                <ElFormItem label="QG8"><ElDatePicker v-model="milestoneForm.qg8_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
+      <div v-show="currentStep === 1" class="flex h-full items-center justify-center overflow-y-auto p-6">
+        <div class="align-self-center w-[700px] translate-y-[-20%]">
+          <div class="border-border bg-card rounded-lg border p-8 shadow-sm">
+            <ElForm label-width="120px">
+              <ElFormItem label="开启里程碑统计">
+                <ElSwitch v-model="enableMilestone" />
+              </ElFormItem>
+              <div v-if="enableMilestone">
+                <div class="text-sm font-medium mb-2">填写 QG 节点时间</div>
+                <div class="grid grid-cols-2 gap-4">
+                  <ElFormItem label="QG1"><ElDatePicker v-model="milestoneForm.qg1_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
+                  <ElFormItem label="QG2"><ElDatePicker v-model="milestoneForm.qg2_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
+                  <ElFormItem label="QG3"><ElDatePicker v-model="milestoneForm.qg3_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
+                  <ElFormItem label="QG4"><ElDatePicker v-model="milestoneForm.qg4_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
+                  <ElFormItem label="QG5"><ElDatePicker v-model="milestoneForm.qg5_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
+                  <ElFormItem label="QG6"><ElDatePicker v-model="milestoneForm.qg6_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
+                  <ElFormItem label="QG7"><ElDatePicker v-model="milestoneForm.qg7_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
+                  <ElFormItem label="QG8"><ElDatePicker v-model="milestoneForm.qg8_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
+                </div>
               </div>
-            </div>
-          </ElForm>
+            </ElForm>
+          </div>
         </div>
       </div>
       <!-- 步骤3：迭代 -->
-      <div v-show="currentStep === 2" class="h-full overflow-hidden p-6">
-        <div class="w-[700px]">
-          <ElForm label-width="120px">
-            <ElFormItem label="开启健康迭代统计">
-              <ElSwitch v-model="enableIteration" />
-            </ElFormItem>
-            <div v-if="enableIteration">
-              <ElFormItem label="中台配置ID">
-                <ElInput v-model="iterationConfig.design_id" placeholder="请输入迭代中台配置 ID" />
+      <div v-show="currentStep === 2" class="flex h-full items-center justify-center overflow-y-auto p-6">
+        <div class="align-self-center w-[700px] translate-y-[-20%]">
+          <div class="border-border bg-card rounded-lg border p-8 shadow-sm">
+            <ElForm label-width="120px">
+              <ElFormItem label="开启健康迭代统计">
+                <ElSwitch v-model="enableIteration" />
               </ElFormItem>
-              <ElFormItem label="迭代责任团队">
-                <div class="flex gap-2 mb-2">
-                  <ElInput v-model="newSubTeam" placeholder="输入团队名称" @keyup.enter="() => { if(newSubTeam) { iterationConfig.sub_teams.push(newSubTeam); newSubTeam = ''; } }" />
-                  <ElButton @click="() => { if(newSubTeam) { iterationConfig.sub_teams.push(newSubTeam); newSubTeam = ''; } }">添加</ElButton>
-                </div>
-                <div class="flex flex-wrap gap-2">
-                  <div v-for="(team, index) in iterationConfig.sub_teams" :key="index" class="bg-gray-100 px-2 py-1 rounded flex items-center gap-1">
-                    <span>{{ team }}</span>
-                    <span class="cursor-pointer text-red-500 font-bold" @click="iterationConfig.sub_teams.splice(index, 1)">×</span>
+              <div v-if="enableIteration">
+                <ElFormItem label="中台配置ID">
+                  <ElInput v-model="iterationConfig.design_id" placeholder="请输入迭代中台配置 ID" />
+                </ElFormItem>
+                <ElFormItem label="迭代责任团队">
+                  <div class="flex gap-2 mb-2">
+                    <ElInput v-model="newSubTeam" placeholder="输入团队名称" @keyup.enter="() => { if(newSubTeam) { iterationConfig.sub_teams.push(newSubTeam); newSubTeam = ''; } }" />
+                    <ElButton @click="() => { if(newSubTeam) { iterationConfig.sub_teams.push(newSubTeam); newSubTeam = ''; } }">添加</ElButton>
                   </div>
-                </div>
-              </ElFormItem>
-            </div>
-          </ElForm>
+                  <div class="flex flex-wrap gap-2">
+                    <div v-for="(team, index) in iterationConfig.sub_teams" :key="index" class="bg-gray-100 px-2 py-1 rounded flex items-center gap-1">
+                      <span>{{ team }}</span>
+                      <span class="cursor-pointer text-red-500 font-bold" @click="iterationConfig.sub_teams.splice(index, 1)">×</span>
+                    </div>
+                  </div>
+                </ElFormItem>
+              </div>
+            </ElForm>
+          </div>
         </div>
       </div>
       <!-- 步骤4：代码质量 -->
-      <div v-show="currentStep === 3" class="h-full overflow-hidden p-6">
-        <div class="w-[900px]">
-          <ElForm label-width="120px">
-            <ElFormItem label="开启代码质量统计">
-              <ElSwitch v-model="enableQuality" />
-            </ElFormItem>
-          </ElForm>
-          <div v-if="enableQuality">
-            <div class="mb-2">
-              <ElButton type="primary" @click="moduleRows.push({ name: '', owner_id: '' })">新增模块</ElButton>
+      <div v-show="currentStep === 3" class="flex h-full items-center justify-center overflow-y-auto p-6">
+        <div class="align-self-center w-[900px] translate-y-[-20%]">
+          <div class="border-border bg-card rounded-lg border p-8 shadow-sm">
+            <ElForm label-width="120px">
+              <ElFormItem label="开启代码质量统计">
+                <ElSwitch v-model="enableQuality" />
+              </ElFormItem>
+            </ElForm>
+            <div v-if="enableQuality">
+              <div class="mb-2">
+                <ElButton type="primary" @click="moduleRows.push({ name: '', owner_id: '' })">新增模块</ElButton>
+              </div>
+              <ElTable :data="moduleRows">
+                <ElTableColumn label="模块名" width="300">
+                  <template #default="{ row }">
+                    <ElInput v-model="row.name" placeholder="模块名" />
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn label="责任人ID" width="300">
+                  <template #default="{ row }">
+                    <ElInput v-model="row.owner_id" placeholder="责任人ID" />
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn label="操作" width="120">
+                  <template #default="{ $index }">
+                    <ElButton type="danger" link @click="moduleRows.splice($index, 1)">删除</ElButton>
+                  </template>
+                </ElTableColumn>
+              </ElTable>
             </div>
-            <ElTable :data="moduleRows">
-              <ElTableColumn label="模块名" width="300">
-                <template #default="{ row }">
-                  <ElInput v-model="row.name" placeholder="模块名" />
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="责任人ID" width="300">
-                <template #default="{ row }">
-                  <ElInput v-model="row.owner_id" placeholder="责任人ID" />
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="操作" width="120">
-                <template #default="{ $index }">
-                  <ElButton type="danger" link @click="moduleRows.splice($index, 1)">删除</ElButton>
-                </template>
-              </ElTableColumn>
-            </ElTable>
           </div>
         </div>
       </div>
