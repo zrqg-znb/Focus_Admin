@@ -1,182 +1,230 @@
-import type { VbenFormProps } from '@vben/common-ui';
-import type { VxeGridProps } from '#/adapter/vxe-table';
+import type { VbenFormSchema } from '#/adapter/form';
+import type { OnActionClickFn, VxeTableGridOptions } from '#/adapter/vxe-table';
+import type { ProjectOut } from '#/api/project-manager/project';
+import { z } from '#/adapter/form';
 
-export function useColumns() {
-  const columns: VxeGridProps['columns'] = [
+export function useSearchFormSchema(): VbenFormSchema[] {
+  return [
+    { component: 'Input', fieldName: 'keyword', label: '关键词' },
+    { component: 'Input', fieldName: 'domain', label: '领域' },
+    { component: 'Input', fieldName: 'type', label: '类型' },
+    { component: 'Input', fieldName: 'manager_id', label: '项目经理ID' },
     {
-      field: 'name',
-      title: '项目名称',
-      minWidth: 150,
-      fixed: 'left',
+      component: 'Select',
+      fieldName: 'is_closed',
+      label: '是否结项',
+      componentProps: {
+        options: [
+          { label: '全部', value: undefined },
+          { label: '是', value: true },
+          { label: '否', value: false },
+        ],
+        clearable: true,
+      },
     },
     {
-      field: 'code',
-      title: '项目编码',
-      width: 120,
+      component: 'Select',
+      fieldName: 'enable_milestone',
+      label: '统计里程碑',
+      componentProps: {
+        options: [
+          { label: '全部', value: undefined },
+          { label: '是', value: true },
+          { label: '否', value: false },
+        ],
+        clearable: true,
+      },
     },
     {
-      field: 'domain',
-      title: '项目领域',
-      width: 120,
+      component: 'Select',
+      fieldName: 'enable_iteration',
+      label: '统计迭代',
+      componentProps: {
+        options: [
+          { label: '全部', value: undefined },
+          { label: '是', value: true },
+          { label: '否', value: false },
+        ],
+        clearable: true,
+      },
     },
     {
-      field: 'type',
-      title: '项目类型',
-      width: 120,
+      component: 'Select',
+      fieldName: 'enable_quality',
+      label: '统计代码质量',
+      componentProps: {
+        options: [
+          { label: '全部', value: undefined },
+          { label: '是', value: true },
+          { label: '否', value: false },
+        ],
+        clearable: true,
+      },
     },
+  ];
+}
+
+export function useColumns(
+  onActionClick?: OnActionClickFn<ProjectOut>,
+): VxeTableGridOptions<ProjectOut>['columns'] {
+  return [
+    { field: 'name', title: '项目名', minWidth: 160 },
+    { field: 'domain', title: '项目领域', minWidth: 120 },
+    { field: 'type', title: '项目类型', minWidth: 120 },
+    { field: 'code', title: '项目编码', minWidth: 140 },
     {
-      field: 'managers',
+      field: 'managers_info',
       title: '项目经理',
-      minWidth: 150,
-      slots: { default: 'managers' },
-    },
-    {
-      field: 'enable_milestone',
-      title: '里程碑',
-      width: 100,
-      slots: { default: 'enable_milestone' },
-    },
-    {
-      field: 'enable_iteration',
-      title: '迭代',
-      width: 100,
-      slots: { default: 'enable_iteration' },
-    },
-    {
-      field: 'enable_quality',
-      title: '代码质量',
-      width: 100,
-      slots: { default: 'enable_quality' },
+      minWidth: 160,
+      formatter: ({ cellValue }) => (cellValue || []).map((i: any) => i.name).join('、'),
     },
     {
       field: 'is_closed',
-      title: '状态',
-      width: 100,
-      slots: { default: 'status' },
+      title: '是否结项',
+      minWidth: 100,
+      cellRender: { name: 'CellTag' },
+    },
+    { field: 'repo_url', title: '制品仓号', minWidth: 200 },
+    {
+      field: 'enable_milestone',
+      title: '统计里程碑',
+      minWidth: 120,
+      cellRender: { name: 'CellTag' },
     },
     {
-      field: 'action',
-      title: '操作',
-      width: 140,
+      field: 'enable_iteration',
+      title: '统计迭代',
+      minWidth: 120,
+      cellRender: { name: 'CellTag' },
+    },
+    {
+      field: 'enable_quality',
+      title: '统计代码质量',
+      minWidth: 130,
+      cellRender: { name: 'CellTag' },
+    },
+    { field: 'sys_create_datetime', title: '创建时间', minWidth: 160 },
+    {
+      align: 'right',
+      cellRender: {
+        attrs: {
+          nameField: 'name',
+          nameTitle: '项目名',
+          onClick: onActionClick,
+        },
+        name: 'CellOperation',
+        options: ['edit', 'delete'],
+      },
+      field: 'operation',
       fixed: 'right',
-      slots: { default: 'action' },
+      headerAlign: 'center',
+      showOverflow: false,
+      title: '操作',
+      minWidth: 120,
     },
   ];
-  return columns;
 }
 
-export function useSearchFormSchema(): VbenFormProps {
-  return {
-    schema: [
-      {
-        fieldName: 'keyword',
-        label: '关键字',
-        component: 'Input',
-        componentProps: {
-          placeholder: '项目名称/编码',
-          clearable: true,
-        },
+export function getProjectFormSchema(): VbenFormSchema[] {
+  return [
+    {
+      component: 'Input',
+      fieldName: 'name',
+      label: '项目名',
+      rules: z.string().min(1, '请输入项目名'),
+    },
+    {
+      component: 'Input',
+      fieldName: 'domain',
+      label: '项目领域',
+      rules: z.string().min(1, '请输入项目领域'),
+    },
+    {
+      component: 'Input',
+      fieldName: 'type',
+      label: '项目类型',
+      rules: z.string().min(1, '请输入项目类型'),
+    },
+    {
+      component: 'Input',
+      fieldName: 'code',
+      label: '项目编码',
+      rules: z.string().min(1, '请输入项目编码'),
+    },
+    {
+      component: 'UserSelector',
+      fieldName: 'manager_ids',
+      label: '项目经理',
+      componentProps: { multiple: true, placeholder: '选择项目经理' },
+      rules: z.array(z.string()).min(1, '至少选择一位项目经理'),
+    },
+    {
+      component: 'RadioGroup',
+      fieldName: 'is_closed',
+      label: '是否结项',
+      defaultValue: false,
+      componentProps: {
+        isButton: true,
+        options: [
+          { label: '否', value: false, type: 'success' },
+          { label: '是', value: true, type: 'danger' },
+        ],
       },
-      {
-        fieldName: 'domain',
-        label: '领域',
-        component: 'Input',
-        componentProps: {
-          clearable: true,
-        },
+    },
+    {
+      component: 'Input',
+      fieldName: 'repo_url',
+      label: '制品仓',
+      rules: z.string().min(1, '请输入制品仓号/地址'),
+    },
+    {
+      component: 'Input',
+      fieldName: 'remark',
+      label: '备注',
+      componentProps: {
+        placeholder: '请输入备注',
+        rows: 3,
       },
-      {
-        fieldName: 'type',
-        label: '类型',
-        component: 'Input',
-        componentProps: {
-          clearable: true,
-        },
+      rules: z.string().min(1, '请输入备注'),
+    },
+    {
+      component: 'RadioGroup',
+      fieldName: 'enable_milestone',
+      label: '统计里程碑',
+      defaultValue: false,
+      componentProps: {
+        isButton: true,
+        options: [
+          { label: '开启', value: true, type: 'success' },
+          { label: '关闭', value: false, type: 'danger' },
+        ],
       },
-      {
-        fieldName: 'is_closed',
-        label: '状态',
-        component: 'Select',
-        componentProps: {
-          clearable: true,
-          options: [
-            { label: '进行中', value: false },
-            { label: '已结项', value: true },
-          ],
-        },
+    },
+    {
+      component: 'RadioGroup',
+      fieldName: 'enable_iteration',
+      label: '统计迭代数据',
+      defaultValue: false,
+      componentProps: {
+        isButton: true,
+        options: [
+          { label: '开启', value: true, type: 'success' },
+          { label: '关闭', value: false, type: 'danger' },
+        ],
       },
-    ],
-  };
-}
-
-export function useFormSchema(): VbenFormProps {
-  return {
-    schema: [
-      {
-        fieldName: 'name',
-        label: '项目名称',
-        component: 'Input',
-        rules: 'required',
+    },
+    {
+      component: 'RadioGroup',
+      fieldName: 'enable_quality',
+      label: '统计代码质量',
+      defaultValue: false,
+      componentProps: {
+        isButton: true,
+        options: [
+          { label: '开启', value: true, type: 'success' },
+          { label: '关闭', value: false, type: 'danger' },
+        ],
       },
-      {
-        fieldName: 'code',
-        label: '项目编码',
-        component: 'Input',
-        rules: 'required',
-      },
-      {
-        fieldName: 'domain',
-        label: '项目领域',
-        component: 'Input',
-        rules: 'required',
-      },
-      {
-        fieldName: 'type',
-        label: '项目类型',
-        component: 'Input',
-        rules: 'required',
-      },
-      {
-        fieldName: 'manager_ids',
-        label: '项目经理',
-        component: 'Select',
-        componentProps: {
-          multiple: true,
-          filterable: true,
-          options: [], // 这里需要在组件中动态加载用户列表
-          placeholder: '请选择项目经理',
-        },
-        rules: 'required',
-      },
-      {
-        fieldName: 'repo_url',
-        label: '制品仓地址',
-        component: 'Input',
-      },
-      {
-        fieldName: 'remark',
-        label: '备注',
-        component: 'Textarea',
-      },
-      {
-        fieldName: 'enable_milestone',
-        label: '里程碑统计',
-        component: 'Switch',
-        defaultValue: true,
-        help: '开启后将自动创建里程碑看板',
-      },
-      {
-        fieldName: 'enable_iteration',
-        label: '迭代统计',
-        component: 'Switch',
-        defaultValue: true,
-      },
-      {
-        fieldName: 'enable_quality',
-        label: '代码质量',
-        component: 'Switch',
-        defaultValue: true,
-      },
-    ],
-  };
+    },
+  ];
 }

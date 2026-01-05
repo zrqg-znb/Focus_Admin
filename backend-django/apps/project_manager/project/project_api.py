@@ -19,7 +19,7 @@ def create_project(request, data: ProjectCreateSchema):
 def update_project(request, id: str, data: ProjectUpdateSchema):
     return project_service.update_project(request, id, data)
 
-@router.delete("/{id}", summary="删除项目")
+@router.delete("/{id}", response=ProjectOut, summary="删除项目")
 def delete_project(request, id: str):
     return project_service.delete_project(request, id)
 

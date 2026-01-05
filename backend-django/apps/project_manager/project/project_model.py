@@ -14,6 +14,8 @@ class Project(RootModel):
     # Switches
     enable_milestone = models.BooleanField(default=True, verbose_name="是否统计里程碑")
     enable_iteration = models.BooleanField(default=True, verbose_name="是否统计迭代数据")
+    design_id = models.CharField(max_length=255, null=True, blank=True, verbose_name="迭代中台配置 id")
+    sub_teams = models.JSONField(default=list, null=True, blank=True, verbose_name="迭代责任团队")
     enable_quality = models.BooleanField(default=True, verbose_name="是否统计代码质量")
 
     class Meta:

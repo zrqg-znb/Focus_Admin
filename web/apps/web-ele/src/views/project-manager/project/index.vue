@@ -1,17 +1,42 @@
 <script lang="ts" setup>
+import type {
+  OnActionClickParams,
+  VxeTableGridOptions,
+} from '#/adapter/vxe-table';
+import type { ProjectOut } from '#/api/project-manager/project';
+
 import { Page, useVbenDrawer } from '@vben/common-ui';
+import { ref } from 'vue';
+
+import { ElButton, ElMessage } from 'element-plus';
+
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
-import { getProjectList, deleteProject } from '#/api/project-manager/project';
+import { listProjectsApi, deleteProjectApi } from '#/api/project-manager/project';
 import { useColumns, useSearchFormSchema } from './data';
-import ProjectDrawer from './modules/project-drawer.vue';
-import { ElButton, ElMessage, ElMessageBox, ElTag } from 'element-plus';
-import { Plus } from '@vben/icons';
+import Form from './modules/form.vue';
+import NewProjectDialog from './modules/NewProjectDialog.vue';
 
 defineOptions({ name: 'ProjectList' });
 
-const [Drawer, drawerApi] = useVbenDrawer({
-  connectedComponent: ProjectDrawer,
+const [FormDrawer, formDrawerApi] = useVbenDrawer({
+  connectedComponent: Form,
+  destroyOnClose: true,
 });
+
+const createDialogVisible = ref(false);
+
+function onActionClick({ code, row }: OnActionClickParams<ProjectOut>) {
+  if (code === 'edit') {
+    formDrawerApi.setData(row).open();
+    return;
+  }
+  if (code === 'delete') {
+    deleteProjectApi(row.id).then(() => {
+      ElMessage.success('删除成功');
+      refreshGrid();
+    });
+  }
+}
 
 const [Grid, gridApi] = useVbenVxeGrid({
   formOptions: {
@@ -19,57 +44,30 @@ const [Grid, gridApi] = useVbenVxeGrid({
     submitOnChange: true,
   },
   gridOptions: {
-    columns: useColumns(),
+    columns: useColumns(onActionClick),
     height: 'auto',
     keepSource: true,
+    pagerConfig: { enabled: true },
     proxyConfig: {
       ajax: {
         query: async ({ page }, formValues) => {
-          return await getProjectList({
+          const params = {
             page: page.currentPage,
             pageSize: page.pageSize,
             ...formValues,
-          });
+          };
+          return await listProjectsApi(params);
         },
       },
     },
     toolbarConfig: {
       custom: true,
-      export: false,
       refresh: { code: 'query' },
       search: true,
       zoom: true,
     },
-  },
+  } as VxeTableGridOptions<ProjectOut>,
 });
-
-function onCreate() {
-  drawerApi.setData({}).open();
-}
-
-function onEdit(row: any) {
-  drawerApi.setData(row).open();
-}
-
-function onDelete(row: any) {
-  ElMessageBox.confirm(
-    `确认删除项目 "${row.name}" 吗？`,
-    '删除确认',
-    {
-      confirmButtonText: '确认',
-      cancelButtonText: '取消',
-      type: 'warning',
-    }
-  ).then(async () => {
-    try {
-      await deleteProject(row.id);
-      ElMessage.success('删除成功');
-      gridApi.query();
-    } catch (error) {
-      console.error(error);
-    }
-  });
-}
 
 function refreshGrid() {
   gridApi.query();
@@ -78,55 +76,16 @@ function refreshGrid() {
 
 <template>
   <Page auto-content-height>
-    <Drawer @success="refreshGrid" />
+    <FormDrawer @success="refreshGrid" />
+
     <Grid>
       <template #table-title>
-        <ElButton type="primary" @click="onCreate">
-          <Plus class="size-5" />
+        <ElButton type="primary" @click="createDialogVisible = true">
           新增项目
         </ElButton>
       </template>
-
-      <template #managers="{ row }">
-        <div class="flex flex-wrap gap-1">
-          <ElTag v-for="m in row.managers" :key="m.id" size="small" type="info">
-            {{ m.name }}
-          </ElTag>
-        </div>
-      </template>
-
-      <template #enable_milestone="{ row }">
-        <ElTag :type="row.enable_milestone ? 'success' : 'danger'" size="small">
-          {{ row.enable_milestone ? '开启' : '关闭' }}
-        </ElTag>
-      </template>
-
-      <template #enable_iteration="{ row }">
-        <ElTag :type="row.enable_iteration ? 'success' : 'danger'" size="small">
-          {{ row.enable_iteration ? '开启' : '关闭' }}
-        </ElTag>
-      </template>
-
-      <template #enable_quality="{ row }">
-        <ElTag :type="row.enable_quality ? 'success' : 'danger'" size="small">
-          {{ row.enable_quality ? '开启' : '关闭' }}
-        </ElTag>
-      </template>
-
-      <template #status="{ row }">
-        <ElTag :type="row.is_closed ? 'info' : 'success'" effect="plain">
-          {{ row.is_closed ? '已结项' : '进行中' }}
-        </ElTag>
-      </template>
-
-      <template #action="{ row }">
-        <ElButton type="primary" link size="small" @click="onEdit(row)">
-          编辑
-        </ElButton>
-        <ElButton type="danger" link size="small" @click="onDelete(row)">
-          删除
-        </ElButton>
-      </template>
     </Grid>
+
+    <NewProjectDialog v-model="createDialogVisible" @created="refreshGrid" />
   </Page>
 </template>

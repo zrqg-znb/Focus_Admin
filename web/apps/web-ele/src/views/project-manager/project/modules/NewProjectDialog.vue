@@ -58,14 +58,12 @@ const milestoneForm = ref({
 
 // 迭代
 const enableIteration = ref(false);
-const iterationForm = ref({
-  name: '',
-  code: '',
-  start_date: '',
-  end_date: '',
-  is_current: true,
-  is_healthy: true,
+const iterationConfig = ref({
+  design_id: '',
+  sub_teams: [] as string[],
 });
+// 临时输入框，用于添加团队
+const newSubTeam = ref('');
 
 // 代码质量
 const enableQuality = ref(false);
@@ -85,10 +83,8 @@ const canGoNext = computed(() => {
   }
   if (currentStep.value === 2 && enableIteration.value) {
     return (
-      iterationForm.value.name &&
-      iterationForm.value.code &&
-      iterationForm.value.start_date &&
-      iterationForm.value.end_date
+      iterationConfig.value.design_id &&
+      iterationConfig.value.sub_teams.length > 0
     );
   }
   if (currentStep.value === 3 && enableQuality.value) {
@@ -127,13 +123,9 @@ function resetAll() {
     qg7_date: '',
     qg8_date: '',
   };
-  iterationForm.value = {
-    name: '',
-    code: '',
-    start_date: '',
-    end_date: '',
-    is_current: true,
-    is_healthy: true,
+  iterationConfig.value = {
+    design_id: '',
+    sub_teams: [],
   };
   moduleRows.value = [];
 }
@@ -153,6 +145,8 @@ async function handleSave() {
       enable_milestone: enableMilestone.value,
       enable_iteration: enableIteration.value,
       enable_quality: enableQuality.value,
+      design_id: enableIteration.value ? iterationConfig.value.design_id : undefined,
+      sub_teams: enableIteration.value ? iterationConfig.value.sub_teams : undefined,
     };
     const project = await createProjectApi(payload);
     const projectId = project.id;
@@ -160,17 +154,8 @@ async function handleSave() {
     if (enableMilestone.value) {
       await updateMilestoneApi(projectId, milestoneForm.value);
     }
-    if (enableIteration.value) {
-      await createIterationApi({
-        project_id: projectId,
-        name: iterationForm.value.name,
-        code: iterationForm.value.code,
-        start_date: iterationForm.value.start_date,
-        end_date: iterationForm.value.end_date,
-        is_current: iterationForm.value.is_current,
-        is_healthy: iterationForm.value.is_healthy,
-      });
-    }
+    // 迭代数据由后端根据 design_id 和 sub_teams 自动同步，无需前端调用 createIterationApi
+
     if (enableQuality.value && moduleRows.value.length) {
       for (const row of moduleRows.value) {
         await configModuleApi({
@@ -280,10 +265,21 @@ function handleClose() {
               <ElSwitch v-model="enableIteration" />
             </ElFormItem>
             <div v-if="enableIteration">
-              <ElFormItem label="迭代名称"><ElInput v-model="iterationForm.name" /></ElFormItem>
-              <ElFormItem label="迭代编号"><ElInput v-model="iterationForm.code" /></ElFormItem>
-              <ElFormItem label="开始时间"><ElDatePicker v-model="iterationForm.start_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
-              <ElFormItem label="结束时间"><ElDatePicker v-model="iterationForm.end_date" type="date" value-format="YYYY-MM-DD" /></ElFormItem>
+              <ElFormItem label="中台配置ID">
+                <ElInput v-model="iterationConfig.design_id" placeholder="请输入迭代中台配置 ID" />
+              </ElFormItem>
+              <ElFormItem label="迭代责任团队">
+                <div class="flex gap-2 mb-2">
+                  <ElInput v-model="newSubTeam" placeholder="输入团队名称" @keyup.enter="() => { if(newSubTeam) { iterationConfig.sub_teams.push(newSubTeam); newSubTeam = ''; } }" />
+                  <ElButton @click="() => { if(newSubTeam) { iterationConfig.sub_teams.push(newSubTeam); newSubTeam = ''; } }">添加</ElButton>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <div v-for="(team, index) in iterationConfig.sub_teams" :key="index" class="bg-gray-100 px-2 py-1 rounded flex items-center gap-1">
+                    <span>{{ team }}</span>
+                    <span class="cursor-pointer text-red-500 font-bold" @click="iterationConfig.sub_teams.splice(index, 1)">×</span>
+                  </div>
+                </div>
+              </ElFormItem>
             </div>
           </ElForm>
         </div>

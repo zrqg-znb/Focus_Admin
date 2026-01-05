@@ -14,6 +14,8 @@ class ProjectCreateSchema(Schema):
     enable_milestone: bool = Field(True, description="是否统计里程碑")
     enable_iteration: bool = Field(True, description="是否统计迭代数据")
     enable_quality: bool = Field(True, description="是否统计代码质量")
+    design_id: Optional[str] = Field(None, description="迭代中台配置 id")
+    sub_teams: Optional[List[str]] = Field(None, description="迭代责任团队")
 
 class ProjectUpdateSchema(Schema):
     name: Optional[str] = None
@@ -27,6 +29,8 @@ class ProjectUpdateSchema(Schema):
     enable_milestone: Optional[bool] = None
     enable_iteration: Optional[bool] = None
     enable_quality: Optional[bool] = None
+    design_id: Optional[str] = None
+    sub_teams: Optional[List[str]] = None
 
 class ProjectFilterSchema(Schema):
     keyword: Optional[str] = Field(None, description="搜索关键字(项目名/编码)")
