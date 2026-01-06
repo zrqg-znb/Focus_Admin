@@ -13,9 +13,10 @@ export interface ProjectQualitySummary {
 export interface CodeModuleOut {
   id: string;
   project_id: string;
-  name: string;
-  owner_id?: string | null;
-  owner_name?: string | null;
+  oem_name: string;
+  module: string;
+  owner_names?: string[] | null;
+  owner_ids?: string[] | null;
 }
 
 export interface CodeMetricOut {
@@ -34,9 +35,11 @@ export interface ModuleQualityDetail {
 }
 
 export interface ModuleConfigPayload {
+  id?: string;
   project_id: string;
-  name: string;
-  owner_id?: string;
+  oem_name: string;
+  module: string;
+  owner_ids?: string[];
 }
 
 export interface CodeMetricPayload {

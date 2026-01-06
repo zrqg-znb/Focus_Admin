@@ -8,8 +8,9 @@ import { ElButton, ElInput, ElMessage, ElTable, ElTableColumn, ElDatePicker, ElF
 import { createProjectApi, updateProjectApi } from '#/api/project-manager/project';
 import { getMilestoneBoardApi, updateMilestoneApi } from '#/api/project-manager/milestone';
 import { createIterationApi } from '#/api/project-manager/iteration';
-import { configModuleApi } from '#/api/project-manager/code_quality';
+import { configModuleApi, getProjectQualityDetailsApi } from '#/api/project-manager/code_quality';
 import { getProjectFormSchema } from '../data';
+import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
 
 const emit = defineEmits<{
   success: [];
@@ -34,7 +35,7 @@ const enableMilestone = ref(false);
 const enableIteration = ref(false);
 const enableQuality = ref(false);
 const newSubTeam = ref('');
-type ModuleRow = { name: string; owner_id?: string };
+type ModuleRow = { id?: string; oem_name: string; module: string; owner_ids: string[] };
 const moduleRows = ref<ModuleRow[]>([]);
 
 const [Form, formApi] = useVbenForm({
@@ -70,7 +71,7 @@ const [Drawer, drawerApi] = useVbenDrawer({
         // 回填配置项（无条件回填，确保开关开启时有数据）
         iterationConfig.value.design_id = data.design_id || '';
         iterationConfig.value.sub_teams = Array.isArray(data.sub_teams) ? data.sub_teams : [];
-        
+
         // 回填里程碑数据
         try {
           const milestones = await getMilestoneBoardApi({ keyword: data.name });
@@ -90,7 +91,29 @@ const [Drawer, drawerApi] = useVbenDrawer({
         } catch (e) {
           console.error('Failed to fetch milestone data', e);
         }
-        
+
+        // 回填代码质量模块
+        if (data.enable_quality) {
+          try {
+            const details = await getProjectQualityDetailsApi(data.id);
+            if (details && details.length > 0) {
+              moduleRows.value = details.map((d) => ({
+                id: d.module_info.id,
+                oem_name: d.module_info.oem_name,
+                module: d.module_info.module,
+                owner_ids: d.module_info.owner_ids || [],
+              }));
+            } else {
+              moduleRows.value = [];
+            }
+          } catch (e) {
+            console.error('Failed to fetch quality modules', e);
+            moduleRows.value = [];
+          }
+        } else {
+          moduleRows.value = [];
+        }
+
         formApi.setValues(normalized);
       } else {
         formApi.resetForm();
@@ -118,6 +141,20 @@ async function onSubmit() {
     drawerApi.lock();
     const data = await formApi.getValues<any>();
     try {
+      // 前端校验重复模块
+      if (data.enable_quality && moduleRows.value.length > 0) {
+        const seen = new Set();
+        for (const row of moduleRows.value) {
+          if (!row.oem_name || !row.module) continue;
+          const key = `${row.oem_name}|${row.module}`;
+          if (seen.has(key)) {
+            ElMessage.error(`重复的模块配置: ${row.oem_name} - ${row.module}`);
+            return;
+          }
+          seen.add(key);
+        }
+      }
+
       // 准备提交数据
       const payload = {
         ...data,
@@ -144,9 +181,11 @@ async function onSubmit() {
         if (enableQuality.value && moduleRows.value.length) {
           for (const row of moduleRows.value) {
             await configModuleApi({
+              id: row.id,
               project_id: projectId,
-              name: row.name,
-              owner_id: row.owner_id,
+              oem_name: row.oem_name,
+              module: row.module,
+              owner_ids: row.owner_ids,
             });
           }
         }
@@ -168,12 +207,14 @@ async function onSubmit() {
             is_healthy: true,
           });
         }
-        if (data.enable_quality && moduleRows.value.length) {
+        if (enableQuality.value && moduleRows.value.length) {
           for (const row of moduleRows.value) {
             await configModuleApi({
+              id: row.id,
               project_id: projectId,
-              name: row.name,
-              owner_id: row.owner_id,
+              oem_name: row.oem_name,
+              module: row.module,
+              owner_ids: row.owner_ids,
             });
           }
         }
@@ -237,17 +278,22 @@ async function onSubmit() {
       </div>
       <div v-if="enableQuality">
         <div class="mb-2">
-          <ElButton type="primary" @click="moduleRows.push({ name: '', owner_id: '' })">新增模块</ElButton>
+          <ElButton type="primary" @click="moduleRows.push({ oem_name: '', module: '', owner_ids: [] })">新增模块</ElButton>
         </div>
         <ElTable :data="moduleRows">
-          <ElTableColumn label="模块名">
+          <ElTableColumn label="OEM名称" width="200">
             <template #default="{ row }">
-              <ElInput v-model="row.name" placeholder="模块名" />
+              <ElInput v-model="row.oem_name" placeholder="OEM名称" />
             </template>
           </ElTableColumn>
-          <ElTableColumn label="责任人ID">
+          <ElTableColumn label="模块名" width="200">
             <template #default="{ row }">
-              <ElInput v-model="row.owner_id" placeholder="责任人ID" />
+              <ElInput v-model="row.module" placeholder="模块名" />
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="责任人" width="200">
+            <template #default="{ row }">
+              <UserSelector v-model="row.owner_ids" :multiple="true" placeholder="请选择责任人" />
             </template>
           </ElTableColumn>
           <ElTableColumn label="操作" width="120">

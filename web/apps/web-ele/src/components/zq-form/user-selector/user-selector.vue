@@ -394,20 +394,25 @@ const loadInitialUserInfo = async (userIds: string[]) => {
     try {
       const user = await getUserDetailApi(userId);
       if (user) {
-        userInfoMap.value.set(userId, {
+        // 使用新 Map 触发响应式更新
+        const newMap = new Map(userInfoMap.value);
+        newMap.set(userId, {
           id: user.id,
           name: user.name,
           username: user.username,
         });
+        userInfoMap.value = newMap;
       }
     } catch (error) {
       console.error(`Failed to load user ${userId}:`, error);
       // 加载失败时，至少保存ID
-      userInfoMap.value.set(userId, {
+      const newMap = new Map(userInfoMap.value);
+      newMap.set(userId, {
         id: userId,
         name: undefined,
         username: userId,
       });
+      userInfoMap.value = newMap;
     }
   });
 

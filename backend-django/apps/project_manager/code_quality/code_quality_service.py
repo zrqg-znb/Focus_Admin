@@ -46,8 +46,57 @@ def get_quality_overview():
         
     return result
 
+from .quality_sync import sync_project_quality_metrics
+
+from django.db import IntegrityError
+from ninja.errors import HttpError
+
 def config_module(request, data: ModuleConfigSchema):
-    return fu_crud.create(request, data.dict(), CodeModule)
+    data_dict = data.dict()
+    module_id = data_dict.pop('id', None)
+    owner_ids = data_dict.pop('owner_ids', [])
+    
+    project_id = data_dict.get('project_id')
+    oem_name = data_dict.get('oem_name')
+    module_name = data_dict.get('module')
+
+    try:
+        if module_id:
+            # 更新模式
+            module = CodeModule.objects.get(id=module_id)
+            # 检查是否有重复（排除自身）
+            if CodeModule.objects.filter(project_id=project_id, oem_name=oem_name, module=module_name).exclude(id=module_id).exists():
+                raise HttpError(409, f"模块 {oem_name}-{module_name} 已存在")
+            
+            module.oem_name = oem_name
+            module.module = module_name
+            module.project_id = project_id
+            module.save()
+        else:
+            # 创建模式
+            # 检查是否已存在
+            existing = CodeModule.objects.filter(project_id=project_id, oem_name=oem_name, module=module_name).first()
+            if existing:
+                # 如果已存在，直接更新（比如责任人变化）
+                module = existing
+            else:
+                module = fu_crud.create(request, data_dict, CodeModule)
+    except IntegrityError:
+        raise HttpError(409, f"模块 {oem_name}-{module_name} 已存在")
+    
+    if owner_ids is not None:
+        module.owners.set(owner_ids)
+        
+    # 配置完成后，立即触发一次同步，获取初始数据
+    try:
+        # 需要获取 Project 对象
+        project = Project.objects.get(id=project_id)
+        if project.enable_quality:
+            sync_project_quality_metrics(project)
+    except Exception as e:
+        print(f"Initial quality sync failed: {e}")
+        
+    return module
 
 def record_module_metric(module_id: str, data: CodeMetricSchema):
     metric, created = CodeMetric.objects.update_or_create(

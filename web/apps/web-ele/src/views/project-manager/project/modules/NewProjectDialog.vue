@@ -7,6 +7,7 @@ import { createProjectApi } from '#/api/project-manager/project';
 import { updateMilestoneApi } from '#/api/project-manager/milestone';
 import { createIterationApi } from '#/api/project-manager/iteration';
 import { configModuleApi } from '#/api/project-manager/code_quality';
+import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
 
 import { getProjectFormSchema } from '../data';
 
@@ -67,7 +68,7 @@ const newSubTeam = ref('');
 
 // 代码质量
 const enableQuality = ref(false);
-type ModuleRow = { name: string; owner_id?: string };
+type ModuleRow = { oem_name: string; module: string; owner_ids: string[] };
 const moduleRows = ref<ModuleRow[]>([]);
 
 const steps = [
@@ -88,7 +89,7 @@ const canGoNext = computed(() => {
     );
   }
   if (currentStep.value === 3 && enableQuality.value) {
-    return moduleRows.value.every((m) => m.name && m.name.trim().length > 0);
+    return moduleRows.value.every((row) => row.oem_name && row.module);
   }
   return true;
 });
@@ -127,6 +128,7 @@ function resetAll() {
     design_id: '',
     sub_teams: [],
   };
+  newSubTeam.value = '';
   moduleRows.value = [];
 }
 
@@ -162,12 +164,13 @@ async function handleSave() {
 
     if (enableQuality.value && moduleRows.value.length) {
       for (const row of moduleRows.value) {
-        await configModuleApi({
-          project_id: projectId,
-          name: row.name,
-          owner_id: row.owner_id,
-        });
-      }
+            await configModuleApi({
+              project_id: projectId,
+              oem_name: row.oem_name,
+              module: row.module,
+              owner_ids: row.owner_ids,
+            });
+          }
     }
     ElMessage.success('创建成功');
     emit('created');
@@ -303,17 +306,22 @@ function handleClose() {
             </ElForm>
             <div v-if="enableQuality">
               <div class="mb-2">
-                <ElButton type="primary" @click="moduleRows.push({ name: '', owner_id: '' })">新增模块</ElButton>
+                <ElButton type="primary" @click="moduleRows.push({ oem_name: '', module: '', owner_ids: [] })">新增模块</ElButton>
               </div>
               <ElTable :data="moduleRows">
-                <ElTableColumn label="模块名" width="300">
+                <ElTableColumn label="OEM名称" width="200">
                   <template #default="{ row }">
-                    <ElInput v-model="row.name" placeholder="模块名" />
+                    <ElInput v-model="row.oem_name" placeholder="OEM名称" />
                   </template>
                 </ElTableColumn>
-                <ElTableColumn label="责任人ID" width="300">
+                <ElTableColumn label="模块名" width="200">
                   <template #default="{ row }">
-                    <ElInput v-model="row.owner_id" placeholder="责任人ID" />
+                    <ElInput v-model="row.module" placeholder="模块名" />
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn label="责任人" width="200">
+                  <template #default="{ row }">
+                    <UserSelector v-model="row.owner_ids" :multiple="true" placeholder="请选择责任人" />
                   </template>
                 </ElTableColumn>
                 <ElTableColumn label="操作" width="120">
