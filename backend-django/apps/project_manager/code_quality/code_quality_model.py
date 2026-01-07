@@ -21,6 +21,7 @@ class CodeMetric(RootModel):
     function_count = models.IntegerField(verbose_name="函数个数")
     dangerous_func_count = models.IntegerField(verbose_name="危险函数个数")
     duplication_rate = models.FloatField(verbose_name="重复率")
+    is_clean_code = models.BooleanField(default=False, verbose_name="是否符合CleanCode标准")
 
     class Meta:
         db_table = 'pm_code_metric'

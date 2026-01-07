@@ -16,6 +16,7 @@ class CodeMetricSchema(Schema):
     function_count: int
     dangerous_func_count: int
     duplication_rate: float
+    is_clean_code: bool
 
 class CodeMetricOut(ModelSchema):
     module_id: str
@@ -52,8 +53,25 @@ class CodeModuleOut(ModelSchema):
 class ProjectQualitySummarySchema(Schema):
     project_id: str
     project_name: str
+    project_domain: str
+    project_type: str
+    project_managers: str
+    record_date: Optional[date] = None
     total_loc: int = 0
     total_function_count: int = 0
     total_dangerous_func_count: int = 0
     avg_duplication_rate: float = 0.0
     module_count: int = 0
+
+class ModuleQualityDetailSchema(Schema):
+    id: str
+    oem_name: str
+    module: str
+    owner_names: List[str]
+    owner_ids: List[str]
+    record_date: Optional[date] = None
+    loc: int = 0
+    function_count: int = 0
+    dangerous_func_count: int = 0
+    duplication_rate: float = 0.0
+    is_clean_code: bool = False

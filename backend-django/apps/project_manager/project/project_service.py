@@ -74,3 +74,6 @@ def update_project(request, id: str, data: ProjectUpdateSchema):
 
 def delete_project(request, id: str):
     return fu_crud.delete(id, Project)
+
+def get_project(request, id: str):
+    return get_object_or_404(Project, id=id)

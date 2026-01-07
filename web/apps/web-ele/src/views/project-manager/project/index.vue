@@ -5,13 +5,18 @@ import type {
 } from '#/adapter/vxe-table';
 import type { ProjectOut } from '#/api/project-manager/project';
 
-import { Page, useVbenDrawer } from '@vben/common-ui';
 import { ref } from 'vue';
+
+import { Page, useVbenDrawer } from '@vben/common-ui';
 
 import { ElButton, ElMessage } from 'element-plus';
 
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
-import { listProjectsApi, deleteProjectApi } from '#/api/project-manager/project';
+import {
+  deleteProjectApi,
+  listProjectsApi,
+} from '#/api/project-manager/project';
+
 import { useColumns, useSearchFormSchema } from './data';
 import Form from './modules/form.vue';
 import NewProjectDialog from './modules/NewProjectDialog.vue';

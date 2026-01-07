@@ -23,6 +23,10 @@ def update_project(request, id: str, data: ProjectUpdateSchema):
 def delete_project(request, id: str):
     return project_service.delete_project(request, id)
 
+@router.get("/{id}", response=ProjectOut, summary="获取项目详情")
+def get_project(request, id: str):
+    return project_service.get_project(request, id)
+
 @router.get("/", response=List[ProjectOut], summary="获取项目列表")
 @paginate(MyPagination)
 def list_projects(request, filters: ProjectFilterSchema = Query(...)):

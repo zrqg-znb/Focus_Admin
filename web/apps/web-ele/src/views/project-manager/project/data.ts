@@ -82,26 +82,50 @@ export function useColumns(
       field: 'is_closed',
       title: '是否结项',
       minWidth: 100,
-      cellRender: { name: 'CellTag' },
+      cellRender: {
+        name: 'CellTag',
+        options: [
+          { label: '关闭', value: true, type: 'info' },
+          { label: '开启', value: false, type: 'success' },
+        ],
+      },
     },
     { field: 'repo_url', title: '制品仓号', minWidth: 200 },
     {
       field: 'enable_milestone',
       title: '统计里程碑',
       minWidth: 120,
-      cellRender: { name: 'CellTag' },
+      cellRender: {
+        name: 'CellTag',
+        options: [
+          { label: '开启', value: true, type: 'success' },
+          { label: '关闭', value: false, type: 'danger' },
+        ],
+      },
     },
     {
       field: 'enable_iteration',
       title: '统计迭代',
       minWidth: 120,
-      cellRender: { name: 'CellTag' },
+      cellRender: {
+        name: 'CellTag',
+        options: [
+          { label: '开启', value: true, type: 'success' },
+          { label: '关闭', value: false, type: 'danger' },
+        ],
+      },
     },
     {
       field: 'enable_quality',
       title: '统计代码质量',
       minWidth: 130,
-      cellRender: { name: 'CellTag' },
+      cellRender: {
+        name: 'CellTag',
+        options: [
+          { label: '开启', value: true, type: 'success' },
+          { label: '关闭', value: false, type: 'danger' },
+        ],
+      },
     },
     { field: 'sys_create_datetime', title: '创建时间', minWidth: 160 },
     {

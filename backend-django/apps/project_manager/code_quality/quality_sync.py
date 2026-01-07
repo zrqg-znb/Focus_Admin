@@ -13,7 +13,8 @@ class CodeQualityMock:
             "loc": random.randint(1000, 50000),
             "function_count": random.randint(50, 1000),
             "dangerous_func_count": random.randint(0, 50),
-            "duplication_rate": round(random.uniform(0.0, 20.0), 2)
+            "duplication_rate": round(random.uniform(0.0, 20.0), 2),
+            "is_clean_code": random.choice([True, False])
         }
 
 def sync_project_quality_metrics(project: Project):

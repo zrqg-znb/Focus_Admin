@@ -81,3 +81,7 @@ export async function updateProjectApi(id: string, data: ProjectUpdatePayload) {
 export async function deleteProjectApi(id: string) {
   return requestClient.delete(`/api/project-manager/projects/${id}`);
 }
+
+export async function getProjectApi(id: string) {
+  return requestClient.get<ProjectOut>(`/api/project-manager/projects/${id}`);
+}
