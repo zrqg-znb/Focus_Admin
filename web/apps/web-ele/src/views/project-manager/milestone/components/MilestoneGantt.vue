@@ -242,7 +242,7 @@ const dateRange = computed(() => {
   const maxDate = Math.max(...dates);
 
   const start = new Date(minDate);
-  start.setMonth(start.getMonth() - 1);
+  start.setMonth(start.getMonth() - 2);
   const end = new Date(maxDate);
   end.setMonth(end.getMonth() + 2);
 
@@ -323,6 +323,9 @@ function getProjectSegments(row: MilestoneBoardItem) {
   for (let i = 0; i < milestoneConfigs.length - 1; i++) {
     const current = milestoneConfigs[i];
     const next = milestoneConfigs[i + 1];
+
+    if (!current || !next) continue;
+
     const d1 = row[current.key];
     const d2 = row[next.key];
 
@@ -347,7 +350,13 @@ function getProjectSegments(row: MilestoneBoardItem) {
 }
 
 function getProjectMilestones(row: MilestoneBoardItem) {
-  const milestones = [];
+  const milestones: Array<{
+    key: string;
+    position: number;
+    color: string;
+    label: string;
+    date: string;
+  }> = [];
   milestoneConfigs.forEach((config) => {
     const d = row[config.key];
     if (d) {
@@ -439,10 +448,10 @@ function adjustOffsetAfterZoom(oldZoom: number, newZoom: number) {
   // 我们需要保持这个"时间点"不变。
   // TimePoint = (centerX - offset) / pixelsPerDay_Current
   // NewOffset = centerX - (TimePoint * pixelsPerDay_New)
-  
-  const timePointFactor = (centerX - offsetX.value) / oldZoom; 
+
+  const timePointFactor = (centerX - offsetX.value) / oldZoom;
   // 因为 pixelsPerDay = base * zoom, 所以除以 zoom 就得到 basePixels 下的位置
-  
+
   offsetX.value = centerX - timePointFactor * newZoom;
   applyBoundary();
 }
@@ -458,10 +467,8 @@ function resetView() {
 
 function applyBoundary() {
   const boundary = dragBoundary.value;
-  // 只有当内容比容器宽时才限制，否则可以自由一点或者居中
-  if (timelineTotalWidth.value > (timelineContainerRef.value?.clientWidth || 0)) {
-     offsetX.value = Math.max(boundary.min, Math.min(boundary.max, offsetX.value));
-  }
+  // Always clamp, even if content is smaller than container (pins it to 0)
+  offsetX.value = Math.max(boundary.min, Math.min(boundary.max, offsetX.value));
 }
 
 function handleMouseDown(e: MouseEvent) {
@@ -483,6 +490,7 @@ function handleMouseMove(e: MouseEvent) {
   if (!isDragging.value) return;
   const deltaX = e.clientX - dragStartX.value;
   offsetX.value = dragStartOffsetX.value + deltaX;
+  applyBoundary();
 }
 
 function handleMouseUp() {
@@ -523,28 +531,29 @@ onUnmounted(() => {
   flex-direction: column;
   height: 100%;
   width: 100%;
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color);
   border-radius: 6px;
   overflow: hidden;
   font-size: 14px;
-  color: #374151;
+  color: var(--el-text-color-primary);
 }
 
 .gantt-header {
   display: flex;
   height: 48px;
-  background: #f9fafb;
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--el-fill-color-light);
+  border-bottom: 1px solid var(--el-border-color);
   flex-shrink: 0;
 
   .table-header {
-    border-right: 1px solid #e5e7eb;
-    background: #f3f4f6;
+    border-right: 1px solid var(--el-border-color);
+    background: var(--el-fill-color);
     display: flex;
     align-items: center;
     padding-left: 12px;
     font-weight: 600;
+    color: var(--el-text-color-regular);
   }
 
   .timeline-header-container {
@@ -563,29 +572,31 @@ onUnmounted(() => {
   overflow-y: auto;
   overflow-x: hidden;
   position: relative;
+  background: var(--el-bg-color);
 }
 
 .gantt-row {
   display: flex;
   height: 48px;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid var(--el-border-color-lighter);
   transition: background-color 0.2s;
   &:hover {
-    background-color: #f9fafb;
+    background-color: var(--el-fill-color-light);
   }
 
   .table-row {
-    border-right: 1px solid #e5e7eb;
-    background: #fff;
+    border-right: 1px solid var(--el-border-color);
+    background: var(--el-bg-color);
     flex-shrink: 0;
     display: flex;
     align-items: center;
     padding-left: 12px;
-    
+
     .row-cell {
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        color: var(--el-text-color-primary);
     }
   }
 
@@ -603,7 +614,6 @@ onUnmounted(() => {
 .timeline-content {
   height: 100%;
   position: relative;
-  /* Remove transform-origin since we use translateX only */
 }
 
 /* Timeline Elements */
@@ -624,18 +634,18 @@ onUnmounted(() => {
       top: 0;
       bottom: 0;
       width: 1px;
-      background: #e5e7eb;
+      background: var(--el-border-color-lighter);
     }
 
     .scale-label {
       margin-left: 6px;
       font-size: 12px;
-      color: #9ca3af;
+      color: var(--el-text-color-secondary);
       font-weight: 500;
     }
 
     &.is-today .scale-label {
-      color: #3b82f6;
+      color: var(--el-color-primary);
       font-weight: 600;
     }
   }
@@ -646,7 +656,7 @@ onUnmounted(() => {
   top: 0;
   bottom: 0;
   width: 2px;
-  background: #3b82f6;
+  background: var(--el-color-primary);
   z-index: 10;
   pointer-events: none;
   opacity: 0.5;
@@ -664,7 +674,6 @@ onUnmounted(() => {
   padding: 0 8px;
   cursor: pointer;
   transition: opacity 0.2s, box-shadow 0.2s;
-  /* Removed transition: height 0.2s to avoid flicker */
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 
   &:hover {
@@ -676,7 +685,7 @@ onUnmounted(() => {
 
   .bar-label {
     font-size: 11px;
-    color: #fff;
+    color: #fff; /* Always white for contrast on colored bars */
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -691,7 +700,7 @@ onUnmounted(() => {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  border: 2px solid #fff;
+  border: 2px solid var(--el-bg-color);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
   z-index: 15;
   cursor: pointer;
@@ -706,8 +715,8 @@ onUnmounted(() => {
 /* Controls */
 .gantt-controls {
   padding: 8px 16px;
-  border-top: 1px solid #e5e7eb;
-  background: #f9fafb;
+  border-top: 1px solid var(--el-border-color);
+  background: var(--el-fill-color-light);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -726,6 +735,7 @@ onUnmounted(() => {
     display: flex;
     gap: 16px;
     font-size: 12px;
+    color: var(--el-text-color-regular);
     .legend-item {
       display: flex;
       align-items: center;
@@ -742,22 +752,23 @@ onUnmounted(() => {
 /* Tooltip */
 .gantt-tooltip {
   position: fixed;
-  background: rgba(17, 24, 39, 0.9);
-  color: #fff;
+  background: var(--el-bg-color-overlay);
+  color: var(--el-text-color-primary);
   padding: 12px;
   border-radius: 6px;
   font-size: 13px;
   z-index: 9999;
   pointer-events: none;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--el-box-shadow-dark);
   backdrop-filter: blur(4px);
   min-width: 200px;
+  border: 1px solid var(--el-border-color-lighter);
 
   .tooltip-header {
     font-weight: 600;
     margin-bottom: 8px;
     padding-bottom: 8px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    border-bottom: 1px solid var(--el-border-color-lighter);
   }
 
   .tooltip-body {
@@ -771,7 +782,7 @@ onUnmounted(() => {
     justify-content: space-between;
     gap: 16px;
     span:first-child {
-      color: #9ca3af;
+      color: var(--el-text-color-secondary);
     }
     span:last-child {
       font-weight: 500;

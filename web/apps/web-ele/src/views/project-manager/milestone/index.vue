@@ -120,6 +120,6 @@ onMounted(() => {
 
 <style scoped>
 .bg-card {
-  background-color: #fff;
+  background-color: var(--el-bg-color);
 }
 </style>

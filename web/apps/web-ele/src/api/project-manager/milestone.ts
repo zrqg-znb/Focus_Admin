@@ -21,3 +21,10 @@ export async function getMilestoneOverviewApi(params?: any) {
     params,
   });
 }
+
+// Alias for compatibility with form.vue
+export const getMilestoneBoardApi = getMilestoneOverviewApi;
+
+export async function updateMilestoneApi(projectId: string, data: any) {
+  return requestClient.put(`/api/project-manager/milestones/project/${projectId}`, data);
+}
