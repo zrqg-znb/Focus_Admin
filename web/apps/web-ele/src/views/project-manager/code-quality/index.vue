@@ -11,6 +11,7 @@ import { ElLink } from 'element-plus';
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import { getQualityOverviewApi } from '#/api/project-manager/code_quality';
 
+import MetricTooltip from '#/components/MetricTooltip/index.vue';
 import { useSearchFormSchema, useSummaryColumns } from './data';
 
 defineOptions({ name: 'CodeQualityDashboard' });
@@ -27,7 +28,7 @@ const [Grid, gridApi] = useVbenVxeGrid({
     submitOnChange: true,
   },
   gridOptions: {
-    columns: useSummaryColumns(onNameClick),
+    columns: useSummaryColumns(),
     height: 'auto',
     keepSource: true,
     pagerConfig: { enabled: true }, // Enable pager for manual pagination
@@ -87,6 +88,22 @@ const [Grid, gridApi] = useVbenVxeGrid({
         <ElLink type="primary" @click="onNameClick(row)">
           {{ row.project_name }}
         </ElLink>
+      </template>
+
+      <template #dangerous_func_header>
+        <MetricTooltip
+          title="危险函数"
+          definition="代码中被识别为 Block 级别的严重问题数量。"
+          rule="∑(各模块 Dangerous Function Count)"
+        />
+      </template>
+
+      <template #duplication_rate_header>
+        <MetricTooltip
+          title="平均重复率"
+          definition="代码库中重复代码块所占的比例。"
+          rule="AVG(各模块 Duplication Rate)"
+        />
       </template>
     </Grid>
   </Page>

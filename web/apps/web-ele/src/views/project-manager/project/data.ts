@@ -137,14 +137,22 @@ export function useColumns(
           onClick: onActionClick,
         },
         name: 'CellOperation',
-        options: ['edit', 'delete'],
-      },
+        options: (row: any) => {
+          const favoriteAction = {
+            code: 'favorite',
+            icon: row.is_favorited ? 'ep:star-filled' : 'ep:star',
+            type: row.is_favorited ? 'warning' : 'info',
+            title: row.is_favorited ? '取消收藏' : '收藏', // 鼠标悬停提示
+          };
+          return ['edit', favoriteAction, 'delete'];
+        },
+      } as any,
       field: 'operation',
       fixed: 'right',
       headerAlign: 'center',
       showOverflow: false,
       title: '操作',
-      minWidth: 120,
+      minWidth: 160,
     },
   ];
 }

@@ -14,6 +14,7 @@ export interface ProjectOut {
   enable_iteration: boolean;
   enable_quality: boolean;
   sys_create_datetime?: string;
+  is_favorited: boolean;
 }
 
 export interface ProjectCreatePayload {
@@ -84,4 +85,12 @@ export async function deleteProjectApi(id: string) {
 
 export async function getProjectApi(id: string) {
   return requestClient.get<ProjectOut>(`/api/project-manager/projects/${id}`);
+}
+
+export async function favoriteProjectApi(id: string) {
+  return requestClient.post<boolean>(`/api/project-manager/projects/${id}/favorite`);
+}
+
+export async function unfavoriteProjectApi(id: string) {
+  return requestClient.delete<boolean>(`/api/project-manager/projects/${id}/favorite`);
 }

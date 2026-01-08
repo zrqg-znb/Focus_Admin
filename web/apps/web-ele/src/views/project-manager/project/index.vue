@@ -15,6 +15,8 @@ import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import {
   deleteProjectApi,
   listProjectsApi,
+  favoriteProjectApi,
+  unfavoriteProjectApi,
 } from '#/api/project-manager/project';
 
 import { useColumns, useSearchFormSchema } from './data';
@@ -40,6 +42,19 @@ function onActionClick({ code, row }: OnActionClickParams<ProjectOut>) {
       ElMessage.success('删除成功');
       refreshGrid();
     });
+  }
+  if (code === 'favorite') {
+    if (row.is_favorited) {
+      unfavoriteProjectApi(row.id).then(() => {
+        ElMessage.success('已取消收藏');
+        refreshGrid();
+      });
+    } else {
+      favoriteProjectApi(row.id).then(() => {
+        ElMessage.success('收藏成功');
+        refreshGrid();
+      });
+    }
   }
 }
 

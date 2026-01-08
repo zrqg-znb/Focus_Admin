@@ -17,6 +17,9 @@ class Project(RootModel):
     design_id = models.CharField(max_length=255, null=True, blank=True, verbose_name="迭代中台配置 id")
     sub_teams = models.JSONField(default=list, null=True, blank=True, verbose_name="迭代责任团队")
     enable_quality = models.BooleanField(default=True, verbose_name="是否统计代码质量")
+    
+    # Favorites
+    favorited_by = models.ManyToManyField('core.User', related_name='favorite_projects', blank=True, verbose_name="收藏该项目的用户")
 
     class Meta:
         db_table = 'pm_project'

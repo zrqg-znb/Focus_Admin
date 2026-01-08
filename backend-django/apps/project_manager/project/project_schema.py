@@ -44,15 +44,25 @@ class ProjectFilterSchema(Schema):
 
 class ProjectOut(ModelSchema):
     managers_info: List[dict] = Field([], description="项目经理详情")
+    is_favorited: bool = Field(False, description="当前用户是否收藏")
     
     class Meta:
         model = Project
         fields = "__all__"
-        exclude = ['managers']
+        exclude = ['managers', 'favorited_by']
 
     @staticmethod
     def resolve_managers_info(obj):
         return [{"id": m.id, "name": m.name or m.username} for m in obj.managers.all()]
+
+    @staticmethod
+    def resolve_is_favorited(obj, context):
+        request = context.get('request')
+        if request and request.auth:
+            # 检查当前用户是否在 favorited_by 列表中
+            # 注意：这里可能产生 N+1 查询，最好在 QuerySet 中 prefetch 或 annotate
+            return obj.favorited_by.filter(id=request.auth.id).exists()
+        return False
 
     class Config:
         from_attributes = True

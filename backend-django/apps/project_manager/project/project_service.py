@@ -77,3 +77,13 @@ def delete_project(request, id: str):
 
 def get_project(request, id: str):
     return get_object_or_404(Project, id=id)
+
+def favorite_project(request, id: str):
+    project = get_object_or_404(Project, id=id)
+    project.favorited_by.add(request.auth)
+    return True
+
+def unfavorite_project(request, id: str):
+    project = get_object_or_404(Project, id=id)
+    project.favorited_by.remove(request.auth)
+    return True

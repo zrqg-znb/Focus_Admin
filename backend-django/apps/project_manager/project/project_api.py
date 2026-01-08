@@ -27,6 +27,14 @@ def delete_project(request, id: str):
 def get_project(request, id: str):
     return project_service.get_project(request, id)
 
+@router.post("/{id}/favorite", response=bool, summary="收藏项目")
+def favorite_project(request, id: str):
+    return project_service.favorite_project(request, id)
+
+@router.delete("/{id}/favorite", response=bool, summary="取消收藏项目")
+def unfavorite_project(request, id: str):
+    return project_service.unfavorite_project(request, id)
+
 @router.get("/", response=List[ProjectOut], summary="获取项目列表")
 @paginate(MyPagination)
 def list_projects(request, filters: ProjectFilterSchema = Query(...)):

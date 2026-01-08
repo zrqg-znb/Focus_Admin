@@ -122,8 +122,12 @@ setupVbenVxeTable({
             type: 'primary',
           },
         };
+
+        // 处理 options 为函数的情况
+        const resolvedOptions = isFunction(options) ? options(row) : options;
+        
         const operations: Array<Recordable<any>> = (
-          options || ['edit', 'delete']
+          resolvedOptions || ['edit', 'delete']
         )
           .map((opt) => {
             if (isString(opt)) {
@@ -159,12 +163,9 @@ setupVbenVxeTable({
 
         function renderBtn(opt: Recordable<any>, listen = true) {
           const { icon, text, code, ...btnProps } = opt;
-          const buttonType =
-            btnProps.type === 'danger'
-              ? 'danger'
-              : (btnProps.type === 'primary'
-                ? 'primary'
-                : 'default');
+          // 直接使用传入的 type，如果未定义则默认为 default (或由上层逻辑处理)
+          // Element Plus Button type: primary / success / warning / danger / info / text
+          const buttonType = btnProps.type || 'primary'; 
 
           const button = h(
             ElButton,
@@ -193,11 +194,14 @@ setupVbenVxeTable({
           );
 
           // 如果有图标，用 Tooltip 包装；否则直接返回按钮
-          if (icon) {
+          // 注意：如果传入了 title 属性，优先使用 title 作为 tooltip 内容，否则使用 text
+          const tooltipContent = opt.title || text;
+          
+          if (icon && tooltipContent) {
             return h(
               ElTooltip,
               {
-                content: text,
+                content: tooltipContent,
                 placement: 'top',
               },
               {

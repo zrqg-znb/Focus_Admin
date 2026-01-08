@@ -1,236 +1,115 @@
 <script lang="ts" setup>
-import type {
-  WorkbenchProjectItem,
-  WorkbenchQuickNavItem,
-  WorkbenchTodoItem,
-  WorkbenchTrendItem,
-} from '@vben/common-ui';
-
-import { ref } from 'vue';
-import { useRouter } from 'vue-router';
-
-import {
-  AnalysisChartCard,
-  WorkbenchHeader,
-  WorkbenchProject,
-  WorkbenchQuickNav,
-  WorkbenchTodo,
-  WorkbenchTrends,
-} from '@vben/common-ui';
-import { preferences } from '@vben/preferences';
+import { onMounted, ref } from 'vue';
+import { ElSelect, ElOption, ElSkeleton, ElSkeletonItem } from 'element-plus';
+import { WorkbenchHeader } from '@vben/common-ui';
 import { useUserStore } from '@vben/stores';
-import { openWindow } from '@vben/utils';
-
-import AnalyticsVisitsSource from '../analytics/analytics-visits-source.vue';
+import { preferences } from '@vben/preferences';
+import { 
+  getCoreMetrics, 
+  getFavoriteProjects, 
+  getProjectDistribution, 
+  getUpcomingMilestones,
+  type CodeQualitySummary,
+  type IterationSummary,
+  type PerformanceSummary,
+  type ProjectDistribution,
+  type UpcomingMilestone,
+  type FavoriteProjectDetail
+} from '#/api/dashboard';
+import ProjectPie from './components/ProjectPie.vue';
+import ProjectBar from './components/ProjectBar.vue';
+import MilestoneTable from './components/MilestoneTable.vue';
+import MilestoneTimeline from './components/MilestoneTimeline.vue';
 
 const userStore = useUserStore();
 
-// 这是一个示例数据，实际项目中需要根据实际情况进行调整
-// url 也可以是内部路由，在 navTo 方法中识别处理，进行内部跳转
-// 例如：url: /dashboard/workspace
-const projectItems: WorkbenchProjectItem[] = [
-  {
-    color: '',
-    content: '不要等待机会，而要创造机会。',
-    date: '2021-04-01',
-    group: '开源组',
-    icon: 'carbon:logo-github',
-    title: 'Github',
-    url: 'https://github.com',
-  },
-  {
-    color: '#3fb27f',
-    content: '现在的你决定将来的你。',
-    date: '2021-04-01',
-    group: '算法组',
-    icon: 'ion:logo-vue',
-    title: 'Vue',
-    url: 'https://vuejs.org',
-  },
-  {
-    color: '#e18525',
-    content: '没有什么才能比努力更重要。',
-    date: '2021-04-01',
-    group: '上班摸鱼',
-    icon: 'ion:logo-html5',
-    title: 'Html5',
-    url: 'https://developer.mozilla.org/zh-CN/docs/Web/HTML',
-  },
-  {
-    color: '#bf0c2c',
-    content: '热情和欲望可以突破一切难关。',
-    date: '2021-04-01',
-    group: 'UI',
-    icon: 'ion:logo-angular',
-    title: 'Angular',
-    url: 'https://angular.io',
-  },
-  {
-    color: '#00d8ff',
-    content: '健康的身体是实现目标的基石。',
-    date: '2021-04-01',
-    group: '技术牛',
-    icon: 'bx:bxl-react',
-    title: 'React',
-    url: 'https://reactjs.org',
-  },
-  {
-    color: '#EBD94E',
-    content: '路是走出来的，而不是空想出来的。',
-    date: '2021-04-01',
-    group: '架构组',
-    icon: 'ion:logo-javascript',
-    title: 'Js',
-    url: 'https://developer.mozilla.org/zh-CN/docs/Web/JavaScript',
-  },
-];
+// 独立的状态变量
+const coreMetrics = ref<{
+  code_quality: CodeQualitySummary;
+  iteration: IterationSummary;
+  performance: PerformanceSummary;
+} | null>(null);
+const favoriteProjects = ref<FavoriteProjectDetail[]>([]);
+const projectDistribution = ref<ProjectDistribution | null>(null);
+const upcomingMilestones = ref<UpcomingMilestone[]>([]);
 
-// 同样，这里的 url 也可以使用以 http 开头的外部链接
-const quickNavItems: WorkbenchQuickNavItem[] = [
-  {
-    color: '#1fdaca',
-    icon: 'ion:home-outline',
-    title: '首页',
-    url: '/',
-  },
-  {
-    color: '#bf0c2c',
-    icon: 'ion:grid-outline',
-    title: '仪表盘',
-    url: '/dashboard',
-  },
-  {
-    color: '#e18525',
-    icon: 'ion:layers-outline',
-    title: '组件',
-    url: '/demos/features/icons',
-  },
-  {
-    color: '#3fb27f',
-    icon: 'ion:settings-outline',
-    title: '系统管理',
-    url: '/demos/features/login-expired', // 这里的 URL 是示例，实际项目中需要根据实际情况进行调整
-  },
-  {
-    color: '#4daf1bc9',
-    icon: 'ion:key-outline',
-    title: '权限管理',
-    url: '/demos/access/page-control',
-  },
-  {
-    color: '#00d8ff',
-    icon: 'ion:bar-chart-outline',
-    title: '图表',
-    url: '/analytics',
-  },
-];
+// 独立的 Loading 状态
+const loadingCore = ref(true);
+const loadingFavorites = ref(true);
+const loadingDistribution = ref(true);
+const loadingMilestones = ref(true);
 
-const todoItems = ref<WorkbenchTodoItem[]>([
-  {
-    completed: false,
-    content: `审查最近提交到Git仓库的前端代码，确保代码质量和规范。`,
-    date: '2024-07-30 11:00:00',
-    title: '审查前端代码提交',
-  },
-  {
-    completed: true,
-    content: `检查并优化系统性能，降低CPU使用率。`,
-    date: '2024-07-30 11:00:00',
-    title: '系统性能优化',
-  },
-  {
-    completed: false,
-    content: `进行系统安全检查，确保没有安全漏洞或未授权的访问。 `,
-    date: '2024-07-30 11:00:00',
-    title: '安全检查',
-  },
-  {
-    completed: false,
-    content: `更新项目中的所有npm依赖包，确保使用最新版本。`,
-    date: '2024-07-30 11:00:00',
-    title: '更新项目依赖',
-  },
-  {
-    completed: false,
-    content: `修复用户报告的页面UI显示问题，确保在不同浏览器中显示一致。 `,
-    date: '2024-07-30 11:00:00',
-    title: '修复UI显示问题',
-  },
-]);
-const trendItems: WorkbenchTrendItem[] = [
-  {
-    avatar: 'svg:avatar-1',
-    content: `在 <a>开源组</a> 创建了项目 <a>Vue</a>`,
-    date: '刚刚',
-    title: '威廉',
-  },
-  {
-    avatar: 'svg:avatar-2',
-    content: `关注了 <a>威廉</a> `,
-    date: '1个小时前',
-    title: '艾文',
-  },
-  {
-    avatar: 'svg:avatar-3',
-    content: `发布了 <a>个人动态</a> `,
-    date: '1天前',
-    title: '克里斯',
-  },
-  {
-    avatar: 'svg:avatar-4',
-    content: `发表文章 <a>如何编写一个Vite插件</a> `,
-    date: '2天前',
-    title: 'Vben',
-  },
-  {
-    avatar: 'svg:avatar-1',
-    content: `回复了 <a>杰克</a> 的问题 <a>如何进行项目优化？</a>`,
-    date: '3天前',
-    title: '皮特',
-  },
-  {
-    avatar: 'svg:avatar-2',
-    content: `关闭了问题 <a>如何运行项目</a> `,
-    date: '1周前',
-    title: '杰克',
-  },
-  {
-    avatar: 'svg:avatar-3',
-    content: `发布了 <a>个人动态</a> `,
-    date: '1周前',
-    title: '威廉',
-  },
-  {
-    avatar: 'svg:avatar-4',
-    content: `推送了代码到 <a>Github</a>`,
-    date: '2021-04-01 20:00',
-    title: '威廉',
-  },
-  {
-    avatar: 'svg:avatar-4',
-    content: `发表文章 <a>如何编写使用 Admin Vben</a> `,
-    date: '2021-03-01 20:00',
-    title: 'Vben',
-  },
-];
+// QG 筛选
+const selectedQGs = ref<string[]>([]);
+const milestoneFiltering = ref(false); // 仅用于筛选时的 loading
+const filteredMilestones = ref<UpcomingMilestone[]>([]);
 
-const router = useRouter();
+const qgOptions = Array.from({ length: 8 }, (_, i) => ({
+  label: `QG${i + 1}`,
+  value: `QG${i + 1}`,
+}));
 
-// 这是一个示例方法，实际项目中需要根据实际情况进行调整
-// This is a sample method, adjust according to the actual project requirements
-function navTo(nav: WorkbenchProjectItem | WorkbenchQuickNavItem) {
-  if (nav.url?.startsWith('http')) {
-    openWindow(nav.url);
-    return;
-  }
-  if (nav.url?.startsWith('/')) {
-    router.push(nav.url).catch((error) => {
-      console.error('Navigation failed:', error);
-    });
+async function fetchMilestones(isFilter = false) {
+  if (isFilter) {
+    milestoneFiltering.value = true;
   } else {
-    console.warn(`Unknown URL for navigation item: ${nav.title} -> ${nav.url}`);
+    loadingMilestones.value = true;
+  }
+  
+  try {
+    const params = selectedQGs.value.length > 0 ? selectedQGs.value : undefined;
+    const data = await getUpcomingMilestones(params);
+    
+    if (isFilter) {
+      filteredMilestones.value = data;
+    } else {
+      upcomingMilestones.value = data;
+      filteredMilestones.value = data;
+    }
+  } catch (error) {
+    console.error('Failed to fetch milestones:', error);
+  } finally {
+    if (isFilter) {
+      milestoneFiltering.value = false;
+    } else {
+      loadingMilestones.value = false;
+    }
   }
 }
+
+function onQGChange() {
+  fetchMilestones(true);
+}
+
+onMounted(() => {
+  // 并发请求，互不阻塞
+  getCoreMetrics().then(data => {
+    coreMetrics.value = data;
+    loadingCore.value = false;
+  }).catch(e => {
+    console.error('Core metrics error', e);
+    loadingCore.value = false;
+  });
+
+  getFavoriteProjects().then(data => {
+    favoriteProjects.value = data;
+    loadingFavorites.value = false;
+  }).catch(e => {
+    console.error('Favorites error', e);
+    loadingFavorites.value = false;
+  });
+
+  getProjectDistribution().then(data => {
+    projectDistribution.value = data;
+    loadingDistribution.value = false;
+  }).catch(e => {
+    console.error('Distribution error', e);
+    loadingDistribution.value = false;
+  });
+
+  // Initial milestone load
+  fetchMilestones(false);
+});
 </script>
 
 <template>
@@ -241,26 +120,288 @@ function navTo(nav: WorkbenchProjectItem | WorkbenchQuickNavItem) {
       <template #title>
         早安, {{ userStore.userInfo?.realName }}, 开始您一天的工作吧！
       </template>
-      <template #description> 今日晴，20℃ - 32℃！ </template>
+      <template #description>
+        今日晴，20℃ - 32℃！这里是您的项目全景概览。
+      </template>
     </WorkbenchHeader>
 
-    <div class="mt-5 flex flex-col lg:flex-row">
-      <div class="mr-4 w-full lg:w-3/5">
-        <WorkbenchProject :items="projectItems" title="项目" @click="navTo" />
-        <WorkbenchTrends :items="trendItems" class="mt-5" title="最新动态" />
+    <div class="space-y-6 mt-5">
+      
+      <!-- 0. 收藏项目 (骨架屏 + 内容) -->
+      <!-- 始终保留占位，避免布局跳动，或者仅在 loading 或有数据时显示 -->
+      <!-- 这里策略：如果 loading，显示骨架；如果 loaded 且有数据，显示内容；否则隐藏 -->
+      <div v-if="loadingFavorites || favoriteProjects.length > 0" class="space-y-4">
+        <div class="flex items-center">
+          <div class="p-2 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg mr-3">
+             <span class="text-yellow-500 text-xl font-bold">★</span>
+          </div>
+          <h3 class="text-lg font-bold">我的关注项目</h3>
+        </div>
+        
+        <ElSkeleton :loading="loadingFavorites" animated>
+          <template #template>
+            <div class="bg-white dark:bg-[#151515] p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-800 mb-4">
+              <div class="flex justify-between mb-6">
+                 <div class="space-y-2">
+                    <ElSkeletonItem variant="h3" style="width: 200px" />
+                    <ElSkeletonItem variant="text" style="width: 300px" />
+                 </div>
+                 <div class="flex space-x-6">
+                    <ElSkeletonItem variant="text" style="width: 80px" />
+                    <ElSkeletonItem variant="text" style="width: 80px" />
+                    <ElSkeletonItem variant="text" style="width: 80px" />
+                 </div>
+              </div>
+              <ElSkeletonItem variant="rect" style="height: 60px; width: 100%" />
+            </div>
+          </template>
+          
+          <template #default>
+            <div class="grid grid-cols-1 gap-6">
+              <div 
+                v-for="project in favoriteProjects" 
+                :key="project.id"
+                class="bg-white dark:bg-[#151515] p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-800 hover:shadow-md transition-shadow"
+              >
+                <div class="flex justify-between items-start mb-6">
+                  <div>
+                    <h4 class="text-xl font-bold text-gray-900 dark:text-white mb-1">{{ project.name }}</h4>
+                    <div class="flex space-x-3 text-sm text-gray-500">
+                      <span>{{ project.domain }}</span>
+                      <span>|</span>
+                      <span>{{ project.type }}</span>
+                      <span>|</span>
+                      <span>负责人: {{ project.managers }}</span>
+                    </div>
+                  </div>
+                  <div class="flex space-x-6 text-right">
+                    <div>
+                      <div class="text-gray-500 text-xs uppercase">Code Health</div>
+                      <div class="text-xl font-bold" :class="project.health_score >= 80 ? 'text-green-500' : 'text-orange-500'">
+                        {{ project.health_score }}
+                      </div>
+                    </div>
+                    <div>
+                      <div class="text-gray-500 text-xs uppercase">LOC</div>
+                      <div class="text-xl font-bold">{{ project.loc.toLocaleString() }}</div>
+                    </div>
+                    <div>
+                      <div class="text-gray-500 text-xs uppercase">Iteration</div>
+                      <div class="text-xl font-bold">{{ project.iteration_progress }}%</div>
+                      <div class="text-xs text-gray-400">{{ project.current_iteration || 'No Active Iteration' }}</div>
+                    </div>
+                  </div>
+                </div>
+                
+                <div class="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
+                  <MilestoneTimeline :milestones="project.milestones" />
+                </div>
+              </div>
+            </div>
+          </template>
+        </ElSkeleton>
       </div>
-      <div class="w-full lg:w-2/5">
-        <WorkbenchQuickNav
-          :items="quickNavItems"
-          class="mt-5 lg:mt-0"
-          title="快捷导航"
-          @click="navTo"
-        />
-        <WorkbenchTodo :items="todoItems" class="mt-5" title="待办事项" />
-        <AnalysisChartCard class="mt-5" title="访问来源">
-          <AnalyticsVisitsSource />
-        </AnalysisChartCard>
+
+      <!-- 1. 核心指标卡片 (骨架屏 + 内容) -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <!-- 通用骨架模板 -->
+        <template v-if="loadingCore">
+           <div v-for="i in 3" :key="i" class="bg-white dark:bg-[#151515] p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-800">
+              <div class="flex items-center mb-6">
+                 <ElSkeletonItem variant="circle" style="width: 40px; height: 40px; margin-right: 12px" />
+                 <ElSkeletonItem variant="h3" style="width: 100px" />
+              </div>
+              <div class="space-y-4">
+                 <div v-for="j in 4" :key="j" class="flex justify-between">
+                    <ElSkeletonItem variant="text" style="width: 80px" />
+                    <ElSkeletonItem variant="text" style="width: 40px" />
+                 </div>
+              </div>
+           </div>
+        </template>
+        
+        <template v-else-if="coreMetrics">
+           <!-- 代码质量卡片 -->
+          <div class="bg-white dark:bg-[#151515] p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-800 hover:shadow-md transition-shadow">
+            <div class="flex items-center mb-6">
+              <div class="p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg mr-3">
+                <span class="text-blue-500 text-xl font-bold">Code</span>
+              </div>
+              <h3 class="text-lg font-bold">代码质量总结</h3>
+            </div>
+            
+            <div class="space-y-4">
+              <div class="flex justify-between items-center">
+                <span class="text-gray-500 dark:text-gray-400">接入项目数</span>
+                <span class="font-semibold text-lg">{{ coreMetrics.code_quality.total_projects }}</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-gray-500 dark:text-gray-400">总代码行</span>
+                <span class="font-mono font-medium">{{ coreMetrics.code_quality.total_loc.toLocaleString() }}</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-gray-500 dark:text-gray-400">阻断问题</span>
+                <span class="font-bold" :class="coreMetrics.code_quality.total_issues > 0 ? 'text-red-500' : 'text-gray-700'">
+                  {{ coreMetrics.code_quality.total_issues }}
+                </span>
+              </div>
+               <div class="flex justify-between items-center">
+                <span class="text-gray-500 dark:text-gray-400">平均重复率</span>
+                <span class="font-medium">{{ coreMetrics.code_quality.avg_duplication_rate }}%</span>
+              </div>
+               <div class="pt-4 mt-2 border-t border-gray-100 dark:border-gray-800 flex justify-between items-center">
+                <span class="text-gray-500 dark:text-gray-400">健康得分</span>
+                <span class="text-2xl font-bold text-green-600">{{ coreMetrics.code_quality.health_score }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 迭代健康卡片 -->
+          <div class="bg-white dark:bg-[#151515] p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-800 hover:shadow-md transition-shadow">
+            <div class="flex items-center mb-6">
+              <div class="p-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg mr-3">
+                 <span class="text-purple-500 text-xl font-bold">Iter</span>
+              </div>
+              <h3 class="text-lg font-bold">迭代健康总结</h3>
+            </div>
+            
+            <div class="space-y-4">
+              <div class="flex justify-between items-center">
+                <span class="text-gray-500 dark:text-gray-400">进行中迭代</span>
+                <span class="font-semibold text-lg">{{ coreMetrics.iteration.active_iterations }}</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-gray-500 dark:text-gray-400">延期迭代</span>
+                <span class="font-bold text-lg" :class="coreMetrics.iteration.delayed_iterations > 0 ? 'text-red-500' : 'text-green-500'">
+                  {{ coreMetrics.iteration.delayed_iterations }}
+                </span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-gray-500 dark:text-gray-400">总需求数</span>
+                <span class="font-medium">{{ coreMetrics.iteration.total_req_count }}</span>
+              </div>
+              <div class="mt-2">
+                 <div class="flex justify-between text-sm mb-2">
+                    <span class="text-gray-500 dark:text-gray-400">平均进度</span>
+                    <span class="font-bold">{{ coreMetrics.iteration.completion_rate }}%</span>
+                 </div>
+                 <div class="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-2">
+                    <div 
+                      class="bg-purple-500 h-2 rounded-full transition-all duration-500" 
+                      :style="{ width: coreMetrics.iteration.completion_rate + '%' }"
+                    ></div>
+                 </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 性能监控卡片 -->
+          <div class="bg-white dark:bg-[#151515] p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-800 hover:shadow-md transition-shadow">
+            <div class="flex items-center mb-6">
+              <div class="p-2 bg-orange-50 dark:bg-orange-900/20 rounded-lg mr-3">
+                 <span class="text-orange-500 text-xl font-bold">Perf</span>
+              </div>
+              <h3 class="text-lg font-bold">性能监控总结</h3>
+            </div>
+            
+            <div class="space-y-4">
+              <div class="flex justify-between items-center">
+                <span class="text-gray-500 dark:text-gray-400">监控指标总数</span>
+                <span class="font-semibold text-lg">{{ coreMetrics.performance.total_indicators }}</span>
+              </div>
+               <div class="flex justify-between items-center">
+                <span class="text-gray-500 dark:text-gray-400">今日异常指标</span>
+                <span class="font-bold text-xl text-red-500">{{ coreMetrics.performance.abnormal_count }}</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-gray-500 dark:text-gray-400">指标覆盖率</span>
+                <span class="font-medium">{{ coreMetrics.performance.coverage_rate }}%</span>
+              </div>
+              <div class="mt-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg text-sm">
+                <div class="flex items-center">
+                  <span class="w-2 h-2 rounded-full mr-2" :class="coreMetrics.performance.abnormal_count === 0 ? 'bg-green-500' : 'bg-red-500'"></span>
+                  <span class="text-gray-600 dark:text-gray-300">
+                    系统状态：
+                    <span v-if="coreMetrics.performance.abnormal_count === 0" class="text-green-600 dark:text-green-400 font-bold">运行正常</span>
+                    <span v-else class="text-red-500 font-bold">存在异常波动</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
       </div>
+
+      <!-- 2. 图表区域 (骨架屏 + 内容) -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <template v-if="loadingDistribution">
+           <div v-for="i in 2" :key="i" class="bg-white dark:bg-[#151515] p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-800 h-[350px]">
+              <ElSkeletonItem variant="h3" style="width: 150px; margin-bottom: 20px" />
+              <div class="flex justify-center items-center h-[250px]">
+                 <ElSkeletonItem variant="circle" style="width: 200px; height: 200px" />
+              </div>
+           </div>
+        </template>
+        <template v-else-if="projectDistribution">
+          <div class="bg-white dark:bg-[#151515] p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-800">
+            <h3 class="text-lg font-bold mb-4">项目领域分布</h3>
+            <ProjectPie :data="projectDistribution.by_domain" title="领域分布" />
+          </div>
+          <div class="bg-white dark:bg-[#151515] p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-800">
+            <h3 class="text-lg font-bold mb-4">项目类型分布</h3>
+            <ProjectBar :data="projectDistribution.by_type" title="类型分布" />
+          </div>
+        </template>
+      </div>
+
+      <!-- 3. 里程碑提醒 (骨架屏 + 内容) -->
+      <div class="bg-white dark:bg-[#151515] p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-800">
+        <div class="flex items-center justify-between mb-6">
+          <div class="flex items-center">
+            <div class="p-2 bg-green-50 dark:bg-green-900/20 rounded-lg mr-3">
+               <span class="text-green-500 text-xl font-bold">QG</span>
+            </div>
+            <h3 class="text-lg font-bold">即将到达的里程碑 (未来30天)</h3>
+          </div>
+          
+          <div class="w-64">
+            <ElSelect
+              v-model="selectedQGs"
+              multiple
+              placeholder="筛选 QG 节点"
+              style="width: 100%"
+              collapse-tags
+              clearable
+              @change="onQGChange"
+            >
+              <ElOption
+                v-for="item in qgOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </ElSelect>
+          </div>
+        </div>
+        
+        <ElSkeleton :loading="loadingMilestones" animated :count="3">
+          <template #template>
+             <div class="flex items-center justify-between py-4 border-b">
+                <ElSkeletonItem variant="text" style="width: 30%" />
+                <ElSkeletonItem variant="text" style="width: 20%" />
+                <ElSkeletonItem variant="text" style="width: 20%" />
+                <ElSkeletonItem variant="text" style="width: 10%" />
+             </div>
+          </template>
+          <template #default>
+             <div v-if="milestoneFiltering" class="py-10 text-center text-gray-500">
+                加载筛选数据中...
+             </div>
+             <MilestoneTable v-else :milestones="filteredMilestones" />
+          </template>
+        </ElSkeleton>
+      </div>
+
     </div>
   </div>
 </template>
