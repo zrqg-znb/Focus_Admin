@@ -65,3 +65,15 @@ class DashboardSummarySchema(Schema):
     project_distribution: ProjectDistribution
     upcoming_milestones: List[UpcomingMilestone]
     favorite_projects: List[FavoriteProjectDetail]
+
+class PaginatedProjectTimeline(Schema):
+    items: List[FavoriteProjectDetail]
+    total: int
+    page: int
+    page_size: int
+
+class PaginatedMilestones(Schema):
+    items: List[UpcomingMilestone]
+    total: int
+    page: int
+    page_size: int

@@ -12,6 +12,8 @@ from .schemas import (
     UpcomingMilestone,
     FavoriteProjectDetail,
     QGNode,
+    PaginatedProjectTimeline,
+    PaginatedMilestones,
     CoreMetricsSchema
 )
 
@@ -23,29 +25,40 @@ from apps.project_manager.milestone.milestone_model import Milestone
 
 router = Router(tags=["Dashboard"])
 
-@router.get("/milestones", response=List[UpcomingMilestone], summary="即将到达的里程碑")
-def get_upcoming_milestones(request, qg_types: List[str] = Query(None)):
+def get_projects_by_scope(request, scope: str = 'all'):
+    """
+    Helper to filter projects based on scope ('all' or 'favorites')
+    """
+    if scope == 'favorites' and request.auth:
+        return Project.objects.filter(favorited_by=request.auth, is_deleted=False)
+    return Project.objects.filter(is_deleted=False)
+
+@router.get("/milestones", response=PaginatedMilestones, summary="即将到达的里程碑")
+def get_upcoming_milestones(request, qg_types: List[str] = Query(None), scope: str = 'all', page: int = 1, page_size: int = 5):
     """
     获取即将到达的里程碑（默认未来30天）。
-    支持筛选特定的 QG 点，例如 qg_types=["QG1", "QG3"]
+    scope: 'all' | 'favorites'
     """
     today = timezone.now().date()
-    milestones = Milestone.objects.select_related('project').filter(project__is_deleted=False, project__is_closed=False)
+    
+    # Base filter
+    projects = get_projects_by_scope(request, scope)
+    # Filter milestones related to these projects
+    milestones = Milestone.objects.select_related('project').filter(
+        project__in=projects, 
+        project__is_closed=False
+    )
     
     # 确定要检查的字段
     if qg_types:
-        # 用户指定了 QG 类型，如 ["QG1", "QG3"]
-        # 转换为字段名 qg1_date, qg3_date
         target_fields = [f"{qg.lower()}_date" for qg in qg_types if qg.upper().startswith("QG")]
     else:
-        # 默认检查所有
         target_fields = [f'qg{i}_date' for i in range(1, 9)]
         
     result = []
     
     for ms in milestones:
         for field in target_fields:
-            # 安全获取属性，防止传入非法字段名导致报错
             if not hasattr(ms, field):
                 continue
                 
@@ -54,7 +67,6 @@ def get_upcoming_milestones(request, qg_types: List[str] = Query(None)):
                 delta = (qg_date - today).days
                 if 0 <= delta <= 30: # 未来 30 天内
                     managers = ",".join([m.name for m in ms.project.managers.all()])
-                    # 从字段名 qg1_date -> QG1
                     qg_name = field.replace('_date', '').upper()
                     
                     result.append(UpcomingMilestone(
@@ -65,22 +77,51 @@ def get_upcoming_milestones(request, qg_types: List[str] = Query(None)):
                         days_left=delta
                     ))
     
-    # 按剩余天数排序
     result.sort(key=lambda x: x.days_left)
-    return result
+    
+    # Pagination
+    total = len(result)
+    start = (page - 1) * page_size
+    end = start + page_size
+    paginated_result = result[start:end]
+    
+    return PaginatedMilestones(
+        items=paginated_result,
+        total=total,
+        page=page,
+        page_size=page_size
+    )
 
 @router.get("/core-metrics", response=CoreMetricsSchema, summary="核心指标数据")
-def get_core_metrics(request):
+def get_core_metrics(request, scope: str = 'all'):
+    """
+    获取核心指标数据
+    scope: 'all' | 'favorites'
+    """
+    target_projects = get_projects_by_scope(request, scope)
+    target_project_ids = target_projects.values_list('id', flat=True)
+
     # --- Code Quality ---
-    active_modules = CodeModule.objects.filter(is_deleted=False).values_list('id', flat=True)
-    total_projects = CodeModule.objects.filter(is_deleted=False).values('project').distinct().count()
+    # Filter modules belonging to target projects
+    active_modules = CodeModule.objects.filter(
+        project__in=target_project_ids, 
+        is_deleted=False
+    ).values_list('id', flat=True)
     
+    total_projects = target_projects.count() # Use target count instead of distinct from modules to include projects without modules? 
+    # Or keep consistent with module query:
+    # total_projects = CodeModule.objects.filter(project__in=target_project_ids, is_deleted=False).values('project').distinct().count()
+    # Let's stick to CodeModule based count for quality metrics context
+    quality_project_count = CodeModule.objects.filter(
+        project__in=target_project_ids, 
+        is_deleted=False
+    ).values('project').distinct().count()
+
     latest_metrics = []
     total_loc = 0
     total_dangerous = 0
     dup_rates = []
     
-    # 优化：可以考虑使用子查询或聚合来优化，这里先保持逻辑一致
     for mod_id in active_modules:
         metric = CodeMetric.objects.filter(module_id=mod_id).order_by('-record_date').first()
         if metric:
@@ -91,7 +132,7 @@ def get_core_metrics(request):
     avg_dup = sum(dup_rates) / len(dup_rates) if dup_rates else 0.0
     
     code_quality_summary = CodeQualitySummary(
-        total_projects=total_projects,
+        total_projects=quality_project_count,
         total_modules=len(active_modules),
         total_loc=total_loc,
         total_issues=total_dangerous,
@@ -100,7 +141,12 @@ def get_core_metrics(request):
     )
     
     # --- Iteration ---
-    current_iterations = Iteration.objects.filter(is_current=True, is_deleted=False)
+    # Filter iterations belonging to target projects
+    current_iterations = Iteration.objects.filter(
+        project__in=target_project_ids,
+        is_current=True, 
+        is_deleted=False
+    )
     active_count = current_iterations.count()
     today = timezone.now().date()
     delayed_count = current_iterations.filter(end_date__lt=today).count()
@@ -124,6 +170,10 @@ def get_core_metrics(request):
     )
     
     # --- Performance ---
+    # Performance is system-wide usually, but if we have project linkage we should filter.
+    # Assuming PerformanceIndicator is system-wide for now as it doesn't seem to link to project in current context snippet.
+    # If scope is 'favorites', maybe we just return system stats or 0? 
+    # For now, let's keep it system-wide (global) as performance usually refers to the platform itself.
     total_indicators = PerformanceIndicator.objects.count()
     last_data = PerformanceIndicatorData.objects.order_by('-date').first()
     abnormal_count = 0
@@ -149,8 +199,12 @@ def get_core_metrics(request):
     )
 
 @router.get("/project-distribution", response=ProjectDistribution, summary="项目分布数据")
-def get_project_distribution(request):
-    projects = Project.objects.filter(is_deleted=False)
+def get_project_distribution(request, scope: str = 'all'):
+    """
+    获取项目分布数据
+    scope: 'all' | 'favorites'
+    """
+    projects = get_projects_by_scope(request, scope)
     
     domain_counts = projects.values('domain').annotate(count=Count('id'))
     by_domain = [NameValue(name=item['domain'] or "未分类", value=item['count']) for item in domain_counts]
@@ -163,17 +217,32 @@ def get_project_distribution(request):
         by_type=by_type
     )
 
-@router.get("/favorites", response=List[FavoriteProjectDetail], summary="收藏项目详情")
-def get_favorite_projects(request):
+@router.get("/project-timelines", response=PaginatedProjectTimeline, summary="项目里程碑时间轴数据")
+def get_project_timelines(request, scope: str = 'all', page: int = 1, page_size: int = 5, name: str = None):
+    """
+    获取项目里程碑时间轴数据 (替代原 favorites 接口，支持 scope)
+    """
     user = request.auth
-    if not user:
-        return []
+    target_projects = get_projects_by_scope(request, scope)
+    
+    if name:
+        target_projects = target_projects.filter(name__icontains=name)
+
+    total = target_projects.count()
+    
+    # Sort and slice
+    # 如果是 'all' 模式，默认按更新时间倒序
+    target_projects = target_projects.order_by('-sys_update_datetime')
+    
+    # Apply pagination on QuerySet
+    start = (page - 1) * page_size
+    end = start + page_size
+    sliced_projects = target_projects[start:end]
         
-    favorites = Project.objects.filter(favorited_by=user, is_deleted=False)
     result = []
     today = timezone.now().date()
     
-    for proj in favorites:
+    for proj in sliced_projects:
         # 1. 基础数据
         managers = ",".join([m.name for m in proj.managers.all()])
         
@@ -232,14 +301,19 @@ def get_favorite_projects(request):
             milestones=milestones_list
         ))
         
-    return result
+    return PaginatedProjectTimeline(
+        items=result,
+        total=total,
+        page=page,
+        page_size=page_size
+    )
+
+@router.get("/favorites", response=List[FavoriteProjectDetail], summary="收藏项目详情 (Deprecated)")
+def get_favorite_projects(request):
+    return get_project_timelines(request, scope='favorites')
 
 @router.get("/summary", response=DashboardSummarySchema, summary="工作台聚合数据 (Deprecated)")
 def get_dashboard_summary(request):
-    # 为了保持向后兼容，或者作为全量接口保留
-    # 实际上内部可以复用上面的函数，但为了避免重复查询开销，这里先保留原样或直接调用上面的函数组合
-    # 考虑到性能，前端将切换到细粒度接口，此接口可能仅作备用
-    
     core = get_core_metrics(request)
     dist = get_project_distribution(request)
     favs = get_favorite_projects(request)

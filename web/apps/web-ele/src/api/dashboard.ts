@@ -74,6 +74,13 @@ export interface DashboardSummary {
   favorite_projects: FavoriteProjectDetail[];
 }
 
+export interface PaginatedResponse<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 /**
  * 获取工作台聚合数据 (Deprecated: use split APIs below)
  */
@@ -84,31 +91,53 @@ export function getDashboardSummary() {
 /**
  * 获取核心指标数据 (代码质量、迭代、性能)
  */
-export function getCoreMetrics() {
-  return requestClient.get<CoreMetrics>('/api/dashboard/core-metrics');
+export function getCoreMetrics(scope: 'all' | 'favorites' = 'all') {
+  return requestClient.get<CoreMetrics>('/api/dashboard/core-metrics', { params: { scope } });
 }
 
 /**
  * 获取项目分布数据
  */
-export function getProjectDistribution() {
-  return requestClient.get<ProjectDistribution>('/api/dashboard/project-distribution');
+export function getProjectDistribution(scope: 'all' | 'favorites' = 'all') {
+  return requestClient.get<ProjectDistribution>('/api/dashboard/project-distribution', { params: { scope } });
 }
 
 /**
- * 获取收藏项目详情
+ * 获取项目里程碑时间轴数据
+ */
+export function getProjectTimelines(scope: 'all' | 'favorites' = 'all', page = 1, pageSize = 5, name?: string) {
+  return requestClient.get<PaginatedResponse<FavoriteProjectDetail>>('/api/dashboard/project-timelines', {
+    params: {
+      scope,
+      page,
+      page_size: pageSize,
+      name
+    }
+  });
+}
+
+/**
+ * 获取收藏项目详情 (Legacy alias)
  */
 export function getFavoriteProjects() {
-  return requestClient.get<FavoriteProjectDetail[]>('/api/dashboard/favorites');
+  // Use default page 1, size 20 or similar for legacy support if needed, but return type changed.
+  // Assuming legacy callers can handle the new structure or we wrap it.
+  // For simplicity, let's just return the new structure.
+  return getProjectTimelines('favorites', 1, 100);
 }
 
 /**
  * 获取即将到达的里程碑（支持筛选）
  * @param qg_types 筛选的 QG 类型列表，如 ["QG1", "QG3"]
  */
-export function getUpcomingMilestones(qg_types?: string[]) {
-  return requestClient.get<UpcomingMilestone[]>('/api/dashboard/milestones', {
-    params: { qg_types },
+export function getUpcomingMilestones(qg_types?: string[], scope: 'all' | 'favorites' = 'all', page = 1, pageSize = 5) {
+  return requestClient.get<PaginatedResponse<UpcomingMilestone>>('/api/dashboard/milestones', {
+    params: {
+      qg_types,
+      scope,
+      page,
+      page_size: pageSize
+    },
     // 自定义参数序列化，解决 Django Ninja 不识别 array[] 格式的问题
     paramsSerializer: (params) => {
       const searchParams = new URLSearchParams();

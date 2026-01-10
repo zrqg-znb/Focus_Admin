@@ -24,12 +24,12 @@ const relativePosition = computed(() => {
   const today = new Date().getTime();
 
   // 1. 如果在第一个节点之前
-  if (today < new Date(milestones[0].date).getTime()) {
+  if (today < new Date(milestones[0]!.date).getTime()) {
     return 0;
   }
 
   // 2. 如果在最后一个节点之后
-  if (today > new Date(milestones[milestones.length - 1].date).getTime()) {
+  if (today > new Date(milestones[milestones.length - 1]!.date).getTime()) {
     return 100;
   }
 
@@ -38,8 +38,8 @@ const relativePosition = computed(() => {
   const segmentWidth = 100 / totalSegments;
 
   for (let i = 0; i < totalSegments; i++) {
-    const startNode = milestones[i];
-    const endNode = milestones[i+1];
+    const startNode = milestones[i]!;
+    const endNode = milestones[i+1]!;
 
     const startTime = new Date(startNode.date).getTime();
     const endTime = new Date(endNode.date).getTime();
@@ -75,7 +75,7 @@ const todayStr = new Date().toISOString().split('T')[0];
 </script>
 
 <template>
-  <div class="relative w-full h-20 flex items-center px-8 overflow-x-auto hide-scrollbar">
+  <div class="relative w-full h-24 flex items-center px-8 overflow-x-auto hide-scrollbar">
     <!-- 背景线 (绳子) -->
     <div class="absolute left-8 right-8 top-1/2 h-1 bg-gray-200 dark:bg-gray-700 -translate-y-1/2 rounded-full"></div>
 
@@ -93,7 +93,7 @@ const todayStr = new Date().toISOString().split('T')[0];
           <div class="text-[10px] font-bold text-blue-500 mb-1 bg-blue-50 dark:bg-blue-900/30 px-1 rounded whitespace-nowrap">
             Today
           </div>
-          <div class="w-0.5 h-8 bg-blue-500 dashed"></div>
+          <div class="h-8 border-l border-dashed border-blue-500"></div>
           <div class="w-2 h-2 rounded-full bg-blue-500 -mt-1"></div>
        </div>
     </div>
@@ -105,53 +105,39 @@ const todayStr = new Date().toISOString().split('T')[0];
         :key="index"
         class="relative flex flex-col items-center group cursor-pointer"
       >
-        <!-- 绳结圆点 -->
-        <div
-          class="w-4 h-4 rounded-full border-2 z-10 transition-all duration-300 group-hover:scale-125 bg-white dark:bg-[#151515]"
-          :class="getStatusColor(node.status)"
-        ></div>
+        <ElTooltip
+           effect="dark"
+           placement="top"
+        >
+           <template #content>
+              <div class="text-center">
+                 <div class="font-bold">{{ node.name }}</div>
+                 <div class="text-xs text-gray-300">{{ node.date }}</div>
+                 <div class="mt-1">
+                    <span
+                       class="px-1.5 py-0.5 rounded text-[10px]"
+                       :class="node.status === 'completed' ? 'bg-green-500 text-white' : (node.status === 'delayed' ? 'bg-red-500 text-white' : 'bg-gray-500 text-white')"
+                    >
+                       {{ node.status === 'completed' ? '已完成' : (node.status === 'delayed' ? '已延期' : '进行中') }}
+                    </span>
+                 </div>
+              </div>
+           </template>
 
-        <!-- Tooltip / Label -->
-        <div class="absolute top-6 flex flex-col items-center opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap bg-white dark:bg-gray-800 p-2 rounded shadow-lg border border-gray-100 dark:border-gray-700 z-50 pointer-events-none">
-          <span class="font-bold text-xs">{{ node.name }}</span>
-          <span class="text-xs text-gray-500">{{ node.date }}</span>
-          <span
-            class="text-[10px] mt-1 px-1.5 py-0.5 rounded-full text-white"
-            :class="getStatusColor(node.status)"
-          >
-            {{ node.status === 'completed' ? '已完成' : '进行中' }}
-          </span>
-        </div>
+           <!-- 绳结圆点 -->
+           <div
+             class="w-4 h-4 rounded-full border-2 z-10 transition-all duration-300 group-hover:scale-125 bg-white dark:bg-[#151515]"
+             :class="getStatusColor(node.status)"
+           ></div>
+        </ElTooltip>
 
         <!-- 简略标签 -->
-        <div class="absolute -top-6 text-xs font-bold text-gray-600 dark:text-gray-400">
+        <div class="absolute -top-6 text-xs font-bold text-gray-600 dark:text-gray-400 whitespace-nowrap">
           {{ node.name }}
         </div>
       </div>
-
-      <!-- '今天' 指示器 (嵌入在 Flex 布局中，使用 absolute 定位会更难对齐) -->
-      <!-- 替代方案：在背景层绘制一个游标，根据时间计算它相对于左侧的 % -->
     </div>
 
-    <!-- 修正后的今天指示器层 -->
-    <!-- 我们需要一个与 flex 容器完全重叠的层来放置 '今天' -->
-    <div class="absolute left-8 right-8 top-0 bottom-0 pointer-events-none">
-       <!--
-          为了让指示器准确显示在非线性时间轴（等间距节点）上，我们需要计算它在第几个区间。
-          例如：如果在 Node1(index 0) 和 Node2(index 1) 之间，且时间过了 50%，那位置就是 (0.5 / (N-1)) * 100%。
-       -->
-       <div
-          v-if="relativePosition >= 0"
-          class="absolute top-1/2 -translate-y-1/2 z-20 flex flex-col items-center -ml-3"
-          :style="{ left: `${relativePosition}%` }"
-       >
-          <div class="text-[10px] font-bold text-blue-500 mb-1 bg-blue-50 dark:bg-blue-900/30 px-1 rounded whitespace-nowrap">
-            Today
-          </div>
-          <div class="w-0.5 h-8 bg-blue-500 dashed"></div>
-          <div class="w-2 h-2 rounded-full bg-blue-500 -mt-1"></div>
-       </div>
-    </div>
   </div>
 </template>
 
