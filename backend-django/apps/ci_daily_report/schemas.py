@@ -6,6 +6,8 @@ class ProjectConfigSchema(Schema):
     id: int
     name: str
     description: Optional[str] = None
+    project_category: Optional[str] = None
+    project_owner: Optional[str] = None
     codecheck_id: Optional[str] = None
     binscope_id: Optional[str] = None
     cooddy_id: Optional[str] = None
@@ -14,12 +16,15 @@ class ProjectConfigSchema(Schema):
     build_project_id: Optional[str] = None
     codecov_id: Optional[str] = None
     fossbot_id: Optional[str] = None
+    is_subscribed: bool = False
     created_at: datetime
     updated_at: datetime
 
 class ProjectConfigCreateSchema(Schema):
     name: str
     description: Optional[str] = None
+    project_category: Optional[str] = None
+    project_owner: Optional[str] = None
     codecheck_id: Optional[str] = None
     binscope_id: Optional[str] = None
     cooddy_id: Optional[str] = None

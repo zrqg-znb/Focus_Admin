@@ -8,6 +8,10 @@ class ProjectConfig(models.Model):
     name = models.CharField(max_length=100, verbose_name="项目名称", unique=True)
     description = models.TextField(verbose_name="项目描述", blank=True, null=True)
     
+    # 新增字段
+    project_category = models.CharField(max_length=50, verbose_name="项目分类", blank=True, null=True)
+    project_owner = models.CharField(max_length=50, verbose_name="项目责任人", blank=True, null=True)
+    
     # 配置ID字段
     codecheck_id = models.CharField(max_length=100, verbose_name="CodeCheck ID", blank=True, null=True)
     binscope_id = models.CharField(max_length=100, verbose_name="BinScope ID", blank=True, null=True)
