@@ -23,7 +23,11 @@ import { useColumns, useSearchFormSchema } from './data';
 import Form from './modules/form.vue';
 import NewProjectDialog from './modules/NewProjectDialog.vue';
 
+import { useRouter } from 'vue-router';
+
 defineOptions({ name: 'ProjectList' });
+
+const router = useRouter();
 
 const [FormDrawer, formDrawerApi] = useVbenDrawer({
   connectedComponent: Form,
@@ -55,6 +59,9 @@ function onActionClick({ code, row }: OnActionClickParams<ProjectOut>) {
         refreshGrid();
       });
     }
+  }
+  if (code === 'report') {
+    router.push(`/project-manager/report/${row.id}`);
   }
 }
 

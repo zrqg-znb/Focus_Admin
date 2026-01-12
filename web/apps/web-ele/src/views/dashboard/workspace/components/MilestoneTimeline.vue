@@ -43,8 +43,6 @@ const timelineItems = computed(() => {
   
   return props.milestones.map((ms, index) => {
     // 均匀分布：0% 到 100%
-    // 例如 3个点：0%, 50%, 100%
-    // 4个点：0%, 33%, 66%, 100%
     const left = count > 1 ? (index / (count - 1)) * 100 : 50;
     
     return {
@@ -55,6 +53,49 @@ const timelineItems = computed(() => {
     };
   });
 });
+
+const todayPosition = computed(() => {
+  const count = props.milestones.length;
+  if (count < 2) return null;
+
+  const now = new Date().getTime();
+  // 确保按日期排序
+  const sortedMs = [...props.milestones].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  
+  // 找到第一个比现在大的节点
+  const nextIndex = sortedMs.findIndex(ms => new Date(ms.date).getTime() > now);
+  
+  let percent = 0;
+  
+  if (nextIndex === 0) {
+    // 在第一个节点之前
+    percent = 0;
+  } else if (nextIndex === -1) {
+    // 在最后一个节点之后
+    percent = 100;
+  } else {
+    // 在 prevIndex 和 nextIndex 之间
+    const prevIndex = nextIndex - 1;
+    const prevMs = sortedMs[prevIndex];
+    const nextMs = sortedMs[nextIndex];
+    
+    const prevTime = new Date(prevMs.date).getTime();
+    const nextTime = new Date(nextMs.date).getTime();
+    
+    // 避免除以零
+    if (nextTime === prevTime) {
+       percent = (prevIndex / (count - 1)) * 100;
+    } else {
+        const timeRatio = (now - prevTime) / (nextTime - prevTime);
+        const gapPercent = 100 / (count - 1);
+        const prevUiPos = (prevIndex / (count - 1)) * 100;
+        
+        percent = prevUiPos + (gapPercent * timeRatio);
+    }
+  }
+  
+  return `${Math.max(0, Math.min(100, percent))}%`;
+});
 </script>
 
 <template>
@@ -62,11 +103,23 @@ const timelineItems = computed(() => {
     <!-- 背景线 -->
     <div class="absolute left-4 right-4 top-[39px] h-0.5 bg-gray-200 dark:bg-gray-700"></div>
     
+    <!-- Today Flag (Global) -->
+    <div 
+       v-if="todayPosition" 
+       class="absolute top-2 z-20 flex flex-col items-center pointer-events-none"
+       :style="{ left: todayPosition, marginLeft: '-16px' }" 
+    >
+       <div class="px-1.5 py-0.5 bg-red-500 text-white text-[10px] rounded shadow-sm whitespace-nowrap">Today</div>
+       <div class="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[4px] border-t-red-500"></div>
+       <!-- Line down to timeline -->
+       <div class="w-0.5 h-6 bg-red-500/50 mt-1"></div>
+    </div>
+    
     <!-- 节点 -->
     <div 
       v-for="(item, index) in timelineItems" 
       :key="index"
-      class="absolute top-8 -ml-2 flex flex-col items-center"
+      class="absolute top-8 -ml-2 flex flex-col items-center group"
       :style="{ left: item.left }"
     >
       <ElTooltip

@@ -144,7 +144,13 @@ export function useColumns(
             type: row.is_favorited ? 'warning' : 'info',
             title: row.is_favorited ? '取消收藏' : '收藏', // 鼠标悬停提示
           };
-          return ['edit', favoriteAction, 'delete'];
+          const reportAction = {
+            code: 'report',
+            icon: 'lucide:file-bar-chart-2',
+            type: 'primary',
+            title: '查看详细报告',
+          };
+          return ['edit', favoriteAction, reportAction, 'delete'];
         },
       } as any,
       field: 'operation',
