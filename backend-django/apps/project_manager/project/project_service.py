@@ -7,6 +7,7 @@ from .project_schema import ProjectCreateSchema, ProjectUpdateSchema
 from apps.project_manager.milestone.milestone_model import Milestone
 from apps.project_manager.iteration.iteration_model import Iteration
 from apps.project_manager.iteration.iteration_sync import sync_project_iterations
+from apps.project_manager.dts.dts_service import sync_project_dts
 from datetime import date
 
 @transaction.atomic
@@ -31,6 +32,10 @@ def create_project(request, data: ProjectCreateSchema):
         if project.enable_iteration and project.design_id and project.sub_teams:
             sync_project_iterations(project)
             
+        # 联动同步问题单数据
+        if project.enable_dts and project.ws_id and project.di_teams:
+            sync_project_dts(project)
+
         return project
     except IntegrityError as e:
         if 'code' in str(e):
@@ -43,6 +48,8 @@ def update_project(request, id: str, data: ProjectUpdateSchema):
     old_enable_milestone = project.enable_milestone
     old_design_id = project.design_id
     old_sub_teams = project.sub_teams
+    old_ws_id = project.ws_id
+    old_di_teams = project.di_teams
     
     # 提取 M2M 字段
     data_dict = data.dict(exclude_unset=True)
@@ -69,6 +76,15 @@ def update_project(request, id: str, data: ProjectUpdateSchema):
         # 如果配置变更，或者之前没有迭代数据（初次开启），则触发同步
         if (config_changed or not project.iterations.exists()) and project.design_id and project.sub_teams:
             sync_project_iterations(project)
+
+    # 检查是否需要同步问题单数据
+    if project.enable_dts:
+        dts_config_changed = (
+            project.ws_id != old_ws_id or 
+            project.di_teams != old_di_teams
+        )
+        if (dts_config_changed or not project.dts_teams.exists()) and project.ws_id and project.di_teams:
+            sync_project_dts(project)
 
     return project
 

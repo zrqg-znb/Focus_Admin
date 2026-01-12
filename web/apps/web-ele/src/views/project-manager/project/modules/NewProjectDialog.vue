@@ -82,11 +82,20 @@ const enableQuality = ref(false);
 type ModuleRow = { module: string; oem_name: string; owner_ids: string[] };
 const moduleRows = ref<ModuleRow[]>([]);
 
+// 问题单 DTS
+const enableDts = ref(false);
+const dtsConfig = ref({
+  ws_id: '',
+  di_teams: [] as string[],
+});
+const newDiTeam = ref('');
+
 const steps = [
   { title: '基本信息', index: 1 },
   { title: '里程碑配置', index: 2 },
   { title: '健康迭代配置', index: 3 },
   { title: '代码质量配置', index: 4 },
+  { title: '问题单配置', index: 5 },
 ];
 
 const canGoNext = computed(() => {
@@ -101,6 +110,9 @@ const canGoNext = computed(() => {
   }
   if (currentStep.value === 3 && enableQuality.value) {
     return moduleRows.value.every((row) => row.oem_name && row.module);
+  }
+  if (currentStep.value === 4 && enableDts.value) {
+    return dtsConfig.value.ws_id && dtsConfig.value.di_teams.length > 0;
   }
   return true;
 });
@@ -125,6 +137,7 @@ function resetAll() {
   enableMilestone.value = false;
   enableIteration.value = false;
   enableQuality.value = false;
+  enableDts.value = false;
   milestoneForm.value = {
     qg1_date: '',
     qg2_date: '',
@@ -139,7 +152,12 @@ function resetAll() {
     design_id: '',
     sub_teams: [],
   };
+  dtsConfig.value = {
+    ws_id: '',
+    di_teams: [],
+  };
   newSubTeam.value = '';
+  newDiTeam.value = '';
   moduleRows.value = [];
 }
 
@@ -158,12 +176,15 @@ async function handleSave() {
       enable_milestone: enableMilestone.value,
       enable_iteration: enableIteration.value,
       enable_quality: enableQuality.value,
+      enable_dts: enableDts.value,
       design_id: enableIteration.value
         ? iterationConfig.value.design_id
         : undefined,
       sub_teams: enableIteration.value
         ? iterationConfig.value.sub_teams
         : undefined,
+      ws_id: enableDts.value ? dtsConfig.value.ws_id : undefined,
+      di_teams: enableDts.value ? dtsConfig.value.di_teams : undefined,
     };
     const project = await createProjectApi(payload);
     const projectId = project.id;
@@ -489,6 +510,70 @@ function handleClose() {
                 </ElTableColumn>
               </ElTable>
             </div>
+          </div>
+        </div>
+      </div>
+      <!-- 步骤5：问题单配置 -->
+      <div
+        v-show="currentStep === 4"
+        class="flex h-full items-center justify-center overflow-y-auto p-6"
+      >
+        <div class="align-self-center w-[700px] translate-y-[-20%]">
+          <div class="border-border bg-card rounded-lg border p-8 shadow-sm">
+            <ElForm label-width="120px">
+              <ElFormItem label="开启问题单统计">
+                <ElSwitch v-model="enableDts" />
+              </ElFormItem>
+              <div v-if="enableDts">
+                <ElFormItem label="中台配置ID">
+                  <ElInput
+                    v-model="dtsConfig.ws_id"
+                    placeholder="请输入数据中台配置 ID"
+                  />
+                </ElFormItem>
+                <ElFormItem label="问题单责任团队">
+                  <div class="mb-2 flex gap-2">
+                    <ElInput
+                      v-model="newDiTeam"
+                      placeholder="输入团队名称"
+                      @keyup.enter="
+                        () => {
+                          if (newDiTeam) {
+                            dtsConfig.di_teams.push(newDiTeam);
+                            newDiTeam = '';
+                          }
+                        }
+                      "
+                    />
+                    <ElButton
+                      @click="
+                        () => {
+                          if (newDiTeam) {
+                            dtsConfig.di_teams.push(newDiTeam);
+                            newDiTeam = '';
+                          }
+                        }
+                      "
+                    >
+                      添加
+                    </ElButton>
+                  </div>
+                  <div class="flex flex-wrap gap-2">
+                    <div
+                      v-for="(team, index) in dtsConfig.di_teams"
+                      :key="index"
+                      class="flex items-center gap-1 rounded bg-gray-100 px-2 py-1"
+                    >
+                      <span>{{ team }}</span>
+                      <span
+                        class="cursor-pointer font-bold text-red-500"
+                        @click="dtsConfig.di_teams.splice(index, 1)"
+                        >×</span>
+                    </div>
+                  </div>
+                </ElFormItem>
+              </div>
+            </ElForm>
           </div>
         </div>
       </div>

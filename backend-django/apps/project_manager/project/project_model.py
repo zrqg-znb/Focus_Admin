@@ -14,9 +14,18 @@ class Project(RootModel):
     # Switches
     enable_milestone = models.BooleanField(default=True, verbose_name="是否统计里程碑")
     enable_iteration = models.BooleanField(default=True, verbose_name="是否统计迭代数据")
-    design_id = models.CharField(max_length=255, null=True, blank=True, verbose_name="迭代中台配置 id")
     sub_teams = models.JSONField(default=list, null=True, blank=True, verbose_name="迭代责任团队")
-    enable_quality = models.BooleanField(default=True, verbose_name="是否统计代码质量")
+
+    # Quality
+    enable_quality = models.BooleanField(default=False, verbose_name="是否统计代码质量")
+    
+    # DTS (Issue Tracking)
+    enable_dts = models.BooleanField(default=False, verbose_name="是否统计问题单")
+    ws_id = models.CharField(max_length=255, null=True, blank=True, verbose_name="数据中台配置ID")
+    di_teams = models.JSONField(null=True, blank=True, verbose_name="问题单责任团队")
+
+    # Config Details
+    design_id = models.CharField(max_length=255, null=True, blank=True, verbose_name="设计平台ID")
     
     # Favorites
     favorited_by = models.ManyToManyField('core.User', related_name='favorite_projects', blank=True, verbose_name="收藏该项目的用户")

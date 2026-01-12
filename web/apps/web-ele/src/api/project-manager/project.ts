@@ -13,6 +13,9 @@ export interface ProjectOut {
   enable_milestone: boolean;
   enable_iteration: boolean;
   enable_quality: boolean;
+  enable_dts: boolean;
+  ws_id?: string;
+  di_teams?: string[];
   sys_create_datetime?: string;
   is_favorited: boolean;
 }
@@ -29,6 +32,9 @@ export interface ProjectCreatePayload {
   enable_milestone?: boolean;
   enable_iteration?: boolean;
   enable_quality?: boolean;
+  enable_dts?: boolean;
+  ws_id?: string;
+  di_teams?: string[];
 }
 
 export interface ProjectUpdatePayload {
@@ -43,6 +49,9 @@ export interface ProjectUpdatePayload {
   enable_milestone?: boolean;
   enable_iteration?: boolean;
   enable_quality?: boolean;
+  enable_dts?: boolean;
+  ws_id?: string;
+  di_teams?: string[];
 }
 
 export interface ProjectFilterParams {
@@ -54,6 +63,7 @@ export interface ProjectFilterParams {
   enable_milestone?: boolean;
   enable_iteration?: boolean;
   enable_quality?: boolean;
+  enable_dts?: boolean;
   page?: number;
   pageSize?: number;
 }

@@ -54,6 +54,12 @@ const iterationConfig = ref({
 const enableMilestone = ref(false);
 const enableIteration = ref(false);
 const enableQuality = ref(false);
+const enableDts = ref(false);
+const dtsConfig = ref({
+  ws_id: '',
+  di_teams: [] as string[],
+});
+const newDiTeam = ref('');
 const newSubTeam = ref('');
 type ModuleRow = {
   id?: string;
@@ -92,11 +98,17 @@ const [Drawer, drawerApi] = useVbenDrawer({
         enableMilestone.value = !!data.enable_milestone;
         enableIteration.value = !!data.enable_iteration;
         enableQuality.value = !!data.enable_quality;
+        enableDts.value = !!data.enable_dts;
 
         // 回填配置项（无条件回填，确保开关开启时有数据）
         iterationConfig.value.design_id = data.design_id || '';
         iterationConfig.value.sub_teams = Array.isArray(data.sub_teams)
           ? data.sub_teams
+          : [];
+
+        dtsConfig.value.ws_id = data.ws_id || '';
+        dtsConfig.value.di_teams = Array.isArray(data.di_teams)
+          ? data.di_teams
           : [];
 
         // 回填里程碑数据
@@ -144,6 +156,7 @@ const [Drawer, drawerApi] = useVbenDrawer({
       } else {
         formApi.resetForm();
         iterationConfig.value = { design_id: '', sub_teams: [] };
+        dtsConfig.value = { ws_id: '', di_teams: [] };
         moduleRows.value = [];
         milestoneForm.value = {
           qg1_date: '',
@@ -158,6 +171,7 @@ const [Drawer, drawerApi] = useVbenDrawer({
         enableMilestone.value = false;
         enableIteration.value = false;
         enableQuality.value = false;
+        enableDts.value = false;
       }
     }
   },
@@ -193,12 +207,15 @@ async function onSubmit() {
         enable_milestone: enableMilestone.value,
         enable_iteration: enableIteration.value,
         enable_quality: enableQuality.value,
+        enable_dts: enableDts.value,
         design_id: enableIteration.value
           ? iterationConfig.value.design_id
           : undefined,
         sub_teams: enableIteration.value
           ? iterationConfig.value.sub_teams
           : undefined,
+        ws_id: enableDts.value ? dtsConfig.value.ws_id : undefined,
+        di_teams: enableDts.value ? dtsConfig.value.di_teams : undefined,
       };
 
       if (formData.value?.id) {
@@ -445,6 +462,66 @@ async function onSubmit() {
           </ElTableColumn>
         </ElTable>
       </div>
+    </div>
+    <div class="mx-4 mt-6">
+      <div class="mb-2 flex items-center gap-2">
+        <div class="text-sm font-medium">问题单统计配置</div>
+        <ElSwitch
+          v-model="enableDts"
+          inline-prompt
+          active-text="开"
+          inactive-text="关"
+        />
+      </div>
+      <ElForm label-width="120px" v-if="enableDts">
+        <ElFormItem label="中台配置ID">
+          <ElInput
+            v-model="dtsConfig.ws_id"
+            placeholder="请输入数据中台配置 ID"
+          />
+        </ElFormItem>
+        <ElFormItem label="问题单责任团队">
+          <div class="mb-2 flex gap-2">
+            <ElInput
+              v-model="newDiTeam"
+              placeholder="输入团队名称"
+              @keyup.enter="
+                () => {
+                  if (newDiTeam) {
+                    dtsConfig.di_teams.push(newDiTeam);
+                    newDiTeam = '';
+                  }
+                }
+              "
+            />
+            <ElButton
+              @click="
+                () => {
+                  if (newDiTeam) {
+                    dtsConfig.di_teams.push(newDiTeam);
+                    newDiTeam = '';
+                  }
+                }
+              "
+            >
+              添加
+            </ElButton>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <div
+              v-for="(team, index) in dtsConfig.di_teams"
+              :key="index"
+              class="flex items-center gap-1 rounded bg-gray-100 px-2 py-1"
+            >
+              <span>{{ team }}</span>
+              <span
+                class="cursor-pointer font-bold text-red-500"
+                @click="dtsConfig.di_teams.splice(index, 1)"
+                >×</span>
+            </div>
+          </div>
+        </ElFormItem>
+      </ElForm>
     </div>
   </Drawer>
 </template>
