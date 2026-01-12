@@ -20,11 +20,18 @@ class PerformanceSummary(Schema):
     total_indicators: int
     abnormal_count: int
     coverage_rate: float
+
+class DtsSummary(Schema):
+    total_issues: int
+    critical_issues: int
+    avg_solve_time: float
+    solve_rate: float
     
 class CoreMetricsSchema(Schema):
     code_quality: CodeQualitySummary
     iteration: IterationSummary
     performance: PerformanceSummary
+    dts: DtsSummary
 
 class NameValue(Schema):
     name: str

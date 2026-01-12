@@ -22,10 +22,18 @@ export interface PerformanceSummary {
   coverage_rate: number;
 }
 
+export interface DtsSummary {
+  total_issues: number;
+  critical_issues: number;
+  avg_solve_time: number;
+  solve_rate: number;
+}
+
 export interface CoreMetrics {
   code_quality: CodeQualitySummary;
   iteration: IterationSummary;
   performance: PerformanceSummary;
+  dts: DtsSummary;
 }
 
 export interface NameValue {
