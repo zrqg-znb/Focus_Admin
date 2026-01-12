@@ -16,7 +16,6 @@ import {
   ElEmpty,
   ElButton
 } from 'element-plus';
-import { IconifyIcon } from '@vben/icons';
 import MilestoneTimeline from './MilestoneTimeline.vue';
 import DtsCard from './DtsCard.vue';
 

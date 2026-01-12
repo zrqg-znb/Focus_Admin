@@ -20,7 +20,6 @@ import {
   ElLink,
   ElEmpty
 } from 'element-plus';
-import { IconifyIcon } from '@vben/icons';
 import MilestoneTable from './MilestoneTable.vue';
 import MilestoneTimeline from './MilestoneTimeline.vue';
 import ProjectBar from './ProjectBar.vue';
