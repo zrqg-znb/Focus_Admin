@@ -30,10 +30,12 @@ router = Router(tags=["Dashboard"])
 def get_projects_by_scope(request, scope: str = 'all'):
     """
     Helper to filter projects based on scope ('all' or 'favorites')
+    Only returns active (not closed) projects for dashboard metrics generally.
     """
+    base_qs = Project.objects.filter(is_deleted=False, is_closed=False)
     if scope == 'favorites' and request.auth:
-        return Project.objects.filter(favorited_by=request.auth, is_deleted=False)
-    return Project.objects.filter(is_deleted=False)
+        return base_qs.filter(favorited_by=request.auth)
+    return base_qs
 
 @router.get("/milestones", response=PaginatedMilestones, summary="即将到达的里程碑")
 def get_upcoming_milestones(request, qg_types: List[str] = Query(None), scope: str = 'all', page: int = 1, page_size: int = 5):
@@ -43,12 +45,13 @@ def get_upcoming_milestones(request, qg_types: List[str] = Query(None), scope: s
     """
     today = timezone.now().date()
     
-    # Base filter
+    # Base filter: Active projects only
     projects = get_projects_by_scope(request, scope)
-    # Filter milestones related to these projects
+    
+    # Filter milestones related to these projects AND project must have milestones enabled
     milestones = Milestone.objects.select_related('project').filter(
-        project__in=projects, 
-        project__is_closed=False
+        project__in=projects,
+        project__enable_milestone=True  # Ensure milestone feature is enabled
     )
     
     # 确定要检查的字段
@@ -104,21 +107,18 @@ def get_core_metrics(request, scope: str = 'all'):
     target_project_ids = target_projects.values_list('id', flat=True)
 
     # --- Code Quality ---
-    # Filter modules belonging to target projects
+    # Filter modules belonging to target projects that have Quality enabled
+    quality_projects = target_projects.filter(enable_quality=True)
+    quality_project_ids = quality_projects.values_list('id', flat=True)
+    
     active_modules = CodeModule.objects.filter(
-        project__in=target_project_ids, 
+        project__in=quality_project_ids, 
         is_deleted=False
     ).values_list('id', flat=True)
     
-    total_projects = target_projects.count() # Use target count instead of distinct from modules to include projects without modules? 
-    # Or keep consistent with module query:
-    # total_projects = CodeModule.objects.filter(project__in=target_project_ids, is_deleted=False).values('project').distinct().count()
-    # Let's stick to CodeModule based count for quality metrics context
-    quality_project_count = CodeModule.objects.filter(
-        project__in=target_project_ids, 
-        is_deleted=False
-    ).values('project').distinct().count()
-
+    # Use quality enabled projects count
+    quality_project_count = quality_projects.count()
+    
     latest_metrics = []
     total_loc = 0
     total_dangerous = 0
@@ -143,9 +143,12 @@ def get_core_metrics(request, scope: str = 'all'):
     )
     
     # --- Iteration ---
-    # Filter iterations belonging to target projects
+    # Filter iterations belonging to target projects that have Iteration enabled
+    iter_projects = target_projects.filter(enable_iteration=True)
+    iter_project_ids = iter_projects.values_list('id', flat=True)
+    
     current_iterations = Iteration.objects.filter(
-        project__in=target_project_ids,
+        project__in=iter_project_ids,
         is_current=True, 
         is_deleted=False
     )
@@ -198,8 +201,9 @@ def get_core_metrics(request, scope: str = 'all'):
     # Aggregate data from DtsData for target projects
     # DtsData is linked to DtsTeam, which is linked to Project
     
-    # 1. Get teams for target projects
-    dts_teams = DtsTeam.objects.filter(project__in=target_project_ids)
+    # 1. Get teams for target projects that have DTS enabled
+    dts_projects = target_projects.filter(enable_dts=True)
+    dts_teams = DtsTeam.objects.filter(project__in=dts_projects)
     
     # 2. Get latest data for these teams
     # Since DtsData is daily, we can aggregate today's data or latest available.
@@ -272,9 +276,15 @@ def get_project_distribution(request, scope: str = 'all'):
 def get_project_timelines(request, scope: str = 'all', page: int = 1, page_size: int = 5, name: str = None):
     """
     获取项目里程碑时间轴数据 (替代原 favorites 接口，支持 scope)
+    注意：在 'all' 模式下，为了避免干扰，这里只返回开启了里程碑功能的项目。
+    如果需要查看所有项目进度，理论上应该去项目列表页。
+    但在工作台 '近期活跃项目进度' 卡片中，主要展示里程碑进度，因此过滤掉未开启里程碑的项目是合理的。
     """
     user = request.auth
     target_projects = get_projects_by_scope(request, scope)
+    
+    # 强制过滤：只显示开启了里程碑的项目
+    target_projects = target_projects.filter(enable_milestone=True)
     
     if name:
         target_projects = target_projects.filter(name__icontains=name)
