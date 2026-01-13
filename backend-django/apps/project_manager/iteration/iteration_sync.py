@@ -34,12 +34,70 @@ class DataPlatformMock:
         """
         模拟获取某个迭代期的指标数据
         """
+        # Generate random base numbers
+        sr_num = random.randint(10, 50)
+        dr_num = random.randint(20, 100)
+        ar_num = random.randint(15, 80)
+        
+        # Breakdown metrics
+        need_break_sr_num = int(sr_num * random.uniform(0.8, 1.0))
+        need_break_but_un_break_sr_num = int(need_break_sr_num * random.uniform(0.0, 0.3))
+        
+        need_break_dr_num = int(dr_num * random.uniform(0.8, 1.0))
+        need_break_but_un_break_dr_num = int(need_break_dr_num * random.uniform(0.0, 0.3))
+        
+        # Workload metrics
+        workload_man_dr_count = int(dr_num * random.uniform(0.9, 1.0))
+        workload_loc_dr_count = int(dr_num * random.uniform(0.9, 1.0))
+        workload_man_ar_count = int(ar_num * random.uniform(0.9, 1.0))
+        workload_loc_ar_count = int(ar_num * random.uniform(0.9, 1.0))
+        
+        # State metrics for AR (I -> D -> P -> C -> A)
+        remaining_ar = ar_num
+        a_state_ar_num = int(remaining_ar * random.uniform(0.1, 0.4))
+        remaining_ar -= a_state_ar_num
+        c_state_ar_num = int(remaining_ar * random.uniform(0.2, 0.5))
+        remaining_ar -= c_state_ar_num
+        p_state_ar_num = int(remaining_ar * random.uniform(0.3, 0.6))
+        remaining_ar -= p_state_ar_num
+        d_state_ar_num = int(remaining_ar * random.uniform(0.4, 0.7))
+        remaining_ar -= d_state_ar_num
+        i_state_ar_num = remaining_ar # Rest in Initial
+        
+        # State metrics for DR
+        remaining_dr = dr_num
+        a_state_dr_num = int(remaining_dr * random.uniform(0.1, 0.4))
+        remaining_dr -= a_state_dr_num
+        c_state_dr_num = int(remaining_dr * random.uniform(0.2, 0.5))
+        remaining_dr -= c_state_dr_num
+        p_state_dr_num = int(remaining_dr * random.uniform(0.3, 0.6))
+        remaining_dr -= p_state_dr_num
+        d_state_dr_num = int(remaining_dr * random.uniform(0.4, 0.7))
+        remaining_dr -= d_state_dr_num
+        i_state_dr_num = remaining_dr
+        
         return {
-            "req_decomposition_rate": round(random.uniform(0.8, 1.0), 2),
-            "req_drift_rate": round(random.uniform(0.0, 0.2), 2),
-            "req_completion_rate": round(random.uniform(0.5, 1.0), 2),
-            "req_workload": round(random.uniform(100, 500), 1),
-            "completed_workload": round(random.uniform(50, 450), 1)
+            "sr_num": sr_num,
+            "dr_num": dr_num,
+            "ar_num": ar_num,
+            "need_break_sr_num": need_break_sr_num,
+            "need_break_dr_num": need_break_dr_num,
+            "need_break_but_un_break_sr_num": need_break_but_un_break_sr_num,
+            "need_break_but_un_break_dr_num": need_break_but_un_break_dr_num,
+            "workload_man_dr_count": workload_man_dr_count,
+            "workload_loc_dr_count": workload_loc_dr_count,
+            "workload_man_ar_count": workload_man_ar_count,
+            "workload_loc_ar_count": workload_loc_ar_count,
+            "i_state_ar_num": i_state_ar_num,
+            "d_state_ar_num": d_state_ar_num,
+            "p_state_ar_num": p_state_ar_num,
+            "c_state_ar_num": c_state_ar_num,
+            "a_state_ar_num": a_state_ar_num,
+            "i_state_dr_num": i_state_dr_num,
+            "d_state_dr_num": d_state_dr_num,
+            "p_state_dr_num": p_state_dr_num,
+            "c_state_dr_num": c_state_dr_num,
+            "a_state_dr_num": a_state_dr_num,
         }
 
 def sync_project_iterations(project: Project):

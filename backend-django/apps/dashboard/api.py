@@ -162,8 +162,27 @@ def get_core_metrics(request, scope: str = 'all'):
     for iter_obj in current_iterations:
         metric = IterationMetric.objects.filter(iteration=iter_obj).order_by('-record_date').first()
         if metric:
-            total_req += metric.req_workload
-            completion_rates.append(metric.req_completion_rate)
+            # req_workload removed, use new calculation or just skip sum
+            # For iteration summary, total_req usually meant number of requirements or workload
+            # In new model we have sr_num, dr_num, ar_num.
+            # Let's sum up DR + AR + SR numbers as total requirements count for now.
+            total_req += (metric.sr_num + metric.dr_num + metric.ar_num)
+            
+            # Completion rate calculation also needs update based on new fields?
+            # Model doesn't have req_completion_rate anymore.
+            # Let's calculate based on Set C rate (Completed + Accepted) / Total
+            # For simplicity, let's average AR and DR Set C rates
+            
+            ar_total = metric.ar_num
+            dr_total = metric.dr_num
+            
+            ar_comp = (metric.c_state_ar_num + metric.a_state_ar_num) / ar_total if ar_total > 0 else 0.0
+            dr_comp = (metric.c_state_dr_num + metric.a_state_dr_num) / dr_total if dr_total > 0 else 0.0
+            
+            # Weighted average or simple average? Let's do simple average of the two rates
+            avg_rate = (ar_comp + dr_comp) / 2 if (ar_total > 0 and dr_total > 0) else (ar_comp if ar_total > 0 else dr_comp)
+            
+            completion_rates.append(avg_rate)
             
     avg_completion = sum(completion_rates) / len(completion_rates) if completion_rates else 0.0
     
@@ -171,7 +190,7 @@ def get_core_metrics(request, scope: str = 'all'):
         active_iterations=active_count,
         delayed_iterations=delayed_count,
         total_req_count=int(total_req),
-        completion_rate=round(avg_completion, 2)
+        completion_rate=round(avg_completion * 100, 1)
     )
     
     # --- Performance ---
@@ -329,7 +348,13 @@ def get_project_timelines(request, scope: str = 'all', page: int = 1, page_size:
         if current_iter:
             iter_metric = IterationMetric.objects.filter(iteration=current_iter).order_by('-record_date').first()
             if iter_metric:
-                iter_progress = iter_metric.req_completion_rate
+                # Calculate completion rate on the fly
+                ar_total = iter_metric.ar_num
+                dr_total = iter_metric.dr_num
+                ar_comp = (iter_metric.c_state_ar_num + iter_metric.a_state_ar_num) / ar_total if ar_total > 0 else 0.0
+                dr_comp = (iter_metric.c_state_dr_num + iter_metric.a_state_dr_num) / dr_total if dr_total > 0 else 0.0
+                iter_progress = (ar_comp + dr_comp) / 2 if (ar_total > 0 and dr_total > 0) else (ar_comp if ar_total > 0 else dr_comp)
+                iter_progress = round(iter_progress * 100, 1)
         
         # 4. 里程碑
         milestones_list = []

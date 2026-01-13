@@ -20,18 +20,27 @@ class IterationUpdateSchema(Schema):
     is_current: Optional[bool] = None
     is_healthy: Optional[bool] = None
 
-class IterationMetricSchema(Schema):
-    record_date: date
-    req_decomposition_rate: float
-    req_drift_rate: float
-    req_completion_rate: float
-    req_workload: float
-    completed_workload: float
-
-class IterationMetricOut(ModelSchema):
+class IterationMetricSchema(ModelSchema):
+    """Input Schema matching the raw data"""
     class Meta:
         model = IterationMetric
-        fields = "__all__"
+        exclude = ['id', 'iteration', 'sys_create_datetime', 'sys_update_datetime', 'sys_creator', 'sys_modifier', 'is_deleted', 'sort']
+
+class IterationMetricOut(Schema):
+    id: str
+    iteration_id: str
+    record_date: date
+
+    sr_num: int = 0
+    dr_num: int = 0
+    ar_num: int = 0
+
+    sr_breakdown_rate: float = 0.0
+    dr_breakdown_rate: float = 0.0
+    ar_set_a_rate: float = 0.0
+    dr_set_a_rate: float = 0.0
+    ar_set_c_rate: float = 0.0
+    dr_set_c_rate: float = 0.0
 
 class IterationOut(ModelSchema):
     project_id: str
@@ -57,8 +66,16 @@ class IterationDashboardSchema(Schema):
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     is_healthy: bool = True
-    req_decomposition_rate: float = 0.0
-    req_drift_rate: float = 0.0
-    req_completion_rate: float = 0.0
-    req_workload: float = 0.0
-    completed_workload: float = 0.0
+    
+    # Calculated Metrics
+    sr_breakdown_rate: float = 0.0
+    dr_breakdown_rate: float = 0.0
+    ar_set_a_rate: float = 0.0
+    dr_set_a_rate: float = 0.0
+    ar_set_c_rate: float = 0.0
+    dr_set_c_rate: float = 0.0
+    
+    # Raw counts for context if needed (optional)
+    sr_num: int = 0
+    dr_num: int = 0
+    ar_num: int = 0

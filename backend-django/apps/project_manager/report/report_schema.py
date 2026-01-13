@@ -7,6 +7,7 @@ from apps.dashboard.schemas import (
     DtsSummary,
     QGNode
 )
+from apps.project_manager.code_quality.code_quality_schema import ModuleQualityDetailSchema
 
 class RadarIndicator(Schema):
     name: str
@@ -21,6 +22,30 @@ class DtsTrendItem(Schema):
     suggestion: int
     solve_rate: float
     critical_solve_rate: float
+
+class DtsTeamDiItem(Schema):
+    team_name: str
+    di: float
+    target_di: Optional[float] = None
+
+class DtsTeamDiSeries(Schema):
+    team_name: str
+    values: List[Optional[float]]
+
+class DtsTeamDiTrend(Schema):
+    dates: List[str]
+    series: List[DtsTeamDiSeries]
+
+class IterationDetailMetrics(Schema):
+    sr_num: int = 0
+    dr_num: int = 0
+    ar_num: int = 0
+    sr_breakdown_rate: float = 0.0
+    dr_breakdown_rate: float = 0.0
+    ar_set_a_rate: float = 0.0
+    dr_set_a_rate: float = 0.0
+    ar_set_c_rate: float = 0.0
+    dr_set_c_rate: float = 0.0
 
 class ProjectReportSchema(Schema):
     project_id: str
@@ -37,8 +62,12 @@ class ProjectReportSchema(Schema):
     
     # 3. DTS Trend (Last 7 days)
     dts_trend: List[DtsTrendItem]
+    dts_team_di: Optional[List[DtsTeamDiItem]] = None
+    dts_team_di_trend: Optional[DtsTeamDiTrend] = None
     
     # 4. Modules Data
     code_quality: Optional[CodeQualitySummary]
+    code_quality_details: Optional[List[ModuleQualityDetailSchema]] = None
     iteration: Optional[IterationSummary]
+    iteration_detail: Optional[IterationDetailMetrics] = None
     dts_summary: Optional[DtsSummary]

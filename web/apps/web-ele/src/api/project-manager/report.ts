@@ -22,6 +22,34 @@ export interface DtsTrendItem {
   critical_solve_rate: number;
 }
 
+export interface DtsTeamDiItem {
+  team_name: string;
+  di: number;
+  target_di?: number | null;
+}
+
+export interface DtsTeamDiSeries {
+  team_name: string;
+  values: Array<number | null>;
+}
+
+export interface DtsTeamDiTrend {
+  dates: string[];
+  series: DtsTeamDiSeries[];
+}
+
+export interface IterationDetailMetrics {
+  sr_num: number;
+  dr_num: number;
+  ar_num: number;
+  sr_breakdown_rate: number;
+  dr_breakdown_rate: number;
+  ar_set_a_rate: number;
+  dr_set_a_rate: number;
+  ar_set_c_rate: number;
+  dr_set_c_rate: number;
+}
+
 export interface CodeQualitySummary {
   total_projects: number;
   total_modules: number;
@@ -29,6 +57,20 @@ export interface CodeQualitySummary {
   total_issues: number;
   avg_duplication_rate: number;
   health_score: number;
+}
+
+export interface CodeQualityModuleDetail {
+  id: string;
+  oem_name: string;
+  module: string;
+  owner_names: string[];
+  owner_ids: string[];
+  record_date?: string | null;
+  loc: number;
+  function_count: number;
+  dangerous_func_count: number;
+  duplication_rate: number;
+  is_clean_code: boolean;
 }
 
 export interface IterationSummary {
@@ -54,8 +96,12 @@ export interface ProjectReport {
   radar_data: RadarIndicator[];
   milestones: QGNode[];
   dts_trend: DtsTrendItem[];
+  dts_team_di?: DtsTeamDiItem[] | null;
+  dts_team_di_trend?: DtsTeamDiTrend | null;
   code_quality: CodeQualitySummary | null;
+  code_quality_details?: CodeQualityModuleDetail[] | null;
   iteration: IterationSummary | null;
+  iteration_detail?: IterationDetailMetrics | null;
   dts_summary: DtsSummary | null;
 }
 

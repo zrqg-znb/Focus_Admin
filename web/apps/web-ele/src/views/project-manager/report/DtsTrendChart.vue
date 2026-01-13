@@ -1,17 +1,20 @@
 <script lang="ts" setup>
-import type { DtsTrendItem } from '#/api/project-manager/report';
+import type { DtsTeamDiTrend, DtsTrendItem } from '#/api/project-manager/report';
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 import type { EchartsUIType } from '@vben/plugins/echarts';
 import { ref, watch } from 'vue';
 
 const props = defineProps<{
   trendData: DtsTrendItem[];
+  diTrend?: DtsTeamDiTrend | null;
 }>();
 
 const chartRef = ref<EchartsUIType>();
 const rateChartRef = ref<EchartsUIType>();
+const diChartRef = ref<EchartsUIType>();
 const { renderEcharts: setTrendOptions } = useEcharts(chartRef);
 const { renderEcharts: setRateOptions } = useEcharts(rateChartRef);
+const { renderEcharts: setDiOptions } = useEcharts(diChartRef);
 
 watch(
   () => props.trendData,
@@ -97,10 +100,37 @@ watch(
   },
   { immediate: true }
 );
+
+watch(
+  () => props.diTrend,
+  () => {
+    if (!props.diTrend || !props.diTrend.dates?.length) return;
+    const dates = props.diTrend.dates;
+    const series = (props.diTrend.series || []).map((s) => ({
+      name: s.team_name,
+      type: 'line',
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 6,
+      data: s.values,
+      connectNulls: false,
+    }));
+
+    setDiOptions({
+      tooltip: { trigger: 'axis' },
+      legend: { type: 'scroll', bottom: 0 },
+      grid: { left: '3%', right: '4%', bottom: '12%', containLabel: true },
+      xAxis: { type: 'category', boundaryGap: false, data: dates },
+      yAxis: { type: 'value' },
+      series,
+    });
+  },
+  { immediate: true }
+);
 </script>
 
 <template>
-  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
     <!-- Issue Trend -->
     <div class="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-[#151515]">
       <h3 class="mb-4 text-lg font-bold">近七天问题单趋势</h3>
@@ -114,6 +144,20 @@ watch(
       <h3 class="mb-4 text-lg font-bold">问题单解决率趋势</h3>
       <div class="h-[300px] w-full">
          <EchartsUI ref="rateChartRef" />
+      </div>
+    </div>
+
+    <div class="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-[#151515]">
+      <div class="mb-4 flex items-center justify-between">
+        <h3 class="text-lg font-bold">各团队 DI</h3>
+        <span class="text-xs text-gray-400">近七天</span>
+      </div>
+
+      <div v-if="props.diTrend && props.diTrend.series && props.diTrend.series.length" class="h-[300px] w-full">
+        <EchartsUI ref="diChartRef" />
+      </div>
+      <div v-else class="h-[300px] flex items-center justify-center text-sm text-gray-400">
+        暂无团队 DI 数据
       </div>
     </div>
   </div>

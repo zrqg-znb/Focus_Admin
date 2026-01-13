@@ -2,7 +2,7 @@ from django.db import transaction
 from common import fu_crud
 from apps.project_manager.project.project_model import Project
 from .iteration_model import Iteration, IterationMetric
-from .iteration_schema import IterationCreateSchema, IterationMetricSchema, IterationDetailSchema, IterationDashboardSchema
+from .iteration_schema import IterationCreateSchema, IterationMetricSchema, IterationDetailSchema, IterationDashboardSchema, IterationMetricOut
 from .iteration_sync import sync_project_iterations
 
 @transaction.atomic
@@ -17,6 +17,46 @@ def create_iteration(request, data: IterationCreateSchema):
         ).update(is_current=False)
         
     return fu_crud.create(request, data_dict, Iteration)
+
+def _calculate_rates(metric: IterationMetric) -> dict:
+    if not metric:
+        return {}
+    
+    # SR Decomposition Rate
+    sr_total = metric.need_break_sr_num
+    sr_unbroken = metric.need_break_but_un_break_sr_num
+    sr_breakdown_rate = (sr_total - sr_unbroken) / sr_total if sr_total > 0 else 0.0
+    
+    # DR Decomposition Rate
+    dr_total = metric.need_break_dr_num
+    dr_unbroken = metric.need_break_but_un_break_dr_num
+    dr_breakdown_rate = (dr_total - dr_unbroken) / dr_total if dr_total > 0 else 0.0
+    
+    # AR Set A Rate
+    ar_total = metric.ar_num
+    ar_set_a_rate = metric.a_state_ar_num / ar_total if ar_total > 0 else 0.0
+    
+    # DR Set A Rate
+    dr_total = metric.dr_num
+    dr_set_a_rate = metric.a_state_dr_num / dr_total if dr_total > 0 else 0.0
+    
+    # AR Set C Rate (C + A)
+    ar_set_c_rate = (metric.c_state_ar_num + metric.a_state_ar_num) / ar_total if ar_total > 0 else 0.0
+    
+    # DR Set C Rate (C + A)
+    dr_set_c_rate = (metric.c_state_dr_num + metric.a_state_dr_num) / dr_total if dr_total > 0 else 0.0
+    
+    return {
+        "sr_breakdown_rate": sr_breakdown_rate,
+        "dr_breakdown_rate": dr_breakdown_rate,
+        "ar_set_a_rate": ar_set_a_rate,
+        "dr_set_a_rate": dr_set_a_rate,
+        "ar_set_c_rate": ar_set_c_rate,
+        "dr_set_c_rate": dr_set_c_rate,
+        "sr_num": metric.sr_num,
+        "dr_num": metric.dr_num,
+        "ar_num": metric.ar_num,
+    }
 
 def get_iteration_dashboard():
     projects = Project.objects.filter(
@@ -55,13 +95,8 @@ def get_iteration_dashboard():
             ).order_by('-record_date').first()
             
             if latest_metric:
-                dashboard_data.update({
-                    "req_decomposition_rate": latest_metric.req_decomposition_rate,
-                    "req_drift_rate": latest_metric.req_drift_rate,
-                    "req_completion_rate": latest_metric.req_completion_rate,
-                    "req_workload": latest_metric.req_workload,
-                    "completed_workload": latest_metric.completed_workload,
-                })
+                rates = _calculate_rates(latest_metric)
+                dashboard_data.update(rates)
         
         result.append(IterationDashboardSchema(
             project_id=str(dashboard_data['project_id']),
@@ -74,11 +109,15 @@ def get_iteration_dashboard():
             start_date=dashboard_data.get('start_date'),
             end_date=dashboard_data.get('end_date'),
             is_healthy=dashboard_data.get('is_healthy', True),
-            req_decomposition_rate=dashboard_data.get('req_decomposition_rate', 0.0),
-            req_drift_rate=dashboard_data.get('req_drift_rate', 0.0),
-            req_completion_rate=dashboard_data.get('req_completion_rate', 0.0),
-            req_workload=dashboard_data.get('req_workload', 0.0),
-            completed_workload=dashboard_data.get('completed_workload', 0.0)
+            sr_breakdown_rate=dashboard_data.get('sr_breakdown_rate', 0.0),
+            dr_breakdown_rate=dashboard_data.get('dr_breakdown_rate', 0.0),
+            ar_set_a_rate=dashboard_data.get('ar_set_a_rate', 0.0),
+            dr_set_a_rate=dashboard_data.get('dr_set_a_rate', 0.0),
+            ar_set_c_rate=dashboard_data.get('ar_set_c_rate', 0.0),
+            dr_set_c_rate=dashboard_data.get('dr_set_c_rate', 0.0),
+            sr_num=dashboard_data.get('sr_num', 0),
+            dr_num=dashboard_data.get('dr_num', 0),
+            ar_num=dashboard_data.get('ar_num', 0),
         ))
         
     return result
@@ -103,7 +142,22 @@ def get_project_iterations(project_id: str):
         
         detail = IterationDetailSchema.from_orm(iteration)
         if latest_metric:
-            detail.latest_metric = latest_metric
+            rates = _calculate_rates(latest_metric)
+            detail.latest_metric = IterationMetricOut(
+                id=str(latest_metric.id),
+                iteration_id=str(latest_metric.iteration_id),
+                record_date=latest_metric.record_date,
+                sr_num=latest_metric.sr_num,
+                dr_num=latest_metric.dr_num,
+                ar_num=latest_metric.ar_num,
+                sr_breakdown_rate=rates.get("sr_breakdown_rate", 0.0),
+                dr_breakdown_rate=rates.get("dr_breakdown_rate", 0.0),
+                ar_set_a_rate=rates.get("ar_set_a_rate", 0.0),
+                dr_set_a_rate=rates.get("dr_set_a_rate", 0.0),
+                ar_set_c_rate=rates.get("ar_set_c_rate", 0.0),
+                dr_set_c_rate=rates.get("dr_set_c_rate", 0.0),
+            )
+            
         result.append(detail)
         
     return result

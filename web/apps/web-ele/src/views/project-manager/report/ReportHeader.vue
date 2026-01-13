@@ -80,14 +80,14 @@ watch(
 
 <template>
   <div class="h-full rounded-2xl border p-6 transition-all shadow-sm" :class="bgColor">
-    <div class="flex h-full items-center justify-between">
+    <div class="flex h-full items-center justify-center gap-10">
       <!-- Radar Chart -->
       <div class="h-64 w-64 flex-shrink-0">
          <EchartsUI ref="chartRef" />
       </div>
       
       <!-- Text Description -->
-      <div class="flex-1 pl-8">
+      <div class="flex w-[320px] flex-col items-center text-center">
         <h2 class="text-lg font-medium text-gray-500 mb-2">项目健康度</h2>
         <div class="text-5xl font-bold mb-4" :class="scoreColor">
           {{ healthScore }}
@@ -95,18 +95,18 @@ watch(
         </div>
         
         <div class="space-y-3">
-           <div class="flex items-center gap-2" v-if="healthLevel === 'healthy'">
-              <div class="w-2 h-2 rounded-full bg-green-500"></div>
-              <span class="text-gray-700 dark:text-gray-300">项目运行良好，各项指标正常。</span>
-           </div>
-           <div class="flex items-center gap-2" v-if="healthLevel === 'warning'">
-              <div class="w-2 h-2 rounded-full bg-orange-500"></div>
-              <span class="text-gray-700 dark:text-gray-300">项目存在潜在风险，请关注警告指标。</span>
-           </div>
-           <div class="flex items-center gap-2" v-if="healthLevel === 'error'">
-              <div class="w-2 h-2 rounded-full bg-red-500"></div>
-              <span class="text-gray-700 dark:text-gray-300">项目处于高风险状态，建议立即介入。</span>
-           </div>
+          <div class="flex items-center justify-center gap-2" v-if="healthLevel === 'healthy'">
+            <div class="h-2 w-2 rounded-full bg-green-500"></div>
+            <span class="text-gray-700 dark:text-gray-300">项目运行良好，各项指标正常。</span>
+          </div>
+          <div class="flex items-center justify-center gap-2" v-if="healthLevel === 'warning'">
+            <div class="h-2 w-2 rounded-full bg-orange-500"></div>
+            <span class="text-gray-700 dark:text-gray-300">项目存在潜在风险，请关注警告指标。</span>
+          </div>
+          <div class="flex items-center justify-center gap-2" v-if="healthLevel === 'error'">
+            <div class="h-2 w-2 rounded-full bg-red-500"></div>
+            <span class="text-gray-700 dark:text-gray-300">项目处于高风险状态，建议立即介入。</span>
+          </div>
         </div>
       </div>
     </div>

@@ -10,6 +10,10 @@ export function useSearchFormSchema(): VbenFormSchema[] {
   ];
 }
 
+const formatRate = ({ cellValue }: { cellValue: number }) => {
+  return cellValue !== undefined && cellValue !== null ? `${(cellValue * 100).toFixed(1)}%` : '-';
+};
+
 export function useDashboardColumns(
   onNameClick: (row: IterationDashboardItem) => void,
 ): VxeTableGridOptions<IterationDashboardItem>['columns'] {
@@ -19,13 +23,11 @@ export function useDashboardColumns(
       title: '项目名',
       minWidth: 160,
       slots: { default: 'name_slot' },
+      fixed: 'left',
     },
-    { field: 'project_domain', title: '领域', minWidth: 120 },
-    { field: 'project_type', title: '类型', minWidth: 120 },
-    { field: 'project_managers', title: '项目经理', minWidth: 150 },
-    { field: 'current_iteration_name', title: '当前迭代', minWidth: 150 },
-    { field: 'start_date', title: '开始时间', minWidth: 120 },
-    { field: 'end_date', title: '结束时间', minWidth: 120 },
+    { field: 'project_domain', title: '领域', minWidth: 100 },
+    { field: 'project_type', title: '类型', minWidth: 100 },
+    { field: 'current_iteration_name', title: '当前迭代', minWidth: 140 },
     {
       field: 'is_healthy',
       title: '健康状态',
@@ -38,15 +40,35 @@ export function useDashboardColumns(
         ],
       },
     },
-    { field: 'req_decomposition_rate', title: '需求分解率', minWidth: 100, formatter: ({ cellValue }) => `${(cellValue * 100).toFixed(1)}%` },
-    { field: 'req_completion_rate', title: '完成率', minWidth: 100, formatter: ({ cellValue }) => `${(cellValue * 100).toFixed(1)}%` },
-    { field: 'req_workload', title: '工作量', minWidth: 100 },
+    {
+      title: '分解率',
+      children: [
+        { field: 'dr_breakdown_rate', title: 'DR分解率', minWidth: 100, formatter: formatRate },
+        { field: 'sr_breakdown_rate', title: 'SR分解率', minWidth: 100, formatter: formatRate },
+      ]
+    },
+    {
+      title: '置A率',
+      children: [
+        { field: 'dr_set_a_rate', title: 'DR置A率', minWidth: 100, formatter: formatRate },
+        { field: 'ar_set_a_rate', title: 'AR置A率', minWidth: 100, formatter: formatRate },
+      ]
+    },
+    {
+      title: '置C率(C+A)',
+      children: [
+        { field: 'dr_set_c_rate', title: 'DR置C率', minWidth: 100, formatter: formatRate },
+        { field: 'ar_set_c_rate', title: 'AR置C率', minWidth: 100, formatter: formatRate },
+      ]
+    },
+    { field: 'start_date', title: '开始时间', minWidth: 110 },
+    { field: 'end_date', title: '结束时间', minWidth: 110 },
   ];
 }
 
 export function useDetailColumns(): VxeTableGridOptions<IterationDetailItem>['columns'] {
   return [
-    { field: 'name', title: '迭代名称', minWidth: 150 },
+    { field: 'name', title: '迭代名称', minWidth: 150, fixed: 'left' },
     { field: 'code', title: '编码', minWidth: 120 },
     { field: 'start_date', title: '开始时间', minWidth: 120 },
     { field: 'end_date', title: '结束时间', minWidth: 120 },
@@ -74,30 +96,39 @@ export function useDetailColumns(): VxeTableGridOptions<IterationDetailItem>['co
         ],
       },
     },
-    // Metrics are nested in latest_metric
     {
-      field: 'latest_metric.req_decomposition_rate',
-      title: '需求分解率',
-      minWidth: 100,
-      formatter: ({ cellValue }) => cellValue ? `${(cellValue * 100).toFixed(1)}%` : '-',
+      title: '分解率',
+      children: [
+        { 
+          field: 'latest_metric.dr_breakdown_rate', 
+          title: 'DR分解率', 
+          minWidth: 100, 
+          formatter: formatRate 
+        },
+        { 
+          field: 'latest_metric.sr_breakdown_rate', 
+          title: 'SR分解率', 
+          minWidth: 100, 
+          formatter: formatRate 
+        },
+      ]
     },
     {
-      field: 'latest_metric.req_completion_rate',
-      title: '完成率',
-      minWidth: 100,
-      formatter: ({ cellValue }) => cellValue ? `${(cellValue * 100).toFixed(1)}%` : '-',
-    },
-    {
-      field: 'latest_metric.req_drift_rate',
-      title: '游离率',
-      minWidth: 100,
-      formatter: ({ cellValue }) => cellValue ? `${(cellValue * 100).toFixed(1)}%` : '-',
-    },
-    {
-      field: 'latest_metric.req_workload',
-      title: '工作量',
-      minWidth: 100,
-      formatter: ({ cellValue }) => cellValue ?? '-',
+      title: '置A率',
+      children: [
+        { 
+          field: 'latest_metric.dr_set_a_rate', 
+          title: 'DR置A率', 
+          minWidth: 100, 
+          formatter: formatRate 
+        },
+        { 
+          field: 'latest_metric.ar_set_a_rate', 
+          title: 'AR置A率', 
+          minWidth: 100, 
+          formatter: formatRate 
+        },
+      ]
     },
   ];
 }

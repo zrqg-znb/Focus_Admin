@@ -15,11 +15,19 @@ export interface IterationMetricOut {
   id: string;
   iteration_id: string;
   record_date: string;
-  req_decomposition_rate: number;
-  req_drift_rate: number;
-  req_completion_rate: number;
-  req_workload: number;
-  completed_workload: number;
+  
+  // Calculated Rates
+  sr_breakdown_rate: number;
+  dr_breakdown_rate: number;
+  ar_set_a_rate: number;
+  dr_set_a_rate: number;
+  ar_set_c_rate: number;
+  dr_set_c_rate: number;
+  
+  // Raw data (optional, but good to have)
+  sr_num: number;
+  dr_num: number;
+  ar_num: number;
 }
 
 export interface IterationDashboardItem {
@@ -33,11 +41,19 @@ export interface IterationDashboardItem {
   start_date?: string;
   end_date?: string;
   is_healthy: boolean;
-  req_decomposition_rate: number;
-  req_drift_rate: number;
-  req_completion_rate: number;
-  req_workload: number;
-  completed_workload: number;
+  
+  // Calculated Rates
+  sr_breakdown_rate: number;
+  dr_breakdown_rate: number;
+  ar_set_a_rate: number;
+  dr_set_a_rate: number;
+  ar_set_c_rate: number;
+  dr_set_c_rate: number;
+  
+  // Raw counts
+  sr_num: number;
+  dr_num: number;
+  ar_num: number;
 }
 
 export interface IterationDetailItem extends IterationOut {

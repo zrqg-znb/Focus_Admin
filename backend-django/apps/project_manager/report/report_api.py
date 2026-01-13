@@ -7,6 +7,7 @@ import random
 
 from apps.project_manager.project.project_model import Project
 from apps.project_manager.code_quality.code_quality_model import CodeModule, CodeMetric
+from apps.project_manager.code_quality.code_quality_service import get_project_quality_details
 from apps.project_manager.iteration.iteration_model import Iteration, IterationMetric
 from apps.project_manager.dts.dts_model import DtsData, DtsTeam
 from apps.project_manager.milestone.milestone_model import Milestone
@@ -15,9 +16,13 @@ from .report_schema import (
     ProjectReportSchema, 
     RadarIndicator, 
     DtsTrendItem, 
+    DtsTeamDiItem,
+    DtsTeamDiTrend,
+    DtsTeamDiSeries,
     CodeQualitySummary, 
     IterationSummary, 
     DtsSummary,
+    IterationDetailMetrics,
     QGNode
 )
 
@@ -26,12 +31,43 @@ router = Router(tags=["Project Report"])
 @router.get("/{project_id}", response=ProjectReportSchema, summary="获取项目详细报告")
 def get_project_report(request, project_id: str):
     project = get_object_or_404(Project, id=project_id)
+
+    def calc_iteration_detail(metric: IterationMetric) -> IterationDetailMetrics:
+        sr_total = metric.need_break_sr_num
+        sr_unbroken = metric.need_break_but_un_break_sr_num
+        sr_breakdown_rate = (sr_total - sr_unbroken) / sr_total if sr_total > 0 else 0.0
+
+        dr_total_break = metric.need_break_dr_num
+        dr_unbroken = metric.need_break_but_un_break_dr_num
+        dr_breakdown_rate = (dr_total_break - dr_unbroken) / dr_total_break if dr_total_break > 0 else 0.0
+
+        ar_total = metric.ar_num
+        dr_total = metric.dr_num
+
+        ar_set_a_rate = metric.a_state_ar_num / ar_total if ar_total > 0 else 0.0
+        dr_set_a_rate = metric.a_state_dr_num / dr_total if dr_total > 0 else 0.0
+
+        ar_set_c_rate = (metric.c_state_ar_num + metric.a_state_ar_num) / ar_total if ar_total > 0 else 0.0
+        dr_set_c_rate = (metric.c_state_dr_num + metric.a_state_dr_num) / dr_total if dr_total > 0 else 0.0
+
+        return IterationDetailMetrics(
+            sr_num=metric.sr_num,
+            dr_num=metric.dr_num,
+            ar_num=metric.ar_num,
+            sr_breakdown_rate=round(sr_breakdown_rate, 4),
+            dr_breakdown_rate=round(dr_breakdown_rate, 4),
+            ar_set_a_rate=round(ar_set_a_rate, 4),
+            dr_set_a_rate=round(dr_set_a_rate, 4),
+            ar_set_c_rate=round(ar_set_c_rate, 4),
+            dr_set_c_rate=round(dr_set_c_rate, 4),
+        )
     
     # --- 1. Basic Info ---
     managers = ",".join([m.name for m in project.managers.all()])
     
     # --- 2. Code Quality ---
     cq_summary = None
+    cq_details = None
     cq_score = 0
     if project.enable_quality:
         modules = CodeModule.objects.filter(project=project, is_deleted=False)
@@ -58,9 +94,11 @@ def get_project_report(request, project_id: str):
             avg_duplication_rate=round(avg_dup, 2),
             health_score=round(cq_score, 1)
         )
+        cq_details = get_project_quality_details(project_id)
     
     # --- 3. Iteration ---
     iter_summary = None
+    iter_detail = None
     iter_score = 0
     if project.enable_iteration:
         current_iter = Iteration.objects.filter(project=project, is_current=True).first()
@@ -77,22 +115,34 @@ def get_project_report(request, project_id: str):
         if current_iter:
             metric = IterationMetric.objects.filter(iteration=current_iter).order_by('-record_date').first()
             if metric:
-                total_req = metric.req_workload
-                completion_rate = metric.req_completion_rate
+                total_req = metric.sr_num + metric.dr_num + metric.ar_num
+                iter_detail = calc_iteration_detail(metric)
+                
+                # Completion rate (Average of AR/DR Set C rates)
+                ar_total = metric.ar_num
+                dr_total = metric.dr_num
+                
+                ar_comp = (metric.c_state_ar_num + metric.a_state_ar_num) / ar_total if ar_total > 0 else 0.0
+                dr_comp = (metric.c_state_dr_num + metric.a_state_dr_num) / dr_total if dr_total > 0 else 0.0
+                
+                completion_rate = (ar_comp + dr_comp) / 2 if (ar_total > 0 and dr_total > 0) else (ar_comp if ar_total > 0 else dr_comp)
+                completion_rate = round(completion_rate * 100, 1)
         
-        iter_score = completion_rate # Simple mapping
+        iter_score = completion_rate # 0-100
         
         iter_summary = IterationSummary(
             active_iterations=active_count,
             delayed_iterations=delayed_count,
             total_req_count=int(total_req),
-            completion_rate=round(completion_rate, 2)
+            completion_rate=completion_rate
         )
 
     # --- 4. DTS ---
     dts_summary = None
     dts_score = 0
     dts_trend = []
+    dts_team_di = None
+    dts_team_di_trend = None
     
     if project.enable_dts:
         # Summary (Latest)
@@ -140,6 +190,36 @@ def get_project_report(request, project_id: str):
                 solve_rate=round(min(100, max(0, base_rate)), 1),
                 critical_solve_rate=round(min(100, max(0, base_rate - 5)), 1)
             ))
+
+        dts_team_di = []
+        for team in dts_teams:
+            latest = DtsData.objects.filter(team=team).order_by('-record_date').first()
+            if not latest:
+                continue
+            dts_team_di.append(DtsTeamDiItem(
+                team_name=team.team_name,
+                di=float(latest.di or 0),
+                target_di=float(latest.target_di) if latest.target_di is not None else None,
+            ))
+
+        di_dates = [(today - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(6, -1, -1)]
+        di_values_by_team = {t.id: [None] * len(di_dates) for t in dts_teams}
+        date_index = {d: idx for idx, d in enumerate(di_dates)}
+
+        start_date = today - timedelta(days=6)
+        di_qs = DtsData.objects.filter(team__in=dts_teams, record_date__gte=start_date, record_date__lte=today).select_related('team')
+        for row in di_qs:
+            d = row.record_date.strftime('%Y-%m-%d')
+            idx = date_index.get(d)
+            if idx is None:
+                continue
+            di_values_by_team.get(row.team_id, [None] * len(di_dates))[idx] = float(row.di or 0)
+
+        di_series = []
+        for t in dts_teams:
+            values = di_values_by_team.get(t.id, [None] * len(di_dates))
+            di_series.append(DtsTeamDiSeries(team_name=t.team_name, values=values))
+        dts_team_di_trend = DtsTeamDiTrend(dates=di_dates, series=di_series)
             
     # --- 5. Milestones ---
     milestones_list = []
@@ -194,7 +274,11 @@ def get_project_report(request, project_id: str):
         radar_data=radar_data,
         milestones=milestones_list,
         dts_trend=dts_trend,
+        dts_team_di=dts_team_di,
+        dts_team_di_trend=dts_team_di_trend,
         code_quality=cq_summary,
+        code_quality_details=cq_details,
         iteration=iter_summary,
+        iteration_detail=iter_detail,
         dts_summary=dts_summary
     )

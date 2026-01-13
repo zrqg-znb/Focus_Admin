@@ -29,11 +29,30 @@ class Iteration(RootModel):
 class IterationMetric(RootModel):
     iteration = models.ForeignKey(Iteration, on_delete=models.CASCADE, related_name='metrics', verbose_name="所属迭代")
     record_date = models.DateField(verbose_name="记录日期")
-    req_decomposition_rate = models.FloatField(verbose_name="需求分解率")
-    req_drift_rate = models.FloatField(verbose_name="需求游离率")
-    req_completion_rate = models.FloatField(verbose_name="需求完成率")
-    req_workload = models.FloatField(verbose_name="需求工作量")
-    completed_workload = models.FloatField(verbose_name="已完成工作量")
+    
+    # Raw Data Fields
+    sr_num = models.IntegerField(default=0, verbose_name="sr需求数")
+    dr_num = models.IntegerField(default=0, verbose_name="dr需求数")
+    ar_num = models.IntegerField(default=0, verbose_name="ar需求数")
+    need_break_sr_num = models.IntegerField(default=0, verbose_name="需要分解的 sr 数")
+    need_break_dr_num = models.IntegerField(default=0, verbose_name="需要分解的 dr 数")
+    need_break_but_un_break_sr_num = models.IntegerField(default=0, verbose_name="需要分解但是未被分解的 sr 数")
+    need_break_but_un_break_dr_num = models.IntegerField(default=0, verbose_name="需要分解但是未被分解的 dr 数")
+    workload_man_dr_count = models.IntegerField(default=0, verbose_name="填写了工作量人力信息的 dr 数")
+    workload_loc_dr_count = models.IntegerField(default=0, verbose_name="填写了工作量代码量的 dr 数")
+    workload_man_ar_count = models.IntegerField(default=0, verbose_name="填写了工作量人力信息的 ar 数")
+    workload_loc_ar_count = models.IntegerField(default=0, verbose_name="填写了工作量代码量的 ar 数")
+    i_state_ar_num = models.IntegerField(default=0, verbose_name="当前置I的ar需求，Initial")
+    d_state_ar_num = models.IntegerField(default=0, verbose_name="当前置I的ar需求，defined")
+    p_state_ar_num = models.IntegerField(default=0, verbose_name="当前置I的ar需求，processing")
+    c_state_ar_num = models.IntegerField(default=0, verbose_name="当前置I的ar需求，complete")
+    a_state_ar_num = models.IntegerField(default=0, verbose_name="当前置I的ar需求，accept")
+    i_state_dr_num = models.IntegerField(default=0, verbose_name="当前置I的dr需求，Initial")
+    d_state_dr_num = models.IntegerField(default=0, verbose_name="当前置I的dr需求，defined")
+    p_state_dr_num = models.IntegerField(default=0, verbose_name="当前置I的dr需求，processing")
+    c_state_dr_num = models.IntegerField(default=0, verbose_name="当前置I的dr需求，complete")
+    a_state_dr_num = models.IntegerField(default=0, verbose_name="当前置I的dr需求，accept")
+
 
     class Meta:
         db_table = 'pm_iteration_metric'

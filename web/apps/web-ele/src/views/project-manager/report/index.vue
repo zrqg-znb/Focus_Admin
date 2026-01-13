@@ -143,17 +143,29 @@ onMounted(() => {
                            </div>
                         </div>
                         
-                        <!-- Row 2: Charts Area -->
-                        <DtsTrendChart :trend-data="reportData.dts_trend" />
-                        
-                        <!-- Row 3: Detail Cards -->
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                           <IterationCard v-if="reportData.iteration" :data="reportData.iteration" />
-                           <CodeQualityCard v-if="reportData.code_quality" :data="reportData.code_quality" />
-                        </div>
-                     </div>
-                  </template>
-                </ElSkeleton>
+                      <!-- Row 2: Charts Area -->
+                      <DtsTrendChart
+                        v-if="reportData.dts_summary"
+                        :trend-data="reportData.dts_trend"
+                        :di-trend="reportData.dts_team_di_trend"
+                      />
+                      
+                      <!-- Row 3: Detail Cards -->
+                      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                         <IterationCard
+                           v-if="reportData.iteration"
+                           :data="reportData.iteration"
+                           :detail="reportData.iteration_detail"
+                         />
+                         <CodeQualityCard
+                           v-if="reportData.code_quality"
+                           :data="reportData.code_quality"
+                           :details="reportData.code_quality_details"
+                         />
+                      </div>
+                   </div>
+                </template>
+              </ElSkeleton>
               </div>
             </div>
          </ElScrollbar>
