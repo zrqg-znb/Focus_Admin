@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'scheduler',
     'apps.performance',
     'apps.project_manager',
+    'apps.integration_report',
 ]
 
 TEMPLATES = [
