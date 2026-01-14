@@ -132,9 +132,10 @@ onMounted(() => {
                           :href="getMetric(r.code_metrics, col.key)?.url || undefined"
                           target="_blank"
                           :underline="false"
-                          :class="cellClass(getMetric(r.code_metrics, col.key))"
                         >
-                          {{ cellText(getMetric(r.code_metrics, col.key)) }}
+                          <span :class="cellClass(getMetric(r.code_metrics, col.key))">
+                            {{ cellText(getMetric(r.code_metrics, col.key)) }}
+                          </span>
                         </ElLink>
                         <span v-else :class="cellClass(getMetric(r.code_metrics, col.key))">
                           {{ cellText(getMetric(r.code_metrics, col.key)) }}
@@ -176,9 +177,10 @@ onMounted(() => {
                           :href="getMetric(r.dt_metrics, col.key)?.url || undefined"
                           target="_blank"
                           :underline="false"
-                          :class="cellClass(getMetric(r.dt_metrics, col.key))"
                         >
-                          {{ cellText(getMetric(r.dt_metrics, col.key)) }}
+                          <span :class="cellClass(getMetric(r.dt_metrics, col.key))">
+                            {{ cellText(getMetric(r.dt_metrics, col.key)) }}
+                          </span>
                         </ElLink>
                         <span v-else :class="cellClass(getMetric(r.dt_metrics, col.key))">
                           {{ cellText(getMetric(r.dt_metrics, col.key)) }}
