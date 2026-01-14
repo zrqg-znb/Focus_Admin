@@ -14,11 +14,14 @@ class MetricCell(Schema):
 
 
 class ProjectConfigOut(Schema):
+    id: str  # Config ID
+    name: str  # Config Name
     project_id: str
     project_name: str
     project_domain: str
     project_type: str
     project_managers: str
+    managers: str  # Config managers
     enabled: bool
     subscribed: bool
     latest_date: Optional[date] = None
@@ -27,6 +30,9 @@ class ProjectConfigOut(Schema):
 
 
 class ProjectConfigUpsertIn(Schema):
+    project_id: str  # Required for create
+    name: str
+    managers: List[str] = []
     enabled: bool = True
     code_check_task_id: str = ""
     bin_scope_task_id: str = ""
@@ -35,9 +41,17 @@ class ProjectConfigUpsertIn(Schema):
     dt_project_id: str = ""
 
 
+class ConfigFilterSchema(Schema):
+    project_name: Optional[str] = None
+
+
 class ProjectConfigManageRow(Schema):
+    id: str  # Config ID
+    name: str  # Config Name
     project_id: str
     project_name: str
+    managers: str
+    manager_ids: List[str]
     enabled: bool
     code_check_task_id: str
     bin_scope_task_id: str
@@ -52,7 +66,8 @@ class SubscriptionToggleIn(Schema):
 
 class HistoryRow(Schema):
     record_date: date
-    project_id: str
+    config_id: str
+    config_name: str
     project_name: str
     code_metrics: List[MetricCell] = []
     dt_metrics: List[MetricCell] = []
@@ -60,3 +75,8 @@ class HistoryRow(Schema):
 
 class HistoryQueryOut(Schema):
     items: List[HistoryRow]
+
+
+class MockCollectIn(Schema):
+    record_date: Optional[date] = None
+    config_ids: List[str] = []

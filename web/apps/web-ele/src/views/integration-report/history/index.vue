@@ -1,46 +1,59 @@
 <script setup lang="ts">
-import type { HistoryRow, MetricCell, ProjectConfigOut } from '#/api/integration-report';
+import type { HistoryRow, MetricCell } from '#/api/integration-report';
 import { computed, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 import { IconifyIcon } from '@vben/icons';
 import { ElButton, ElDatePicker, ElLink, ElMessage, ElSkeleton, ElTag } from 'element-plus';
 
-import { listIntegrationProjectsApi, queryIntegrationHistoryApi } from '#/api/integration-report';
+import { queryIntegrationHistoryApi } from '#/api/integration-report';
 
 defineOptions({ name: 'DailyIntegrationHistory' });
 
 const loading = ref(false);
-const range = ref<[Date, Date] | null>(null);
+const range = ref<Date | null>(null);
 const rows = ref<HistoryRow[]>([]);
-const projects = ref<ProjectConfigOut[]>([]);
 
-const startStr = computed(() => (range.value ? range.value[0].toISOString().slice(0, 10) : ''));
-const endStr = computed(() => (range.value ? range.value[1].toISOString().slice(0, 10) : ''));
+function formatDate(d: Date) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
-function cellText(c: MetricCell) {
+const startStr = computed(() => (range.value ? formatDate(range.value) : ''));
+const endStr = computed(() => (range.value ? formatDate(range.value) : ''));
+
+const CODE_COLS = [
+  { key: 'codecheck_error_num', name: 'CodeCheck 错误数' },
+  { key: 'bin_scope_error_num', name: 'Bin Scope 错误数' },
+  { key: 'build_check_error_num', name: 'Build 检测错误数' },
+  { key: 'compile_error_num', name: 'Compile 错误数' },
+];
+
+const DT_COLS = [
+  { key: 'dt_pass_rate', name: 'DT 通过率' },
+  { key: 'dt_pass_num', name: 'DT 通过数' },
+  { key: 'dt_line_coverage', name: '行覆盖率' },
+  { key: 'dt_method_coverage', name: '方法覆盖率' },
+];
+
+function cellText(c?: MetricCell) {
+  if (!c) return '-';
   if (c.text) return c.text;
   if (c.value === undefined || c.value === null) return '-';
   const s = `${c.value}`;
   return c.unit ? `${s}${c.unit}` : s;
 }
-function cellClass(c: MetricCell) {
+function cellClass(c?: MetricCell) {
+  if (!c) return 'text-gray-400';
   if (c.level === 'danger') return 'text-red-600 font-bold';
   if (c.level === 'warning') return 'text-orange-600 font-bold';
   return 'text-gray-700 dark:text-gray-200';
 }
 
-const codeKeys = computed(() => (projects.value[0]?.code_metrics || []).map((m) => m.key));
-const dtKeys = computed(() => (projects.value[0]?.dt_metrics || []).map((m) => m.key));
-const codeNameMap = computed(() => Object.fromEntries((projects.value[0]?.code_metrics || []).map((m) => [m.key, m.name])));
-const dtNameMap = computed(() => Object.fromEntries((projects.value[0]?.dt_metrics || []).map((m) => [m.key, m.name])));
-
-async function init() {
-  projects.value = await listIntegrationProjectsApi();
-  const end = new Date();
-  const start = new Date();
-  start.setDate(end.getDate() - 6);
-  range.value = [start, end];
+function getMetric(metrics: MetricCell[], key: string) {
+  return metrics.find((m) => m.key === key);
 }
 
 async function query() {
@@ -56,9 +69,9 @@ async function query() {
   }
 }
 
-onMounted(async () => {
-  await init();
-  await query();
+onMounted(() => {
+  range.value = new Date();
+  query();
 });
 </script>
 
@@ -77,7 +90,7 @@ onMounted(async () => {
             </div>
           </div>
           <div class="flex items-center gap-2">
-            <ElDatePicker v-model="range" type="daterange" unlink-panels size="small" />
+            <ElDatePicker v-model="range" type="date" size="small" :clearable="false" />
             <ElButton size="small" plain type="primary" :loading="loading" @click="query">
               <template #icon><IconifyIcon icon="lucide:search" /></template>
               查询
@@ -103,19 +116,29 @@ onMounted(async () => {
                   <thead>
                     <tr class="text-left text-xs text-gray-500">
                       <th class="py-2 pr-3">日期</th>
+                      <th class="py-2 pr-3">配置</th>
                       <th class="py-2 pr-3">项目</th>
-                      <th v-for="k in codeKeys" :key="k" class="py-2 pr-3">{{ codeNameMap[k] }}</th>
+                      <th v-for="col in CODE_COLS" :key="col.key" class="py-2 pr-3">{{ col.name }}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="r in rows" :key="`${r.record_date}-${r.project_id}`" class="border-t border-gray-100 dark:border-gray-800">
+                    <tr v-for="r in rows" :key="`${r.record_date}-${r.config_id}`" class="border-t border-gray-100 dark:border-gray-800">
                       <td class="py-3 pr-3 text-gray-500">{{ r.record_date }}</td>
-                      <td class="py-3 pr-3 font-bold text-gray-900 dark:text-white">{{ r.project_name }}</td>
-                      <td v-for="c in r.code_metrics" :key="c.key" class="py-3 pr-3">
-                        <ElLink v-if="c.url" :href="c.url" target="_blank" :underline="false" :class="cellClass(c)">
-                          {{ cellText(c) }}
+                      <td class="py-3 pr-3 font-bold text-gray-900 dark:text-white">{{ r.config_name }}</td>
+                      <td class="py-3 pr-3 text-gray-500 text-xs">{{ r.project_name }}</td>
+                      <td v-for="col in CODE_COLS" :key="col.key" class="py-3 pr-3">
+                        <ElLink
+                          v-if="getMetric(r.code_metrics, col.key)?.url"
+                          :href="getMetric(r.code_metrics, col.key)?.url || undefined"
+                          target="_blank"
+                          :underline="false"
+                          :class="cellClass(getMetric(r.code_metrics, col.key))"
+                        >
+                          {{ cellText(getMetric(r.code_metrics, col.key)) }}
                         </ElLink>
-                        <span v-else :class="cellClass(c)">{{ cellText(c) }}</span>
+                        <span v-else :class="cellClass(getMetric(r.code_metrics, col.key))">
+                          {{ cellText(getMetric(r.code_metrics, col.key)) }}
+                        </span>
                       </td>
                     </tr>
                   </tbody>
@@ -137,19 +160,29 @@ onMounted(async () => {
                   <thead>
                     <tr class="text-left text-xs text-gray-500">
                       <th class="py-2 pr-3">日期</th>
+                      <th class="py-2 pr-3">配置</th>
                       <th class="py-2 pr-3">项目</th>
-                      <th v-for="k in dtKeys" :key="k" class="py-2 pr-3">{{ dtNameMap[k] }}</th>
+                      <th v-for="col in DT_COLS" :key="col.key" class="py-2 pr-3">{{ col.name }}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="r in rows" :key="`dt-${r.record_date}-${r.project_id}`" class="border-t border-gray-100 dark:border-gray-800">
+                    <tr v-for="r in rows" :key="`dt-${r.record_date}-${r.config_id}`" class="border-t border-gray-100 dark:border-gray-800">
                       <td class="py-3 pr-3 text-gray-500">{{ r.record_date }}</td>
-                      <td class="py-3 pr-3 font-bold text-gray-900 dark:text-white">{{ r.project_name }}</td>
-                      <td v-for="c in r.dt_metrics" :key="c.key" class="py-3 pr-3">
-                        <ElLink v-if="c.url" :href="c.url" target="_blank" :underline="false" :class="cellClass(c)">
-                          {{ cellText(c) }}
+                      <td class="py-3 pr-3 font-bold text-gray-900 dark:text-white">{{ r.config_name }}</td>
+                      <td class="py-3 pr-3 text-gray-500 text-xs">{{ r.project_name }}</td>
+                      <td v-for="col in DT_COLS" :key="col.key" class="py-3 pr-3">
+                        <ElLink
+                          v-if="getMetric(r.dt_metrics, col.key)?.url"
+                          :href="getMetric(r.dt_metrics, col.key)?.url || undefined"
+                          target="_blank"
+                          :underline="false"
+                          :class="cellClass(getMetric(r.dt_metrics, col.key))"
+                        >
+                          {{ cellText(getMetric(r.dt_metrics, col.key)) }}
                         </ElLink>
-                        <span v-else :class="cellClass(c)">{{ cellText(c) }}</span>
+                        <span v-else :class="cellClass(getMetric(r.dt_metrics, col.key))">
+                          {{ cellText(getMetric(r.dt_metrics, col.key)) }}
+                        </span>
                       </td>
                     </tr>
                   </tbody>
@@ -162,4 +195,3 @@ onMounted(async () => {
     </div>
   </Page>
 </template>
-

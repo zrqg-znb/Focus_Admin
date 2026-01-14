@@ -2,14 +2,19 @@
 import type { CodeQualityModuleDetail, CodeQualitySummary } from '#/api/project-manager/report';
 import { IconifyIcon } from '@vben/icons';
 import { ElButton, ElTag } from 'element-plus';
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 
 const props = defineProps<{
   data: CodeQualitySummary;
   details?: CodeQualityModuleDetail[] | null;
+  expanded?: boolean;
 }>();
 
-const detailVisible = ref(false);
+const emit = defineEmits<{
+  (e: 'toggle', expanded: boolean): void;
+}>();
+
+const isExpanded = computed(() => !!props.expanded);
 
 const latestModules = computed(() => {
   const items = props.details || [];
@@ -75,15 +80,22 @@ function scoreColor(score: number) {
           size="small"
           plain
           type="primary"
-          @click="detailVisible = !detailVisible"
+          @click="emit('toggle', !isExpanded)"
           :disabled="!(props.details && props.details.length)"
         >
-          {{ detailVisible ? '收起详情' : '展开详情' }}
+          {{ isExpanded ? '收起详情' : '展开详情' }}
         </ElButton>
       </div>
 
-      <transition name="el-collapse-transition">
-        <div v-show="detailVisible" class="mt-4 rounded-xl border border-gray-100 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-900/20">
+      <Transition
+        enter-active-class="transition-all duration-300 ease-out"
+        enter-from-class="opacity-0 max-h-0 -translate-y-1"
+        enter-to-class="opacity-100 max-h-[1200px] translate-y-0"
+        leave-active-class="transition-all duration-200 ease-in"
+        leave-from-class="opacity-100 max-h-[1200px] translate-y-0"
+        leave-to-class="opacity-0 max-h-0 -translate-y-1"
+      >
+        <div v-if="isExpanded" class="mt-4 overflow-hidden rounded-xl border border-gray-100 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-900/20">
           <div class="mb-3 flex items-center justify-between">
             <div class="flex items-center gap-2">
               <div class="h-2 w-2 rounded-full bg-blue-500" />
@@ -142,7 +154,7 @@ function scoreColor(score: number) {
             <span class="font-medium" :class="scoreColor(data.health_score)">整体得分 {{ data.health_score }}</span>
           </div>
         </div>
-      </transition>
+      </Transition>
     </div>
   </div>
 </template>

@@ -82,16 +82,20 @@ def ensure_default_metric_definitions():
 
 
 @transaction.atomic
-def mock_collect_daily(record_date: Optional[date] = None):
+def mock_collect_daily(record_date: Optional[date] = None, config_ids: Optional[List[str]] = None):
     ensure_default_metric_definitions()
     if record_date is None:
         record_date = date.today()
 
     configs = IntegrationProjectConfig.objects.select_related("project").filter(is_deleted=False, enabled=True)
+    if config_ids:
+        configs = configs.filter(id__in=config_ids)
     def_map = {d.key: d for d in IntegrationMetricDefinition.objects.filter(is_deleted=False, enabled=True)}
 
     for cfg in configs:
-        payload = mock_fetch(cfg.project.name, record_date, {
+        # Mock fetch using the Config Name (since user wants separate display name)
+        # But for task IDs we use what's configured
+        payload = mock_fetch(cfg.name, record_date, {
             "code_check_task_id": cfg.code_check_task_id,
             "bin_scope_task_id": cfg.bin_scope_task_id,
             "build_check_task_id": cfg.build_check_task_id,
@@ -104,7 +108,7 @@ def mock_collect_daily(record_date: Optional[date] = None):
             if not defn:
                 continue
             IntegrationProjectMetricValue.objects.update_or_create(
-                project=cfg.project,
+                config=cfg,
                 record_date=record_date,
                 metric=defn,
                 defaults={
@@ -115,7 +119,7 @@ def mock_collect_daily(record_date: Optional[date] = None):
             )
 
 
-def list_projects_with_latest(user: User) -> List[ProjectConfigOut]:
+def list_configs_with_latest(user: User) -> List[ProjectConfigOut]:
     ensure_default_metric_definitions()
 
     configs = (
@@ -124,26 +128,26 @@ def list_projects_with_latest(user: User) -> List[ProjectConfigOut]:
         .order_by("-sys_update_datetime")
     )
     subscribed_ids = set(
-        IntegrationEmailSubscription.objects.filter(is_deleted=False, user=user, enabled=True).values_list("project_id", flat=True)
+        IntegrationEmailSubscription.objects.filter(is_deleted=False, user=user, enabled=True).values_list("config_id", flat=True)
     )
     latest_dates = (
         IntegrationProjectMetricValue.objects.filter(is_deleted=False)
-        .values("project_id")
+        .values("config_id")
         .annotate(latest=Max("record_date"))
     )
-    latest_map = {row["project_id"]: row["latest"] for row in latest_dates}
+    latest_map = {row["config_id"]: row["latest"] for row in latest_dates}
 
     def_map = {d.key: d for d in IntegrationMetricDefinition.objects.filter(is_deleted=False, enabled=True)}
 
     result = []
     for cfg in configs:
         proj = cfg.project
-        latest_date = latest_map.get(proj.id)
+        latest_date = latest_map.get(str(cfg.id))
         values = []
         if latest_date:
             values = list(
                 IntegrationProjectMetricValue.objects.select_related("metric")
-                .filter(is_deleted=False, project=proj, record_date=latest_date, metric__enabled=True)
+                .filter(is_deleted=False, config=cfg, record_date=latest_date, metric__enabled=True)
             )
         cell_by_key: Dict[str, MetricCell] = {}
         for v in values:
@@ -168,16 +172,20 @@ def list_projects_with_latest(user: User) -> List[ProjectConfigOut]:
                 cells.append(cell_by_key.get(k) or MetricCell(key=k, name=d.name, unit=d.unit))
             return cells
 
-        managers = ",".join([m.name for m in proj.managers.all()])
+        proj_managers_str = ",".join([m.name or m.username for m in proj.managers.all()])
+        config_managers_str = ",".join([u.name or u.username for u in cfg.managers.all()])
         result.append(
             ProjectConfigOut(
+                id=str(cfg.id),
+                name=cfg.name,
                 project_id=str(proj.id),
                 project_name=proj.name,
                 project_domain=proj.domain,
                 project_type=proj.type,
-                project_managers=managers,
+                project_managers=proj_managers_str,
+                managers=config_managers_str,
                 enabled=cfg.enabled,
-                subscribed=str(proj.id) in subscribed_ids,
+                subscribed=str(cfg.id) in subscribed_ids,
                 latest_date=latest_date,
                 code_metrics=make_cells(CODE_KEYS),
                 dt_metrics=make_cells(DT_KEYS),
@@ -187,10 +195,10 @@ def list_projects_with_latest(user: User) -> List[ProjectConfigOut]:
 
 
 @transaction.atomic
-def toggle_subscription(user: User, project_id: str, enabled: bool) -> bool:
+def toggle_subscription(user: User, config_id: str, enabled: bool) -> bool:
     sub, _ = IntegrationEmailSubscription.objects.update_or_create(
         user=user,
-        project_id=project_id,
+        config_id=config_id,
         defaults={"enabled": enabled},
     )
     return sub.enabled
@@ -202,20 +210,20 @@ def send_daily_emails(record_date: Optional[date] = None) -> int:
 
     ensure_default_metric_definitions()
     subs = (
-        IntegrationEmailSubscription.objects.select_related("user", "project")
+        IntegrationEmailSubscription.objects.select_related("user", "config", "config__project")
         .filter(is_deleted=False, enabled=True, user__is_active=True)
         .order_by("user_id")
     )
-    by_user: Dict[str, List[Project]] = defaultdict(list)
+    by_user: Dict[str, List[IntegrationProjectConfig]] = defaultdict(list)
     for s in subs:
-        by_user[str(s.user_id)].append(s.project)
+        by_user[str(s.user_id)].append(s.config)
 
     if not by_user:
         return 0
 
     def_map = {d.key: d for d in IntegrationMetricDefinition.objects.filter(is_deleted=False, enabled=True)}
     sent = 0
-    for user_id, projects in by_user.items():
+    for user_id, configs in by_user.items():
         user = User.objects.filter(id=user_id, is_active=True).first()
         if not user:
             continue
@@ -224,10 +232,10 @@ def send_daily_emails(record_date: Optional[date] = None) -> int:
             continue
 
         project_rows = []
-        for proj in projects:
+        for cfg in configs:
             qs = (
                 IntegrationProjectMetricValue.objects.select_related("metric")
-                .filter(is_deleted=False, project=proj, record_date=record_date)
+                .filter(is_deleted=False, config=cfg, record_date=record_date)
             )
             cell_by_key = {}
             for v in qs:
@@ -246,8 +254,8 @@ def send_daily_emails(record_date: Optional[date] = None) -> int:
             dt_cells = [cell_by_key.get(k) or MetricCell(key=k, name=def_map[k].name, unit=def_map[k].unit) for k in DT_KEYS if k in def_map]
             project_rows.append(
                 {
-                    "project_name": proj.name,
-                    "project_domain": proj.domain or "",
+                    "project_name": cfg.name,  # Use Config Name as Display Name
+                    "project_domain": cfg.project.domain or "",
                     "code_metrics": code_cells,
                     "dt_metrics": dt_cells,
                 }

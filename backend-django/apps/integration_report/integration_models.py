@@ -4,11 +4,18 @@ from apps.project_manager.project.project_model import Project
 
 
 class IntegrationProjectConfig(RootModel):
-    project = models.OneToOneField(
+    project = models.ForeignKey(
         Project,
         on_delete=models.CASCADE,
-        related_name="integration_report_config",
-        verbose_name="项目",
+        related_name="integration_configs",
+        verbose_name="所属项目",
+    )
+    name = models.CharField(max_length=128, verbose_name="配置名称/邮件显示名")
+    managers = models.ManyToManyField(
+        "core.User",
+        related_name="integration_configs_managed",
+        verbose_name="项目负责人",
+        blank=True,
     )
     enabled = models.BooleanField(default=True, verbose_name="是否启用")
 
@@ -42,7 +49,12 @@ class IntegrationMetricDefinition(RootModel):
 
 
 class IntegrationProjectMetricValue(RootModel):
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="integration_metrics", verbose_name="项目")
+    config = models.ForeignKey(
+        IntegrationProjectConfig,
+        on_delete=models.CASCADE,
+        related_name="metric_values",
+        verbose_name="所属配置",
+    )
     record_date = models.DateField(verbose_name="记录日期")
     metric = models.ForeignKey(
         IntegrationMetricDefinition,
@@ -58,19 +70,24 @@ class IntegrationProjectMetricValue(RootModel):
         db_table = "ir_project_metric_value"
         verbose_name = "每日集成报告项目指标值"
         verbose_name_plural = verbose_name
-        unique_together = ("project", "record_date", "metric")
+        unique_together = ("config", "record_date", "metric")
 
 
 class IntegrationEmailSubscription(RootModel):
     user = models.ForeignKey("core.User", on_delete=models.CASCADE, related_name="integration_subscriptions", verbose_name="订阅人")
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="integration_subscriptions", verbose_name="订阅项目")
+    config = models.ForeignKey(
+        IntegrationProjectConfig,
+        on_delete=models.CASCADE,
+        related_name="subscriptions",
+        verbose_name="订阅配置",
+    )
     enabled = models.BooleanField(default=True, verbose_name="是否启用")
 
     class Meta:
         db_table = "ir_email_subscription"
         verbose_name = "每日集成报告邮件订阅"
         verbose_name_plural = verbose_name
-        unique_together = ("user", "project")
+        unique_together = ("user", "config")
 
 
 class IntegrationEmailDelivery(RootModel):
@@ -85,4 +102,3 @@ class IntegrationEmailDelivery(RootModel):
         db_table = "ir_email_delivery"
         verbose_name = "每日集成报告邮件投递"
         verbose_name_plural = verbose_name
-

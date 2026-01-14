@@ -3,7 +3,7 @@ from django.shortcuts import get_object_or_404
 from django.db.models import Sum
 from django.utils import timezone
 from datetime import timedelta
-import random
+from collections import defaultdict
 
 from apps.project_manager.project.project_model import Project
 from apps.project_manager.code_quality.code_quality_model import CodeModule, CodeMetric
@@ -173,22 +173,78 @@ def get_project_report(request, project_id: str):
             solve_rate=round(avg_rate, 1)
         )
         
-        # Trend (Last 7 days Mock)
-        # In a real app, we would query DtsData grouped by date
-        for i in range(6, -1, -1):
-            date_str = (today - timedelta(days=i)).strftime('%Y-%m-%d')
-            # Mock fluctuation
-            base_total = (dts_summary.total_issues or 10) + random.randint(-5, 5)
-            base_rate = (dts_summary.solve_rate or 90) + random.uniform(-5, 5)
-            
+        def parse_percent(value) -> float | None:
+            if value is None:
+                return None
+            if isinstance(value, (int, float)):
+                return float(value)
+            s = str(value).strip()
+            if not s:
+                return None
+            if s.endswith('%'):
+                s = s[:-1]
+            try:
+                return float(s)
+            except Exception:
+                return None
+
+        start_date = today - timedelta(days=6)
+        trend_dates = [today - timedelta(days=i) for i in range(6, -1, -1)]
+        trend_date_strs = [d.strftime('%Y-%m-%d') for d in trend_dates]
+
+        rows = DtsData.objects.filter(
+            team__in=dts_teams,
+            record_date__gte=start_date,
+            record_date__lte=today,
+        ).values(
+            'record_date',
+            'fatal_num',
+            'major_num',
+            'minor_num',
+            'suggestion_num',
+            'solve_rate',
+            'critical_solve_rate',
+        )
+
+        by_date = defaultdict(lambda: {"fatal": 0, "major": 0, "minor": 0, "suggestion": 0, "rates": [], "critical_rates": []})
+        for r in rows:
+            d = r["record_date"]
+            agg = by_date[d]
+            agg["fatal"] += int(r.get("fatal_num") or 0)
+            agg["major"] += int(r.get("major_num") or 0)
+            agg["minor"] += int(r.get("minor_num") or 0)
+            agg["suggestion"] += int(r.get("suggestion_num") or 0)
+            sr = parse_percent(r.get("solve_rate"))
+            if sr is not None:
+                agg["rates"].append(sr)
+            cr = parse_percent(r.get("critical_solve_rate"))
+            if cr is not None:
+                agg["critical_rates"].append(cr)
+
+        for d, date_str in zip(trend_dates, trend_date_strs):
+            agg = by_date.get(d)
+            if not agg:
+                dts_trend.append(DtsTrendItem(
+                    date=date_str,
+                    critical=0,
+                    major=0,
+                    minor=0,
+                    suggestion=0,
+                    solve_rate=0.0,
+                    critical_solve_rate=0.0,
+                ))
+                continue
+
+            avg_sr = sum(agg["rates"]) / len(agg["rates"]) if agg["rates"] else 0.0
+            avg_cr = sum(agg["critical_rates"]) / len(agg["critical_rates"]) if agg["critical_rates"] else 0.0
             dts_trend.append(DtsTrendItem(
                 date=date_str,
-                critical=max(0, int(base_total * 0.1)),
-                major=max(0, int(base_total * 0.2)),
-                minor=max(0, int(base_total * 0.4)),
-                suggestion=max(0, int(base_total * 0.3)),
-                solve_rate=round(min(100, max(0, base_rate)), 1),
-                critical_solve_rate=round(min(100, max(0, base_rate - 5)), 1)
+                critical=agg["fatal"] + agg["major"],
+                major=agg["major"],
+                minor=agg["minor"],
+                suggestion=agg["suggestion"],
+                solve_rate=round(avg_sr, 1),
+                critical_solve_rate=round(avg_cr, 1),
             ))
 
         dts_team_di = []
@@ -202,11 +258,10 @@ def get_project_report(request, project_id: str):
                 target_di=float(latest.target_di) if latest.target_di is not None else None,
             ))
 
-        di_dates = [(today - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(6, -1, -1)]
+        di_dates = trend_date_strs
         di_values_by_team = {t.id: [None] * len(di_dates) for t in dts_teams}
         date_index = {d: idx for idx, d in enumerate(di_dates)}
 
-        start_date = today - timedelta(days=6)
         di_qs = DtsData.objects.filter(team__in=dts_teams, record_date__gte=start_date, record_date__lte=today).select_related('team')
         for row in di_qs:
             d = row.record_date.strftime('%Y-%m-%d')

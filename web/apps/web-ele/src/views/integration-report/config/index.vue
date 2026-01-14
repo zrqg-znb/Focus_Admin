@@ -1,12 +1,14 @@
 <script setup lang="ts">
+import type { VxeGridProps } from '#/adapter/vxe-table';
 import type { ProjectConfigManageRow, ProjectConfigUpsertIn } from '#/api/integration-report';
-import { computed, onMounted, ref } from 'vue';
+
+import { ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 import { IconifyIcon } from '@vben/icons';
+import { useVbenVxeGrid } from '@vben/plugins/vxe-table';
 import {
   ElButton,
-  ElDatePicker,
   ElDialog,
   ElForm,
   ElFormItem,
@@ -15,38 +17,33 @@ import {
   ElOption,
   ElPopconfirm,
   ElSelect,
-  ElSkeleton,
   ElSwitch,
-  ElTable,
-  ElTableColumn,
-  ElTag,
 } from 'element-plus';
 
+import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
+
 import {
+  createIntegrationConfigApi,
   initIntegrationConfigsApi,
   listIntegrationConfigsApi,
   mockCollectIntegrationApi,
   mockSendIntegrationEmailsApi,
-  upsertIntegrationConfigApi,
+  updateIntegrationConfigApi,
 } from '#/api/integration-report';
 import { listProjectsApi } from '#/api/project-manager/project';
 
 defineOptions({ name: 'DailyIntegrationConfig' });
 
-const loading = ref(false);
-const savingId = ref<string | null>(null);
-const rows = ref<ProjectConfigManageRow[]>([]);
-const keyword = ref('');
-
-const recordDate = ref<Date>(new Date());
-
+// Dialog state
 const dialogVisible = ref(false);
 const dialogMode = ref<'create' | 'edit'>('create');
 const dialogSaving = ref(false);
-
 const allProjects = ref<Array<{ id: string; name: string; domain: string; type: string }>>([]);
-const formProjectId = ref<string>('');
+const formConfigId = ref<string>('');
 const form = ref<ProjectConfigUpsertIn>({
+  project_id: '',
+  name: '',
+  managers: [],
   enabled: true,
   code_check_task_id: '',
   bin_scope_task_id: '',
@@ -55,17 +52,97 @@ const form = ref<ProjectConfigUpsertIn>({
   dt_project_id: '',
 });
 
-const filteredRows = computed(() => {
-  const k = keyword.value.trim().toLowerCase();
-  if (!k) return rows.value;
-  return rows.value.filter((r) => r.project_name.toLowerCase().includes(k));
+// --- Grid Setup ---
+const gridOptions: VxeGridProps<ProjectConfigManageRow> = {
+  columns: [
+    { type: 'checkbox', width: 50, fixed: 'left' },
+    { type: 'seq', width: 50, fixed: 'left' },
+    { field: 'name', title: '配置名称', minWidth: 180, fixed: 'left' },
+    { field: 'project_name', title: '所属项目', minWidth: 150 },
+    { field: 'managers', title: '负责人', minWidth: 120 },
+    {
+      field: 'enabled',
+      title: '启用',
+      width: 90,
+      slots: { default: 'enabled_default' },
+    },
+    { field: 'code_check_task_id', title: 'CodeCheck ID', minWidth: 150 },
+    { field: 'bin_scope_task_id', title: 'BinScope ID', minWidth: 150 },
+    { field: 'build_check_task_id', title: 'BuildCheck ID', minWidth: 150 },
+    { field: 'compile_check_task_id', title: 'CompileCheck ID', minWidth: 150 },
+    { field: 'dt_project_id', title: 'DT Project ID', minWidth: 150 },
+    {
+      field: 'action',
+      title: '操作',
+      width: 100,
+      fixed: 'right',
+      slots: { default: 'action_default' },
+    },
+  ],
+  checkboxConfig: {
+    labelField: 'seq',
+    highlight: true,
+    range: true,
+  },
+  pagerConfig: {
+    enabled: true,
+  },
+  proxyConfig: {
+    ajax: {
+      query: async ({ page }, formValues) => {
+        const params = {
+          page: page.currentPage,
+          pageSize: page.pageSize,
+          ...formValues,
+        };
+        const res = await listIntegrationConfigsApi(params);
+        return {
+          items: res.items,
+          total: res.count,
+        };
+      },
+    },
+  },
+  toolbarConfig: {
+    slots: {
+      buttons: 'toolbar_buttons',
+    },
+    refresh: true, // VxeGrid built-in refresh
+    custom: true,
+  },
+};
+
+const [Grid, gridApi] = useVbenVxeGrid({
+  formOptions: {
+    schema: [
+      {
+        fieldName: 'project_name',
+        label: '搜索配置/项目',
+        component: 'Input',
+        componentProps: {
+          placeholder: '搜索配置名或项目名',
+        },
+      },
+    ],
+    submitOnChange: true,
+  },
+  gridOptions,
 });
 
-const configuredProjectIds = computed(() => new Set(rows.value.map((r) => r.project_id)));
+// --- Helper Functions ---
 
-function dateStr() {
-  const d = recordDate.value;
-  return d.toISOString().slice(0, 10);
+function payloadOf(r: ProjectConfigManageRow): ProjectConfigUpsertIn {
+  return {
+    project_id: r.project_id,
+    name: r.name,
+    managers: r.manager_ids || [],
+    enabled: r.enabled,
+    code_check_task_id: r.code_check_task_id || '',
+    bin_scope_task_id: r.bin_scope_task_id || '',
+    build_check_task_id: r.build_check_task_id || '',
+    compile_check_task_id: r.compile_check_task_id || '',
+    dt_project_id: r.dt_project_id || '',
+  };
 }
 
 async function ensureProjectsLoaded() {
@@ -84,51 +161,15 @@ async function ensureProjectsLoaded() {
   }
 }
 
-async function reload() {
-  try {
-    loading.value = true;
-    rows.value = await listIntegrationConfigsApi();
-  } finally {
-    loading.value = false;
-  }
-}
-
-async function initRows() {
-  try {
-    loading.value = true;
-    const created = await initIntegrationConfigsApi();
-    ElMessage.success(`初始化完成，新增 ${created} 条配置`);
-    await reload();
-  } finally {
-    loading.value = false;
-  }
-}
-
-function payloadOf(r: ProjectConfigManageRow): ProjectConfigUpsertIn {
-  return {
-    enabled: r.enabled,
-    code_check_task_id: r.code_check_task_id || '',
-    bin_scope_task_id: r.bin_scope_task_id || '',
-    build_check_task_id: r.build_check_task_id || '',
-    compile_check_task_id: r.compile_check_task_id || '',
-    dt_project_id: r.dt_project_id || '',
-  };
-}
-
-async function saveRow(r: ProjectConfigManageRow) {
-  try {
-    savingId.value = r.project_id;
-    await upsertIntegrationConfigApi(r.project_id, payloadOf(r));
-    ElMessage.success('保存成功');
-  } finally {
-    savingId.value = null;
-  }
-}
+// --- Actions ---
 
 function openCreate() {
   dialogMode.value = 'create';
-  formProjectId.value = '';
+  formConfigId.value = '';
   form.value = {
+    project_id: '',
+    name: '',
+    managers: [],
     enabled: true,
     code_check_task_id: '',
     bin_scope_task_id: '',
@@ -142,182 +183,132 @@ function openCreate() {
 
 function openEdit(r: ProjectConfigManageRow) {
   dialogMode.value = 'edit';
-  formProjectId.value = r.project_id;
+  formConfigId.value = r.id;
   form.value = payloadOf(r);
   dialogVisible.value = true;
   ensureProjectsLoaded();
 }
 
-function isConfigured(projectId: string) {
-  return configuredProjectIds.value.has(projectId);
+async function saveRow(r: ProjectConfigManageRow) {
+  try {
+    await updateIntegrationConfigApi(r.id, payloadOf(r));
+    ElMessage.success('状态更新成功');
+  } catch (e) {
+    ElMessage.error('更新失败');
+  }
 }
 
 async function submitDialog() {
-  if (!formProjectId.value) {
+  if (!form.value.project_id) {
     ElMessage.warning('请选择项目');
+    return;
+  }
+  if (!form.value.name) {
+    ElMessage.warning('请输入配置名称');
     return;
   }
   try {
     dialogSaving.value = true;
-    await upsertIntegrationConfigApi(formProjectId.value, form.value);
-    ElMessage.success(dialogMode.value === 'create' ? '创建成功' : '更新成功');
+    if (dialogMode.value === 'create') {
+      await createIntegrationConfigApi(form.value);
+      ElMessage.success('创建成功');
+    } else {
+      await updateIntegrationConfigApi(formConfigId.value, form.value);
+      ElMessage.success('更新成功');
+    }
     dialogVisible.value = false;
-    await reload();
+    gridApi.reload(); // Refresh grid
   } finally {
     dialogSaving.value = false;
   }
 }
 
-async function mockCollect() {
+async function initRows() {
   try {
-    loading.value = true;
-    await mockCollectIntegrationApi(dateStr());
-    ElMessage.success('Mock 采集完成');
-    await reload();
-  } finally {
-    loading.value = false;
+    const created = await initIntegrationConfigsApi();
+    ElMessage.success(`初始化完成，新增 ${created} 条配置`);
+    gridApi.reload();
+  } catch (e) {
+    ElMessage.error('初始化失败');
+  }
+}
+
+async function batchMockCollect() {
+  const records = gridApi.grid?.getCheckboxRecords() || [];
+  const ids = records.map((r: any) => r.id);
+  const isBatch = ids.length > 0;
+  try {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    await mockCollectIntegrationApi(todayStr, isBatch ? ids : undefined);
+    ElMessage.success(isBatch ? `Mock 采集完成 (${ids.length}条)` : 'Mock 采集完成 (全部)');
+    gridApi.reload();
+  } catch (e) {
+    ElMessage.error('采集失败');
   }
 }
 
 async function mockSendEmails() {
   try {
-    loading.value = true;
-    const sent = await mockSendIntegrationEmailsApi(dateStr());
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const sent = await mockSendIntegrationEmailsApi(todayStr);
     ElMessage.success(`Mock 邮件发送完成：${sent} 封`);
-  } finally {
-    loading.value = false;
+  } catch (e) {
+    ElMessage.error('发送失败');
   }
 }
-
-function idTag(id: string) {
-  if (!id) return '未配置';
-  return id.length > 14 ? `${id.slice(0, 6)}...${id.slice(-6)}` : id;
-}
-
-onMounted(() => {
-  reload();
-});
 </script>
 
 <template>
   <Page auto-content-height>
-    <div class="p-4 space-y-4">
-      <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-[#151515]">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div class="flex items-center gap-2">
-            <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-50 border border-gray-200 dark:bg-gray-900/30 dark:border-gray-800">
-              <IconifyIcon icon="lucide:settings-2" class="text-xl text-gray-700 dark:text-gray-200" />
-            </div>
-            <div>
-              <div class="text-base font-bold text-gray-900 dark:text-white">每日集成报告 · 配置维护</div>
-              <div class="text-xs text-gray-400">维护各项目 task_id，并支持一键 Mock</div>
-            </div>
-          </div>
-
-          <div class="flex flex-wrap items-center gap-2">
-            <ElInput v-model="keyword" placeholder="搜索项目名" clearable size="small" style="width: 220px" />
-            <ElDatePicker v-model="recordDate" type="date" size="small" />
-
-            <ElButton size="small" plain type="primary" :loading="loading" @click="openCreate">
-              <template #icon><IconifyIcon icon="lucide:plus" /></template>
-              新建项目配置
-            </ElButton>
-
-            <ElPopconfirm title="将为所有项目初始化一行配置，继续？" @confirm="initRows">
-              <template #reference>
-                <ElButton size="small" plain :loading="loading">
-                  <template #icon><IconifyIcon icon="lucide:wand-2" /></template>
-                  初始化配置行
-                </ElButton>
-              </template>
-            </ElPopconfirm>
-
-            <ElButton size="small" plain type="primary" :loading="loading" @click="mockCollect">
-              <template #icon><IconifyIcon icon="lucide:database" /></template>
-              一键 Mock 采集
-            </ElButton>
-
-            <ElButton size="small" plain type="success" :loading="loading" @click="mockSendEmails">
-              <template #icon><IconifyIcon icon="lucide:mail" /></template>
-              一键 Mock 发邮件
-            </ElButton>
-
-            <ElButton size="small" plain :loading="loading" @click="reload">
-              <template #icon><IconifyIcon icon="lucide:refresh-cw" /></template>
-              刷新
-            </ElButton>
-          </div>
+    <Grid>
+      <!-- Toolbar Buttons -->
+      <template #toolbar_buttons>
+        <div class="flex items-center gap-2">
+          <ElButton size="small" type="primary" plain @click="openCreate">
+            <template #icon><IconifyIcon icon="lucide:plus" /></template>
+            新建配置
+          </ElButton>
+          <ElPopconfirm title="初始化配置将为无配置的项目创建默认记录，继续？" @confirm="initRows">
+            <template #reference>
+              <ElButton size="small" plain>
+                <template #icon><IconifyIcon icon="lucide:wand-2" /></template>
+                初始化
+              </ElButton>
+            </template>
+          </ElPopconfirm>
+          <ElButton size="small" type="primary" plain @click="batchMockCollect">
+            <template #icon><IconifyIcon icon="lucide:database" /></template>
+            刷新数据 (Mock)
+          </ElButton>
+          <ElButton size="small" type="success" plain @click="mockSendEmails">
+            <template #icon><IconifyIcon icon="lucide:mail" /></template>
+            Mock 发送邮件
+          </ElButton>
         </div>
-      </div>
+      </template>
 
-      <ElSkeleton :loading="loading" animated>
-        <template #default>
-          <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-[#151515]">
-            <div class="mb-3 flex items-center justify-between">
-              <div class="flex items-center gap-2">
-                <span class="h-4 w-1 rounded-full bg-indigo-500" />
-                <span class="font-bold text-gray-900 dark:text-white">项目配置表</span>
-              </div>
-              <ElTag type="info" size="small">Mock 日期：{{ dateStr() }}</ElTag>
-            </div>
+      <!-- Enabled Switch -->
+      <template #enabled_default="{ row }">
+        <ElSwitch v-model="row.enabled" size="small" @change="() => saveRow(row)" />
+      </template>
 
-            <ElTable :data="filteredRows" size="small" stripe height="calc(100vh - 300px)">
-              <ElTableColumn prop="project_name" label="项目" min-width="180" fixed="left" />
-              <ElTableColumn label="启用" width="90">
-                <template #default="{ row }">
-                  <ElSwitch v-model="row.enabled" @change="() => saveRow(row)" />
-                </template>
-              </ElTableColumn>
+      <!-- Actions -->
+      <template #action_default="{ row }">
+        <ElButton size="small" type="primary" link @click="openEdit(row)"> 编辑 </ElButton>
+      </template>
+    </Grid>
 
-              <ElTableColumn label="CodeCheck task_id" min-width="220">
-                <template #default="{ row }">
-                  <span class="text-gray-700 dark:text-gray-200">{{ idTag(row.code_check_task_id) }}</span>
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="BinScope task_id" min-width="220">
-                <template #default="{ row }">
-                  <span class="text-gray-700 dark:text-gray-200">{{ idTag(row.bin_scope_task_id) }}</span>
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="BuildCheck task_id" min-width="220">
-                <template #default="{ row }">
-                  <span class="text-gray-700 dark:text-gray-200">{{ idTag(row.build_check_task_id) }}</span>
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="CompileCheck task_id" min-width="220">
-                <template #default="{ row }">
-                  <span class="text-gray-700 dark:text-gray-200">{{ idTag(row.compile_check_task_id) }}</span>
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="DT project_id" min-width="220">
-                <template #default="{ row }">
-                  <span class="text-gray-700 dark:text-gray-200">{{ idTag(row.dt_project_id) }}</span>
-                </template>
-              </ElTableColumn>
-
-              <ElTableColumn label="操作" width="120" fixed="right">
-                <template #default="{ row }">
-                  <ElButton
-                    size="small"
-                    type="primary"
-                    plain
-                    @click="openEdit(row)"
-                  >
-                    编辑
-                  </ElButton>
-                </template>
-              </ElTableColumn>
-            </ElTable>
-          </div>
-        </template>
-      </ElSkeleton>
-    </div>
-
-    <ElDialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建项目配置' : '编辑项目配置'" width="640">
-      <ElForm label-width="140px">
+    <!-- Dialog -->
+    <ElDialog
+      v-model="dialogVisible"
+      :title="dialogMode === 'create' ? '新建项目配置' : '编辑项目配置'"
+      width="640px"
+      append-to-body
+    >
+      <ElForm label-width="160px">
         <ElFormItem label="关联项目" required>
           <ElSelect
-            v-model="formProjectId"
+            v-model="form.project_id"
             filterable
             placeholder="请选择项目"
             style="width: 100%"
@@ -326,31 +317,42 @@ onMounted(() => {
             <ElOption
               v-for="p in allProjects"
               :key="p.id"
-              :disabled="dialogMode === 'create' && isConfigured(p.id)"
-              :label="`${p.name}（${p.domain || '-'} / ${p.type || '-'}）${dialogMode === 'create' && isConfigured(p.id) ? '（已配置）' : ''}`"
+              :label="`${p.name}（${p.domain || '-'} / ${p.type || '-'}）`"
               :value="p.id"
             />
           </ElSelect>
+        </ElFormItem>
+
+        <ElFormItem label="配置名称" required>
+          <ElInput v-model="form.name" placeholder="邮件/报表中显示的名称" />
+        </ElFormItem>
+
+        <ElFormItem label="负责人">
+          <UserSelector
+            v-model="form.managers"
+            :multiple="true"
+            placeholder="请选择责任人"
+          />
         </ElFormItem>
 
         <ElFormItem label="启用">
           <ElSwitch v-model="form.enabled" />
         </ElFormItem>
 
-        <ElFormItem label="code_check_task_id">
-          <ElInput v-model="form.code_check_task_id" placeholder="code_check_task_id" />
+        <ElFormItem label="CodeCheck ID">
+          <ElInput v-model="form.code_check_task_id" placeholder="Task ID" />
         </ElFormItem>
-        <ElFormItem label="bin_scope_task_id">
-          <ElInput v-model="form.bin_scope_task_id" placeholder="bin_scope_task_id" />
+        <ElFormItem label="BinScope ID">
+          <ElInput v-model="form.bin_scope_task_id" placeholder="Task ID" />
         </ElFormItem>
-        <ElFormItem label="build_check_task_id">
-          <ElInput v-model="form.build_check_task_id" placeholder="build_check_task_id" />
+        <ElFormItem label="BuildCheck ID">
+          <ElInput v-model="form.build_check_task_id" placeholder="Task ID" />
         </ElFormItem>
-        <ElFormItem label="compile_check_task_id">
-          <ElInput v-model="form.compile_check_task_id" placeholder="compile_check_task_id" />
+        <ElFormItem label="CompileCheck ID">
+          <ElInput v-model="form.compile_check_task_id" placeholder="Task ID" />
         </ElFormItem>
-        <ElFormItem label="dt_project_id">
-          <ElInput v-model="form.dt_project_id" placeholder="dt_project_id" />
+        <ElFormItem label="DT Project ID">
+          <ElInput v-model="form.dt_project_id" placeholder="Project ID" />
         </ElFormItem>
       </ElForm>
 

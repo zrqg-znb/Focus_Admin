@@ -76,8 +76,8 @@ const todayPosition = computed(() => {
   } else {
     // 在 prevIndex 和 nextIndex 之间
     const prevIndex = nextIndex - 1;
-    const prevMs = sortedMs[prevIndex];
-    const nextMs = sortedMs[nextIndex];
+    const prevMs = sortedMs[prevIndex]!;
+    const nextMs = sortedMs[nextIndex]!;
     
     const prevTime = new Date(prevMs.date).getTime();
     const nextTime = new Date(nextMs.date).getTime();
@@ -99,41 +99,42 @@ const todayPosition = computed(() => {
 </script>
 
 <template>
-  <div class="relative h-20 w-full pt-8 px-4">
-    <!-- 背景线 -->
-    <div class="absolute left-4 right-4 top-[39px] h-0.5 bg-gray-200 dark:bg-gray-700"></div>
-    
-    <!-- Today Flag (Global) -->
-    <div 
-       v-if="todayPosition" 
-       class="absolute top-2 z-20 flex flex-col items-center pointer-events-none"
-       :style="{ left: todayPosition, marginLeft: '-16px' }" 
-    >
-       <div class="px-1.5 py-0.5 bg-red-500 text-white text-[10px] rounded shadow-sm whitespace-nowrap">Today</div>
-       <div class="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[4px] border-t-red-500"></div>
-       <!-- Line down to timeline -->
-       <div class="w-0.5 h-6 bg-red-500/50 mt-1"></div>
-    </div>
-    
-    <!-- 节点 -->
-    <div 
-      v-for="(item, index) in timelineItems" 
-      :key="index"
-      class="absolute top-8 -ml-2 flex flex-col items-center group"
-      :style="{ left: item.left }"
-    >
-      <ElTooltip
-        effect="dark"
-        :content="`${item.name} (${item.date}) - ${item.label}`"
-        placement="top"
+  <div class="relative h-20 w-full pt-8">
+    <div class="absolute left-4 right-4 top-0 bottom-0">
+      <!-- 背景线 -->
+      <div class="absolute left-0 right-0 top-[39px] h-0.5 bg-gray-200 dark:bg-gray-700"></div>
+      
+      <!-- Today Flag (Global) -->
+      <div 
+         v-if="todayPosition" 
+         class="absolute top-2 z-20 flex flex-col items-center pointer-events-none -translate-x-1/2"
+         :style="{ left: todayPosition }" 
       >
-        <div 
-          class="h-4 w-4 rounded-full border-2 bg-white transition-all hover:scale-125 cursor-pointer z-10 box-content"
-          :class="[item.colorClass]"
-        ></div>
-      </ElTooltip>
-      <div class="mt-2 text-xs font-medium text-gray-500 whitespace-nowrap">
-        {{ item.name }}
+         <div class="px-1.5 py-0.5 bg-red-500 text-white text-[10px] rounded shadow-sm whitespace-nowrap">Today</div>
+         <div class="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[4px] border-t-red-500"></div>
+         <div class="w-0.5 h-6 bg-red-500/50 mt-1"></div>
+      </div>
+      
+      <!-- 节点 -->
+      <div 
+        v-for="(item, index) in timelineItems" 
+        :key="index"
+        class="absolute top-8 flex flex-col items-center group -translate-x-1/2"
+        :style="{ left: item.left }"
+      >
+        <ElTooltip
+          effect="dark"
+          :content="`${item.name} (${item.date}) - ${item.label}`"
+          placement="top"
+        >
+          <div 
+            class="h-4 w-4 rounded-full border-2 bg-white transition-all hover:scale-125 cursor-pointer z-10 box-content"
+            :class="[item.colorClass]"
+          ></div>
+        </ElTooltip>
+        <div class="mt-2 text-xs font-medium text-gray-500 whitespace-nowrap">
+          {{ item.name }}
+        </div>
       </div>
     </div>
   </div>

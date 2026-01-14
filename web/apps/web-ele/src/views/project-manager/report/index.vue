@@ -20,16 +20,20 @@ const route = useRoute();
 const router = useRouter();
 const loading = ref(true);
 const reportData = ref<ProjectReport | null>(null);
+const iterationExpanded = ref(false);
+const qualityExpanded = ref(false);
 
 // Get projectId from route
 const currentProjectId = ref(route.params.id as string);
 
 async function fetchReport() {
   if (!currentProjectId.value) return;
-  
+
   try {
     loading.value = true;
     reportData.value = await getProjectReportApi(currentProjectId.value);
+    iterationExpanded.value = false;
+    qualityExpanded.value = false;
   } catch (error) {
     console.error('Failed to fetch report', error);
   } finally {
@@ -48,10 +52,20 @@ watch(
   (newId) => {
     if (newId && typeof newId === 'string') {
       currentProjectId.value = newId;
+      iterationExpanded.value = false;
+      qualityExpanded.value = false;
       fetchReport();
     }
   }
 );
+
+function toggleIteration(expanded: boolean) {
+  iterationExpanded.value = expanded;
+}
+
+function toggleQuality(expanded: boolean) {
+  qualityExpanded.value = expanded;
+}
 
 onMounted(() => {
   if (currentProjectId.value) {
@@ -106,7 +120,7 @@ onMounted(() => {
                    </ElButton>
                 </template>
               </WorkbenchHeader>
-          
+
               <div class="space-y-4">
                 <ElSkeleton :loading="loading" animated>
                   <template #template>
@@ -115,19 +129,19 @@ onMounted(() => {
                         <div class="bg-gray-100 rounded-xl dark:bg-gray-800"></div>
                      </div>
                   </template>
-                  
+
                   <template #default>
                      <div v-if="reportData" class="space-y-4">
                         <!-- Row 1: Overview & Milestones -->
                         <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
                            <!-- Left: Health Overview -->
-                           <ReportHeader 
+                           <ReportHeader
                               class="h-[340px]"
-                              :radar-data="reportData.radar_data" 
+                              :radar-data="reportData.radar_data"
                               :health-score="reportData.health_score"
                               :health-level="reportData.health_level"
                            />
-                           
+
                            <!-- Right: Milestones -->
                            <div class="h-[340px] rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-[#151515] flex flex-col">
                               <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
@@ -142,25 +156,29 @@ onMounted(() => {
                               </div>
                            </div>
                         </div>
-                        
+
                       <!-- Row 2: Charts Area -->
                       <DtsTrendChart
                         v-if="reportData.dts_summary"
                         :trend-data="reportData.dts_trend"
                         :di-trend="reportData.dts_team_di_trend"
                       />
-                      
+
                       <!-- Row 3: Detail Cards -->
                       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                          <IterationCard
                            v-if="reportData.iteration"
                            :data="reportData.iteration"
                            :detail="reportData.iteration_detail"
+                           :expanded="iterationExpanded"
+                           @toggle="toggleIteration"
                          />
                          <CodeQualityCard
                            v-if="reportData.code_quality"
                            :data="reportData.code_quality"
                            :details="reportData.code_quality_details"
+                           :expanded="qualityExpanded"
+                           @toggle="toggleQuality"
                          />
                       </div>
                    </div>

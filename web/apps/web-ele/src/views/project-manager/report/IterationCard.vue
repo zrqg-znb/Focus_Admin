@@ -2,14 +2,19 @@
 import type { IterationDetailMetrics, IterationSummary } from '#/api/project-manager/report';
 import { IconifyIcon } from '@vben/icons';
 import { ElButton } from 'element-plus';
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 
 const props = defineProps<{
   data: IterationSummary;
   detail?: IterationDetailMetrics | null;
+  expanded?: boolean;
 }>();
 
-const detailVisible = ref(false);
+const emit = defineEmits<{
+  (e: 'toggle', expanded: boolean): void;
+}>();
+
+const isExpanded = computed(() => !!props.expanded);
 
 const rateRows = computed(() => {
   if (!props.detail) return [];
@@ -82,15 +87,22 @@ function fmtRate(v: number) {
         size="small"
         plain
         type="primary"
-        @click="detailVisible = !detailVisible"
+        @click="emit('toggle', !isExpanded)"
         :disabled="!props.detail"
       >
-        {{ detailVisible ? '收起详情' : '展开详情' }}
+        {{ isExpanded ? '收起详情' : '展开详情' }}
       </ElButton>
     </div>
 
-    <transition name="el-collapse-transition">
-      <div v-show="detailVisible" class="mt-4 rounded-xl border border-gray-100 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-900/20">
+    <Transition
+      enter-active-class="transition-all duration-300 ease-out"
+      enter-from-class="opacity-0 max-h-0 -translate-y-1"
+      enter-to-class="opacity-100 max-h-[1200px] translate-y-0"
+      leave-active-class="transition-all duration-200 ease-in"
+      leave-from-class="opacity-100 max-h-[1200px] translate-y-0"
+      leave-to-class="opacity-0 max-h-0 -translate-y-1"
+    >
+      <div v-if="isExpanded" class="mt-4 overflow-hidden rounded-xl border border-gray-100 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-900/20">
         <div class="mb-3 flex items-center justify-between">
           <div class="flex items-center gap-2">
             <div class="h-2 w-2 rounded-full bg-purple-500" />
@@ -122,6 +134,6 @@ function fmtRate(v: number) {
           </div>
         </div>
       </div>
-    </transition>
+    </Transition>
   </div>
 </template>
