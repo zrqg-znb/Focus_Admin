@@ -33,8 +33,38 @@ def get_milestone_board(filters: dict):
 
     # 构造扁平化数据
     result = []
+    
+    # 批量获取风险状态
+    # Structure: { project_id: { 'QG1': 'high', 'QG2': 'medium' } }
+    risk_map = {}
+    if queryset.exists():
+        # Get all milestones IDs
+        milestone_ids = [m.id for m in queryset]
+        
+        # Query active risks for these milestones
+        active_risks = MilestoneRiskItem.objects.filter(
+            config__milestone_id__in=milestone_ids,
+            status__in=['pending', 'confirmed'],
+            is_deleted=False
+        ).select_related('config', 'config__milestone')
+        
+        for risk in active_risks:
+            ms_id = risk.config.milestone.id
+            qg_name = risk.config.qg_name # e.g. "QG1"
+            
+            if ms_id not in risk_map:
+                risk_map[ms_id] = {}
+            
+            # Populate detailed risk info
+            risk_map[ms_id][qg_name] = {
+                "id": str(risk.id),
+                "level": "medium" if risk.status == 'confirmed' else "high",
+                "description": risk.description,
+                "status": risk.status
+            }
+
     for m in queryset:
-        result.append(MilestoneBoardSchema(
+        schema = MilestoneBoardSchema(
             id=str(m.id),
             project_id=m.project.id,
             project_name=m.project.name,
@@ -48,7 +78,70 @@ def get_milestone_board(filters: dict):
             qg6_date=m.qg6_date,
             qg7_date=m.qg7_date,
             qg8_date=m.qg8_date,
-        ))
+        )
+        
+        # Inject risk info dynamically (schema allows extra fields via Config)
+        # However, `Schema` validates fields. We need to add `risks` field to schema or use a Dict.
+        # Let's update Schema first. But wait, I can just attach it if I convert to dict?
+        # No, Ninja validates return type.
+        # I should add `risks: Optional[dict] = None` to MilestoneBoardSchema.
+        
+        # For now, let's update Schema in next step. 
+        # But I can't leave this file broken if I change Schema later.
+        # Let's assume I will update Schema to have `risks` field.
+        
+        if m.id in risk_map:
+            # We need to assign it to the schema object
+            # Pydantic models (Ninja Schema) are not dicts.
+            # But wait, `MilestoneBoardSchema` is a Schema, which is a Pydantic model.
+            # We can pass it in constructor if field exists.
+            pass # Will be handled by schema update
+            
+        # Re-construct with risks if I update schema
+        # Let's just return dicts? No, type safety.
+        
+        # I'll update schema first in next tool call, then come back here?
+        # Or I can update schema now if I can edit multiple files? No, single file edit.
+        
+        # I will update this file to populate `risks` field, assuming I will add it to Schema immediately after.
+        
+        risks = risk_map.get(m.id, {})
+        # Monkey patch for now or use constructor if field existed
+        # schema.risks = risks # Pydantic models are immutable by default in v2? 
+        # Actually Ninja uses Pydantic v1 or v2.
+        
+        # Better approach: update Schema first.
+        # I will undo this change plan and update Schema first.
+        
+        # Wait, I am editing service.py right now.
+        # I will add the logic but comment it out or put placeholders until schema is ready?
+        # No, I should do it properly.
+        
+        # Let's finish the `get_milestone_board` modification to include risks, 
+        # AND I will update schema in the next step.
+        # To avoid runtime error, I will convert to dict and Ninja might accept it if response model matches?
+        # Ninja `response=List[MilestoneBoardSchema]` expects objects that match schema.
+        
+        # I will add `risks` to the constructor call.
+        
+        item_dict = {
+            "id": str(m.id),
+            "project_id": m.project.id,
+            "project_name": m.project.name,
+            "project_domain": m.project.domain,
+            "manager_names": [u.name or u.username for u in m.project.managers.all()],
+            "qg1_date": m.qg1_date,
+            "qg2_date": m.qg2_date,
+            "qg3_date": m.qg3_date,
+            "qg4_date": m.qg4_date,
+            "qg5_date": m.qg5_date,
+            "qg6_date": m.qg6_date,
+            "qg7_date": m.qg7_date,
+            "qg8_date": m.qg8_date,
+            "risks": risk_map.get(m.id, {})
+        }
+        result.append(item_dict)
+        
     return result
 
 def update_milestone(request, project_id: str, data: MilestoneUpdateSchema):
@@ -141,17 +234,37 @@ def confirm_risk(risk_id: str, user: User, note: str, action: str):
 
 # --- Daily Check Logic ---
 
-def mock_get_project_dts_issues(project_id):
-    """Mock: Get open DTS issues count"""
-    import random
-    if random.random() > 0.7:
-        return random.randint(1, 5)
-    return 0
+from apps.project_manager.dts.dts_model import DtsTeam, DtsData
 
-def mock_get_project_di(project_id):
-    """Mock: Get current DI value"""
-    import random
-    return round(random.uniform(0, 100), 1)
+def get_project_latest_dts_data(project_id):
+    """
+    Get aggregated DI and open issues count from DTS module.
+    Returns: (Actual DI Sum, Target DI Sum, Total Open Issues)
+    """
+    # Get all teams for the project
+    teams = DtsTeam.objects.filter(project_id=project_id)
+    
+    total_di = 0.0
+    total_target_di = 0.0
+    total_issues = 0
+    
+    for team in teams:
+        # Get latest data record for each team
+        latest_data = DtsData.objects.filter(team=team).order_by('-record_date').first()
+        if latest_data:
+            total_di += latest_data.di
+            total_target_di += (latest_data.target_di or 0.0)
+            
+            # Sum all issue types as open issues
+            # Assuming these fields represent current open counts
+            total_issues += (
+                latest_data.fatal_num + 
+                latest_data.major_num + 
+                latest_data.minor_num + 
+                latest_data.suggestion_num
+            )
+            
+    return round(total_di, 1), round(total_target_di, 1), total_issues
 
 @transaction.atomic
 def check_qg_risks_daily():
@@ -165,41 +278,23 @@ def check_qg_risks_daily():
         if not qg_date:
             continue
             
-        # Check if within 2 weeks before QG
+        # Check if within 2 weeks before QG OR past QG
         days_diff = (qg_date - today).days
-        if 0 <= days_diff <= 14:
+        # If QG is in future 30 days or past 30 days, we check.
+        if -30 <= days_diff <= 30: 
             _check_single_config(config, today)
 
 def _check_single_config(config: MilestoneQGConfig, record_date: date):
     project_id = config.milestone.project_id
     
-    # 1. Check DTS
-    open_issues = mock_get_project_dts_issues(project_id)
-    if open_issues > 0:
-        _upsert_risk(
-            config=config,
-            record_date=record_date,
-            risk_type='dts',
-            description=f"存在 {open_issues} 个未关闭的 DTS 问题单",
-            status='pending'
-        )
-    else:
-        # Auto close if exists? Requirement says "processed day 1, reappears day 2 -> re-warn".
-        # If processed (closed) day 1, and day 2 issues=0, do nothing.
-        # If processed (closed) day 1, and day 2 issues>0, create new risk.
-        pass
-
+    # Fetch real data from DTS module
+    current_di, target_di_sum, open_issues = get_project_latest_dts_data(project_id)
+    
+    # 1. Check DTS Issues (REMOVED as per user request)
+    # if open_issues > 0:
+    #     _upsert_risk(...)
+    
     # 2. Check DI
-    # Always check DI if QG risk config is enabled, regardless of config.target_di value (which is now unused/optional)
-    
-    # 联动 DTS 模块：项目的 DI = 所有根节点团队的 DI 之和
-    # 目标 DI = 所有根节点团队的目标 DI 之和 (从 DTS 数据表中获取)
-    
-    current_di, target_di_sum = mock_get_project_di_aggregation(project_id)
-    
-    # Risk Condition: Actual Project DI > Target Project DI (Sum from DTS)
-    # 目标 DI 是不需要自己配置的这个要从dts 数据表中获取 -> We rely solely on target_di_sum
-    
     if current_di > target_di_sum:
          _upsert_risk(
             config=config,
@@ -208,18 +303,6 @@ def _check_single_config(config: MilestoneQGConfig, record_date: date):
             description=f"当前 DI 值 ({current_di}) 高于目标值 ({target_di_sum})",
             status='pending'
         )
-
-def mock_get_project_di_aggregation(project_id):
-    """
-    Mock: Get aggregated DI values from DTS module.
-    Returns: (Actual DI Sum, Target DI Sum)
-    """
-    import random
-    # Simulate 3 root teams
-    team_actuals = [random.uniform(0, 50) for _ in range(3)]
-    team_targets = [random.uniform(0, 40) for _ in range(3)]
-    
-    return round(sum(team_actuals), 1), round(sum(team_targets), 1)
 
 def _upsert_risk(config, record_date, risk_type, description, status):
     # Check if there is an existing OPEN risk (pending or confirmed)
@@ -234,16 +317,31 @@ def _upsert_risk(config, record_date, risk_type, description, status):
     ).first()
     
     if existing:
+        updates = []
         # Update existing risk (e.g. update description with new numbers)
         if existing.description != description:
             existing.description = description
-            existing.save(update_fields=['description'])
+            updates.append('description')
+            
+        # If status is 'confirmed' (Warning), reset to 'pending' (Error) because risk persists
+        if existing.status == 'confirmed':
+            existing.status = 'pending'
+            updates.append('status')
             
             MilestoneRiskLog.objects.create(
                 risk_item=existing,
-                action='update',
-                note=f"自动更新: {description}"
+                action='reset',
+                note="风险持续存在，重置为待处理状态"
             )
+            
+        if updates:
+            existing.save(update_fields=updates)
+            if 'description' in updates:
+                MilestoneRiskLog.objects.create(
+                    risk_item=existing,
+                    action='update',
+                    note=f"自动更新: {description}"
+                )
     else:
         # Create new risk
         item = MilestoneRiskItem.objects.create(

@@ -10,7 +10,7 @@ from apps.project_manager.code_quality.code_quality_model import CodeModule, Cod
 from apps.project_manager.code_quality.code_quality_service import get_project_quality_details
 from apps.project_manager.iteration.iteration_model import Iteration, IterationMetric
 from apps.project_manager.dts.dts_model import DtsData, DtsTeam
-from apps.project_manager.milestone.milestone_model import Milestone
+from apps.project_manager.milestone.milestone_model import Milestone, MilestoneQGConfig, MilestoneRiskItem
 
 from .report_schema import (
     ProjectReportSchema, 
@@ -281,6 +281,21 @@ def get_project_report(request, project_id: str):
     ms_score = 100
     if hasattr(project, 'milestone') and project.enable_milestone:
         ms = project.milestone
+        
+        # Get active risks
+        risk_qgs = set()
+        risk_configs = MilestoneQGConfig.objects.filter(
+             milestone=ms,
+             enabled=True,
+             is_deleted=False
+        )
+        active_risks = MilestoneRiskItem.objects.filter(
+             config__in=risk_configs,
+             status__in=['pending', 'confirmed'],
+             is_deleted=False
+        ).values_list('config__qg_name', flat=True)
+        risk_qgs = set(active_risks)
+
         for i in range(1, 9):
             field_name = f'qg{i}_date'
             qg_date = getattr(ms, field_name)
@@ -292,7 +307,8 @@ def get_project_report(request, project_id: str):
                 milestones_list.append(QGNode(
                     name=f'QG{i}',
                     date=qg_date,
-                    status=status
+                    status=status,
+                    has_risk=f'QG{i}' in risk_qgs
                 ))
     
     # --- 6. Radar & Health ---

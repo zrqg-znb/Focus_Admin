@@ -119,7 +119,12 @@ onMounted(() => {
       <div
         v-for="item in risks.slice((page - 1) * pageSize, page * pageSize)"
         :key="item.id"
-        class="border-l-4 border-l-red-500 bg-red-50 p-3 dark:bg-red-900/10"
+        class="border-l-4 p-3 dark:bg-opacity-10"
+        :class="[
+          item.status === 'confirmed' 
+            ? 'border-l-yellow-500 bg-yellow-50 dark:bg-yellow-900' 
+            : 'border-l-red-500 bg-red-50 dark:bg-red-900'
+        ]"
       >
         <div class="flex items-start justify-between">
           <div>
@@ -128,7 +133,9 @@ onMounted(() => {
                 {{ item.project_name }}
               </span>
               <ElTag size="small" effect="plain">{{ item.qg_name }}</ElTag>
-              <ElTag size="small" type="danger">{{ getRiskTypeLabel(item.risk_type) }}</ElTag>
+              <ElTag size="small" :type="item.status === 'confirmed' ? 'warning' : 'danger'">
+                {{ getRiskTypeLabel(item.risk_type) }}
+              </ElTag>
             </div>
             <div class="mt-1 text-sm text-gray-600 dark:text-gray-400">
               {{ item.description }}
@@ -141,12 +148,11 @@ onMounted(() => {
             </div>
           </div>
           <ElButton
-            v-if="item.status === 'pending'"
             size="small"
-            type="primary"
+            :type="item.status === 'confirmed' ? 'warning' : 'primary'"
             @click="handleConfirm(item)"
           >
-            处理
+            {{ item.status === 'confirmed' ? '再次处理' : '处理' }}
           </ElButton>
         </div>
       </div>

@@ -13,6 +13,7 @@ export interface MilestoneBoardItem {
   qg6_date: string | null;
   qg7_date: string | null;
   qg8_date: string | null;
+  risks?: Record<string, string>;
   [key: string]: any; // Allow dynamic access for QG keys
 }
 

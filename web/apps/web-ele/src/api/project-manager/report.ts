@@ -10,6 +10,7 @@ export interface QGNode {
   name: string;
   date: string;
   status: string;
+  has_risk?: boolean;
 }
 
 export interface DtsTrendItem {

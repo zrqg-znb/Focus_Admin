@@ -78,14 +78,26 @@
               v-for="milestone in getProjectMilestones(row)"
               :key="`ms-${milestone.key}`"
               class="milestone-node"
+              :class="{
+                'has-risk': milestone.hasRisk,
+                'risk-confirmed': milestone.riskInfo?.level === 'medium'
+              }"
               :style="{
                 left: `${milestone.position}px`,
-                backgroundColor: milestone.color,
+                backgroundColor: milestone.hasRisk
+                  ? (milestone.riskInfo?.level === 'medium' ? '#f59e0b' : '#ef4444')
+                  : milestone.color,
+                borderColor: milestone.hasRisk
+                  ? (milestone.riskInfo?.level === 'medium' ? '#f59e0b' : '#ef4444')
+                  : 'var(--el-bg-color)',
               }"
+              @click.stop="() => handleRiskClick(milestone, row)"
               @mouseenter="(e) => showMilestoneTooltip(e, milestone, row)"
               @mousemove="(e) => updateTooltipPosition(e)"
               @mouseleave="hideBarTooltip"
-            ></div>
+            >
+              <div v-if="milestone.hasRisk" class="risk-indicator">!</div>
+            </div>
 
             <div
               class="today-line"
@@ -122,6 +134,44 @@
         </div>
       </div>
     </div>
+
+    <!-- Risk Confirm Dialog -->
+    <ElDialog
+      v-model="confirmDialogVisible"
+      title="处理风险预警"
+      width="500px"
+    >
+      <div v-if="currentRisk" class="space-y-4">
+        <div class="bg-red-50 p-4 rounded-md border border-red-100">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="font-bold text-red-600 text-lg">⚠️ 风险详情</span>
+            <span class="text-gray-500 text-sm">({{ currentRisk.project_name }} - {{ currentRisk.qg_name }})</span>
+          </div>
+          <p class="text-gray-700">{{ currentRisk.description }}</p>
+        </div>
+
+        <ElForm :model="confirmForm" label-position="top">
+          <ElFormItem label="处理意见">
+            <ElInput
+              v-model="confirmForm.note"
+              type="textarea"
+              rows="3"
+              placeholder="请输入处理意见或备注..."
+            />
+          </ElFormItem>
+          <ElFormItem label="操作">
+            <ElRadioGroup v-model="confirmForm.action">
+              <ElRadioButton label="confirm">确认知晓 (保持风险状态)</ElRadioButton>
+              <ElRadioButton label="close">关闭风险 (已解决)</ElRadioButton>
+            </ElRadioGroup>
+          </ElFormItem>
+        </ElForm>
+      </div>
+      <template #footer>
+        <ElButton @click="confirmDialogVisible = false">取消</ElButton>
+        <ElButton type="primary" @click="handleConfirmRisk">提交</ElButton>
+      </template>
+    </ElDialog>
 
     <!-- Tooltip -->
     <Teleport to="body">
@@ -162,6 +212,12 @@
               <span>日期:</span>
               <span>{{ tooltip.content.date }}</span>
             </div>
+            <div v-if="tooltip.content.hasRisk" class="tooltip-row risk-row">
+              <span :class="tooltip.content.riskLevel === 'medium' ? 'text-yellow-500' : 'text-red-500'">风险:</span>
+              <span :class="tooltip.content.riskLevel === 'medium' ? 'text-yellow-500 font-bold' : 'text-red-500 font-bold'">
+                {{ tooltip.content.riskLevel === 'medium' ? '已确认 (持续跟踪)' : '存在高风险' }}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -177,6 +233,10 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 
 import { ElButton, ElButtonGroup } from 'element-plus';
 
+import { confirmRiskApi } from '#/api/project-manager/milestone';
+import type { RiskConfirmPayload } from '#/api/project-manager/milestone';
+import { ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElRadioGroup, ElRadioButton } from 'element-plus';
+
 interface Props {
   data: MilestoneBoardItem[];
   basePixelsPerDay?: number;
@@ -185,6 +245,54 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   basePixelsPerDay: 2,
 });
+
+const emit = defineEmits(['refresh']);
+
+// Risk Confirm Dialog
+const confirmDialogVisible = ref(false);
+const currentRisk = ref<any>(null);
+const confirmForm = ref<RiskConfirmPayload>({
+  note: '',
+  action: 'confirm',
+});
+
+function handleRiskClick(milestone: any, row: MilestoneBoardItem) {
+  if (milestone.hasRisk && milestone.riskInfo) {
+    currentRisk.value = {
+      ...milestone.riskInfo,
+      project_name: row.project_name,
+      qg_name: milestone.label,
+    };
+    confirmForm.value = {
+      note: '',
+      action: 'confirm',
+    };
+    confirmDialogVisible.value = true;
+  }
+}
+
+async function handleConfirmRisk() {
+  if (!currentRisk.value) return;
+  try {
+    await confirmRiskApi(currentRisk.value.id, confirmForm.value);
+    ElMessage.success('操作成功');
+    confirmDialogVisible.value = false;
+    emit('refresh'); // Notify parent to refresh data
+  } catch (error) {
+    // Error handled by interceptor
+  }
+}
+
+// Mock risk check (should be real data from API)
+function getRiskInfo(row: MilestoneBoardItem, qgKey: string): any | null {
+  const risks = (row as any).risks || {};
+  const qgName = qgKey.split('_')[0].toUpperCase();
+  const risk = risks[qgName];
+  if (risk && risk.level === 'high') {
+    return risk;
+  }
+  return null;
+}
 
 // 配置信息
 const milestoneConfigs: MilestoneConfig[] = [
@@ -356,16 +464,21 @@ function getProjectMilestones(row: MilestoneBoardItem) {
     color: string;
     label: string;
     date: string;
+    hasRisk: boolean;
+    riskInfo?: any;
   }> = [];
   milestoneConfigs.forEach((config) => {
     const d = row[config.key];
     if (d) {
+      const riskInfo = getRiskInfo(row, config.key);
       milestones.push({
         key: config.key,
         position: dateToPosition(new Date(d)),
         color: config.color,
         label: config.label,
         date: d,
+        hasRisk: !!riskInfo,
+        riskInfo,
       });
     }
   });
@@ -401,7 +514,12 @@ function showMilestoneTooltip(
     y: e.clientY + 15,
     title: row.project_name,
     type: 'milestone',
-    content: { label: milestone.label, date: milestone.date },
+    content: {
+      label: milestone.label,
+      date: milestone.date,
+      hasRisk: milestone.hasRisk,
+      riskLevel: milestone.riskInfo?.level
+    },
   };
 }
 
@@ -694,25 +812,67 @@ onUnmounted(() => {
 }
 
 .milestone-node {
-  position: absolute;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid var(--el-bg-color);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-  z-index: 15;
-  cursor: pointer;
-  transition: transform 0.2s;
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--el-bg-color);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    z-index: 15;
+    cursor: pointer;
+    transition: transform 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 
-  &:hover {
-    transform: translate(-50%, -50%) scale(1.4);
-    z-index: 25;
+    &:hover {
+      transform: translate(-50%, -50%) scale(1.4);
+      z-index: 25;
+    }
+
+    &.has-risk {
+      animation: pulse-red 2s infinite;
+    }
+
+    &.risk-confirmed {
+      animation: pulse-yellow 2s infinite;
+    }
+
+    .risk-indicator {
+      color: white;
+      font-size: 10px;
+      font-weight: bold;
+      line-height: 1;
+    }
   }
-}
 
-/* Controls */
+  @keyframes pulse-red {
+    0% {
+      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+    }
+    70% {
+      box-shadow: 0 0 0 6px rgba(239, 68, 68, 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+    }
+  }
+
+  @keyframes pulse-yellow {
+    0% {
+      box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7);
+    }
+    70% {
+      box-shadow: 0 0 0 6px rgba(245, 158, 11, 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+    }
+  }
+
+  /* Controls */
 .gantt-controls {
   padding: 8px 16px;
   border-top: 1px solid var(--el-border-color);

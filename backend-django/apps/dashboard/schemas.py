@@ -52,6 +52,7 @@ class QGNode(Schema):
     name: str
     date: date
     status: str # 'completed', 'pending', 'delayed'
+    has_risk: bool = False
 
 class FavoriteProjectDetail(Schema):
     id: str
