@@ -16,6 +16,41 @@ export interface MilestoneBoardItem {
   [key: string]: any; // Allow dynamic access for QG keys
 }
 
+export interface QGConfig {
+  id: string;
+  milestone: string;
+  qg_name: string;
+  target_di: number | null;
+  enabled: boolean;
+}
+
+export interface QGConfigPayload {
+  qg_name: string;
+  target_di?: number | null;
+  enabled: boolean;
+}
+
+export interface RiskItem {
+  id: string;
+  config_id: string;
+  qg_name: string;
+  milestone_id: string;
+  project_id: string;
+  project_name: string;
+  record_date: string;
+  risk_type: 'dts' | 'di';
+  description: string;
+  status: 'pending' | 'confirmed' | 'closed';
+  manager_confirm_note: string;
+  manager_confirm_at: string | null;
+  manager_name?: string | null;
+}
+
+export interface RiskConfirmPayload {
+  note: string;
+  action: 'confirm' | 'close';
+}
+
 export async function getMilestoneOverviewApi(params?: any) {
   return requestClient.get<MilestoneBoardItem[]>('/api/project-manager/milestones/overview', {
     params,
@@ -27,4 +62,27 @@ export const getMilestoneBoardApi = getMilestoneOverviewApi;
 
 export async function updateMilestoneApi(projectId: string, data: any) {
   return requestClient.put(`/api/project-manager/milestones/project/${projectId}`, data);
+}
+
+// QG Config
+export async function getQGConfigsApi(milestoneId: string) {
+  return requestClient.get<QGConfig[]>(`/api/project-manager/milestones/${milestoneId}/qg-configs`);
+}
+
+export async function saveQGConfigApi(milestoneId: string, data: QGConfigPayload) {
+  return requestClient.post<QGConfig>(`/api/project-manager/milestones/${milestoneId}/qg-configs`, data);
+}
+
+// Risks
+export async function getPendingRisksApi() {
+  return requestClient.get<RiskItem[]>('/api/project-manager/milestones/risks/pending');
+}
+
+export async function confirmRiskApi(riskId: string, data: RiskConfirmPayload) {
+  return requestClient.post<boolean>(`/api/project-manager/milestones/risks/${riskId}/confirm`, data);
+}
+
+// Mock
+export async function mockDailyCheckApi() {
+  return requestClient.post<boolean>('/api/project-manager/milestones/mock/daily-check');
 }

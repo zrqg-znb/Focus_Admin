@@ -22,6 +22,7 @@ import {
 import { useColumns, useSearchFormSchema } from './data';
 import Form from './modules/form.vue';
 import NewProjectDialog from './modules/NewProjectDialog.vue';
+import QGConfigDialog from '../milestone/components/QGConfigDialog.vue';
 
 import { useRouter } from 'vue-router';
 
@@ -35,6 +36,9 @@ const [FormDrawer, formDrawerApi] = useVbenDrawer({
 });
 
 const createDialogVisible = ref(false);
+const configDialogVisible = ref(false);
+const currentProjectId = ref('');
+const currentProjectName = ref('');
 
 function onActionClick({ code, row }: OnActionClickParams<ProjectOut>) {
   if (code === 'edit') {
@@ -62,6 +66,11 @@ function onActionClick({ code, row }: OnActionClickParams<ProjectOut>) {
   }
   if (code === 'report') {
     router.push(`/project-manager/report/${row.id}`);
+  }
+  if (code === 'qg_config') {
+    currentProjectId.value = row.id;
+    currentProjectName.value = row.name;
+    configDialogVisible.value = true;
   }
 }
 
@@ -114,5 +123,11 @@ function refreshGrid() {
     </Grid>
 
     <NewProjectDialog v-model="createDialogVisible" @created="refreshGrid" />
+
+    <QGConfigDialog
+      v-model="configDialogVisible"
+      :project-id="currentProjectId"
+      :project-name="currentProjectName"
+    />
   </Page>
 </template>

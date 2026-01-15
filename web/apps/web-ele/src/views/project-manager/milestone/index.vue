@@ -38,6 +38,9 @@ import type { MilestoneBoardItem } from '#/api/project-manager/milestone';
 import { onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
+import { IconifyIcon } from '@vben/icons';
+
+import { ElButton } from 'element-plus';
 
 import { useVbenForm } from '#/adapter/form';
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
@@ -83,7 +86,7 @@ const [Grid, gridApi] = useVbenVxeGrid({
               ...values,
               ...formValues,
             });
-            
+
             // Update the Gantt chart data with the full result set
             milestoneData.value = data;
 

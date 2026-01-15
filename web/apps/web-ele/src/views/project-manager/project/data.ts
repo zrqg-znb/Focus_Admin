@@ -150,7 +150,13 @@ export function useColumns(
             type: 'primary',
             title: '查看详细报告',
           };
-          return ['edit', favoriteAction, reportAction, 'delete'];
+          const qgConfigAction = {
+            code: 'qg_config',
+            icon: 'lucide:settings',
+            type: 'info',
+            title: 'QG预警配置',
+          };
+          return ['edit', favoriteAction, reportAction, qgConfigAction, 'delete'];
         },
       } as any,
       field: 'operation',
