@@ -68,9 +68,9 @@ export interface HistoryQueryOut {
   items: HistoryRow[];
 }
 
-export async function listIntegrationProjectsApi() {
+export async function listIntegrationProjectsApi(params?: ConfigFilterParams) {
   // Returns configs for subscription page
-  return requestClient.get<ProjectConfigOut[]>('/api/integration-report/projects');
+  return requestClient.get<PaginatedResponse<ProjectConfigOut>>('/api/integration-report/projects', { params });
 }
 
 export interface ConfigFilterParams {
@@ -133,4 +133,33 @@ export async function queryIntegrationHistoryApi(params: {
   end: string;
 }) {
   return requestClient.get<HistoryQueryOut>('/api/integration-report/history', { params });
+}
+
+export interface EmailDeliveryRow {
+  id: string;
+  record_date: string;
+  user_id: string;
+  user_name?: string | null;
+  to_email: string;
+  subject: string;
+  status: string; // pending|sent|failed
+  error_message?: string | null;
+  sys_create_datetime?: string | null;
+}
+
+export interface EmailDeliveryQueryParams {
+  status?: string; // pending|sent|failed
+  start_date?: string;
+  end_date?: string;
+  user_id?: string;
+  to_email?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export async function listEmailDeliveriesApi(params?: EmailDeliveryQueryParams) {
+  return requestClient.get<PaginatedResponse<EmailDeliveryRow>>(
+    '/api/integration-report/email-deliveries',
+    { params },
+  );
 }

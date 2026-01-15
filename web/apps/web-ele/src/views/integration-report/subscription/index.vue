@@ -40,18 +40,27 @@ const gridOptions: VxeGridProps<ProjectConfigOut> = {
     },
   ],
   pagerConfig: {
-    enabled: false,
+    enabled: true,
   },
+  height: 'auto',
+  keepSource: true,
   proxyConfig: {
     ajax: {
-      query: async (_params, formValues: any) => {
-        const items = await listIntegrationProjectsApi();
+      query: async ({ page }, formValues: any) => {
+        const params = {
+          page: page.currentPage,
+          pageSize: page.pageSize,
+          ...formValues,
+        };
+        const res = await listIntegrationProjectsApi(params);
         const k = formValues?.keyword?.toLowerCase().trim();
-        if (!k) return items;
-        return items.filter(
+        if (!k) return { items: res.items, total: res.count };
+        // 前端筛选（保持原有逻辑，但注意这会使得分页不准确）
+        const filtered = res.items.filter(
           (i) =>
             i.name.toLowerCase().includes(k) || i.project_name.toLowerCase().includes(k),
         );
+        return { items: filtered, total: filtered.length };
       },
     },
   },

@@ -17,9 +17,12 @@ from .integration_schema import (
     HistoryRow,
     MetricCell,
     ConfigFilterSchema,
-    MockCollectIn
+    MockCollectIn,
+    EmailDeliveryRow,
+    EmailDeliveryQueryIn,
+    EmailDeliveryQueryOut
 )
-from .integration_models import IntegrationMetricDefinition, IntegrationProjectMetricValue
+from .integration_models import IntegrationMetricDefinition, IntegrationProjectMetricValue, IntegrationEmailDelivery
 from . import integration_service
 from .integration_models import IntegrationProjectConfig
 
@@ -28,6 +31,7 @@ router = Router(tags=["Integration Report"], auth=GlobalAuth())
 
 
 @router.get("/projects", response=List[ProjectConfigOut], summary="集成报告配置列表（用于订阅页）")
+@paginate
 def list_projects(request):
     # Actually returns Configs now
     return integration_service.list_configs_with_latest(request.auth)
@@ -176,3 +180,39 @@ def mock_collect(request, payload: MockCollectIn):
 @router.post("/mock/send-emails", response=int, summary="Mock 发送一次邮件（按订阅拆分）")
 def mock_send(request, record_date: Optional[date] = None):
     return integration_service.send_daily_emails(record_date)
+
+
+@router.get("/email-deliveries", response=List[EmailDeliveryRow], summary="邮件投递日志查询")
+@paginate
+def list_email_deliveries(request, filters: EmailDeliveryQueryIn = Query(...)):
+    qs = IntegrationEmailDelivery.objects.select_related("user").filter(is_deleted=False)
+    
+    if filters.status:
+        qs = qs.filter(status=filters.status)
+    if filters.start_date:
+        qs = qs.filter(record_date__gte=filters.start_date)
+    if filters.end_date:
+        qs = qs.filter(record_date__lte=filters.end_date)
+    if filters.user_id:
+        qs = qs.filter(user_id=filters.user_id)
+    if filters.to_email:
+        qs = qs.filter(to_email__icontains=filters.to_email)
+    
+    qs = qs.order_by("-sys_create_datetime")
+    
+    rows = []
+    for delivery in qs:
+        rows.append(
+            EmailDeliveryRow(
+                id=str(delivery.id),
+                record_date=delivery.record_date,
+                user_id=str(delivery.user_id),
+                user_name=delivery.user.name if delivery.user else None,
+                to_email=delivery.to_email,
+                subject=delivery.subject,
+                status=delivery.status,
+                error_message=delivery.error_message,
+                sys_create_datetime=delivery.sys_create_datetime,
+            )
+        )
+    return rows

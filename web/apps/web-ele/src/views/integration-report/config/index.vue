@@ -32,6 +32,8 @@ import {
 } from '#/api/integration-report';
 import { listProjectsApi } from '#/api/project-manager/project';
 
+import { useSearchFormSchema, useColumns } from './data';
+
 defineOptions({ name: 'DailyIntegrationConfig' });
 
 // Dialog state
@@ -54,31 +56,7 @@ const form = ref<ProjectConfigUpsertIn>({
 
 // --- Grid Setup ---
 const gridOptions: VxeGridProps<ProjectConfigManageRow> = {
-  columns: [
-    { type: 'checkbox', width: 50, fixed: 'left' },
-    { type: 'seq', width: 50, fixed: 'left' },
-    { field: 'name', title: '配置名称', minWidth: 180, fixed: 'left' },
-    { field: 'project_name', title: '所属项目', minWidth: 150 },
-    { field: 'managers', title: '负责人', minWidth: 120 },
-    {
-      field: 'enabled',
-      title: '启用',
-      width: 90,
-      slots: { default: 'enabled_default' },
-    },
-    { field: 'code_check_task_id', title: 'CodeCheck ID', minWidth: 150 },
-    { field: 'bin_scope_task_id', title: 'BinScope ID', minWidth: 150 },
-    { field: 'build_check_task_id', title: 'BuildCheck ID', minWidth: 150 },
-    { field: 'compile_check_task_id', title: 'CompileCheck ID', minWidth: 150 },
-    { field: 'dt_project_id', title: 'DT Project ID', minWidth: 150 },
-    {
-      field: 'action',
-      title: '操作',
-      width: 100,
-      fixed: 'right',
-      slots: { default: 'action_default' },
-    },
-  ],
+  columns: useColumns(),
   checkboxConfig: {
     labelField: 'seq',
     highlight: true,
@@ -87,6 +65,8 @@ const gridOptions: VxeGridProps<ProjectConfigManageRow> = {
   pagerConfig: {
     enabled: true,
   },
+  height: 'auto',
+  keepSource: true,
   proxyConfig: {
     ajax: {
       query: async ({ page }, formValues) => {
@@ -114,16 +94,7 @@ const gridOptions: VxeGridProps<ProjectConfigManageRow> = {
 
 const [Grid, gridApi] = useVbenVxeGrid({
   formOptions: {
-    schema: [
-      {
-        fieldName: 'project_name',
-        label: '搜索配置/项目',
-        component: 'Input',
-        componentProps: {
-          placeholder: '搜索配置名或项目名',
-        },
-      },
-    ],
+    schema: useSearchFormSchema(),
     submitOnChange: true,
   },
   gridOptions,

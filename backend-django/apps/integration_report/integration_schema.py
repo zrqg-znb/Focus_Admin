@@ -1,6 +1,6 @@
 from ninja import Schema
 from typing import List, Optional, Dict
-from datetime import date
+from datetime import date, datetime
 
 
 class MetricCell(Schema):
@@ -80,3 +80,32 @@ class HistoryQueryOut(Schema):
 class MockCollectIn(Schema):
     record_date: Optional[date] = None
     config_ids: List[str] = []
+
+
+class EmailDeliveryRow(Schema):
+    id: str
+    record_date: date
+    user_id: str
+    user_name: Optional[str] = None
+    to_email: str
+    subject: str
+    status: str  # pending|sent|failed
+    error_message: Optional[str] = None
+    sys_create_datetime: Optional[datetime] = None
+
+
+class EmailDeliveryQueryIn(Schema):
+    status: Optional[str] = None  # pending|sent|failed
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    user_id: Optional[str] = None
+    to_email: Optional[str] = None
+    page: Optional[int] = 1
+    page_size: Optional[int] = 20
+
+
+class EmailDeliveryQueryOut(Schema):
+    items: List[EmailDeliveryRow]
+    count: int
+    page: int
+    page_size: int
