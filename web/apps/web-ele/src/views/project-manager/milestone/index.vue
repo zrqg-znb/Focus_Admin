@@ -24,10 +24,18 @@
         </div>
 
         <div class="flex-1 overflow-hidden">
-          <Grid />
+          <Grid>
+            <template #risk_action="{ row }">
+              <ElButton link type="primary" @click="handleOpenRiskDrawer(row)">
+                跟踪
+              </ElButton>
+            </template>
+          </Grid>
         </div>
       </div>
     </div>
+
+    <RiskLogDrawer ref="riskDrawerRef" />
   </Page>
 </template>
 
@@ -47,12 +55,18 @@ import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import { getMilestoneOverviewApi } from '#/api/project-manager/milestone';
 
 import MilestoneGantt from './components/MilestoneGantt.vue';
+import RiskLogDrawer from './components/RiskLogDrawer.vue';
 import { useSearchFormSchema, useTableColumns } from './data';
 
 defineOptions({ name: 'MilestoneDashboard' });
 
 const loading = ref(false);
 const milestoneData = ref<MilestoneBoardItem[]>([]);
+const riskDrawerRef = ref();
+
+function handleOpenRiskDrawer(row: MilestoneBoardItem) {
+  riskDrawerRef.value?.open(row.project_id, row.project_name);
+}
 
 const [Form, formApi] = useVbenForm({
   schema: useSearchFormSchema(),

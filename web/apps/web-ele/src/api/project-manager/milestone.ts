@@ -52,6 +52,14 @@ export interface RiskConfirmPayload {
   action: 'confirm' | 'close';
 }
 
+export interface RiskLog {
+  id: string;
+  action: string;
+  operator_name: string;
+  note: string;
+  create_time: string;
+}
+
 export async function getMilestoneOverviewApi(params?: any) {
   return requestClient.get<MilestoneBoardItem[]>('/api/project-manager/milestones/overview', {
     params,
@@ -75,8 +83,18 @@ export async function saveQGConfigApi(milestoneId: string, data: QGConfigPayload
 }
 
 // Risks
-export async function getPendingRisksApi() {
-  return requestClient.get<RiskItem[]>('/api/project-manager/milestones/risks/pending');
+export async function getPendingRisksApi(scope: 'all' | 'favorites' = 'all') {
+  return requestClient.get<RiskItem[]>('/api/project-manager/milestones/risks/pending', {
+    params: { scope },
+  });
+}
+
+export async function getProjectRisksApi(projectId: string) {
+  return requestClient.get<RiskItem[]>(`/api/project-manager/milestones/project/${projectId}/risks`);
+}
+
+export async function getRiskLogsApi(riskId: string) {
+  return requestClient.get<RiskLog[]>(`/api/project-manager/milestones/risks/${riskId}/logs`);
 }
 
 export async function confirmRiskApi(riskId: string, data: RiskConfirmPayload) {

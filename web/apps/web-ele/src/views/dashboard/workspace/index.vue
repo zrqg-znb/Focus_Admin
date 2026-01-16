@@ -30,7 +30,6 @@ import {
 
 import AllProjectsView from './components/AllProjectsView.vue';
 import FavoriteProjectsView from './components/FavoriteProjectsView.vue';
-import QGRiskCard from './components/QGRiskCard.vue';
 
 const userStore = useUserStore();
 
@@ -220,10 +219,6 @@ onMounted(() => {
     </WorkbenchHeader>
 
     <div class="mt-5">
-      <div class="mb-5 h-[300px]">
-        <QGRiskCard />
-      </div>
-
       <AllProjectsView
         v-if="viewScope === 'all'"
         :loading-core="loadingCore"

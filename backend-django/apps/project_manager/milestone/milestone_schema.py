@@ -1,7 +1,7 @@
 from ninja import Schema, ModelSchema, Field
 from typing import Optional, List, Dict
 from datetime import date, datetime
-from .milestone_model import Milestone, MilestoneQGConfig, MilestoneRiskItem
+from .milestone_model import Milestone, MilestoneQGConfig, MilestoneRiskItem, MilestoneRiskLog
 
 
 class MilestoneUpdateSchema(Schema):
@@ -89,3 +89,12 @@ class RiskItemOut(Schema):
 class RiskConfirmIn(Schema):
     note: str
     action: str = "confirm"  # confirm | close
+
+
+class RiskLogOut(Schema):
+    id: str
+    action: str
+    operator_name: str
+    note: str
+    create_time: datetime
+

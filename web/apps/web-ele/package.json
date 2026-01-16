@@ -28,6 +28,7 @@
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
     "@vben-core/menu-ui": "workspace:*",
+    "@vben-core/shadcn-ui": "workspace:*",
     "@vben/access": "workspace:*",
     "@vben/common-ui": "workspace:*",
     "@vben/constants": "workspace:*",

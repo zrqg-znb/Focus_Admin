@@ -18,6 +18,7 @@ import {
 } from 'element-plus';
 import MilestoneTimeline from './MilestoneTimeline.vue';
 import DtsCard from './DtsCard.vue';
+import QGRiskCard from './QGRiskCard.vue';
 
 const props = defineProps<{
   loadingCore: boolean;
@@ -140,6 +141,9 @@ function goProjectConfig() {
         <DtsCard :data="coreMetrics.dts" />
       </template>
     </div>
+
+    <!-- QG Risk Card -->
+    <QGRiskCard scope="favorites" />
 
     <!-- 2. 关注项目列表 -->
     <div class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-[#151515]">

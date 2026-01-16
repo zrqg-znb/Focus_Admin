@@ -5,7 +5,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from common import fu_crud
 from .milestone_model import Milestone, MilestoneQGConfig, MilestoneRiskItem, MilestoneRiskLog
-from .milestone_schema import MilestoneUpdateSchema, MilestoneBoardSchema, RiskItemOut
+from .milestone_schema import MilestoneUpdateSchema, MilestoneBoardSchema, RiskItemOut, RiskLogOut
 from core.user.user_model import User
 
 
@@ -64,65 +64,8 @@ def get_milestone_board(filters: dict):
             }
 
     for m in queryset:
-        schema = MilestoneBoardSchema(
-            id=str(m.id),
-            project_id=m.project.id,
-            project_name=m.project.name,
-            project_domain=m.project.domain,
-            manager_names=[u.name or u.username for u in m.project.managers.all()],
-            qg1_date=m.qg1_date,
-            qg2_date=m.qg2_date,
-            qg3_date=m.qg3_date,
-            qg4_date=m.qg4_date,
-            qg5_date=m.qg5_date,
-            qg6_date=m.qg6_date,
-            qg7_date=m.qg7_date,
-            qg8_date=m.qg8_date,
-        )
-        
-        # Inject risk info dynamically (schema allows extra fields via Config)
-        # However, `Schema` validates fields. We need to add `risks` field to schema or use a Dict.
-        # Let's update Schema first. But wait, I can just attach it if I convert to dict?
-        # No, Ninja validates return type.
-        # I should add `risks: Optional[dict] = None` to MilestoneBoardSchema.
-        
-        # For now, let's update Schema in next step. 
-        # But I can't leave this file broken if I change Schema later.
-        # Let's assume I will update Schema to have `risks` field.
-        
-        if m.id in risk_map:
-            # We need to assign it to the schema object
-            # Pydantic models (Ninja Schema) are not dicts.
-            # But wait, `MilestoneBoardSchema` is a Schema, which is a Pydantic model.
-            # We can pass it in constructor if field exists.
-            pass # Will be handled by schema update
-            
-        # Re-construct with risks if I update schema
-        # Let's just return dicts? No, type safety.
-        
-        # I'll update schema first in next tool call, then come back here?
-        # Or I can update schema now if I can edit multiple files? No, single file edit.
-        
-        # I will update this file to populate `risks` field, assuming I will add it to Schema immediately after.
-        
+        # Inject risk info dynamically
         risks = risk_map.get(m.id, {})
-        # Monkey patch for now or use constructor if field existed
-        # schema.risks = risks # Pydantic models are immutable by default in v2? 
-        # Actually Ninja uses Pydantic v1 or v2.
-        
-        # Better approach: update Schema first.
-        # I will undo this change plan and update Schema first.
-        
-        # Wait, I am editing service.py right now.
-        # I will add the logic but comment it out or put placeholders until schema is ready?
-        # No, I should do it properly.
-        
-        # Let's finish the `get_milestone_board` modification to include risks, 
-        # AND I will update schema in the next step.
-        # To avoid runtime error, I will convert to dict and Ninja might accept it if response model matches?
-        # Ninja `response=List[MilestoneBoardSchema]` expects objects that match schema.
-        
-        # I will add `risks` to the constructor call.
         
         item_dict = {
             "id": str(m.id),
@@ -138,7 +81,7 @@ def get_milestone_board(filters: dict):
             "qg6_date": m.qg6_date,
             "qg7_date": m.qg7_date,
             "qg8_date": m.qg8_date,
-            "risks": risk_map.get(m.id, {})
+            "risks": risks
         }
         result.append(item_dict)
         
@@ -177,12 +120,49 @@ def get_qg_configs(project_id: str):
     except Milestone.DoesNotExist:
         return []
 
-def list_pending_risks():
+def list_pending_risks(request=None, scope: str = 'all'):
     """获取所有待处理风险，用于工作台展示"""
     qs = MilestoneRiskItem.objects.select_related(
         'config', 'config__milestone', 'config__milestone__project', 'manager'
     ).filter(
         status__in=['pending', 'confirmed'],
+        is_deleted=False
+    )
+
+    if scope == 'favorites' and request and request.auth:
+        qs = qs.filter(config__milestone__project__favorited_by=request.auth)
+
+    qs = qs.order_by('-record_date', 'id')
+    
+    result = []
+    for item in qs:
+        config = item.config
+        milestone = config.milestone
+        project = milestone.project
+        
+        result.append(RiskItemOut(
+            id=str(item.id),
+            config_id=str(config.id),
+            qg_name=config.qg_name,
+            milestone_id=str(milestone.id),
+            project_id=str(project.id),
+            project_name=project.name,
+            record_date=item.record_date,
+            risk_type=item.risk_type,
+            description=item.description,
+            status=item.status,
+            manager_confirm_note=item.manager_confirm_note,
+            manager_confirm_at=item.manager_confirm_at,
+            manager_name=item.manager.name if item.manager else None
+        ))
+    return result
+
+def get_project_risks(project_id: str):
+    """获取项目的所有风险（包括历史记录）"""
+    qs = MilestoneRiskItem.objects.select_related(
+        'config', 'config__milestone', 'config__milestone__project', 'manager'
+    ).filter(
+        config__milestone__project_id=project_id,
         is_deleted=False
     ).order_by('-record_date', 'id')
     
@@ -206,6 +186,24 @@ def list_pending_risks():
             manager_confirm_note=item.manager_confirm_note,
             manager_confirm_at=item.manager_confirm_at,
             manager_name=item.manager.name if item.manager else None
+        ))
+    return result
+
+def get_risk_logs(risk_id: str):
+    """获取风险的处理日志"""
+    logs = MilestoneRiskLog.objects.select_related('operator').filter(
+        risk_item_id=risk_id,
+        is_deleted=False
+    ).order_by('-sys_create_datetime')
+    
+    result = []
+    for log in logs:
+        result.append(RiskLogOut(
+            id=str(log.id),
+            action=log.get_action_display(),
+            operator_name=log.operator.name if log.operator else "系统",
+            note=log.note,
+            create_time=log.sys_create_datetime
         ))
     return result
 
@@ -305,42 +303,68 @@ def _check_single_config(config: MilestoneQGConfig, record_date: date):
         )
 
 def _upsert_risk(config, record_date, risk_type, description, status):
-    # Check if there is an existing OPEN risk (pending or confirmed)
-    # Requirement: "If a risk item was processed (closed) on Day 1, and reappears on Day 2, it should be re-warned."
-    # So we only look for *non-closed* risks to update. If all closed, create new.
-    
-    existing = MilestoneRiskItem.objects.filter(
+    # 查找该配置下同类型的最新一条风险记录（无论状态如何）
+    # 按照 ID 倒序排列，取最新的一条
+    latest_risk = MilestoneRiskItem.objects.filter(
         config=config,
         risk_type=risk_type,
-        status__in=['pending', 'confirmed'],
         is_deleted=False
-    ).first()
+    ).order_by('-id').first()
     
-    if existing:
+    if latest_risk:
         updates = []
-        # Update existing risk (e.g. update description with new numbers)
-        if existing.description != description:
-            existing.description = description
-            updates.append('description')
-            
-        # If status is 'confirmed' (Warning), reset to 'pending' (Error) because risk persists
-        if existing.status == 'confirmed':
-            existing.status = 'pending'
+        should_log = False
+        log_action = 'update'
+        log_note = ""
+
+        # 情况1: 已关闭 -> 重新打开
+        if latest_risk.status == 'closed':
+            latest_risk.status = 'pending'
             updates.append('status')
+            latest_risk.record_date = record_date # 更新为最新的检测日期
+            updates.append('record_date')
             
-            MilestoneRiskLog.objects.create(
-                risk_item=existing,
-                action='reset',
-                note="风险持续存在，重置为待处理状态"
-            )
+            should_log = True
+            log_action = 'update'
+            log_note = f"风险复发/未解决 (DI: {description})，系统自动重新打开"
             
-        if updates:
-            existing.save(update_fields=updates)
-            if 'description' in updates:
+            # 如果描述变了，也更新描述
+            if latest_risk.description != description:
+                latest_risk.description = description
+                updates.append('description')
+
+        # 情况2: 待处理/已确认 -> 更新信息
+        else:
+            if latest_risk.description != description:
+                latest_risk.description = description
+                updates.append('description')
+                
+                # 仅当只更新描述时记录日志（如果是重置状态，下面会单独处理）
+                if latest_risk.status != 'confirmed':
+                     MilestoneRiskLog.objects.create(
+                        risk_item=latest_risk,
+                        action='update',
+                        note=f"自动更新: {description}"
+                    )
+
+            # If status is 'confirmed' (Warning), reset to 'pending' (Error) because risk persists
+            if latest_risk.status == 'confirmed':
+                latest_risk.status = 'pending'
+                updates.append('status')
+                
                 MilestoneRiskLog.objects.create(
-                    risk_item=existing,
-                    action='update',
-                    note=f"自动更新: {description}"
+                    risk_item=latest_risk,
+                    action='update', # Use 'update' but note it's a reset
+                    note="风险持续存在，重置为待处理状态"
+                )
+        
+        if updates:
+             latest_risk.save(update_fields=updates)
+             if should_log:
+                 MilestoneRiskLog.objects.create(
+                    risk_item=latest_risk,
+                    action=log_action,
+                    note=log_note
                 )
     else:
         # Create new risk
@@ -356,4 +380,3 @@ def _upsert_risk(config, record_date, risk_type, description, status):
             action='create',
             note="自动创建风险项"
         )
-

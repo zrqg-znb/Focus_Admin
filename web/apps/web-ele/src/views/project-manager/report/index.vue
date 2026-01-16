@@ -152,7 +152,12 @@ onMounted(() => {
                                  <span class="text-xs text-gray-400">项目全生命周期节点概览</span>
                               </div>
                               <div class="flex-1 overflow-hidden relative">
-                                 <MilestoneFishbone :milestones="reportData.milestones" />
+                                 <MilestoneFishbone 
+                                    :milestones="reportData.milestones" 
+                                    :project-id="reportData.project_id"
+                                    :project-name="reportData.project_name"
+                                    @refresh="fetchReport"
+                                 />
                               </div>
                            </div>
                         </div>

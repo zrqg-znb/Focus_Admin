@@ -1,5 +1,5 @@
 import type { VbenFormSchema } from '#/adapter/form';
-import type { OnActionClickFn, VxeTableGridOptions } from '#/adapter/vxe-table';
+import type { VxeTableGridOptions } from '#/adapter/vxe-table';
 import type { MilestoneBoardItem } from '#/api/project-manager/milestone';
 
 export function useSearchFormSchema(): VbenFormSchema[] {
@@ -44,5 +44,11 @@ export function useTableColumns(): VxeTableGridOptions<MilestoneBoardItem>['colu
     { field: 'qg6_date', title: 'QG6', minWidth: 120 },
     { field: 'qg7_date', title: 'QG7', minWidth: 120 },
     { field: 'qg8_date', title: 'QG8', minWidth: 120 },
+    {
+      slots: { default: 'risk_action' },
+      title: '风险处理',
+      fixed: 'right',
+      width: 120,
+    },
   ];
 }

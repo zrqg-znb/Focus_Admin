@@ -5,7 +5,6 @@ from apps.dashboard.schemas import (
     CodeQualitySummary, 
     IterationSummary, 
     DtsSummary,
-    QGNode
 )
 from apps.project_manager.code_quality.code_quality_schema import ModuleQualityDetailSchema
 
@@ -46,6 +45,13 @@ class IterationDetailMetrics(Schema):
     dr_set_a_rate: float = 0.0
     ar_set_c_rate: float = 0.0
     dr_set_c_rate: float = 0.0
+
+class QGNode(Schema):
+    name: str
+    date: date
+    status: str # 'completed', 'pending', 'delayed'
+    has_risk: bool = False
+    risk_status: Optional[str] = None # 'pending', 'confirmed', 'normal'
 
 class ProjectReportSchema(Schema):
     project_id: str

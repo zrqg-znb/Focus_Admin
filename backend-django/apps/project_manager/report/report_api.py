@@ -283,7 +283,6 @@ def get_project_report(request, project_id: str):
         ms = project.milestone
         
         # Get active risks
-        risk_qgs = set()
         risk_configs = MilestoneQGConfig.objects.filter(
              milestone=ms,
              enabled=True,
@@ -293,8 +292,18 @@ def get_project_report(request, project_id: str):
              config__in=risk_configs,
              status__in=['pending', 'confirmed'],
              is_deleted=False
-        ).values_list('config__qg_name', flat=True)
-        risk_qgs = set(active_risks)
+        ).select_related('config')
+        
+        # Map QG Name -> Risk Status Priority (pending > confirmed)
+        risk_map = {}
+        for risk in active_risks:
+            qg = risk.config.qg_name
+            current = risk_map.get(qg)
+            if risk.status == 'pending':
+                risk_map[qg] = 'pending'
+            elif risk.status == 'confirmed':
+                if current != 'pending':
+                    risk_map[qg] = 'confirmed'
 
         for i in range(1, 9):
             field_name = f'qg{i}_date'
@@ -304,11 +313,15 @@ def get_project_report(request, project_id: str):
                 if qg_date < today:
                     status = 'completed'
                 
+                qg_name = f'QG{i}'
+                risk_status = risk_map.get(qg_name)
+                
                 milestones_list.append(QGNode(
-                    name=f'QG{i}',
+                    name=qg_name,
                     date=qg_date,
                     status=status,
-                    has_risk=f'QG{i}' in risk_qgs
+                    has_risk=bool(risk_status),
+                    risk_status=risk_status
                 ))
     
     # --- 6. Radar & Health ---

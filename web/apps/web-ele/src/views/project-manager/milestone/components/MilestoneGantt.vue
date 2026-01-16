@@ -288,7 +288,7 @@ function getRiskInfo(row: MilestoneBoardItem, qgKey: string): any | null {
   const risks = (row as any).risks || {};
   const qgName = qgKey.split('_')[0].toUpperCase();
   const risk = risks[qgName];
-  if (risk && risk.level === 'high') {
+  if (risk) {
     return risk;
   }
   return null;
