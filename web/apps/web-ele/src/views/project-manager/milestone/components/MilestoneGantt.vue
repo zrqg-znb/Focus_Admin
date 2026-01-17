@@ -135,43 +135,8 @@
       </div>
     </div>
 
-    <!-- Risk Confirm Dialog -->
-    <ElDialog
-      v-model="confirmDialogVisible"
-      title="处理风险预警"
-      width="500px"
-    >
-      <div v-if="currentRisk" class="space-y-4">
-        <div class="bg-red-50 p-4 rounded-md border border-red-100">
-          <div class="flex items-center gap-2 mb-2">
-            <span class="font-bold text-red-600 text-lg">⚠️ 风险详情</span>
-            <span class="text-gray-500 text-sm">({{ currentRisk.project_name }} - {{ currentRisk.qg_name }})</span>
-          </div>
-          <p class="text-gray-700">{{ currentRisk.description }}</p>
-        </div>
-
-        <ElForm :model="confirmForm" label-position="top">
-          <ElFormItem label="处理意见">
-            <ElInput
-              v-model="confirmForm.note"
-              type="textarea"
-              rows="3"
-              placeholder="请输入处理意见或备注..."
-            />
-          </ElFormItem>
-          <ElFormItem label="操作">
-            <ElRadioGroup v-model="confirmForm.action">
-              <ElRadioButton label="confirm">确认知晓 (保持风险状态)</ElRadioButton>
-              <ElRadioButton label="close">关闭风险 (已解决)</ElRadioButton>
-            </ElRadioGroup>
-          </ElFormItem>
-        </ElForm>
-      </div>
-      <template #footer>
-        <ElButton @click="confirmDialogVisible = false">取消</ElButton>
-        <ElButton type="primary" @click="handleConfirmRisk">提交</ElButton>
-      </template>
-    </ElDialog>
+    <!-- Risk Handle Dialog -->
+    <RiskHandleDialog ref="riskHandleDialogRef" @success="handleRiskSuccess" />
 
     <!-- Tooltip -->
     <Teleport to="body">
@@ -233,9 +198,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 
 import { ElButton, ElButtonGroup } from 'element-plus';
 
-import { confirmRiskApi } from '#/api/project-manager/milestone';
-import type { RiskConfirmPayload } from '#/api/project-manager/milestone';
-import { ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElRadioGroup, ElRadioButton } from 'element-plus';
+import RiskHandleDialog from './RiskHandleDialog.vue';
 
 interface Props {
   data: MilestoneBoardItem[];
@@ -248,39 +211,20 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits(['refresh']);
 
-// Risk Confirm Dialog
-const confirmDialogVisible = ref(false);
-const currentRisk = ref<any>(null);
-const confirmForm = ref<RiskConfirmPayload>({
-  note: '',
-  action: 'confirm',
-});
+// Risk Handle Dialog
+const riskHandleDialogRef = ref();
 
 function handleRiskClick(milestone: any, row: MilestoneBoardItem) {
   if (milestone.hasRisk && milestone.riskInfo) {
-    currentRisk.value = {
-      ...milestone.riskInfo,
-      project_name: row.project_name,
-      qg_name: milestone.label,
-    };
-    confirmForm.value = {
-      note: '',
-      action: 'confirm',
-    };
-    confirmDialogVisible.value = true;
+    // 直接打开风险处理弹窗
+    // 这里假设 milestone.riskInfo 包含了 RiskItem 所需的完整信息（特别是 id）
+    riskHandleDialogRef.value?.open(milestone.riskInfo, 'handle');
   }
 }
 
-async function handleConfirmRisk() {
-  if (!currentRisk.value) return;
-  try {
-    await confirmRiskApi(currentRisk.value.id, confirmForm.value);
-    ElMessage.success('操作成功');
-    confirmDialogVisible.value = false;
-    emit('refresh'); // Notify parent to refresh data
-  } catch (error) {
-    // Error handled by interceptor
-  }
+function handleRiskSuccess() {
+  // 处理成功后刷新数据
+  emit('refresh');
 }
 
 // Mock risk check (should be real data from API)

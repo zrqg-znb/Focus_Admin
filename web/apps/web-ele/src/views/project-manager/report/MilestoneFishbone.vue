@@ -1,9 +1,14 @@
 <script lang="ts" setup>
 import type { QGNode } from '#/api/project-manager/report';
+
 import { computed, ref } from 'vue';
-import { ElTooltip, ElMessage } from 'element-plus';
-import RiskHandleDialog from '../milestone/components/RiskHandleDialog.vue';
+import { useRouter } from 'vue-router';
+
+import { ElButton, ElEmpty, ElMessage } from 'element-plus';
+
 import { getProjectRisksApi } from '#/api/project-manager/milestone';
+
+import RiskHandleDialog from '../milestone/components/RiskHandleDialog.vue';
 
 const props = defineProps<{
   milestones: QGNode[];
@@ -12,9 +17,14 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits(['refresh']);
+const router = useRouter();
 
 const riskHandleDialogRef = ref();
 const loadingRisk = ref(false);
+
+function goToConfig() {
+  router.push('/project-manager/project');
+}
 
 // Fishbone Logic
 // We will alternate items top and bottom
@@ -24,7 +34,7 @@ const fishboneItems = computed(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const isPast = typeof t === 'number' ? t < today.getTime() : false;
-    
+
     // Check risk status from backend
     // risk_status: 'pending' (Error) | 'confirmed' (Warning) | null
     const riskStatus = (ms as any).risk_status;
@@ -36,13 +46,15 @@ const fishboneItems = computed(() => {
       isPast,
       hasRisk,
       riskStatus,
-      left: `${(index / (props.milestones.length - 1 || 1)) * 90 + 5}%` // Distributed 5% to 95%
+      left: `${(index / (props.milestones.length - 1 || 1)) * 90 + 5}%`, // Distributed 5% to 95%
     };
   });
 });
 
-function parseDate(value: unknown): number | null {
-  if (!value) return null;
+function parseDate(value: unknown): null | number {
+  if (!value) {
+    return null;
+  }
   const d = new Date(String(value));
   const t = d.getTime();
   return Number.isFinite(t) ? t : null;
@@ -52,11 +64,15 @@ const todayPosition = computed(() => {
   const dates = props.milestones
     .map((m) => parseDate((m as any).date))
     .filter((t): t is number => typeof t === 'number');
-  if (dates.length < 2) return null;
+  if (dates.length < 2) {
+    return null;
+  }
 
   const min = Math.min(...dates);
   const max = Math.max(...dates);
-  if (max <= min) return null;
+  if (max <= min) {
+    return null;
+  }
 
   const now = new Date();
   now.setHours(0, 0, 0, 0);
@@ -71,10 +87,18 @@ const todayPosition = computed(() => {
 
 function getStatusColor(status: string) {
   switch (status) {
-    case 'completed': return 'bg-green-500 border-green-200';
-    case 'pending': return 'bg-blue-500 border-blue-200';
-    case 'delayed': return 'bg-red-500 border-red-200';
-    default: return 'bg-gray-300';
+    case 'completed': {
+      return 'bg-green-500 border-green-200';
+    }
+    case 'delayed': {
+      return 'bg-red-500 border-red-200';
+    }
+    case 'pending': {
+      return 'bg-blue-500 border-blue-200';
+    }
+    default: {
+      return 'bg-gray-300';
+    }
   }
 }
 
@@ -84,12 +108,13 @@ async function handleNodeClick(item: any) {
     try {
       // Fetch risks for the project
       const risks = await getProjectRisksApi(props.projectId);
-      
+
       // Match the specific risk for this QG node
       // Prioritize active risks (not closed), then look for closed ones
-      const riskItem = risks.find(r => r.qg_name === item.name && r.status !== 'closed') 
-                    || risks.find(r => r.qg_name === item.name);
-      
+      const riskItem =
+        risks.find((r) => r.qg_name === item.name && r.status !== 'closed') ||
+        risks.find((r) => r.qg_name === item.name);
+
       if (riskItem) {
         riskHandleDialogRef.value?.open(riskItem);
       } else {
@@ -110,8 +135,12 @@ function handleRiskSuccess() {
 
 function getRiskClasses(item: any) {
   if (!item.hasRisk) {
-    if (item.status === 'delayed') return 'border-red-200 bg-red-50 dark:bg-red-900/20';
-    if (item.isPast) return 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-900/10';
+    if (item.status === 'delayed') {
+      return 'border-red-200 bg-red-50 dark:bg-red-900/20';
+    }
+    if (item.isPast) {
+      return 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-900/10';
+    }
     return 'border-gray-200 dark:border-gray-700';
   }
 
@@ -125,106 +154,183 @@ function getRiskClasses(item: any) {
 </script>
 
 <template>
-  <div class="h-full w-full flex items-center px-4 relative" v-loading="loadingRisk">
-      <!-- Main Axis -->
-      <div class="absolute w-[calc(100%-48px)] left-6 h-1.5 bg-gray-100 dark:bg-gray-700 rounded-full z-0">
-         <div
-           v-if="todayPosition"
-           class="absolute left-0 top-0 h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400"
-           :style="{ width: `${todayPosition.ratio * 100}%` }"
-         />
-         <div class="absolute right-0 -top-1.5 w-0 h-0 border-l-[12px] border-l-gray-100 border-t-[6px] border-t-transparent border-b-[6px] border-b-transparent dark:border-l-gray-700"></div>
-      </div>
-
+  <div
+    v-if="!milestones || milestones.length === 0"
+    class="flex h-full w-full flex-col items-center justify-center"
+  >
+    <ElEmpty description="该项目未开启里程碑配置，请前往项目配置页面开启并添加数据" />
+    <ElButton class="mt-4" type="primary" @click="goToConfig">
+      去项目配置页面
+    </ElButton>
+  </div>
+  <div
+    v-else
+    v-loading="loadingRisk"
+    class="relative flex h-full w-full items-center px-4"
+  >
+    <!-- Main Axis -->
+    <div
+      class="absolute left-6 z-0 h-1.5 w-[calc(100%-48px)] rounded-full bg-gray-100 dark:bg-gray-700"
+    >
       <div
         v-if="todayPosition"
-        class="absolute top-1/2 -translate-y-1/2 z-10 pointer-events-none"
-        :style="{ left: todayPosition.left }"
-      >
-        <div class="relative -translate-x-1/2">
-          <div class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-10 w-0.5 bg-primary/70" />
-          <div class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-3 w-3 rounded-full bg-primary shadow-sm ring-4 ring-primary/20" />
-          <div class="absolute left-1/2 -top-7 -translate-x-1/2 rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold text-white shadow-sm">
-            今日
-          </div>
+        :style="{ width: `${todayPosition.ratio * 100}%` }"
+        class="absolute left-0 top-0 h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400"
+      ></div>
+      <div
+        class="absolute -top-1.5 right-0 h-0 w-0 border-b-[6px] border-l-[12px] border-t-[6px] border-b-transparent border-l-gray-100 border-t-transparent dark:border-l-gray-700"
+      ></div>
+    </div>
+
+    <div
+      v-if="todayPosition"
+      :style="{ left: todayPosition.left }"
+      class="pointer-events-none absolute top-1/2 z-10 -translate-y-1/2"
+    >
+      <div class="relative -translate-x-1/2">
+        <div
+          class="absolute left-1/2 top-1/2 h-10 w-0.5 -translate-x-1/2 -translate-y-1/2 bg-primary/70"
+        ></div>
+        <div
+          class="absolute left-1/2 top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary shadow-sm ring-4 ring-primary/20"
+        ></div>
+        <div
+          class="absolute -top-7 left-1/2 -translate-x-1/2 rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold text-white shadow-sm"
+        >
+          今日
         </div>
       </div>
-      
-      <!-- Nodes -->
-      <div v-for="(item, index) in fishboneItems" :key="index" 
-           class="absolute h-full flex flex-col items-center justify-center transition-all group hover:z-20"
-           :style="{ left: item.left }">
-           
-         <!-- Connection Line (Top) -->
-         <div v-if="item.isTop" 
-              class="absolute left-1/2 top-1/2 h-12 w-0.5 -translate-x-1/2 -translate-y-full bg-gray-200 dark:bg-gray-600 origin-bottom -rotate-[20deg] group-hover:bg-primary transition-colors"
-              :class="{ 
-                'bg-red-400': item.hasRisk && item.riskStatus !== 'confirmed',
-                'bg-yellow-500': item.hasRisk && item.riskStatus === 'confirmed'
-              }"></div>
-         
-         <!-- Connection Line (Bottom) -->
-         <div v-if="!item.isTop" 
-              class="absolute left-1/2 top-1/2 h-12 w-0.5 -translate-x-1/2 bg-gray-200 dark:bg-gray-600 origin-top rotate-[20deg] group-hover:bg-primary transition-colors"
-              :class="{ 
-                'bg-red-400': item.hasRisk && item.riskStatus !== 'confirmed',
-                'bg-yellow-500': item.hasRisk && item.riskStatus === 'confirmed'
-              }"></div>
-         
-         <!-- Content Bubble -->
-         <div class="absolute w-28 p-2 rounded-xl border shadow-sm text-center z-10 transition-all duration-300 hover:shadow-md hover:scale-110"
-              :class="[
-                  item.isTop ? 'bottom-[65%]' : 'top-[65%]',
-                  getRiskClasses(item)
-              ]"
-              @click="handleNodeClick(item)">
-            <div class="text-xs font-bold truncate text-gray-800 dark:text-gray-100" :title="item.name">{{ item.name }}</div>
-            <div class="text-[10px] text-gray-400 mt-0.5 font-mono">{{ item.date }}</div>
-            
-            <div v-if="item.hasRisk" class="mt-1 flex items-center justify-center gap-1">
-               <span 
-                 class="text-[10px] font-bold"
-                 :class="item.riskStatus === 'confirmed' ? 'text-yellow-600' : 'text-red-500'"
-               >
-                 {{ item.riskStatus === 'confirmed' ? '⚠ 已确认' : '⚠ 风险预警' }}
-               </span>
-            </div>
-            
-            <div v-else class="mt-1.5 h-1.5 w-full rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden">
-                <div class="h-full w-full transition-all duration-500" :class="getStatusColor(item.status).split(' ')[0]"></div>
-            </div>
-         </div>
-         
-         <!-- Axis Point -->
-         <div class="w-3.5 h-3.5 rounded-full border-[3px] bg-white z-10 transition-all group-hover:scale-125 group-hover:border-primary" 
-              :class="item.hasRisk 
-                ? (item.riskStatus === 'confirmed' ? 'border-yellow-500 bg-yellow-100' : 'border-red-500 bg-red-100')
-                : item.status === 'delayed'
-                  ? 'border-red-400'
-                  : item.isPast
-                    ? 'border-emerald-400'
-                    : 'border-gray-300 dark:border-gray-500'"></div>
+    </div>
+
+    <!-- Nodes -->
+    <div
+      v-for="(item, index) in fishboneItems"
+      :key="index"
+      :style="{ left: item.left }"
+      class="group absolute flex h-full flex-col items-center justify-center transition-all hover:z-20"
+    >
+      <!-- Connection Line (Top) -->
+      <div
+        v-if="item.isTop"
+        :class="{
+          'bg-red-400': item.hasRisk && item.riskStatus !== 'confirmed',
+          'bg-yellow-500': item.hasRisk && item.riskStatus === 'confirmed',
+        }"
+        class="absolute left-1/2 top-1/2 h-12 w-0.5 -translate-x-1/2 -translate-y-full origin-bottom -rotate-[20deg] bg-gray-200 transition-colors group-hover:bg-primary dark:bg-gray-600"
+      ></div>
+
+      <!-- Connection Line (Bottom) -->
+      <div
+        v-if="!item.isTop"
+        :class="{
+          'bg-red-400': item.hasRisk && item.riskStatus !== 'confirmed',
+          'bg-yellow-500': item.hasRisk && item.riskStatus === 'confirmed',
+        }"
+        class="absolute left-1/2 top-1/2 h-12 w-0.5 -translate-x-1/2 origin-top rotate-[20deg] bg-gray-200 transition-colors group-hover:bg-primary dark:bg-gray-600"
+      ></div>
+
+      <!-- Content Bubble -->
+      <div
+        :class="[
+          item.isTop ? 'bottom-[65%]' : 'top-[65%]',
+          getRiskClasses(item),
+        ]"
+        class="absolute z-10 w-28 rounded-xl border p-2 text-center shadow-sm transition-all duration-300 hover:scale-110 hover:shadow-md"
+        @click="handleNodeClick(item)"
+      >
+        <div
+          :title="item.name"
+          class="truncate text-xs font-bold text-gray-800 dark:text-gray-100"
+        >
+          {{ item.name }}
+        </div>
+        <div class="mt-0.5 font-mono text-[10px] text-gray-400">
+          {{ item.date }}
+        </div>
+
+        <div
+          v-if="item.hasRisk"
+          class="mt-1 flex items-center justify-center gap-1"
+        >
+          <span
+            :class="
+              item.riskStatus === 'confirmed'
+                ? 'text-yellow-600'
+                : 'text-red-500'
+            "
+            class="text-[10px] font-bold"
+          >
+            {{ item.riskStatus === 'confirmed' ? '⚠ 已确认' : '⚠ 风险预警' }}
+          </span>
+        </div>
+
+        <div
+          v-else
+          class="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700"
+        >
+          <div
+            :class="getStatusColor(item.status).split(' ')[0]"
+            class="h-full w-full transition-all duration-500"
+          ></div>
+        </div>
       </div>
-      
-      <RiskHandleDialog ref="riskHandleDialogRef" @success="handleRiskSuccess" />
+
+      <!-- Axis Point -->
+      <div
+        :class="
+          item.hasRisk
+            ? item.riskStatus === 'confirmed'
+              ? 'border-yellow-500 bg-yellow-100'
+              : 'border-red-500 bg-red-100'
+            : item.status === 'delayed'
+              ? 'border-red-400'
+              : item.isPast
+                ? 'border-emerald-400'
+                : 'border-gray-300 dark:border-gray-500'
+        "
+        class="z-10 h-3.5 w-3.5 rounded-full border-[3px] bg-white transition-all group-hover:border-primary group-hover:scale-125"
+      ></div>
+    </div>
+
+    <RiskHandleDialog ref="riskHandleDialogRef" @success="handleRiskSuccess" />
   </div>
 </template>
 
 <style scoped>
 @keyframes pulse-border {
-  0% { border-color: rgba(239, 68, 68, 0.5); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-  50% { border-color: rgba(239, 68, 68, 1); box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.1); }
-  100% { border-color: rgba(239, 68, 68, 0.5); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  0% {
+    border-color: rgb(239 68 68 / 50%);
+    box-shadow: 0 0 0 0 rgb(239 68 68 / 40%);
+  }
+  50% {
+    border-color: rgb(239 68 68 / 100%);
+    box-shadow: 0 0 0 4px rgb(239 68 68 / 10%);
+  }
+  100% {
+    border-color: rgb(239 68 68 / 50%);
+    box-shadow: 0 0 0 0 rgb(239 68 68 / 40%);
+  }
 }
+
 .animate-pulse-border {
   animation: pulse-border 2s infinite;
 }
 
 @keyframes pulse-yellow {
-  0% { border-color: rgba(234, 179, 8, 0.5); box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.4); }
-  50% { border-color: rgba(234, 179, 8, 1); box-shadow: 0 0 0 4px rgba(234, 179, 8, 0.1); }
-  100% { border-color: rgba(234, 179, 8, 0.5); box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.4); }
+  0% {
+    border-color: rgb(234 179 8 / 50%);
+    box-shadow: 0 0 0 0 rgb(234 179 8 / 40%);
+  }
+  50% {
+    border-color: rgb(234 179 8 / 100%);
+    box-shadow: 0 0 0 4px rgb(234 179 8 / 10%);
+  }
+  100% {
+    border-color: rgb(234 179 8 / 50%);
+    box-shadow: 0 0 0 0 rgb(234 179 8 / 40%);
+  }
 }
+
 .animate-pulse-yellow {
   animation: pulse-yellow 2s infinite;
 }
