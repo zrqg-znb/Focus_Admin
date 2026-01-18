@@ -15,6 +15,7 @@ export const overridesPreferences = defineOverridesPreferences({
     accessMode: 'mixed',
     authPageLayout: 'panel-center',
     layout: 'header-sidebar-nav',
+    defaultHomePath: '/workspace',
   },
   theme: {
     mode: 'light',
