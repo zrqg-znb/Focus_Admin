@@ -61,8 +61,8 @@ def create_scheduler_job(request, data: SchedulerJobSchemaIn):
     job = create(request, data.dict(), SchedulerJob)
     
     # 如果任务是启用状态，添加到调度器
-    if job.is_enabled() and scheduler_service.is_running():
-        scheduler_service.add_job(job)
+    # if job.is_enabled() and scheduler_service.is_running():
+    #     scheduler_service.add_job(job)
     
     return job
 
@@ -78,8 +78,8 @@ def delete_scheduler_job(request, job_id: str):
     job = get_object_or_404(SchedulerJob, id=job_id)
     
     # 从调度器移除
-    if scheduler_service.is_running():
-        scheduler_service.remove_job(job.code)
+    # if scheduler_service.is_running():
+    #     scheduler_service.remove_job(job.code)
     
     instance = delete(job_id, SchedulerJob)
     return instance
@@ -101,8 +101,8 @@ def delete_batch_scheduler_job(request, data: SchedulerJobBatchDeleteIn):
             job = SchedulerJob.objects.get(id=job_id)
             
             # 从调度器移除
-            if scheduler_service.is_running():
-                scheduler_service.remove_job(job.code)
+            # if scheduler_service.is_running():
+            #     scheduler_service.remove_job(job.code)
             
             job.delete()
             success_count += 1
@@ -137,8 +137,10 @@ def update_scheduler_job(request, job_id: str, data: SchedulerJobSchemaIn):
     job.save()
     
     # 同步更新调度器
-    if scheduler_service.is_running():
-        scheduler_service.modify_job(job)
+    # 注意：现在调度器进程会自动同步 DB 变更，这里其实不需要手动调用 modify_job
+    # 但为了兼容单进程模式，保留调用，或者可以移除
+    # if scheduler_service.is_running():
+    #     scheduler_service.modify_job(job)
     
     return job
 
@@ -169,8 +171,8 @@ def patch_scheduler_job(request, job_id: str, data: SchedulerJobSchemaPatch):
     job.save()
     
     # 同步更新调度器
-    if scheduler_service.is_running():
-        scheduler_service.modify_job(job)
+    # if scheduler_service.is_running():
+    #    scheduler_service.modify_job(job)
     
     return job
 
@@ -236,32 +238,29 @@ def batch_update_scheduler_job_status(request, data: SchedulerJobBatchUpdateStat
     return SchedulerJobBatchUpdateStatusOut(count=count)
 
 
+from django.core.cache import cache
+
 @router.post("/job/execute", response=SchedulerJobExecuteOut, summary="立即执行任务")
 def execute_scheduler_job(request, data: SchedulerJobExecuteIn):
     """
     立即执行指定任务（不影响正常调度）
     
     改进点：
-    - 创建执行日志
+    - 通过 Cache 发送命令给调度器进程
     """
     job = get_object_or_404(SchedulerJob, id=data.job_id)
     
     if not scheduler_service.is_running():
         raise HttpError(400, "调度器未运行")
     
-    # 立即执行任务
-    success = scheduler_service.run_job_now(job.code)
+    # 发送执行命令
+    cmd_key = f"scheduler_cmd_run_{job.code}"
+    cache.set(cmd_key, True, timeout=60)
     
-    if success:
-        return SchedulerJobExecuteOut(
-            success=True,
-            message=f"任务 {job.name} 将立即执行"
-        )
-    else:
-        return SchedulerJobExecuteOut(
-            success=False,
-            message=f"任务 {job.name} 执行失败"
-        )
+    return SchedulerJobExecuteOut(
+        success=True,
+        message=f"任务 {job.name} 已加入执行队列"
+    )
 
 
 @router.get("/job/search", response=List[SchedulerJobSchemaOut], summary="搜索定时任务")
@@ -395,12 +394,18 @@ def list_scheduler_log_by_job(request, job_id: str):
 
 @router.post("/start", summary="启动调度器")
 def start_scheduler(request):
-    """启动调度器"""
+    """
+    启动调度器
+    注意：在分离进程模式下，这里只能提示用户去启动 start_scheduler.py
+    或者通过 Redis 发送信号让其 Resume
+    """
     if scheduler_service.is_running():
         raise HttpError(400, "调度器已在运行中")
     
-    scheduler_service.start()
-    return response_success("调度器已启动")
+    # 如果是本地模式，可以尝试启动
+    # scheduler_service.start()
+    
+    return response_success("请确保后台调度进程已启动 (start_scheduler.py)")
 
 
 @router.post("/shutdown", summary="关闭调度器")

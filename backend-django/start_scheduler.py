@@ -33,26 +33,10 @@ def main():
     try:
         from scheduler.service import scheduler_service
         
-        logger.info("正在启动 APScheduler 调度器...")
+        logger.info("正在启动 APScheduler 调度器监控进程...")
         
-        # 启动调度器
-        if not scheduler_service.is_running():
-            scheduler_service.start()
-            logger.info("✅ APScheduler 调度器已成功启动")
-        else:
-            logger.warning("⚠️  调度器已经在运行中")
-        
-        # 保持进程运行
-        logger.info("调度器正在运行，按 Ctrl+C 停止...")
-        
-        import time
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            logger.info("收到停止信号，正在关闭调度器...")
-            scheduler_service.shutdown()
-            logger.info("✅ 调度器已安全关闭")
+        # 启动调度器监控（阻塞模式）
+        scheduler_service.start_monitor()
     
     except Exception as e:
         logger.error(f"❌ 调度器启动失败: {str(e)}")
