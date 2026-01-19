@@ -266,6 +266,22 @@ class BaseOAuthService(ABC):
             
             # 同步部门信息
             sync_user_dept_info(user)
+            
+            # 自动订阅所有每日集成报告项目
+            try:
+                from apps.integration_report.integration_models import IntegrationProjectConfig, IntegrationEmailSubscription
+                
+                # 获取所有已启用的项目配置
+                configs = IntegrationProjectConfig.objects.filter(enabled=True)
+                if configs.exists():
+                    subscriptions = [
+                        IntegrationEmailSubscription(user=user, config=config, enabled=True)
+                        for config in configs
+                    ]
+                    IntegrationEmailSubscription.objects.bulk_create(subscriptions)
+                    logger.info(f"为用户 {unique_username} 自动订阅了 {len(subscriptions)} 个集成报告项目")
+            except Exception as e:
+                logger.error(f"为用户 {unique_username} 自动订阅集成报告失败: {str(e)}")
         
         # 确保用户至少有一个角色（如果没有角色，无法获取菜单）
         if not user.core_roles.exists():
