@@ -37,6 +37,10 @@ class UserInfoOut(Schema):
     id: str = Field(..., description="用户ID")
     username: str = Field(..., description="用户名")
     realName: str = Field(..., description="真实姓名")
+    avatar: str = Field(None, description="头像")
+    desc: str = Field(None, description="个人简介")
+    homePath: str = Field("/workspace", description="首页路径")
+    roles: list[str] = Field([], description="角色列表")
     is_superuser: bool = Field(False, description="是否为超级管理员")
 
 

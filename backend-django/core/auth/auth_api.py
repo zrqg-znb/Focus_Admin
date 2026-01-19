@@ -134,10 +134,17 @@ def get_userinfo(request):
     
     user = get_object_or_404(User, id=user_info.id)
     
+    # 获取角色列表
+    roles = [role.code for role in user.core_roles.filter(status=True)]
+    
     return UserInfoOut(
         id=str(user.pk),
         username=user.username,
         realName=user.name or "",
+        avatar=user.avatar,
+        desc=user.bio,
+        homePath="/workspace",  # 强制指定首页
+        roles=roles,
         is_superuser=user.is_superuser
     )
 
