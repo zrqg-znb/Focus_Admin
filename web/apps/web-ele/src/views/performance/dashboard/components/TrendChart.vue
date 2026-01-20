@@ -10,6 +10,8 @@ import { getTrendDataApi } from '#/api/core/performance';
 const props = defineProps<{
   baselineValue?: number;
   indicatorId: string;
+  startDate?: string;
+  endDate?: string;
 }>();
 
 const chartRef = ref<EchartsUIType>();
@@ -21,7 +23,10 @@ async function fetchDataAndRender() {
 
   loading.value = true;
   try {
-    const data = await getTrendDataApi(props.indicatorId);
+    const data = await getTrendDataApi(props.indicatorId, {
+      start_date: props.startDate,
+      end_date: props.endDate,
+    });
     // data is Array of {date, value, fluctuation_value}
     const dates = data.map((item) => item.date);
     const values = data.map((item) => item.value);

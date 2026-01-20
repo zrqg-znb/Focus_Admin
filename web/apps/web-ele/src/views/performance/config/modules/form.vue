@@ -36,11 +36,7 @@ const [Drawer, drawerApi] = useVbenDrawer({
       const data = drawerApi.getData<PerformanceIndicator>();
       if (data) {
         formData.value = data;
-        const values = { ...data };
-        if (!values.owner_id && data.owner) {
-          values.owner_id = data.owner.id;
-        }
-        formApi.setValues(values);
+        formApi.setValues({ ...data });
       } else {
         formData.value = undefined;
         formApi.resetForm();

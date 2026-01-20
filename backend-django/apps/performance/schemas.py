@@ -1,7 +1,7 @@
 from ninja import Schema, ModelSchema, Field
 from typing import List, Optional
 from datetime import date
-from .models import PerformanceIndicator, PerformanceIndicatorData
+from .models import PerformanceIndicator, PerformanceIndicatorData, PerformanceIndicatorImportTask
 
 class PerformanceIndicatorSchema(ModelSchema):
     owner_id: Optional[str] = Field(None, alias="owner.id")
@@ -20,6 +20,7 @@ class PerformanceIndicatorSchema(ModelSchema):
 
 class PerformanceIndicatorCreateSchema(Schema):
     code: Optional[str] = None
+    category: str
     name: str
     module: str
     project: str
@@ -33,6 +34,7 @@ class PerformanceIndicatorCreateSchema(Schema):
 
 class PerformanceIndicatorUpdateSchema(Schema):
     code: Optional[str] = None
+    category: Optional[str] = None
     name: Optional[str] = None
     module: Optional[str] = None
     project: Optional[str] = None
@@ -50,6 +52,7 @@ class PerformanceDataUploadItem(Schema):
     value: float
 
 class PerformanceDataUploadSchema(Schema):
+    category: Optional[str] = None
     project: str
     module: str
     chip_type: str
@@ -64,3 +67,34 @@ class PerformanceDataTrendSchema(Schema):
     date: date
     value: float
     fluctuation_value: float
+
+class PerformanceTreeNodeSchema(Schema):
+    key: str
+    label: str
+    type: str
+    children: List['PerformanceTreeNodeSchema'] = []
+
+class PerformanceChipTypeSchema(Schema):
+    chip_type: str
+
+class PerformanceImportTaskStartResponse(Schema):
+    task_id: str
+
+class PerformanceImportTaskSchema(ModelSchema):
+    class Meta:
+        model = PerformanceIndicatorImportTask
+        fields = [
+            'id',
+            'status',
+            'progress',
+            'filename',
+            'total_rows',
+            'processed_rows',
+            'success_count',
+            'error_count',
+            'message',
+            'errors',
+            'started_at',
+            'finished_at',
+            'sys_create_datetime',
+        ]

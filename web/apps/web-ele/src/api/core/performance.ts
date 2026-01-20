@@ -3,6 +3,7 @@ import { requestClient } from '#/api/request';
 export interface PerformanceIndicator {
   id: string;
   code?: string;
+  category: 'vehicle' | 'cockpit';
   name: string;
   module: string;
   project: string;
@@ -49,11 +50,42 @@ export interface PerformanceDataUploadItem {
 }
 
 export interface PerformanceDataUploadPayload {
+  category?: 'vehicle' | 'cockpit';
   project: string;
   module: string;
   chip_type: string;
   date: string;
   data: PerformanceDataUploadItem[];
+}
+
+export interface PerformanceTreeNode {
+  key: string;
+  label: string;
+  type: 'category' | 'project' | 'module';
+  children: PerformanceTreeNode[];
+}
+
+export interface PerformanceChipType {
+  chip_type: string;
+}
+
+export interface PerformanceImportTaskStartResponse {
+  task_id: string;
+}
+
+export interface PerformanceImportTask {
+  id: string;
+  status: 'pending' | 'running' | 'success' | 'failed';
+  progress: number;
+  filename: string;
+  total_rows?: number | null;
+  processed_rows: number;
+  success_count: number;
+  error_count: number;
+  message?: string;
+  errors?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
 }
 
 export interface PaginatedResponse<T> {
@@ -65,6 +97,18 @@ export interface PaginatedResponse<T> {
 
 export async function getIndicatorListApi(params?: any) {
   return requestClient.get<PaginatedResponse<PerformanceIndicator>>('/api/performance/indicators', { params });
+}
+
+export async function getIndicatorTreeApi() {
+  return requestClient.get<PerformanceTreeNode[]>('/api/performance/tree');
+}
+
+export async function getChipTypesApi(params?: {
+  category?: string;
+  project?: string;
+  module?: string;
+}) {
+  return requestClient.get<PerformanceChipType[]>('/api/performance/chip-types', { params });
 }
 
 export async function createIndicatorApi(data: any) {
@@ -79,12 +123,25 @@ export async function deleteIndicatorApi(id: string) {
   return requestClient.delete(`/api/performance/indicators/${id}`);
 }
 
-export async function importIndicatorsApi(file: File) {
+export async function startIndicatorImportTaskApi(
+  file: File,
+  options?: { timeout?: number; onUploadProgress?: (evt: any) => void },
+) {
   const formData = new FormData();
   formData.append('file', file);
-  return requestClient.post('/api/performance/indicators/import', formData, {
+  return requestClient.post<PerformanceImportTaskStartResponse>(
+    '/api/performance/indicators/import',
+    formData,
+    {
     headers: { 'Content-Type': 'multipart/form-data' },
-  });
+    timeout: options?.timeout,
+    onUploadProgress: options?.onUploadProgress,
+    },
+  );
+}
+
+export async function getIndicatorImportTaskApi(taskId: string) {
+  return requestClient.get<PerformanceImportTask>(`/api/performance/indicators/import/${taskId}`);
 }
 
 export async function uploadPerformanceDataApi(data: PerformanceDataUploadPayload) {
@@ -95,6 +152,11 @@ export async function getDashboardDataApi(params?: any) {
   return requestClient.get<PaginatedResponse<PerformanceDashboardItem>>('/api/performance/dashboard', { params });
 }
 
-export async function getTrendDataApi(indicatorId: string, days: number = 7) {
-  return requestClient.get<any[]>('/api/performance/data/trend', { params: { indicator_id: indicatorId, days } });
+export async function getTrendDataApi(
+  indicatorId: string,
+  params?: { days?: number; start_date?: string; end_date?: string },
+) {
+  return requestClient.get<any[]>('/api/performance/data/trend', {
+    params: { indicator_id: indicatorId, days: params?.days ?? 7, ...params },
+  });
 }

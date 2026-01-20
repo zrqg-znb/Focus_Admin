@@ -8,121 +8,107 @@ from .schemas import (
     PerformanceIndicatorUpdateSchema,
     PerformanceDataUploadSchema,
     PerformanceDataUploadResponse,
-    PerformanceDataTrendSchema
+    PerformanceDataTrendSchema,
+    PerformanceTreeNodeSchema,
+    PerformanceChipTypeSchema,
+    PerformanceImportTaskStartResponse,
+    PerformanceImportTaskSchema,
 )
-from .models import PerformanceIndicator, PerformanceIndicatorData
-from .services import upload_performance_data, import_indicators_service
+from .models import PerformanceIndicator, PerformanceIndicatorData, PerformanceIndicatorImportTask
+from .services import upload_performance_data, import_indicators_service, run_indicator_import_task
 from django.shortcuts import get_object_or_404
 from common.fu_pagination import MyPagination
 from common.fu_crud import create, delete, update, retrieve
 from django.db.models import Q
-import openpyxl
-import zipfile
-import csv
-from io import BytesIO, StringIO
+import os
+import threading
+from django.conf import settings
 
 router = Router()
 
+@router.get("/tree", response=List[PerformanceTreeNodeSchema], summary="获取指标管理树（分类/项目/模块）")
+def get_indicator_tree(request):
+    rows = (
+        PerformanceIndicator.objects.all()
+        .values("category", "project", "module")
+        .distinct()
+        .order_by("category", "project", "module")
+    )
+
+    category_map: dict[str, dict[str, set[str]]] = {}
+    for r in rows:
+        category = r.get("category") or "vehicle"
+        project = r.get("project") or ""
+        module = r.get("module") or ""
+        category_map.setdefault(category, {}).setdefault(project, set()).add(module)
+
+    category_label = {"vehicle": "车控", "cockpit": "座舱"}
+
+    roots: list[dict] = []
+    for cat, projects in category_map.items():
+        cat_node = {"key": cat, "label": category_label.get(cat, cat), "type": "category", "children": []}
+        for proj, modules in projects.items():
+            proj_key = f"{cat}:{proj}"
+            proj_node = {"key": proj_key, "label": proj, "type": "project", "children": []}
+            for mod in sorted(modules):
+                mod_key = f"{proj_key}:{mod}"
+                proj_node["children"].append({"key": mod_key, "label": mod, "type": "module", "children": []})
+            cat_node["children"].append(proj_node)
+        roots.append(cat_node)
+    return roots
+
+@router.get("/chip-types", response=List[PerformanceChipTypeSchema], summary="获取芯片类型列表")
+def list_chip_types(request, category: str = None, project: str = None, module: str = None):
+    qs = PerformanceIndicator.objects.all()
+    if category:
+        qs = qs.filter(category=category)
+    if project:
+        qs = qs.filter(project=project)
+    if module:
+        qs = qs.filter(module=module)
+    chip_types = qs.values_list("chip_type", flat=True).distinct().order_by("chip_type")
+    return [{"chip_type": c} for c in chip_types]
+
 # --- Indicator CRUD ---
 
-@router.post("/indicators/import", url_name="import_indicators")
+@router.post("/indicators/import", url_name="import_indicators", response=PerformanceImportTaskStartResponse)
 def import_indicators(request, file: UploadedFile = File(...)):
-    # Check extension
-    filename = file.name.lower()
-    if not (filename.endswith('.xlsx') or filename.endswith('.csv')):
+    filename = (file.name or "").strip()
+    lower = filename.lower()
+    if not (lower.endswith(".xlsx") or lower.endswith(".csv")):
         raise HttpError(400, "不支持的文件格式，请上传 .xlsx 或 .csv 文件")
 
-    try:
-        # Ensure pointer is at the beginning
-        if hasattr(file, 'seek'):
-            file.seek(0)
-            
-        content = file.read()
-        if not content:
-            raise HttpError(400, "上传的文件为空")
+    if hasattr(file, "seek"):
+        file.seek(0)
+    content = file.read()
+    if not content:
+        raise HttpError(400, "上传的文件为空")
 
-        data_rows = []
-        headers = []
+    ext = ".xlsx" if lower.endswith(".xlsx") else ".csv"
+    base_dir = os.path.join(str(settings.BASE_DIR), "media", "performance", "indicator_import")
+    os.makedirs(base_dir, exist_ok=True)
 
-        if filename.endswith('.xlsx'):
-            # Read Excel file
-            wb = openpyxl.load_workbook(filename=BytesIO(content))
-            ws = wb.active
-            
-            # Get headers from first row
-            headers = [cell.value for cell in ws[1]]
-            
-            # Get data rows
-            for row in ws.iter_rows(min_row=2, values_only=True):
-                data_rows.append(row)
-                
-        elif filename.endswith('.csv'):
-            # Read CSV file
-            # Decode bytes to string, handling BOM if present
-            content_str = content.decode('utf-8-sig')
-            f = StringIO(content_str)
-            reader = csv.reader(f)
-            rows = list(reader)
-            
-            if not rows:
-                raise HttpError(400, "CSV文件为空")
-                
-            headers = rows[0]
-            data_rows = rows[1:]
+    task = PerformanceIndicatorImportTask.objects.create(
+        filename=filename,
+        file_path="",
+        status="pending",
+        progress=0,
+        message="文件已接收，等待执行",
+        sys_creator=getattr(request, "auth", None),
+    )
+    file_path = os.path.join(base_dir, f"{task.id}{ext}")
+    with open(file_path, "wb") as f:
+        f.write(content)
 
-        # Map headers to fields
-        # Expected headers: "业务唯一标识", "指标名称", "所属模块", "所属项目", "芯片类型", etc.
-        header_map = {
-            "业务唯一标识": "code",
-            "指标名称": "name",
-            "所属模块": "module",
-            "所属项目": "project",
-            "芯片类型": "chip_type",
-            "值类型": "value_type",
-            "基线值": "baseline_value",
-            "单位": "baseline_unit",
-            "允许浮动范围": "fluctuation_range",
-            "浮动方向": "fluctuation_direction",
-            "责任人": "owner",
-            
-            # English headers support
-            "Code": "code",
-            "Name": "name",
-            "Module": "module",
-            "Project": "project",
-            "Chip Type": "chip_type",
-            "Value Type": "value_type",
-            "Baseline Value": "baseline_value",
-            "Baseline Unit": "baseline_unit",
-            "Fluctuation Range": "fluctuation_range",
-            "Fluctuation Direction": "fluctuation_direction",
-            "Owner": "owner"
-        }
-        
-        data_list = []
-        for row in data_rows:
-            row_dict = {}
-            for i, value in enumerate(row):
-                if i < len(headers):
-                    header_name = headers[i]
-                    # Handle potential None in headers (e.g. empty column in Excel)
-                    if header_name and header_name in header_map:
-                        field_name = header_map[header_name]
-                        # CSV values are always strings, might need type conversion if service expects otherwise
-                        # But for now we pass as is, assuming service handles it or fields are strings
-                        row_dict[field_name] = value
-            if row_dict:
-                data_list.append(row_dict)
-                
-        result = import_indicators_service(data_list)
-        return result
-        
-    except zipfile.BadZipFile:
-        raise HttpError(400, "文件损坏或格式不正确，请确保是有效的 .xlsx 文件")
-    except UnicodeDecodeError:
-        raise HttpError(400, "CSV文件编码错误，请使用UTF-8编码")
-    except Exception as e:
-        raise HttpError(400, f"导入失败: {str(e)}")
+    PerformanceIndicatorImportTask.objects.filter(id=task.id).update(file_path=file_path)
+    t = threading.Thread(target=run_indicator_import_task, args=(task.id,), daemon=True)
+    t.start()
+    return {"task_id": str(task.id)}
+
+
+@router.get("/indicators/import/{task_id}", response=PerformanceImportTaskSchema, summary="查询指标导入任务状态")
+def get_import_task(request, task_id: str):
+    return get_object_or_404(PerformanceIndicatorImportTask, id=task_id)
 
 @router.post("/indicators", response=PerformanceIndicatorSchema)
 def create_indicator(request, payload: PerformanceIndicatorCreateSchema):
@@ -155,7 +141,7 @@ def update_indicator(request, id: str, payload: PerformanceIndicatorUpdateSchema
 
 @router.get("/indicators", response=List[PerformanceIndicatorSchema])
 @paginate(MyPagination)
-def list_indicators(request, search: str = None, module: str = None, chip_type: str = None, project: str = None):
+def list_indicators(request, search: str = None, module: str = None, chip_type: str = None, project: str = None, category: str = None):
     qs = PerformanceIndicator.objects.select_related('owner').all()
     if search:
         qs = qs.filter(name__icontains=search)
@@ -165,6 +151,8 @@ def list_indicators(request, search: str = None, module: str = None, chip_type: 
         qs = qs.filter(chip_type__icontains=chip_type)
     if project:
         qs = qs.filter(project__icontains=project)
+    if category:
+        qs = qs.filter(category=category)
     return qs
 
 # --- Data Upload & Trend ---
@@ -175,15 +163,25 @@ def upload_data(request, payload: PerformanceDataUploadSchema):
     return result
 
 @router.get("/data/trend", response=List[PerformanceDataTrendSchema])
-def get_trend(request, indicator_id: str, days: int = 7):
+def get_trend(request, indicator_id: str, days: int = 7, end_date: str = None, start_date: str = None):
     from datetime import timedelta, date
-    end_date = date.today()
-    start_date = end_date - timedelta(days=days)
+    def parse_iso(val):
+        try:
+            return date.fromisoformat(str(val))
+        except Exception:
+            return None
+
+    e = parse_iso(end_date) if end_date else None
+    s = parse_iso(start_date) if start_date else None
+    if not e:
+        e = date.today()
+    if not s:
+        s = e - timedelta(days=days)
     
     qs = PerformanceIndicatorData.objects.filter(
         indicator_id=indicator_id,
-        date__gte=start_date,
-        date__lte=end_date
+        date__gte=s,
+        date__lte=e
     ).order_by('date')
     
     return list(qs)
@@ -192,7 +190,16 @@ def get_trend(request, indicator_id: str, days: int = 7):
 
 @router.get("/dashboard", response=List[dict]) # Simplified schema for dashboard table
 @paginate(MyPagination)
-def dashboard_data(request, project: str = None, module: str = None, chip_type: str = None, date: str = None):
+def dashboard_data(
+    request,
+    project: str = None,
+    module: str = None,
+    chip_type: str = None,
+    category: str = None,
+    date: str = None,
+    start_date: str = None,
+    end_date: str = None,
+):
     """
     Dashboard API v2
     Focuses on actual data records (PerformanceIndicatorData) rather than indicators.
@@ -212,12 +219,25 @@ def dashboard_data(request, project: str = None, module: str = None, chip_type: 
     
     from datetime import date as dt_date
     
-    if date:
+    def parse_iso_date(val):
         try:
-            target_date = dt_date.fromisoformat(str(date))
+            return dt_date.fromisoformat(str(val))
+        except Exception:
+            return None
+
+    if start_date or end_date:
+        s = parse_iso_date(start_date) if start_date else None
+        e = parse_iso_date(end_date) if end_date else None
+        if s and e:
+            qs = qs.filter(date__range=(s, e))
+        elif s:
+            qs = qs.filter(date__gte=s)
+        elif e:
+            qs = qs.filter(date__lte=e)
+    elif date:
+        target_date = parse_iso_date(date)
+        if target_date:
             qs = qs.filter(date=target_date)
-        except ValueError:
-            pass
     
     # Filter by Indicator properties (Project, Module, Chip Type)
     if project:
@@ -226,6 +246,8 @@ def dashboard_data(request, project: str = None, module: str = None, chip_type: 
         qs = qs.filter(indicator__module__icontains=module)
     if chip_type:
         qs = qs.filter(indicator__chip_type__icontains=chip_type)
+    if category:
+        qs = qs.filter(indicator__category=category)
         
     # Order by date desc, then indicator code
     qs = qs.order_by('-date', 'indicator__code')

@@ -56,7 +56,19 @@ export function getFormSchema(): VbenFormSchema[] {
       componentProps: {
         placeholder: '请输入业务唯一标识',
       },
-      rules: z.string().min(1, '请输入Code'),
+    },
+    {
+      component: 'Select',
+      fieldName: 'category',
+      label: '分类',
+      defaultValue: 'vehicle',
+      componentProps: {
+        options: [
+          { label: '车控', value: 'vehicle' },
+          { label: '座舱', value: 'cockpit' },
+        ],
+      },
+      rules: z.string().min(1, '请选择分类'),
     },
     {
       component: 'Input',
@@ -163,6 +175,12 @@ export function useColumns(
       field: 'code',
       title: 'Code',
       minWidth: 150,
+    },
+    {
+      field: 'category',
+      title: '分类',
+      minWidth: 90,
+      formatter: ({ row }) => (row.category === 'cockpit' ? '座舱' : '车控'),
     },
     {
       field: 'name',
