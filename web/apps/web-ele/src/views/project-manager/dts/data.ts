@@ -39,6 +39,18 @@ export function useDetailColumns(): VxeGridProps['columns'] {
   ];
 }
 
+export function useDefectListColumns(): VxeGridProps['columns'] {
+  return [
+    { type: 'seq', width: 50 },
+    { field: 'defectNo', title: '问题单号', width: 150 },
+    { field: 'brief', title: '简述', minWidth: 200 },
+    { field: 'severity', title: '严重程度', width: 100 },
+    { field: 'currentHandler', title: '当前处理人', width: 150 },
+    { field: 'currentStageStayDay', title: '停留天数', width: 100 },
+    { field: 'progress', title: '进展', minWidth: 200 },
+  ];
+}
+
 export function useSearchFormSchema() {
   return [
     {

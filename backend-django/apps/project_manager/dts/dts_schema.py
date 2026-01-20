@@ -38,3 +38,23 @@ class DtsProjectOverviewSchema(Schema):
 class DtsSyncResponse(Schema):
     success: bool
     message: str
+
+class DtsPageResultSchema(Schema):
+    pageNo: int
+    pageSize: int
+    total: int
+    currentPageNo: int
+    npage: bool
+
+class DtsDefectSchema(Schema):
+    defectNo: str
+    brief: str
+    severity: str
+    currentTeam: str
+    currentHandler: str
+    currentStageStayDay: int
+    progress: str
+
+class DtsDefectListResponseSchema(Schema):
+    pageResult: DtsPageResultSchema
+    dataList: List[DtsDefectSchema]

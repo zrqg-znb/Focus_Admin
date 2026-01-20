@@ -1,11 +1,15 @@
 from ninja import Router
 from typing import List
-from .dts_schema import DtsDashboardSchema, DtsSyncResponse, DtsProjectOverviewSchema
-from .dts_service import sync_project_dts, get_dts_dashboard, get_dts_overview
+from .dts_schema import DtsDashboardSchema, DtsSyncResponse, DtsProjectOverviewSchema, DtsDefectListResponseSchema
+from .dts_service import sync_project_dts, get_dts_dashboard, get_dts_overview, get_mock_dts_details
 from apps.project_manager.project.project_model import Project
 from django.shortcuts import get_object_or_404
 
 router = Router(tags=["DTS"])
+
+@router.get("/details/{project_id}", response=DtsDefectListResponseSchema, summary="获取问题单详情列表")
+def get_details(request, project_id: str, page: int = 1, page_size: int = 10):
+    return get_mock_dts_details(project_id, page, page_size)
 
 @router.get("/overview", response=List[DtsProjectOverviewSchema], summary="获取问题单项目概览")
 def get_overview(request):

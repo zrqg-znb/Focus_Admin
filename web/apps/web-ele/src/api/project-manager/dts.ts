@@ -36,6 +36,29 @@ export interface DtsDashboard {
   root_teams: DtsTeam[];
 }
 
+export interface DtsPageResult {
+  pageNo: number;
+  pageSize: number;
+  total: number;
+  currentPageNo: number;
+  npage: boolean;
+}
+
+export interface DtsDefect {
+  defectNo: string;
+  brief: string;
+  severity: string;
+  currentTeam: string;
+  currentHandler: string;
+  currentStageStayDay: number;
+  progress: string;
+}
+
+export interface DtsDefectListResponse {
+  pageResult: DtsPageResult;
+  dataList: DtsDefect[];
+}
+
 export async function getDtsOverviewApi() {
   return requestClient.get<DtsProjectOverview[]>('/api/project-manager/dts/overview');
 }
@@ -49,5 +72,16 @@ export async function syncDtsApi(projectId: string) {
 export async function getDtsDashboardApi(projectId: string) {
   return requestClient.get<DtsDashboard>(
     `/api/project-manager/dts/dashboard/${projectId}`,
+  );
+}
+
+export async function getDtsDetailsApi(
+  projectId: string,
+  page = 1,
+  pageSize = 10,
+) {
+  return requestClient.get<DtsDefectListResponse>(
+    `/api/project-manager/dts/details/${projectId}`,
+    { params: { page, page_size: pageSize } },
   );
 }

@@ -2,7 +2,13 @@ from datetime import date
 from django.db import transaction
 from apps.project_manager.project.project_model import Project
 from .dts_model import DtsTeam, DtsData
-from .dts_schema import DtsDashboardSchema, DtsTeamSchema, DtsDataSchema, DtsProjectOverviewSchema
+from .dts_schema import (
+    DtsDashboardSchema, 
+    DtsTeamSchema, 
+    DtsDataSchema, 
+    DtsProjectOverviewSchema,
+    DtsDefectListResponseSchema
+)
 
 def get_mock_dts_data(root_team_name):
     """
@@ -208,3 +214,45 @@ def get_dts_overview() -> list[DtsProjectOverviewSchema]:
             has_data_today=has_data
         ))
     return result
+
+def get_mock_dts_details(project_id: str, page: int, page_size: int) -> DtsDefectListResponseSchema:
+    # Mock data as requested
+    base_data = [
+         { 
+             "defectNo": "DTS235689542", 
+             "brief": "问题单简洁", 
+             "severity": "一般", 
+             "currentTeam": "", 
+             "currentHandler": "当前处理人，对应用户", 
+             "currentStageStayDay": 3, 
+             "progress": "【2026/01/07】【张瑞卿】soc 改 skew 时钟和数据相位差值，待验证\n" 
+         }, 
+         { 
+             "defectNo": "DTS235689543", 
+             "brief": "问题单简洁2", 
+             "severity": "严重", 
+             "currentTeam": "Backend", 
+             "currentHandler": "UserB", 
+             "currentStageStayDay": 5, 
+             "progress": "Pending fix" 
+         }
+    ]
+    
+    # Generate mock data
+    full_list = base_data * 15 # 30 items
+    total = len(full_list)
+    
+    start = (page - 1) * page_size
+    end = start + page_size
+    page_items = full_list[start:end]
+    
+    return {
+        "pageResult": {
+            "pageNo": page,
+            "pageSize": page_size,
+            "total": total,
+            "currentPageNo": page,
+            "npage": end < total
+        },
+        "dataList": page_items
+    }
