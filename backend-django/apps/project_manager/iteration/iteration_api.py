@@ -25,6 +25,19 @@ def get_iteration_overview(request):
 def list_project_iterations(request, project_id: str):
     return iteration_service.get_project_iterations(project_id)
 
+from apps.project_manager.utils.sync_executor import run_sync_task
+
 @router.post("/project/{project_id}/refresh", response=bool, summary="刷新项目迭代数据")
 def refresh_project_iteration(request, project_id: str):
-    return iteration_service.refresh_project_iteration(project_id)
+    """
+    异步刷新项目迭代数据
+    """
+    user_id = request.auth.id
+    run_sync_task(
+        project_id=project_id,
+        sync_type='iteration',
+        user_id=user_id,
+        sync_func=iteration_service.refresh_project_iteration,
+        func_args=(project_id,)
+    )
+    return True

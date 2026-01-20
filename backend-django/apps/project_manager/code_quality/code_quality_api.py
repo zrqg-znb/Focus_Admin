@@ -29,6 +29,19 @@ def config_module(request, data: ModuleConfigSchema):
 def get_project_quality_details(request, project_id: str):
     return code_quality_service.get_project_quality_details(project_id)
 
+from apps.project_manager.utils.sync_executor import run_sync_task
+
 @router.post("/project/{project_id}/refresh", response=bool, summary="刷新项目代码质量数据")
 def refresh_project_quality(request, project_id: str):
-    return code_quality_service.refresh_project_quality(project_id)
+    """
+    异步刷新项目代码质量数据
+    """
+    user_id = request.auth.id
+    run_sync_task(
+        project_id=project_id,
+        sync_type='code_quality',
+        user_id=user_id,
+        sync_func=code_quality_service.refresh_project_quality,
+        func_args=(project_id,)
+    )
+    return True

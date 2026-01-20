@@ -5,6 +5,7 @@ from .iteration.iteration_api import router as iteration_router
 from .code_quality.code_quality_api import router as code_quality_router
 from .dts.dts_api import router as dts_router
 from .report.report_api import router as report_router
+from .sync_log_api import router as sync_log_router
 
 router = Router()
 
@@ -14,3 +15,4 @@ router.add_router("/iterations", iteration_router)
 router.add_router("/code_quality", code_quality_router)
 router.add_router("/dts", dts_router)
 router.add_router("/report", report_router)
+router.add_router("/", sync_log_router)

@@ -35,8 +35,8 @@ async function handleRefresh() {
   try {
     loading.value = true;
     await syncDtsApi(projectId);
-    ElMessage.success('同步成功');
-    gridApi.reload();
+    ElMessage.success('同步任务已提交，请稍后查看同步日志或刷新页面');
+    // gridApi.reload(); // 不再立即刷新表格，因为是异步的
   } catch (error) {
     console.error(error);
   } finally {
