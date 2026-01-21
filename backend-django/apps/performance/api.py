@@ -3,8 +3,8 @@ from ninja.pagination import paginate
 from ninja.errors import HttpError
 from typing import List
 from .schemas import (
-    PerformanceIndicatorSchema, 
-    PerformanceIndicatorCreateSchema, 
+    PerformanceIndicatorSchema,
+    PerformanceIndicatorCreateSchema,
     PerformanceIndicatorUpdateSchema,
     PerformanceDataUploadSchema,
     PerformanceDataUploadResponse,
@@ -12,7 +12,7 @@ from .schemas import (
     PerformanceTreeNodeSchema,
     PerformanceChipTypeSchema,
     PerformanceImportTaskStartResponse,
-    PerformanceImportTaskSchema,
+    PerformanceImportTaskSchema, PerformanceBatchDeleteSchema, PerformanceBatchUpdateSchema,
 )
 from .models import PerformanceIndicator, PerformanceIndicatorData, PerformanceIndicatorImportTask
 from .services import upload_performance_data, import_indicators_service, run_indicator_import_task
@@ -113,6 +113,23 @@ def get_import_task(request, task_id: str):
 @router.post("/indicators", response=PerformanceIndicatorSchema)
 def create_indicator(request, payload: PerformanceIndicatorCreateSchema):
     return create(request, payload, PerformanceIndicator)
+
+@router.post("/indicators/batch-delete", response=int, summary="批量删除指标")
+def batch_delete_indicators(request, payload: PerformanceBatchDeleteSchema):
+    qs = PerformanceIndicator.objects.filter(id__in=payload.ids)
+    count, _ = qs.delete()
+    return count
+
+@router.post("/indicators/batch-update", response=int, summary="批量更新指标")
+def batch_update_indicators(request, payload: PerformanceBatchUpdateSchema):
+    qs = PerformanceIndicator.objects.filter(id__in=payload.ids)
+    
+    # Security: Prevent updating restricted fields if any (e.g. id, owner if not admin?)
+    # For now, allow updating any field provided.
+    
+    update_kwargs = {payload.field: payload.value}
+    count = qs.update(**update_kwargs)
+    return count
 
 @router.delete("/indicators/{id}")
 def delete_indicator(request, id: str):

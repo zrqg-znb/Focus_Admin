@@ -123,6 +123,18 @@ export async function deleteIndicatorApi(id: string) {
   return requestClient.delete(`/api/performance/indicators/${id}`);
 }
 
+export async function batchDeleteIndicatorsApi(ids: string[]) {
+  return requestClient.post<number>('/api/performance/indicators/batch-delete', { ids });
+}
+
+export async function batchUpdateIndicatorsApi(ids: string[], field: string, value: any) {
+  return requestClient.post<number>('/api/performance/indicators/batch-update', {
+    ids,
+    field,
+    value,
+  });
+}
+
 export async function startIndicatorImportTaskApi(
   file: File,
   options?: { timeout?: number; onUploadProgress?: (evt: any) => void },

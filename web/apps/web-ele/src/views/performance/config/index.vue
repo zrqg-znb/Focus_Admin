@@ -20,9 +20,11 @@ import {
   ElSkeletonItem,
   ElTree,
   ElUpload,
+  ElForm,
+  ElFormItem,
 } from 'element-plus';
-import { ElMessage } from 'element-plus';
-import { Plus, Upload } from '@vben/icons';
+import { ElMessage, ElMessageBox } from 'element-plus';
+import { Plus, Upload, Edit, Trash2 } from '@vben/icons';
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import {
   deleteIndicatorApi,
@@ -31,8 +33,11 @@ import {
   getIndicatorTreeApi,
   getIndicatorImportTaskApi,
   startIndicatorImportTaskApi,
+  batchDeleteIndicatorsApi,
+  batchUpdateIndicatorsApi,
 } from '#/api/core/performance';
 
+import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
 import { useColumns } from './data';
 import Form from './modules/form.vue';
 
@@ -67,6 +72,23 @@ const chipTypeUpdating = ref(false);
 const pageInitializing = ref(true);
 const gridLoading = ref(false);
 
+const selectedRows = ref<PerformanceIndicator[]>([]);
+const batchEditVisible = ref(false);
+const batchEditField = ref('');
+const batchEditValue = ref('');
+const batchEditLoading = ref(false);
+
+const batchEditFieldOptions = [
+  { label: '模块', value: 'module' },
+  { label: '项目', value: 'project' },
+  { label: '芯片类型', value: 'chip_type' },
+  { label: '基线值', value: 'baseline_value' },
+  { label: '基线单位', value: 'baseline_unit' },
+  { label: '浮动范围', value: 'fluctuation_range' },
+  { label: '浮动方向', value: 'fluctuation_direction' },
+  { label: '责任人', value: 'owner_id' },
+];
+
 const currentFilters = computed(() => ({
   category: selectedCategory.value,
   project: selectedProject.value,
@@ -82,6 +104,11 @@ const [Grid, gridApi] = useVbenVxeGrid({
     keepSource: true,
     pagerConfig: {
       enabled: true,
+    },
+    checkboxConfig: {
+      reserve: true,
+      highlight: true,
+      range: true,
     },
     proxyConfig: {
       autoLoad: false,
@@ -109,7 +136,82 @@ const [Grid, gridApi] = useVbenVxeGrid({
       zoom: true,
     },
   } as VxeTableGridOptions<PerformanceIndicator>,
+  gridEvents: {
+    checkboxChange: handleSelectionChange,
+    checkboxAll: handleSelectionChange,
+  },
 });
+
+function handleSelectionChange(params: any) {
+  // Try to get from event params
+  if (params && (params.records || params.reserves)) {
+    const records = params.records || [];
+    const reserves = params.reserves || [];
+    selectedRows.value = [...records, ...reserves];
+    return;
+  }
+  // Fallback to API
+  const grid = gridApi.grid;
+  if (grid) {
+    selectedRows.value = [
+      ...grid.getCheckboxRecords(),
+      ...grid.getCheckboxReserveRecords(),
+    ];
+  } else {
+    selectedRows.value = [];
+  }
+}
+
+function handleBatchDelete() {
+  if (selectedRows.value.length === 0) return;
+  ElMessageBox.confirm(
+    `确定要删除选中的 ${selectedRows.value.length} 个指标吗？`,
+    '批量删除',
+    {
+      type: 'warning',
+      confirmButtonText: '确定删除',
+      cancelButtonText: '取消',
+    },
+  ).then(async () => {
+    try {
+      const ids = selectedRows.value.map((r) => r.id);
+      const count = await batchDeleteIndicatorsApi(ids);
+      ElMessage.success(`成功删除 ${count} 个指标`);
+      gridApi.query();
+      selectedRows.value = []; // Clear selection
+    } catch (error) {
+      // handled
+    }
+  });
+}
+
+function handleBatchEdit() {
+  if (selectedRows.value.length === 0) return;
+  batchEditField.value = '';
+  batchEditValue.value = '';
+  batchEditVisible.value = true;
+}
+
+async function confirmBatchEdit() {
+  if (!batchEditField.value) {
+    ElMessage.warning('请选择要修改的字段');
+    return;
+  }
+
+  batchEditLoading.value = true;
+  try {
+    const ids = selectedRows.value.map((r) => r.id);
+    const count = await batchUpdateIndicatorsApi(ids, batchEditField.value, batchEditValue.value);
+    ElMessage.success(`成功更新 ${count} 个指标`);
+    batchEditVisible.value = false;
+    gridApi.query();
+    selectedRows.value = [];
+  } catch (error) {
+    // handled
+  } finally {
+    batchEditLoading.value = false;
+  }
+}
 
 function onActionClick({ code, row }: OnActionClickParams<PerformanceIndicator>) {
   if (code === 'edit') {
@@ -391,6 +493,23 @@ onMounted(async () => {
 
                   <div class="flex-1" />
 
+                  <ElButton
+                    type="danger"
+                    plain
+                    :disabled="selectedRows.length === 0"
+                    @click="handleBatchDelete"
+                  >
+                    <Trash2 class="mr-1 size-4" /> 批量删除
+                  </ElButton>
+                  <ElButton
+                    type="primary"
+                    plain
+                    :disabled="selectedRows.length === 0"
+                    @click="handleBatchEdit"
+                  >
+                    <Edit class="mr-1 size-4" /> 批量编辑
+                  </ElButton>
+
                   <ElButton type="primary" @click="openCreate">
                     <Plus class="mr-1 size-4" /> 新增指标
                   </ElButton>
@@ -406,6 +525,47 @@ onMounted(async () => {
     </ElSkeleton>
 
     <!-- Import Dialog -->
+    <ElDialog
+      v-model="batchEditVisible"
+      title="批量编辑"
+      width="400px"
+      destroy-on-close
+    >
+      <ElForm label-position="top">
+        <ElFormItem label="选择字段">
+          <ElSelect v-model="batchEditField" placeholder="请选择要修改的字段" class="w-full">
+            <ElOption
+              v-for="opt in batchEditFieldOptions"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
+          </ElSelect>
+        </ElFormItem>
+        <ElFormItem label="新值">
+           <ElSelect v-if="batchEditField === 'fluctuation_direction'" v-model="batchEditValue" class="w-full">
+             <ElOption label="向上" value="up" />
+             <ElOption label="向下" value="down" />
+             <ElOption label="无" value="none" />
+           </ElSelect>
+           <UserSelector
+             v-else-if="batchEditField === 'owner_id'"
+             v-model="batchEditValue"
+             placeholder="请选择责任人"
+             :multiple="false"
+             class="w-full"
+           />
+           <ElInput v-else v-model="batchEditValue" placeholder="请输入新值" />
+        </ElFormItem>
+      </ElForm>
+      <template #footer>
+        <ElButton @click="batchEditVisible = false">取消</ElButton>
+        <ElButton type="primary" :loading="batchEditLoading" @click="confirmBatchEdit">
+          确定更新
+        </ElButton>
+      </template>
+    </ElDialog>
+
     <ElDialog
       v-model="importDialogVisible"
       title="导入指标"

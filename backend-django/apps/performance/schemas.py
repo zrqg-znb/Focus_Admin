@@ -1,5 +1,5 @@
 from ninja import Schema, ModelSchema, Field
-from typing import List, Optional
+from typing import List, Optional, Any, Union
 from datetime import date
 from .models import PerformanceIndicator, PerformanceIndicatorData, PerformanceIndicatorImportTask
 
@@ -45,6 +45,17 @@ class PerformanceIndicatorUpdateSchema(Schema):
     fluctuation_range: Optional[float] = None
     fluctuation_direction: Optional[str] = None
     owner_id: Optional[str] = None
+
+class PerformanceBatchDeleteSchema(Schema):
+    ids: List[str]
+
+class PerformanceBatchUpdateSchema(Schema):
+    ids: List[str]
+    field: str
+    value: Union[str, int, float, bool, None]
+
+    class Config:
+        arbitrary_types_allowed = True
 
 class PerformanceDataUploadItem(Schema):
     code: Optional[str] = None
