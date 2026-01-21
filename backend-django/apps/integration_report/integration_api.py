@@ -8,6 +8,7 @@ from ninja.errors import HttpError
 
 from common.fu_auth import BearerAuth as GlobalAuth
 from apps.project_manager.project.project_model import Project
+from core.user.user_model import User
 from .integration_schema import (
     ProjectConfigManageRow,
     ProjectConfigOut,
@@ -22,7 +23,7 @@ from .integration_schema import (
     EmailDeliveryQueryIn,
     EmailDeliveryQueryOut
 )
-from .integration_models import IntegrationMetricDefinition, IntegrationProjectMetricValue, IntegrationEmailDelivery
+from .integration_models import IntegrationMetricDefinition, IntegrationProjectMetricValue, IntegrationEmailDelivery, IntegrationEmailSubscription
 from . import integration_service
 from .integration_models import IntegrationProjectConfig
 
@@ -107,7 +108,13 @@ def init_configs(request):
     for p in projects:
         # If project has NO config, create one
         if not IntegrationProjectConfig.objects.filter(project=p).exists():
-            IntegrationProjectConfig.objects.create(project=p, name=p.name)
+            cfg = IntegrationProjectConfig.objects.create(project=p, name=p.name)
+            
+            # Auto subscribe all active users
+            users = User.objects.filter(is_deleted=False, is_active=True)
+            subs = [IntegrationEmailSubscription(user=u, config=cfg, enabled=True) for u in users]
+            IntegrationEmailSubscription.objects.bulk_create(subs)
+
             count += 1
     return count
 
