@@ -1,7 +1,7 @@
 from ninja import Schema, ModelSchema, Field
 from typing import List, Optional, Any, Union
 from datetime import date
-from .models import PerformanceIndicator, PerformanceIndicatorData, PerformanceIndicatorImportTask
+from .models import PerformanceIndicator, PerformanceIndicatorData, PerformanceIndicatorImportTask, PerformanceRiskRecord
 
 class PerformanceIndicatorSchema(ModelSchema):
     owner_id: Optional[str] = Field(None, alias="owner.id")
@@ -109,3 +109,32 @@ class PerformanceImportTaskSchema(ModelSchema):
             'finished_at',
             'sys_create_datetime',
         ]
+
+class PerformanceRiskRecordSchema(ModelSchema):
+    indicator_name: Optional[str] = Field(None, alias="indicator.name")
+    project: Optional[str] = Field(None, alias="indicator.project")
+    module: Optional[str] = Field(None, alias="indicator.module")
+    chip_type: Optional[str] = Field(None, alias="indicator.chip_type")
+    owner_name: Optional[str] = Field(None, alias="owner.name")
+
+    class Meta:
+        model = PerformanceRiskRecord
+        fields = '__all__'
+        exclude = ['indicator', 'data', 'owner']
+
+class PerformanceRiskQuerySchema(Schema):
+    category: Optional[str] = None
+    project: Optional[str] = None
+    module: Optional[str] = None
+    chip_type: Optional[str] = None
+    status: Optional[str] = None
+    indicator_id: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+
+class PerformanceRiskConfirmSchema(Schema):
+    resolved: bool
+    reason: str
+
+class PerformanceRiskResolveSchema(Schema):
+    reason: Optional[str] = None

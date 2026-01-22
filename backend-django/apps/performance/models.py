@@ -55,6 +55,41 @@ class PerformanceIndicatorData(RootModel):
         ordering = ['-date']
 
 
+class PerformanceRiskRecord(RootModel):
+    STATUS_CHOICES = (
+        ('open', '未处理'),
+        ('ack', '已确认'),
+        ('resolved', '已解决'),
+    )
+
+    indicator = models.ForeignKey(PerformanceIndicator, on_delete=models.CASCADE, related_name='risks', verbose_name="指标", help_text="指标")
+    data = models.ForeignKey(PerformanceIndicatorData, on_delete=models.CASCADE, related_name='risks', verbose_name="数据", help_text="数据")
+    occur_date = models.DateField(verbose_name="发生日期", help_text="发生日期")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='open', verbose_name="状态", help_text="状态")
+    owner = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="责任人", help_text="责任人")
+    confirmed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='performance_confirmed_risks', verbose_name="确认人", help_text="确认人")
+    confirmed_at = models.DateTimeField(null=True, blank=True, verbose_name="确认时间", help_text="确认时间")
+    resolved_at = models.DateTimeField(null=True, blank=True, verbose_name="解决时间", help_text="解决时间")
+
+    baseline_value = models.FloatField(verbose_name="基线值", help_text="基线值")
+    measured_value = models.FloatField(verbose_name="测量值", help_text="测量值")
+    deviation_value = models.FloatField(verbose_name="偏差值", help_text="偏差值")
+    allowed_range = models.FloatField(verbose_name="允许浮动范围", help_text="允许浮动范围")
+    direction = models.CharField(max_length=20, verbose_name="浮动方向", help_text="浮动方向")
+    message = models.CharField(max_length=500, default='', blank=True, verbose_name="说明", help_text="说明")
+
+    class Meta:
+        db_table = 'performance_risk_record'
+        verbose_name = '性能风险'
+        verbose_name_plural = verbose_name
+        unique_together = ('indicator', 'data')
+        indexes = [
+            models.Index(fields=['indicator']),
+            models.Index(fields=['status']),
+            models.Index(fields=['occur_date']),
+        ]
+        ordering = ['-sys_create_datetime']
+
 class PerformanceIndicatorImportTask(RootModel):
     STATUS_CHOICES = (
         ('pending', '等待中'),

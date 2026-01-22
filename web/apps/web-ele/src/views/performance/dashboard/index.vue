@@ -4,6 +4,7 @@ import type { PerformanceDashboardItem, PerformanceTreeNode, PerformanceChipType
 
 import dayjs from 'dayjs';
 import { computed, onMounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
@@ -97,6 +98,19 @@ function showTrend(row: PerformanceDashboardItem) {
   currentIndicatorName.value = row.name;
   currentBaselineValue.value = row.baseline_value;
   trendVisible.value = true;
+}
+
+const router = useRouter();
+function gotoRisk(row: PerformanceDashboardItem) {
+  router.push({
+    path: '/performance/risk',
+    query: {
+      indicator_id: row.id,
+      category: category.value,
+      project: project.value,
+      module: module.value || undefined,
+    },
+  });
 }
 
 async function loadTree() {
@@ -243,6 +257,15 @@ onMounted(async () => {
       <template #action="{ row }">
         <ElButton type="primary" size="small" @click="showTrend(row)">
           趋势
+        </ElButton>
+        <ElButton
+          v-if="getStatusType(row) !== 'success'"
+          type="danger"
+          size="small"
+          class="ml-2"
+          @click="gotoRisk(row)"
+        >
+          风险记录
         </ElButton>
       </template>
     </Grid>

@@ -13,8 +13,9 @@ from .schemas import (
     PerformanceChipTypeSchema,
     PerformanceImportTaskStartResponse,
     PerformanceImportTaskSchema, PerformanceBatchDeleteSchema, PerformanceBatchUpdateSchema,
+    PerformanceRiskRecordSchema, PerformanceRiskQuerySchema, PerformanceRiskConfirmSchema, PerformanceRiskResolveSchema,
 )
-from .models import PerformanceIndicator, PerformanceIndicatorData, PerformanceIndicatorImportTask
+from .models import PerformanceIndicator, PerformanceIndicatorData, PerformanceIndicatorImportTask, PerformanceRiskRecord
 from .services import upload_performance_data, import_indicators_service, run_indicator_import_task
 from django.shortcuts import get_object_or_404
 from common.fu_pagination import MyPagination
@@ -343,3 +344,85 @@ def dashboard_data(
         results.append(row)
         
     return results
+
+# --- Risks ---
+
+@router.get("/risks", response=List[PerformanceRiskRecordSchema])
+@paginate(MyPagination)
+def list_risks(
+    request,
+    category: str = None,
+    project: str = None,
+    module: str = None,
+    chip_type: str = None,
+    status: str = None,
+    indicator_id: str = None,
+    start_date: str = None,
+    end_date: str = None,
+):
+    qs = PerformanceRiskRecord.objects.select_related('indicator', 'owner').all()
+    if category:
+        qs = qs.filter(indicator__category=category)
+    if project:
+        qs = qs.filter(indicator__project__icontains=project)
+    if module:
+        qs = qs.filter(indicator__module__icontains=module)
+    if chip_type:
+        qs = qs.filter(indicator__chip_type__icontains=chip_type)
+    if status:
+        qs = qs.filter(status=status)
+    if indicator_id:
+        qs = qs.filter(indicator_id=indicator_id)
+
+    from datetime import date as dt_date
+    def parse_iso(val):
+        try:
+            return dt_date.fromisoformat(str(val))
+        except Exception:
+            return None
+    s = parse_iso(start_date) if start_date else None
+    e = parse_iso(end_date) if end_date else None
+    if s and e:
+        qs = qs.filter(occur_date__range=(s, e))
+    elif s:
+        qs = qs.filter(occur_date__gte=s)
+    elif e:
+        qs = qs.filter(occur_date__lte=e)
+    qs = qs.order_by('-occur_date', '-sys_create_datetime')
+    return qs
+
+@router.get("/risks/{id}", response=PerformanceRiskRecordSchema)
+def get_risk_detail(request, id: str):
+    return get_object_or_404(PerformanceRiskRecord, id=id)
+
+@router.post("/risks/{id}/confirm", response=PerformanceRiskRecordSchema)
+def confirm_risk(request, id: str, payload: PerformanceRiskConfirmSchema):
+    instance = get_object_or_404(PerformanceRiskRecord, id=id)
+    user_id = request.auth.id
+    is_superuser = getattr(request.auth, 'is_superuser', False)
+    if str(instance.owner_id) != str(user_id) and not is_superuser:
+        raise HttpError(403, "只有责任人才能处理该风险")
+    from django.utils import timezone
+    status = 'resolved' if payload.resolved else 'ack'
+    PerformanceRiskRecord.objects.filter(id=id).update(
+        status=status,
+        message=payload.reason,
+        confirmed_by_id=user_id,
+        confirmed_at=timezone.now(),
+        resolved_at=timezone.now() if status == 'resolved' else None,
+    )
+    return get_object_or_404(PerformanceRiskRecord, id=id)
+
+@router.post("/risks/{id}/resolve", response=PerformanceRiskRecordSchema)
+def resolve_risk(request, id: str, payload: PerformanceRiskResolveSchema):
+    instance = get_object_or_404(PerformanceRiskRecord, id=id)
+    user_id = request.auth.id
+    is_superuser = getattr(request.auth, 'is_superuser', False)
+    if str(instance.owner_id) != str(user_id) and not is_superuser:
+        raise HttpError(403, "只有责任人才能处理该风险")
+    from django.utils import timezone
+    update_kwargs = { 'status': 'resolved', 'resolved_at': timezone.now() }
+    if payload.reason:
+        update_kwargs['message'] = payload.reason
+    PerformanceRiskRecord.objects.filter(id=id).update(**update_kwargs)
+    return get_object_or_404(PerformanceRiskRecord, id=id)

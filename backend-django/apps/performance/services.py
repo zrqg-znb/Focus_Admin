@@ -1,4 +1,4 @@
-from .models import PerformanceIndicator, PerformanceIndicatorData, PerformanceIndicatorImportTask
+from .models import PerformanceIndicator, PerformanceIndicatorData, PerformanceIndicatorImportTask, PerformanceRiskRecord
 from django.db import transaction
 from typing import List, Dict, Any
 from datetime import date
@@ -60,7 +60,7 @@ def upload_performance_data(payload: Dict[str, Any]) -> Dict[str, Any]:
             # Calculate fluctuation
             fluctuation_value = value - indicator.baseline_value
             
-            PerformanceIndicatorData.objects.update_or_create(
+            data_obj, _ = PerformanceIndicatorData.objects.update_or_create(
                 indicator=indicator,
                 date=test_date,
                 defaults={
@@ -68,9 +68,39 @@ def upload_performance_data(payload: Dict[str, Any]) -> Dict[str, Any]:
                     'fluctuation_value': fluctuation_value
                 }
             )
+            _create_risk_if_violation(indicator, data_obj)
             success_count += 1
             
     return {"success_count": success_count, "errors": errors}
+
+def _create_risk_if_violation(indicator: PerformanceIndicator, data_obj: PerformanceIndicatorData):
+    dir = indicator.fluctuation_direction or 'none'
+    rng = indicator.fluctuation_range or 0.0
+    dev = data_obj.fluctuation_value or 0.0
+    violated = False
+    if dir == 'up':
+        violated = dev < -rng
+    elif dir == 'down':
+        violated = dev > rng
+    else:
+        violated = abs(dev) > rng
+    if not violated:
+        return
+    PerformanceRiskRecord.objects.update_or_create(
+        indicator=indicator,
+        data=data_obj,
+        defaults={
+            'occur_date': data_obj.date,
+            'status': 'open',
+            'owner': indicator.owner,
+            'baseline_value': indicator.baseline_value,
+            'measured_value': data_obj.value,
+            'deviation_value': dev,
+            'allowed_range': rng,
+            'direction': dir,
+            'message': ''
+        }
+    )
 
 def import_indicators_service(data_list: List[Dict]) -> Dict[str, Any]:
     from core.user.user_model import User

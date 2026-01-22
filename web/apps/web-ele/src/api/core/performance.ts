@@ -95,6 +95,24 @@ export interface PaginatedResponse<T> {
   limit: number;
 }
 
+export interface PerformanceRiskRecord {
+  id: string;
+  indicator_id: string;
+  indicator_name?: string;
+  project?: string;
+  module?: string;
+  chip_type?: string;
+  occur_date: string;
+  status: 'open' | 'ack' | 'resolved';
+  owner_name?: string;
+  baseline_value: number;
+  measured_value: number;
+  deviation_value: number;
+  allowed_range: number;
+  direction: 'up' | 'down' | 'none';
+  message?: string;
+}
+
 export async function getIndicatorListApi(params?: any) {
   return requestClient.get<PaginatedResponse<PerformanceIndicator>>('/api/performance/indicators', { params });
 }
@@ -171,4 +189,27 @@ export async function getTrendDataApi(
   return requestClient.get<any[]>('/api/performance/data/trend', {
     params: { indicator_id: indicatorId, days: params?.days ?? 7, ...params },
   });
+}
+
+export async function getRiskListApi(params?: any) {
+  return requestClient.get<PaginatedResponse<PerformanceRiskRecord>>('/api/performance/risks', { params });
+}
+
+export async function getRiskDetailApi(id: string) {
+  return requestClient.get<PerformanceRiskRecord>(`/api/performance/risks/${id}`);
+}
+
+export async function ackRiskApi(id: string) {
+  return requestClient.post<PerformanceRiskRecord>(`/api/performance/risks/${id}/ack`);
+}
+
+export async function resolveRiskApi(id: string) {
+  return requestClient.post<PerformanceRiskRecord>(`/api/performance/risks/${id}/resolve`);
+}
+
+export async function confirmRiskApi(
+  id: string,
+  data: { resolved: boolean; reason: string },
+) {
+  return requestClient.post<PerformanceRiskRecord>(`/api/performance/risks/${id}/confirm`, data);
 }

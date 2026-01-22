@@ -118,7 +118,7 @@ export function useColumns(): VxeTableGridOptions<PerformanceDashboardItem>['col
       field: 'action',
       title: '操作',
       fixed: 'right',
-      width: 100,
+      width: 150,
       slots: { default: 'action' },
     },
   ];

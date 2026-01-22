@@ -4,11 +4,11 @@ from datetime import date, timedelta
 import random
 
 # API Base URL
-BASE_URL = "http://127.0.0.1:8000/api"
+BASE_URL = "http://127.0.0.1:8001/api"
 
 # Login Credentials (Assuming default admin/admin or create a new user if needed)
 # Please update if you have specific credentials
-USERNAME = "admin" 
+USERNAME = "superadmin"
 PASSWORD = "password" if False else "123456"
 
 
@@ -17,15 +17,15 @@ INDICATOR_CODE = "TEST_01_ZRQ"
 INDICATOR_DATA = {
     "code": "TEST_01_ZRQ",
     "name": "test01",
+    "category": "vehicle",
     "project": "A66",
     "module": "RAM",
     "chip_type": "NN84",
-    "value_type": "avg", # Assuming avg based on description
+    "value_type": "avg",
     "baseline_value": 100.2,
     "baseline_unit": "byte",
     "fluctuation_range": 5,
     "fluctuation_direction": "down",
-    # owner_id needs to be fetched or assumed current user
 }
 
 def login():
@@ -75,21 +75,15 @@ def ensure_indicator_exists(token, owner_id):
         print(f"Failed to create indicator: {response.text}")
         return None
 
-def upload_data(token):
+def upload_data(token, indicator_id):
     url = f"{BASE_URL}/performance/data/upload"
     headers = {"Authorization": f"Bearer {token}"}
-    
-    # Generate some dummy data for the last 7 days
     today = date.today()
-    
-    # We will upload data for 3 different days
-    for i in range(3):
+    test_values = [95.0, 104.0, 106.0, 111.0]
+    for i, value in enumerate(reversed(test_values)):
         data_date = today - timedelta(days=i)
-        
-        # Generate a value around the baseline (100.2)
-        # Random value between 90 and 110
-        value = round(random.uniform(90, 110), 2)
-        
+        deviation = round(value - INDICATOR_DATA["baseline_value"], 2)
+        violated = deviation > INDICATOR_DATA["fluctuation_range"]
         payload = {
             "project": INDICATOR_DATA["project"],
             "module": INDICATOR_DATA["module"],
@@ -103,14 +97,24 @@ def upload_data(token):
                 }
             ]
         }
-        
-        print(f"Uploading data for {data_date}: Value={value}")
+        print(f"Uploading {data_date} value={value} deviation={deviation} expected={'RISK' if violated else 'SAFE'}")
         response = requests.post(url, json=payload, headers=headers)
-        
         if response.status_code == 200:
             print(f"Upload success: {response.json()}")
         else:
             print(f"Upload failed: {response.text}")
+
+    start_date = (today - timedelta(days=len(test_values)-1)).isoformat()
+    end_date = today.isoformat()
+    risks_url = f"{BASE_URL}/performance/risks?indicator_id={indicator_id}&start_date={start_date}&end_date={end_date}"
+    risks_resp = requests.get(risks_url, headers=headers)
+    if risks_resp.status_code == 200:
+        risks = risks_resp.json()
+        print(f"Risk count: {risks['total']}")
+        for item in risks.get('items', []):
+            print(f"Risk {item['occur_date']} value={item['measured_value']} deviation={item['deviation_value']} status={item['status']}")
+    else:
+        print(f"Fetch risks failed: {risks_resp.text}")
 
 if __name__ == "__main__":
     token, user_id = login()
@@ -120,4 +124,4 @@ if __name__ == "__main__":
         
         if indicator_id:
             # 2. Upload data
-            upload_data(token)
+            upload_data(token, indicator_id)
