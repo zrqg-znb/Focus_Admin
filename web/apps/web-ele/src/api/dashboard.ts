@@ -57,7 +57,7 @@ export interface UpcomingMilestone {
 export interface QGNode {
   name: string;
   date: string;
-  status: 'completed' | 'pending' | 'delayed';
+  status: 'completed' | 'delayed' | 'pending';
 }
 
 export interface FavoriteProjectDetail {
@@ -100,28 +100,41 @@ export function getDashboardSummary() {
  * 获取核心指标数据 (代码质量、迭代、性能)
  */
 export function getCoreMetrics(scope: 'all' | 'favorites' = 'all') {
-  return requestClient.get<CoreMetrics>('/api/dashboard/core-metrics', { params: { scope } });
+  return requestClient.get<CoreMetrics>('/api/dashboard/core-metrics', {
+    params: { scope },
+  });
 }
 
 /**
  * 获取项目分布数据
  */
 export function getProjectDistribution(scope: 'all' | 'favorites' = 'all') {
-  return requestClient.get<ProjectDistribution>('/api/dashboard/project-distribution', { params: { scope } });
+  return requestClient.get<ProjectDistribution>(
+    '/api/dashboard/project-distribution',
+    { params: { scope } },
+  );
 }
 
 /**
  * 获取项目里程碑时间轴数据
  */
-export function getProjectTimelines(scope: 'all' | 'favorites' = 'all', page = 1, pageSize = 5, name?: string) {
-  return requestClient.get<PaginatedResponse<FavoriteProjectDetail>>('/api/dashboard/project-timelines', {
-    params: {
-      scope,
-      page,
-      page_size: pageSize,
-      name
-    }
-  });
+export function getProjectTimelines(
+  scope: 'all' | 'favorites' = 'all',
+  page = 1,
+  pageSize = 5,
+  name?: string,
+) {
+  return requestClient.get<PaginatedResponse<FavoriteProjectDetail>>(
+    '/api/dashboard/project-timelines',
+    {
+      params: {
+        scope,
+        page,
+        page_size: pageSize,
+        name,
+      },
+    },
+  );
 }
 
 /**
@@ -138,29 +151,37 @@ export function getFavoriteProjects() {
  * 获取即将到达的里程碑（支持筛选）
  * @param qg_types 筛选的 QG 类型列表，如 ["QG1", "QG3"]
  */
-export function getUpcomingMilestones(qg_types?: string[], scope: 'all' | 'favorites' = 'all', page = 1, pageSize = 5) {
-  return requestClient.get<PaginatedResponse<UpcomingMilestone>>('/api/dashboard/milestones', {
-    params: {
-      qg_types,
-      scope,
-      page,
-      page_size: pageSize
+export function getUpcomingMilestones(
+  qg_types?: string[],
+  scope: 'all' | 'favorites' = 'all',
+  page = 1,
+  pageSize = 5,
+) {
+  return requestClient.get<PaginatedResponse<UpcomingMilestone>>(
+    '/api/dashboard/milestones',
+    {
+      params: {
+        qg_types,
+        scope,
+        page,
+        page_size: pageSize,
+      },
+      // 自定义参数序列化，解决 Django Ninja 不识别 array[] 格式的问题
+      paramsSerializer: (params) => {
+        const searchParams = new URLSearchParams();
+        Object.keys(params).forEach((key) => {
+          const value = params[key];
+          if (value === undefined || value === null) {
+            return;
+          }
+          if (Array.isArray(value)) {
+            value.forEach((v) => searchParams.append(key, v));
+          } else {
+            searchParams.append(key, value);
+          }
+        });
+        return searchParams.toString();
+      },
     },
-    // 自定义参数序列化，解决 Django Ninja 不识别 array[] 格式的问题
-    paramsSerializer: (params) => {
-      const searchParams = new URLSearchParams();
-      Object.keys(params).forEach((key) => {
-        const value = params[key];
-        if (value === undefined || value === null) {
-          return;
-        }
-        if (Array.isArray(value)) {
-          value.forEach((v) => searchParams.append(key, v));
-        } else {
-          searchParams.append(key, value);
-        }
-      });
-      return searchParams.toString();
-    },
-  });
+  );
 }
