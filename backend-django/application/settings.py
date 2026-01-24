@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'apps.performance',
     'apps.project_manager',
     'apps.integration_report',
+    'apps.code_compliance',
 ]
 
 TEMPLATES = [
