@@ -5,10 +5,11 @@ import type { ComplianceRecord } from '#/api/compliance';
 import { ref, watch } from 'vue';
 
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
-import { ElButton, ElDrawer, ElMessage, ElRadioButton, ElRadioGroup, ElTag } from 'element-plus';
+import { ElButton, ElDrawer, ElMessage, ElTag } from 'element-plus';
 
 import { getUserRecords, updateRecordStatus } from '#/api/compliance';
 import { useRiskColumns } from './data';
+import RiskHandleDialog from './RiskHandleDialog.vue';
 
 const props = defineProps<{
   userId: string;
@@ -17,6 +18,9 @@ const props = defineProps<{
 
 const visible = defineModel<boolean>({ default: false });
 const emit = defineEmits(['close']);
+
+const dialogVisible = ref(false);
+const currentRecord = ref<ComplianceRecord | null>(null);
 
 const [Grid, gridApi] = useVbenVxeGrid({
   gridOptions: {
@@ -41,11 +45,6 @@ const [Grid, gridApi] = useVbenVxeGrid({
 
 watch(() => visible.value, (val) => {
   if (val) {
-    // We need to wait for drawer animation or component mount?
-    // gridApi.query() works if grid is mounted.
-    // Since VxeGrid is inside Drawer, it might not be mounted immediately if destroy-on-close is true (default in VbenDrawer, but here using ElDrawer).
-    // Let's rely on proxyConfig to fetch data when grid mounts/activates?
-    // Actually, when visible becomes true, we can trigger query.
     setTimeout(() => {
         gridApi.query();
     }, 100);
@@ -54,14 +53,18 @@ watch(() => visible.value, (val) => {
   }
 });
 
-const handleStatusChange = async (row: ComplianceRecord, status: number) => {
+const handleProcess = (row: ComplianceRecord) => {
+  currentRecord.value = row;
+  dialogVisible.value = true;
+};
+
+const handleDialogSubmit = async (row: ComplianceRecord, remark: string) => {
   try {
-    await updateRecordStatus(row.id, { status });
-    ElMessage.success('状态更新成功');
-    // Optimistic update
-    row.status = status; 
+    await updateRecordStatus(row.id, { status: row.status, remark });
+    ElMessage.success('处理成功');
+    gridApi.query(); // Reload to show updated log
   } catch (error) {
-    gridApi.query();
+    // Error handled by request interceptor usually
   }
 };
 
@@ -104,15 +107,17 @@ const statusTypeMap: Record<number, string> = {
         </template>
 
         <template #action="{ row }">
-          <div class="flex items-center gap-2">
-            <ElRadioGroup v-model="row.status" size="small" @change="(val) => handleStatusChange(row, val as number)">
-              <ElRadioButton :label="0">待处理</ElRadioButton>
-              <ElRadioButton :label="1">无风险</ElRadioButton>
-              <ElRadioButton :label="2">已修复</ElRadioButton>
-            </ElRadioGroup>
-          </div>
+          <ElButton type="primary" size="small" @click="handleProcess(row)">
+            处理 / 查看记录
+          </ElButton>
         </template>
       </Grid>
+      
+      <RiskHandleDialog 
+        v-model="dialogVisible" 
+        :record="currentRecord"
+        @submit="handleDialogSubmit"
+      />
     </div>
   </ElDrawer>
 </template>
