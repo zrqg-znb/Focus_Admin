@@ -2,6 +2,7 @@ from django.db.models import Count, Q
 from .models import ComplianceRecord
 from core.user.user_model import User
 from core.dept.dept_model import Dept
+from datetime import datetime
 
 def get_department_stats():
     """
@@ -96,13 +97,25 @@ def get_user_records(user_id: str):
     """
     return ComplianceRecord.objects.filter(user_id=user_id).order_by('status', '-update_time')
 
-def update_record_status(record_id: str, status: int, remark: str = None):
+def update_record_status(record_id: str, status: int, remark: str = None, user: User = None):
     """
     更新风险记录状态
     """
     record = ComplianceRecord.objects.get(id=record_id)
     record.status = status
-    if remark is not None:
-        record.remark = remark
+    
+    if remark:
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        username = user.name or user.username if user else "System"
+        
+        status_label = {0: '待处理', 1: '无风险', 2: '已修复'}.get(status, '未知')
+        
+        log_entry = f"[{current_time}] {username}: 将状态更新为【{status_label}】，备注：{remark}"
+        
+        if record.remark:
+            record.remark = f"{record.remark}\n{log_entry}"
+        else:
+            record.remark = log_entry
+            
     record.save()
     return record

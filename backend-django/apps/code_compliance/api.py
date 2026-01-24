@@ -22,5 +22,6 @@ def list_user_records(request, user_id: str):
 
 @router.put("/record/{record_id}")
 def update_record(request, record_id: str, data: ComplianceUpdateSchema):
-    update_record_status(record_id, data.status, data.remark)
+    # Pass request.auth (User object) to service
+    update_record_status(record_id, data.status, data.remark, user=request.auth)
     return {"msg": "操作成功"}
