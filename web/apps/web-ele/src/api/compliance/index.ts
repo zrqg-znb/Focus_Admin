@@ -31,6 +31,22 @@ export interface UserComplianceStat {
   no_risk_count: number;
 }
 
+export interface OverviewSummary {
+  total_risks: number;
+  unresolved_risks: number;
+  affected_users: number;
+  affected_branches: number;
+  items: DeptComplianceStat[];
+}
+
+export interface DetailSummary {
+  total_risks: number;
+  unresolved_risks: number;
+  fixed_risks: number;
+  no_risk_risks: number;
+  items: UserComplianceStat[];
+}
+
 export interface UpdateRecordParams {
   status: number;
   remark?: string;
@@ -38,14 +54,16 @@ export interface UpdateRecordParams {
 
 // APIs
 export function getDeptStats() {
-  return requestClient.get<DeptComplianceStat[]>(
-    '/api/code-compliance/stats/dept',
-  );
+  return requestClient.get<OverviewSummary>('/api/code-compliance/stats/dept');
 }
 
-export function getDeptUsersStats(deptId: string) {
-  return requestClient.get<UserComplianceStat[]>(
+export function getDeptUsersStats(
+  deptId: string,
+  params?: { end_date?: string; start_date?: string },
+) {
+  return requestClient.get<DetailSummary>(
     `/api/code-compliance/stats/dept/${deptId}/users`,
+    { params },
   );
 }
 

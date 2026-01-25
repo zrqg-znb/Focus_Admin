@@ -6,7 +6,12 @@ export function useDetailColumns(
   onActionClick?: OnActionClickFn<UserComplianceStat>,
 ): VxeTableGridOptions<UserComplianceStat>['columns'] {
   return [
-    { field: 'user_name', title: '用户姓名', minWidth: 120 },
+    { 
+      field: 'user_name', 
+      title: '用户姓名', 
+      minWidth: 150,
+      slots: { default: 'user_name' }
+    },
     { field: 'dept_name', title: '部门', minWidth: 150 },
     { field: 'total_count', title: '总风险数', minWidth: 120 },
     { 
@@ -35,6 +40,18 @@ export function useDetailSearchFormSchema(): VbenFormSchema[] {
       label: '用户姓名',
       componentProps: {
         placeholder: '请输入用户姓名',
+      },
+    },
+    {
+      component: 'DatePicker',
+      fieldName: 'dateRange',
+      label: '时间范围',
+      componentProps: {
+        type: 'daterange',
+        rangeSeparator: '至',
+        startPlaceholder: '开始日期',
+        endPlaceholder: '结束日期',
+        valueFormat: 'YYYY-MM-DD HH:mm:ss', // Match backend datetime filter expectations or just date
       },
     },
   ];
