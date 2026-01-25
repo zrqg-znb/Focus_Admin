@@ -28,3 +28,17 @@ class DeptComplianceStatSchema(Schema):
     user_count: int
     total_risk_count: int
     unresolved_count: int
+
+class OverviewSummarySchema(Schema):
+    total_risks: int
+    unresolved_risks: int
+    affected_users: int
+    affected_branches: int
+    items: List[DeptComplianceStatSchema]
+
+class DetailSummarySchema(Schema):
+    total_risks: int
+    unresolved_risks: int
+    fixed_risks: int
+    no_risk_risks: int
+    items: List[UserComplianceStatSchema]

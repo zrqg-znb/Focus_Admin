@@ -2,18 +2,31 @@ from django.db.models import Count, Q
 from .models import ComplianceRecord
 from core.user.user_model import User
 from core.dept.dept_model import Dept
-from datetime import datetime
+from datetime import datetime, date
 
 def get_department_stats():
     """
-    获取部门维度的合规风险统计
+    获取部门维度的合规风险统计，包括总览摘要
     """
-    # 获取所有有风险记录的用户及其部门
     records = ComplianceRecord.objects.select_related('user', 'user__dept').all()
+    
+    total_risks = 0
+    unresolved_risks = 0
+    all_branches = set()
+    all_users = set()
     
     dept_stats = {}
     
     for record in records:
+        total_risks += 1
+        if record.status == 0:
+            unresolved_risks += 1
+            
+        # Collect branches
+        if record.missing_branches:
+            for branch in record.missing_branches:
+                all_branches.add(branch)
+                
         user = record.user
         if not user or not user.dept:
             dept_key = "unknown"
@@ -23,6 +36,8 @@ def get_department_stats():
             dept_key = user.dept.id
             dept_name = user.dept.name
             dept_id = user.dept.id
+            
+        all_users.add(user.id if user else "unknown")
             
         if dept_key not in dept_stats:
             dept_stats[dept_key] = {
@@ -38,9 +53,9 @@ def get_department_stats():
         if record.status == 0:
             dept_stats[dept_key]["unresolved_count"] += 1
             
-    result = []
+    items = []
     for stat in dept_stats.values():
-        result.append({
+        items.append({
             "dept_id": stat["dept_id"],
             "dept_name": stat["dept_name"],
             "user_count": len(stat["users"]),
@@ -48,11 +63,17 @@ def get_department_stats():
             "unresolved_count": stat["unresolved_count"]
         })
         
-    return result
+    return {
+        "total_risks": total_risks,
+        "unresolved_risks": unresolved_risks,
+        "affected_users": len(all_users),
+        "affected_branches": len(all_branches),
+        "items": items
+    }
 
-def get_department_users_detail(dept_id: str):
+def get_department_users_detail(dept_id: str, start_date: str = None, end_date: str = None):
     """
-    获取指定部门下用户的合规风险详情
+    获取指定部门下用户的合规风险详情，支持时间筛选
     """
     # 过滤该部门下的用户
     if dept_id == "unknown" or not dept_id:
@@ -65,9 +86,30 @@ def get_department_users_detail(dept_id: str):
     # 获取这些用户的风险记录
     records = ComplianceRecord.objects.filter(user_id__in=user_ids)
     
+    # Date filtering
+    if start_date:
+        records = records.filter(update_time__gte=start_date)
+    if end_date:
+        records = records.filter(update_time__lte=end_date)
+    
     user_stats = {}
     
+    summary = {
+        "total_risks": 0,
+        "unresolved_risks": 0,
+        "fixed_risks": 0,
+        "no_risk_risks": 0
+    }
+    
     for record in records:
+        summary["total_risks"] += 1
+        if record.status == 0:
+            summary["unresolved_risks"] += 1
+        elif record.status == 1:
+            summary["no_risk_risks"] += 1
+        elif record.status == 2:
+            summary["fixed_risks"] += 1
+            
         u_id = record.user_id
         if u_id not in user_stats:
             user_stats[u_id] = {
@@ -89,7 +131,10 @@ def get_department_users_detail(dept_id: str):
         elif record.status == 2:
             user_stats[u_id]["fixed_count"] += 1
             
-    return list(user_stats.values())
+    return {
+        **summary,
+        "items": list(user_stats.values())
+    }
 
 def get_user_records(user_id: str):
     """
