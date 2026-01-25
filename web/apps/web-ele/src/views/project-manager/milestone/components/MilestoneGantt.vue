@@ -1,5 +1,5 @@
 <template>
-  <div class="milestone-gantt-container">
+  <div class="milestone-gantt-container" ref="ganttContainerRef">
     <!-- 头部区域 -->
     <div class="gantt-header">
       <!-- 左侧：项目名称列 -->
@@ -119,6 +119,10 @@
           <el-button @click="zoomIn" :disabled="zoomLevel >= 3">+</el-button>
         </el-button-group>
         <el-button size="small" @click="resetView">重置视图</el-button>
+        <el-button size="small" @click="toggleFullscreen">
+          <el-icon class="mr-1"><FullScreen /></el-icon>
+          {{ isFullscreen ? '退出全屏' : '全屏' }}
+        </el-button>
       </div>
       <div class="legend">
         <div
@@ -196,7 +200,9 @@ import type { MilestoneConfig } from './types';
 
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 
-import { ElButton, ElButtonGroup } from 'element-plus';
+import { FullScreen } from '@element-plus/icons-vue';
+import { useFullscreen } from '@vueuse/core';
+import { ElButton, ElButtonGroup, ElIcon } from 'element-plus';
 
 import RiskHandleDialog from './RiskHandleDialog.vue';
 
@@ -260,6 +266,9 @@ const projectColumnWidth = 200;
 
 const timelineContainerRef = ref<HTMLElement>();
 const ganttBodyRef = ref<HTMLElement>();
+const ganttContainerRef = ref<HTMLElement>();
+
+const { isFullscreen, toggle: toggleFullscreen } = useFullscreen(ganttContainerRef);
 
 const tooltip = ref({
   visible: false,
