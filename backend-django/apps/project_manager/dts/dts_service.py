@@ -1,5 +1,6 @@
 from datetime import date
 from django.db import transaction
+from django.core.cache import cache
 from apps.project_manager.project.project_model import Project
 from .dts_model import DtsTeam, DtsData
 from .dts_schema import (
@@ -9,6 +10,50 @@ from .dts_schema import (
     DtsProjectOverviewSchema,
     DtsDefectListResponseSchema
 )
+
+_DTS_DEFECT_DETAILS_CACHE_TTL_SECONDS = 6 * 60 * 60
+
+
+def _get_dts_defect_details_cache_key(project_id: str, record_date: date) -> str:
+    return f"dts:defect_details:{project_id}:{record_date.isoformat()}"
+
+
+def _fetch_mock_dts_defect_details(project_id: str) -> list[dict]:
+    base_data = [
+        {
+            "defectNo": "DTS235689542",
+            "brief": "问题单简洁",
+            "severity": "一般",
+            "currentTeam": "",
+            "currentHandler": "当前处理人，对应用户",
+            "currentStageStayDay": 3,
+            "progress": "【2026/01/07】【张瑞卿】soc 改 skew 时钟和数据相位差值，待验证\n",
+        },
+        {
+            "defectNo": "DTS235689543",
+            "brief": "问题单简洁2",
+            "severity": "严重",
+            "currentTeam": "Backend",
+            "currentHandler": "UserB",
+            "currentStageStayDay": 5,
+            "progress": "Pending fix",
+        },
+    ]
+    full_list = base_data * 15
+    for i, item in enumerate(full_list):
+        item["defectNo"] = f"{item['defectNo']}_{project_id[-6:]}_{i + 1:03d}"
+    return full_list
+
+
+def _warmup_dts_defect_details_cache(project_id: str, record_date: date) -> list[dict]:
+    key = _get_dts_defect_details_cache_key(project_id, record_date)
+    cached = cache.get(key)
+    if isinstance(cached, list) and cached:
+        return cached
+    details = _fetch_mock_dts_defect_details(project_id)
+    cache.set(key, details, _DTS_DEFECT_DETAILS_CACHE_TTL_SECONDS)
+    return details
+
 
 def get_mock_dts_data(root_team_name):
     """
@@ -143,6 +188,8 @@ def sync_project_dts(project: Project):
         # In a real scenario: data = fetch_from_middleware(project.ws_id, team_name)
         data = get_mock_dts_data(team_name)
         process_node(data, parent_team=None)
+    
+    _warmup_dts_defect_details_cache(str(project.id), today)
 
 def get_dts_dashboard(project_id: str) -> DtsDashboardSchema:
     project = Project.objects.get(id=project_id)
@@ -216,43 +263,24 @@ def get_dts_overview() -> list[DtsProjectOverviewSchema]:
     return result
 
 def get_mock_dts_details(project_id: str, page: int, page_size: int) -> DtsDefectListResponseSchema:
-    # Mock data as requested
-    base_data = [
-         { 
-             "defectNo": "DTS235689542", 
-             "brief": "问题单简洁", 
-             "severity": "一般", 
-             "currentTeam": "", 
-             "currentHandler": "当前处理人，对应用户", 
-             "currentStageStayDay": 3, 
-             "progress": "【2026/01/07】【张瑞卿】soc 改 skew 时钟和数据相位差值，待验证\n" 
-         }, 
-         { 
-             "defectNo": "DTS235689543", 
-             "brief": "问题单简洁2", 
-             "severity": "严重", 
-             "currentTeam": "Backend", 
-             "currentHandler": "UserB", 
-             "currentStageStayDay": 5, 
-             "progress": "Pending fix" 
-         }
-    ]
-    
-    # Generate mock data
-    full_list = base_data * 15 # 30 items
+    today = date.today()
+    full_list = _warmup_dts_defect_details_cache(project_id, today)
     total = len(full_list)
-    
+
+    page = max(int(page or 1), 1)
+    page_size = max(int(page_size or 10), 1)
+
     start = (page - 1) * page_size
     end = start + page_size
     page_items = full_list[start:end]
-    
+
     return {
         "pageResult": {
             "pageNo": page,
             "pageSize": page_size,
             "total": total,
             "currentPageNo": page,
-            "npage": end < total
+            "npage": end < total,
         },
-        "dataList": page_items
+        "dataList": page_items,
     }
