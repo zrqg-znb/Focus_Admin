@@ -33,6 +33,15 @@ const project = ref<string>('');
 const module = ref<string>('');
 const chipType = ref<string>('');
 const chipTypes = ref<PerformanceChipType[]>([]);
+const sortOption = ref<
+  | 'default'
+  | 'current_value_desc'
+  | 'current_value_asc'
+  | 'fluctuation_value_desc'
+  | 'fluctuation_value_asc'
+  | 'baseline_value_desc'
+  | 'baseline_value_asc'
+>('default');
 
 const dateRange = ref<[string, string]>([
   dayjs().subtract(6, 'day').format('YYYY-MM-DD'),
@@ -52,6 +61,22 @@ const moduleOptions = computed(() => {
 
 const startDate = computed(() => dateRange.value[0]);
 const endDate = computed(() => dateRange.value[1]);
+const sortParams = computed(() => {
+  if (sortOption.value === 'default') return {};
+  if (sortOption.value === 'current_value_desc')
+    return { sort_field: 'current_value', sort_order: 'desc' };
+  if (sortOption.value === 'current_value_asc')
+    return { sort_field: 'current_value', sort_order: 'asc' };
+  if (sortOption.value === 'fluctuation_value_desc')
+    return { sort_field: 'fluctuation_value', sort_order: 'desc' };
+  if (sortOption.value === 'fluctuation_value_asc')
+    return { sort_field: 'fluctuation_value', sort_order: 'asc' };
+  if (sortOption.value === 'baseline_value_desc')
+    return { sort_field: 'baseline_value', sort_order: 'desc' };
+  if (sortOption.value === 'baseline_value_asc')
+    return { sort_field: 'baseline_value', sort_order: 'asc' };
+  return {};
+});
 
 const trendVisible = ref(false);
 const currentIndicatorId = ref('');
@@ -78,6 +103,7 @@ const [Grid, gridApi] = useVbenVxeGrid({
             chip_type: chipType.value,
             start_date: startDate.value,
             end_date: endDate.value,
+            ...sortParams.value,
           };
           return await getDashboardDataApi(params);
         },
@@ -151,6 +177,13 @@ watch(
 
 watch(
   () => [module.value, chipType.value, startDate.value, endDate.value] as const,
+  () => {
+    gridApi.query();
+  },
+);
+
+watch(
+  () => sortOption.value,
   () => {
     gridApi.query();
   },
@@ -243,6 +276,19 @@ onMounted(async () => {
             value-format="YYYY-MM-DD"
             class="!w-[260px]"
           />
+        </div>
+
+        <div class="flex items-center gap-2">
+          <div class="text-sm text-[var(--el-text-color-regular)]">排序</div>
+          <ElSelect v-model="sortOption" class="w-[200px]" placeholder="默认">
+            <ElOption label="默认（按日期）" value="default" />
+            <ElOption label="当前值：从大到小" value="current_value_desc" />
+            <ElOption label="当前值：从小到大" value="current_value_asc" />
+            <ElOption label="浮动：从大到小" value="fluctuation_value_desc" />
+            <ElOption label="浮动：从小到大" value="fluctuation_value_asc" />
+            <ElOption label="基线值：从大到小" value="baseline_value_desc" />
+            <ElOption label="基线值：从小到大" value="baseline_value_asc" />
+          </ElSelect>
         </div>
       </div>
     </div>

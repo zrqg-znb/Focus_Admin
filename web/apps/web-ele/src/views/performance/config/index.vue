@@ -162,6 +162,13 @@ function handleSelectionChange(params: any) {
   }
 }
 
+function clearSelection() {
+  selectedRows.value = [];
+  const grid = gridApi.grid;
+  grid?.clearCheckboxRow?.();
+  grid?.clearCheckboxReserve?.();
+}
+
 function handleBatchDelete() {
   if (selectedRows.value.length === 0) return;
   ElMessageBox.confirm(
@@ -177,8 +184,8 @@ function handleBatchDelete() {
       const ids = selectedRows.value.map((r) => r.id);
       const count = await batchDeleteIndicatorsApi(ids);
       ElMessage.success(`成功删除 ${count} 个指标`);
+      clearSelection();
       gridApi.query();
-      selectedRows.value = []; // Clear selection
     } catch (error) {
       // handled
     }
@@ -204,8 +211,8 @@ async function confirmBatchEdit() {
     const count = await batchUpdateIndicatorsApi(ids, batchEditField.value, batchEditValue.value);
     ElMessage.success(`成功更新 ${count} 个指标`);
     batchEditVisible.value = false;
+    clearSelection();
     gridApi.query();
-    selectedRows.value = [];
   } catch (error) {
     // handled
   } finally {
@@ -378,6 +385,7 @@ watch(
   () => [selectedCategory.value, selectedProject.value, selectedModule.value] as const,
   async () => {
     if (!initialized.value) return;
+    clearSelection();
     await loadChipTypes();
     gridApi.query();
   },
@@ -388,6 +396,7 @@ watch(
   () => {
     if (!initialized.value) return;
     if (chipTypeUpdating.value) return;
+    clearSelection();
     gridApi.query();
   },
 );

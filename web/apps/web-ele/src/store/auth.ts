@@ -40,7 +40,6 @@ export const useAuthStore = defineStore('auth', () => {
       const accessToken = response.accessToken;
       const refreshToken = response.refreshToken;
 
-
       // 如果成功获取到 accessToken
       if (accessToken) {
         // 将 accessToken 存储到 accessStore 中
@@ -97,9 +96,6 @@ export const useAuthStore = defineStore('auth', () => {
       // 不做任何处理
     }
 
-    // 清除所有可能的认证 Cookie（包括根域名的）
-    clearAllCookies();
-
     resetAllStores();
     accessStore.setLoginExpired(false);
 
@@ -133,38 +129,3 @@ export const useAuthStore = defineStore('auth', () => {
     logout,
   };
 });
-
-/**
- * 清除所有 Cookie，包括可能的根域名 Cookie
- */
-function clearAllCookies() {
-  const cookies = document.cookie.split(';');
-  const hostname = window.location.hostname;
-  
-  // 构造需要尝试清除的域名列表
-  // 1. 当前域名
-  // 2. 根域名（尝试向上取两级，如 .example.com）
-  const domains = [hostname];
-  
-  const domainParts = hostname.split('.');
-  if (domainParts.length > 1) {
-    // 尝试添加根域名（例如 .example.com）
-    const rootDomain = domainParts.slice(-2).join('.');
-    domains.push(`.${rootDomain}`);
-    domains.push(rootDomain);
-  }
-
-  // 遍历所有 cookie 并尝试清除
-  for (const cookie of cookies) {
-    const eqPos = cookie.indexOf('=');
-    const name = eqPos > -1 ? cookie.substring(0, eqPos).trim() : cookie.trim();
-    
-    // 清除默认路径和域名的 cookie
-    document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
-    
-    // 尝试指定域名清除
-    for (const domain of domains) {
-      document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=${domain}`;
-    }
-  }
-}

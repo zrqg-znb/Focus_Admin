@@ -217,6 +217,8 @@ def dashboard_data(
     date: str = None,
     start_date: str = None,
     end_date: str = None,
+    sort_field: str = None,
+    sort_order: str = "desc",
 ):
     """
     Dashboard API v2
@@ -267,8 +269,26 @@ def dashboard_data(
     if category:
         qs = qs.filter(indicator__category=category)
         
-    # Order by date desc, then indicator code
-    qs = qs.order_by('-date', 'indicator__code')
+    sort_field_map = {
+        "current_value": "value",
+        "value": "value",
+        "fluctuation_value": "fluctuation_value",
+        "baseline_value": "indicator__baseline_value",
+        "data_date": "date",
+        "date": "date",
+    }
+
+    if sort_field:
+        orm_field = sort_field_map.get(str(sort_field).strip())
+        if not orm_field:
+            raise HttpError(400, "不支持的排序字段")
+        direction = str(sort_order or "desc").lower()
+        if direction not in {"asc", "desc"}:
+            raise HttpError(400, "不支持的排序方向")
+        prefix = "" if direction == "asc" else "-"
+        qs = qs.order_by(f"{prefix}{orm_field}", "-date", "indicator__code")
+    else:
+        qs = qs.order_by("-date", "indicator__code")
     
     # Transform to result format
     # Since we are paginating the QuerySet directly via Ninja, we just need to return the QuerySet
