@@ -29,26 +29,176 @@ function goToConfig() {
 // Fishbone Logic
 // We will alternate items top and bottom
 const fishboneItems = computed(() => {
-  return props.milestones.map((ms, index) => {
-    const t = parseDate((ms as any).date);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const isPast = typeof t === 'number' ? t < today.getTime() : false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayT = today.getTime();
 
-    // Check risk status from backend
-    // risk_status: 'pending' (Error) | 'confirmed' (Warning) | null
+  const rows = props.milestones.map((ms, originalIndex) => {
+    const t = parseDate((ms as any).date);
+    const rawDate = String((ms as any).date || '');
+    const dateKey = /^\d{4}-\d{2}-\d{2}/.test(rawDate)
+      ? rawDate.slice(0, 10)
+      : typeof t === 'number'
+        ? new Date(t).toISOString().slice(0, 10)
+        : '';
+
     const riskStatus = (ms as any).risk_status;
     const hasRisk = (ms as any).has_risk || !!riskStatus;
 
     return {
-      ...ms,
-      isTop: index % 2 === 0,
-      isPast,
+      ms,
+      originalIndex,
+      t,
+      dateKey,
+      isPast: typeof t === 'number' ? t < todayT : false,
       hasRisk,
       riskStatus,
-      left: `${(index / (props.milestones.length - 1 || 1)) * 90 + 5}%`, // Distributed 5% to 95%
     };
   });
+
+  const dated = rows.filter((r) => typeof r.t === 'number') as Array<
+    (typeof rows)[number] & { t: number }
+  >;
+
+  const canUseDateAxis = dated.length >= 2;
+  if (!canUseDateAxis) {
+    return rows.map((r, index) => ({
+      ...(r.ms as any),
+      isTop: index % 2 === 0,
+      isPast: r.isPast,
+      hasRisk: r.hasRisk,
+      riskStatus: r.riskStatus,
+      left: `${(index / (rows.length - 1 || 1)) * 90 + 5}%`,
+    }));
+  }
+
+  const min = Math.min(...dated.map((r) => r.t));
+  const max = Math.max(...dated.map((r) => r.t));
+  if (max <= min) {
+    return rows.map((r, index) => ({
+      ...(r.ms as any),
+      isTop: index % 2 === 0,
+      isPast: r.isPast,
+      hasRisk: r.hasRisk,
+      riskStatus: r.riskStatus,
+      left: `${(index / (rows.length - 1 || 1)) * 90 + 5}%`,
+    }));
+  }
+
+  const sorted = [...rows].sort((a, b) => {
+    const ta = typeof a.t === 'number' ? a.t : Number.POSITIVE_INFINITY;
+    const tb = typeof b.t === 'number' ? b.t : Number.POSITIVE_INFINITY;
+    if (ta !== tb) return ta - tb;
+    return a.originalIndex - b.originalIndex;
+  });
+
+  const groupMap = new Map<string, number[]>();
+  for (const [i, item] of sorted.entries()) {
+    const key = item.dateKey || `__idx_${item.originalIndex}`;
+    const arr = groupMap.get(key) || [];
+    arr.push(i);
+    groupMap.set(key, arr);
+  }
+
+  const groupSummaryMap = new Map<
+    string,
+    {
+      axisHasRisk: boolean;
+      axisRiskStatus: null | string;
+      axisIsPast: boolean;
+      axisStatus: string;
+    }
+  >();
+  for (const [key, idxs] of groupMap.entries()) {
+    const members = idxs
+      .map((i) => sorted[i])
+      .filter(
+        (m): m is (typeof sorted)[number] => typeof m !== 'undefined' && m !== null,
+      );
+    if (members.length === 0) {
+      continue;
+    }
+    const axisHasRisk = members.some((m) => m.hasRisk);
+    const hasConfirmed = members.some((m) => m.riskStatus === 'confirmed');
+    const hasPending = members.some(
+      (m) => m.riskStatus && m.riskStatus !== 'confirmed',
+    );
+    const axisRiskStatus = axisHasRisk
+      ? hasConfirmed
+        ? 'confirmed'
+        : hasPending
+          ? 'pending'
+          : 'pending'
+      : null;
+
+    const axisIsPast = members.every((m) => m.isPast);
+    const statuses = members.map((m) => String((m.ms as any).status || ''));
+    const axisStatus = statuses.includes('delayed')
+      ? 'delayed'
+      : statuses.includes('pending')
+        ? 'pending'
+        : statuses.includes('completed')
+          ? 'completed'
+          : statuses[0] || '';
+
+    groupSummaryMap.set(key, {
+      axisHasRisk,
+      axisRiskStatus,
+      axisIsPast,
+      axisStatus,
+    });
+  }
+
+  const baseLefts = sorted.map((r) => {
+    if (typeof r.t !== 'number') return null;
+    const ratio = Math.min(1, Math.max(0, (r.t - min) / (max - min)));
+    return ratio * 90 + 5;
+  });
+
+  const result = sorted.map((r, sortedIndex) => {
+    const base = baseLefts[sortedIndex];
+    let leftNum =
+      typeof base === 'number'
+        ? base
+        : (sortedIndex / (sorted.length - 1 || 1)) * 90 + 5;
+
+    const key = r.dateKey || `__idx_${r.originalIndex}`;
+    const group = groupMap.get(key) || [sortedIndex];
+    const pos = group.indexOf(sortedIndex);
+    const axisIndexInGroup = Math.round((group.length - 1) / 2);
+    const showAxisPoint = pos === axisIndexInGroup;
+    const groupSize = group.length;
+    const level = Math.floor(pos / 2);
+    const isTop = pos % 2 === 0;
+
+    if (group.length > 1) {
+      leftNum =
+        typeof base === 'number'
+          ? base
+          : (sortedIndex / (sorted.length - 1 || 1)) * 90 + 5;
+      leftNum = Math.max(5, Math.min(95, leftNum));
+    }
+
+    const axisSummary = groupSummaryMap.get(key);
+    return {
+      ...(r.ms as any),
+      isTop,
+      groupSize,
+      level,
+      lineHeightPx: 48 + level * 22,
+      isPast: r.isPast,
+      hasRisk: r.hasRisk,
+      riskStatus: r.riskStatus,
+      showAxisPoint,
+      axisHasRisk: axisSummary?.axisHasRisk ?? r.hasRisk,
+      axisRiskStatus: axisSummary?.axisRiskStatus ?? r.riskStatus,
+      axisIsPast: axisSummary?.axisIsPast ?? r.isPast,
+      axisStatus: axisSummary?.axisStatus ?? String((r.ms as any).status || ''),
+      left: `${leftNum}%`,
+    };
+  });
+
+  return result;
 });
 
 function parseDate(value: unknown): null | number {
@@ -216,7 +366,8 @@ function getRiskClasses(item: any) {
           'bg-red-400': item.hasRisk && item.riskStatus !== 'confirmed',
           'bg-yellow-500': item.hasRisk && item.riskStatus === 'confirmed',
         }"
-        class="absolute left-1/2 top-1/2 h-12 w-0.5 -translate-x-1/2 -translate-y-full origin-bottom -rotate-[20deg] bg-gray-200 transition-colors group-hover:bg-primary dark:bg-gray-600"
+        :style="{ height: `${item.lineHeightPx ?? 48}px` }"
+        class="absolute left-1/2 top-1/2 w-0.5 -translate-x-1/2 -translate-y-full origin-bottom -rotate-[20deg] bg-gray-200 transition-colors group-hover:bg-primary dark:bg-gray-600"
       ></div>
 
       <!-- Connection Line (Bottom) -->
@@ -226,7 +377,8 @@ function getRiskClasses(item: any) {
           'bg-red-400': item.hasRisk && item.riskStatus !== 'confirmed',
           'bg-yellow-500': item.hasRisk && item.riskStatus === 'confirmed',
         }"
-        class="absolute left-1/2 top-1/2 h-12 w-0.5 -translate-x-1/2 origin-top rotate-[20deg] bg-gray-200 transition-colors group-hover:bg-primary dark:bg-gray-600"
+        :style="{ height: `${item.lineHeightPx ?? 48}px` }"
+        class="absolute left-1/2 top-1/2 w-0.5 -translate-x-1/2 origin-top rotate-[20deg] bg-gray-200 transition-colors group-hover:bg-primary dark:bg-gray-600"
       ></div>
 
       <!-- Content Bubble -->
@@ -235,6 +387,13 @@ function getRiskClasses(item: any) {
           item.isTop ? 'bottom-[65%]' : 'top-[65%]',
           getRiskClasses(item),
         ]"
+        :style="
+          item.level
+            ? item.isTop
+              ? { bottom: `calc(65% + ${item.level * 22}px)` }
+              : { top: `calc(65% + ${item.level * 22}px)` }
+            : undefined
+        "
         class="absolute z-10 w-28 rounded-xl border p-2 text-center shadow-sm transition-all duration-300 hover:scale-110 hover:shadow-md"
         @click="handleNodeClick(item)"
       >
@@ -277,14 +436,15 @@ function getRiskClasses(item: any) {
 
       <!-- Axis Point -->
       <div
+        v-if="item.showAxisPoint"
         :class="
-          item.hasRisk
-            ? item.riskStatus === 'confirmed'
+          item.axisHasRisk
+            ? item.axisRiskStatus === 'confirmed'
               ? 'border-yellow-500 bg-yellow-100'
               : 'border-red-500 bg-red-100'
-            : item.status === 'delayed'
+            : item.axisStatus === 'delayed'
               ? 'border-red-400'
-              : item.isPast
+              : item.axisIsPast
                 ? 'border-emerald-400'
                 : 'border-gray-300 dark:border-gray-500'
         "
