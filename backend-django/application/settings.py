@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'apps.project_manager',
     'apps.integration_report',
     'apps.code_compliance',
+    'apps.delivery_matrix',
 ]
 
 TEMPLATES = [
