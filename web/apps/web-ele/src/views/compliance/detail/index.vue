@@ -10,7 +10,7 @@ import { Page } from '@vben/common-ui';
 import { ElButton, ElCard, ElStatistic } from 'element-plus';
 
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
-import { getDeptUsersStats } from '#/api/compliance';
+import { getPostUsersStats } from '#/api/compliance';
 import { UserAvatar } from '#/components/user-avatar';
 
 import RiskDrawer from '../components/RiskDrawer.vue';
@@ -18,8 +18,8 @@ import { useDetailColumns, useDetailSearchFormSchema } from './data';
 
 const route = useRoute();
 const router = useRouter();
-const deptId = computed(() => route.query.deptId as string);
-const deptName = computed(() => (route.query.deptName as string) || '部门详情');
+const postId = computed(() => route.query.postId as string);
+const postName = computed(() => (route.query.postName as string) || '岗位详情');
 
 const drawerVisible = ref(false);
 const currentUserId = ref('');
@@ -28,8 +28,10 @@ const currentUserName = ref('');
 const summary = ref({
   total_risks: 0,
   unresolved_risks: 0,
-  fixed_risks: 0,
-  no_risk_risks: 0,
+  total_branch_risks: 0,
+  unresolved_branch_risks: 0,
+  fixed_branch_risks: 0,
+  no_risk_branch_risks: 0,
 });
 
 const [Grid, gridApi] = useVbenVxeGrid({
@@ -45,7 +47,7 @@ const [Grid, gridApi] = useVbenVxeGrid({
     proxyConfig: {
       ajax: {
         query: async (_, formValues) => {
-          if (!deptId.value) return [];
+          if (!postId.value) return [];
 
           const params: any = {};
           if (formValues.dateRange && formValues.dateRange.length === 2) {
@@ -53,13 +55,15 @@ const [Grid, gridApi] = useVbenVxeGrid({
             params.end_date = formValues.dateRange[1];
           }
 
-          const data = await getDeptUsersStats(deptId.value, params);
+          const data = await getPostUsersStats(postId.value, params);
 
           summary.value = {
             total_risks: data.total_risks,
             unresolved_risks: data.unresolved_risks,
-            fixed_risks: data.fixed_risks,
-            no_risk_risks: data.no_risk_risks,
+            total_branch_risks: data.total_branch_risks,
+            unresolved_branch_risks: data.unresolved_branch_risks,
+            fixed_branch_risks: data.fixed_branch_risks,
+            no_risk_branch_risks: data.no_risk_branch_risks,
           };
 
           let items = data.items;
@@ -95,41 +99,51 @@ const goBack = () => {
   router.back();
 };
 
-// Re-query when deptId changes
-watch(deptId, () => {
+// Re-query when postId changes
+watch(postId, () => {
   gridApi.query();
 });
 </script>
 
 <template>
-  <Page :title="`${deptName} - 合规风险详情`" auto-content-height>
+  <Page :title="`${postName} - 合规风险详情`" auto-content-height>
     <template #extra>
       <ElButton @click="goBack">返回</ElButton>
     </template>
 
     <div class="flex h-full flex-col gap-4">
-      <div class="grid shrink-0 grid-cols-4 gap-4">
+      <div class="grid shrink-0 grid-cols-6 gap-4">
         <ElCard shadow="hover" class="!border-none">
-          <ElStatistic title="总风险数" :value="summary.total_risks" />
+          <ElStatistic title="Change总数" :value="summary.total_risks" />
         </ElCard>
         <ElCard shadow="hover" class="!border-none">
           <ElStatistic
-            title="待处理"
+            title="待处理Change"
             :value="summary.unresolved_risks"
             value-style="color: var(--el-color-danger)"
           />
         </ElCard>
         <ElCard shadow="hover" class="!border-none">
+          <ElStatistic title="分支风险总数" :value="summary.total_branch_risks" />
+        </ElCard>
+        <ElCard shadow="hover" class="!border-none">
           <ElStatistic
-            title="已修复"
-            :value="summary.fixed_risks"
+            title="待处理分支风险"
+            :value="summary.unresolved_branch_risks"
+            value-style="color: var(--el-color-danger)"
+          />
+        </ElCard>
+        <ElCard shadow="hover" class="!border-none">
+          <ElStatistic
+            title="已修复分支风险"
+            :value="summary.fixed_branch_risks"
             value-style="color: var(--el-color-success)"
           />
         </ElCard>
         <ElCard shadow="hover" class="!border-none">
           <ElStatistic
-            title="无风险"
-            :value="summary.no_risk_risks"
+            title="无风险分支"
+            :value="summary.no_risk_branch_risks"
             value-style="color: var(--el-color-info)"
           />
         </ElCard>
@@ -146,7 +160,6 @@ watch(deptId, () => {
                 :size="30"
                 :font-size="14"
               />
-              <!--              <span>{{ row.user_name }}</span>-->
             </div>
           </template>
 
@@ -157,6 +170,15 @@ watch(deptId, () => {
               {{ row.unresolved_count }}
             </span>
           </template>
+          
+          <template #unresolved_branch="{ row }">
+            <span
+              :class="{ 'font-bold text-red-500': row.unresolved_branch_count > 0 }"
+            >
+              {{ row.unresolved_branch_count }}
+            </span>
+          </template>
+
           <template #action="{ row }">
             <ElButton type="primary" link @click="handleViewRisks(row)">
               查看风险

@@ -20,7 +20,10 @@ class ComplianceRecord(RootModel):
     title = models.CharField(max_length=500, blank=True, null=True, help_text="Title")
     update_time = models.DateTimeField(blank=True, null=True, help_text="UpdateTime")
     url = models.CharField(max_length=500, blank=True, null=True, help_text="URL")
-    missing_branches = models.JSONField(default=list, help_text="Missing Branches")
+    # missing_branches field is deprecated and will be removed in future migrations
+    # we now use ComplianceBranch model
+    
+    # Status on the record can be seen as an aggregate or main status
     status = models.IntegerField(choices=STATUS_CHOICES, default=0, help_text="状态")
     remark = models.TextField(blank=True, null=True, help_text="备注")
 
@@ -28,4 +31,28 @@ class ComplianceRecord(RootModel):
         db_table = "compliance_record"
         ordering = ("-update_time",)
         verbose_name = "合规风险记录"
+        verbose_name_plural = verbose_name
+
+class ComplianceBranch(RootModel):
+    STATUS_CHOICES = (
+        (0, '待处理'), # Unresolved
+        (1, '无风险'), # No Risk
+        (2, '已修复'), # Fixed
+    )
+    
+    record = models.ForeignKey(
+        ComplianceRecord, 
+        on_delete=models.CASCADE, 
+        related_name='branches',
+        db_constraint=False,
+        help_text="关联的合规记录"
+    )
+    branch_name = models.CharField(max_length=255, help_text="分支名称")
+    status = models.IntegerField(choices=STATUS_CHOICES, default=0, help_text="状态")
+    remark = models.TextField(blank=True, null=True, help_text="备注")
+    
+    class Meta:
+        db_table = "compliance_branch"
+        ordering = ("branch_name",)
+        verbose_name = "合规风险分支"
         verbose_name_plural = verbose_name

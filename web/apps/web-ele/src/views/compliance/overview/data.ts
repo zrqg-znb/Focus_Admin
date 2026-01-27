@@ -1,19 +1,36 @@
 import type { VbenFormSchema } from '#/adapter/form';
 import type { OnActionClickFn, VxeTableGridOptions } from '#/adapter/vxe-table';
-import type { DeptComplianceStat } from '#/api/compliance';
+import type { PostComplianceStat } from '#/api/compliance';
 
 export function useOverviewColumns(
-  onActionClick?: OnActionClickFn<DeptComplianceStat>,
-): VxeTableGridOptions<DeptComplianceStat>['columns'] {
+  onActionClick?: OnActionClickFn<PostComplianceStat>,
+): VxeTableGridOptions<PostComplianceStat>['columns'] {
   return [
-    { field: 'dept_name', title: '部门名称', minWidth: 150 },
-    { field: 'user_count', title: '涉及用户数', minWidth: 120 },
-    { field: 'total_risk_count', title: '总风险数', minWidth: 120 },
-    { 
-      field: 'unresolved_count', 
-      title: '待处理数', 
-      minWidth: 120,
-      slots: { default: 'unresolved' } 
+    { field: 'post_name', title: '岗位名称', minWidth: 150 },
+    { field: 'user_count', title: '涉及用户数', minWidth: 100 },
+    {
+      title: 'Change记录统计',
+      children: [
+        { field: 'total_risk_count', title: '总数', minWidth: 100 },
+        { 
+          field: 'unresolved_count', 
+          title: '待处理', 
+          minWidth: 100,
+          slots: { default: 'unresolved' } 
+        },
+      ]
+    },
+    {
+      title: '分支风险统计',
+      children: [
+        { field: 'total_branch_count', title: '总数', minWidth: 100 },
+        { 
+          field: 'unresolved_branch_count', 
+          title: '待处理', 
+          minWidth: 100,
+          slots: { default: 'unresolved_branch' } 
+        },
+      ]
     },
     {
       field: 'action',
@@ -29,10 +46,10 @@ export function useOverviewSearchFormSchema(): VbenFormSchema[] {
   return [
     {
       component: 'Input',
-      fieldName: 'dept_name',
-      label: '部门名称',
+      fieldName: 'post_name',
+      label: '岗位名称',
       componentProps: {
-        placeholder: '请输入部门名称',
+        placeholder: '请输入岗位名称',
       },
     },
   ];

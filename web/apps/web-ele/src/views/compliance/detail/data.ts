@@ -12,16 +12,33 @@ export function useDetailColumns(
       minWidth: 150,
       slots: { default: 'user_name' }
     },
-    { field: 'dept_name', title: '部门', minWidth: 150 },
-    { field: 'total_count', title: '总风险数', minWidth: 120 },
-    { 
-      field: 'unresolved_count', 
-      title: '待处理', 
-      minWidth: 120,
-      slots: { default: 'unresolved' } 
+    { field: 'post_name', title: '岗位', minWidth: 150 },
+    {
+      title: 'Change记录统计',
+      children: [
+        { field: 'total_count', title: '总数', minWidth: 80 },
+        { 
+          field: 'unresolved_count', 
+          title: '待处理', 
+          minWidth: 80,
+          slots: { default: 'unresolved' } 
+        },
+      ]
     },
-    { field: 'fixed_count', title: '已修复', minWidth: 120 },
-    { field: 'no_risk_count', title: '无风险', minWidth: 120 },
+    {
+      title: '分支风险统计',
+      children: [
+        { field: 'total_branch_count', title: '总数', minWidth: 80 },
+        { 
+          field: 'unresolved_branch_count', 
+          title: '待处理', 
+          minWidth: 80,
+          slots: { default: 'unresolved_branch' } 
+        },
+        { field: 'fixed_branch_count', title: '已修复', minWidth: 80 },
+        { field: 'no_risk_branch_count', title: '无风险', minWidth: 80 },
+      ]
+    },
     {
       field: 'action',
       title: '操作',
@@ -51,7 +68,7 @@ export function useDetailSearchFormSchema(): VbenFormSchema[] {
         rangeSeparator: '至',
         startPlaceholder: '开始日期',
         endPlaceholder: '结束日期',
-        valueFormat: 'YYYY-MM-DD HH:mm:ss', // Match backend datetime filter expectations or just date
+        valueFormat: 'YYYY-MM-DD HH:mm:ss',
       },
     },
   ];

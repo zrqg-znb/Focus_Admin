@@ -6,9 +6,9 @@ export function useRiskColumns(): VxeTableGridOptions<ComplianceRecord>['columns
     { field: 'change_id', title: 'ChangeId', width: 150 },
     { field: 'title', title: 'Title', minWidth: 200 },
     { field: 'update_time', title: 'UpdateTime', width: 160 },
-    { field: 'url', title: 'URL', width: 100, slots: { default: 'url' } },
-    { field: 'missing_branches', title: 'Missing Branches', minWidth: 150, slots: { default: 'branches' } },
-    { field: 'status', title: '状态', width: 100, slots: { default: 'status' } },
-    { field: 'action', title: '操作', width: 250, slots: { default: 'action' } },
+    { field: 'url', title: 'URL', width: 80, slots: { default: 'url' } },
+    { field: 'branches', title: 'Branches', minWidth: 200, slots: { default: 'branches' } },
+    { field: 'status', title: '整体状态', width: 100, slots: { default: 'status' } },
+    { field: 'action', title: '操作', width: 150, slots: { default: 'action' } },
   ];
 }
