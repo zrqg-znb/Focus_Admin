@@ -114,10 +114,15 @@ class ProjectComponentOut(ModelSchema):
         return None
 
 # --- Dashboard Schemas ---
+class DashboardUserInfo(Schema):
+    id: str
+    name: str
+
 class DashboardComponent(Schema):
     id: str
     name: str
     managers: List[str]
+    managers_info: List[DashboardUserInfo] = Field([])
     project_name: Optional[str] = None
     milestone: Optional[dict] = None
 
@@ -125,10 +130,12 @@ class DashboardGroup(Schema):
     id: str
     name: str
     managers: List[str]
+    managers_info: List[DashboardUserInfo] = Field([])
     components: List[DashboardComponent]
 
 class DashboardDomain(Schema):
     id: str
     name: str
     interface_people: List[str]
+    interface_people_info: List[DashboardUserInfo] = Field([])
     groups: List[DashboardGroup]

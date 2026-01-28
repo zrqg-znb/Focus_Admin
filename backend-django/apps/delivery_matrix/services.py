@@ -116,6 +116,7 @@ def get_dashboard_data():
                     "id": comp.id,
                     "name": comp.name,
                     "managers": [u.name for u in comp.managers.all()],
+                    "managers_info": [{"id": u.id, "name": u.name} for u in comp.managers.all()],
                     "project_name": project_name,
                     "milestone": milestone_info
                 })
@@ -124,6 +125,7 @@ def get_dashboard_data():
                 "id": group.id,
                 "name": group.name,
                 "managers": [u.name for u in group.managers.all()],
+                "managers_info": [{"id": u.id, "name": u.name} for u in group.managers.all()],
                 "components": components_data
             })
         
@@ -131,6 +133,7 @@ def get_dashboard_data():
             "id": domain.id,
             "name": domain.name,
             "interface_people": [u.name for u in domain.interface_people.all()],
+            "interface_people_info": [{"id": u.id, "name": u.name} for u in domain.interface_people.all()],
             "groups": groups_data
         })
     
