@@ -85,11 +85,14 @@ class SchedulerService:
 
     def start_monitor(self):
         """启动监控循环（阻塞模式，用于独立进程）"""
+        from django.db import close_old_connections
+
         self.start()
         logger.info("调度器监控进程已启动")
         
         try:
             while True:
+                close_old_connections()
                 # 1. 更新心跳
                 self.touch_heartbeat()
                 
@@ -146,7 +149,9 @@ class SchedulerService:
     def sync_jobs_from_db(self):
         """从数据库同步任务"""
         try:
+            from django.db import close_old_connections
             from scheduler.models import SchedulerJob
+            close_old_connections()
             
             # 获取所有未删除的任务
             db_jobs = SchedulerJob.objects.filter(is_deleted=False)
@@ -191,6 +196,21 @@ class SchedulerService:
                     
         except Exception as e:
             logger.error(f"同步任务失败: {str(e)}")
+
+    @staticmethod
+    def _with_db_connection_cleanup(task_func):
+        from functools import wraps
+        from django.db import close_old_connections
+
+        @wraps(task_func)
+        def wrapped(*args, **kwargs):
+            close_old_connections()
+            try:
+                return task_func(*args, **kwargs)
+            finally:
+                close_old_connections()
+
+        return wrapped
 
     def start(self):
         """启动调度器"""
@@ -285,6 +305,8 @@ class SchedulerService:
             if not task_func:
                 logger.error(f"无法导入任务函数: {job_obj.task_func}")
                 return False
+
+            task_func = self._with_db_connection_cleanup(task_func)
             
             # 智能注入 job_code 参数
             # 检查函数签名，如果函数接受 job_code 参数或接受 **kwargs，则注入
@@ -477,9 +499,11 @@ class SchedulerService:
     def _update_next_run_time(self, job_obj):
         """更新任务的下次执行时间"""
         try:
+            from django.db import close_old_connections
             job = self._scheduler.get_job(job_obj.code)
             if job and job.next_run_time:
                 from scheduler.models import SchedulerJob
+                close_old_connections()
                 # 处理时区问题：如果 USE_TZ=False，需要将时间转换为 naive datetime
                 next_run_time = job.next_run_time
                 if not settings.USE_TZ and next_run_time and next_run_time.tzinfo:
@@ -494,9 +518,11 @@ class SchedulerService:
     def _job_executed_listener(self, event: JobExecutionEvent):
         """任务执行事件监听器"""
         try:
+            from django.db import close_old_connections
             from scheduler.models import SchedulerJob, SchedulerLog
             from django.utils import timezone
             import traceback
+            close_old_connections()
 
             job_code = event.job_id
             
@@ -573,8 +599,13 @@ class SchedulerService:
         
         except Exception as e:
             logger.error(f"处理任务执行事件失败: {str(e)}")
+        finally:
+            try:
+                from django.db import close_old_connections
+                close_old_connections()
+            except Exception:
+                pass
 
 
 # 全局调度器实例
 scheduler_service = SchedulerService()
-

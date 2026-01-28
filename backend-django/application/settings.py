@@ -115,6 +115,8 @@ if DATABASE_TYPE == "MYSQL":
             "USER": DATABASE_USER,
             "PASSWORD": DATABASE_PASSWORD,
             "NAME": DATABASE_NAME,
+            "CONN_MAX_AGE": 60,
+            "CONN_HEALTH_CHECKS": True,
         }
     }
 elif DATABASE_TYPE == "SQLSERVER":

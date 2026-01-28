@@ -76,6 +76,9 @@ def scheduler_task(func: Callable) -> Callable:
     """
     @wraps(func)
     def wrapper(*args, **kwargs):
+        from django.db import close_old_connections
+        close_old_connections()
+
         job_code = kwargs.get('job_code')
         log = None
         
@@ -120,6 +123,8 @@ def scheduler_task(func: Callable) -> Callable:
             
             # 重新抛出异常，让 APScheduler 处理
             raise
+        finally:
+            close_old_connections()
     
     return wrapper
 
@@ -308,4 +313,3 @@ def send_daily_report(**kwargs):
     except Exception as e:
         logger.error(f"发送每日报表失败: {str(e)}")
         raise
-
