@@ -85,14 +85,20 @@ class SchedulerService:
 
     def start_monitor(self):
         """启动监控循环（阻塞模式，用于独立进程）"""
-        from django.db import close_old_connections
+        from django.db import connection, close_old_connections
 
         self.start()
         logger.info("调度器监控进程已启动")
         
         try:
             while True:
+                # 每次循环开始时确保数据库连接有效
+                try:
+                    connection.close()
+                except Exception:
+                    pass
                 close_old_connections()
+                
                 # 1. 更新心跳
                 self.touch_heartbeat()
                 
@@ -101,6 +107,13 @@ class SchedulerService:
                 
                 # 3. 检查命令（如立即执行）
                 self.check_commands()
+                
+                # 循环结束时关闭连接
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+                close_old_connections()
                 
                 # 休眠
                 time.sleep(5)
@@ -149,8 +162,14 @@ class SchedulerService:
     def sync_jobs_from_db(self):
         """从数据库同步任务"""
         try:
-            from django.db import close_old_connections
+            from django.db import connection, close_old_connections
             from scheduler.models import SchedulerJob
+            
+            # 确保连接有效
+            try:
+                connection.close()
+            except Exception:
+                pass
             close_old_connections()
             
             # 获取所有未删除的任务
@@ -198,17 +217,88 @@ class SchedulerService:
             logger.error(f"同步任务失败: {str(e)}")
 
     @staticmethod
+    def _ensure_db_connection():
+        """
+        确保数据库连接有效
+        关闭旧连接并重新建立连接
+        """
+        from django.db import connection, close_old_connections
+        
+        # 关闭过期连接
+        close_old_connections()
+        
+        # 检查连接是否有效，如果无效则关闭并重新建立
+        try:
+            if connection.connection is not None:
+                connection.ensure_connection()
+        except Exception:
+            # 连接无效，关闭它
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+    @staticmethod
     def _with_db_connection_cleanup(task_func):
         from functools import wraps
-        from django.db import close_old_connections
+        from django.db import connection, close_old_connections
+        import time
 
         @wraps(task_func)
         def wrapped(*args, **kwargs):
-            close_old_connections()
-            try:
-                return task_func(*args, **kwargs)
-            finally:
-                close_old_connections()
+            max_retries = 3
+            retry_delay = 1
+            last_exception = None
+            
+            for attempt in range(max_retries):
+                try:
+                    # 在执行前确保连接有效
+                    close_old_connections()
+                    
+                    # 强制关闭当前连接，获取新连接
+                    try:
+                        connection.close()
+                    except Exception:
+                        pass
+                    
+                    return task_func(*args, **kwargs)
+                    
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    # 检查是否是数据库连接错误
+                    if any(msg in error_msg for msg in [
+                        'mysql server has gone away',
+                        'lost connection',
+                        'broken pipe',
+                        'connection refused',
+                        'connection reset',
+                        '2006',  # MySQL error code
+                        '2013',  # Lost connection during query
+                    ]):
+                        last_exception = e
+                        logger.warning(f"任务执行遇到数据库连接错误，第 {attempt + 1} 次重试: {e}")
+                        # 关闭当前连接
+                        try:
+                            connection.close()
+                        except Exception:
+                            pass
+                        close_old_connections()
+                        time.sleep(retry_delay * (attempt + 1))
+                        continue
+                    else:
+                        # 非连接错误，直接抛出
+                        raise
+                finally:
+                    # 执行完毕后关闭连接
+                    try:
+                        connection.close()
+                    except Exception:
+                        pass
+                    close_old_connections()
+            
+            # 重试次数用尽，抛出最后一个异常
+            if last_exception:
+                raise last_exception
 
         return wrapped
 
@@ -499,10 +589,16 @@ class SchedulerService:
     def _update_next_run_time(self, job_obj):
         """更新任务的下次执行时间"""
         try:
-            from django.db import close_old_connections
+            from django.db import connection, close_old_connections
             job = self._scheduler.get_job(job_obj.code)
             if job and job.next_run_time:
                 from scheduler.models import SchedulerJob
+                
+                # 确保连接有效
+                try:
+                    connection.close()
+                except Exception:
+                    pass
                 close_old_connections()
                 # 处理时区问题：如果 USE_TZ=False，需要将时间转换为 naive datetime
                 next_run_time = job.next_run_time
@@ -518,10 +614,16 @@ class SchedulerService:
     def _job_executed_listener(self, event: JobExecutionEvent):
         """任务执行事件监听器"""
         try:
-            from django.db import close_old_connections
+            from django.db import connection, close_old_connections
             from scheduler.models import SchedulerJob, SchedulerLog
             from django.utils import timezone
             import traceback
+            
+            # 确保连接有效
+            try:
+                connection.close()
+            except Exception:
+                pass
             close_old_connections()
 
             job_code = event.job_id

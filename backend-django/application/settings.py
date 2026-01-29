@@ -115,8 +115,13 @@ if DATABASE_TYPE == "MYSQL":
             "USER": DATABASE_USER,
             "PASSWORD": DATABASE_PASSWORD,
             "NAME": DATABASE_NAME,
-            "CONN_MAX_AGE": 60,
+            "CONN_MAX_AGE": 0,  # 每次请求后关闭连接，避免长时间连接被MySQL服务器关闭
             "CONN_HEALTH_CHECKS": True,
+            "OPTIONS": {
+                "connect_timeout": 10,  # 连接超时
+                "read_timeout": 30,     # 读取超时
+                "write_timeout": 30,    # 写入超时
+            }
         }
     }
 elif DATABASE_TYPE == "SQLSERVER":
