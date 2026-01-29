@@ -75,6 +75,11 @@ export interface UpdateStatusParams {
   remark?: string;
 }
 
+export interface UploadResponse {
+  code: number;
+  msg: string;
+}
+
 // APIs
 export function getPostStats() {
   return requestClient.get<OverviewSummary>('/api/code-compliance/stats/post');
@@ -103,7 +108,7 @@ export function updateBranchStatus(branchId: string, data: UpdateStatusParams) {
 export function uploadComplianceData(file: File) {
   const formData = new FormData();
   formData.append('file', file);
-  return requestClient.post('/api/code-compliance/upload', formData);
+  return requestClient.post<UploadResponse>('/api/code-compliance/upload', formData);
 }
 
 export function getUploadTemplate() {

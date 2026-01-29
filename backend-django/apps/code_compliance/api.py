@@ -7,6 +7,9 @@ from .services import get_post_stats, get_post_users_detail, get_user_records, u
 from .models import ComplianceRecord, ComplianceBranch
 from core.user.user_model import User
 import openpyxl
+import csv
+import io
+import re
 
 router = Router()
 
@@ -45,70 +48,126 @@ def update_branch(request, branch_id: str, data: ComplianceUpdateSchema):
 @router.post("/upload")
 def upload_compliance_data(request, file: UploadedFile = File(...)):
     """
-    批量上传合规风险数据
+    批量上传合规风险数据 (支持 .xlsx 和 .csv)
     """
     try:
-        wb = openpyxl.load_workbook(file)
-        ws = wb.active
+        data_rows = []
+        filename = file.name.lower()
         
+        if filename.endswith('.xlsx'):
+            wb = openpyxl.load_workbook(file)
+            ws = wb.active
+            # Iterate rows, skipping header
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                if not row or not any(row):
+                    continue
+                data_rows.append(list(row))
+        elif filename.endswith('.csv'):
+            raw_content = file.read()
+            try:
+                content = raw_content.decode('utf-8-sig')
+            except UnicodeDecodeError:
+                try:
+                    content = raw_content.decode('gbk')
+                except UnicodeDecodeError:
+                    content = raw_content.decode('utf-8', errors='ignore')
+            
+            csv_reader = csv.reader(io.StringIO(content))
+            header = next(csv_reader, None) # Skip header
+            for row in csv_reader:
+                if not row or not any(row):
+                    continue
+                data_rows.append(row)
+        else:
+            return {"msg": "仅支持 .xlsx 或 .csv 文件格式"}
+
         count = 0
+        added_records = 0
+        updated_records = 0
         
-        # Iterate rows, skipping header
-        for row in ws.iter_rows(min_row=2, values_only=True):
+        for row in data_rows:
             # Columns: ChangeId, Title, URL, User(Username/Email), Branches, Remark
-            if not row or not row[0]:
+            if not row or len(row) < 1 or not row[0]:
                 continue
                 
             change_id = str(row[0]).strip()
-            title = str(row[1]) if len(row) > 1 and row[1] else ""
-            url = str(row[2]) if len(row) > 2 and row[2] else ""
+            title = str(row[1]).strip() if len(row) > 1 and row[1] else ""
+            url = str(row[2]).strip() if len(row) > 2 and row[2] else ""
             user_ident = str(row[3]).strip() if len(row) > 3 and row[3] else ""
-            branches_str = str(row[4]) if len(row) > 4 and row[4] else ""
-            remark = str(row[5]) if len(row) > 5 and row[5] else ""
+            branches_str = str(row[4]).strip() if len(row) > 4 and row[4] else ""
+            remark = str(row[5]).strip() if len(row) > 5 and row[5] else ""
             
             # Find User
             user = None
             if user_ident:
+                # Try username first, then email
                 user = User.objects.filter(username=user_ident).first()
                 if not user:
                     user = User.objects.filter(email=user_ident).first()
             
             if not user:
-                # If user not found, maybe create a dummy user or skip?
-                # For now, skip if no user found, or assign to admin?
-                # Or just don't assign user (nullable?) -> Model says user is required.
-                # We skip.
+                # Skip if no valid user found
                 continue
                 
             # Create/Update Record
-            record, created = ComplianceRecord.objects.update_or_create(
-                change_id=change_id,
-                defaults={
-                    'user': user,
-                    'title': title,
-                    'url': url,
-                    'update_time': datetime.now(),
-                    'remark': remark
-                }
-            )
+            # Requirement: if change_id exists, identify new/old branch info.
+            # If branch is duplicate, skip; if new, save.
+            record = ComplianceRecord.objects.filter(change_id=change_id).first()
             
-            # Parse Branches
+            if not record:
+                # Create new record
+                record = ComplianceRecord.objects.create(
+                    change_id=change_id,
+                    user=user,
+                    title=title,
+                    url=url,
+                    update_time=datetime.now(),
+                    remark=remark
+                )
+                added_records += 1
+            else:
+                # Record exists, optionally update basic info if needed
+                # But user said "以数据库里面保存的为准", usually refers to branches.
+                # We'll update basic info if they are provided but keep existing ones if not.
+                if title: record.title = title
+                if url: record.url = url
+                if remark: record.remark = remark
+                record.update_time = datetime.now()
+                record.save()
+                updated_records += 1
+            
+            # Parse and Update Branches
             if branches_str:
-                # Support comma or newline separated
-                branch_names = [b.strip() for b in branches_str.replace('\n', ',').split(',') if b.strip()]
+                # Support comma, semicolon or newline separated
+                branch_names = [b.strip() for b in re.split(r'[,;\n]', branches_str) if b.strip()]
                 
-                current_branches = {b.branch_name: b for b in record.branches.all()}
+                # Get existing branches for this record
+                existing_branch_names = set(ComplianceBranch.objects.filter(record=record).values_list('branch_name', flat=True))
                 
+                new_branches_added = False
                 for bn in branch_names:
-                    if bn not in current_branches:
+                    if bn not in existing_branch_names:
                         ComplianceBranch.objects.create(record=record, branch_name=bn)
+                        new_branches_added = True
+                
+                # If new branches added, ensure record status is updated to 'pending' if it was resolved
+                if new_branches_added:
+                    all_branches = record.branches.all()
+                    if any(b.status == 0 for b in all_branches):
+                        record.status = 0
+                        record.save(update_fields=['status'])
             
             count += 1
             
-        return {"msg": f"成功处理 {count} 条记录"}
+        return {
+            "msg": f"上传成功: 处理 {count} 条记录 (新增 {added_records}, 更新 {updated_records})",
+            "code": 200
+        }
         
     except Exception as e:
-        return {"msg": f"上传失败: {str(e)}"}
+        import traceback
+        traceback.print_exc()
+        return {"msg": f"上传失败: {str(e)}", "code": 500}
 
 @router.get("/template")
 def get_upload_template(request):

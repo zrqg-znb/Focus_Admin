@@ -73,21 +73,25 @@ const handleViewDetail = (row: PostComplianceStat) => {
   });
 };
 
-const handleUploadSuccess = () => {
-  ElMessage.success('上传成功');
+const handleUploadSuccess = (msg?: string) => {
+  ElMessage.success(msg || '上传成功');
   gridApi.query();
 };
 
-const handleUploadError = () => {
-  ElMessage.error('上传失败');
+const handleUploadError = (msg?: string) => {
+  ElMessage.error(msg || '上传失败');
 };
 
 const beforeUpload = async (file: File) => {
   try {
-    await uploadComplianceData(file);
-    handleUploadSuccess();
-  } catch (e) {
-    handleUploadError();
+    const res = await uploadComplianceData(file);
+    if (res.code === 200) {
+      handleUploadSuccess(res.msg);
+    } else {
+      handleUploadError(res.msg);
+    }
+  } catch (e: any) {
+    handleUploadError(e?.response?.data?.msg || e?.message);
   }
   return false;
 };
@@ -146,7 +150,7 @@ const downloadTemplate = async () => {
                 action="#"
                 :show-file-list="false"
                 :before-upload="beforeUpload"
-                accept=".xlsx"
+                accept=".xlsx,.csv"
               >
                 <ElButton type="primary">批量上传</ElButton>
               </ElUpload>
