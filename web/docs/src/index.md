@@ -4,108 +4,93 @@ layout: home
 sidebar: false
 
 hero:
-  name: Vben Admin
-  text: 企业级管理系统框架
-  tagline: 全新升级，开箱即用，简单高效
+  name: Focus Admin
+  text: 企业级全栈管理系统
+  tagline: 基于 Django + Vue 3 + Element Plus 的现代化管理平台
   image:
-    src: https://unpkg.com/@vbenjs/static-source@0.1.7/source/logo-v1.webp
-    alt: Vben Admin
+    src: /logo.svg
+    alt: Focus Admin
   actions:
     - theme: brand
       text: 快速开始 ->
-      link: /guide/introduction/vben
+      link: /overview/quick-start
     - theme: alt
-      text: 在线预览
-      link: https://www.vben.pro
+      text: 项目介绍
+      link: /overview/introduction
     - theme: alt
       text: 在 GitHub 查看
       link: https://github.com/jiangzhikj/zq-platform
-    - theme: alt
-      text: DeepWiki 文档
-      link: https://deepwiki.com/vbenjs/vue-vben-admin
 
 features:
   - icon: 🚀
-    title: 最新技术栈
-    details: 基于 Vue3、Pinia、Vue Router、TypeScript、等最新技术栈。
-    link: /guide/introduction/quick-start
-    linkText: 快速开始
-  - icon: 🦄
-    title: 丰富的配置
-    details: 企业级中后台前端解决方案，提供丰富的组件和模板以及 N 种偏好设置组合方案。
-    link: /guide/essentials/settings
-    linkText: 配置文档
-  - icon: 🎨
-    title: 主题定制
-    details: 通过简单的配置，即可实现各种主题切换，满足个性化需求。
-    link: /guide/in-depth/theme
-    linkText: 主题文档
-  - icon: 🌐
-    title: 国际化
-    details: 内置国际化方案，支持多语言切换，满足国际化需求。
-    link: /guide/in-depth/locale
-    linkText: 国际化文档
+    title: 前后端分离架构
+    details: 采用 Django + Vue 3 前后端分离架构，后端使用 Django Ninja 构建高性能 API，前端基于 Vben Admin 二次开发。
+    link: /overview/architecture
+    linkText: 查看架构
+  - icon: 🎯
+    title: 项目管理模块
+    details: 完整的项目管理功能，包括项目、迭代、里程碑、代码质量分析等，支持与外部系统集成。
+    link: /backend/apps/project-manager
+    linkText: 了解更多
+  - icon: 📊
+    title: 绩效管理
+    details: 支持绩效指标定义、数据导入、统计分析等功能，帮助团队进行绩效评估和管理。
+    link: /backend/apps/performance
+    linkText: 查看详情
   - icon: 🔐
-    title: 权限管理
-    details: 内置权限管理方案，支持多种权限控制方式，满足各种权限需求。
-    link: /guide/in-depth/access
+    title: 完善的权限管理
+    details: 基于 RBAC 的权限管理系统，支持用户、角色、权限、菜单、部门等完整的权限控制体系。
+    link: /backend/core/permission
     linkText: 权限文档
-  - title: Vite
+  - icon: ⏰
+    title: 任务调度
+    details: 内置任务调度模块，支持定时任务、周期任务的配置和管理，基于 APScheduler 实现。
+    link: /backend/system/scheduler
+    linkText: 调度文档
+  - title: Django
     icon:
-      src: /logos/vite.svg
-    details: 现代化的前端构建工具，快速冷启动，瞬间热更新。
-    link: https://vitejs.dev/
-    linkText: 官方站点
-  - title: Shadcn UI
+      src: /logos/django.svg
+    details: 后端基于 Django 4.x + Django Ninja 构建，提供高性能的 RESTful API 服务。
+    link: /backend/core/overview
+    linkText: 后端文档
+  - title: Vue 3
     icon:
-      src: /logos/shadcn-ui.svg
-    details: 核心基于 Shadcn UI + Tailwindcss，业务可支持任意的 UI 框架。
-    link: https://www.shadcn-vue.com/
-    linkText: 官方站点
-  - title: Turbo Repo
+      src: /logos/vue.svg
+    details: 前端采用 Vue 3 + TypeScript + Element Plus，基于 Vben Admin 框架进行二次开发。
+    link: /frontend/overview
+    linkText: 前端文档
+  - title: Monorepo
     icon:
       src: /logos/turborepo.svg
-    details: 规范且标准的大仓架构，使用 pnpm + monorepo + turbo 工程管理模式，提供企业级开发规范。
-    link: https://turbo.build/
-    linkText: 官方站点
-  - title: Nitro Mock Server
-    icon:
-      src: /logos/nitro.svg
-    details: 内置 Nitro Mock 服务，让你的 mock 服务更加强大。
-    link: https://nitro.unjs.io/
-    linkText: 官方站点
+    details: 前端采用 pnpm + Monorepo + Turbo 工程管理模式，支持多应用开发和共享组件库。
+    link: /frontend/project-structure
+    linkText: 工程结构
 ---
 
-<!-- <script setup>
-import {
-  VPTeamPage,
-  VPTeamPageTitle,
-  VPTeamMembers,
-  VPTeamPageSection
-} from 'vitepress/theme';
+## 项目模块
 
-const members = [
-  {
-    avatar: 'https://avatars.githubusercontent.com/u/28132598?v=4',
-    name: 'Vben',
-    title: '创建者',
-    desc: 'Vben Admin以及相关生态的作者，负责项目的整体开发。',
-    links: [
-      { icon: 'github', link: 'https://github.com/anncwb' },
-    ]
-  },
-]
-</script>
+<div class="module-grid">
 
-<VPTeamPage>
-  <VPTeamPageTitle>
-    <template #title>
-      核心成员介绍
-    </template>
-  </VPTeamPageTitle>
-  <VPTeamMembers
-    :members="members"
-  />
-</VPTeamPage> -->
+### 核心模块 (Core)
+- **认证模块** - 用户登录、JWT Token 管理
+- **用户管理** - 用户增删改查、状态管理
+- **角色管理** - 角色定义、权限分配
+- **权限管理** - 细粒度权限控制
+- **菜单管理** - 动态菜单配置
+- **部门管理** - 组织架构管理
+- **字典管理** - 数据字典维护
 
-<VbenContributors />
+### 业务模块 (Apps)
+- **项目管理** - 项目、迭代、里程碑管理
+- **绩效管理** - 绩效指标、统计分析
+- **代码合规** - 代码规范检查
+- **交付矩阵** - 交付进度管理
+- **集成报告** - 外部系统数据集成
+
+### 系统功能
+- **任务调度** - 定时任务管理
+- **文件管理** - 文件上传下载
+- **日志管理** - 操作日志、登录日志
+- **系统监控** - 服务器状态监控
+
+</div>

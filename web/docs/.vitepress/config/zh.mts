@@ -5,7 +5,7 @@ import { defineConfig } from 'vitepress';
 import { version } from '../../../package.json';
 
 export const zh = defineConfig({
-  description: 'Vben Admin & 企业级管理系统框架',
+  description: 'Focus Admin - 企业级全栈管理系统',
   lang: 'zh-Hans',
   themeConfig: {
     darkModeSwitchLabel: '主题',
@@ -16,12 +16,12 @@ export const zh = defineConfig({
     },
     editLink: {
       pattern:
-        'https://github.com/jiangzhikj/zq-platform/edit/main/docs/src/:path',
+        'https://github.com/jiangzhikj/zq-platform/edit/main/web/docs/src/:path',
       text: '在 GitHub 上编辑此页面',
     },
     footer: {
-      copyright: `Copyright © 2020-${new Date().getFullYear()} Vben`,
-      message: '基于 MIT 许可发布.',
+      copyright: `Copyright © 2024-${new Date().getFullYear()} Focus Admin`,
+      message: '内部项目文档',
     },
     langMenuLabel: '多语言',
     lastUpdated: {
@@ -40,162 +40,138 @@ export const zh = defineConfig({
     returnToTopLabel: '回到顶部',
 
     sidebar: {
-      '/commercial/': { base: '/commercial/', items: sidebarCommercial() },
-      '/components/': { base: '/components/', items: sidebarComponents() },
-      '/guide/': { base: '/guide/', items: sidebarGuide() },
+      '/overview/': { base: '/overview/', items: sidebarOverview() },
+      '/backend/': { base: '/backend/', items: sidebarBackend() },
+      '/frontend/': { base: '/frontend/', items: sidebarFrontend() },
+      '/dev-guide/': { base: '/dev-guide/', items: sidebarDevGuide() },
     },
     sidebarMenuLabel: '菜单',
   },
 });
 
-function sidebarGuide(): DefaultTheme.SidebarItem[] {
+// 项目概览侧边栏
+function sidebarOverview(): DefaultTheme.SidebarItem[] {
   return [
     {
       collapsed: false,
-      text: '简介',
+      text: '项目简介',
       items: [
-        {
-          link: 'introduction/vben',
-          text: '关于 Vben Admin',
-        },
-        {
-          link: 'introduction/why',
-          text: '为什么选择我们?',
-        },
-        { link: 'introduction/quick-start', text: '快速开始' },
-        { link: 'introduction/thin', text: '精简版本' },
-        {
-          base: '/',
-          link: 'components/introduction',
-          text: '组件文档',
-        },
+        { link: 'introduction', text: '项目介绍' },
+        { link: 'tech-stack', text: '技术栈' },
+        { link: 'architecture', text: '系统架构' },
       ],
     },
     {
+      collapsed: false,
+      text: '快速开始',
+      items: [
+        { link: 'quick-start', text: '快速开始' },
+        { link: 'project-structure', text: '项目结构' },
+      ],
+    },
+  ];
+}
+
+// 后端文档侧边栏
+function sidebarBackend(): DefaultTheme.SidebarItem[] {
+  return [
+    {
+      collapsed: false,
+      text: '核心模块',
+      items: [
+        { link: 'core/overview', text: '模块概览' },
+        { link: 'core/auth', text: '认证模块' },
+        { link: 'core/user', text: '用户管理' },
+        { link: 'core/role', text: '角色管理' },
+        { link: 'core/permission', text: '权限管理' },
+        { link: 'core/menu', text: '菜单管理' },
+        { link: 'core/dept', text: '部门管理' },
+      ],
+    },
+    {
+      collapsed: false,
+      text: '业务模块',
+      items: [
+        { link: 'apps/project-manager', text: '项目管理' },
+        { link: 'apps/performance', text: '绩效管理' },
+        { link: 'apps/code-compliance', text: '代码合规' },
+        { link: 'apps/delivery-matrix', text: '交付矩阵' },
+        { link: 'apps/integration-report', text: '集成报告' },
+      ],
+    },
+    {
+      collapsed: false,
+      text: '系统功能',
+      items: [
+        { link: 'system/scheduler', text: '任务调度' },
+        { link: 'system/file-manager', text: '文件管理' },
+        { link: 'system/dict', text: '数据字典' },
+        { link: 'system/log', text: '日志管理' },
+      ],
+    },
+  ];
+}
+
+// 前端文档侧边栏
+function sidebarFrontend(): DefaultTheme.SidebarItem[] {
+  return [
+    {
+      collapsed: false,
       text: '基础',
       items: [
-        { link: 'essentials/concept', text: '基础概念' },
-        { link: 'essentials/development', text: '本地开发' },
-        { link: 'essentials/route', text: '路由和菜单' },
-        { link: 'essentials/settings', text: '配置' },
-        { link: 'essentials/icons', text: '图标' },
-        { link: 'essentials/styles', text: '样式' },
-        { link: 'essentials/external-module', text: '外部模块' },
-        { link: 'essentials/build', text: '构建与部署' },
-        { link: 'essentials/server', text: '服务端交互与数据Mock' },
+        { link: 'overview', text: '前端概览' },
+        { link: 'project-structure', text: '目录结构' },
+        { link: 'router', text: '路由管理' },
+        { link: 'store', text: '状态管理' },
       ],
     },
     {
-      text: '深入',
+      collapsed: false,
+      text: '功能页面',
       items: [
-        { link: 'in-depth/login', text: '登录' },
-        // { link: 'in-depth/layout', text: '布局' },
-        { link: 'in-depth/theme', text: '主题' },
-        { link: 'in-depth/access', text: '权限' },
-        { link: 'in-depth/locale', text: '国际化' },
-        { link: 'in-depth/features', text: '常用功能' },
-        { link: 'in-depth/check-updates', text: '检查更新' },
-        { link: 'in-depth/loading', text: '全局loading' },
-        { link: 'in-depth/ui-framework', text: '组件库切换' },
+        { link: 'views/project-manager', text: '项目管理页面' },
+        { link: 'views/performance', text: '绩效管理页面' },
+        { link: 'views/system', text: '系统管理页面' },
       ],
     },
     {
-      text: '工程',
-      items: [
-        { link: 'project/standard', text: '规范' },
-        { link: 'project/cli', text: 'CLI' },
-        { link: 'project/dir', text: '目录说明' },
-        { link: 'project/test', text: '单元测试' },
-        { link: 'project/tailwindcss', text: 'Tailwind CSS' },
-        { link: 'project/changeset', text: 'Changeset' },
-        { link: 'project/vite', text: 'Vite Config' },
-      ],
-    },
-    {
-      text: '其他',
-      items: [
-        { link: 'other/project-update', text: '项目更新' },
-        { link: 'other/remove-code', text: '移除代码' },
-        { link: 'other/faq', text: '常见问题' },
-      ],
-    },
-  ];
-}
-
-function sidebarCommercial(): DefaultTheme.SidebarItem[] {
-  return [
-    {
-      link: 'community',
-      text: '交流群',
-    },
-    {
-      link: 'technical-support',
-      text: '技术支持',
-    },
-    {
-      link: 'customized',
-      text: '定制开发',
-    },
-  ];
-}
-
-function sidebarComponents(): DefaultTheme.SidebarItem[] {
-  return [
-    {
+      collapsed: false,
       text: '组件',
       items: [
-        {
-          link: 'introduction',
-          text: '介绍',
-        },
+        { link: 'components/overview', text: '组件概览' },
+        { link: 'components/common', text: '通用组件' },
+      ],
+    },
+  ];
+}
+
+// 开发指南侧边栏
+function sidebarDevGuide(): DefaultTheme.SidebarItem[] {
+  return [
+    {
+      collapsed: false,
+      text: '环境搭建',
+      items: [
+        { link: 'setup/backend', text: '后端环境' },
+        { link: 'setup/frontend', text: '前端环境' },
+        { link: 'setup/database', text: '数据库配置' },
       ],
     },
     {
       collapsed: false,
-      text: '布局组件',
+      text: '开发规范',
       items: [
-        {
-          link: 'layout-ui/page',
-          text: 'Page 页面',
-        },
+        { link: 'standard/code-style', text: '代码规范' },
+        { link: 'standard/git', text: 'Git 规范' },
+        { link: 'standard/api', text: 'API 规范' },
       ],
     },
     {
       collapsed: false,
-      text: '通用组件',
+      text: '部署',
       items: [
-        {
-          link: 'common-ui/vben-api-component',
-          text: 'ApiComponent Api组件包装器',
-        },
-        {
-          link: 'common-ui/vben-alert',
-          text: 'Alert 轻量提示框',
-        },
-        {
-          link: 'common-ui/vben-modal',
-          text: 'Modal 模态框',
-        },
-        {
-          link: 'common-ui/vben-drawer',
-          text: 'Drawer 抽屉',
-        },
-        {
-          link: 'common-ui/vben-form',
-          text: 'Form 表单',
-        },
-        {
-          link: 'common-ui/vben-vxe-table',
-          text: 'Vxe Table 表格',
-        },
-        {
-          link: 'common-ui/vben-count-to-animator',
-          text: 'CountToAnimator 数字动画',
-        },
-        {
-          link: 'common-ui/vben-ellipsis-text',
-          text: 'EllipsisText 省略文本',
-        },
+        { link: 'deploy/docker', text: 'Docker 部署' },
+        { link: 'deploy/nginx', text: 'Nginx 配置' },
       ],
     },
   ];
@@ -204,62 +180,48 @@ function sidebarComponents(): DefaultTheme.SidebarItem[] {
 function nav(): DefaultTheme.NavItem[] {
   return [
     {
-      activeMatch: '^/(guide|components)/',
-      text: '文档',
+      activeMatch: '^/overview/',
+      text: '项目概览',
+      link: '/overview/introduction',
+    },
+    {
+      activeMatch: '^/backend/',
+      text: '后端文档',
       items: [
         {
-          activeMatch: '^/guide/',
-          link: '/guide/introduction/vben',
-          text: '指南',
+          text: '核心模块',
+          link: '/backend/core/overview',
         },
         {
-          activeMatch: '^/components/',
-          link: '/components/introduction',
-          text: '组件',
+          text: '业务模块',
+          link: '/backend/apps/project-manager',
         },
         {
-          text: '历史版本',
-          items: [
-            {
-              link: 'https://doc.vvbin.cn',
-              text: '2.x版本文档',
-            },
-          ],
+          text: '系统功能',
+          link: '/backend/system/scheduler',
         },
       ],
     },
     {
-      text: '演示',
+      activeMatch: '^/frontend/',
+      text: '前端文档',
+      link: '/frontend/overview',
+    },
+    {
+      activeMatch: '^/dev-guide/',
+      text: '开发指南',
       items: [
         {
-          text: 'Vben Admin',
-          items: [
-            {
-              link: 'https://www.vben.pro',
-              text: '演示版本',
-            },
-            {
-              link: 'https://ant.vben.pro',
-              text: 'Ant Design Vue 版本',
-            },
-            {
-              link: 'https://naive.vben.pro',
-              text: 'Naive 版本',
-            },
-            {
-              link: 'https://ele.vben.pro',
-              text: 'Element Plus版本',
-            },
-          ],
+          text: '环境搭建',
+          link: '/dev-guide/setup/backend',
         },
         {
-          text: '其他',
-          items: [
-            {
-              link: 'https://vben.vvbin.cn',
-              text: 'Vben Admin 2.x',
-            },
-          ],
+          text: '开发规范',
+          link: '/dev-guide/standard/code-style',
+        },
+        {
+          text: '部署文档',
+          link: '/dev-guide/deploy/docker',
         },
       ],
     },
@@ -270,46 +232,8 @@ function nav(): DefaultTheme.NavItem[] {
           link: 'https://github.com/jiangzhikj/zq-platform/releases',
           text: '更新日志',
         },
-        {
-          link: 'https://github.com/orgs/vbenjs/projects/5',
-          text: '路线图',
-        },
-        {
-          link: 'https://github.com/jiangzhikj/zq-platform/blob/main/.github/contributing.md',
-          text: '贡献',
-        },
       ],
     },
-    {
-      link: '/commercial/technical-support',
-      text: '🦄 技术支持',
-    },
-    {
-      link: '/sponsor/personal',
-      text: '✨ 赞助',
-    },
-    {
-      link: '/commercial/community',
-      text: '👨‍👦‍👦 交流群',
-      // items: [
-      //   {
-      //     link: 'https://qun.qq.com/qqweb/qunpro/share?_wv=3&_wwv=128&appChannel=share&inviteCode=22ySzj7pKiw&businessType=9&from=246610&biz=ka&mainSourceId=share&subSourceId=others&jumpsource=shorturl#/pc',
-      //     text: 'QQ频道',
-      //   },
-      //   {
-      //     link: 'https://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=mjZmlhgVzzUxvdxllB6C1vHpX8O8QRL0&authKey=DBdFbBwERmfaKY95JvRWqLCJIRGJAmKyZbrpzZ41EKDMZ5SR6MfbjOBaaNRN73fr&noverify=0&group_code=4286109',
-      //     text: 'QQ群',
-      //   },
-      //   {
-      //     link: 'https://discord.gg/VU62jTecad',
-      //     text: 'Discord',
-      //   },
-      // ],
-    },
-    // {
-    //   link: '/friend-links/',
-    //   text: '🤝 友情链接',
-    // },
   ];
 }
 

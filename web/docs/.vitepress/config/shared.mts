@@ -35,7 +35,7 @@ export const shared = defineConfig({
   srcDir: 'src',
   themeConfig: {
     i18nRouting: true,
-    logo: 'https://unpkg.com/@vbenjs/static-source@0.1.7/source/logo-v1.webp',
+    logo: '/logo.svg',
     search: {
       options: {
         locales: {
@@ -44,12 +44,12 @@ export const shared = defineConfig({
       },
       provider: 'local',
     },
-    siteTitle: 'Vben Admin',
+    siteTitle: 'Focus Admin',
     socialLinks: [
       { icon: 'github', link: 'https://github.com/jiangzhikj/zq-platform' },
     ],
   },
-  title: 'Vben Admin',
+  title: 'Focus Admin',
   vite: {
     build: {
       chunkSizeWarningLimit: Infinity,
@@ -111,11 +111,11 @@ export const shared = defineConfig({
 
 function head(): HeadConfig[] {
   return [
-    ['meta', { content: 'Vbenjs Team', name: 'author' }],
+    ['meta', { content: 'Focus Admin Team', name: 'author' }],
     [
       'meta',
       {
-        content: 'vben, vitejs, vite, shacdn-ui, vue',
+        content: 'focus admin, django, vue, element plus, 企业管理系统',
         name: 'keywords',
       },
     ],
@@ -128,14 +128,8 @@ function head(): HeadConfig[] {
         name: 'viewport',
       },
     ],
-    ['meta', { content: 'vben admin docs', name: 'keywords' }],
+    ['meta', { content: 'Focus Admin 项目文档', name: 'keywords' }],
     ['link', { href: '/favicon.ico', rel: 'icon' }],
-    // [
-    //   'script',
-    //   {
-    //     src: 'https://cdn.tailwindcss.com',
-    //   },
-    // ],
   ];
 }
 
@@ -144,22 +138,22 @@ function pwa(): PwaOptions {
     includeManifestIcons: false,
     manifest: {
       description:
-        'Vben Admin is a modern admin dashboard template based on Vue 3. ',
+        'Focus Admin - 企业级全栈管理系统文档',
       icons: [
         {
           sizes: '192x192',
-          src: 'https://unpkg.com/@vbenjs/static-source@0.1.7/source/pwa-icon-192.png',
+          src: '/pwa-192x192.png',
           type: 'image/png',
         },
         {
           sizes: '512x512',
-          src: 'https://unpkg.com/@vbenjs/static-source@0.1.7/source/pwa-icon-512.png',
+          src: '/pwa-512x512.png',
           type: 'image/png',
         },
       ],
       id: '/',
-      name: 'Vben Admin Doc',
-      short_name: 'vben_admin_doc',
+      name: 'Focus Admin Doc',
+      short_name: 'focus_admin_doc',
       theme_color: '#ffffff',
     },
     outDir: resolve(process.cwd(), '.vitepress/dist'),
