@@ -15,7 +15,7 @@ from .integration_models import (
     IntegrationProjectConfig,
     IntegrationProjectMetricValue,
 )
-from .integration_mock import mock_fetch
+from .integration_fetcher import IntegrationDataFetcher
 from .integration_schema import MetricCell, ProjectConfigOut
 from .integration_email import build_daily_email_html, send_html_email
 
@@ -82,7 +82,11 @@ def ensure_default_metric_definitions():
 
 
 @transaction.atomic
-def mock_collect_daily(record_date: Optional[date] = None, config_ids: Optional[List[str]] = None):
+def collect_daily_metrics(record_date: Optional[date] = None, config_ids: Optional[List[str]] = None):
+    """
+    采集每日指标数据。
+    使用 IntegrationDataFetcher 根据配置中的各个 ID 获取数据。
+    """
     ensure_default_metric_definitions()
     if record_date is None:
         record_date = date.today()
@@ -93,15 +97,8 @@ def mock_collect_daily(record_date: Optional[date] = None, config_ids: Optional[
     def_map = {d.key: d for d in IntegrationMetricDefinition.objects.filter(is_deleted=False, enabled=True)}
 
     for cfg in configs:
-        # Mock fetch using the Config Name (since user wants separate display name)
-        # But for task IDs we use what's configured
-        payload = mock_fetch(cfg.name, record_date, {
-            "code_check_task_id": cfg.code_check_task_id,
-            "bin_scope_task_id": cfg.bin_scope_task_id,
-            "build_check_task_id": cfg.build_check_task_id,
-            "compile_check_task_id": cfg.compile_check_task_id,
-            "dt_project_id": cfg.dt_project_id,
-        })
+        fetcher = IntegrationDataFetcher(cfg).set_date(record_date)
+        payload = fetcher.fetch_metrics()
 
         for key, (val, url) in payload.items():
             defn = def_map.get(key)
@@ -113,10 +110,14 @@ def mock_collect_daily(record_date: Optional[date] = None, config_ids: Optional[
                 metric=defn,
                 defaults={
                     "value_number": val,
-                    "value_text": "",
+                    "value_text": "error" if val is None else "",
                     "detail_url": url,
                 },
             )
+
+
+# 保持兼容性，指向新函数
+mock_collect_daily = collect_daily_metrics
 
 
 def list_configs_with_latest(user: User) -> List[ProjectConfigOut]:
@@ -158,6 +159,7 @@ def list_configs_with_latest(user: User) -> List[ProjectConfigOut]:
                 key=defn.key,
                 name=defn.name,
                 value=val,
+                text=v.value_text,
                 unit=unit,
                 url=v.detail_url or "",
                 level=_eval_level(defn, val),
@@ -245,6 +247,7 @@ def send_daily_emails(record_date: Optional[date] = None) -> int:
                     key=defn.key,
                     name=defn.name,
                     value=val,
+                    text=v.value_text,
                     unit=defn.unit,
                     url=v.detail_url or "",
                     level=_eval_level(defn, val),

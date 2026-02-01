@@ -153,6 +153,7 @@ def history(
             key=defn.key,
             name=defn.name,
             value=v.value_number,
+            text=v.value_text,
             unit=defn.unit,
             url=v.detail_url or "",
             level=integration_service._eval_level(defn, v.value_number),
