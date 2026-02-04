@@ -49,7 +49,7 @@ INSTALLED_APPS = [
     'apps.integration_report',
     'apps.code_compliance',
     'apps.delivery_matrix',
-    'apps.tscan',
+    'apps.code_scan',
 ]
 
 TEMPLATES = [

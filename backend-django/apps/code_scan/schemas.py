@@ -1,37 +1,34 @@
 from typing import Optional, List
 from ninja import Schema, ModelSchema
-from datetime import datetime
-from apps.tscan.models import TScanProject, TScanTask, TScanResult, TScanShieldApplication
+from apps.code_scan.models import ScanProject, ScanTask, ScanResult, ShieldApplication
 
-class TScanProjectSchema(ModelSchema):
+class ScanProjectSchema(ModelSchema):
     class Config:
-        model = TScanProject
+        model = ScanProject
         model_fields = "__all__"
 
-class TScanProjectCreateSchema(Schema):
+class ScanProjectCreateSchema(Schema):
     name: str
     repo_url: str
     branch: str = "master"
-    build_cmd: str
-    docker_image: str
     description: Optional[str] = None
 
-class TScanTaskSchema(ModelSchema):
+class ScanTaskSchema(ModelSchema):
     class Config:
-        model = TScanTask
+        model = ScanTask
         model_fields = "__all__"
 
-class TScanResultSchema(ModelSchema):
+class ScanResultSchema(ModelSchema):
     class Config:
-        model = TScanResult
+        model = ScanResult
         model_fields = "__all__"
 
-class TScanShieldApplicationSchema(ModelSchema):
+class ShieldApplicationSchema(ModelSchema):
     applicant_name: Optional[str] = None
     approver_name: Optional[str] = None
 
     class Config:
-        model = TScanShieldApplication
+        model = ShieldApplication
         model_fields = "__all__"
 
 class ShieldApplySchema(Schema):
@@ -43,3 +40,11 @@ class ShieldAuditSchema(Schema):
     application_id: str
     status: str  # Approved or Rejected
     audit_comment: Optional[str] = None
+
+class ChunkUploadSchema(Schema):
+    project_key: str
+    tool_name: str
+    chunk_index: int
+    total_chunks: int
+    chunk_content: str  # Base64 or plain text content of the chunk
+    file_id: str # Unique ID for the file session
