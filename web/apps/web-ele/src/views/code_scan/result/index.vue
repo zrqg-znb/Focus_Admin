@@ -2,9 +2,9 @@
 import { ref, onMounted } from 'vue';
 import { Page } from '@vben/common-ui';
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
-import { listResultsApi, applyShieldApi, listTasksApi } from '#/api/tscan';
+import { listResultsApi, applyShieldApi, listTasksApi } from '#/api/code_scan';
 import { useColumns } from './data';
-import { ElButton, ElTag, ElMessageBox, ElMessage, ElSelect, ElOption, ElDialog, ElInput, ElForm, ElFormItem } from 'element-plus';
+import { ElButton, ElTag, ElMessageBox, ElMessage, ElSelect, ElOption, ElDialog, ElInput, ElForm, ElFormItem, ElDescriptions, ElDescriptionsItem } from 'element-plus';
 import { useRoute } from 'vue-router';
 import { listUsersApi } from '#/api/core/user';
 
@@ -100,6 +100,18 @@ const getStatusType = (status: string) => {
     </template>
 
     <Grid>
+      <template #expand_content="{ row }">
+          <div class="p-4 bg-gray-50">
+              <ElDescriptions title="详细信息" :column="1" border>
+                  <ElDescriptionsItem label="缺陷描述">{{ row.description }}</ElDescriptionsItem>
+                  <ElDescriptionsItem label="文件路径">{{ row.file_path }} : {{ row.line_number }}</ElDescriptionsItem>
+                  <ElDescriptionsItem label="修复建议" v-if="row.help_info">{{ row.help_info }}</ElDescriptionsItem>
+                  <ElDescriptionsItem label="代码片段" v-if="row.code_snippet">
+                      <pre class="bg-gray-800 text-white p-2 rounded text-xs overflow-x-auto">{{ row.code_snippet }}</pre>
+                  </ElDescriptionsItem>
+              </ElDescriptions>
+          </div>
+      </template>
       <template #severity="{ row }">
         <ElTag :type="getSeverityType(row.severity)">{{ row.severity }}</ElTag>
       </template>

@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue';
 import { Page } from '@vben/common-ui';
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
-import { listApplicationsApi, auditShieldApi } from '#/api/tscan';
+import { listApplicationsApi, auditShieldApi } from '#/api/code_scan';
 import { ElButton, ElTag, ElMessage, ElTabs, ElTabPane, ElDialog, ElForm, ElFormItem, ElInput } from 'element-plus';
 
 const activeTab = ref<'my_audit' | 'my_apply'>('my_audit');
