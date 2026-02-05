@@ -2,6 +2,7 @@ import os
 import hashlib
 import logging
 from datetime import datetime
+from django.shortcuts import get_object_or_404
 from django.conf import settings
 from django.db import transaction
 from django.core.files.storage import default_storage
@@ -20,7 +21,48 @@ class ScanService:
         return ScanProject.objects.create(**data, sys_creator=user)
 
     @staticmethod
-    def handle_chunk_upload(project_key: str, tool_name: str, chunk_index: int, total_chunks: int, chunk_content: str, file_id: str) -> dict:
+    def update_project(project_id: str, data: dict, user: User) -> ScanProject:
+        """更新扫描项目"""
+        project = get_object_or_404(ScanProject, id=project_id)
+        for key, value in data.items():
+            setattr(project, key, value)
+        project.save()
+        return project
+
+    @staticmethod
+    def handle_upload(project_key: str, tool_name: str, file_obj) -> ScanTask:
+        """接收文件上传并触发解析"""
+        try:
+            project = ScanProject.objects.get(project_key=project_key)
+        except ScanProject.DoesNotExist:
+            raise ValueError("无效的项目标识 (project_key)")
+
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        file_name = f"scan_reports/{project.id}/{timestamp}_{tool_name}_{file_obj.name}"
+        saved_path = default_storage.save(file_name, ContentFile(file_obj.read()))
+        full_path = os.path.join(settings.MEDIA_ROOT, saved_path)
+
+        task = ScanTask.objects.create(
+            project=project,
+            tool_name=tool_name,
+            status="processing",
+            source="pipeline",
+            report_file=full_path,
+            scan_time=datetime.now(),
+        )
+
+        try:
+            ScanService.process_report(task.id)
+        except Exception as e:
+            logger.error(f"任务 {task.id} 异步处理失败: {e}")
+            task.status = "failed"
+            task.log = str(e)
+            task.save()
+
+        return task
+
+    @staticmethod
+    def handle_chunk_upload(project_key: str, tool_name: str, chunk_index: int, total_chunks: int, chunk_content: str, file_id: str, file_ext: str = "xml") -> dict:
         """
         处理分片上传的 JSON 文本内容
         """
@@ -52,7 +94,11 @@ class ScanService:
             
             # 保存到文件
             timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-            file_name = f"scan_reports/{project.id}/{timestamp}_{tool_name}_{file_id}.json"
+            # 兼容处理 file_ext，默认使用 xml (针对 tscancode)
+            if not file_ext:
+                file_ext = "xml" if tool_name == "tscan" else "json"
+            
+            file_name = f"scan_reports/{project.id}/{timestamp}_{tool_name}_{file_id}.{file_ext}"
             saved_path = default_storage.save(file_name, ContentFile(full_content.encode('utf-8')))
             full_path = os.path.join(settings.MEDIA_ROOT, saved_path)
             
@@ -95,7 +141,8 @@ class ScanService:
                 
                 results_to_create = []
                 for item in defects:
-                    # 生成指纹: 文件路径 + 缺陷类型 + 描述
+                    # 生成指纹: 文件路径 + 缺陷类型 + 描述 (不包含行号，以支持代码移动)
+                    # 如果需要区分同一文件中的相同错误，建议工具提供更稳定的 context hash
                     fingerprint_str = f"{item['file_path']}:{item['defect_type']}:{item['description']}"
                     fingerprint = hashlib.md5(fingerprint_str.encode()).hexdigest()
                     

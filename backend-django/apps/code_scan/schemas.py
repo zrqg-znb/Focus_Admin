@@ -1,8 +1,13 @@
 from typing import Optional, List
+from uuid import UUID
 from ninja import Schema, ModelSchema
 from apps.code_scan.models import ScanProject, ScanTask, ScanResult, ShieldApplication
 
 class ScanProjectSchema(ModelSchema):
+    # 显式覆盖自动生成的类型，确保序列化时兼容 UUID 对象
+    id: UUID
+    project_key: UUID
+
     class Config:
         model = ScanProject
         model_fields = "__all__"
@@ -23,13 +28,17 @@ class ScanResultSchema(ModelSchema):
         model = ScanResult
         model_fields = "__all__"
 
-class ShieldApplicationSchema(ModelSchema):
+class ShieldApplicationSchema(Schema):
+    id: str
+    result_id: str
+    applicant_id: str
+    approver_id: Optional[str] = None
+    reason: str
+    status: str
+    audit_comment: Optional[str] = None
     applicant_name: Optional[str] = None
     approver_name: Optional[str] = None
-
-    class Config:
-        model = ShieldApplication
-        model_fields = "__all__"
+    sys_create_datetime: Optional[str] = None
 
 class ShieldApplySchema(Schema):
     result_ids: List[str]
@@ -48,3 +57,26 @@ class ChunkUploadSchema(Schema):
     total_chunks: int
     chunk_content: str  # Base64 or plain text content of the chunk
     file_id: str # Unique ID for the file session
+    file_ext: Optional[str] = "xml" # File extension, default to xml
+
+class ProjectOverviewSchema(Schema):
+    project_id: str
+    project_name: str
+    tool_counts: dict[str, int]
+    total: int
+    latest_time: Optional[str] = None
+
+class LatestScanResultSchema(Schema):
+    id: str
+    task_id: str
+    tool_name: str
+    file_path: str
+    line_number: int
+    defect_type: str
+    severity: str
+    description: str
+    fingerprint: str
+    shield_status: str
+    help_info: Optional[str] = None
+    code_snippet: Optional[str] = None
+    sys_create_datetime: Optional[str] = None
