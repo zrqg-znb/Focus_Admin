@@ -24,6 +24,7 @@ const gridOptions: any = {
     { field: 'sys_create_datetime', title: '申请时间', width: 180 },
     { field: 'action', title: '操作', width: 120, slots: { default: 'action' } },
   ],
+  height: '100%',
   proxyConfig: {
     ajax: {
       query: async () => {
@@ -66,20 +67,23 @@ const getStatusType = (status: string) => {
 </script>
 
 <template>
-  <Page title="屏蔽审批中心">
-    <ElTabs v-model="activeTab" @tab-change="handleTabChange" class="bg-white p-4 rounded shadow">
-      <ElTabPane label="待我审批" name="my_audit" />
-      <ElTabPane label="我的申请" name="my_apply" />
-    </ElTabs>
-
-    <Grid class="mt-4">
-      <template #status="{ row }">
-        <ElTag :type="getStatusType(row.status)">{{ row.status }}</ElTag>
-      </template>
-      <template #action="{ row }">
-        <ElButton v-if="activeTab === 'my_audit' && row.status === 'Pending'" type="primary" link @click="handleAudit(row)">审批</ElButton>
-      </template>
-    </Grid>
+  <Page title="屏蔽审批" auto-content-height>
+    <div class="h-full flex flex-col">
+      <ElTabs v-model="activeTab" @tab-change="handleTabChange" class="mb-2">
+        <ElTabPane label="待我审批" name="my_audit" />
+        <ElTabPane label="我的申请" name="my_apply" />
+      </ElTabs>
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <Grid>
+          <template #status="{ row }">
+            <ElTag :type="getStatusType(row.status)">{{ row.status }}</ElTag>
+          </template>
+          <template #action="{ row }">
+            <ElButton v-if="activeTab === 'my_audit' && row.status === 'Pending'" type="primary" link @click="handleAudit(row)">审批</ElButton>
+          </template>
+        </Grid>
+      </div>
+    </div>
 
     <ElDialog v-model="auditVisible" title="屏蔽审批" width="500px">
       <ElForm :model="auditForm" label-width="80px">
