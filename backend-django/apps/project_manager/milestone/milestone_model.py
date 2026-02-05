@@ -25,6 +25,7 @@ class MilestoneQGConfig(RootModel):
     qg_name = models.CharField(max_length=32, verbose_name="QG点名称")  # e.g., QG1, QG2
     target_di = models.FloatField(null=True, blank=True, verbose_name="目标DI值")
     enabled = models.BooleanField(default=True, verbose_name="是否启用")
+    is_delayed = models.BooleanField(default=False, verbose_name="是否延期")
 
     class Meta:
         db_table = 'pm_milestone_qg_config'

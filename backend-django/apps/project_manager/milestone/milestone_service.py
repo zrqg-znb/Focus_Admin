@@ -97,7 +97,7 @@ def update_milestone(request, project_id: str, data: MilestoneUpdateSchema):
 
 # --- QG Risk Logic ---
 
-def upsert_qg_config(project_id: str, qg_name: str, target_di: Optional[float], enabled: bool):
+def upsert_qg_config(project_id: str, qg_name: str, target_di: Optional[float], enabled: bool, is_delayed: bool = False):
     # Find milestone by project_id, or create if not exists (though milestone should exist for project)
     # Actually requirement says "Config from Project Page", project page usually has Project ID.
     milestone, _ = Milestone.objects.get_or_create(project_id=project_id)
@@ -107,7 +107,8 @@ def upsert_qg_config(project_id: str, qg_name: str, target_di: Optional[float], 
         qg_name=qg_name,
         defaults={
             "target_di": target_di,
-            "enabled": enabled
+            "enabled": enabled,
+            "is_delayed": is_delayed
         }
     )
     return config
@@ -273,13 +274,19 @@ def check_qg_risks_daily():
         milestone = config.milestone
         qg_date = getattr(milestone, f"{config.qg_name.lower()}_date", None)
         
-        if not qg_date:
-            continue
-            
-        # Check if within 2 weeks before QG OR past QG
-        days_diff = (qg_date - today).days
-        # If QG is in future 30 days or past 30 days, we check.
-        if -30 <= days_diff <= 30: 
+        should_check = False
+        
+        # Check if is_delayed is True, check anyway
+        if config.is_delayed:
+             should_check = True
+        elif qg_date:
+            # Check if within 2 weeks before QG OR past QG
+            days_diff = (qg_date - today).days
+            # If QG is in future 30 days or past 30 days, we check.
+            if -30 <= days_diff <= 30: 
+                should_check = True
+
+        if should_check: 
             _check_single_config(config, today)
 
 def _check_single_config(config: MilestoneQGConfig, record_date: date):

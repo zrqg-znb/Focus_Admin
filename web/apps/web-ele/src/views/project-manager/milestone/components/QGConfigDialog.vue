@@ -58,6 +58,7 @@ async function loadConfigs() {
           qg_name: qg,
           target_di: null,
           enabled: false,
+          is_delayed: false,
         }
       );
     });
@@ -76,6 +77,7 @@ async function handleSave(row: QGConfig) {
       qg_name: row.qg_name,
       target_di: row.target_di,
       enabled: row.enabled,
+      is_delayed: row.is_delayed,
     });
     // Update local id
     row.id = res.id;
@@ -94,6 +96,11 @@ async function handleSave(row: QGConfig) {
       <ElTableColumn label="启用预警" width="100">
         <template #default="{ row }">
           <ElSwitch v-model="row.enabled" @change="() => handleSave(row)" />
+        </template>
+      </ElTableColumn>
+      <ElTableColumn label="是否延期" width="100">
+        <template #default="{ row }">
+          <ElSwitch v-model="row.is_delayed" @change="() => handleSave(row)" />
         </template>
       </ElTableColumn>
       <ElTableColumn label="说明">

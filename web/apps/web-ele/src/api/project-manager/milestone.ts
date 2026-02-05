@@ -23,12 +23,14 @@ export interface QGConfig {
   qg_name: string;
   target_di: number | null;
   enabled: boolean;
+  is_delayed: boolean;
 }
 
 export interface QGConfigPayload {
   qg_name: string;
   target_di?: number | null;
   enabled: boolean;
+  is_delayed?: boolean;
 }
 
 export interface RiskItem {

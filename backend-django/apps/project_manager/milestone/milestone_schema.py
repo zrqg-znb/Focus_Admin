@@ -52,6 +52,7 @@ class QGConfigIn(Schema):
     qg_name: str
     target_di: Optional[float] = None
     enabled: bool = True
+    is_delayed: bool = False
 
 
 class QGConfigOut(Schema):
@@ -60,6 +61,7 @@ class QGConfigOut(Schema):
     qg_name: str
     target_di: Optional[float] = None
     enabled: bool
+    is_delayed: bool
 
     @staticmethod
     def resolve_id(obj):

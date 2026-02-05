@@ -40,7 +40,8 @@ def save_qg_config(request, project_id: str, payload: QGConfigIn):
         project_id=project_id,
         qg_name=payload.qg_name,
         target_di=payload.target_di,
-        enabled=payload.enabled
+        enabled=payload.enabled,
+        is_delayed=payload.is_delayed
     )
 
 # --- Risks ---
