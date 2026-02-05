@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<results>
+    <error file="/src/main.cpp" line="42" id="nullPointer" severity="error" msg="Possible null pointer dereference">
+        <verbose>Value is initialized to null and dereferenced.</verbose>
+    </error>
+    <error file="/src/utils.cpp" line="108" id="memoryLeak" severity="error" msg="Memory leak detected">
+        <verbose>Memory allocated at line 100 is not freed.</verbose>
+    </error>
+    <error file="/src/config.cpp" line="15" id="unusedVariable" severity="warning" msg="Unused variable 'ret'">
+        <verbose>Variable 'ret' is assigned a value that is never used.</verbose>
+    </error>
+</results>
