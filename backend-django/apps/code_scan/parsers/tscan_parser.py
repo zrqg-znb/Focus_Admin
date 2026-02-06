@@ -44,6 +44,18 @@ class TScanParser(BaseParser):
         
         # TScan XML format assumption: <error file="..." line="..." id="..." severity="..." msg="..."/>
         for error in root.findall('.//error'):
+            # Try to find code snippet in child tags
+            code_snippet = ""
+            context_node = error.find('context')
+            if context_node is not None:
+                code_snippet = context_node.text
+            
+            # Fallback: check for 'code' tag
+            if not code_snippet:
+                code_node = error.find('code')
+                if code_node is not None:
+                    code_snippet = code_node.text
+
             results.append({
                 "file_path": error.get('file', 'unknown'),
                 "line_number": int(error.get('line', 0)),
@@ -51,7 +63,7 @@ class TScanParser(BaseParser):
                 "severity": self._map_severity(error.get('severity')),
                 "description": error.get('msg', ''),
                 "help_info": error.get('sub_msg', ''), # Sometimes additional info is here
-                "code_snippet": "", # XML might not have code snippet
+                "code_snippet": code_snippet or "",
             })
         return results
 

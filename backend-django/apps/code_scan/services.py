@@ -96,7 +96,10 @@ class ScanService:
             timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
             # 兼容处理 file_ext，默认使用 xml (针对 tscancode)
             if not file_ext:
-                file_ext = "xml" if tool_name == "tscan" else "json"
+                if tool_name in ["tscan", "cppcheck"]:
+                    file_ext = "xml"
+                else:
+                    file_ext = "json"
             
             file_name = f"scan_reports/{project.id}/{timestamp}_{tool_name}_{file_id}.{file_ext}"
             saved_path = default_storage.save(file_name, ContentFile(full_content.encode('utf-8')))

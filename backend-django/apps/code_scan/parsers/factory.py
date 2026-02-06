@@ -1,12 +1,12 @@
 from typing import Type
 from .base import BaseParser
 from .tscan_parser import TScanParser
+from .cppcheck_parser import CppCheckParser
 
 class ParserFactory:
     _parsers = {
         'tscan': TScanParser,
-        # Future extensions:
-        # 'cppcheck': CppCheckParser,
+        'cppcheck': CppCheckParser,
     }
     
     @classmethod

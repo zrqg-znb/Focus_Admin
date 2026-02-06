@@ -9,6 +9,7 @@ class ScanProject(RootModel):
     branch = models.CharField(max_length=100, default="master", verbose_name="分支", help_text="分支")
     project_key = models.CharField(max_length=64, unique=True, default=uuid.uuid4, verbose_name="项目标识", help_text="用于流水线认证的唯一标识")
     description = models.TextField(null=True, blank=True, verbose_name="描述", help_text="项目描述")
+    caretaker = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='scan_projects', verbose_name="数据看护责任人")
 
     class Meta:
         db_table = 'scan_project'

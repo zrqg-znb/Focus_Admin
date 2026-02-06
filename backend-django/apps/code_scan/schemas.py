@@ -17,6 +17,7 @@ class ScanProjectCreateSchema(Schema):
     repo_url: str
     branch: str = "master"
     description: Optional[str] = None
+    caretaker_id: Optional[str] = None
 
 class ScanTaskSchema(ModelSchema):
     class Config:
