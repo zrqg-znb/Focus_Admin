@@ -46,6 +46,7 @@ function handleCreate() {
     repo_url: '',
     branch: 'master',
     description: '',
+    caretaker_id: '',
   });
   dialogVisible.value = true;
 }
@@ -60,6 +61,7 @@ function handleEdit(row: any) {
     repo_url: row.repo_url,
     branch: row.branch,
     description: row.description,
+    caretaker_id: row.caretaker,
   });
   dialogVisible.value = true;
 }

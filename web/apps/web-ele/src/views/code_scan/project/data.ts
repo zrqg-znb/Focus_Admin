@@ -23,6 +23,14 @@ export function getFormSchema(): VbenFormSchema[] {
       defaultValue: 'master',
     },
     {
+      component: 'UserSelector',
+      fieldName: 'caretaker_id',
+      label: '数据看护责任人',
+      componentProps: {
+        placeholder: '请选择数据看护责任人',
+      },
+    },
+    {
       component: 'Input',
       fieldName: 'description',
       label: '描述',
