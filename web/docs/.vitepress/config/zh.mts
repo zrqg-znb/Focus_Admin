@@ -95,6 +95,7 @@ function sidebarBackend(): DefaultTheme.SidebarItem[] {
         { link: 'apps/project-manager', text: '项目管理' },
         { link: 'apps/performance', text: '绩效管理' },
         { link: 'apps/code-compliance', text: '代码合规' },
+        { link: 'apps/code-scan', text: '代码扫描' },
         { link: 'apps/delivery-matrix', text: '交付矩阵' },
         { link: 'apps/integration-report', text: '集成报告' },
       ],
