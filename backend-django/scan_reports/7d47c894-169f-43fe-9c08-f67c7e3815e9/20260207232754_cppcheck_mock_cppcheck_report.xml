@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<results version="2">
+    <cppcheck version="2.10"/>
+    <errors>
+        <error id="memleak" severity="error" msg="Memory leak: p" verbose="Memory leak: p" cwe="401" file="src/main.cpp" line="42" column="10">
+            <location file="src/main.cpp" line="42" column="10"/>
+        </error>
+        <error id="arrayIndexOutOfBounds" severity="error" msg="Array 'a[10]' accessed at index 10, which is out of bounds." verbose="Array 'a[10]' accessed at index 10, which is out of bounds." cwe="119" file="src/utils.cpp" line="15" column="5">
+             <location file="src/utils.cpp" line="15" column="5"/>
+        </error>
+        <error id="unreadVariable" severity="style" msg="Variable 'x' is assigned a value that is never used." verbose="Variable 'x' is assigned a value that is never used." cwe="563" file="src/test.cpp" line="8" column="9">
+            <location file="src/test.cpp" line="8" column="9"/>
+        </error>
+        <error id="nullPointer" severity="error" msg="Null pointer dereference: ptr" verbose="Null pointer dereference: ptr" cwe="476" file="src/core/engine.cpp" line="102" column="15">
+            <location file="src/core/engine.cpp" line="102" column="15"/>
+        </error>
+    </errors>
+</results>

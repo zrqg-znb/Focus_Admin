@@ -6,7 +6,8 @@ from apps.code_scan.schemas import (
     ScanProjectSchema, ScanProjectCreateSchema,
     ScanTaskSchema, ScanResultSchema,
     ShieldApplicationSchema, ShieldApplySchema, ShieldAuditSchema,
-    ChunkUploadSchema, ProjectOverviewSchema, LatestScanResultSchema
+    ChunkUploadSchema, ProjectOverviewSchema, LatestScanResultSchema,
+    PaginatedScanResultSchema
 )
 from apps.code_scan.services import ScanService
 from common.fu_auth import BearerAuth
@@ -17,8 +18,12 @@ router = Router()
 # --- 项目管理 ---
 
 @router.get("/projects", response=List[ScanProjectSchema], auth=BearerAuth())
-def list_projects(request):
-    return ScanProject.objects.filter(is_deleted=False)
+def list_projects(request, keyword: str = None):
+    qs = ScanProject.objects.filter(is_deleted=False).select_related('caretaker')
+    if keyword:
+        from django.db.models import Q
+        qs = qs.filter(Q(name__icontains=keyword) | Q(repo_url__icontains=keyword))
+    return qs
 
 @router.get("/projects/overview", response=List[ProjectOverviewSchema], auth=BearerAuth())
 def list_project_overview(request):
@@ -128,10 +133,17 @@ def list_tasks(request, project_id: str):
 def list_results(request, task_id: str):
     return ScanResult.objects.filter(task_id=task_id, is_deleted=False)
 
-@router.get("/projects/{project_id}/latest-results", response=List[LatestScanResultSchema], auth=BearerAuth())
-def list_latest_results(request, project_id: str):
+@router.get("/projects/{project_id}/latest-results", response=PaginatedScanResultSchema, auth=BearerAuth())
+def list_latest_results(request, project_id: str, tool_name: str = None, page: int = 1, pageSize: int = 20):
+    tasks_qs = ScanTask.objects.filter(project_id=project_id, is_deleted=False, status="success")
+    
+    if tool_name:
+        # If tool_name is specified, get latest task for that tool
+        # Actually, we want latest task per tool, but filter by tool_name if provided
+        tasks_qs = tasks_qs.filter(tool_name=tool_name)
+
     tasks = (
-        ScanTask.objects.filter(project_id=project_id, is_deleted=False, status="success")
+        tasks_qs
         .order_by("-sys_create_datetime")
         .values("id", "tool_name", "sys_create_datetime")
     )
@@ -144,13 +156,18 @@ def list_latest_results(request, project_id: str):
 
     task_ids = list(latest_task_by_tool.values())
     if not task_ids:
-        return []
+        return {"items": [], "total": 0}
 
-    results = (
+    results_qs = (
         ScanResult.objects.filter(task_id__in=task_ids, is_deleted=False)
         .select_related("task")
         .order_by("-severity", "file_path", "line_number")
     )
+    
+    total = results_qs.count()
+    start = (page - 1) * pageSize
+    end = start + pageSize
+    results = results_qs[start:end]
 
     payload = []
     for r in results:
@@ -173,7 +190,7 @@ def list_latest_results(request, project_id: str):
                 else None,
             }
         )
-    return payload
+    return {"items": payload, "total": total}
 
 # --- 屏蔽申请与审批 ---
 
@@ -191,7 +208,7 @@ def list_applications(request, mode: str = "my_apply"):
         qs = ShieldApplication.objects.filter(approver=user)
     
     results = []
-    for app in qs.select_related("applicant", "approver", "result"):
+    for app in qs.select_related("applicant", "approver", "result", "result__task"):
         results.append(
             {
                 "id": str(app.id),
@@ -206,6 +223,12 @@ def list_applications(request, mode: str = "my_apply"):
                 "sys_create_datetime": app.sys_create_datetime.isoformat(sep=" ", timespec="seconds")
                 if getattr(app, "sys_create_datetime", None)
                 else None,
+                "file_path": app.result.file_path,
+                "defect_description": app.result.description,
+                "severity": app.result.severity,
+                "tool_name": app.result.task.tool_name,
+                "help_info": app.result.help_info,
+                "code_snippet": app.result.code_snippet,
             }
         )
     return results

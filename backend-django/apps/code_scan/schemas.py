@@ -7,10 +7,15 @@ class ScanProjectSchema(ModelSchema):
     # 显式覆盖自动生成的类型，确保序列化时兼容 UUID 对象
     id: UUID
     project_key: UUID
+    caretaker_name: Optional[str] = None
 
     class Config:
         model = ScanProject
         model_fields = "__all__"
+    
+    @staticmethod
+    def resolve_caretaker_name(obj):
+        return obj.caretaker.name if obj.caretaker else None
 
 class ScanProjectCreateSchema(Schema):
     name: str
@@ -40,6 +45,13 @@ class ShieldApplicationSchema(Schema):
     applicant_name: Optional[str] = None
     approver_name: Optional[str] = None
     sys_create_datetime: Optional[str] = None
+    # Context info
+    file_path: Optional[str] = None
+    defect_description: Optional[str] = None
+    severity: Optional[str] = None
+    tool_name: Optional[str] = None
+    help_info: Optional[str] = None
+    code_snippet: Optional[str] = None
 
 class ShieldApplySchema(Schema):
     result_ids: List[str]
@@ -81,3 +93,7 @@ class LatestScanResultSchema(Schema):
     help_info: Optional[str] = None
     code_snippet: Optional[str] = None
     sys_create_datetime: Optional[str] = None
+
+class PaginatedScanResultSchema(Schema):
+    items: List[LatestScanResultSchema]
+    total: int
