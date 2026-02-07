@@ -3,11 +3,14 @@ import { ref, onMounted } from 'vue';
 import { Page } from '@vben/common-ui';
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import { listApplicationsApi, auditShieldApi } from '#/api/code_scan';
-import { ElButton, ElTag, ElMessage, ElTabs, ElTabPane, ElDialog, ElForm, ElFormItem, ElInput } from 'element-plus';
+import { ElButton, ElTag, ElMessage, ElTabs, ElTabPane, ElDialog, ElForm, ElFormItem, ElInput, ElDescriptions, ElDescriptionsItem } from 'element-plus';
 
 const activeTab = ref<'my_audit' | 'my_apply'>('my_audit');
 
 const auditVisible = ref(false);
+const detailVisible = ref(false);
+const currentDetail = ref<any>(null);
+
 const auditForm = ref({
   application_id: '',
   status: 'Approved',
@@ -17,12 +20,15 @@ const auditForm = ref({
 const gridOptions: any = {
   columns: [
     { type: 'seq', width: 60 },
-    { field: 'applicant_name', title: '申请人', width: 120 },
-    { field: 'approver_name', title: '审批人', width: 120 },
-    { field: 'reason', title: '申请理由', minWidth: 200 },
+    { field: 'applicant_name', title: '申请人', width: 100 },
+    { field: 'tool_name', title: '工具', width: 100 },
+    { field: 'severity', title: '严重程度', width: 100, slots: { default: 'severity' } },
+    { field: 'file_path', title: '文件路径', minWidth: 200, showOverflow: true },
+    { field: 'defect_description', title: '缺陷描述', minWidth: 200, showOverflow: true },
+    { field: 'reason', title: '申请理由', minWidth: 200, showOverflow: true },
     { field: 'status', title: '状态', width: 100, slots: { default: 'status' } },
-    { field: 'sys_create_datetime', title: '申请时间', width: 180 },
-    { field: 'action', title: '操作', width: 120, slots: { default: 'action' } },
+    { field: 'sys_create_datetime', title: '申请时间', width: 160 },
+    { field: 'action', title: '操作', width: 150, slots: { default: 'action' } },
   ],
   height: '100%',
   proxyConfig: {
@@ -44,6 +50,11 @@ function handleTabChange() {
 function handleAudit(row: any) {
   auditForm.value.application_id = row.id;
   auditVisible.value = true;
+}
+
+function handleDetail(row: any) {
+    currentDetail.value = row;
+    detailVisible.value = true;
 }
 
 async function submitAudit(status: string) {
@@ -75,10 +86,16 @@ const getStatusType = (status: string) => {
       </ElTabs>
       <div class="flex-1 min-h-0 overflow-hidden">
         <Grid>
+          <template #severity="{ row }">
+             <ElTag v-if="row.severity === 'High'" type="danger">High</ElTag>
+             <ElTag v-else-if="row.severity === 'Medium'" type="warning">Medium</ElTag>
+             <ElTag v-else type="info">Low</ElTag>
+          </template>
           <template #status="{ row }">
             <ElTag :type="getStatusType(row.status)">{{ row.status }}</ElTag>
           </template>
           <template #action="{ row }">
+            <ElButton link type="primary" @click="handleDetail(row)">详情</ElButton>
             <ElButton v-if="activeTab === 'my_audit' && row.status === 'Pending'" type="primary" link @click="handleAudit(row)">审批</ElButton>
           </template>
         </Grid>
@@ -95,6 +112,20 @@ const getStatusType = (status: string) => {
         <ElButton type="danger" @click="submitAudit('Rejected')">驳回</ElButton>
         <ElButton type="primary" @click="submitAudit('Approved')">通过</ElButton>
       </template>
+    </ElDialog>
+
+    <ElDialog v-model="detailVisible" title="缺陷详情" width="800px">
+        <ElDescriptions :column="1" border v-if="currentDetail">
+            <ElDescriptionsItem label="工具">{{ currentDetail.tool_name }}</ElDescriptionsItem>
+            <ElDescriptionsItem label="严重程度">{{ currentDetail.severity }}</ElDescriptionsItem>
+            <ElDescriptionsItem label="文件路径">{{ currentDetail.file_path }}</ElDescriptionsItem>
+            <ElDescriptionsItem label="缺陷描述">{{ currentDetail.defect_description }}</ElDescriptionsItem>
+            <ElDescriptionsItem label="修复建议" v-if="currentDetail.help_info">{{ currentDetail.help_info }}</ElDescriptionsItem>
+            <ElDescriptionsItem label="申请理由">{{ currentDetail.reason }}</ElDescriptionsItem>
+            <ElDescriptionsItem label="代码片段" v-if="currentDetail.code_snippet">
+                <pre class="bg-gray-800 text-white p-2 rounded text-xs overflow-x-auto max-h-[300px]">{{ currentDetail.code_snippet }}</pre>
+            </ElDescriptionsItem>
+        </ElDescriptions>
     </ElDialog>
   </Page>
 </template>

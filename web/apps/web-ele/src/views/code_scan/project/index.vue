@@ -3,7 +3,7 @@ import { ref } from 'vue';
 import { Page } from '@vben/common-ui';
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import { listProjectsApi, createProjectApi, updateProjectApi } from '#/api/code_scan';
-import { useColumns, getFormSchema } from './data';
+import { useColumns, getFormSchema, useSearchFormSchema } from './data';
 import { ElButton, ElMessage, ElDialog, ElForm, ElFormItem, ElInput } from 'element-plus';
 import { useRouter } from 'vue-router';
 import { useClipboard } from '@vueuse/core';
@@ -17,15 +17,24 @@ const gridOptions: any = {
   height: '100%', // 强制撑满父容器
   proxyConfig: {
     ajax: {
-      query: async () => {
-        const res = await listProjectsApi();
+      query: async ({ page }, formValues) => {
+        const res = await listProjectsApi(formValues);
         return { items: res };
       },
     },
   },
+  toolbarConfig: {
+      search: true,
+      refresh: true,
+  }
 };
 
-const [Grid, gridApi] = useVbenVxeGrid({ gridOptions });
+const [Grid, gridApi] = useVbenVxeGrid({
+    gridOptions,
+    formOptions: {
+        schema: useSearchFormSchema(),
+    }
+});
 
 // 创建/编辑项目弹窗逻辑
 const dialogVisible = ref(false);
@@ -81,6 +90,7 @@ async function submitForm() {
     }
     dialogVisible.value = false;
     gridApi.reload();
+    formApi.resetForm();
   } catch (error) {
     // error handled by request interceptor
   }

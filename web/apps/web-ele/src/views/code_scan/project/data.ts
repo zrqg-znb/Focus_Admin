@@ -41,6 +41,19 @@ export function getFormSchema(): VbenFormSchema[] {
   ];
 }
 
+export function useSearchFormSchema(): VbenFormSchema[] {
+  return [
+    {
+      component: 'Input',
+      fieldName: 'keyword',
+      label: '关键词',
+      componentProps: {
+        placeholder: '搜索项目名或代码仓',
+      },
+    },
+  ];
+}
+
 export function useColumns(): VxeTableGridOptions<any>['columns'] {
   return [
     { type: 'seq', width: 60 },
@@ -48,6 +61,7 @@ export function useColumns(): VxeTableGridOptions<any>['columns'] {
     { field: 'project_key', title: 'Project Key', minWidth: 300, showOverflow: true },
     { field: 'repo_url', title: '代码仓', minWidth: 250 },
     { field: 'branch', title: '分支', width: 100 },
+    { field: 'caretaker_name', title: '数据看护人', width: 120 },
     {
         field: 'action',
         title: '操作',

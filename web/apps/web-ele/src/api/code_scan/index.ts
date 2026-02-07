@@ -1,7 +1,7 @@
 import { requestClient } from '#/api/request';
 
-export const listProjectsApi = () => {
-  return requestClient.get('/api/code-scan/projects');
+export const listProjectsApi = (params?: any) => {
+  return requestClient.get('/api/code-scan/projects', { params });
 };
 
 export const listProjectOverviewApi = () => {
@@ -28,8 +28,8 @@ export const listResultsApi = (taskId: string) => {
   return requestClient.get('/api/code-scan/results', { params: { task_id: taskId } });
 };
 
-export const listLatestResultsApi = (projectId: string) => {
-  return requestClient.get(`/api/code-scan/projects/${projectId}/latest-results`);
+export const listLatestResultsApi = (projectId: string, params?: any) => {
+  return requestClient.get(`/api/code-scan/projects/${projectId}/latest-results`, { params });
 };
 
 export const applyShieldApi = (data: { result_ids: string[]; approver_id: string; reason: string }) => {
