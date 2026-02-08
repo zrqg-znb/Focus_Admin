@@ -1,100 +1,89 @@
-from typing import List, Optional, Any
+from typing import List, Optional
 from ninja import ModelSchema, Schema, Field
-from .models import DeliveryDomain, ProjectGroup, ProjectComponent
-from apps.project_manager.project.project_model import Project
+from .models import OrganizationNode, PositionStaff
 
-# --- Delivery Domain ---
-class DeliveryDomainCreate(Schema):
+class DeleteOut(Schema):
+    id: str
+
+# --- Position Staff ---
+class PositionStaffCreate(Schema):
     name: str
-    code: str
-    interface_people_ids: List[str] = Field([])
-    remark: Optional[str] = None
+    user_ids: List[str] = Field([])
 
-class DeliveryDomainUpdate(Schema):
-    name: Optional[str] = None
-    code: Optional[str] = None
-    interface_people_ids: Optional[List[str]] = Field(None)
-    remark: Optional[str] = None
-
-class DeliveryDomainOut(ModelSchema):
-    interface_people_info: List[dict] = Field([])
+class PositionStaffOut(ModelSchema):
+    id: str  # 明确指定为 str 类型
+    users_info: List[dict] = Field([])
+    
     class Meta:
-        model = DeliveryDomain
-        fields = "__all__"
+        model = PositionStaff
+        fields = ['id', 'name']
     
     @staticmethod
-    def resolve_interface_people_info(obj):
-        return [{"id": u.id, "name": u.name} for u in obj.interface_people.all()]
-
-# --- Project Group ---
-class ProjectGroupCreate(Schema):
-    name: str
-    domain_id: str
-    manager_ids: List[str] = Field([])
-    remark: Optional[str] = None
-
-class ProjectGroupUpdate(Schema):
-    name: Optional[str] = None
-    domain_id: Optional[str] = None
-    manager_ids: Optional[List[str]] = Field(None)
-    remark: Optional[str] = None
-
-class ProjectGroupOut(ModelSchema):
-    domain_info: dict = Field(None)
-    managers_info: List[dict] = Field([])
-    class Meta:
-        model = ProjectGroup
-        fields = "__all__"
+    def resolve_id(obj):
+        return str(obj.id)
 
     @staticmethod
-    def resolve_domain_info(obj):
-        if obj.domain:
-            return {"id": obj.domain.id, "name": obj.domain.name}
-        return None
+    def resolve_users_info(obj):
+        return [{"id": str(u.id), "name": u.name, "avatar": u.avatar if hasattr(u, 'avatar') else None} for u in obj.users.all()]
 
-    @staticmethod
-    def resolve_managers_info(obj):
-        return [{"id": u.id, "name": u.name} for u in obj.managers.all()]
-
-# --- Project Component ---
-class ProjectComponentCreate(Schema):
+# --- Organization Node ---
+class OrgNodeCreate(Schema):
     name: str
-    group_id: str
+    code: Optional[str] = None
+    description: Optional[str] = None
+    parent_id: Optional[str] = None
     linked_project_id: Optional[str] = None
-    manager_ids: List[str] = Field([])
-    remark: Optional[str] = None
+    positions: List[PositionStaffCreate] = Field(default_factory=list)
 
-class ProjectComponentUpdate(Schema):
+class OrgNodeUpdate(Schema):
     name: Optional[str] = None
-    group_id: Optional[str] = None
+    code: Optional[str] = None
+    description: Optional[str] = None
+    parent_id: Optional[str] = None
     linked_project_id: Optional[str] = None
-    manager_ids: Optional[List[str]] = Field(None)
-    remark: Optional[str] = None
+    sort_order: Optional[int] = None
 
-class ProjectComponentOut(ModelSchema):
-    group_info: dict = Field(None)
-    managers_info: List[dict] = Field([])
+class OrgNodeOut(ModelSchema):
+    id: str  # 明确指定为 str 类型
+    children: List['OrgNodeOut'] = Field([])
+    positions: List[PositionStaffOut] = Field([])
     linked_project_info: Optional[dict] = Field(None)
     milestone_info: Optional[dict] = Field(None)
+    
+    parent_id: Optional[str] = None
+    linked_project_id: Optional[str] = None
 
     class Meta:
-        model = ProjectComponent
-        fields = "__all__"
+        model = OrganizationNode
+        fields = ['id', 'name', 'code', 'description', 'sort_order', 'sys_create_datetime']
+    
+    @staticmethod
+    def resolve_id(obj):
+        return str(obj.id)
 
     @staticmethod
-    def resolve_group_info(obj):
-        if obj.group:
-            return {"id": obj.group.id, "name": obj.group.name}
-        return None
+    def resolve_children(obj):
+        return getattr(obj, 'child_list', [])
 
     @staticmethod
-    def resolve_managers_info(obj):
-        return [{"id": u.id, "name": u.name} for u in obj.managers.all()]
+    def resolve_parent_id(obj):
+        return str(obj.parent_id) if obj.parent_id else None
+
+    @staticmethod
+    def resolve_linked_project_id(obj):
+        return str(obj.linked_project_id) if obj.linked_project_id else None
+
+    @staticmethod
+    def resolve_positions(obj):
+        """获取节点的所有岗位配置"""
+        # 直接从数据库查询，避免使用可能被覆盖的属性
+        from .models import PositionStaff
+        return PositionStaff.objects.filter(node=obj).prefetch_related('users')
 
     @staticmethod
     def resolve_linked_project_info(obj):
         if obj.linked_project:
-            return {"id": obj.linked_project.id, "name": obj.linked_project.name}
+            return {"id": str(obj.linked_project.id), "name": obj.linked_project.name}
         return None
     
     @staticmethod
@@ -113,29 +102,4 @@ class ProjectComponentOut(ModelSchema):
             }
         return None
 
-# --- Dashboard Schemas ---
-class DashboardUserInfo(Schema):
-    id: str
-    name: str
-
-class DashboardComponent(Schema):
-    id: str
-    name: str
-    managers: List[str]
-    managers_info: List[DashboardUserInfo] = Field([])
-    project_name: Optional[str] = None
-    milestone: Optional[dict] = None
-
-class DashboardGroup(Schema):
-    id: str
-    name: str
-    managers: List[str]
-    managers_info: List[DashboardUserInfo] = Field([])
-    components: List[DashboardComponent]
-
-class DashboardDomain(Schema):
-    id: str
-    name: str
-    interface_people: List[str]
-    interface_people_info: List[DashboardUserInfo] = Field([])
-    groups: List[DashboardGroup]
+OrgNodeOut.update_forward_refs()

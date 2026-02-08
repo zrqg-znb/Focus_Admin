@@ -2,36 +2,51 @@ from django.db import models
 from common.fu_model import RootModel
 from apps.project_manager.project.project_model import Project
 
-class DeliveryDomain(RootModel):
-    name = models.CharField(max_length=255, verbose_name="领域名称")
-    code = models.CharField(max_length=255, unique=True, verbose_name="领域编码")
-    interface_people = models.ManyToManyField('core.User', related_name='delivery_domains', verbose_name="领域接口人", blank=True)
-    remark = models.TextField(blank=True, null=True, verbose_name="备注")
+class OrganizationNode(RootModel):
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='children',
+        verbose_name="父节点"
+    )
+    name = models.CharField(max_length=255, verbose_name="名称")
+    code = models.CharField(max_length=100, blank=True, null=True, verbose_name="编码")
+    description = models.TextField(blank=True, null=True, verbose_name="描述")
+    linked_project = models.ForeignKey(
+        Project,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='delivery_nodes',
+        verbose_name="关联项目"
+    )
+    sort_order = models.IntegerField(default=0, verbose_name="排序")
 
     class Meta:
-        db_table = 'dm_delivery_domain'
-        verbose_name = '交付领域'
+        db_table = 'dm_org_node'
+        verbose_name = "组织节点"
         verbose_name_plural = verbose_name
+        ordering = ['sort_order', 'sys_create_datetime']
 
-class ProjectGroup(RootModel):
-    name = models.CharField(max_length=255, verbose_name="项目群名称")
-    domain = models.ForeignKey(DeliveryDomain, on_delete=models.CASCADE, related_name='groups', verbose_name="所属领域")
-    managers = models.ManyToManyField('core.User', related_name='delivery_project_groups', verbose_name="项目群经理", blank=True)
-    remark = models.TextField(blank=True, null=True, verbose_name="备注")
+class PositionStaff(RootModel):
+    node = models.ForeignKey(
+        OrganizationNode,
+        on_delete=models.CASCADE,
+        related_name='positions',
+        verbose_name="所属节点"
+    )
+    name = models.CharField(max_length=100, verbose_name="岗位名称")
+    users = models.ManyToManyField(
+        'core.User',
+        related_name='delivery_positions',
+        verbose_name="关联人员",
+        blank=True
+    )
 
     class Meta:
-        db_table = 'dm_project_group'
-        verbose_name = '项目群'
+        db_table = 'dm_position_staff'
+        verbose_name = "岗位人员"
         verbose_name_plural = verbose_name
-
-class ProjectComponent(RootModel):
-    name = models.CharField(max_length=255, verbose_name="组件名称")
-    group = models.ForeignKey(ProjectGroup, on_delete=models.CASCADE, related_name='components', verbose_name="所属项目群")
-    managers = models.ManyToManyField('core.User', related_name='delivery_components', verbose_name="项目经理", blank=True)
-    linked_project = models.ForeignKey(Project, on_delete=models.SET_NULL, null=True, blank=True, related_name='delivery_component', verbose_name="关联项目")
-    remark = models.TextField(blank=True, null=True, verbose_name="备注")
-
-    class Meta:
-        db_table = 'dm_project_component'
-        verbose_name = '项目组件'
-        verbose_name_plural = verbose_name
+        unique_together = ('node', 'name')
