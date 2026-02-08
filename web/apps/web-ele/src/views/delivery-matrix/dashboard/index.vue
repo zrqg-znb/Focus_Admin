@@ -1,12 +1,15 @@
 <script lang="ts" setup>
-import { computed, onMounted, ref } from 'vue';
+import type { OrgNode } from '#/api/delivery-matrix';
+import { onMounted, ref } from 'vue';
 import { Page } from '@vben/common-ui';
-import { getDashboardMatrix } from '#/api/delivery-matrix';
-import { ElTag, ElSkeleton } from 'element-plus';
+import { getTree } from '#/api/delivery-matrix';
+import { ElTag, ElSkeleton, ElTabs, ElTabPane, ElButton, ElTooltip } from 'element-plus';
 import { IconifyIcon } from '@vben/icons';
 import { UserAvatar } from '#/components/user-avatar';
+import { useRouter } from 'vue-router';
 
-const matrixData = ref<any[]>([]);
+const router = useRouter();
+const matrixData = ref<OrgNode[]>([]);
 const loading = ref(false);
 const activeDomainId = ref<string>('');
 const collapsedByDomain = ref<Record<string, Record<string, boolean>>>({});
@@ -30,121 +33,53 @@ function toggleGroup(domainId: string, groupId: string) {
   setGroupCollapsed(domainId, groupId, !isGroupCollapsed(domainId, groupId));
 }
 
-function setAllGroups(domainId: string, collapsed: boolean, groups: any[]) {
+function setAllGroups(domainId: string, collapsed: boolean, groups: OrgNode[]) {
   const domainState = ensureDomainCollapse(domainId);
   for (const g of groups || []) {
     domainState[g.id] = collapsed;
   }
 }
 
-function initDomainUI(domains: any[]) {
+function initDomainUI(domains: OrgNode[]) {
   const list = domains || [];
-  if (!activeDomainId.value && list.length > 0) activeDomainId.value = String(list[0].id);
+  if (!activeDomainId.value && list.length > 0) activeDomainId.value = list[0]!.id;
   for (const d of list) {
-    const domainId = String(d.id);
+    const domainId = d.id;
     const domainState = ensureDomainCollapse(domainId);
-    const groups = d?.groups || [];
+    const groups = d.children || [];
     for (let idx = 0; idx < groups.length; idx++) {
       const g = groups[idx];
-      if (typeof domainState[g.id] !== 'boolean') domainState[g.id] = idx !== 0;
+      if (g && typeof domainState[g.id] !== 'boolean') domainState[g.id] = idx !== 0;
     }
   }
 }
 
-onMounted(async () => {
+async function fetchData() {
   loading.value = true;
   try {
-    const data = await getDashboardMatrix();
-    matrixData.value = data;
-    initDomainUI(data);
+    matrixData.value = await getTree();
+    initDomainUI(matrixData.value);
   } finally {
     loading.value = false;
   }
-});
-
-const stats = computed(() => {
-  const domains = matrixData.value || [];
-  let groupCount = 0;
-  let componentCount = 0;
-  let linkedProjectCount = 0;
-  const totalPeopleKey = new Set<string>();
-
-  for (const d of domains) {
-    addUsersToSet(totalPeopleKey, d?.interface_people_info, d?.interface_people);
-    const groups = d?.groups || [];
-    groupCount += groups.length;
-    for (const g of groups) {
-      addUsersToSet(totalPeopleKey, g?.managers_info, g?.managers);
-      const comps = g?.components || [];
-      componentCount += comps.length;
-      for (const c of comps) {
-        addUsersToSet(totalPeopleKey, c?.managers_info, c?.managers);
-        if (c?.project_name) linkedProjectCount += 1;
-      }
-    }
-  }
-  return [
-    { label: '业务领域', value: domains.length, icon: 'carbon:wikis', color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-500/10' },
-    { label: '交付组件', value: componentCount, icon: 'carbon:cube', color: 'text-indigo-500', bg: 'bg-indigo-50 dark:bg-indigo-500/10' },
-    { label: '涉及人员', value: totalPeopleKey.size, icon: 'carbon:user-multiple', color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-500/10' },
-    { label: '已关联项目', value: linkedProjectCount, icon: 'carbon:connection-two-way', color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-500/10' },
-  ];
-});
-
-type SimpleUser = { id?: string; name: string };
-
-function normalizeUsers(infoList?: any[], nameList?: any[]): SimpleUser[] {
-  if (Array.isArray(infoList) && infoList.length > 0) {
-    return infoList
-      .filter((u: any) => u && (u.id || u.name))
-      .map((u: any) => ({
-        id: u.id ? String(u.id) : undefined,
-        name: String(u.name ?? ''),
-      }))
-      .filter(u => u.name || u.id);
-  }
-  if (Array.isArray(nameList) && nameList.length > 0) {
-    return nameList.filter(Boolean).map((n: any) => ({ name: String(n) }));
-  }
-  return [];
 }
 
-function addUsersToSet(set: Set<string>, infoList?: any[], nameList?: any[]) {
-  for (const u of normalizeUsers(infoList, nameList)) {
-    set.add(u.id ? `id:${u.id}` : `name:${u.name}`);
-  }
-}
+onMounted(fetchData);
 
-function getDomainInterfaces(domain: any) {
-  return normalizeUsers(domain?.interface_people_info, domain?.interface_people);
-}
-
-function getGroupManagers(group: any) {
-  return normalizeUsers(group?.managers_info, group?.managers);
-}
-
-function getComponentManagers(comp: any) {
-  return normalizeUsers(comp?.managers_info, comp?.managers);
-}
-
-function takeUsers(users: SimpleUser[], max: number) {
+function takeUsers(users: any[], max: number) {
   const list = Array.isArray(users) ? users : [];
   if (list.length <= max) return { shown: list, more: 0 };
   return { shown: list.slice(0, max), more: list.length - max };
 }
 
-function getDomainComponentCount(domain: any) {
-  const groups = domain?.groups || [];
-  return (groups || []).reduce((acc: number, g: any) => acc + ((g?.components || []).length || 0), 0);
-}
-
 function formatDate(dateStr?: string | null) {
   if (!dateStr) return '';
   if (typeof dateStr !== 'string') return String(dateStr);
-  return dateStr.length >= 10 ? dateStr.slice(5, 10) : dateStr; // MM-DD
+  return dateStr.length >= 10 ? dateStr.slice(5, 10) : dateStr;
 }
 
 function getMilestoneInfo(milestone: Record<string, any> | null | undefined) {
+  if (!milestone) return { total: 0, completed: 0, lastIndex: 0, nextIndex: null, percent: 0 };
   const total = 8;
   let completed = 0;
   let lastIndex = 0;
@@ -163,7 +98,7 @@ function getMilestoneInfo(milestone: Record<string, any> | null | undefined) {
 function getCurrentQG(milestone: any) {
   const info = getMilestoneInfo(milestone);
   if (info.lastIndex) return `QG${info.lastIndex}`;
-  return '规划中';
+  return '未开始';
 }
 
 function getNextQG(milestone: any) {
@@ -174,162 +109,162 @@ function getNextQG(milestone: any) {
   }
   return '已完成';
 }
+
+function goToAdmin() {
+  router.push('/delivery-matrix/admin');
+}
 </script>
 
 <template>
-  <Page content-class="flex flex-col gap-10 pb-16 dm-page">
-    <div class="grid grid-cols-2 gap-4 md:grid-cols-4 lg:gap-6">
-      <div
-        v-for="stat in stats"
-        :key="stat.label"
-        class="flex items-center gap-4 rounded-xl border border-border bg-card p-5 shadow-sm dark:bg-card/40"
-      >
-        <div :class="`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${stat.bg}`">
-          <IconifyIcon :icon="stat.icon" :class="`text-[22px] ${stat.color}`" />
-        </div>
-        <div class="min-w-0">
-          <div class="text-xs font-medium text-muted-foreground">{{ stat.label }}</div>
-          <div class="mt-1 text-2xl font-bold tabular-nums text-foreground">{{ stat.value }}</div>
-        </div>
-      </div>
-    </div>
-
+  <Page content-class="flex flex-col gap-6 pb-16 dm-page" auto-content-height>
+    <!-- Loading 状态 -->
     <div v-if="loading" class="space-y-6">
       <ElSkeleton :rows="10" animated />
     </div>
 
-    <div v-else-if="matrixData.length === 0" class="flex flex-col items-center justify-center py-28">
-      <IconifyIcon icon="carbon:data-vis-4" class="text-5xl text-muted-foreground/30" />
-      <div class="mt-4 text-sm font-medium text-muted-foreground">暂无交付矩阵数据</div>
+    <!-- 空状态 -->
+    <div v-else-if="matrixData.length === 0" class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-card/20 py-32">
+      <IconifyIcon icon="carbon:data-vis-4" class="mb-4 text-6xl text-muted-foreground/30" />
+      <div class="mb-2 text-lg font-semibold text-foreground">暂无组织架构数据</div>
+      <div class="mb-6 text-sm text-muted-foreground">请先在管理页面创建组织节点</div>
+      <ElButton type="primary" @click="goToAdmin">
+        <IconifyIcon icon="carbon:settings" class="mr-1" />
+        前往管理
+      </ElButton>
     </div>
 
-    <div v-else class="space-y-10">
+    <!-- 主内容区 -->
+    <div v-else class="space-y-6">
       <ElTabs v-model="activeDomainId" class="dm-domain-tabs">
         <ElTabPane v-for="domain in matrixData" :key="domain.id" :name="domain.id">
           <template #label>
             <div class="flex items-center gap-2">
-              <span class="max-w-[180px] truncate font-semibold">{{ domain.name }}</span>
-              <span class="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                {{ (domain.groups || []).length }}
-              </span>
+              <IconifyIcon icon="carbon:data-structured" class="text-base" />
+              <span class="max-w-[160px] truncate font-semibold">{{ domain.name }}</span>
             </div>
           </template>
 
-          <div class="mt-6 space-y-10">
-            <div class="flex flex-col gap-4 rounded-2xl border border-border bg-card/40 p-6 shadow-sm dark:bg-card/20">
-              <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div class="min-w-0">
+          <div class="mt-6 space-y-6">
+            <!-- 领域信息卡片 -->
+            <div class="rounded-xl border border-border bg-gradient-to-br from-card/60 to-card/40 p-5 shadow-sm backdrop-blur-sm">
+              <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div class="min-w-0 flex-1">
                   <div class="flex items-center gap-3">
-                    <div class="h-6 w-1.5 rounded-full bg-primary"></div>
-                    <div class="truncate text-xl font-semibold text-foreground">{{ domain.name }}</div>
-                  </div>
-                  <div class="mt-1 text-sm text-muted-foreground">
-                    <span>项目群 {{ (domain.groups || []).length }}</span>
-                    <span class="mx-2 text-muted-foreground/30">•</span>
-                    <span>组件 {{ getDomainComponentCount(domain) }}</span>
-                  </div>
-                </div>
-
-                <div class="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    class="rounded-lg border border-border bg-background/40 px-3 py-1.5 text-xs font-medium text-foreground/75 hover:bg-background/70"
-                    @click="setAllGroups(domain.id, false, domain.groups)"
-                  >
-                    展开全部
-                  </button>
-                  <button
-                    type="button"
-                    class="rounded-lg border border-border bg-background/40 px-3 py-1.5 text-xs font-medium text-foreground/75 hover:bg-background/70"
-                    @click="setAllGroups(domain.id, true, domain.groups)"
-                  >
-                    收起全部
-                  </button>
-                </div>
-              </div>
-
-              <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-                <span class="text-xs font-medium text-muted-foreground">领域接口人</span>
-                <div class="flex flex-wrap items-center gap-2">
-                  <template v-if="getDomainInterfaces(domain).length">
-                    <div
-                      v-for="u in takeUsers(getDomainInterfaces(domain), 8).shown"
-                      :key="u.id || u.name"
-                      class="flex items-center gap-2 rounded-full border border-border bg-background/50 px-2 py-1.5"
-                    >
-                      <UserAvatar
-                        :user-id="u.id"
-                        :name="u.name"
-                        :size="22"
-                        :font-size="10"
-                        :shadow="false"
-                        :show-popover="Boolean(u.id)"
-                      />
-                      <span class="max-w-[140px] truncate text-xs font-medium text-foreground/80">{{ u.name || u.id }}</span>
+                    <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+                      <IconifyIcon icon="carbon:data-structured" class="text-xl text-primary" />
                     </div>
-                    <span
-                      v-if="takeUsers(getDomainInterfaces(domain), 8).more"
-                      class="rounded-full border border-border bg-background/40 px-2 py-1.5 text-xs text-muted-foreground"
-                    >
-                      +{{ takeUsers(getDomainInterfaces(domain), 8).more }}
-                    </span>
-                  </template>
-                  <span v-else class="text-xs text-muted-foreground">未配置</span>
+                    <div class="truncate text-xl font-bold text-foreground">{{ domain.name }}</div>
+                  </div>
+
+                  <!-- 领域岗位 -->
+                  <div v-if="domain.positions && domain.positions.length > 0" class="mt-5 flex flex-wrap gap-x-6 gap-y-3">
+                    <div v-for="pos in domain.positions" :key="pos.name" class="flex flex-wrap items-center gap-3">
+                      <div class="flex items-center gap-2">
+                        <IconifyIcon icon="carbon:user-role" class="text-sm text-muted-foreground" />
+                        <span class="text-sm font-semibold text-foreground">{{ pos.name }}</span>
+                      </div>
+                      <div class="flex flex-wrap items-center gap-2">
+                        <template v-if="pos.users_info.length">
+                          <div
+                            v-for="u in takeUsers(pos.users_info, 6).shown"
+                            :key="u.id"
+                            class="flex items-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-1.5 transition-colors hover:bg-background"
+                          >
+                            <UserAvatar
+                              :user-id="u.id"
+                              :name="u.name"
+                              :size="22"
+                              :font-size="10"
+                              :shadow="false"
+                              :show-popover="true"
+                            />
+                            <span class="max-w-[110px] truncate text-sm font-medium text-foreground/90">{{ u.name }}</span>
+                          </div>
+                          <span
+                            v-if="takeUsers(pos.users_info, 6).more"
+                            class="rounded-lg border border-dashed border-border bg-background/40 px-3 py-1.5 text-xs font-medium text-muted-foreground"
+                          >
+                            +{{ takeUsers(pos.users_info, 6).more }}
+                          </span>
+                        </template>
+                        <span v-else class="rounded-lg border border-dashed border-border bg-background/20 px-3 py-1.5 text-sm text-muted-foreground">
+                          未配置
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="flex shrink-0 flex-wrap gap-2">
+                  <ElButton size="small" @click="setAllGroups(domain.id, false, domain.children || [])">
+                    <IconifyIcon icon="carbon:chevron-down" class="mr-1" />
+                    展开全部
+                  </ElButton>
+                  <ElButton size="small" @click="setAllGroups(domain.id, true, domain.children || [])">
+                    <IconifyIcon icon="carbon:chevron-up" class="mr-1" />
+                    收起全部
+                  </ElButton>
                 </div>
               </div>
             </div>
 
-            <div class="space-y-6">
+            <!-- 子节点列表 -->
+            <div class="space-y-4">
               <div
-                v-for="group in (domain.groups || [])"
+                v-for="group in (domain.children || [])"
                 :key="group.id"
-                class="overflow-hidden rounded-2xl border border-border bg-card shadow-sm dark:bg-card/60"
+                class="overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-shadow hover:shadow-md dark:bg-card/60"
               >
+                <!-- 子节点头部 -->
                 <button
                   type="button"
-                  class="flex w-full items-center justify-between gap-4 p-6 text-left hover:bg-muted/10"
+                  class="flex w-full items-center justify-between gap-4 bg-card/40 p-5 text-left transition-colors hover:bg-muted/10"
                   :aria-expanded="!isGroupCollapsed(domain.id, group.id)"
                   @click="toggleGroup(domain.id, group.id)"
                 >
-                  <div class="min-w-0">
-                    <div class="flex flex-wrap items-center gap-2">
-                      <IconifyIcon icon="carbon:folder" class="text-[18px] text-primary" />
-                      <span class="truncate text-lg font-semibold text-foreground">{{ group.name }}</span>
-                      <span class="rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-                        {{ (group.components || []).length }} 组件
-                      </span>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex flex-wrap items-center gap-3">
+                      <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
+                        <IconifyIcon icon="carbon:folder" class="text-lg text-primary" />
+                      </div>
+                      <span class="truncate text-lg font-bold text-foreground">{{ group.name }}</span>
                     </div>
-                    <div class="mt-3 flex flex-wrap items-center gap-2">
-                      <span class="text-xs font-medium text-muted-foreground">负责人</span>
-                      <template v-if="getGroupManagers(group).length">
-                        <div class="flex items-center gap-2">
-                          <div class="flex -space-x-2">
-                            <UserAvatar
-                              v-for="u in takeUsers(getGroupManagers(group), 4).shown"
-                              :key="u.id || u.name"
-                              :user-id="u.id"
-                              :name="u.name"
-                              :size="26"
-                              :font-size="11"
-                              :shadow="false"
-                              :show-popover="Boolean(u.id)"
-                              class="ring-2 ring-card"
-                            />
+
+                    <!-- 子节点岗位 -->
+                    <div v-if="group.positions && group.positions.length > 0" class="mt-4 flex flex-wrap items-center gap-4">
+                      <div v-for="pos in group.positions" :key="pos.name" class="flex flex-wrap items-center gap-2">
+                        <span class="text-xs font-medium text-muted-foreground">{{ pos.name }}</span>
+                        <template v-if="pos.users_info.length">
+                          <div class="flex items-center gap-2">
+                            <div class="flex -space-x-2">
+                              <UserAvatar
+                                v-for="u in takeUsers(pos.users_info, 4).shown"
+                                :key="u.id"
+                                :user-id="u.id"
+                                :name="u.name"
+                                :size="26"
+                                :font-size="11"
+                                :shadow="false"
+                                :show-popover="true"
+                                class="ring-2 ring-card"
+                              />
+                            </div>
+                            <span
+                              v-if="takeUsers(pos.users_info, 4).more"
+                              class="rounded-full border border-border bg-background/40 px-2 py-1 text-xs text-muted-foreground"
+                            >
+                              +{{ takeUsers(pos.users_info, 4).more }}
+                            </span>
                           </div>
-                          <span
-                            v-if="takeUsers(getGroupManagers(group), 4).more"
-                            class="rounded-full border border-border bg-background/40 px-2 py-0.5 text-xs text-muted-foreground"
-                          >
-                            +{{ takeUsers(getGroupManagers(group), 4).more }}
-                          </span>
-                        </div>
-                      </template>
-                      <span v-else class="text-xs text-muted-foreground">-</span>
+                        </template>
+                        <span v-else class="text-xs text-muted-foreground">-</span>
+                      </div>
                     </div>
                   </div>
 
                   <div class="flex items-center gap-2 text-muted-foreground">
-                    <span class="hidden text-xs font-medium sm:inline">
+                    <span class="hidden text-sm font-medium sm:inline">
                       {{ isGroupCollapsed(domain.id, group.id) ? '展开' : '收起' }}
                     </span>
                     <IconifyIcon
@@ -339,76 +274,81 @@ function getNextQG(milestone: any) {
                   </div>
                 </button>
 
-                <div v-show="!isGroupCollapsed(domain.id, group.id)" class="border-t border-border/40 p-6 pt-5">
-                  <div class="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                <!-- 孙节点列表 -->
+                <div v-show="!isGroupCollapsed(domain.id, group.id)" class="border-t border-border/40 bg-muted/5 p-5">
+                  <div v-if="!group.children || group.children.length === 0" class="rounded-xl border border-dashed border-border bg-background/20 py-8 text-center">
+                    <IconifyIcon icon="carbon:document-blank" class="mb-2 text-3xl text-muted-foreground/30" />
+                    <div class="text-sm text-muted-foreground">暂无子节点</div>
+                  </div>
+                  <div v-else class="space-y-3">
                     <div
-                      v-for="comp in (group.components || [])"
+                      v-for="comp in (group.children || [])"
                       :key="comp.id"
-                      class="flex flex-col rounded-2xl border border-border bg-background/40 shadow-sm transition-shadow hover:shadow-md dark:bg-background/10"
+                      class="flex items-start gap-4 rounded-lg border border-border bg-card/60 p-4 transition-all hover:bg-card hover:shadow-sm"
                     >
-                      <div class="flex items-start justify-between gap-3 border-b border-border/40 p-5">
-                        <div class="min-w-0">
-                          <div class="truncate text-base font-semibold text-foreground">{{ comp.name }}</div>
-                          <div v-if="comp.remark" class="mt-1 truncate text-xs text-muted-foreground">{{ comp.remark }}</div>
-                        </div>
-                        <ElTag
-                          v-if="comp.project_name"
-                          type="primary"
-                          effect="plain"
-                          size="small"
-                          class="shrink-0"
-                        >
-                          {{ comp.project_name }}
-                        </ElTag>
+                      <!-- 左侧图标 -->
+                      <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                        <IconifyIcon icon="carbon:cube" class="text-lg text-primary" />
                       </div>
 
-                      <div class="flex flex-1 flex-col gap-4 p-5">
-                        <div class="flex items-center justify-between">
-                          <div class="text-xs font-medium text-muted-foreground">交付负责人</div>
-                          <IconifyIcon icon="carbon:collaborate" class="text-[18px] text-muted-foreground/40" />
+                      <!-- 中间内容 -->
+                      <div class="min-w-0 flex-1">
+                        <div class="mb-3 flex items-start justify-between gap-3">
+                          <div class="min-w-0">
+                            <div class="truncate text-base font-bold text-foreground">{{ comp.name }}</div>
+                            <div v-if="comp.description" class="mt-1 line-clamp-1 text-sm text-muted-foreground">
+                              {{ comp.description }}
+                            </div>
+                          </div>
+                          <ElTag v-if="comp.linked_project_info" type="primary" effect="light" size="small" class="shrink-0">
+                            {{ comp.linked_project_info.name }}
+                          </ElTag>
                         </div>
 
-                        <div class="flex flex-wrap gap-2">
-                          <template v-if="getComponentManagers(comp).length">
-                            <div
-                              v-for="u in takeUsers(getComponentManagers(comp), 4).shown"
-                              :key="u.id || u.name"
-                              class="flex items-center gap-2 rounded-xl border border-border bg-background/40 px-2.5 py-2"
-                            >
-                              <UserAvatar
-                                :user-id="u.id"
-                                :name="u.name"
-                                :size="26"
-                                :font-size="11"
-                                :shadow="false"
-                                :show-popover="Boolean(u.id)"
-                              />
-                              <span class="max-w-[140px] truncate text-sm font-medium text-foreground/80">{{ u.name || u.id }}</span>
+                        <!-- 岗位横向排列 -->
+                        <div v-if="comp.positions && comp.positions.length > 0" class="flex flex-wrap gap-x-5 gap-y-2">
+                          <div v-for="pos in comp.positions" :key="pos.name" class="flex items-center gap-2">
+                            <span class="text-xs font-medium text-muted-foreground">{{ pos.name }}</span>
+                            <div class="flex items-center gap-1.5">
+                              <template v-if="pos.users_info.length">
+                                <ElTooltip
+                                  v-for="u in takeUsers(pos.users_info, 3).shown"
+                                  :key="u.id"
+                                  :content="u.name"
+                                  placement="top"
+                                >
+                                  <UserAvatar
+                                    :user-id="u.id"
+                                    :name="u.name"
+                                    :size="24"
+                                    :font-size="10"
+                                    :shadow="false"
+                                    :show-popover="false"
+                                  />
+                                </ElTooltip>
+                                <span
+                                  v-if="takeUsers(pos.users_info, 3).more"
+                                  class="ml-1 text-xs text-muted-foreground"
+                                >
+                                  +{{ takeUsers(pos.users_info, 3).more }}
+                                </span>
+                              </template>
+                              <span v-else class="text-xs text-muted-foreground">-</span>
                             </div>
-                            <div
-                              v-if="takeUsers(getComponentManagers(comp), 4).more"
-                              class="flex items-center rounded-xl border border-dashed border-border bg-background/20 px-2.5 py-2 text-xs text-muted-foreground"
-                            >
-                              +{{ takeUsers(getComponentManagers(comp), 4).more }} 人
-                            </div>
-                          </template>
-                          <div v-else class="w-full rounded-xl border border-dashed border-border bg-background/20 px-3 py-6 text-center text-xs text-muted-foreground">
-                            待分配
                           </div>
                         </div>
-                      </div>
 
-                      <div class="border-t border-border/40 bg-muted/5 px-5 py-3">
-                        <div v-if="comp.milestone" class="flex items-center justify-between text-xs">
-                          <div class="flex items-center gap-2 text-muted-foreground">
-                            <IconifyIcon icon="carbon:time" class="text-[14px]" />
-                            <span class="font-medium text-foreground/80">{{ getCurrentQG(comp.milestone) }}</span>
+                        <!-- 里程碑信息 -->
+                        <div v-if="comp.milestone_info" class="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
+                          <div class="flex items-center gap-1.5">
+                            <IconifyIcon icon="carbon:time" class="text-sm" />
+                            <span class="font-medium text-foreground">{{ getCurrentQG(comp.milestone_info) }}</span>
                           </div>
-                          <div class="text-muted-foreground">
-                            下一步：<span class="font-medium text-foreground/80">{{ getNextQG(comp.milestone) }}</span>
+                          <div class="flex items-center gap-1.5">
+                            <span>下一步：</span>
+                            <span class="font-medium text-foreground">{{ getNextQG(comp.milestone_info) }}</span>
                           </div>
                         </div>
-                        <div v-else class="text-center text-xs text-muted-foreground/70">无里程碑</div>
                       </div>
                     </div>
                   </div>
@@ -424,12 +364,11 @@ function getNextQG(milestone: any) {
 
 <style scoped>
 .dm-page :deep(.vben-page-content) {
-  padding-left: 1.5rem;
-  padding-right: 1.5rem;
+  padding: 1.5rem;
 }
 
 .dm-domain-tabs :deep(.el-tabs__header) {
-  margin: 0;
+  margin: 0 0 1rem;
 }
 
 .dm-domain-tabs :deep(.el-tabs__nav-wrap::after) {
@@ -437,21 +376,33 @@ function getNextQG(milestone: any) {
 }
 
 .dm-domain-tabs :deep(.el-tabs__item) {
-  height: 40px;
-  line-height: 40px;
-  padding: 0 14px;
+  height: 42px;
+  line-height: 42px;
+  padding: 0 16px;
   border-radius: 10px;
-  margin-right: 8px;
+  margin-right: 10px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.dm-domain-tabs :deep(.el-tabs__item:hover) {
+  background: hsl(var(--muted) / 0.5);
 }
 
 .dm-domain-tabs :deep(.el-tabs__item.is-active) {
-  background: hsl(var(--muted));
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
+}
+
+@media (min-width: 768px) {
+  .dm-page :deep(.vben-page-content) {
+    padding: 2rem;
+  }
 }
 
 @media (min-width: 1024px) {
   .dm-page :deep(.vben-page-content) {
-    padding-left: 2rem;
-    padding-right: 2rem;
+    padding: 2.5rem;
   }
 }
 </style>

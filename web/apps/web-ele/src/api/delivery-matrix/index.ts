@@ -1,119 +1,61 @@
 import { requestClient } from '#/api/request';
 
-export interface DeliveryDomain {
-  id: number;
+export interface PositionStaff {
+  id?: string;
   name: string;
-  code: string;
-  interface_people: string[];
-  interface_people_info: { id: string; name: string }[];
-  remark?: string;
-  sys_create_datetime: string;
+  users_info: { id: string; name: string; avatar?: string }[];
 }
 
-export interface ProjectGroup {
-  id: number;
-  name: string;
-  domain: number;
-  domain_info: { id: number; name: string };
-  managers: string[];
-  managers_info: { id: string; name: string }[];
-  remark?: string;
-}
-
-export interface ProjectComponent {
-  id: number;
-  name: string;
-  group: number;
-  group_info: { id: number; name: string };
-  managers: string[];
-  managers_info: { id: string; name: string }[];
-  linked_project: null | number;
-  linked_project_info: null | { id: number; name: string };
-  milestone_info: any | null;
-  remark?: string;
-}
-
-export interface DeliveryTreeNode {
+export interface OrgNode {
   id: string;
-  key: string;
   name: string;
-  type: 'component' | 'domain' | 'group';
-  real_id: number;
+  code?: string;
+  description?: string;
   parent_id?: string;
-  children?: DeliveryTreeNode[];
-  [key: string]: any;
+  linked_project_id?: string;
+  linked_project_info?: { id: string; name: string };
+  sys_create_datetime?: string;
+  sort_order?: number;
+  children?: OrgNode[];
+  positions: PositionStaff[];
+  milestone_info?: any;
 }
 
-// --- Domain ---
-export function getDomains() {
-  return requestClient.get<DeliveryDomain[]>('/api/delivery-matrix/domains');
+export interface OrgNodeCreate {
+  name: string;
+  code?: string;
+  description?: string;
+  parent_id?: string;
+  linked_project_id?: string;
+  positions: { name: string; user_ids: string[] }[];
 }
 
-export function getAllDomains() {
-  return requestClient.get<DeliveryDomain[]>(
-    '/api/delivery-matrix/domains/all',
-  );
+export interface OrgNodeUpdate {
+  name?: string;
+  code?: string;
+  description?: string;
+  parent_id?: string;
+  linked_project_id?: string;
+  sort_order?: number;
 }
 
-export function createDomain(data: any) {
-  return requestClient.post('/api/delivery-matrix/domains', data);
+// --- Nodes ---
+export function getTree() {
+  return requestClient.get<OrgNode[]>('/api/delivery-matrix/tree');
 }
 
-export function updateDomain(id: number, data: any) {
-  return requestClient.put(`/api/delivery-matrix/domains/${id}`, data);
+export function createNode(data: OrgNodeCreate) {
+  return requestClient.post<OrgNode>('/api/delivery-matrix/nodes', data);
 }
 
-export function deleteDomain(id: number) {
-  return requestClient.delete(`/api/delivery-matrix/domains/${id}`);
+export function updateNode(id: string, data: OrgNodeUpdate) {
+  return requestClient.put<OrgNode>(`/api/delivery-matrix/nodes/${id}`, data);
 }
 
-// --- Group ---
-export function getGroups(domain_id?: number) {
-  return requestClient.get<ProjectGroup[]>('/api/delivery-matrix/groups', {
-    params: { domain_id },
-  });
+export function deleteNode(id: string) {
+  return requestClient.delete(`/api/delivery-matrix/nodes/${id}`);
 }
 
-export function createGroup(data: any) {
-  return requestClient.post('/api/delivery-matrix/groups', data);
-}
-
-export function updateGroup(id: number, data: any) {
-  return requestClient.put(`/api/delivery-matrix/groups/${id}`, data);
-}
-
-export function deleteGroup(id: number) {
-  return requestClient.delete(`/api/delivery-matrix/groups/${id}`);
-}
-
-// --- Component ---
-export function getComponents(group_id?: number) {
-  return requestClient.get<ProjectComponent[]>(
-    '/api/delivery-matrix/components',
-    { params: { group_id } },
-  );
-}
-
-export function createComponent(data: any) {
-  return requestClient.post('/api/delivery-matrix/components', data);
-}
-
-export function updateComponent(id: number, data: any) {
-  return requestClient.put(`/api/delivery-matrix/components/${id}`, data);
-}
-
-export function deleteComponent(id: number) {
-  return requestClient.delete(`/api/delivery-matrix/components/${id}`);
-}
-
-// --- Dashboard ---
-export function getDashboardMatrix() {
-  return requestClient.get<any[]>('/api/delivery-matrix/dashboard/matrix');
-}
-
-// --- Admin Tree ---
-export function getAdminTree() {
-  return requestClient.get<DeliveryTreeNode[]>(
-    '/api/delivery-matrix/admin/tree',
-  );
+export function updateNodePositions(id: string, positions: { name: string; user_ids: string[] }[]) {
+  return requestClient.put<PositionStaff[]>(`/api/delivery-matrix/nodes/${id}/positions`, positions);
 }

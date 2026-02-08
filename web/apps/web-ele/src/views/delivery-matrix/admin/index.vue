@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { DeliveryTreeNode } from '#/api/delivery-matrix';
+import type { OrgNode } from '#/api/delivery-matrix';
 
 import { ref } from 'vue';
 
@@ -9,31 +9,31 @@ import DeliveryForm from './modules/DeliveryForm.vue';
 import DeliveryTree from './modules/DeliveryTree.vue';
 
 const treeRef = ref();
-const selectedNode = ref<DeliveryTreeNode>();
+const selectedNode = ref<OrgNode>();
 const isEdit = ref(false);
-const createType = ref<'component' | 'domain' | 'group'>();
-const createParent = ref<DeliveryTreeNode>();
+const createParent = ref<OrgNode>();
+const showForm = ref(false);
 
-function onSelect(node: DeliveryTreeNode | undefined) {
+function onSelect(node: OrgNode | undefined) {
+  if (!node) {
+      showForm.value = false;
+      return;
+  }
   selectedNode.value = node;
   isEdit.value = true;
-  createType.value = undefined;
   createParent.value = undefined;
+  showForm.value = true;
 }
 
-function onAdd(
-  type: 'component' | 'domain' | 'group',
-  parentNode?: DeliveryTreeNode,
-) {
-  selectedNode.value = undefined; // Clear selection to show create form
+function onAdd(parentNode?: OrgNode) {
+  selectedNode.value = undefined;
   isEdit.value = false;
-  createType.value = type;
   createParent.value = parentNode;
+  showForm.value = true;
 }
 
 function onSuccess() {
   treeRef.value?.refresh();
-  // If created, maybe select it? For now just refresh
 }
 </script>
 
@@ -50,16 +50,15 @@ function onSuccess() {
       <!-- Right Form -->
       <div class="flex-1 rounded-lg border border-gray-100 bg-white shadow-sm">
         <div
-          v-if="!selectedNode && !createType"
+          v-if="!showForm"
           class="flex h-full items-center justify-center text-gray-400"
         >
-          请选择左侧节点进行操作
+          请选择左侧节点进行操作或点击添加
         </div>
         <DeliveryForm
           v-else
           :node="selectedNode"
           :is-edit="isEdit"
-          :type="createType || selectedNode?.type"
           :parent-node="createParent"
           @success="onSuccess"
         />

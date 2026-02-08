@@ -1,188 +1,89 @@
 <script lang="ts" setup>
-import type { DeliveryTreeNode } from '#/api/delivery-matrix';
+import type { OrgNode } from '#/api/delivery-matrix';
 
-import { computed, watch } from 'vue';
+import { ref, watch } from 'vue';
 
 import { ElButton, ElCard, ElMessage } from 'element-plus';
 
 import { useVbenForm } from '#/adapter/form';
 import {
-  createComponent,
-  createGroup,
-  updateComponent,
-  updateDomain,
-  updateGroup,
+  createNode,
+  updateNode,
+  updateNodePositions,
 } from '#/api/delivery-matrix';
-import { listProjectsApi } from '#/api/project-manager/project';
+
+import { useNodeFormSchema } from '../../data';
+import PositionEdit from './PositionEdit.vue';
 
 const props = defineProps<{
-  isEdit?: boolean; // true for edit selected, false for create new
-  node?: DeliveryTreeNode;
-  parentNode?: DeliveryTreeNode; // for create
-  type?: 'component' | 'domain' | 'group'; // for create
+  isEdit?: boolean;
+  node?: OrgNode;
+  parentNode?: OrgNode;
 }>();
 
 const emit = defineEmits<{ success: [] }>();
 
-// Define Schemas
-const domainSchema = [
-  {
-    component: 'Input',
-    fieldName: 'name',
-    label: '领域名称',
-    componentProps: { disabled: false },
-  },
-  {
-    component: 'Input',
-    fieldName: 'code',
-    label: '领域编码',
-    componentProps: { disabled: false },
-  },
-  {
-    component: 'UserSelector',
-    fieldName: 'interface_people_ids',
-    label: '领域接口人',
-    componentProps: { multiple: true, placeholder: '请选择接口人' },
-  },
-  { component: 'Textarea', fieldName: 'remark', label: '备注' },
-];
-
-const groupSchema = [
-  {
-    component: 'Input',
-    fieldName: 'name',
-    label: '项目群名称',
-    rules: 'required',
-  },
-  {
-    component: 'UserSelector',
-    fieldName: 'manager_ids',
-    label: '项目群经理',
-    componentProps: { multiple: true, placeholder: '请选择经理' },
-  },
-  { component: 'Textarea', fieldName: 'remark', label: '备注' },
-];
-
-const componentSchema = [
-  {
-    component: 'Input',
-    fieldName: 'name',
-    label: '组件名称',
-    rules: 'required',
-  },
-  {
-    component: 'UserSelector',
-    fieldName: 'manager_ids',
-    label: '项目经理',
-    componentProps: { multiple: true, placeholder: '请选择经理' },
-  },
-  {
-    component: 'ApiSelect',
-    fieldName: 'linked_project_id',
-    label: '关联项目',
-    componentProps: {
-      api: async () => {
-        const res = await listProjectsApi({ pageSize: 1000 });
-        return res.items;
-      },
-      labelField: 'name',
-      valueField: 'id',
-      showSearch: true,
-      optionFilterProp: 'label',
-    },
-  },
-  { component: 'Textarea', fieldName: 'remark', label: '备注' },
-];
-
-const currentSchema = computed(() => {
-  const targetType = props.isEdit ? props.node?.type : props.type;
-  if (targetType === 'domain') return domainSchema;
-  if (targetType === 'group') return groupSchema;
-  if (targetType === 'component') return componentSchema;
-  return [];
-});
+const positions = ref<{ name: string; user_ids: string[] }[]>([]);
+const submitLoading = ref(false);
 
 const [Form, formApi] = useVbenForm({
   commonConfig: { colon: true, componentProps: { class: 'w-full' } },
-  schema: [],
+  schema: useNodeFormSchema(),
   showDefaultActions: false,
 });
 
-// Watch for changes to update form
 watch(
-  () => [props.node, props.isEdit, props.type],
+  () => [props.node, props.isEdit],
   () => {
-    if (!props.isEdit && !props.type) return; // Nothing to show
-
-    // Update Schema
-    formApi.setState({ schema: currentSchema.value });
-
-    // Update Values
     if (props.isEdit && props.node) {
-      const data = { ...props.node };
-      // Map fields
-      switch (props.node.type) {
-        case 'component': {
-          data.manager_ids = props.node.managers;
-
-          break;
-        }
-        case 'domain': {
-          data.interface_people_ids = props.node.interface_people;
-
-          break;
-        }
-        case 'group': {
-          data.manager_ids = props.node.managers;
-
-          break;
-        }
-        // No default
-      }
-      formApi.setValues(data);
+      formApi.setValues(props.node);
+      // Map positions
+      positions.value = props.node.positions
+        ? props.node.positions.map((p) => ({
+            name: p.name,
+            user_ids: p.users_info.map((u) => u.id),
+          }))
+        : [];
     } else {
       formApi.resetForm();
+      positions.value = [];
     }
   },
   { immediate: true },
 );
 
 async function onSubmit() {
+  if (submitLoading.value) return; // 防止重复提交
+
   const { valid } = await formApi.validate();
   if (!valid) return;
 
   const data = await formApi.getValues();
+  submitLoading.value = true;
+
   try {
     if (props.isEdit && props.node) {
-      switch (props.node.type) {
-        case 'component': {
-          {
-            await updateComponent(props.node.real_id, data);
-            // No default
-          }
-          break;
-        }
-        case 'domain': {
-          await updateDomain(props.node.real_id, data);
-          break;
-        }
-        case 'group': {
-          await updateGroup(props.node.real_id, data);
-          break;
-        }
-      }
+      // Update Node
+      await updateNode(props.node.id, data);
+      // Update Positions - 始终调用，无论是否为根节点
+      await updateNodePositions(props.node.id, positions.value);
     } else {
       // Create
-      if (props.type === 'group') {
-        await createGroup({ ...data, domain_id: props.parentNode?.real_id });
-      } else if (props.type === 'component') {
-        await createComponent({ ...data, group_id: props.parentNode?.real_id });
-      }
+      const payload = {
+        ...data,
+        parent_id: props.parentNode?.id || undefined,
+        positions: positions.value,
+      } as any;
+      await createNode(payload);
     }
     ElMessage.success('保存成功');
     emit('success');
-  } catch (error) {
-    console.error(error);
+  } catch (error: any) {
+    console.error('保存失败:', error);
+    const msg = error?.response?.data?.detail || error?.message || '保存失败，请重试';
+    ElMessage.error(msg);
+  } finally {
+    submitLoading.value = false;
   }
 }
 </script>
@@ -190,17 +91,24 @@ async function onSubmit() {
 <template>
   <ElCard
     class="h-full border-none shadow-none"
-    :body-style="{ padding: '20px' }"
+    :body-style="{ padding: '20px', height: '100%', overflowY: 'auto' }"
   >
     <template #header>
       <div class="mb-4 border-b pb-2 text-lg font-bold">
-        {{ isEdit ? '编辑' : '新增' }}
-        {{ type === 'domain' ? '领域' : type === 'group' ? '项目群' : '组件' }}
+        {{ isEdit ? '编辑节点' : '新增节点' }}
       </div>
     </template>
+
     <Form />
-    <div class="mt-4 flex justify-end">
-      <ElButton type="primary" @click="onSubmit">保存</ElButton>
+
+    <div class="mt-4 border-t pt-4">
+      <PositionEdit v-model="positions" />
+    </div>
+
+    <div class="mt-8 flex justify-end">
+      <ElButton type="primary" :loading="submitLoading" @click="onSubmit">
+        保存
+      </ElButton>
     </div>
   </ElCard>
 </template>
