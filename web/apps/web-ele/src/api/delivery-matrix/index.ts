@@ -3,6 +3,7 @@ import { requestClient } from '#/api/request';
 export interface PositionStaff {
   id?: string;
   name: string;
+  sort?: number;
   users_info: { id: string; name: string; avatar?: string }[];
 }
 
@@ -27,7 +28,8 @@ export interface OrgNodeCreate {
   description?: string;
   parent_id?: string;
   linked_project_id?: string;
-  positions: { name: string; user_ids: string[] }[];
+  sort_order?: number;
+  positions: { name: string; sort?: number; user_ids: string[] }[];
 }
 
 export interface OrgNodeUpdate {
@@ -56,6 +58,6 @@ export function deleteNode(id: string) {
   return requestClient.delete(`/api/delivery-matrix/nodes/${id}`);
 }
 
-export function updateNodePositions(id: string, positions: { name: string; user_ids: string[] }[]) {
+export function updateNodePositions(id: string, positions: { name: string; sort?: number; user_ids: string[] }[]) {
   return requestClient.put<PositionStaff[]>(`/api/delivery-matrix/nodes/${id}/positions`, positions);
 }

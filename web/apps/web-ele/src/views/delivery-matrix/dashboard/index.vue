@@ -1,9 +1,9 @@
 <script lang="ts" setup>
 import type { OrgNode } from '#/api/delivery-matrix';
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { Page } from '@vben/common-ui';
 import { getTree } from '#/api/delivery-matrix';
-import { ElTag, ElSkeleton, ElTabs, ElTabPane, ElButton, ElTooltip } from 'element-plus';
+import { ElTag, ElSkeleton, ElTabs, ElTabPane, ElButton, ElTooltip, ElInput } from 'element-plus';
 import { IconifyIcon } from '@vben/icons';
 import { UserAvatar } from '#/components/user-avatar';
 import { useRouter } from 'vue-router';
@@ -13,6 +13,41 @@ const matrixData = ref<OrgNode[]>([]);
 const loading = ref(false);
 const activeDomainId = ref<string>('');
 const collapsedByDomain = ref<Record<string, Record<string, boolean>>>({});
+const searchQuery = ref('');
+
+const filteredData = computed(() => {
+  if (!searchQuery.value.trim()) return matrixData.value;
+  const query = searchQuery.value.toLowerCase();
+
+  return matrixData.value
+    .map((domain) => {
+      // Filter children (Groups)
+      const filteredGroups = (domain.children || [])
+        .map((group) => {
+          // Filter children (Components)
+          const filteredComps = (group.children || []).filter((comp) =>
+            comp.name.toLowerCase().includes(query),
+          );
+
+          // Keep group if it matches or has matching children
+          if (
+            group.name.toLowerCase().includes(query) ||
+            filteredComps.length > 0
+          ) {
+            return { ...group, children: filteredComps };
+          }
+          return null;
+        })
+        .filter(Boolean) as OrgNode[];
+
+      // Keep domain if it matches or has matching children
+      if (domain.name.toLowerCase().includes(query) || filteredGroups.length > 0) {
+        return { ...domain, children: filteredGroups };
+      }
+      return null;
+    })
+    .filter(Boolean) as OrgNode[];
+});
 
 function ensureDomainCollapse(domainId: string) {
   if (!collapsedByDomain.value[domainId]) collapsedByDomain.value[domainId] = {};
@@ -95,19 +130,8 @@ function getMilestoneInfo(milestone: Record<string, any> | null | undefined) {
   return { total, completed, lastIndex, nextIndex, percent };
 }
 
-function getCurrentQG(milestone: any) {
-  const info = getMilestoneInfo(milestone);
-  if (info.lastIndex) return `QG${info.lastIndex}`;
-  return '未开始';
-}
-
-function getNextQG(milestone: any) {
-  const info = getMilestoneInfo(milestone);
-  if (info.nextIndex) {
-    const date = milestone[`qg${info.nextIndex}_date`];
-    return `QG${info.nextIndex} · ${formatDate(date)}`;
-  }
-  return '已完成';
+function goToProjectReport() {
+  router.push('/project-manager/project-report');
 }
 
 function goToAdmin() {
@@ -135,8 +159,19 @@ function goToAdmin() {
 
     <!-- 主内容区 -->
     <div v-else class="space-y-6">
+      <div class="flex items-center justify-between">
+        <div class="w-64">
+          <ElInput
+            v-model="searchQuery"
+            placeholder="搜索节点..."
+            clearable
+            prefix-icon="carbon:search"
+          />
+        </div>
+      </div>
+      
       <ElTabs v-model="activeDomainId" class="dm-domain-tabs">
-        <ElTabPane v-for="domain in matrixData" :key="domain.id" :name="domain.id">
+        <ElTabPane v-for="domain in filteredData" :key="domain.id" :name="domain.id">
           <template #label>
             <div class="flex items-center gap-2">
               <IconifyIcon icon="carbon:data-structured" class="text-base" />
@@ -339,15 +374,16 @@ function goToAdmin() {
                         </div>
 
                         <!-- 里程碑信息 -->
-                        <div v-if="comp.milestone_info" class="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
-                          <div class="flex items-center gap-1.5">
-                            <IconifyIcon icon="carbon:time" class="text-sm" />
-                            <span class="font-medium text-foreground">{{ getCurrentQG(comp.milestone_info) }}</span>
-                          </div>
-                          <div class="flex items-center gap-1.5">
-                            <span>下一步：</span>
-                            <span class="font-medium text-foreground">{{ getNextQG(comp.milestone_info) }}</span>
-                          </div>
+                        <div class="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
+                          <ElButton
+                            link
+                            type="primary"
+                            size="small"
+                            @click="goToProjectReport"
+                          >
+                            <IconifyIcon icon="carbon:document-view" class="mr-1" />
+                            查看项目报告
+                          </ElButton>
                         </div>
                       </div>
                     </div>

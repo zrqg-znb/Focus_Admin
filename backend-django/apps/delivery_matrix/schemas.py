@@ -8,6 +8,7 @@ class DeleteOut(Schema):
 # --- Position Staff ---
 class PositionStaffCreate(Schema):
     name: str
+    sort: Optional[int] = 0
     user_ids: List[str] = Field([])
 
 class PositionStaffOut(ModelSchema):
@@ -16,7 +17,7 @@ class PositionStaffOut(ModelSchema):
     
     class Meta:
         model = PositionStaff
-        fields = ['id', 'name']
+        fields = ['id', 'name', 'sort']
     
     @staticmethod
     def resolve_id(obj):
@@ -78,7 +79,7 @@ class OrgNodeOut(ModelSchema):
         """获取节点的所有岗位配置"""
         # 直接从数据库查询，避免使用可能被覆盖的属性
         from .models import PositionStaff
-        return PositionStaff.objects.filter(node=obj).prefetch_related('users')
+        return PositionStaff.objects.filter(node=obj).prefetch_related('users').order_by('-sort')
 
     @staticmethod
     def resolve_linked_project_info(obj):

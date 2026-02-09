@@ -87,7 +87,7 @@ def get_tree_data():
     # Fetch all nodes with related data
     nodes = OrganizationNode.objects.prefetch_related(
         'positions', 'positions__users', 'linked_project', 'linked_project__milestone'
-    ).order_by('sort_order', 'sys_create_datetime')
+    ).order_by('-sort_order', 'sys_create_datetime')
     
     # Build tree in memory
     node_map = {n.id: n for n in nodes}

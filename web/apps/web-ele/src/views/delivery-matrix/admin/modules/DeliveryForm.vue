@@ -23,7 +23,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ success: [] }>();
 
-const positions = ref<{ name: string; user_ids: string[] }[]>([]);
+const positions = ref<{ name: string; sort?: number; user_ids: string[] }[]>([]);
 const submitLoading = ref(false);
 
 const [Form, formApi] = useVbenForm({
@@ -41,6 +41,7 @@ watch(
       positions.value = props.node.positions
         ? props.node.positions.map((p) => ({
             name: p.name,
+            sort: p.sort,
             user_ids: p.users_info.map((u) => u.id),
           }))
         : [];

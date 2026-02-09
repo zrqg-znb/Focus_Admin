@@ -3,12 +3,13 @@ import { ref, watch } from 'vue';
 
 import { Plus, Trash2 } from 'lucide-vue-next';
 
-import { ElButton, ElInput } from 'element-plus';
+import { ElButton, ElInput, ElInputNumber } from 'element-plus';
 
 import { UserSelector } from '#/components/zq-form/user-selector';
 
 interface PositionItem {
   name: string;
+  sort?: number;
   user_ids: string[];
 }
 
@@ -33,7 +34,7 @@ function update() {
 }
 
 function add() {
-  list.value.push({ name: '', user_ids: [] });
+  list.value.push({ name: '', sort: 0, user_ids: [] });
   update();
 }
 
@@ -71,12 +72,23 @@ function onUserChange(val: string | string[] | undefined, index: number) {
         :key="index"
         class="flex items-start gap-2 rounded border bg-gray-50 p-2"
       >
-        <div class="w-1/3">
+        <div class="w-1/4">
           <div class="mb-1 text-xs text-gray-500">岗位名称</div>
           <ElInput
             v-model="item.name"
             placeholder="如：项目经理"
             @input="update"
+          />
+        </div>
+        <div class="w-24">
+          <div class="mb-1 text-xs text-gray-500">排序</div>
+          <ElInputNumber
+            v-model="item.sort"
+            :min="0"
+            :precision="0"
+            controls-position="right"
+            style="width: 100%"
+            @change="update"
           />
         </div>
         <div class="flex-1">
