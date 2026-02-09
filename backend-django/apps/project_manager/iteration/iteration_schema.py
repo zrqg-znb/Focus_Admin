@@ -42,6 +42,17 @@ class IterationMetricOut(Schema):
     ar_set_c_rate: float = 0.0
     dr_set_c_rate: float = 0.0
 
+    # New Indicators
+    test_automation_rate: float = 0.0
+    test_case_execution_rate: float = 0.0
+    bug_fix_rate: float = 0.0
+    code_review_rate: float = 0.0
+    code_coverage_rate: float = 0.0
+
+class IterationManualUpdateSchema(Schema):
+    test_automation_rate: Optional[float] = None
+    test_case_execution_rate: Optional[float] = None
+
 class IterationOut(ModelSchema):
     project_id: str
     class Meta:
@@ -66,6 +77,9 @@ class IterationDashboardSchema(Schema):
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     is_healthy: bool = True
+
+    # IDs
+    iteration_id: Optional[str] = None
     
     # Calculated Metrics
     sr_breakdown_rate: float = 0.0
@@ -74,6 +88,13 @@ class IterationDashboardSchema(Schema):
     dr_set_a_rate: float = 0.0
     ar_set_c_rate: float = 0.0
     dr_set_c_rate: float = 0.0
+
+    # New Indicators
+    test_automation_rate: float = 0.0
+    test_case_execution_rate: float = 0.0
+    bug_fix_rate: float = 0.0
+    code_review_rate: float = 0.0
+    code_coverage_rate: float = 0.0
     
     # Raw counts for context if needed (optional)
     sr_num: int = 0

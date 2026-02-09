@@ -11,7 +11,8 @@ from .iteration_schema import (
     IterationMetricSchema,
     IterationMetricOut,
     IterationOut,
-    IterationDashboardSchema
+    IterationDashboardSchema,
+    IterationManualUpdateSchema
 )
 from . import iteration_service
 
@@ -41,3 +42,7 @@ def refresh_project_iteration(request, project_id: str):
         func_args=(project_id,)
     )
     return True
+
+@router.put("/metric/{iteration_id}/manual", response=bool, summary="更新手动指标")
+def update_manual_metric(request, iteration_id: str, data: IterationManualUpdateSchema):
+    return iteration_service.update_manual_metric(iteration_id, data)

@@ -76,6 +76,11 @@ class DataPlatformMock:
         remaining_dr -= d_state_dr_num
         i_state_dr_num = remaining_dr
         
+        # New Mocked Indicators
+        bug_fix_rate = random.uniform(0.5, 0.95)
+        code_review_rate = random.uniform(0.6, 0.98)
+        code_coverage_rate = random.uniform(0.3, 0.85)
+        
         return {
             "sr_num": sr_num,
             "dr_num": dr_num,
@@ -98,6 +103,9 @@ class DataPlatformMock:
             "p_state_dr_num": p_state_dr_num,
             "c_state_dr_num": c_state_dr_num,
             "a_state_dr_num": a_state_dr_num,
+            "bug_fix_rate": bug_fix_rate,
+            "code_review_rate": code_review_rate,
+            "code_coverage_rate": code_coverage_rate,
         }
 
 def sync_project_iterations(project: Project):
@@ -132,12 +140,39 @@ def sync_project_iterations(project: Project):
             current_iteration = iteration
 
         # 3. 获取并保存指标数据 (记录为今天的数据)
+        # 如果迭代已经结束（今天 > 结束日期），则不再更新/生成新的指标数据（冻结）
+        if today > it_data['end_date']:
+            continue
+
         metrics_data = DataPlatformMock.get_iteration_metrics(it_data['code'])
-        IterationMetric.objects.update_or_create(
+        
+        # Check if record for today exists
+        existing_metric = IterationMetric.objects.filter(
             iteration=iteration,
-            record_date=today,
-            defaults=metrics_data
-        )
+            record_date=today
+        ).first()
+
+        if existing_metric:
+            # Update existing record: Only update mocked fields, keep manual fields untouched
+            for key, value in metrics_data.items():
+                setattr(existing_metric, key, value)
+            existing_metric.save()
+        else:
+            # Create new record: Try to inherit manual fields from the latest previous record
+            latest_prev_metric = IterationMetric.objects.filter(
+                iteration=iteration,
+                record_date__lt=today
+            ).order_by('-record_date').first()
+
+            if latest_prev_metric:
+                metrics_data['test_automation_rate'] = latest_prev_metric.test_automation_rate
+                metrics_data['test_case_execution_rate'] = latest_prev_metric.test_case_execution_rate
+            
+            IterationMetric.objects.create(
+                iteration=iteration,
+                record_date=today,
+                **metrics_data
+            )
 
     # 4. 更新 is_current 状态
     # 先重置该项目所有迭代为 False

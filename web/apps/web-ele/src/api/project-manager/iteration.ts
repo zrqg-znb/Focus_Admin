@@ -23,6 +23,13 @@ export interface IterationMetricOut {
   dr_set_a_rate: number;
   ar_set_c_rate: number;
   dr_set_c_rate: number;
+
+  // New Indicators
+  test_automation_rate: number;
+  test_case_execution_rate: number;
+  bug_fix_rate: number;
+  code_review_rate: number;
+  code_coverage_rate: number;
   
   // Raw data (optional, but good to have)
   sr_num: number;
@@ -41,6 +48,7 @@ export interface IterationDashboardItem {
   start_date?: string;
   end_date?: string;
   is_healthy: boolean;
+  iteration_id?: string;
   
   // Calculated Rates
   sr_breakdown_rate: number;
@@ -49,6 +57,13 @@ export interface IterationDashboardItem {
   dr_set_a_rate: number;
   ar_set_c_rate: number;
   dr_set_c_rate: number;
+
+  // New Indicators
+  test_automation_rate: number;
+  test_case_execution_rate: number;
+  bug_fix_rate: number;
+  code_review_rate: number;
+  code_coverage_rate: number;
   
   // Raw counts
   sr_num: number;
@@ -72,4 +87,13 @@ export async function listProjectIterationsApi(projectId: string) {
 
 export async function refreshProjectIterationApi(projectId: string) {
   return requestClient.post<boolean>(`${base}/project/${projectId}/refresh`);
+}
+
+export interface IterationManualUpdateData {
+  test_automation_rate?: number;
+  test_case_execution_rate?: number;
+}
+
+export async function updateManualMetricApi(iterationId: string, data: IterationManualUpdateData) {
+  return requestClient.put<boolean>(`${base}/metric/${iterationId}/manual`, data);
 }

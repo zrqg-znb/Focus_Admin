@@ -9,7 +9,8 @@ import { Page } from '@vben/common-ui';
 import { ElLink } from 'element-plus';
 
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
-import { getIterationOverviewApi } from '#/api/project-manager/iteration';
+import { getIterationOverviewApi, updateManualMetricApi } from '#/api/project-manager/iteration';
+import { ElMessage } from 'element-plus';
 
 import { useDashboardColumns, useSearchFormSchema } from './data';
 
@@ -19,6 +20,22 @@ const router = useRouter();
 
 function onNameClick(row: IterationDashboardItem) {
   router.push(`/project-manager/iteration/detail/${row.project_id}`);
+}
+
+async function onEditClosed({ row, column }: any) {
+  if (!row.iteration_id) return;
+  const field = column.field;
+  if (field === 'test_automation_rate' || field === 'test_case_execution_rate') {
+    try {
+      await updateManualMetricApi(row.iteration_id, {
+        [field]: row[field]
+      });
+      ElMessage.success('更新成功');
+    } catch (e) {
+      // Revert change? For now just show error
+      ElMessage.error('更新失败');
+    }
+  }
 }
 
 const [Grid, gridApi] = useVbenVxeGrid({
@@ -31,6 +48,21 @@ const [Grid, gridApi] = useVbenVxeGrid({
     height: 'auto',
     keepSource: true,
     pagerConfig: { enabled: true },
+    editConfig: {
+      trigger: 'click',
+      mode: 'cell',
+      beforeEditMethod: ({ row }) => {
+         if (!row.end_date) return true;
+         const today = new Date();
+         today.setHours(0,0,0,0);
+         const end = new Date(row.end_date);
+         if (end < today) {
+             ElMessage.warning('该迭代已结束，无法修改指标');
+             return false;
+         }
+         return true;
+      }
+    },
     proxyConfig: {
       ajax: {
         query: async ({ page }, formValues) => {
@@ -68,7 +100,7 @@ const [Grid, gridApi] = useVbenVxeGrid({
 
 <template>
   <Page auto-content-height>
-    <Grid>
+    <Grid @edit-closed="onEditClosed">
       <template #name_slot="{ row }">
         <ElLink type="primary" @click="onNameClick(row)">{{ row.project_name }}</ElLink>
       </template>

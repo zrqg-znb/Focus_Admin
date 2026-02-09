@@ -53,6 +53,16 @@ class IterationMetric(RootModel):
     c_state_dr_num = models.IntegerField(default=0, verbose_name="当前置I的dr需求，complete")
     a_state_dr_num = models.IntegerField(default=0, verbose_name="当前置I的dr需求，accept")
 
+    # New Indicators (Mocked or Manual)
+    # Manual
+    test_automation_rate = models.FloatField(default=0.0, verbose_name="迭代测试自动化率")
+    test_case_execution_rate = models.FloatField(default=0.0, verbose_name="用例执行率")
+    
+    # Mocked
+    bug_fix_rate = models.FloatField(default=0.0, verbose_name="缺陷修复率")
+    code_review_rate = models.FloatField(default=0.0, verbose_name="代码评审率")
+    code_coverage_rate = models.FloatField(default=0.0, verbose_name="代码覆盖率")
+
 
     class Meta:
         db_table = 'pm_iteration_metric'
