@@ -6,12 +6,15 @@ from . import milestone_service
 
 router = Router(tags=["Milestone"], auth=GlobalAuth())
 
+import json
+
 @router.get("/overview", response=List[MilestoneBoardSchema], summary="获取里程碑看板")
 def get_milestone_board(
     request, 
     keyword: Optional[str] = None,
     project_type: Optional[str] = None,
-    manager_id: Optional[str] = None
+    manager_id: Optional[str] = None,
+    qg_filters: Optional[str] = None  # Change to str to receive JSON
 ):
     filters = {}
     if keyword:
@@ -20,6 +23,12 @@ def get_milestone_board(
         filters['project_type'] = project_type
     if manager_id:
         filters['manager_id'] = manager_id
+    if qg_filters:
+        try:
+            # Parse JSON string back to list
+            filters['qg_filters'] = json.loads(qg_filters)
+        except json.JSONDecodeError:
+            pass # Or handle error appropriately
         
     return milestone_service.get_milestone_board(filters)
 

@@ -22,6 +22,26 @@ export function useSearchFormSchema(): VbenFormSchema[] {
       fieldName: 'manager_id',
       label: '负责人',
     },
+    {
+      component: 'Select',
+      fieldName: 'qg_filters',
+      label: '即将过点',
+      componentProps: {
+        multiple: true,
+        options: [
+          { label: 'QG1', value: 'QG1' },
+          { label: 'QG2', value: 'QG2' },
+          { label: 'QG3', value: 'QG3' },
+          { label: 'QG4', value: 'QG4' },
+          { label: 'QG5', value: 'QG5' },
+          { label: 'QG6', value: 'QG6' },
+          { label: 'QG7', value: 'QG7' },
+          { label: 'QG8', value: 'QG8' },
+        ],
+        placeholder: '选择QG点',
+        style: { width: '200px' },
+      },
+    },
   ];
 }
 

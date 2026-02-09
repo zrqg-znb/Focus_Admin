@@ -63,8 +63,14 @@ export interface RiskLog {
 }
 
 export async function getMilestoneOverviewApi(params?: any) {
+  // 手动处理数组参数，将其转换为 JSON 字符串
+  const processedParams = { ...params };
+  if (processedParams.qg_filters && Array.isArray(processedParams.qg_filters)) {
+    processedParams.qg_filters = JSON.stringify(processedParams.qg_filters);
+  }
+
   return requestClient.get<MilestoneBoardItem[]>('/api/project-manager/milestones/overview', {
-    params,
+    params: processedParams,
   });
 }
 

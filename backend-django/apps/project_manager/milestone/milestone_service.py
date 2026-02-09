@@ -34,6 +34,10 @@ def get_milestone_board(filters: dict):
     # 构造扁平化数据
     result = []
     
+    # 获取 QG 筛选条件
+    qg_filters = filters.get('qg_filters')
+    today = date.today()
+
     # 批量获取风险状态
     # Structure: { project_id: { 'QG1': 'high', 'QG2': 'medium' } }
     risk_map = {}
@@ -64,6 +68,19 @@ def get_milestone_board(filters: dict):
             }
 
     for m in queryset:
+        # Determine Next QG
+        next_qg = None
+        for i in range(1, 9):
+            qg_key = f'qg{i}_date'
+            qg_date = getattr(m, qg_key)
+            if qg_date and qg_date >= today:
+                next_qg = f'QG{i}'
+                break
+        
+        # Filter by QG if provided
+        if qg_filters and next_qg not in qg_filters:
+            continue
+
         # Inject risk info dynamically
         risks = risk_map.get(m.id, {})
         
@@ -81,7 +98,8 @@ def get_milestone_board(filters: dict):
             "qg6_date": m.qg6_date,
             "qg7_date": m.qg7_date,
             "qg8_date": m.qg8_date,
-            "risks": risks
+            "risks": risks,
+            "next_qg": next_qg, # Optional: return which QG is next
         }
         result.append(item_dict)
         

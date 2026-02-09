@@ -5,6 +5,7 @@
       <!-- 左侧：项目名称列 -->
       <div class="table-header" :style="{ width: `${projectColumnWidth}px` }">
         <div class="header-cell">项目名称</div>
+        <div class="column-resizer" @mousedown.stop="handleResizeStart"></div>
       </div>
 
       <!-- 右侧：时间轴头部 -->
@@ -262,7 +263,10 @@ const offsetX = ref(0);
 const isDragging = ref(false);
 const dragStartX = ref(0);
 const dragStartOffsetX = ref(0);
-const projectColumnWidth = 200;
+const projectColumnWidth = ref(200);
+const isResizing = ref(false);
+const resizeStartX = ref(0);
+const resizeStartWidth = ref(0);
 
 const timelineContainerRef = ref<HTMLElement>();
 const ganttBodyRef = ref<HTMLElement>();
@@ -547,7 +551,8 @@ function handleMouseDown(e: MouseEvent) {
   if (
     target.closest('.gantt-bar') ||
     target.closest('.milestone-node') ||
-    target.closest('.control-group')
+    target.closest('.control-group') ||
+    target.closest('.column-resizer')
   )
     return;
   isDragging.value = true;
@@ -557,7 +562,21 @@ function handleMouseDown(e: MouseEvent) {
   e.preventDefault();
 }
 
+function handleResizeStart(e: MouseEvent) {
+  isResizing.value = true;
+  resizeStartX.value = e.clientX;
+  resizeStartWidth.value = projectColumnWidth.value;
+  document.body.style.cursor = 'col-resize';
+  e.preventDefault();
+}
+
 function handleMouseMove(e: MouseEvent) {
+  if (isResizing.value) {
+    const deltaX = e.clientX - resizeStartX.value;
+    const newWidth = Math.max(100, resizeStartWidth.value + deltaX);
+    projectColumnWidth.value = newWidth;
+    return;
+  }
   if (!isDragging.value) return;
   const deltaX = e.clientX - dragStartX.value;
   offsetX.value = dragStartOffsetX.value + deltaX;
@@ -566,6 +585,7 @@ function handleMouseMove(e: MouseEvent) {
 
 function handleMouseUp() {
   isDragging.value = false;
+  isResizing.value = false;
   document.body.style.cursor = 'default';
 }
 
@@ -618,6 +638,7 @@ onUnmounted(() => {
   flex-shrink: 0;
 
   .table-header {
+    position: relative;
     border-right: 1px solid var(--el-border-color);
     background: var(--el-fill-color);
     display: flex;
@@ -625,6 +646,23 @@ onUnmounted(() => {
     padding-left: 12px;
     font-weight: 600;
     color: var(--el-text-color-regular);
+
+    .column-resizer {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 6px;
+      cursor: col-resize;
+      z-index: 10;
+      opacity: 0;
+      transition: opacity 0.2s, background-color 0.2s;
+
+      &:hover {
+        opacity: 1;
+        background-color: var(--el-color-primary);
+      }
+    }
   }
 
   .timeline-header-container {
