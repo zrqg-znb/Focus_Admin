@@ -131,6 +131,7 @@ export async function queryIntegrationHistoryApi(params: {
   config_ids?: string[];
   start: string;
   end: string;
+  keyword?: string;
 }) {
   return requestClient.get<HistoryQueryOut>('/api/integration-report/history', { params });
 }

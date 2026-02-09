@@ -4,13 +4,14 @@ import { computed, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 import { IconifyIcon } from '@vben/icons';
-import { ElButton, ElDatePicker, ElLink, ElMessage, ElSkeleton, ElTag } from 'element-plus';
+import { ElButton, ElDatePicker, ElInput, ElLink, ElMessage, ElSkeleton, ElTag } from 'element-plus';
 
 import { queryIntegrationHistoryApi } from '#/api/integration-report';
 
 defineOptions({ name: 'DailyIntegrationHistory' });
 
 const loading = ref(false);
+const keyword = ref('');
 const range = ref<Date | null>(null);
 const rows = ref<HistoryRow[]>([]);
 
@@ -60,7 +61,11 @@ async function query() {
   if (!range.value) return;
   try {
     loading.value = true;
-    const res = await queryIntegrationHistoryApi({ start: startStr.value, end: endStr.value });
+    const res = await queryIntegrationHistoryApi({
+      start: startStr.value,
+      end: endStr.value,
+      keyword: keyword.value,
+    });
     rows.value = res.items;
   } catch (e) {
     ElMessage.error('查询失败');
@@ -90,8 +95,16 @@ onMounted(() => {
             </div>
           </div>
           <div class="flex items-center gap-2">
-            <ElDatePicker v-model="range" type="date" size="small" :clearable="false" />
-            <ElButton size="small" plain type="primary" :loading="loading" @click="query">
+            <ElInput
+              v-model="keyword"
+              class="!w-48"
+              clearable
+              placeholder="搜索配置/项目"
+              size="small"
+              @keyup.enter="query"
+            />
+            <ElDatePicker v-model="range" :clearable="false" size="small" type="date" />
+            <ElButton :loading="loading" plain size="small" type="primary" @click="query">
               <template #icon><IconifyIcon icon="lucide:search" /></template>
               查询
             </ElButton>

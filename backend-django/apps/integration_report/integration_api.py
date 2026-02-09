@@ -130,6 +130,7 @@ def history(
     config_ids: List[str] = Query(None),
     start: Optional[date] = None,
     end: Optional[date] = None,
+    keyword: Optional[str] = None,
 ):
     if not start or not end:
         raise HttpError(400, "start/end 必填")
@@ -143,6 +144,10 @@ def history(
     )
     if config_ids:
         qs = qs.filter(config_id__in=config_ids)
+    
+    if keyword:
+        from django.db.models import Q
+        qs = qs.filter(Q(config__name__icontains=keyword) | Q(config__project__name__icontains=keyword))
 
     by_key = {}
     for v in qs:
