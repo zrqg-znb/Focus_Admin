@@ -6,9 +6,11 @@ from apps.project_manager.project.project_model import Project
 class IntegrationProjectConfig(RootModel):
     project = models.ForeignKey(
         Project,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name="integration_configs",
         verbose_name="所属项目",
+        null=True,
+        blank=True,
     )
     name = models.CharField(max_length=128, verbose_name="配置名称/邮件显示名")
     managers = models.ManyToManyField(

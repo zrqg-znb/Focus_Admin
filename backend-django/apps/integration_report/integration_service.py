@@ -174,16 +174,16 @@ def list_configs_with_latest(user: User) -> List[ProjectConfigOut]:
                 cells.append(cell_by_key.get(k) or MetricCell(key=k, name=d.name, unit=d.unit))
             return cells
 
-        proj_managers_str = ",".join([m.name or m.username for m in proj.managers.all()])
+        proj_managers_str = ",".join([m.name or m.username for m in proj.managers.all()]) if proj else ""
         config_managers_str = ",".join([u.name or u.username for u in cfg.managers.all()])
         result.append(
             ProjectConfigOut(
                 id=str(cfg.id),
                 name=cfg.name,
-                project_id=str(proj.id),
-                project_name=proj.name,
-                project_domain=proj.domain,
-                project_type=proj.type,
+                project_id=str(proj.id) if proj else "",
+                project_name=proj.name if proj else "",
+                project_domain=(proj.domain or "") if proj else "",
+                project_type=proj.type if proj else "",
                 project_managers=proj_managers_str,
                 managers=config_managers_str,
                 enabled=cfg.enabled,
@@ -258,7 +258,7 @@ def send_daily_emails(record_date: Optional[date] = None) -> int:
             project_rows.append(
                 {
                     "project_name": cfg.name,  # Use Config Name as Display Name
-                    "project_domain": cfg.project.domain or "",
+                    "project_domain": (cfg.project.domain or "") if cfg.project else "",
                     "code_metrics": code_cells,
                     "dt_metrics": dt_cells,
                 }

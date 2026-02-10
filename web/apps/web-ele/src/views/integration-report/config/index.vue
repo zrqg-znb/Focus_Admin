@@ -170,10 +170,6 @@ async function saveRow(r: ProjectConfigManageRow) {
 }
 
 async function submitDialog() {
-  if (!form.value.project_id) {
-    ElMessage.warning('请选择项目');
-    return;
-  }
   if (!form.value.name) {
     ElMessage.warning('请输入配置名称');
     return;
@@ -277,14 +273,14 @@ async function mockSendEmails() {
       append-to-body
     >
       <ElForm label-width="160px">
-        <ElFormItem label="关联项目" required>
+        <ElFormItem label="关联项目">
           <ElSelect
             v-model="form.project_id"
             filterable
-            placeholder="请选择项目"
+            placeholder="可不关联项目"
             style="width: 100%"
-            :disabled="dialogMode === 'edit'"
           >
+            <ElOption label="不关联项目" value="" />
             <ElOption
               v-for="p in allProjects"
               :key="p.id"

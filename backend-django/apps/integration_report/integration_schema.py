@@ -30,7 +30,7 @@ class ProjectConfigOut(Schema):
 
 
 class ProjectConfigUpsertIn(Schema):
-    project_id: str  # Required for create
+    project_id: Optional[str] = None
     name: str
     managers: List[str] = []
     enabled: bool = True

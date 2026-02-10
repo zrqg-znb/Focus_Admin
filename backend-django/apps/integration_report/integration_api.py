@@ -48,12 +48,13 @@ def list_configs(request, filters: ConfigFilterSchema = Query(...)):
 
     rows = []
     for cfg in qs:
+        project_name = cfg.project.name if cfg.project else ""
         rows.append(
             ProjectConfigManageRow(
                 id=str(cfg.id),
                 name=cfg.name,
-                project_id=str(cfg.project_id),
-                project_name=cfg.project.name,
+                project_id=str(cfg.project_id or ""),
+                project_name=project_name,
                 managers=",".join([u.name or u.username for u in cfg.managers.all()]),
                 manager_ids=[str(u.id) for u in cfg.managers.all()],
                 enabled=cfg.enabled,
@@ -69,7 +70,11 @@ def list_configs(request, filters: ConfigFilterSchema = Query(...)):
 
 @router.post("/configs", response=str, summary="新建配置")
 def create_config(request, payload: ProjectConfigUpsertIn):
-    proj = get_object_or_404(Project, id=payload.project_id)
+    proj = None
+    if payload.project_id:
+        proj = Project.objects.filter(id=payload.project_id).first()
+        if not proj:
+            raise HttpError(404, "project_id 不存在")
     cfg = IntegrationProjectConfig.objects.create(
         project=proj,
         name=payload.name,
@@ -89,6 +94,15 @@ def create_config(request, payload: ProjectConfigUpsertIn):
 def update_config(request, config_id: str, payload: ProjectConfigUpsertIn):
     cfg = get_object_or_404(IntegrationProjectConfig, id=config_id)
     cfg.name = payload.name
+    fields_set = getattr(payload, "model_fields_set", None) or getattr(payload, "__fields_set__", None) or set()
+    if "project_id" in fields_set:
+        if payload.project_id:
+            proj = Project.objects.filter(id=payload.project_id).first()
+            if not proj:
+                raise HttpError(404, "project_id 不存在")
+            cfg.project = proj
+        else:
+            cfg.project = None
     if payload.managers is not None:
         cfg.managers.set(payload.managers)
     cfg.enabled = payload.enabled
@@ -175,7 +189,7 @@ def history(
                 record_date=d,
                 config_id=str(cfg.id),
                 config_name=cfg.name,
-                project_name=cfg.project.name,
+                project_name=cfg.project.name if cfg.project else "",
                 code_metrics=code_cells,
                 dt_metrics=dt_cells,
             )

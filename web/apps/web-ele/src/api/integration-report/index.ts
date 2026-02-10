@@ -44,7 +44,7 @@ export interface ProjectConfigManageRow {
 }
 
 export interface ProjectConfigUpsertIn {
-  project_id: string; // Required for create
+  project_id?: string | null;
   name: string;
   managers: string[];
   enabled: boolean;
