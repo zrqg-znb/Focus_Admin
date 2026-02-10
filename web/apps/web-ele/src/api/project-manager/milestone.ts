@@ -1,5 +1,12 @@
 import { requestClient } from '#/api/request';
 
+export interface RiskInfo {
+  id: string;
+  level: string;
+  description: string;
+  status: string;
+}
+
 export interface MilestoneBoardItem {
   project_id: string;
   project_name: string;
@@ -13,7 +20,8 @@ export interface MilestoneBoardItem {
   qg6_date: string | null;
   qg7_date: string | null;
   qg8_date: string | null;
-  risks?: Record<string, string>;
+  risks?: Record<string, RiskInfo>;
+  next_qg?: string[];
   [key: string]: any; // Allow dynamic access for QG keys
 }
 
