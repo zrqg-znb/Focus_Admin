@@ -68,18 +68,20 @@ def get_milestone_board(filters: dict):
             }
 
     for m in queryset:
-        # Determine Next QG
-        next_qg = None
+        next_qgs = []
+        next_date = None
         for i in range(1, 9):
-            qg_key = f'qg{i}_date'
-            qg_date = getattr(m, qg_key)
+            qg_date = getattr(m, f'qg{i}_date')
             if qg_date and qg_date >= today:
-                next_qg = f'QG{i}'
-                break
-        
+                if next_date is None or qg_date < next_date:
+                    next_date = qg_date
+                    next_qgs = [f'QG{i}']
+                elif qg_date == next_date:
+                    next_qgs.append(f'QG{i}')
         # Filter by QG if provided
-        if qg_filters and next_qg not in qg_filters:
-            continue
+        if qg_filters:
+            if not next_qgs or not any(qg in qg_filters for qg in next_qgs):
+                continue
 
         # Inject risk info dynamically
         risks = risk_map.get(m.id, {})
@@ -99,10 +101,21 @@ def get_milestone_board(filters: dict):
             "qg7_date": m.qg7_date,
             "qg8_date": m.qg8_date,
             "risks": risks,
-            "next_qg": next_qg, # Optional: return which QG is next
+            "next_qg": next_qgs, # Optional: return which QG is next
+            "_sort_date": next_date
         }
         result.append(item_dict)
         
+    # Sort by next_date if qg_filters are applied
+    if qg_filters:
+        # Sort projects with earlier next_date first.
+        # Projects with no next_date (shouldn't happen due to filter logic, but safe to handle) go last.
+        result.sort(key=lambda x: x['_sort_date'] or date.max)
+
+    # Clean up helper key
+    for item in result:
+        item.pop('_sort_date', None)
+
     return result
 
 def update_milestone(request, project_id: str, data: MilestoneUpdateSchema):

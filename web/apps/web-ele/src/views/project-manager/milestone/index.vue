@@ -25,6 +25,24 @@
 
         <div class="flex-1 overflow-hidden">
           <Grid>
+            <template #qg_cell="{ row, column }">
+              <div class="flex items-center gap-1">
+                <span :style="isNextQG(row, column) ? 'font-weight: 700' : ''">
+                  {{ row[column.field] }}
+                </span>
+                <ElTooltip
+                  v-if="getRisk(row, column.field)"
+                  :content="getRisk(row, column.field)?.description"
+                  placement="top"
+                >
+                  <IconifyIcon
+                    :icon="getRiskIcon(row, column.field)"
+                    :class="getRiskClass(row, column.field)"
+                    class="cursor-help"
+                  />
+                </ElTooltip>
+              </div>
+            </template>
             <template #risk_action="{ row }">
               <ElButton link type="primary" @click="handleOpenRiskDrawer(row)">
                 跟踪
@@ -48,7 +66,7 @@ import { onMounted, ref } from 'vue';
 import { Page } from '@vben/common-ui';
 import { IconifyIcon } from '@vben/icons';
 
-import { ElButton } from 'element-plus';
+import { ElButton, ElTooltip } from 'element-plus';
 
 import { useVbenForm } from '#/adapter/form';
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
@@ -66,6 +84,34 @@ const riskDrawerRef = ref();
 
 function handleOpenRiskDrawer(row: MilestoneBoardItem) {
   riskDrawerRef.value?.open(row.project_id, row.project_name);
+}
+
+function getQGName(field: string) {
+  return field.replace('_date', '').toUpperCase();
+}
+
+function getRisk(row: MilestoneBoardItem, field: string) {
+  if (!row.risks) return undefined;
+  const qg = getQGName(field);
+  return row.risks[qg];
+}
+
+function getRiskIcon(row: MilestoneBoardItem, field: string) {
+  const risk = getRisk(row, field);
+  if (!risk) return '';
+  return 'lucide:alert-triangle';
+}
+
+function getRiskClass(row: MilestoneBoardItem, field: string) {
+  const risk = getRisk(row, field);
+  if (!risk) return '';
+  return risk.level === 'high' ? 'text-red-500' : 'text-yellow-500';
+}
+
+function isNextQG(row: MilestoneBoardItem, column: any) {
+   if (!row.next_qg || !row.next_qg.length) return false;
+   const qg = getQGName(column.field);
+   return row.next_qg.includes(qg);
 }
 
 const [Form, formApi] = useVbenForm({

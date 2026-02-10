@@ -36,6 +36,7 @@ class MilestoneBoardSchema(Schema):
     qg7_date: Optional[date] = None
     qg8_date: Optional[date] = None
     risks: Optional[Dict[str, RiskInfo]] = None # key: QG name, value: RiskInfo
+    next_qg: Optional[List[str]] = None
     
     # 允许额外的字段以支持 ORM 映射
     class Config:
@@ -99,4 +100,3 @@ class RiskLogOut(Schema):
     operator_name: str
     note: str
     create_time: datetime
-
