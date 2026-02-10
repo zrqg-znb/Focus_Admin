@@ -2,11 +2,13 @@ from typing import Type
 from .base import BaseParser
 from .tscan_parser import TScanParser
 from .cppcheck_parser import CppCheckParser
+from .weggli_parser import WeggliParser
 
 class ParserFactory:
     _parsers = {
         'tscan': TScanParser,
         'cppcheck': CppCheckParser,
+        'weggli': WeggliParser,
     }
     
     @classmethod

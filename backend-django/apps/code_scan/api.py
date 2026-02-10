@@ -6,6 +6,7 @@ from apps.code_scan.schemas import (
     ScanProjectSchema, ScanProjectCreateSchema,
     ScanTaskSchema, ScanResultSchema,
     ShieldApplicationSchema, ShieldApplySchema, ShieldAuditSchema,
+    ShieldRecordSchema,
     ChunkUploadSchema, ProjectOverviewSchema, LatestScanResultSchema,
     PaginatedScanResultSchema
 )
@@ -132,6 +133,39 @@ def list_tasks(request, project_id: str):
 @router.get("/results", response=List[ScanResultSchema], auth=BearerAuth())
 def list_results(request, task_id: str):
     return ScanResult.objects.filter(task_id=task_id, is_deleted=False)
+
+@router.get("/results/{result_id}/shield-records", response=List[ShieldRecordSchema], auth=BearerAuth())
+def list_result_shield_records(request, result_id: str):
+    r = get_object_or_404(ScanResult.objects.select_related("task"), id=result_id, is_deleted=False)
+    apps = (
+        ShieldApplication.objects.select_related("applicant", "approver")
+        .filter(
+            is_deleted=False,
+            result__task__project_id=r.task.project_id,
+            result__fingerprint=r.fingerprint,
+        )
+        .order_by("-sys_create_datetime")
+    )
+    payload = []
+    for app in apps:
+        payload.append(
+            {
+                "id": str(app.id),
+                "result_id": str(app.result_id),
+                "status": app.status,
+                "reason": app.reason,
+                "audit_comment": app.audit_comment,
+                "applicant_name": (app.applicant.name or app.applicant.username) if app.applicant else None,
+                "approver_name": (app.approver.name or app.approver.username) if app.approver else None,
+                "sys_create_datetime": app.sys_create_datetime.isoformat(sep=" ", timespec="seconds")
+                if getattr(app, "sys_create_datetime", None)
+                else None,
+                "sys_update_datetime": app.sys_update_datetime.isoformat(sep=" ", timespec="seconds")
+                if getattr(app, "sys_update_datetime", None)
+                else None,
+            }
+        )
+    return payload
 
 @router.get("/projects/{project_id}/latest-results", response=PaginatedScanResultSchema, auth=BearerAuth())
 def list_latest_results(request, project_id: str, tool_name: str = None, page: int = 1, pageSize: int = 20):

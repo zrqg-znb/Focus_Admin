@@ -2,9 +2,9 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { Page } from '@vben/common-ui';
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
-import { listProjectOverviewApi, listLatestResultsApi, applyShieldApi } from '#/api/code_scan';
+import { listProjectOverviewApi, listLatestResultsApi, applyShieldApi, listResultShieldRecordsApi } from '#/api/code_scan';
 import { useSummaryColumns, useDetailColumns } from './data';
-import { ElButton, ElTag, ElMessage, ElDialog, ElInput, ElForm, ElFormItem, ElDescriptions, ElDescriptionsItem, ElTabs, ElTabPane } from 'element-plus';
+import { ElButton, ElTag, ElMessage, ElDialog, ElInput, ElForm, ElFormItem, ElDescriptions, ElDescriptionsItem, ElTabs, ElTabPane, ElTable, ElTableColumn } from 'element-plus';
 import { useRoute, useRouter } from 'vue-router';
 import { UserSelector } from '#/components/zq-form/user-selector';
 
@@ -43,6 +43,7 @@ const summaryGridOptions: any = {
         // Explicitly include tscan and cppcheck if they are missing but expected to be shown as 0
         if (!toolSet.has('tscan')) toolSet.add('tscan');
         if (!toolSet.has('cppcheck')) toolSet.add('cppcheck');
+        if (!toolSet.has('weggli')) toolSet.add('weggli');
 
         const toolNames = Array.from(toolSet).sort();
         
@@ -69,7 +70,7 @@ const detailGridOptions: any = {
   proxyConfig: {
     autoLoad: false, // 手动触发加载，确保 activeTool 已设置
     ajax: {
-      query: async ({ page }) => {
+      query: async ({ page }: any) => {
         if (!projectId.value || !activeTool.value) return { items: [], total: 0 };
         try {
             const res = await listLatestResultsApi(projectId.value, {
@@ -107,7 +108,7 @@ async function loadTools() {
             if (tools.value.length > 0) {
                 // If activeTool is not in the list (e.g. initial load), set to first
                 if (!activeTool.value || !tools.value.includes(activeTool.value)) {
-                    activeTool.value = tools.value[0];
+                    activeTool.value = tools.value[0] || '';
                 }
             }
         }
@@ -182,6 +183,47 @@ const getStatusType = (status: string) => {
   if (status === 'Rejected') return 'danger';
   return 'info';
 };
+
+const getShieldRecordStatusType = (status: string) => {
+  if (status === 'Approved') return 'success';
+  if (status === 'Pending') return 'warning';
+  if (status === 'Rejected') return 'danger';
+  return 'info';
+};
+
+const expandTabMap = ref<Record<string, string>>({});
+const shieldRecordsMap = ref<Record<string, any[]>>({});
+const shieldRecordsLoadingMap = ref<Record<string, boolean>>({});
+
+function getExpandTab(resultId: string) {
+  return expandTabMap.value[resultId] || 'detail';
+}
+
+function isShieldRecordsLoading(resultId: string) {
+  return Boolean(shieldRecordsLoadingMap.value[resultId]);
+}
+
+async function ensureShieldRecordsLoaded(resultId: string) {
+  if (shieldRecordsMap.value[resultId]) return;
+  shieldRecordsLoadingMap.value[resultId] = true;
+  try {
+    const res: any = await listResultShieldRecordsApi(resultId);
+    const items = res?.data ?? res ?? [];
+    shieldRecordsMap.value[resultId] = Array.isArray(items) ? items : [];
+  } catch (e) {
+    shieldRecordsMap.value[resultId] = [];
+  } finally {
+    shieldRecordsLoadingMap.value[resultId] = false;
+  }
+}
+
+async function handleExpandTabChange(resultId: string, name: any) {
+  const tabName = String(name);
+  expandTabMap.value[resultId] = tabName;
+  if (tabName === 'shield') {
+    await ensureShieldRecordsLoaded(resultId);
+  }
+}
 </script>
 
 <template>
@@ -208,14 +250,47 @@ const getStatusType = (status: string) => {
               <DetailGrid>
                 <template #expand_content="{ row }">
                   <div class="p-4 bg-gray-50">
-                    <ElDescriptions title="详细信息" :column="1" border>
-                      <ElDescriptionsItem label="缺陷描述">{{ row.description }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="文件路径">{{ row.file_path }} : {{ row.line_number }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="修复建议" v-if="row.help_info">{{ row.help_info }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="代码片段" v-if="row.code_snippet">
-                        <pre class="bg-gray-800 text-white p-2 rounded text-xs overflow-x-auto">{{ row.code_snippet }}</pre>
-                      </ElDescriptionsItem>
-                    </ElDescriptions>
+                    <ElTabs
+                      :model-value="getExpandTab(row.id)"
+                      @tab-change="(name) => handleExpandTabChange(row.id, name)"
+                    >
+                      <ElTabPane label="缺陷详情" name="detail">
+                        <ElDescriptions title="详细信息" :column="1" border>
+                          <ElDescriptionsItem label="缺陷描述">{{ row.description }}</ElDescriptionsItem>
+                          <ElDescriptionsItem label="文件路径">{{ row.file_path }} : {{ row.line_number }}</ElDescriptionsItem>
+                          <ElDescriptionsItem label="修复建议" v-if="row.help_info">{{ row.help_info }}</ElDescriptionsItem>
+                          <ElDescriptionsItem label="代码片段" v-if="row.code_snippet">
+                            <pre class="bg-gray-800 text-white p-2 rounded text-xs overflow-x-auto">{{ row.code_snippet }}</pre>
+                          </ElDescriptionsItem>
+                        </ElDescriptions>
+                      </ElTabPane>
+                      <ElTabPane label="屏蔽记录" name="shield">
+                        <ElTable
+                          v-loading="isShieldRecordsLoading(row.id)"
+                          :data="shieldRecordsMap[row.id] || []"
+                          size="small"
+                          border
+                          style="width: 100%"
+                        >
+                          <ElTableColumn prop="sys_create_datetime" label="时间" width="180" />
+                          <ElTableColumn label="状态" width="120">
+                            <template #default="{ row: srow }">
+                              <ElTag :type="getShieldRecordStatusType(srow.status)">{{ srow.status }}</ElTag>
+                            </template>
+                          </ElTableColumn>
+                          <ElTableColumn prop="applicant_name" label="申请人" width="120" />
+                          <ElTableColumn prop="approver_name" label="审批人" width="120" />
+                          <ElTableColumn prop="reason" label="理由" min-width="220" />
+                          <ElTableColumn prop="audit_comment" label="审批意见" min-width="220" />
+                        </ElTable>
+                        <div
+                          v-if="!isShieldRecordsLoading(row.id) && (shieldRecordsMap[row.id]?.length || 0) === 0"
+                          class="py-3 text-center text-gray-400"
+                        >
+                          暂无屏蔽记录
+                        </div>
+                      </ElTabPane>
+                    </ElTabs>
                   </div>
                 </template>
                 <template #severity="{ row }">

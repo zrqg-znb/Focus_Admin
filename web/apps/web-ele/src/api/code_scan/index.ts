@@ -43,3 +43,7 @@ export const listApplicationsApi = (mode: 'my_apply' | 'my_audit') => {
 export const auditShieldApi = (data: { application_id: string; status: string; audit_comment?: string }) => {
   return requestClient.post('/api/code-scan/shield/audit', data);
 };
+
+export const listResultShieldRecordsApi = (resultId: string) => {
+  return requestClient.get(`/api/code-scan/results/${resultId}/shield-records`);
+};

@@ -53,6 +53,17 @@ class ShieldApplicationSchema(Schema):
     help_info: Optional[str] = None
     code_snippet: Optional[str] = None
 
+class ShieldRecordSchema(Schema):
+    id: str
+    result_id: str
+    status: str
+    reason: str
+    audit_comment: Optional[str] = None
+    applicant_name: Optional[str] = None
+    approver_name: Optional[str] = None
+    sys_create_datetime: Optional[str] = None
+    sys_update_datetime: Optional[str] = None
+
 class ShieldApplySchema(Schema):
     result_ids: List[str]
     approver_id: str

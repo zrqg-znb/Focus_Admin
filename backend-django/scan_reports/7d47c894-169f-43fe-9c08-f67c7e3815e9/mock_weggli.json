@@ -1,0 +1,20 @@
+{
+  "results": [
+    {
+      "file": "src/foo.c",
+      "line": 42,
+      "rule": "weggli-demo",
+      "message": "Potential unsafe function usage",
+      "severity": "high",
+      "snippet": "strcpy(buf, input);"
+    },
+    {
+      "file_path": "src/bar.c",
+      "line_number": 10,
+      "defect_type": "weggli-demo-2",
+      "description": "Hardcoded credentials pattern match",
+      "level": "medium",
+      "code_snippet": "const char* pwd = \"123456\";"
+    }
+  ]
+}
