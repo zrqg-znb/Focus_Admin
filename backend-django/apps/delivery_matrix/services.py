@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404
 from common import fu_crud
 from .models import OrganizationNode, PositionStaff
@@ -37,8 +38,12 @@ def create_node(request, data: OrgNodeCreate):
 @transaction.atomic
 def update_node(request, node_id, data: OrgNodeUpdate):
     data_dict = data.dict(exclude_unset=True)
-    if 'parent_id' in data_dict and data_dict['parent_id'] == "":
-         data_dict['parent_id'] = None
+    if 'parent_id' in data_dict:
+         if data_dict['parent_id'] == "":
+             data_dict['parent_id'] = None
+         elif str(data_dict['parent_id']) == str(node_id):
+             from ninja.errors import HttpError
+             raise HttpError(400, "不能将节点自身设为父节点")
     
     if 'linked_project_id' in data_dict and data_dict['linked_project_id'] == "":
         data_dict['linked_project_id'] = None
@@ -84,9 +89,13 @@ def update_node_positions(request, node_id, positions: list[PositionStaffCreate]
 
 def get_tree_data():
     """获取组织架构树数据"""
-    # Fetch all nodes with related data
+    # 预取岗位与用户，保证根节点等场景返回最新岗位数据
+    positions_qs = PositionStaff.objects.filter(is_deleted=False).prefetch_related('users').order_by('-sort')
+
     nodes = OrganizationNode.objects.prefetch_related(
-        'positions', 'positions__users', 'linked_project', 'linked_project__milestone'
+        Prefetch('positions', queryset=positions_qs, to_attr='position_list'),
+        'linked_project',
+        'linked_project__milestone',
     ).order_by('-sort_order', 'sys_create_datetime')
     
     # Build tree in memory

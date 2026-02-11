@@ -91,10 +91,30 @@ const flattenedTree = computed(() => {
   return result;
 });
 
-async function fetchTree() {
+function findNode(nodes: OrgNode[], id?: string): OrgNode | undefined {
+  if (!id) return undefined;
+  for (const n of nodes) {
+    if (n.id === id) return n;
+    if (n.children) {
+      const hit = findNode(n.children, id);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
+
+async function fetchTree(selectId?: string) {
   loading.value = true;
   try {
     treeData.value = await getTree();
+    if (selectId) {
+      const node = findNode(treeData.value, selectId);
+      if (node) {
+        selectedNodeId.value = node.id;
+        expandedIds.value.add(node.id);
+        emit('select', node);
+      }
+    }
   } finally {
     loading.value = false;
   }

@@ -1,8 +1,15 @@
 import type { VbenFormSchema } from '#/adapter/form';
 import { listProjectsApi } from '#/api/project-manager/project';
+import ParentNodeSelect from './admin/modules/ParentNodeSelect.vue';
 
 export function useNodeFormSchema(): VbenFormSchema[] {
   return [
+    {
+      component: ParentNodeSelect,
+      fieldName: 'parent_id',
+      label: '上级节点',
+      help: '留空即为根节点，可搜索或直接点“设为根节点”',
+    },
     {
       component: 'Input',
       fieldName: 'name',

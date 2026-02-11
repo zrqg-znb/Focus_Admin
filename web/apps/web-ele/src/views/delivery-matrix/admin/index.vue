@@ -33,7 +33,8 @@ function onAdd(parentNode?: OrgNode) {
 }
 
 function onSuccess() {
-  treeRef.value?.refresh();
+  const currentId = isEdit.value ? selectedNode.value?.id : undefined;
+  treeRef.value?.refresh(currentId);
 }
 </script>
 

@@ -36,7 +36,10 @@ watch(
   () => [props.node, props.isEdit],
   () => {
     if (props.isEdit && props.node) {
-      formApi.setValues(props.node);
+      formApi.setValues({
+        ...props.node,
+        parent_id: props.node.parent_id || null,
+      });
       // Map positions
       positions.value = props.node.positions
         ? props.node.positions.map((p) => ({
@@ -47,6 +50,9 @@ watch(
         : [];
     } else {
       formApi.resetForm();
+      formApi.setValues({
+        parent_id: props.parentNode?.id || null,
+      });
       positions.value = [];
     }
   },
@@ -72,7 +78,7 @@ async function onSubmit() {
       // Create
       const payload = {
         ...data,
-        parent_id: props.parentNode?.id || undefined,
+        parent_id: data.parent_id || null,
         positions: positions.value,
       } as any;
       await createNode(payload);

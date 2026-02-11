@@ -76,10 +76,14 @@ class OrgNodeOut(ModelSchema):
 
     @staticmethod
     def resolve_positions(obj):
-        """获取节点的所有岗位配置"""
-        # 直接从数据库查询，避免使用可能被覆盖的属性
+        """获取节点的所有岗位配置，优先使用预取的 position_list"""
+        # 优先使用在 services.get_tree_data 中预取的 position_list，避免重复查询并保证 root 节点实时性
+        if hasattr(obj, 'position_list'):
+            return obj.position_list
+
+        # 兜底查询
         from .models import PositionStaff
-        return PositionStaff.objects.filter(node=obj).prefetch_related('users').order_by('-sort')
+        return PositionStaff.objects.filter(node=obj, is_deleted=False).prefetch_related('users').order_by('-sort')
 
     @staticmethod
     def resolve_linked_project_info(obj):
