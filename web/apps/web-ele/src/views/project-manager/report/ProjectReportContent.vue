@@ -138,6 +138,9 @@ function toggleQuality(expanded: boolean) {
               <DtsTrendChart
                 v-if="reportData.dts_summary"
                 :trend-data="reportData.dts_trend"
+                :issue-trend="reportData.dts_team_issue_trend"
+                :solve-rate-trend="reportData.dts_team_solve_rate_trend"
+                :critical-rate-trend="reportData.dts_team_critical_rate_trend"
                 :di-trend="reportData.dts_team_di_trend"
               />
 

@@ -39,6 +39,16 @@ export interface DtsTeamDiTrend {
   series: DtsTeamDiSeries[];
 }
 
+export interface DtsTeamTrendSeries {
+  team_name: string;
+  values: Array<number | null>;
+}
+
+export interface DtsTeamTrend {
+  dates: string[];
+  series: DtsTeamTrendSeries[];
+}
+
 export interface IterationDetailMetrics {
   sr_num: number;
   dr_num: number;
@@ -99,6 +109,9 @@ export interface ProjectReport {
   dts_trend: DtsTrendItem[];
   dts_team_di?: DtsTeamDiItem[] | null;
   dts_team_di_trend?: DtsTeamDiTrend | null;
+  dts_team_issue_trend?: DtsTeamTrend | null;
+  dts_team_solve_rate_trend?: DtsTeamTrend | null;
+  dts_team_critical_rate_trend?: DtsTeamTrend | null;
   code_quality: CodeQualitySummary | null;
   code_quality_details?: CodeQualityModuleDetail[] | null;
   iteration: IterationSummary | null;

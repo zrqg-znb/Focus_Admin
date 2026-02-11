@@ -34,7 +34,16 @@ def get_project_report(request, project_id: str):
     managers, \
     (cq_summary, cq_details, cq_score), \
     (iter_summary, iter_detail, iter_score), \
-    (dts_summary, dts_trend, dts_team_di, dts_team_di_trend, dts_score), \
+    (
+        dts_summary,
+        dts_trend,
+        dts_team_di,
+        dts_team_di_trend,
+        dts_team_issue_trend,
+        dts_team_solve_rate_trend,
+        dts_team_critical_rate_trend,
+        dts_score,
+    ), \
     (milestones_list, ms_score) = results
     
     # --- Radar & Health ---
@@ -70,6 +79,9 @@ def get_project_report(request, project_id: str):
         dts_trend=dts_trend,
         dts_team_di=dts_team_di,
         dts_team_di_trend=dts_team_di_trend,
+        dts_team_issue_trend=dts_team_issue_trend,
+        dts_team_solve_rate_trend=dts_team_solve_rate_trend,
+        dts_team_critical_rate_trend=dts_team_critical_rate_trend,
         code_quality=cq_summary,
         code_quality_details=cq_details,
         iteration=iter_summary,

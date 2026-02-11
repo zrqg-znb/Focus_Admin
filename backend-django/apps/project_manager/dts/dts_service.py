@@ -60,6 +60,67 @@ def get_mock_dts_data(root_team_name):
     根据传入的根团队名称，返回该团队的 mock 数据（树结构）。
     在真实场景中，这里会根据 ws_id 和 root_team_name 去调用中台接口。
     """
+    def _parse_rate(value):
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith('%'):
+            text = text[:-1]
+        try:
+            return float(text)
+        except Exception:
+            return None
+
+    def _format_rate(value):
+        if value is None:
+            return "0%"
+        return f"{round(value, 1)}%"
+
+    def _ensure_children(node):
+        node.setdefault("children", [])
+        for child in node["children"]:
+            _ensure_children(child)
+
+    def _aggregate_node(node):
+        children = node.get("children") or []
+        if not children:
+            return node
+
+        for child in children:
+            _aggregate_node(child)
+
+        sum_fields = [
+            "di",
+            "target_di",
+            "today_in_di",
+            "today_out_di",
+            "suggestion_num",
+            "major_num",
+            "minor_num",
+            "fatal_num",
+        ]
+
+        for field in sum_fields:
+            node[field] = sum(float(child.get(field) or 0) for child in children)
+
+        solve_rates = [_parse_rate(child.get("solve_rate")) for child in children]
+        critical_rates = [_parse_rate(child.get("critical_solve_rate")) for child in children]
+        solve_rates = [v for v in solve_rates if v is not None]
+        critical_rates = [v for v in critical_rates if v is not None]
+
+        node["solve_rate"] = _format_rate(
+            sum(solve_rates) / len(solve_rates) if solve_rates else 0.0
+        )
+        node["critical_solve_rate"] = _format_rate(
+            sum(critical_rates) / len(critical_rates) if critical_rates else 0.0
+        )
+
+        return node
+
     if "leaf" in root_team_name.lower():
         # Case 1: Root only (no children)
         return {
@@ -74,37 +135,37 @@ def get_mock_dts_data(root_team_name):
             "major_num": 1,
             "minor_num": 1,
             "fatal_num": 1,
-            "children": []
+            "children": [],
         }
-    
+
     # Case 2: Multi-level tree
-    return {
+    tree = {
         "di_team": root_team_name,
-        "di": 5.0,
-        "target_di": 4.0,
-        "today_in_di": 2.0,
-        "today_out_di": 1.1,
-        "solve_rate": "96%",
-        "critical_solve_rate": "71%",
-        "suggestion_num": 2,
-        "major_num": 1,
-        "minor_num": 1,
-        "fatal_num": 1,
+        "di": 0.0,
+        "target_di": 0.0,
+        "today_in_di": 0.0,
+        "today_out_di": 0.0,
+        "solve_rate": "0%",
+        "critical_solve_rate": "0%",
+        "suggestion_num": 0,
+        "major_num": 0,
+        "minor_num": 0,
+        "fatal_num": 0,
         "children": [
             {
                 "di_team": f"{root_team_name}_L1_Child1",
-                "di": 5.0,
-                "target_di": 4.0,
-                "today_in_di": 2.0,
-                "today_out_di": 1.1,
-                "solve_rate": "96%",
-                "critical_solve_rate": "71%",
-                "suggestion_num": 2,
-                "major_num": 1,
-                "minor_num": 1,
-                "fatal_num": 1,
+                "di": 0.0,
+                "target_di": 0.0,
+                "today_in_di": 0.0,
+                "today_out_di": 0.0,
+                "solve_rate": "0%",
+                "critical_solve_rate": "0%",
+                "suggestion_num": 0,
+                "major_num": 0,
+                "minor_num": 0,
+                "fatal_num": 0,
                 "children": [
-                     {
+                    {
                         "di_team": f"{root_team_name}_L2_GrandChild1",
                         "di": 5.0,
                         "target_di": 4.0,
@@ -116,8 +177,9 @@ def get_mock_dts_data(root_team_name):
                         "major_num": 0,
                         "minor_num": 1,
                         "fatal_num": 0,
+                        "children": [],
                     }
-                ]
+                ],
             },
             {
                 "di_team": f"{root_team_name}_L1_Child2",
@@ -131,14 +193,17 @@ def get_mock_dts_data(root_team_name):
                 "major_num": 1,
                 "minor_num": 1,
                 "fatal_num": 1,
-                # Leaf node
-            }
-        ]
+                "children": [],
+            },
+        ],
     }
+
+    _ensure_children(tree)
+    return _aggregate_node(tree)
 
 @transaction.atomic
 def sync_project_dts(project: Project):
-    if not project.enable_dts or not project.ws_id or not project.di_teams:
+    if not project.enable_dts:
         return
     
     today = date.today()
@@ -146,11 +211,21 @@ def sync_project_dts(project: Project):
     # 获取项目配置的根团队列表
     # di_teams 是一个列表，例如 ["TeamA", "TeamB"]
     root_teams = project.di_teams if isinstance(project.di_teams, list) else []
+    if not root_teams:
+        # 配置为空时，清理该项目所有团队（以及关联数据）
+        DtsTeam.objects.filter(project=project).delete()
+        return
+
+    if not project.ws_id:
+        return
+
+    latest_team_names: set[str] = set()
 
     def process_node(node_data, parent_team=None):
         team_name = node_data.get("di_team")
         if not team_name:
             return
+        latest_team_names.add(team_name)
 
         # Find or create team
         team, _ = DtsTeam.objects.update_or_create(
@@ -188,6 +263,9 @@ def sync_project_dts(project: Project):
         # In a real scenario: data = fetch_from_middleware(project.ws_id, team_name)
         data = get_mock_dts_data(team_name)
         process_node(data, parent_team=None)
+
+    # 清理本次同步未出现的团队（以最新配置为准）
+    DtsTeam.objects.filter(project=project).exclude(team_name__in=latest_team_names).delete()
     
     _warmup_dts_defect_details_cache(str(project.id), today)
 

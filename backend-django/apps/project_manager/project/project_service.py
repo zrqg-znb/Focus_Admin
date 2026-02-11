@@ -83,7 +83,7 @@ def update_project(request, id: str, data: ProjectUpdateSchema):
             project.ws_id != old_ws_id or 
             project.di_teams != old_di_teams
         )
-        if (dts_config_changed or not project.dts_teams.exists()) and project.ws_id and project.di_teams:
+        if dts_config_changed or not project.dts_teams.exists():
             sync_project_dts(project)
 
     return project

@@ -35,6 +35,14 @@ class DtsTeamDiTrend(Schema):
     dates: List[str]
     series: List[DtsTeamDiSeries]
 
+class DtsTeamTrendSeries(Schema):
+    team_name: str
+    values: List[Optional[float]]
+
+class DtsTeamTrend(Schema):
+    dates: List[str]
+    series: List[DtsTeamTrendSeries]
+
 class IterationDetailMetrics(Schema):
     sr_num: int = 0
     dr_num: int = 0
@@ -70,6 +78,9 @@ class ProjectReportSchema(Schema):
     dts_trend: List[DtsTrendItem]
     dts_team_di: Optional[List[DtsTeamDiItem]] = None
     dts_team_di_trend: Optional[DtsTeamDiTrend] = None
+    dts_team_issue_trend: Optional[DtsTeamTrend] = None
+    dts_team_solve_rate_trend: Optional[DtsTeamTrend] = None
+    dts_team_critical_rate_trend: Optional[DtsTeamTrend] = None
     
     # 4. Modules Data
     code_quality: Optional[CodeQualitySummary]

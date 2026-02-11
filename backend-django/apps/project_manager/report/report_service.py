@@ -19,6 +19,8 @@ from .report_schema import (
     DtsTeamDiItem,
     DtsTeamDiTrend,
     DtsTeamDiSeries,
+    DtsTeamTrend,
+    DtsTeamTrendSeries,
     CodeQualitySummary, 
     IterationSummary, 
     DtsSummary,
@@ -148,16 +150,19 @@ class ReportService:
     @staticmethod
     async def get_dts_data(project: Project):
         if not project.enable_dts:
-            return None, [], None, None, 100
+            return None, [], None, None, None, None, None, 100
 
         def _fetch_data():
             dts_teams = DtsTeam.objects.filter(project=project)
+            base_teams = dts_teams.filter(parent_team__isnull=True)
+            if not base_teams.exists():
+                base_teams = dts_teams
             today = timezone.now().date()
-            dts_data_qs = DtsData.objects.filter(team__in=dts_teams, record_date=today)
+            dts_data_qs = DtsData.objects.filter(team__in=base_teams, record_date=today)
             
             dts_agg = dts_data_qs.aggregate(
                 total=Sum('major_num') + Sum('minor_num') + Sum('suggestion_num') + Sum('fatal_num'),
-                critical=Sum('fatal_num') + Sum('major_num')
+                critical=Sum('fatal_num')
             )
             
             rates = []
@@ -176,13 +181,13 @@ class ReportService:
                 solve_rate=round(avg_rate, 1)
             )
             
-            # Trend
+            # Trend (aggregated)
             start_date = today - timedelta(days=6)
             trend_dates = [today - timedelta(days=i) for i in range(6, -1, -1)]
             trend_date_strs = [d.strftime('%Y-%m-%d') for d in trend_dates]
 
             rows = DtsData.objects.filter(
-                team__in=dts_teams,
+                team__in=base_teams,
                 record_date__gte=start_date,
                 record_date__lte=today,
             ).values(
@@ -226,13 +231,71 @@ class ReportService:
                 avg_cr = sum(agg["critical_rates"]) / len(agg["critical_rates"]) if agg["critical_rates"] else 0.0
                 dts_trend.append(DtsTrendItem(
                     date=date_str,
-                    critical=agg["fatal"] + agg["major"],
+                    critical=agg["fatal"],
                     major=agg["major"],
                     minor=agg["minor"],
                     suggestion=agg["suggestion"],
                     solve_rate=round(avg_sr, 1),
                     critical_solve_rate=round(avg_cr, 1),
                 ))
+
+            # Team Issue Trend & Solve Rate Trend
+            date_index = {d: idx for idx, d in enumerate(trend_date_strs)}
+            issue_values_by_team = {t.id: [0.0] * len(trend_date_strs) for t in dts_teams}
+            solve_rate_by_team = {t.id: [None] * len(trend_date_strs) for t in dts_teams}
+            critical_rate_by_team = {t.id: [None] * len(trend_date_strs) for t in dts_teams}
+
+            team_rows = DtsData.objects.filter(
+                team__in=dts_teams,
+                record_date__gte=start_date,
+                record_date__lte=today,
+            ).values(
+                'team_id',
+                'record_date',
+                'fatal_num',
+                'major_num',
+                'minor_num',
+                'suggestion_num',
+                'solve_rate',
+                'critical_solve_rate',
+            )
+
+            for row in team_rows:
+                date_str = row['record_date'].strftime('%Y-%m-%d')
+                idx = date_index.get(date_str)
+                if idx is None:
+                    continue
+                total_issues = (
+                    (row.get('fatal_num') or 0)
+                    + (row.get('major_num') or 0)
+                    + (row.get('minor_num') or 0)
+                    + (row.get('suggestion_num') or 0)
+                )
+                issue_values_by_team.get(row['team_id'], [0.0] * len(trend_date_strs))[idx] = float(total_issues)
+                solve_rate_by_team.get(row['team_id'], [None] * len(trend_date_strs))[idx] = parse_percent(row.get('solve_rate'))
+                critical_rate_by_team.get(row['team_id'], [None] * len(trend_date_strs))[idx] = parse_percent(row.get('critical_solve_rate'))
+
+            dts_team_issue_trend = DtsTeamTrend(
+                dates=trend_date_strs,
+                series=[
+                    DtsTeamTrendSeries(team_name=t.team_name, values=issue_values_by_team.get(t.id, [0.0] * len(trend_date_strs)))
+                    for t in dts_teams
+                ],
+            )
+            dts_team_solve_rate_trend = DtsTeamTrend(
+                dates=trend_date_strs,
+                series=[
+                    DtsTeamTrendSeries(team_name=t.team_name, values=solve_rate_by_team.get(t.id, [None] * len(trend_date_strs)))
+                    for t in dts_teams
+                ],
+            )
+            dts_team_critical_rate_trend = DtsTeamTrend(
+                dates=trend_date_strs,
+                series=[
+                    DtsTeamTrendSeries(team_name=t.team_name, values=critical_rate_by_team.get(t.id, [None] * len(trend_date_strs)))
+                    for t in dts_teams
+                ],
+            )
 
             # Team DI
             dts_team_di = []
@@ -263,7 +326,16 @@ class ReportService:
                 di_series.append(DtsTeamDiSeries(team_name=t.team_name, values=values))
             dts_team_di_trend = DtsTeamDiTrend(dates=di_dates, series=di_series)
             
-            return dts_summary, dts_trend, dts_team_di, dts_team_di_trend, dts_score
+            return (
+                dts_summary,
+                dts_trend,
+                dts_team_di,
+                dts_team_di_trend,
+                dts_team_issue_trend,
+                dts_team_solve_rate_trend,
+                dts_team_critical_rate_trend,
+                dts_score,
+            )
 
         return await sync_to_async(_fetch_data)()
 
@@ -321,4 +393,3 @@ class ReportService:
             return milestones_list, ms_score
 
         return await sync_to_async(_fetch_data)()
-

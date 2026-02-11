@@ -44,61 +44,76 @@ const fishboneItems = computed(() => {
 
     const riskStatus = (ms as any).risk_status;
     const hasRisk = (ms as any).has_risk || !!riskStatus;
+    const status = String((ms as any).status || '');
 
     return {
       ms,
       originalIndex,
       t,
       dateKey,
+      status,
       isPast: typeof t === 'number' ? t < todayT : false,
       hasRisk,
       riskStatus,
     };
   });
 
-  const dated = rows.filter((r) => typeof r.t === 'number') as Array<
-    (typeof rows)[number] & { t: number }
-  >;
+  if (rows.length === 0) return [];
 
-  const canUseDateAxis = dated.length >= 2;
-  if (!canUseDateAxis) {
-    return rows.map((r, index) => ({
-      ...(r.ms as any),
-      isTop: index % 2 === 0,
-      isPast: r.isPast,
-      hasRisk: r.hasRisk,
-      riskStatus: r.riskStatus,
-      left: `${(index / (rows.length - 1 || 1)) * 90 + 5}%`,
-    }));
+  const dateGroups = new Map<string, typeof rows>();
+  const missingGroups: Array<{ key: string; items: typeof rows; firstIndex: number }> = [];
+
+  for (const row of rows) {
+    if (typeof row.t === 'number') {
+      const key = row.dateKey || `__idx_${row.originalIndex}`;
+      const list = dateGroups.get(key) || [];
+      list.push(row);
+      dateGroups.set(key, list);
+    } else {
+      missingGroups.push({
+        key: `__missing_${row.originalIndex}`,
+        items: [row],
+        firstIndex: row.originalIndex,
+      });
+    }
   }
 
-  const min = Math.min(...dated.map((r) => r.t));
-  const max = Math.max(...dated.map((r) => r.t));
-  if (max <= min) {
-    return rows.map((r, index) => ({
-      ...(r.ms as any),
-      isTop: index % 2 === 0,
-      isPast: r.isPast,
-      hasRisk: r.hasRisk,
-      riskStatus: r.riskStatus,
-      left: `${(index / (rows.length - 1 || 1)) * 90 + 5}%`,
-    }));
+  const grouped: Array<{
+    key: string;
+    dateTs?: number;
+    items: typeof rows;
+    firstIndex: number;
+  }> = [];
+
+  for (const [key, items] of dateGroups.entries()) {
+    const sortedItems = items.sort((a, b) => a.originalIndex - b.originalIndex);
+    grouped.push({
+      key,
+      dateTs: sortedItems[0]?.t,
+      items: sortedItems,
+      firstIndex: sortedItems[0]?.originalIndex ?? 0,
+    });
   }
 
-  const sorted = [...rows].sort((a, b) => {
-    const ta = typeof a.t === 'number' ? a.t : Number.POSITIVE_INFINITY;
-    const tb = typeof b.t === 'number' ? b.t : Number.POSITIVE_INFINITY;
-    if (ta !== tb) return ta - tb;
-    return a.originalIndex - b.originalIndex;
+  grouped.sort((a, b) => {
+    if (typeof a.dateTs === 'number' && typeof b.dateTs === 'number') {
+      if (a.dateTs !== b.dateTs) return a.dateTs - b.dateTs;
+      return a.firstIndex - b.firstIndex;
+    }
+    if (typeof a.dateTs === 'number') return -1;
+    if (typeof b.dateTs === 'number') return 1;
+    return a.firstIndex - b.firstIndex;
   });
 
-  const groupMap = new Map<string, number[]>();
-  for (const [i, item] of sorted.entries()) {
-    const key = item.dateKey || `__idx_${item.originalIndex}`;
-    const arr = groupMap.get(key) || [];
-    arr.push(i);
-    groupMap.set(key, arr);
-  }
+  const missingSorted = missingGroups.sort((a, b) => a.firstIndex - b.firstIndex);
+  const groups = [...grouped, ...missingSorted];
+
+  const groupPositions = new Map<string, number>();
+  const total = groups.length;
+  const denom = total - 1 || 1;
+  groups.forEach((g, idx) => {
+    groupPositions.set(g.key, (idx / denom) * 90 + 5);
+  });
 
   const groupSummaryMap = new Map<
     string,
@@ -109,20 +124,12 @@ const fishboneItems = computed(() => {
       axisStatus: string;
     }
   >();
-  for (const [key, idxs] of groupMap.entries()) {
-    const members = idxs
-      .map((i) => sorted[i])
-      .filter(
-        (m): m is (typeof sorted)[number] => typeof m !== 'undefined' && m !== null,
-      );
-    if (members.length === 0) {
-      continue;
-    }
+
+  for (const g of groups) {
+    const members = g.items;
     const axisHasRisk = members.some((m) => m.hasRisk);
     const hasConfirmed = members.some((m) => m.riskStatus === 'confirmed');
-    const hasPending = members.some(
-      (m) => m.riskStatus && m.riskStatus !== 'confirmed',
-    );
+    const hasPending = members.some((m) => m.riskStatus && m.riskStatus !== 'confirmed');
     const axisRiskStatus = axisHasRisk
       ? hasConfirmed
         ? 'confirmed'
@@ -132,7 +139,7 @@ const fishboneItems = computed(() => {
       : null;
 
     const axisIsPast = members.every((m) => m.isPast);
-    const statuses = members.map((m) => String((m.ms as any).status || ''));
+    const statuses = members.map((m) => m.status);
     const axisStatus = statuses.includes('delayed')
       ? 'delayed'
       : statuses.includes('pending')
@@ -141,7 +148,7 @@ const fishboneItems = computed(() => {
           ? 'completed'
           : statuses[0] || '';
 
-    groupSummaryMap.set(key, {
+    groupSummaryMap.set(g.key, {
       axisHasRisk,
       axisRiskStatus,
       axisIsPast,
@@ -149,53 +156,32 @@ const fishboneItems = computed(() => {
     });
   }
 
-  const baseLefts = sorted.map((r) => {
-    if (typeof r.t !== 'number') return null;
-    const ratio = Math.min(1, Math.max(0, (r.t - min) / (max - min)));
-    return ratio * 90 + 5;
-  });
-
-  const result = sorted.map((r, sortedIndex) => {
-    const base = baseLefts[sortedIndex];
-    let leftNum =
-      typeof base === 'number'
-        ? base
-        : (sortedIndex / (sorted.length - 1 || 1)) * 90 + 5;
-
-    const key = r.dateKey || `__idx_${r.originalIndex}`;
-    const group = groupMap.get(key) || [sortedIndex];
-    const pos = group.indexOf(sortedIndex);
-    const axisIndexInGroup = Math.round((group.length - 1) / 2);
-    const showAxisPoint = pos === axisIndexInGroup;
-    const groupSize = group.length;
-    const level = Math.floor(pos / 2);
-    const isTop = pos % 2 === 0;
-
-    if (group.length > 1) {
-      leftNum =
-        typeof base === 'number'
-          ? base
-          : (sortedIndex / (sorted.length - 1 || 1)) * 90 + 5;
-      leftNum = Math.max(5, Math.min(95, leftNum));
-    }
-
-    const axisSummary = groupSummaryMap.get(key);
-    return {
-      ...(r.ms as any),
-      isTop,
-      groupSize,
-      level,
-      lineHeightPx: 48 + level * 22,
-      isPast: r.isPast,
-      hasRisk: r.hasRisk,
-      riskStatus: r.riskStatus,
-      showAxisPoint,
-      axisHasRisk: axisSummary?.axisHasRisk ?? r.hasRisk,
-      axisRiskStatus: axisSummary?.axisRiskStatus ?? r.riskStatus,
-      axisIsPast: axisSummary?.axisIsPast ?? r.isPast,
-      axisStatus: axisSummary?.axisStatus ?? String((r.ms as any).status || ''),
-      left: `${leftNum}%`,
-    };
+  const result: any[] = [];
+  groups.forEach((g, groupIndex) => {
+    const leftNum = groupPositions.get(g.key) ?? 5;
+    const baseTop = groupIndex % 2 === 0;
+    const axisIndexInGroup = Math.floor((g.items.length - 1) / 2);
+    g.items.forEach((r, idx) => {
+      const isTop = baseTop ? idx % 2 === 0 : idx % 2 !== 0;
+      const level = Math.floor(idx / 2);
+      const axisSummary = groupSummaryMap.get(g.key);
+      result.push({
+        ...(r.ms as any),
+        isTop,
+        groupSize: g.items.length,
+        level,
+        lineHeightPx: 48 + level * 22,
+        isPast: r.isPast,
+        hasRisk: r.hasRisk,
+        riskStatus: r.riskStatus,
+        showAxisPoint: idx === axisIndexInGroup,
+        axisHasRisk: axisSummary?.axisHasRisk ?? r.hasRisk,
+        axisRiskStatus: axisSummary?.axisRiskStatus ?? r.riskStatus,
+        axisIsPast: axisSummary?.axisIsPast ?? r.isPast,
+        axisStatus: axisSummary?.axisStatus ?? r.status,
+        left: `${Math.max(5, Math.min(95, leftNum))}%`,
+      });
+    });
   });
 
   return result;
@@ -211,26 +197,45 @@ function parseDate(value: unknown): null | number {
 }
 
 const todayPosition = computed(() => {
-  const dates = props.milestones
-    .map((m) => parseDate((m as any).date))
-    .filter((t): t is number => typeof t === 'number');
-  if (dates.length < 2) {
+  const axisPoints = fishboneItems.value
+    .filter((i) => i.showAxisPoint)
+    .map((i) => ({
+      leftNum: Number(String(i.left).replace('%', '')) || 0,
+      axisStatus: i.axisStatus,
+      axisIsPast: i.axisIsPast,
+    }))
+    .sort((a, b) => a.leftNum - b.leftNum);
+
+  if (axisPoints.length === 0) {
     return null;
   }
 
-  const min = Math.min(...dates);
-  const max = Math.max(...dates);
-  if (max <= min) {
-    return null;
+  let lastIndex = -1;
+  for (let i = axisPoints.length - 1; i >= 0; i -= 1) {
+    if (axisPoints[i]?.axisStatus === 'completed') {
+      lastIndex = i;
+      break;
+    }
+  }
+  if (lastIndex === -1) {
+    for (let i = axisPoints.length - 1; i >= 0; i -= 1) {
+      if (axisPoints[i]?.axisIsPast) {
+        lastIndex = i;
+        break;
+      }
+    }
   }
 
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const t = now.getTime();
+  let leftNum = axisPoints[0].leftNum;
+  if (lastIndex >= 0 && lastIndex < axisPoints.length - 1) {
+    leftNum = (axisPoints[lastIndex].leftNum + axisPoints[lastIndex + 1].leftNum) / 2;
+  } else if (lastIndex >= axisPoints.length - 1) {
+    leftNum = axisPoints[axisPoints.length - 1].leftNum;
+  }
 
-  const ratio = Math.min(1, Math.max(0, (t - min) / (max - min)));
+  const ratio = Math.min(1, Math.max(0, (leftNum - 5) / 90));
   return {
-    left: `${ratio * 90 + 5}%`,
+    left: `${leftNum}%`,
     ratio,
   };
 });
@@ -404,7 +409,7 @@ function getRiskClasses(item: any) {
           {{ item.name }}
         </div>
         <div class="mt-0.5 font-mono text-[10px] text-gray-400">
-          {{ item.date }}
+          {{ item.date || '待定' }}
         </div>
 
         <div
