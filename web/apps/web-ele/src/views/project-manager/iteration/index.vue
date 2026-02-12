@@ -6,11 +6,13 @@ import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
-import { ElLink } from 'element-plus';
+import { ElLink, ElMessage } from 'element-plus';
 
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
-import { getIterationOverviewApi, updateManualMetricApi } from '#/api/project-manager/iteration';
-import { ElMessage } from 'element-plus';
+import {
+  getIterationOverviewApi,
+  updateManualMetricApi,
+} from '#/api/project-manager/iteration';
 
 import { useDashboardColumns, useSearchFormSchema } from './data';
 
@@ -25,13 +27,16 @@ function onNameClick(row: IterationDashboardItem) {
 async function onEditClosed({ row, column }: any) {
   if (!row.iteration_id) return;
   const field = column.field;
-  if (field === 'test_automation_rate' || field === 'test_case_execution_rate') {
+  if (
+    field === 'test_automation_rate' ||
+    field === 'test_case_execution_rate'
+  ) {
     try {
       await updateManualMetricApi(row.iteration_id, {
-        [field]: row[field]
+        [field]: row[field],
       });
       ElMessage.success('更新成功');
-    } catch (e) {
+    } catch {
       // Revert change? For now just show error
       ElMessage.error('更新失败');
     }
@@ -43,6 +48,9 @@ const [Grid, gridApi] = useVbenVxeGrid({
     schema: useSearchFormSchema(),
     submitOnChange: true,
   },
+  gridEvents: {
+    editClosed: onEditClosed,
+  },
   gridOptions: {
     columns: useDashboardColumns(onNameClick),
     height: 'auto',
@@ -52,16 +60,16 @@ const [Grid, gridApi] = useVbenVxeGrid({
       trigger: 'click',
       mode: 'cell',
       beforeEditMethod: ({ row }) => {
-         if (!row.end_date) return true;
-         const today = new Date();
-         today.setHours(0,0,0,0);
-         const end = new Date(row.end_date);
-         if (end < today) {
-             ElMessage.warning('该迭代已结束，无法修改指标');
-             return false;
-         }
-         return true;
-      }
+        if (!row.end_date) return true;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const end = new Date(row.end_date);
+        if (end < today) {
+          ElMessage.warning('该迭代已结束，无法修改指标');
+          return false;
+        }
+        return true;
+      },
     },
     proxyConfig: {
       ajax: {
@@ -70,15 +78,21 @@ const [Grid, gridApi] = useVbenVxeGrid({
           let filtered = data;
           if (formValues.keyword) {
             const k = formValues.keyword.toLowerCase();
-            filtered = filtered.filter(i => i.project_name.toLowerCase().includes(k));
+            filtered = filtered.filter((i) =>
+              i.project_name.toLowerCase().includes(k),
+            );
           }
           if (formValues.domain) {
-            filtered = filtered.filter(i => i.project_domain.includes(formValues.domain));
+            filtered = filtered.filter((i) =>
+              i.project_domain.includes(formValues.domain),
+            );
           }
           if (formValues.type) {
-            filtered = filtered.filter(i => i.project_type.includes(formValues.type));
+            filtered = filtered.filter((i) =>
+              i.project_type.includes(formValues.type),
+            );
           }
-          
+
           // Manual pagination
           const start = (page.currentPage - 1) * page.pageSize;
           const end = start + page.pageSize;
@@ -100,9 +114,11 @@ const [Grid, gridApi] = useVbenVxeGrid({
 
 <template>
   <Page auto-content-height>
-    <Grid @edit-closed="onEditClosed">
+    <Grid>
       <template #name_slot="{ row }">
-        <ElLink type="primary" @click="onNameClick(row)">{{ row.project_name }}</ElLink>
+        <ElLink type="primary" @click="onNameClick(row)">
+          {{ row.project_name }}
+        </ElLink>
       </template>
     </Grid>
   </Page>

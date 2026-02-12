@@ -13,7 +13,7 @@ import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import {
   listProjectIterationsApi,
   refreshProjectIterationApi,
-  updateManualMetricApi
+  updateManualMetricApi,
 } from '#/api/project-manager/iteration';
 import { getProjectApi } from '#/api/project-manager/project';
 
@@ -56,17 +56,17 @@ async function onEditClosed({ row, column }: any) {
   // row here is IterationDetailItem
   // But our edit fields are nested in latest_metric: 'latest_metric.test_automation_rate'
   // VxeTable handles nested fields edit by updating the nested object directly.
-  
+
   if (!row.id || !row.latest_metric) return;
   const iterationId = row.id; // Iteration ID is the row ID for detail view
-  
-  const fieldPath = column.field; 
+
+  const fieldPath = column.field;
   // fieldPath is 'latest_metric.test_automation_rate'
-  
+
   // Extract the actual field name
   let fieldName = '';
   let value = null;
-  
+
   if (fieldPath === 'latest_metric.test_automation_rate') {
     fieldName = 'test_automation_rate';
     value = row.latest_metric.test_automation_rate;
@@ -76,18 +76,21 @@ async function onEditClosed({ row, column }: any) {
   } else {
     return;
   }
-  
+
   try {
     await updateManualMetricApi(iterationId, {
-      [fieldName]: value
+      [fieldName]: value,
     });
     ElMessage.success('更新成功');
-  } catch (e) {
+  } catch {
     ElMessage.error('更新失败');
   }
 }
 
 const [Grid, gridApi] = useVbenVxeGrid({
+  gridEvents: {
+    editClosed: onEditClosed,
+  },
   gridOptions: {
     columns: useDetailColumns(),
     height: 'auto',
@@ -96,26 +99,26 @@ const [Grid, gridApi] = useVbenVxeGrid({
       trigger: 'click',
       mode: 'cell',
       beforeEditMethod: ({ row }) => {
-         if (!row.end_date) return true;
-         const today = new Date();
-         today.setHours(0,0,0,0);
-         const end = new Date(row.end_date);
-         if (end < today) {
-             ElMessage.warning('该迭代已结束，无法修改指标');
-             return false;
-         }
-         return true;
-      }
+        if (!row.end_date) return true;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const end = new Date(row.end_date);
+        if (end < today) {
+          ElMessage.warning('该迭代已结束，无法修改指标');
+          return false;
+        }
+        return true;
+      },
     },
     proxyConfig: {
       ajax: {
         query: async ({ page }) => {
           const data = await listProjectIterationsApi(projectId);
-          
+
           const start = (page.currentPage - 1) * page.pageSize;
           const end = start + page.pageSize;
           const pageItems = data.slice(start, end);
-          
+
           return { items: pageItems, total: data.length };
         },
       },
@@ -144,6 +147,6 @@ onMounted(() => {
         刷新数据
       </ElButton>
     </div>
-    <Grid @edit-closed="onEditClosed" />
+    <Grid />
   </Page>
 </template>
