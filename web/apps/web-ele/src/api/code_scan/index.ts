@@ -4,8 +4,8 @@ export const listProjectsApi = (params?: any) => {
   return requestClient.get('/api/code-scan/projects', { params });
 };
 
-export const listProjectOverviewApi = () => {
-  return requestClient.get('/api/code-scan/projects/overview');
+export const listProjectOverviewApi = (params?: any) => {
+  return requestClient.get('/api/code-scan/projects/overview', { params });
 };
 
 export const createProjectApi = (data: any) => {
@@ -36,8 +36,8 @@ export const applyShieldApi = (data: { result_ids: string[]; approver_id: string
   return requestClient.post('/api/code-scan/shield/apply', data);
 };
 
-export const listApplicationsApi = (mode: 'my_apply' | 'my_audit') => {
-  return requestClient.get('/api/code-scan/shield/applications', { params: { mode } });
+export const listApplicationsApi = (mode: 'my_apply' | 'my_audit', params?: any) => {
+  return requestClient.get('/api/code-scan/shield/applications', { params: { mode, ...params } });
 };
 
 export const auditShieldApi = (data: { application_id: string; status: string; audit_comment?: string }) => {

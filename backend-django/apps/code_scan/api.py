@@ -8,7 +8,8 @@ from apps.code_scan.schemas import (
     ShieldApplicationSchema, ShieldApplySchema, ShieldAuditSchema,
     ShieldRecordSchema,
     ChunkUploadSchema, ProjectOverviewSchema, LatestScanResultSchema,
-    PaginatedScanResultSchema
+    PaginatedScanResultSchema, PaginatedScanProjectSchema, PaginatedScanTaskSchema,
+    PaginatedShieldApplicationSchema, PaginatedProjectOverviewSchema
 )
 from apps.code_scan.services import ScanService
 from common.fu_auth import BearerAuth
@@ -18,17 +19,27 @@ router = Router()
 
 # --- 项目管理 ---
 
-@router.get("/projects", response=List[ScanProjectSchema], auth=BearerAuth())
-def list_projects(request, keyword: str = None):
+@router.get("/projects", response=PaginatedScanProjectSchema, auth=BearerAuth(), summary="获取项目列表")
+def list_projects(request, keyword: str = None, page: int = 1, pageSize: int = 20):
     qs = ScanProject.objects.filter(is_deleted=False).select_related('caretaker')
     if keyword:
         from django.db.models import Q
         qs = qs.filter(Q(name__icontains=keyword) | Q(repo_url__icontains=keyword))
-    return qs
+    
+    total = qs.count()
+    start = (page - 1) * pageSize
+    end = start + pageSize
+    items = list(qs[start:end])
+    return {"items": items, "total": total}
 
-@router.get("/projects/overview", response=List[ProjectOverviewSchema], auth=BearerAuth())
-def list_project_overview(request):
-    projects = list(ScanProject.objects.filter(is_deleted=False).values("id", "name"))
+@router.get("/projects/overview", response=PaginatedProjectOverviewSchema, auth=BearerAuth(), summary="获取项目概览")
+def list_project_overview(request, page: int = 1, pageSize: int = 20):
+    projects_qs = ScanProject.objects.filter(is_deleted=False).values("id", "name")
+    
+    total = projects_qs.count()
+    start = (page - 1) * pageSize
+    end = start + pageSize
+    projects = list(projects_qs[start:end])
     project_ids = [p["id"] for p in projects]
 
     tasks = (
@@ -70,7 +81,7 @@ def list_project_overview(request):
         overview_by_project[pid]["tool_counts"][tool] = cnt
         overview_by_project[pid]["total"] += cnt
 
-    return [
+    items = [
         {
             "project_id": p["id"],
             "project_name": p["name"],
@@ -80,20 +91,21 @@ def list_project_overview(request):
         }
         for p in projects
     ]
+    return {"items": items, "total": total}
 
-@router.post("/projects", response=ScanProjectSchema, auth=BearerAuth())
+@router.post("/projects", response=ScanProjectSchema, auth=BearerAuth(), summary="创建项目")
 def create_project(request, data: ScanProjectCreateSchema):
     project = ScanService.create_project(data.dict(), request.auth)
     return project
 
-@router.put("/projects/{project_id}", response=ScanProjectSchema, auth=BearerAuth())
+@router.put("/projects/{project_id}", response=ScanProjectSchema, auth=BearerAuth(), summary="更新项目")
 def update_project(request, project_id: str, data: ScanProjectCreateSchema):
     project = ScanService.update_project(project_id, data.dict(), request.auth)
     return project
 
 # --- 任务上传 (流水线调用) ---
 
-@router.post("/upload", response=ScanTaskSchema, auth=None)
+@router.post("/upload", response=ScanTaskSchema, auth=None, summary="上传扫描报告")
 def upload_report(request, 
                  project_key: str = Form(...), 
                  tool_name: str = Form('tscan'),
@@ -105,7 +117,7 @@ def upload_report(request,
     task = ScanService.handle_upload(project_key, tool_name, file)
     return task
 
-@router.post("/upload/chunk", auth=None)
+@router.post("/upload/chunk", auth=None, summary="分片上传扫描报告")
 def upload_chunk(request, data: ChunkUploadSchema):
     """
     分片上传接口 (适用于受限网络环境)
@@ -124,17 +136,22 @@ def upload_chunk(request, data: ChunkUploadSchema):
 
 # --- 任务管理 ---
 
-@router.get("/tasks", response=List[ScanTaskSchema], auth=BearerAuth())
-def list_tasks(request, project_id: str):
-    return ScanTask.objects.filter(project_id=project_id, is_deleted=False)
+@router.get("/tasks", response=PaginatedScanTaskSchema, auth=BearerAuth(), summary="获取扫描任务列表")
+def list_tasks(request, project_id: str, page: int = 1, pageSize: int = 20):
+    qs = ScanTask.objects.filter(project_id=project_id, is_deleted=False)
+    total = qs.count()
+    start = (page - 1) * pageSize
+    end = start + pageSize
+    items = list(qs[start:end])
+    return {"items": items, "total": total}
 
 # --- 结果管理 ---
 
-@router.get("/results", response=List[ScanResultSchema], auth=BearerAuth())
+@router.get("/results", response=List[ScanResultSchema], auth=BearerAuth(), summary="获取任务结果列表")
 def list_results(request, task_id: str):
     return ScanResult.objects.filter(task_id=task_id, is_deleted=False)
 
-@router.get("/results/{result_id}/shield-records", response=List[ShieldRecordSchema], auth=BearerAuth())
+@router.get("/results/{result_id}/shield-records", response=List[ShieldRecordSchema], auth=BearerAuth(), summary="获取屏蔽记录")
 def list_result_shield_records(request, result_id: str):
     r = get_object_or_404(ScanResult.objects.select_related("task"), id=result_id, is_deleted=False)
     apps = (
@@ -167,7 +184,7 @@ def list_result_shield_records(request, result_id: str):
         )
     return payload
 
-@router.get("/projects/{project_id}/latest-results", response=PaginatedScanResultSchema, auth=BearerAuth())
+@router.get("/projects/{project_id}/latest-results", response=PaginatedScanResultSchema, auth=BearerAuth(), summary="获取最新扫描结果")
 def list_latest_results(request, project_id: str, tool_name: str = None, page: int = 1, pageSize: int = 20):
     tasks_qs = ScanTask.objects.filter(project_id=project_id, is_deleted=False, status="success")
     
@@ -228,21 +245,26 @@ def list_latest_results(request, project_id: str, tool_name: str = None, page: i
 
 # --- 屏蔽申请与审批 ---
 
-@router.post("/shield/apply", auth=BearerAuth())
+@router.post("/shield/apply", auth=BearerAuth(), summary="申请屏蔽缺陷")
 def apply_shield(request, data: ShieldApplySchema):
     ScanService.apply_shield(request.auth, data.result_ids, data.approver_id, data.reason)
     return {"message": "Application submitted"}
 
-@router.get("/shield/applications", response=List[ShieldApplicationSchema], auth=BearerAuth())
-def list_applications(request, mode: str = "my_apply"):
+@router.get("/shield/applications", response=PaginatedShieldApplicationSchema, auth=BearerAuth(), summary="获取屏蔽申请列表")
+def list_applications(request, mode: str = "my_apply", page: int = 1, pageSize: int = 20):
     user = request.auth  # BearerAuth returns user in request.auth
     if mode == "my_apply":
         qs = ShieldApplication.objects.filter(applicant=user)
     else:
         qs = ShieldApplication.objects.filter(approver=user)
     
+    total = qs.count()
+    start = (page - 1) * pageSize
+    end = start + pageSize
+    page_qs = qs[start:end]
+
     results = []
-    for app in qs.select_related("applicant", "approver", "result", "result__task"):
+    for app in page_qs.select_related("applicant", "approver", "result", "result__task"):
         results.append(
             {
                 "id": str(app.id),
@@ -265,9 +287,9 @@ def list_applications(request, mode: str = "my_apply"):
                 "code_snippet": app.result.code_snippet,
             }
         )
-    return results
+    return {"items": results, "total": total}
 
-@router.post("/shield/audit", auth=BearerAuth())
+@router.post("/shield/audit", auth=BearerAuth(), summary="审核屏蔽申请")
 def audit_shield(request, data: ShieldAuditSchema):
     ScanService.audit_shield(request.auth, data.application_id, data.status, data.audit_comment)
     return {"message": "Audit completed"}

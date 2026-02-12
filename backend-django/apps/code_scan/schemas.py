@@ -108,3 +108,19 @@ class LatestScanResultSchema(Schema):
 class PaginatedScanResultSchema(Schema):
     items: List[LatestScanResultSchema]
     total: int
+
+class PaginatedScanProjectSchema(Schema):
+    items: List[ScanProjectSchema]
+    total: int
+
+class PaginatedScanTaskSchema(Schema):
+    items: List[ScanTaskSchema]
+    total: int
+
+class PaginatedShieldApplicationSchema(Schema):
+    items: List[ShieldApplicationSchema]
+    total: int
+
+class PaginatedProjectOverviewSchema(Schema):
+    items: List[ProjectOverviewSchema]
+    total: int

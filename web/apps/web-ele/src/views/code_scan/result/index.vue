@@ -26,17 +26,30 @@ const activeTool = ref('');
 const summaryGridOptions: any = {
   columns: useSummaryColumns([]),
   height: '100%',
+  pagerConfig: {
+      enabled: true,
+      pageSize: 20,
+      pageSizes: [10, 20, 50, 100],
+  },
   proxyConfig: {
     ajax: {
-      query: async () => {
-        const res = (await listProjectOverviewApi()) || [];
+      query: async ({ page }) => {
+        const res = (await listProjectOverviewApi({
+            page: page.currentPage,
+            pageSize: page.pageSize
+        })) || { items: [], total: 0 };
+        
+        // Handle paginated response
+        const itemsData = res.items || [];
+        const total = res.total || 0;
+
         const toolSet = new Set<string>();
         // Ensure tscan and cppcheck are always present if needed, 
         // or just let them be dynamic. 
         // If we want to force columns, we can add them here.
         // But dynamic is usually better. 
         // If 'cppcheck' exists in data, it should appear.
-        for (const row of res) {
+        for (const row of itemsData) {
           const keys = Object.keys(row.tool_counts || {});
           for (const k of keys) toolSet.add(k);
         }
@@ -52,8 +65,8 @@ const summaryGridOptions: any = {
             columns: useSummaryColumns(toolNames)
         });
 
-        const items = res.map((row: any) => ({ ...row, ...(row.tool_counts || {}) }));
-        return { items };
+        const items = itemsData.map((row: any) => ({ ...row, ...(row.tool_counts || {}) }));
+        return { items, total };
       },
     },
   },
@@ -101,8 +114,10 @@ const [DetailGrid, detailGridApi] = useVbenVxeGrid({ gridOptions: detailGridOpti
 async function loadTools() {
     if (!projectId.value) return;
     try {
-        const res = await listProjectOverviewApi();
-        const project = res.find((p: any) => p.project_id === projectId.value);
+        const res: any = await listProjectOverviewApi();
+        const items = res.items || res; // 兼容分页返回结构 {items: [], total: N} 和数组返回
+        const project = Array.isArray(items) ? items.find((p: any) => p.project_id === projectId.value) : null;
+        
         if (project && project.tool_counts) {
             tools.value = Object.keys(project.tool_counts).sort();
             if (tools.value.length > 0) {

@@ -31,11 +31,19 @@ const gridOptions: any = {
     { field: 'action', title: '操作', width: 150, slots: { default: 'action' } },
   ],
   height: '100%',
+  pagerConfig: {
+      enabled: true,
+      pageSize: 20,
+      pageSizes: [10, 20, 50, 100],
+  },
   proxyConfig: {
     ajax: {
-      query: async () => {
-        const res = await listApplicationsApi(activeTab.value);
-        return { items: res };
+      query: async ({ page }) => {
+        const res = await listApplicationsApi(activeTab.value, {
+            page: page.currentPage,
+            pageSize: page.pageSize
+        });
+        return { items: res.items, total: res.total };
       },
     },
   },

@@ -15,11 +15,20 @@ const { copy } = useClipboard();
 const gridOptions: any = {
   columns: useColumns(),
   height: '100%', // 强制撑满父容器
+  pagerConfig: {
+      enabled: true,
+      pageSize: 20,
+      pageSizes: [10, 20, 50, 100],
+  },
   proxyConfig: {
     ajax: {
       query: async ({ page }, formValues) => {
-        const res = await listProjectsApi(formValues);
-        return { items: res };
+        const res = await listProjectsApi({
+          ...formValues,
+          page: page.currentPage,
+          pageSize: page.pageSize,
+        });
+        return { items: res.items, total: res.total };
       },
     },
   },
