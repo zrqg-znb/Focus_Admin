@@ -25,10 +25,14 @@ const [Grid, gridApi] = useVbenVxeGrid({
         query: async ({ page }, formValues) => {
           const params = {
             page: page.currentPage,
-            pageSize: page.pageSize,
+            page_size: page.pageSize,
             ...formValues,
           };
-          return await listEmailDeliveriesApi(params);
+          const res = await listEmailDeliveriesApi(params);
+          return {
+              items: res.items,
+              total: res.count
+          };
         },
       },
     },

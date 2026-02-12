@@ -209,8 +209,7 @@ def mock_send(request, record_date: Optional[date] = None):
     return integration_service.send_daily_emails(record_date)
 
 
-@router.get("/email-deliveries", response=List[EmailDeliveryRow], summary="邮件投递日志查询")
-@paginate
+@router.get("/email-deliveries", response=EmailDeliveryQueryOut, summary="邮件投递日志查询")
 def list_email_deliveries(request, filters: EmailDeliveryQueryIn = Query(...)):
     qs = IntegrationEmailDelivery.objects.select_related("user").filter(is_deleted=False)
     
@@ -227,6 +226,15 @@ def list_email_deliveries(request, filters: EmailDeliveryQueryIn = Query(...)):
     
     qs = qs.order_by("-sys_create_datetime")
     
+    count = qs.count()
+    
+    page = filters.page or 1
+    page_size = filters.page_size or 20
+    
+    start = (page - 1) * page_size
+    end = start + page_size
+    qs = qs[start:end]
+
     rows = []
     for delivery in qs:
         rows.append(
@@ -242,4 +250,9 @@ def list_email_deliveries(request, filters: EmailDeliveryQueryIn = Query(...)):
                 sys_create_datetime=delivery.sys_create_datetime,
             )
         )
-    return rows
+    return EmailDeliveryQueryOut(
+        items=rows,
+        count=count,
+        page=page,
+        page_size=page_size
+    )
