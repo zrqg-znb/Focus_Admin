@@ -48,12 +48,30 @@ watch(
             user_ids: p.users_info.map((u) => u.id),
           }))
         : [];
+      // Pass currentNodeId to ParentNodeSelect
+      formApi.updateSchema([
+        {
+          fieldName: 'parent_id',
+          componentProps: {
+            currentNodeId: props.node.id,
+          },
+        },
+      ]);
     } else {
       formApi.resetForm();
       formApi.setValues({
         parent_id: props.parentNode?.id || null,
       });
       positions.value = [];
+      // Clear currentNodeId
+      formApi.updateSchema([
+        {
+          fieldName: 'parent_id',
+          componentProps: {
+            currentNodeId: undefined,
+          },
+        },
+      ]);
     }
   },
   { immediate: true },

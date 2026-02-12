@@ -14,13 +14,14 @@ import {
   ElTree,
 } from 'element-plus';
 
-import { getTree } from '#/api/delivery-matrix';
+import { getTree, getValidParents } from '#/api/delivery-matrix';
 
 type MaybeId = string | null | undefined;
 
 const props = defineProps<{
   modelValue?: MaybeId;
   placeholder?: string;
+  currentNodeId?: string;
 }>();
 
 const emit = defineEmits<{
@@ -79,7 +80,11 @@ const filteredTree = computed(() => {
 async function loadTree() {
   loading.value = true;
   try {
-    treeData.value = await getTree();
+    if (props.currentNodeId) {
+      treeData.value = await getValidParents(props.currentNodeId);
+    } else {
+      treeData.value = await getTree();
+    }
   } finally {
     loading.value = false;
   }
@@ -119,6 +124,16 @@ function defaultPlaceholder() {
 }
 
 onMounted(loadTree);
+
+watch(
+  () => props.currentNodeId,
+  () => {
+    treeData.value = [];
+    if (visible.value) {
+      loadTree();
+    }
+  },
+);
 
 watch(
   () => visible.value,

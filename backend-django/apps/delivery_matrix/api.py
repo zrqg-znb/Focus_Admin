@@ -24,3 +24,7 @@ def update_positions(request, node_id: str, data: List[schemas.PositionStaffCrea
 @router.get("/tree", response=List[schemas.OrgNodeOut], summary="获取组织架构树")
 def get_tree(request):
     return services.get_tree_data()
+
+@router.get("/nodes/{node_id}/valid-parents", response=List[schemas.OrgNodeOut], summary="获取可用父节点")
+def get_valid_parents(request, node_id: str):
+    return services.get_valid_parent_tree(node_id)

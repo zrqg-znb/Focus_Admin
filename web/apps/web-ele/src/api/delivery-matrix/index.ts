@@ -46,6 +46,12 @@ export function getTree() {
   return requestClient.get<OrgNode[]>('/api/delivery-matrix/tree');
 }
 
+export function getValidParents(nodeId: string) {
+  return requestClient.get<OrgNode[]>(
+    `/api/delivery-matrix/nodes/${nodeId}/valid-parents`,
+  );
+}
+
 export function createNode(data: OrgNodeCreate) {
   return requestClient.post<OrgNode>('/api/delivery-matrix/nodes', data);
 }

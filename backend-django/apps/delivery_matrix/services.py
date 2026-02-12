@@ -120,3 +120,60 @@ def get_tree_data():
             roots.append(node)
             
     return roots
+
+def get_valid_parent_tree(node_id: str = None):
+    """获取可用父节点树（排除当前节点及其子树）"""
+    # 复用 get_tree_data 的查询逻辑
+    positions_qs = PositionStaff.objects.filter(is_deleted=False).prefetch_related('users').order_by('-sort')
+
+    nodes = OrganizationNode.objects.prefetch_related(
+        Prefetch('positions', queryset=positions_qs, to_attr='position_list'),
+        'linked_project',
+        'linked_project__milestone',
+    ).order_by('-sort_order', 'sys_create_datetime')
+    
+    # 1. Build full tree in memory
+    node_map = {str(n.id): n for n in nodes}
+    roots = []
+    
+    for node in nodes:
+        node.child_list = []
+        
+    for node in nodes:
+        if node.parent_id:
+            parent = node_map.get(str(node.parent_id))
+            if parent:
+                parent.child_list.append(node)
+            else:
+                roots.append(node)
+        else:
+            roots.append(node)
+            
+    # 2. If no node_id, return full tree
+    if not node_id:
+        return roots
+
+    # 3. Identify forbidden nodes (target node and its descendants)
+    forbidden_ids = set()
+    if node_id in node_map:
+        target = node_map[node_id]
+        # BFS to find all descendants
+        stack = [target]
+        while stack:
+            curr = stack.pop()
+            forbidden_ids.add(str(curr.id))
+            stack.extend(curr.child_list)
+            
+    # 4. Filter the tree
+    # Helper to filter children recursively
+    def filter_children(node_list):
+        result = []
+        for node in node_list:
+            if str(node.id) in forbidden_ids:
+                continue
+            # Recursively filter children
+            node.child_list = filter_children(node.child_list)
+            result.append(node)
+        return result
+
+    return filter_children(roots)
