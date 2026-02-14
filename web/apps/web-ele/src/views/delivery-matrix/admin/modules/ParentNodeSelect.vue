@@ -92,8 +92,9 @@ async function loadTree() {
 
 function findNode(nodes: OrgNode[], id?: string): OrgNode | undefined {
   if (!id) return undefined;
+  const target = String(id);
   for (const n of nodes) {
-    if (n.id === id) return n;
+    if (String(n.id) === target) return n;
     if (n.children) {
       const hit = findNode(n.children, id);
       if (hit) return hit;
@@ -142,6 +143,16 @@ watch(
       loadTree();
     }
   },
+);
+
+watch(
+  () => props.modelValue,
+  (val) => {
+    if (val && treeData.value.length === 0 && !loading.value) {
+      loadTree();
+    }
+  },
+  { immediate: true },
 );
 </script>
 

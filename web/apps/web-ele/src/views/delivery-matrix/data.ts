@@ -8,6 +8,10 @@ export function useNodeFormSchema(): VbenFormSchema[] {
       component: ParentNodeSelect,
       fieldName: 'parent_id',
       label: '上级节点',
+      modelPropName: 'modelValue',
+      componentProps: {
+        placeholder: '请选择上级节点（留空为根节点）',
+      },
       help: '留空即为根节点，可搜索或直接点“设为根节点”',
     },
     {
