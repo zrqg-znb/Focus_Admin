@@ -7,6 +7,9 @@ Scheduler Service - APScheduler 调度服务
 import json
 import logging
 import inspect  # 添加 inspect 模块
+import importlib
+import os
+import threading
 from datetime import datetime
 from typing import Optional, Dict, Any
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -46,6 +49,8 @@ class SchedulerService:
     _scheduler: Optional[BackgroundScheduler] = None
     _initialized = False
     _job_versions: Dict[str, datetime] = {}  # 记录任务版本，用于同步
+    _module_mtimes: Dict[str, float] = {}  # 记录模块最后修改时间
+    _module_reload_lock = threading.Lock()
     
     def __new__(cls):
         """单例模式"""
@@ -390,28 +395,17 @@ class SchedulerService:
             args = json.loads(job_obj.task_args) if job_obj.task_args else []
             kwargs = json.loads(job_obj.task_kwargs) if job_obj.task_kwargs else {}
             
-            # 导入任务函数
-            task_func = self._import_task_func(job_obj.task_func)
-            if not task_func:
+            # 校验任务函数是否可导入
+            if not self._import_task_func(job_obj.task_func):
                 logger.error(f"无法导入任务函数: {job_obj.task_func}")
                 return False
 
-            task_func = self._with_db_connection_cleanup(task_func)
-            
-            # 智能注入 job_code 参数
-            # 检查函数签名，如果函数接受 job_code 参数或接受 **kwargs，则注入
-            try:
-                sig = inspect.signature(task_func)
-                params = sig.parameters
-                if 'job_code' in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
-                    kwargs['job_code'] = job_obj.code
-            except Exception as e:
-                # 如果检查签名失败，为了保险起见，不注入参数，避免调用失败
-                logger.warning(f"检查任务函数签名失败 {job_obj.code}: {str(e)}")
+            task_runner = self._build_task_runner(job_obj.task_func, job_obj.code)
+            task_runner = self._with_db_connection_cleanup(task_runner)
 
             # 添加任务
             self._scheduler.add_job(
-                func=task_func,
+                func=task_runner,
                 trigger=trigger,
                 args=args,
                 kwargs=kwargs,
@@ -580,11 +574,80 @@ class SchedulerService:
         """动态导入任务函数"""
         try:
             module_path, func_name = task_path.rsplit('.', 1)
-            module = __import__(module_path, fromlist=[func_name])
+            module = importlib.import_module(module_path)
+            module = self._reload_module_if_needed(module)
             return getattr(module, func_name)
         except Exception as e:
             logger.error(f"导入任务函数失败 {task_path}: {str(e)}")
             return None
+
+    def _reload_module_if_needed(self, module):
+        """当模块源码发生变化时自动重载"""
+        try:
+            module_file = getattr(module, '__file__', None)
+            if not module_file:
+                return module
+
+            source_file = module_file
+            if source_file.endswith('.pyc') and os.path.exists(source_file[:-1]):
+                source_file = source_file[:-1]
+
+            if not os.path.exists(source_file):
+                return module
+
+            module_name = module.__name__
+            mtime = os.path.getmtime(source_file)
+            last_mtime = self._module_mtimes.get(module_name)
+
+            if last_mtime is None:
+                self._module_mtimes[module_name] = mtime
+                return module
+
+            if mtime > last_mtime:
+                with self._module_reload_lock:
+                    current_mtime = os.path.getmtime(source_file)
+                    last_mtime = self._module_mtimes.get(module_name)
+                    if last_mtime is None or current_mtime > last_mtime:
+                        logger.info(f"检测到任务模块变更，重新加载: {module_name}")
+                        module = importlib.reload(module)
+                        self._module_mtimes[module_name] = current_mtime
+
+            return module
+        except Exception as e:
+            logger.warning(f"刷新任务模块失败 {module.__name__}: {str(e)}")
+            return module
+
+    def _build_task_runner(self, task_path: str, job_code: str):
+        """构建任务执行器，确保任务代码变更后可热更新"""
+        def runner(*args, **kwargs):
+            task_func = self._import_task_func(task_path)
+            if not task_func:
+                error_msg = f"无法导入任务函数: {task_path}"
+                logger.error(error_msg)
+                raise ImportError(error_msg)
+
+            run_kwargs = dict(kwargs) if kwargs else {}
+            if self._should_inject_job_code(task_func):
+                run_kwargs['job_code'] = job_code
+            else:
+                run_kwargs.pop('job_code', None)
+
+            return task_func(*args, **run_kwargs)
+
+        return runner
+
+    @staticmethod
+    def _should_inject_job_code(task_func) -> bool:
+        """判断任务函数是否需要注入 job_code"""
+        try:
+            sig = inspect.signature(task_func)
+            params = sig.parameters
+            return 'job_code' in params or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+            )
+        except Exception as e:
+            logger.warning(f"检查任务函数签名失败: {str(e)}")
+            return False
     
     def _update_next_run_time(self, job_obj):
         """更新任务的下次执行时间"""

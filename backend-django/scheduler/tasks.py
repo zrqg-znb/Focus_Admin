@@ -11,8 +11,8 @@ def test_task(name="World"):
     :param name: 名字
     """
     logger.info(f"[{datetime.now()}] Hello, {name}! This is a test task.")
-    print(f"[{datetime.now()}] Hello, {name}! This is a test task running.")
-    return f"Success: Hello {name}"
+    print(f"[{datetime.now()}] Hello, {name}! This is a test task running.滴滴滴")
+    return f"Success: Hello {name}, 滴滴滴"
 
 def long_running_task(seconds=5):
     """
