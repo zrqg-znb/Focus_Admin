@@ -14,10 +14,33 @@ export interface ProjectOut {
   enable_iteration: boolean;
   enable_quality: boolean;
   enable_dts: boolean;
+  enable_hardware_config: boolean;
+  viu_platform_id?: string;
+  viu_platform_name?: string;
+  phase_configs?: ProjectPhaseConfig[];
   ws_id?: string;
   di_teams?: string[];
   sys_create_datetime?: string;
   is_favorited: boolean;
+}
+
+export interface VehicleHardwareItem {
+  point: string;
+  board: string;
+  bomid: string;
+}
+
+export interface ProjectPhaseConfig {
+  id?: string;
+  stage_name: string;
+  stage_start?: string;
+  stage_end?: string;
+  scenario?: 'cockpit' | 'vehicle';
+  vehicle_hardware?: VehicleHardwareItem[];
+  cdc_platform_id?: string;
+  cdc_platform_name?: string;
+  smart_screen_version_id?: string;
+  smart_screen_version_name?: string;
 }
 
 export interface ProjectCreatePayload {
@@ -33,6 +56,9 @@ export interface ProjectCreatePayload {
   enable_iteration?: boolean;
   enable_quality?: boolean;
   enable_dts?: boolean;
+  enable_hardware_config?: boolean;
+  viu_platform_id?: string;
+  phase_configs?: ProjectPhaseConfig[];
   ws_id?: string;
   di_teams?: string[];
 }
@@ -50,6 +76,9 @@ export interface ProjectUpdatePayload {
   enable_iteration?: boolean;
   enable_quality?: boolean;
   enable_dts?: boolean;
+  enable_hardware_config?: boolean;
+  viu_platform_id?: string;
+  phase_configs?: ProjectPhaseConfig[];
   ws_id?: string;
   di_teams?: string[];
 }
@@ -64,6 +93,7 @@ export interface ProjectFilterParams {
   enable_iteration?: boolean;
   enable_quality?: boolean;
   enable_dts?: boolean;
+  enable_hardware_config?: boolean;
   page?: number;
   pageSize?: number;
 }

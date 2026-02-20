@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 import {
   ElButton,
@@ -9,13 +9,21 @@ import {
   ElFormItem,
   ElInput,
   ElMessage,
+  ElOption,
+  ElSelect,
   ElSwitch,
+  ElTag,
   ElTable,
   ElTableColumn,
 } from 'element-plus';
 
 import { useVbenForm } from '#/adapter/form';
 import { configModuleApi } from '#/api/project-manager/code_quality';
+import type {
+  HardwarePoint,
+  PlatformConfig,
+} from '#/api/project-manager/hardware';
+import { listHardwareConfigOptionsApi } from '#/api/project-manager/hardware';
 import { updateMilestoneApi } from '#/api/project-manager/milestone';
 import { createProjectApi } from '#/api/project-manager/project';
 import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
@@ -49,6 +57,11 @@ const [BasicForm, basicFormApi] = useVbenForm({
     componentProps: {
       class: 'w-full',
     },
+  },
+  handleValuesChange(values, fieldsChanged) {
+    if (fieldsChanged.includes('domain')) {
+      projectDomain.value = values.domain || '';
+    }
   },
   schema: getProjectFormSchema(),
   showDefaultActions: false,
@@ -90,13 +103,202 @@ const dtsConfig = ref({
 });
 const newDiTeam = ref('');
 
+// 典配配置
+const enableHardwareConfig = ref(false);
+const projectDomain = ref('');
+const hardwarePoints = ref<HardwarePoint[]>([]);
+const viuPlatforms = ref<PlatformConfig[]>([]);
+const cdcPlatforms = ref<PlatformConfig[]>([]);
+const smartScreenVersions = ref<PlatformConfig[]>([]);
+const viuPlatformId = ref('');
+type PhaseConfigFormItem = {
+  stage_name: string;
+  stage_range: string[];
+  vehicle_hardware: Array<{ point: string; board: string; bomid: string }>;
+  cdc_platform_id: string;
+  smart_screen_version_id: string;
+};
+const phaseConfigs = ref<PhaseConfigFormItem[]>([]);
+const hardwareLoading = ref(false);
+
 const steps = [
   { title: '基本信息', index: 1 },
   { title: '里程碑配置', index: 2 },
   { title: '健康迭代配置', index: 3 },
   { title: '代码质量配置', index: 4 },
   { title: '问题单配置', index: 5 },
+  { title: '典配配置', index: 6 },
 ];
+
+const hardwareStepIndex = steps.length - 1;
+
+const hardwareScenario = computed(() => {
+  if (projectDomain.value.includes('座舱')) return 'cockpit';
+  if (projectDomain.value.includes('车控')) return 'vehicle';
+  return '';
+});
+
+function createEmptyPhase(): PhaseConfigFormItem {
+  return {
+    stage_name: '',
+    stage_range: [],
+    vehicle_hardware: [{ point: '', board: '', bomid: '' }],
+    cdc_platform_id: '',
+    smart_screen_version_id: '',
+  };
+}
+
+function addPhase() {
+  phaseConfigs.value.push(createEmptyPhase());
+}
+
+function removePhase(index: number) {
+  phaseConfigs.value.splice(index, 1);
+}
+
+function addVehicleHardwareRow(phase: PhaseConfigFormItem) {
+  phase.vehicle_hardware.push({ point: '', board: '', bomid: '' });
+}
+
+function removeVehicleHardwareRow(phase: PhaseConfigFormItem, index: number) {
+  phase.vehicle_hardware.splice(index, 1);
+}
+
+function getBoardsByPoint(point: string) {
+  const currentPoint = hardwarePoints.value.find((item) => item.code === point);
+  return currentPoint?.boards || [];
+}
+
+function getPhasePayload() {
+  return phaseConfigs.value.map((phase) => {
+    const payload: Record<string, any> = {
+      stage_name: phase.stage_name.trim(),
+      stage_start: phase.stage_range?.[0] || undefined,
+      stage_end: phase.stage_range?.[1] || undefined,
+    };
+    if (hardwareScenario.value === 'vehicle') {
+      payload.vehicle_hardware = phase.vehicle_hardware
+        .filter((item) => item.point && item.board && item.bomid)
+        .map((item) => ({
+          point: item.point,
+          board: item.board,
+          bomid: item.bomid,
+        }));
+    } else if (hardwareScenario.value === 'cockpit') {
+      payload.cdc_platform_id = phase.cdc_platform_id || undefined;
+      payload.smart_screen_version_id =
+        phase.smart_screen_version_id || undefined;
+    }
+    return payload;
+  });
+}
+
+function isHardwareConfigValid(showMessage = false) {
+  if (!enableHardwareConfig.value) return true;
+  if (!hardwareScenario.value) {
+    if (showMessage) {
+      ElMessage.warning('项目领域仅支持车控项目或座舱项目');
+    }
+    return false;
+  }
+  if (phaseConfigs.value.length === 0) {
+    if (showMessage) {
+      ElMessage.warning('请至少配置一个阶段');
+    }
+    return false;
+  }
+
+  const stageSet = new Set<string>();
+  for (const phase of phaseConfigs.value) {
+    const stageName = phase.stage_name.trim();
+    if (!stageName) {
+      if (showMessage) {
+        ElMessage.warning('阶段名称不能为空');
+      }
+      return false;
+    }
+    if (stageSet.has(stageName)) {
+      if (showMessage) {
+        ElMessage.warning(`阶段名称重复: ${stageName}`);
+      }
+      return false;
+    }
+    stageSet.add(stageName);
+
+    if (hardwareScenario.value === 'vehicle') {
+      if (!viuPlatformId.value) {
+        if (showMessage) {
+          ElMessage.warning('请选择 VIU 平台');
+        }
+        return false;
+      }
+      const hasPartialRow = phase.vehicle_hardware.some((item) => {
+        const hasAny = !!(item.point || item.board || item.bomid);
+        const hasAll = !!(item.point && item.board && item.bomid);
+        return hasAny && !hasAll;
+      });
+      if (hasPartialRow) {
+        if (showMessage) {
+          ElMessage.warning(`阶段 ${stageName} 存在未填写完整的硬件组合`);
+        }
+        return false;
+      }
+      const validRows = phase.vehicle_hardware.filter(
+        (item) => item.point && item.board && item.bomid,
+      );
+      if (validRows.length === 0) {
+        if (showMessage) {
+          ElMessage.warning(`阶段 ${stageName} 需要完整填写点位、板子和BOMID`);
+        }
+        return false;
+      }
+    }
+
+    if (hardwareScenario.value === 'cockpit') {
+      if (!phase.cdc_platform_id || !phase.smart_screen_version_id) {
+        if (showMessage) {
+          ElMessage.warning(`阶段 ${stageName} 需要配置CDC平台和智慧屏版本`);
+        }
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+async function ensureHardwarePointsLoaded() {
+  if (
+    (hardwarePoints.value.length ||
+      viuPlatforms.value.length ||
+      cdcPlatforms.value.length ||
+      smartScreenVersions.value.length) &&
+    !hardwareLoading.value
+  ) {
+    return;
+  }
+  hardwareLoading.value = true;
+  try {
+    const options = await listHardwareConfigOptionsApi();
+    hardwarePoints.value = options.points || [];
+    viuPlatforms.value = options.viu_platforms || [];
+    cdcPlatforms.value = options.cdc_platforms || [];
+    smartScreenVersions.value = options.smart_screen_versions || [];
+  } catch (error) {
+    console.error(error);
+    ElMessage.error('获取典配配置项失败');
+  } finally {
+    hardwareLoading.value = false;
+  }
+}
+
+watch(
+  () => dialogVisible.value,
+  (visible) => {
+    if (visible) {
+      ensureHardwarePointsLoaded();
+    }
+  },
+);
 
 const canGoNext = computed(() => {
   if (currentStep.value === 0) {
@@ -138,6 +340,9 @@ function resetAll() {
   enableIteration.value = false;
   enableQuality.value = false;
   enableDts.value = false;
+  enableHardwareConfig.value = false;
+  projectDomain.value = '';
+  viuPlatformId.value = '';
   milestoneForm.value = {
     qg1_date: '',
     qg2_date: '',
@@ -159,6 +364,7 @@ function resetAll() {
   newSubTeam.value = '';
   newDiTeam.value = '';
   moduleRows.value = [];
+  phaseConfigs.value = [];
 }
 
 async function handleSave() {
@@ -171,12 +377,23 @@ async function handleSave() {
   loading.value = true;
   try {
     const baseData = await basicFormApi.getValues<any>();
+    projectDomain.value = baseData.domain || '';
+    if (!isHardwareConfigValid(true)) {
+      currentStep.value = hardwareStepIndex;
+      return;
+    }
     const payload = {
       ...baseData,
       enable_milestone: enableMilestone.value,
       enable_iteration: enableIteration.value,
       enable_quality: enableQuality.value,
       enable_dts: enableDts.value,
+      enable_hardware_config: enableHardwareConfig.value,
+      viu_platform_id:
+        enableHardwareConfig.value && hardwareScenario.value === 'vehicle'
+          ? viuPlatformId.value || undefined
+          : undefined,
+      phase_configs: enableHardwareConfig.value ? getPhasePayload() : undefined,
       design_id: enableIteration.value
         ? iterationConfig.value.design_id
         : undefined,
@@ -569,6 +786,199 @@ function handleClose() {
                         class="cursor-pointer font-bold text-red-500"
                         @click="dtsConfig.di_teams.splice(index, 1)"
                         >×</span>
+                    </div>
+                  </div>
+                </ElFormItem>
+              </div>
+            </ElForm>
+          </div>
+        </div>
+      </div>
+      <!-- 步骤6：典配配置 -->
+      <div
+        v-show="currentStep === 5"
+        class="flex h-full items-center justify-center overflow-y-auto p-6"
+      >
+        <div class="align-self-center w-[900px] translate-y-[-20%]">
+          <div class="border-border bg-card rounded-lg border p-8 shadow-sm">
+            <ElForm label-width="120px">
+              <ElFormItem label="开启典配">
+                <ElSwitch v-model="enableHardwareConfig" />
+              </ElFormItem>
+              <div v-if="enableHardwareConfig">
+                <ElFormItem label="领域类型">
+                  <ElTag
+                    v-if="hardwareScenario === 'vehicle'"
+                    type="success"
+                  >
+                    车控项目：配置点位硬件组合
+                  </ElTag>
+                  <ElTag
+                    v-else-if="hardwareScenario === 'cockpit'"
+                    type="warning"
+                  >
+                    座舱项目：配置 CDC 平台 + 智慧屏版本
+                  </ElTag>
+                  <span v-else class="text-muted-foreground text-sm">
+                    当前项目领域不是车控/座舱，请先在基本信息里填写正确领域。
+                  </span>
+                </ElFormItem>
+                <ElFormItem v-if="hardwareScenario === 'vehicle'" label="VIU 平台">
+                  <ElSelect
+                    v-model="viuPlatformId"
+                    placeholder="选择 VIU 平台"
+                    clearable
+                    class="w-full"
+                  >
+                    <ElOption
+                      v-for="platform in viuPlatforms"
+                      :key="platform.id"
+                      :label="platform.name"
+                      :value="platform.id"
+                    />
+                  </ElSelect>
+                </ElFormItem>
+                <ElFormItem label="阶段配置">
+                  <div class="w-full">
+                    <div class="mb-3">
+                      <ElButton type="primary" @click="addPhase">新增阶段</ElButton>
+                    </div>
+                    <div
+                      v-if="phaseConfigs.length === 0"
+                      class="text-muted-foreground text-sm"
+                    >
+                      暂无阶段配置
+                    </div>
+                    <div
+                      v-for="(phase, phaseIndex) in phaseConfigs"
+                      :key="phaseIndex"
+                      class="mb-4 rounded border p-3"
+                    >
+                      <div class="mb-2 flex items-center justify-between">
+                        <div class="text-foreground text-sm font-medium">
+                          阶段 {{ phaseIndex + 1 }}
+                        </div>
+                        <ElButton
+                          type="danger"
+                          link
+                          size="small"
+                          @click="removePhase(phaseIndex)"
+                        >
+                          删除阶段
+                        </ElButton>
+                      </div>
+                      <div class="mb-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <ElInput
+                          v-model="phase.stage_name"
+                          placeholder="阶段名称，如：SOP"
+                        />
+                        <ElDatePicker
+                          v-model="phase.stage_range"
+                          type="daterange"
+                          value-format="YYYY-MM-DD"
+                          start-placeholder="开始日期"
+                          end-placeholder="结束日期"
+                        />
+                      </div>
+
+                      <div v-if="hardwareScenario === 'vehicle'">
+                        <ElTable :data="phase.vehicle_hardware" size="small">
+                          <ElTableColumn label="硬件点位" min-width="180">
+                            <template #default="{ row }">
+                              <ElSelect
+                                v-model="row.point"
+                                placeholder="选择点位"
+                                clearable
+                                class="w-full"
+                              >
+                                <ElOption
+                                  v-for="point in hardwarePoints"
+                                  :key="point.code"
+                                  :label="point.code"
+                                  :value="point.code"
+                                />
+                              </ElSelect>
+                            </template>
+                          </ElTableColumn>
+                          <ElTableColumn label="板子型号" min-width="220">
+                            <template #default="{ row }">
+                              <ElSelect
+                                v-model="row.board"
+                                placeholder="选择板子"
+                                clearable
+                                class="w-full"
+                              >
+                                <ElOption
+                                  v-for="board in getBoardsByPoint(row.point)"
+                                  :key="board"
+                                  :label="board"
+                                  :value="board"
+                                />
+                              </ElSelect>
+                            </template>
+                          </ElTableColumn>
+                          <ElTableColumn label="BOMID" min-width="200">
+                            <template #default="{ row }">
+                              <ElInput
+                                v-model="row.bomid"
+                                placeholder="请输入 BOMID"
+                              />
+                            </template>
+                          </ElTableColumn>
+                          <ElTableColumn label="操作" width="120">
+                            <template #default="{ $index }">
+                              <ElButton
+                                type="danger"
+                                link
+                                @click="
+                                  removeVehicleHardwareRow(phase, $index)
+                                "
+                              >
+                                删除
+                              </ElButton>
+                            </template>
+                          </ElTableColumn>
+                        </ElTable>
+                        <div class="mt-2">
+                          <ElButton
+                            link
+                            type="primary"
+                            @click="addVehicleHardwareRow(phase)"
+                          >
+                            新增硬件组合
+                          </ElButton>
+                        </div>
+                      </div>
+
+                      <div
+                        v-else-if="hardwareScenario === 'cockpit'"
+                        class="grid grid-cols-1 gap-3 md:grid-cols-2"
+                      >
+                        <ElSelect
+                          v-model="phase.cdc_platform_id"
+                          placeholder="选择 CDC 平台"
+                          clearable
+                        >
+                          <ElOption
+                            v-for="platform in cdcPlatforms"
+                            :key="platform.id"
+                            :label="platform.name"
+                            :value="platform.id"
+                          />
+                        </ElSelect>
+                        <ElSelect
+                          v-model="phase.smart_screen_version_id"
+                          placeholder="选择智慧屏版本"
+                          clearable
+                        >
+                          <ElOption
+                            v-for="version in smartScreenVersions"
+                            :key="version.id"
+                            :label="version.name"
+                            :value="version.id"
+                          />
+                        </ElSelect>
+                      </div>
                     </div>
                   </div>
                 </ElFormItem>

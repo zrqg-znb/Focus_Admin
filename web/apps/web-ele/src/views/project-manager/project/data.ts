@@ -1,6 +1,7 @@
 import type { VbenFormSchema } from '#/adapter/form';
 import type { OnActionClickFn, VxeTableGridOptions } from '#/adapter/vxe-table';
 import type { ProjectOut } from '#/api/project-manager/project';
+
 import { z } from '#/adapter/form';
 
 export function useSearchFormSchema(): VbenFormSchema[] {
@@ -61,6 +62,19 @@ export function useSearchFormSchema(): VbenFormSchema[] {
         clearable: true,
       },
     },
+    {
+      component: 'Select',
+      fieldName: 'enable_hardware_config',
+      label: '开启典配',
+      componentProps: {
+        options: [
+          { label: '全部', value: undefined },
+          { label: '是', value: true },
+          { label: '否', value: false },
+        ],
+        clearable: true,
+      },
+    },
   ];
 }
 
@@ -76,7 +90,8 @@ export function useColumns(
       field: 'managers_info',
       title: '项目经理',
       minWidth: 160,
-      formatter: ({ cellValue }) => (cellValue || []).map((i: any) => i.name).join('、'),
+      formatter: ({ cellValue }) =>
+        (cellValue || []).map((i: any) => i.name).join('、'),
     },
     {
       field: 'is_closed',
@@ -127,6 +142,18 @@ export function useColumns(
         ],
       },
     },
+    {
+      field: 'enable_hardware_config',
+      title: '开启典配',
+      minWidth: 120,
+      cellRender: {
+        name: 'CellTag',
+        options: [
+          { label: '开启', value: true, type: 'success' },
+          { label: '关闭', value: false, type: 'danger' },
+        ],
+      },
+    },
     { field: 'sys_create_datetime', title: '创建时间', minWidth: 160 },
     {
       align: 'right',
@@ -156,7 +183,13 @@ export function useColumns(
             type: 'info',
             title: 'QG预警配置',
           };
-          return ['edit', favoriteAction, reportAction, qgConfigAction, 'delete'];
+          return [
+            'edit',
+            favoriteAction,
+            reportAction,
+            qgConfigAction,
+            'delete',
+          ];
         },
       } as any,
       field: 'operation',
@@ -164,7 +197,7 @@ export function useColumns(
       headerAlign: 'center',
       showOverflow: false,
       title: '操作',
-      minWidth: 160,
+      minWidth: 200,
     },
   ];
 }
