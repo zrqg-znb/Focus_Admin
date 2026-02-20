@@ -63,5 +63,18 @@ def list_projects(request, filters: ProjectFilterSchema = Query(...)):
         
     if filters.enable_quality is not None:
         query &= Q(enable_quality=filters.enable_quality)
-        
-    return Project.objects.filter(query).distinct().order_by('-sort', '-sys_create_datetime')
+
+    if filters.enable_hardware_config is not None:
+        query &= Q(enable_hardware_config=filters.enable_hardware_config)
+
+    return (
+        Project.objects.filter(query)
+        .select_related("viu_platform")
+        .distinct()
+        .prefetch_related(
+            "managers",
+            "phase_configs__cdc_platform",
+            "phase_configs__smart_screen_version",
+        )
+        .order_by("-sort", "-sys_create_datetime")
+    )

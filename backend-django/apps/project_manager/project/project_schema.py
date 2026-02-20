@@ -1,6 +1,27 @@
-from ninja import Schema, ModelSchema, Field
+from datetime import date
 from typing import List, Optional
+
+from ninja import Field, ModelSchema, Schema
+
 from .project_model import Project
+
+
+class VehicleHardwareItem(Schema):
+    point: str = Field(..., description="硬件点位")
+    board: str = Field(..., description="板子型号")
+    bomid: str = Field("", description="BOMID")
+
+
+class ProjectPhaseConfigIn(Schema):
+    stage_name: str = Field(..., description="阶段名称")
+    stage_start: Optional[date] = Field(None, description="阶段开始日期")
+    stage_end: Optional[date] = Field(None, description="阶段结束日期")
+    vehicle_hardware: Optional[List[VehicleHardwareItem]] = Field(
+        None, description="车控硬件组合"
+    )
+    cdc_platform_id: Optional[str] = Field(None, description="CDC平台ID")
+    smart_screen_version_id: Optional[str] = Field(None, description="智慧屏版本ID")
+
 
 class ProjectCreateSchema(Schema):
     name: str = Field(..., description="项目名")
@@ -19,6 +40,12 @@ class ProjectCreateSchema(Schema):
     sub_teams: Optional[List[str]] = Field(None, description="迭代责任团队")
     ws_id: Optional[str] = Field(None, description="数据中台配置ID")
     di_teams: Optional[List[str]] = Field(None, description="问题单责任团队")
+    enable_hardware_config: bool = Field(False, description="是否开启典配")
+    viu_platform_id: Optional[str] = Field(None, description="VIU平台ID")
+    phase_configs: Optional[List[ProjectPhaseConfigIn]] = Field(
+        None, description="项目阶段典配配置"
+    )
+
 
 class ProjectUpdateSchema(Schema):
     name: Optional[str] = None
@@ -37,6 +64,10 @@ class ProjectUpdateSchema(Schema):
     sub_teams: Optional[List[str]] = None
     ws_id: Optional[str] = None
     di_teams: Optional[List[str]] = None
+    enable_hardware_config: Optional[bool] = None
+    viu_platform_id: Optional[str] = None
+    phase_configs: Optional[List[ProjectPhaseConfigIn]] = None
+
 
 class ProjectFilterSchema(Schema):
     keyword: Optional[str] = Field(None, description="搜索关键字(项目名/编码)")
@@ -48,15 +79,33 @@ class ProjectFilterSchema(Schema):
     enable_iteration: Optional[bool] = None
     enable_quality: Optional[bool] = None
     enable_dts: Optional[bool] = None
+    enable_hardware_config: Optional[bool] = None
+
+
+class ProjectPhaseConfigOut(Schema):
+    id: str
+    stage_name: str
+    stage_start: Optional[date] = None
+    stage_end: Optional[date] = None
+    scenario: str
+    vehicle_hardware: List[VehicleHardwareItem] = Field(default_factory=list)
+    cdc_platform_id: Optional[str] = None
+    cdc_platform_name: Optional[str] = None
+    smart_screen_version_id: Optional[str] = None
+    smart_screen_version_name: Optional[str] = None
+
 
 class ProjectOut(ModelSchema):
     managers_info: List[dict] = Field([], description="项目经理详情")
     is_favorited: bool = Field(False, description="当前用户是否收藏")
-    
+    viu_platform_id: Optional[str] = None
+    viu_platform_name: Optional[str] = None
+    phase_configs: List[ProjectPhaseConfigOut] = Field([], description="阶段典配配置")
+
     class Meta:
         model = Project
         fields = "__all__"
-        exclude = ['managers', 'favorited_by']
+        exclude = ["managers", "favorited_by", "viu_platform"]
 
     @staticmethod
     def resolve_managers_info(obj):
@@ -64,12 +113,46 @@ class ProjectOut(ModelSchema):
 
     @staticmethod
     def resolve_is_favorited(obj, context):
-        request = context.get('request')
+        request = context.get("request")
         if request and request.auth:
-            # 检查当前用户是否在 favorited_by 列表中
-            # 注意：这里可能产生 N+1 查询，最好在 QuerySet 中 prefetch 或 annotate
             return obj.favorited_by.filter(id=request.auth.id).exists()
         return False
+
+    @staticmethod
+    def resolve_viu_platform_id(obj):
+        return str(obj.viu_platform_id) if obj.viu_platform_id else None
+
+    @staticmethod
+    def resolve_viu_platform_name(obj):
+        return obj.viu_platform.name if obj.viu_platform else None
+
+    @staticmethod
+    def resolve_phase_configs(obj):
+        phase_items = list(obj.phase_configs.all())
+        phase_items.sort(key=lambda item: (item.stage_start or date.min, item.stage_name))
+        return [
+            {
+                "id": str(item.id),
+                "stage_name": item.stage_name,
+                "stage_start": item.stage_start,
+                "stage_end": item.stage_end,
+                "scenario": item.scenario,
+                "vehicle_hardware": item.vehicle_hardware or [],
+                "cdc_platform_id": (
+                    str(item.cdc_platform_id) if item.cdc_platform_id else None
+                ),
+                "cdc_platform_name": item.cdc_platform.name if item.cdc_platform else None,
+                "smart_screen_version_id": (
+                    str(item.smart_screen_version_id)
+                    if item.smart_screen_version_id
+                    else None
+                ),
+                "smart_screen_version_name": (
+                    item.smart_screen_version.name if item.smart_screen_version else None
+                ),
+            }
+            for item in phase_items
+        ]
 
     class Config:
         from_attributes = True

@@ -1,6 +1,15 @@
 from django.db import models
 from common.fu_model import RootModel
 
+
+PHASE_SCENARIO_VEHICLE = "vehicle"
+PHASE_SCENARIO_COCKPIT = "cockpit"
+PHASE_SCENARIO_CHOICES = [
+    (PHASE_SCENARIO_VEHICLE, "车控"),
+    (PHASE_SCENARIO_COCKPIT, "座舱"),
+]
+
+
 class Project(RootModel):
     name = models.CharField(max_length=255, verbose_name="项目名")
     domain = models.CharField(max_length=255, verbose_name="项目领域")
@@ -26,7 +35,18 @@ class Project(RootModel):
 
     # Config Details
     design_id = models.CharField(max_length=255, null=True, blank=True, verbose_name="设计平台ID")
-    
+
+    # Hardware Config
+    enable_hardware_config = models.BooleanField(default=False, verbose_name="是否开启典配")
+    viu_platform = models.ForeignKey(
+        "project_manager.ViuPlatform",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="projects",
+        verbose_name="VIU平台",
+    )
+
     # Favorites
     favorited_by = models.ManyToManyField('core.User', related_name='favorite_projects', blank=True, verbose_name="收藏该项目的用户")
 
@@ -34,3 +54,52 @@ class Project(RootModel):
         db_table = 'pm_project'
         verbose_name = '项目管理'
         verbose_name_plural = verbose_name
+
+
+class ProjectPhaseConfig(RootModel):
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="phase_configs",
+        verbose_name="所属项目",
+    )
+    stage_name = models.CharField(max_length=128, verbose_name="阶段名称")
+    stage_start = models.DateField(null=True, blank=True, verbose_name="阶段开始日期")
+    stage_end = models.DateField(null=True, blank=True, verbose_name="阶段结束日期")
+    scenario = models.CharField(
+        max_length=20,
+        choices=PHASE_SCENARIO_CHOICES,
+        verbose_name="配置场景",
+    )
+    vehicle_hardware = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name="车控硬件组合",
+    )
+    cdc_platform = models.ForeignKey(
+        "project_manager.CdcPlatform",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="phase_configs",
+        verbose_name="CDC平台",
+    )
+    smart_screen_version = models.ForeignKey(
+        "project_manager.SmartScreenVersion",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="phase_configs",
+        verbose_name="智慧屏版本",
+    )
+
+    class Meta:
+        db_table = "pm_project_phase_config"
+        verbose_name = "项目阶段典配"
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "stage_name"],
+                name="uniq_pm_project_stage_name",
+            )
+        ]
