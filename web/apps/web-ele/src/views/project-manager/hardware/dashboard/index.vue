@@ -4,16 +4,25 @@ import type { PhaseBoardRow } from './data';
 import type { VxeTableGridOptions } from '#/adapter/vxe-table';
 import type { ProjectOut } from '#/api/project-manager/project';
 
+import { nextTick, ref, watch } from 'vue';
+
 import { Page } from '@vben/common-ui';
 
-import { ElTag } from 'element-plus';
+import { ElTabPane, ElTabs } from 'element-plus';
 
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import { listProjectsApi } from '#/api/project-manager/project';
 
-import { useColumns, useSearchFormSchema } from './data';
+import {
+  useCockpitColumns,
+  useCockpitSearchFormSchema,
+  useVehicleColumns,
+  useVehicleSearchFormSchema,
+} from './data';
 
 defineOptions({ name: 'HardwareConfigDashboard' });
+
+const activeView = ref<'cockpit' | 'vehicle'>('vehicle');
 
 function toPhaseRows(projects: ProjectOut[]): PhaseBoardRow[] {
   const rows: PhaseBoardRow[] = [];
@@ -41,98 +50,202 @@ function toPhaseRows(projects: ProjectOut[]): PhaseBoardRow[] {
   return rows;
 }
 
-const [Grid] = useVbenVxeGrid({
+function filterRows(
+  rows: PhaseBoardRow[],
+  formValues: Record<string, any>,
+  scenario: 'cockpit' | 'vehicle',
+) {
+  const keyword = (formValues.keyword || '').toLowerCase();
+  const domain = (formValues.domain || '').toLowerCase();
+  const stage = (formValues.stage || '').toLowerCase();
+
+  let filtered = rows.filter((item) => item.scenario === scenario);
+  if (keyword) {
+    filtered = filtered.filter(
+      (item) =>
+        item.project_name.toLowerCase().includes(keyword) ||
+        (item.project_code || '').toLowerCase().includes(keyword),
+    );
+  }
+  if (domain) {
+    filtered = filtered.filter((item) =>
+      item.domain.toLowerCase().includes(domain),
+    );
+  }
+  if (scenario === 'vehicle' && stage) {
+    filtered = filtered.filter((item) =>
+      item.stage_name.toLowerCase().includes(stage),
+    );
+  }
+  return filtered;
+}
+
+function vehicleProjectSpanMethod({ column, row, rowIndex, visibleData }: any) {
+  if (column.field !== 'project_name') {
+    return { rowspan: 1, colspan: 1 };
+  }
+
+  const prevRow = visibleData[rowIndex - 1];
+  if (prevRow && prevRow.project_id === row.project_id) {
+    return { rowspan: 0, colspan: 0 };
+  }
+
+  let rowspan = 1;
+  for (let index = rowIndex + 1; index < visibleData.length; index += 1) {
+    if (visibleData[index].project_id === row.project_id) {
+      rowspan += 1;
+    } else {
+      break;
+    }
+  }
+  return { rowspan, colspan: 1 };
+}
+
+async function loadRowsByScenario(
+  page: { currentPage: number; pageSize: number },
+  formValues: Record<string, any>,
+  scenario: 'cockpit' | 'vehicle',
+) {
+  const data = await listProjectsApi({
+    page: 1,
+    pageSize: 1000,
+    enable_hardware_config: true,
+  });
+  const rows = toPhaseRows(data.items || []);
+  const scenarioRows = filterRows(rows, formValues, scenario);
+  const currentPage = page?.currentPage || 1;
+  const pageSize = page?.pageSize || 20;
+  const start = (currentPage - 1) * pageSize;
+  const end = start + pageSize;
+  return {
+    items: scenarioRows.slice(start, end),
+    total: scenarioRows.length,
+  };
+}
+
+const [VehicleGrid, vehicleGridApi] = useVbenVxeGrid({
+  separator: false,
   formOptions: {
-    schema: useSearchFormSchema(),
+    schema: useVehicleSearchFormSchema(),
+    showCollapseButton: false,
     submitOnChange: true,
   },
   gridOptions: {
-    columns: useColumns(),
-    height: 'auto',
+    autoResize: true,
+    border: true,
+    columns: useVehicleColumns(),
+    height: '100%',
     keepSource: true,
-    pagerConfig: { enabled: true },
+    pagerConfig: {
+      enabled: true,
+      autoHidden: false,
+      pageSize: 20,
+      pageSizes: [10, 20, 50, 100],
+    },
     proxyConfig: {
       ajax: {
-        query: async ({ page }, formValues) => {
-          const data = await listProjectsApi({
-            page: 1,
-            pageSize: 1000,
-            enable_hardware_config: true,
-          });
-          const keyword = (formValues.keyword || '').toLowerCase();
-          const domain = (formValues.domain || '').toLowerCase();
-          const stage = (formValues.stage || '').toLowerCase();
-
-          let rows = toPhaseRows(data.items || []);
-          if (keyword) {
-            rows = rows.filter(
-              (item) =>
-                item.project_name.toLowerCase().includes(keyword) ||
-                (item.project_code || '').toLowerCase().includes(keyword),
-            );
-          }
-          if (domain) {
-            rows = rows.filter((item) =>
-              item.domain.toLowerCase().includes(domain),
-            );
-          }
-          if (stage) {
-            rows = rows.filter((item) =>
-              item.stage_name.toLowerCase().includes(stage),
-            );
-          }
-
-          const start = (page.currentPage - 1) * page.pageSize;
-          const end = start + page.pageSize;
-          return {
-            items: rows.slice(start, end),
-            total: rows.length,
-          };
-        },
+        query: async ({ page }, formValues) =>
+          await loadRowsByScenario(page, formValues, 'vehicle'),
       },
     },
-    toolbarConfig: {
-      custom: true,
-      refresh: { code: 'query' },
-      search: true,
-      zoom: true,
+    spanMethod: vehicleProjectSpanMethod,
+  } as VxeTableGridOptions<PhaseBoardRow>,
+});
+
+const [CockpitGrid, cockpitGridApi] = useVbenVxeGrid({
+  separator: false,
+  formOptions: {
+    schema: useCockpitSearchFormSchema(),
+    showCollapseButton: false,
+    submitOnChange: true,
+  },
+  gridOptions: {
+    autoResize: true,
+    border: true,
+    columns: useCockpitColumns(),
+    height: '100%',
+    keepSource: true,
+    pagerConfig: {
+      enabled: true,
+      autoHidden: false,
+      pageSize: 20,
+      pageSizes: [10, 20, 50, 100],
+    },
+    proxyConfig: {
+      ajax: {
+        query: async ({ page }, formValues) =>
+          await loadRowsByScenario(page, formValues, 'cockpit'),
+      },
     },
   } as VxeTableGridOptions<PhaseBoardRow>,
 });
+
+watch(
+  () => activeView.value,
+  async (value) => {
+    await nextTick();
+    if (value === 'vehicle') {
+      (vehicleGridApi.grid as any)?.recalculate?.();
+      await vehicleGridApi.reload();
+    } else {
+      (cockpitGridApi.grid as any)?.recalculate?.();
+      await cockpitGridApi.reload();
+    }
+  },
+);
 </script>
 
 <template>
   <Page auto-content-height>
-    <Grid>
-      <template #config_combo="{ row }">
-        <div v-if="row.scenario === 'vehicle'" class="flex flex-wrap gap-2">
-          <ElTag size="small" type="success">
-            VIU平台: {{ row.viu_platform_name || '-' }}
-          </ElTag>
-          <ElTag
-            v-for="item in row.vehicle_hardware || []"
-            :key="`${item.point}-${item.board}-${item.bomid || ''}`"
-            size="small"
-            type="info"
-          >
-            {{ item.point }}: {{ item.board }} / BOMID: {{ item.bomid || '-' }}
-          </ElTag>
-          <span
-            v-if="!row.vehicle_hardware || row.vehicle_hardware.length === 0"
-            class="text-muted-foreground text-sm"
-          >
-            暂无硬件组合
-          </span>
-        </div>
-        <div v-else class="flex flex-wrap gap-2">
-          <ElTag size="small" type="success">
-            CDC: {{ row.cdc_platform_name || '-' }}
-          </ElTag>
-          <ElTag size="small" type="warning">
-            智慧屏: {{ row.smart_screen_version_name || '-' }}
-          </ElTag>
-        </div>
-      </template>
-    </Grid>
+    <div class="flex h-full min-h-0 flex-col">
+      <section
+        class="border-border bg-card flex min-h-0 flex-1 flex-col rounded-xl border p-4 shadow-sm"
+      >
+        <ElTabs
+          v-model="activeView"
+          class="hardware-dashboard-tabs flex h-full min-h-0 flex-col"
+        >
+          <ElTabPane label="车控视图" name="vehicle">
+            <section
+              class="border-border bg-background flex h-full min-h-0 flex-col rounded-lg border p-3"
+            >
+              <div class="min-h-0 flex-1">
+                <VehicleGrid class="h-full" />
+              </div>
+            </section>
+          </ElTabPane>
+
+          <ElTabPane label="座舱视图" name="cockpit">
+            <section
+              class="border-border bg-background flex h-full min-h-0 flex-col rounded-lg border p-3"
+            >
+              <div class="min-h-0 flex-1">
+                <CockpitGrid class="h-full" />
+              </div>
+            </section>
+          </ElTabPane>
+        </ElTabs>
+      </section>
+    </div>
   </Page>
 </template>
+
+<style scoped>
+.hardware-dashboard-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
+}
+
+.hardware-dashboard-tabs :deep(.el-tabs__nav-wrap::after) {
+  display: none;
+}
+
+.hardware-dashboard-tabs :deep(.el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+}
+
+.hardware-dashboard-tabs :deep(.el-tab-pane) {
+  height: 100%;
+  min-height: 0;
+}
+</style>

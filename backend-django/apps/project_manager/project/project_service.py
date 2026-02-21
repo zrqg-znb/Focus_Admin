@@ -55,9 +55,13 @@ def _build_phase_config_rows(
             str(item.id): item
             for item in SmartScreenVersion.objects.filter(is_deleted=False)
         }
+        if len(phase_configs) != 1:
+            raise HttpError(422, "座舱项目仅允许配置一个配套版本")
 
     for item in phase_configs:
         stage_name = (item.get("stage_name") or "").strip()
+        if scenario == PHASE_SCENARIO_COCKPIT:
+            stage_name = "座舱配套版本"
         if not stage_name:
             raise HttpError(422, "阶段名称不能为空")
         if stage_name in stage_names:
@@ -66,6 +70,9 @@ def _build_phase_config_rows(
 
         stage_start = item.get("stage_start")
         stage_end = item.get("stage_end")
+        if scenario == PHASE_SCENARIO_COCKPIT:
+            stage_start = None
+            stage_end = None
         if stage_start and stage_end and stage_start > stage_end:
             raise HttpError(422, f"阶段 {stage_name} 的开始日期不能晚于结束日期")
 
@@ -163,13 +170,23 @@ def _sync_phase_configs(
 
     if phase_configs is None:
         if require_when_enabled:
-            raise HttpError(422, "开启典配后必须至少配置一个阶段")
+            raise HttpError(
+                422,
+                "开启典配后必须配置配套版本"
+                if scenario == PHASE_SCENARIO_COCKPIT
+                else "开启典配后必须至少配置一个阶段",
+            )
         if project.phase_configs.exclude(scenario=scenario).exists():
             raise HttpError(422, "项目领域已变更，请重新配置阶段典配")
         return
 
     if len(phase_configs) == 0:
-        raise HttpError(422, "开启典配后必须至少配置一个阶段")
+        raise HttpError(
+            422,
+            "开启典配后必须配置配套版本"
+            if scenario == PHASE_SCENARIO_COCKPIT
+            else "开启典配后必须至少配置一个阶段",
+        )
 
     rows = _build_phase_config_rows(project, phase_configs)
     project.phase_configs.all().delete()

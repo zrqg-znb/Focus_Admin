@@ -19,8 +19,6 @@ import {
   ElFormItem,
   ElInput,
   ElMessage,
-  ElTable,
-  ElTableColumn,
   ElTabPane,
   ElTabs,
   ElTag,
@@ -67,12 +65,11 @@ const pointForm = ref<{
 });
 const boardInput = ref('');
 
-const viuPlatforms = ref<PlatformConfig[]>([]);
-const cdcPlatforms = ref<PlatformConfig[]>([]);
-const smartScreenVersions = ref<PlatformConfig[]>([]);
+type PlatformType = 'cdc' | 'smart' | 'viu';
+
 const configDialogVisible = ref(false);
 const configDialogMode = ref<'create' | 'edit'>('create');
-const configDialogType = ref<'cdc' | 'smart' | 'viu'>('cdc');
+const configDialogType = ref<PlatformType>('cdc');
 const configDialogSaving = ref(false);
 const configForm = ref<{ id?: string; name: string; remark: string }>({
   name: '',
@@ -162,30 +159,14 @@ async function onPointActionClick({
   }
 }
 
-async function loadPlatformData() {
-  try {
-    const [viu, cdc, smart] = await Promise.all([
-      listViuPlatformsApi(),
-      listCdcPlatformsApi(),
-      listSmartScreenVersionsApi(),
-    ]);
-    viuPlatforms.value = viu || [];
-    cdcPlatforms.value = cdc || [];
-    smartScreenVersions.value = smart || [];
-  } catch (error) {
-    console.error(error);
-    ElMessage.error('获取平台配置失败');
-  }
-}
-
-function openConfigCreate(type: 'cdc' | 'smart' | 'viu') {
+function openConfigCreate(type: PlatformType) {
   configDialogType.value = type;
   configDialogMode.value = 'create';
   configForm.value = { name: '', remark: '' };
   configDialogVisible.value = true;
 }
 
-function openConfigEdit(type: 'cdc' | 'smart' | 'viu', row: PlatformConfig) {
+function openConfigEdit(type: PlatformType, row: PlatformConfig) {
   configDialogType.value = type;
   configDialogMode.value = 'edit';
   configForm.value = {
@@ -194,6 +175,22 @@ function openConfigEdit(type: 'cdc' | 'smart' | 'viu', row: PlatformConfig) {
     remark: row.remark || '',
   };
   configDialogVisible.value = true;
+}
+
+async function queryPlatformList(type: PlatformType) {
+  if (type === 'viu') return (await listViuPlatformsApi()) || [];
+  if (type === 'cdc') return (await listCdcPlatformsApi()) || [];
+  return (await listSmartScreenVersionsApi()) || [];
+}
+
+async function reloadPlatformGrid(type: PlatformType) {
+  if (type === 'viu') {
+    await viuGridApi.reload();
+  } else if (type === 'cdc') {
+    await cdcGridApi.reload();
+  } else {
+    await smartGridApi.reload();
+  }
 }
 
 async function submitConfigDialog() {
@@ -228,16 +225,13 @@ async function submitConfigDialog() {
       configDialogMode.value === 'create' ? '创建成功' : '更新成功',
     );
     configDialogVisible.value = false;
-    await loadPlatformData();
+    await reloadPlatformGrid(configDialogType.value);
   } finally {
     configDialogSaving.value = false;
   }
 }
 
-async function deletePlatform(
-  type: 'cdc' | 'smart' | 'viu',
-  row: PlatformConfig,
-) {
+async function deletePlatform(type: PlatformType, row: PlatformConfig) {
   try {
     if (type === 'viu') {
       await deleteViuPlatformApi(row.id);
@@ -247,11 +241,54 @@ async function deletePlatform(
       await deleteSmartScreenVersionApi(row.id);
     }
     ElMessage.success('删除成功');
-    await loadPlatformData();
+    await reloadPlatformGrid(type);
   } catch (error) {
     console.error(error);
     ElMessage.error('删除失败');
   }
+}
+
+async function onPlatformActionClick(
+  type: PlatformType,
+  { code, row }: OnActionClickParams<PlatformConfig>,
+) {
+  if (code === 'edit') {
+    openConfigEdit(type, row);
+    return;
+  }
+  if (code === 'delete') {
+    await deletePlatform(type, row);
+  }
+}
+
+function usePlatformColumns(
+  type: PlatformType,
+  title: string,
+): VxeTableGridOptions<PlatformConfig>['columns'] {
+  return [
+    { field: 'name', title, minWidth: 220 },
+    { field: 'remark', title: '备注', minWidth: 220 },
+    {
+      align: 'right',
+      cellRender: {
+        attrs: {
+          nameField: 'name',
+          nameTitle: title,
+          onClick: (params: OnActionClickParams<PlatformConfig>) => {
+            void onPlatformActionClick(type, params);
+          },
+        },
+        name: 'CellOperation',
+        options: ['edit', 'delete'],
+      } as any,
+      field: 'operation',
+      fixed: 'right',
+      headerAlign: 'center',
+      showOverflow: false,
+      title: '操作',
+      minWidth: 140,
+    },
+  ];
 }
 
 const [Grid, gridApi] = useVbenVxeGrid({
@@ -299,167 +336,226 @@ const [Grid, gridApi] = useVbenVxeGrid({
   } as VxeTableGridOptions<HardwarePoint>,
 });
 
+const [ViuGrid, viuGridApi] = useVbenVxeGrid({
+  gridOptions: {
+    autoResize: true,
+    border: true,
+    columns: usePlatformColumns('viu', 'VIU 平台'),
+    height: '100%',
+    keepSource: true,
+    pagerConfig: { enabled: true },
+    proxyConfig: {
+      ajax: {
+        query: async ({ page }) => {
+          const data = await queryPlatformList('viu');
+          const start = (page.currentPage - 1) * page.pageSize;
+          const end = start + page.pageSize;
+          return {
+            items: data.slice(start, end),
+            total: data.length,
+          };
+        },
+      },
+    },
+    toolbarConfig: {
+      custom: true,
+      refresh: { code: 'query' },
+      zoom: true,
+    },
+  } as VxeTableGridOptions<PlatformConfig>,
+});
+
+const [CdcGrid, cdcGridApi] = useVbenVxeGrid({
+  gridOptions: {
+    autoResize: true,
+    border: true,
+    columns: usePlatformColumns('cdc', 'CDC 平台'),
+    height: '100%',
+    keepSource: true,
+    pagerConfig: { enabled: true },
+    proxyConfig: {
+      ajax: {
+        query: async ({ page }) => {
+          const data = await queryPlatformList('cdc');
+          const start = (page.currentPage - 1) * page.pageSize;
+          const end = start + page.pageSize;
+          return {
+            items: data.slice(start, end),
+            total: data.length,
+          };
+        },
+      },
+    },
+    toolbarConfig: {
+      custom: true,
+      refresh: { code: 'query' },
+      zoom: true,
+    },
+  } as VxeTableGridOptions<PlatformConfig>,
+});
+
+const [SmartGrid, smartGridApi] = useVbenVxeGrid({
+  gridOptions: {
+    autoResize: true,
+    border: true,
+    columns: usePlatformColumns('smart', '智慧屏版本'),
+    height: '100%',
+    keepSource: true,
+    pagerConfig: { enabled: true },
+    proxyConfig: {
+      ajax: {
+        query: async ({ page }) => {
+          const data = await queryPlatformList('smart');
+          const start = (page.currentPage - 1) * page.pageSize;
+          const end = start + page.pageSize;
+          return {
+            items: data.slice(start, end),
+            total: data.length,
+          };
+        },
+      },
+    },
+    toolbarConfig: {
+      custom: true,
+      refresh: { code: 'query' },
+      zoom: true,
+    },
+  } as VxeTableGridOptions<PlatformConfig>,
+});
+
 watch(
   () => activeTab.value,
   async (tab) => {
+    await nextTick();
     if (tab === 'points') {
-      await nextTick();
       (gridApi.grid as any)?.recalculate?.();
       await gridApi.reload();
+      return;
     }
+    if (tab === 'viu') {
+      (viuGridApi.grid as any)?.recalculate?.();
+      await viuGridApi.reload();
+      return;
+    }
+    if (tab === 'cdc') {
+      (cdcGridApi.grid as any)?.recalculate?.();
+      await cdcGridApi.reload();
+      return;
+    }
+    (smartGridApi.grid as any)?.recalculate?.();
+    await smartGridApi.reload();
   },
 );
-
-loadPlatformData();
 </script>
 
 <template>
-  <Page auto-content-height class="hardware-config-page">
-    <section class="tabs-card">
-      <ElTabs v-model="activeTab" class="hardware-tabs">
-        <ElTabPane label="硬件点位配置" name="points">
-          <section class="config-card">
-            <header class="card-header">
-              <div>
-                <h3 class="card-title">硬件点位管理</h3>
-                <p class="card-desc">
+  <Page auto-content-height>
+    <div class="flex h-full flex-col">
+      <section
+        class="border-border bg-card flex h-full min-h-0 flex-col rounded-lg border p-4 shadow-sm"
+      >
+        <ElTabs
+          v-model="activeTab"
+          class="hardware-tabs flex h-full min-h-0 flex-col"
+        >
+          <ElTabPane label="硬件点位配置" name="points">
+            <section
+              class="bg-background flex h-full min-h-0 flex-col rounded-lg"
+            >
+              <header class="mb-4 shrink-0">
+                <h3 class="text-foreground text-base font-semibold">
+                  硬件点位管理
+                </h3>
+                <p class="text-muted-foreground mt-1 text-sm">
                   维护车控场景下的硬件点位与板子型号映射，供项目阶段配置引用。
                 </p>
+              </header>
+              <div class="min-h-0 flex-1">
+                <Grid class="hardware-points-grid h-full">
+                  <template #table-title>
+                    <ElButton type="primary" @click="openPointCreate">
+                      新增点位
+                    </ElButton>
+                  </template>
+                </Grid>
               </div>
-            </header>
-            <div class="points-pane">
-              <Grid class="points-grid">
-                <template #table-title>
-                  <ElButton type="primary" @click="openPointCreate">
-                    新增点位
-                  </ElButton>
-                </template>
-              </Grid>
-            </div>
-          </section>
-        </ElTabPane>
+            </section>
+          </ElTabPane>
 
-        <ElTabPane label="VIU 平台配置" name="viu">
-          <section class="config-card">
-            <header class="card-header">
-              <div>
-                <h3 class="card-title">VIU 平台配置</h3>
-                <p class="card-desc">
+          <ElTabPane label="VIU 平台配置" name="viu">
+            <section
+              class="bg-background flex h-full min-h-0 flex-col rounded-lg"
+            >
+              <header class="mb-4 shrink-0">
+                <h3 class="text-foreground text-base font-semibold">
+                  VIU 平台配置
+                </h3>
+                <p class="text-muted-foreground mt-1 text-sm">
                   维护车控项目可选的 VIU 平台选项，项目启用典配时进行绑定。
                 </p>
+              </header>
+              <div class="min-h-0 flex-1">
+                <ViuGrid class="hardware-points-grid h-full">
+                  <template #table-title>
+                    <ElButton type="primary" @click="openConfigCreate('viu')">
+                      新增 VIU 平台
+                    </ElButton>
+                  </template>
+                </ViuGrid>
               </div>
-            </header>
-            <div class="card-action">
-              <ElButton type="primary" @click="openConfigCreate('viu')">
-                新增 VIU 平台
-              </ElButton>
-            </div>
-            <ElTable :data="viuPlatforms" border class="config-table">
-              <ElTableColumn prop="name" label="VIU 平台" min-width="220" />
-              <ElTableColumn prop="remark" label="备注" min-width="220" />
-              <ElTableColumn label="操作" width="180">
-                <template #default="{ row }">
-                  <ElButton
-                    type="primary"
-                    link
-                    @click="openConfigEdit('viu', row)"
-                  >
-                    编辑
-                  </ElButton>
-                  <ElButton
-                    type="danger"
-                    link
-                    @click="deletePlatform('viu', row)"
-                  >
-                    删除
-                  </ElButton>
-                </template>
-              </ElTableColumn>
-            </ElTable>
-          </section>
-        </ElTabPane>
+            </section>
+          </ElTabPane>
 
-        <ElTabPane label="CDC 平台配置" name="cdc">
-          <section class="config-card">
-            <header class="card-header">
-              <div>
-                <h3 class="card-title">CDC 平台配置</h3>
-                <p class="card-desc">
+          <ElTabPane label="CDC 平台配置" name="cdc">
+            <section
+              class="bg-background flex h-full min-h-0 flex-col rounded-lg"
+            >
+              <header class="mb-4 shrink-0">
+                <h3 class="text-foreground text-base font-semibold">
+                  CDC 平台配置
+                </h3>
+                <p class="text-muted-foreground mt-1 text-sm">
                   维护座舱场景可选的 CDC 平台，供项目阶段典配配置选择。
                 </p>
+              </header>
+              <div class="min-h-0 flex-1">
+                <CdcGrid class="hardware-points-grid h-full">
+                  <template #table-title>
+                    <ElButton type="primary" @click="openConfigCreate('cdc')">
+                      新增 CDC 平台
+                    </ElButton>
+                  </template>
+                </CdcGrid>
               </div>
-            </header>
-            <div class="card-action">
-              <ElButton type="primary" @click="openConfigCreate('cdc')">
-                新增 CDC 平台
-              </ElButton>
-            </div>
-            <ElTable :data="cdcPlatforms" border class="config-table">
-              <ElTableColumn prop="name" label="CDC 平台" min-width="220" />
-              <ElTableColumn prop="remark" label="备注" min-width="220" />
-              <ElTableColumn label="操作" width="180">
-                <template #default="{ row }">
-                  <ElButton
-                    type="primary"
-                    link
-                    @click="openConfigEdit('cdc', row)"
-                  >
-                    编辑
-                  </ElButton>
-                  <ElButton
-                    type="danger"
-                    link
-                    @click="deletePlatform('cdc', row)"
-                  >
-                    删除
-                  </ElButton>
-                </template>
-              </ElTableColumn>
-            </ElTable>
-          </section>
-        </ElTabPane>
+            </section>
+          </ElTabPane>
 
-        <ElTabPane label="智慧屏版本配置" name="smart">
-          <section class="config-card">
-            <header class="card-header">
-              <div>
-                <h3 class="card-title">智慧屏版本配置</h3>
-                <p class="card-desc">
+          <ElTabPane label="智慧屏版本配置" name="smart">
+            <section
+              class="bg-background flex h-full min-h-0 flex-col rounded-lg"
+            >
+              <header class="mb-4 shrink-0">
+                <h3 class="text-foreground text-base font-semibold">
+                  智慧屏版本配置
+                </h3>
+                <p class="text-muted-foreground mt-1 text-sm">
                   维护座舱项目可选的智慧屏版本，与 CDC 平台共同组成典配信息。
                 </p>
+              </header>
+              <div class="min-h-0 flex-1">
+                <SmartGrid class="hardware-points-grid h-full">
+                  <template #table-title>
+                    <ElButton type="primary" @click="openConfigCreate('smart')">
+                      新增智慧屏版本
+                    </ElButton>
+                  </template>
+                </SmartGrid>
               </div>
-            </header>
-            <div class="card-action">
-              <ElButton type="primary" @click="openConfigCreate('smart')">
-                新增智慧屏版本
-              </ElButton>
-            </div>
-            <ElTable :data="smartScreenVersions" border class="config-table">
-              <ElTableColumn prop="name" label="智慧屏版本" min-width="220" />
-              <ElTableColumn prop="remark" label="备注" min-width="220" />
-              <ElTableColumn label="操作" width="180">
-                <template #default="{ row }">
-                  <ElButton
-                    type="primary"
-                    link
-                    @click="openConfigEdit('smart', row)"
-                  >
-                    编辑
-                  </ElButton>
-                  <ElButton
-                    type="danger"
-                    link
-                    @click="deletePlatform('smart', row)"
-                  >
-                    删除
-                  </ElButton>
-                </template>
-              </ElTableColumn>
-            </ElTable>
-          </section>
-        </ElTabPane>
-      </ElTabs>
-    </section>
+            </section>
+          </ElTabPane>
+        </ElTabs>
+      </section>
+    </div>
 
     <ElDialog
       v-model="pointDialogVisible"
@@ -546,145 +642,13 @@ loadPlatformData();
 </template>
 
 <style scoped>
-.hardware-config-page {
-  min-height: calc(100vh - 160px);
-}
-
-.tabs-card {
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 14px;
-  background: var(--el-bg-color-overlay);
-  padding: 12px;
-  box-shadow: 0 10px 24px rgb(15 23 42 / 4%);
-}
-
-.hardware-tabs {
-  width: 100%;
-}
-
-.hardware-tabs :deep(.el-tabs__header) {
-  margin: 0;
-  padding: 0 4px 8px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-}
-
 .hardware-tabs :deep(.el-tabs__content) {
-  padding-top: 12px;
+  flex: 1;
+  min-height: 0;
 }
 
 .hardware-tabs :deep(.el-tab-pane) {
-  width: 100%;
-}
-
-.config-card {
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 12px;
-  background: linear-gradient(
-    180deg,
-    var(--el-bg-color-overlay) 0%,
-    var(--el-fill-color-extra-light) 100%
-  );
-  padding: 16px;
-  box-shadow: 0 8px 20px rgb(15 23 42 / 4%);
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 12px;
-}
-
-.card-title {
-  margin: 0;
-  color: var(--el-text-color-primary);
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 24px;
-}
-
-.card-desc {
-  margin: 6px 0 0;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
-
-.card-action {
-  margin-bottom: 12px;
-  display: flex;
-  justify-content: flex-end;
-}
-
-.points-pane {
-  width: 100%;
-  min-height: 0;
-  height: clamp(460px, calc(100vh - 340px), 780px);
-  overflow: hidden;
-}
-
-.config-table {
-  width: 100%;
-}
-
-.config-table :deep(.el-table) {
-  width: 100%;
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.points-pane :deep(.points-grid) {
   height: 100%;
-  width: 100%;
-  display: block;
-}
-
-.points-pane :deep(.points-grid > .vxe-grid) {
-  height: 100% !important;
-  width: 100%;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.points-pane :deep(.points-grid .vxe-grid--toolbar-wrapper),
-.points-pane :deep(.points-grid .vxe-grid--form-wrapper) {
-  width: 100%;
-}
-
-.points-pane :deep(.points-grid .vxe-grid--layout-wrapper),
-.points-pane :deep(.points-grid .vxe-grid--layout-body-wrapper),
-.points-pane :deep(.points-grid .vxe-grid--layout-body-content-wrapper) {
-  width: 100%;
-  min-height: 0;
-}
-
-.points-pane :deep(.points-grid .vxe-grid--layout-wrapper) {
-  flex: 1;
-}
-
-.points-pane :deep(.points-grid .vxe-table),
-.points-pane :deep(.points-grid .vxe-table--main-wrapper),
-.points-pane :deep(.points-grid .vxe-table--render-default),
-.points-pane :deep(.points-grid .vxe-table--body-wrapper) {
-  width: 100% !important;
-  min-height: 0;
-}
-
-@media (max-width: 768px) {
-  .tabs-card {
-    padding: 8px;
-  }
-
-  .config-card {
-    padding: 12px;
-  }
-
-  .card-action {
-    justify-content: flex-start;
-  }
-
-  .points-pane {
-    height: clamp(340px, calc(100vh - 280px), 600px);
-  }
 }
 </style>

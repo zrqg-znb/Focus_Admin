@@ -1,4 +1,9 @@
 <script lang="ts" setup>
+import type {
+  HardwarePoint,
+  PlatformConfig,
+} from '#/api/project-manager/hardware';
+
 import { computed, ref, watch } from 'vue';
 
 import {
@@ -12,17 +17,13 @@ import {
   ElOption,
   ElSelect,
   ElSwitch,
-  ElTag,
   ElTable,
   ElTableColumn,
+  ElTag,
 } from 'element-plus';
 
 import { useVbenForm } from '#/adapter/form';
 import { configModuleApi } from '#/api/project-manager/code_quality';
-import type {
-  HardwarePoint,
-  PlatformConfig,
-} from '#/api/project-manager/hardware';
 import { listHardwareConfigOptionsApi } from '#/api/project-manager/hardware';
 import { updateMilestoneApi } from '#/api/project-manager/milestone';
 import { createProjectApi } from '#/api/project-manager/project';
@@ -31,7 +32,7 @@ import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
 import { getProjectFormSchema } from '../data';
 
 interface Props {
-  modelValue: boolean;
+  modelValue?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -112,11 +113,11 @@ const cdcPlatforms = ref<PlatformConfig[]>([]);
 const smartScreenVersions = ref<PlatformConfig[]>([]);
 const viuPlatformId = ref('');
 type PhaseConfigFormItem = {
-  stage_name: string;
-  stage_range: string[];
-  vehicle_hardware: Array<{ point: string; board: string; bomid: string }>;
   cdc_platform_id: string;
   smart_screen_version_id: string;
+  stage_name: string;
+  stage_range: string[];
+  vehicle_hardware: Array<{ board: string; bomid: string; point: string }>;
 };
 const phaseConfigs = ref<PhaseConfigFormItem[]>([]);
 const hardwareLoading = ref(false);
@@ -138,7 +139,9 @@ const hardwareScenario = computed(() => {
   return '';
 });
 
-function createEmptyPhase(): PhaseConfigFormItem {
+const cockpitStageName = '座舱配套版本';
+
+function createEmptyVehiclePhase(): PhaseConfigFormItem {
   return {
     stage_name: '',
     stage_range: [],
@@ -148,11 +151,42 @@ function createEmptyPhase(): PhaseConfigFormItem {
   };
 }
 
+function createEmptyCockpitConfig(): PhaseConfigFormItem {
+  return {
+    stage_name: cockpitStageName,
+    stage_range: [],
+    vehicle_hardware: [{ point: '', board: '', bomid: '' }],
+    cdc_platform_id: '',
+    smart_screen_version_id: '',
+  };
+}
+
+function ensureCockpitSingleConfig() {
+  if (hardwareScenario.value !== 'cockpit') return;
+  if (phaseConfigs.value.length === 0) {
+    phaseConfigs.value = [createEmptyCockpitConfig()];
+    return;
+  }
+  const first = phaseConfigs.value[0];
+  phaseConfigs.value = [
+    {
+      ...first,
+      stage_name: cockpitStageName,
+      stage_range: [],
+    },
+  ];
+}
+
 function addPhase() {
-  phaseConfigs.value.push(createEmptyPhase());
+  if (hardwareScenario.value === 'cockpit') {
+    ensureCockpitSingleConfig();
+    return;
+  }
+  phaseConfigs.value.push(createEmptyVehiclePhase());
 }
 
 function removePhase(index: number) {
+  if (hardwareScenario.value === 'cockpit') return;
   phaseConfigs.value.splice(index, 1);
 }
 
@@ -170,6 +204,16 @@ function getBoardsByPoint(point: string) {
 }
 
 function getPhasePayload() {
+  if (hardwareScenario.value === 'cockpit') {
+    const phase = phaseConfigs.value[0] || createEmptyCockpitConfig();
+    return [
+      {
+        stage_name: cockpitStageName,
+        cdc_platform_id: phase.cdc_platform_id || undefined,
+        smart_screen_version_id: phase.smart_screen_version_id || undefined,
+      },
+    ];
+  }
   return phaseConfigs.value.map((phase) => {
     const payload: Record<string, any> = {
       stage_name: phase.stage_name.trim(),
@@ -184,10 +228,6 @@ function getPhasePayload() {
           board: item.board,
           bomid: item.bomid,
         }));
-    } else if (hardwareScenario.value === 'cockpit') {
-      payload.cdc_platform_id = phase.cdc_platform_id || undefined;
-      payload.smart_screen_version_id =
-        phase.smart_screen_version_id || undefined;
     }
     return payload;
   });
@@ -203,29 +243,39 @@ function isHardwareConfigValid(showMessage = false) {
   }
   if (phaseConfigs.value.length === 0) {
     if (showMessage) {
-      ElMessage.warning('请至少配置一个阶段');
+      ElMessage.warning(
+        hardwareScenario.value === 'cockpit'
+          ? '请配置座舱配套版本'
+          : '请至少配置一个阶段',
+      );
+    }
+    return false;
+  }
+
+  if (hardwareScenario.value === 'cockpit' && phaseConfigs.value.length !== 1) {
+    if (showMessage) {
+      ElMessage.warning('座舱项目仅允许配置一个配套版本');
     }
     return false;
   }
 
   const stageSet = new Set<string>();
   for (const phase of phaseConfigs.value) {
-    const stageName = phase.stage_name.trim();
-    if (!stageName) {
-      if (showMessage) {
-        ElMessage.warning('阶段名称不能为空');
-      }
-      return false;
-    }
-    if (stageSet.has(stageName)) {
-      if (showMessage) {
-        ElMessage.warning(`阶段名称重复: ${stageName}`);
-      }
-      return false;
-    }
-    stageSet.add(stageName);
-
     if (hardwareScenario.value === 'vehicle') {
+      const stageName = phase.stage_name.trim();
+      if (!stageName) {
+        if (showMessage) {
+          ElMessage.warning('阶段名称不能为空');
+        }
+        return false;
+      }
+      if (stageSet.has(stageName)) {
+        if (showMessage) {
+          ElMessage.warning(`阶段名称重复: ${stageName}`);
+        }
+        return false;
+      }
+      stageSet.add(stageName);
       if (!viuPlatformId.value) {
         if (showMessage) {
           ElMessage.warning('请选择 VIU 平台');
@@ -254,13 +304,14 @@ function isHardwareConfigValid(showMessage = false) {
       }
     }
 
-    if (hardwareScenario.value === 'cockpit') {
-      if (!phase.cdc_platform_id || !phase.smart_screen_version_id) {
-        if (showMessage) {
-          ElMessage.warning(`阶段 ${stageName} 需要配置CDC平台和智慧屏版本`);
-        }
-        return false;
+    if (
+      hardwareScenario.value === 'cockpit' &&
+      (!phase.cdc_platform_id || !phase.smart_screen_version_id)
+    ) {
+      if (showMessage) {
+        ElMessage.warning('请完整配置 CDC 平台和智慧屏版本');
       }
+      return false;
     }
   }
   return true;
@@ -268,10 +319,10 @@ function isHardwareConfigValid(showMessage = false) {
 
 async function ensureHardwarePointsLoaded() {
   if (
-    (hardwarePoints.value.length ||
-      viuPlatforms.value.length ||
-      cdcPlatforms.value.length ||
-      smartScreenVersions.value.length) &&
+    (hardwarePoints.value.length > 0 ||
+      viuPlatforms.value.length > 0 ||
+      cdcPlatforms.value.length > 0 ||
+      smartScreenVersions.value.length > 0) &&
     !hardwareLoading.value
   ) {
     return;
@@ -296,6 +347,37 @@ watch(
   (visible) => {
     if (visible) {
       ensureHardwarePointsLoaded();
+    }
+  },
+);
+
+watch(
+  () => hardwareScenario.value,
+  (scenario) => {
+    if (!enableHardwareConfig.value) return;
+    if (scenario === 'cockpit') {
+      ensureCockpitSingleConfig();
+    } else if (scenario === 'vehicle' && phaseConfigs.value.length === 0) {
+      phaseConfigs.value = [createEmptyVehiclePhase()];
+    }
+  },
+);
+
+watch(
+  () => enableHardwareConfig.value,
+  (enabled) => {
+    if (!enabled) {
+      phaseConfigs.value = [];
+      viuPlatformId.value = '';
+      return;
+    }
+    if (hardwareScenario.value === 'cockpit') {
+      ensureCockpitSingleConfig();
+    } else if (
+      hardwareScenario.value === 'vehicle' &&
+      phaseConfigs.value.length === 0
+    ) {
+      phaseConfigs.value = [createEmptyVehiclePhase()];
     }
   },
 );
@@ -659,10 +741,13 @@ function handleClose() {
                       class="flex items-center gap-1 rounded bg-gray-100 px-2 py-1"
                     >
                       <span>{{ team }}</span>
-                      <span
-                        class="cursor-pointer font-bold text-red-500"
+                      <ElButton
+                        link
+                        type="danger"
                         @click="iterationConfig.sub_teams.splice(index, 1)"
-                        >×</span>
+                      >
+                        删除
+                      </ElButton>
                     </div>
                   </div>
                 </ElFormItem>
@@ -782,10 +867,13 @@ function handleClose() {
                       class="flex items-center gap-1 rounded bg-gray-100 px-2 py-1"
                     >
                       <span>{{ team }}</span>
-                      <span
-                        class="cursor-pointer font-bold text-red-500"
+                      <ElButton
+                        link
+                        type="danger"
                         @click="dtsConfig.di_teams.splice(index, 1)"
-                        >×</span>
+                      >
+                        删除
+                      </ElButton>
                     </div>
                   </div>
                 </ElFormItem>
@@ -807,10 +895,7 @@ function handleClose() {
               </ElFormItem>
               <div v-if="enableHardwareConfig">
                 <ElFormItem label="领域类型">
-                  <ElTag
-                    v-if="hardwareScenario === 'vehicle'"
-                    type="success"
-                  >
+                  <ElTag v-if="hardwareScenario === 'vehicle'" type="success">
                     车控项目：配置点位硬件组合
                   </ElTag>
                   <ElTag
@@ -823,7 +908,10 @@ function handleClose() {
                     当前项目领域不是车控/座舱，请先在基本信息里填写正确领域。
                   </span>
                 </ElFormItem>
-                <ElFormItem v-if="hardwareScenario === 'vehicle'" label="VIU 平台">
+                <ElFormItem
+                  v-if="hardwareScenario === 'vehicle'"
+                  label="VIU 平台"
+                >
                   <ElSelect
                     v-model="viuPlatformId"
                     placeholder="选择 VIU 平台"
@@ -838,23 +926,36 @@ function handleClose() {
                     />
                   </ElSelect>
                 </ElFormItem>
-                <ElFormItem label="阶段配置">
+                <ElFormItem
+                  :label="
+                    hardwareScenario === 'cockpit' ? '配套版本配置' : '阶段配置'
+                  "
+                >
                   <div class="w-full">
-                    <div class="mb-3">
-                      <ElButton type="primary" @click="addPhase">新增阶段</ElButton>
+                    <div v-if="hardwareScenario === 'vehicle'" class="mb-3">
+                      <ElButton type="primary" @click="addPhase">
+                        新增阶段
+                      </ElButton>
                     </div>
                     <div
                       v-if="phaseConfigs.length === 0"
                       class="text-muted-foreground text-sm"
                     >
-                      暂无阶段配置
+                      {{
+                        hardwareScenario === 'cockpit'
+                          ? '暂无配套版本配置'
+                          : '暂无阶段配置'
+                      }}
                     </div>
                     <div
                       v-for="(phase, phaseIndex) in phaseConfigs"
                       :key="phaseIndex"
                       class="mb-4 rounded border p-3"
                     >
-                      <div class="mb-2 flex items-center justify-between">
+                      <div
+                        v-if="hardwareScenario === 'vehicle'"
+                        class="mb-2 flex items-center justify-between"
+                      >
                         <div class="text-foreground text-sm font-medium">
                           阶段 {{ phaseIndex + 1 }}
                         </div>
@@ -867,7 +968,10 @@ function handleClose() {
                           删除阶段
                         </ElButton>
                       </div>
-                      <div class="mb-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div
+                        v-if="hardwareScenario === 'vehicle'"
+                        class="mb-3 grid grid-cols-1 gap-3 md:grid-cols-2"
+                      >
                         <ElInput
                           v-model="phase.stage_name"
                           placeholder="阶段名称，如：SOP"
@@ -930,9 +1034,7 @@ function handleClose() {
                               <ElButton
                                 type="danger"
                                 link
-                                @click="
-                                  removeVehicleHardwareRow(phase, $index)
-                                "
+                                @click="removeVehicleHardwareRow(phase, $index)"
                               >
                                 删除
                               </ElButton>
