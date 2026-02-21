@@ -1,12 +1,16 @@
 from django.shortcuts import get_object_or_404
 from django.db.models import Sum
 from django.utils import timezone
-from datetime import timedelta
+from datetime import date, timedelta
 from collections import defaultdict
 from asgiref.sync import sync_to_async
 import asyncio
 
-from apps.project_manager.project.project_model import Project
+from apps.project_manager.project.project_model import (
+    PHASE_SCENARIO_COCKPIT,
+    PHASE_SCENARIO_VEHICLE,
+    Project,
+)
 from apps.project_manager.code_quality.code_quality_model import CodeModule, CodeMetric
 from apps.project_manager.code_quality.code_quality_service import get_project_quality_details
 from apps.project_manager.iteration.iteration_model import Iteration, IterationMetric
@@ -25,7 +29,10 @@ from .report_schema import (
     IterationSummary, 
     DtsSummary,
     IterationDetailMetrics,
-    QGNode
+    QGNode,
+    HardwareConfigSummary,
+    HardwareItem,
+    HardwarePhaseConfig,
 )
 
 class ReportService:
@@ -391,5 +398,75 @@ class ReportService:
                     ))
             
             return milestones_list, ms_score
+
+        return await sync_to_async(_fetch_data)()
+
+    @staticmethod
+    async def get_hardware_config_data(project: Project):
+        def _sanitize_vehicle_hardware(items):
+            sanitized = []
+            for item in items or []:
+                if not isinstance(item, dict):
+                    continue
+                sanitized.append(
+                    HardwareItem(
+                        point=str(item.get("point") or ""),
+                        board=str(item.get("board") or ""),
+                        bomid=str(item.get("bomid") or ""),
+                    )
+                )
+            return sanitized
+
+        def _fetch_data():
+            project_domain = project.domain or ""
+            default_scenario = (
+                PHASE_SCENARIO_COCKPIT
+                if "座舱" in project_domain
+                else PHASE_SCENARIO_VEHICLE
+            )
+
+            phase_items = list(
+                project.phase_configs.select_related(
+                    "cdc_platform", "smart_screen_version"
+                ).all()
+            )
+            phase_items.sort(key=lambda item: (item.stage_start or date.min, item.stage_name))
+
+            phases = [
+                HardwarePhaseConfig(
+                    stage_name=item.stage_name,
+                    stage_start=item.stage_start,
+                    stage_end=item.stage_end,
+                    scenario=item.scenario,
+                    vehicle_hardware=_sanitize_vehicle_hardware(item.vehicle_hardware),
+                    cdc_platform_name=(
+                        item.cdc_platform.name if item.cdc_platform else None
+                    ),
+                    smart_screen_version_name=(
+                        item.smart_screen_version.name
+                        if item.smart_screen_version
+                        else None
+                    ),
+                )
+                for item in phase_items
+            ]
+
+            if default_scenario == PHASE_SCENARIO_COCKPIT and phases:
+                cockpit_phases = [
+                    phase
+                    for phase in phases
+                    if phase.scenario == PHASE_SCENARIO_COCKPIT
+                ]
+                phases = cockpit_phases[:1] if cockpit_phases else phases[:1]
+
+            return HardwareConfigSummary(
+                enabled=bool(project.enable_hardware_config),
+                domain=project_domain,
+                scenario=default_scenario,
+                viu_platform_name=(
+                    project.viu_platform.name if project.viu_platform else None
+                ),
+                phases=phases,
+            )
 
         return await sync_to_async(_fetch_data)()

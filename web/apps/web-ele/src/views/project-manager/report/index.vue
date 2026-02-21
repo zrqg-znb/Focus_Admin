@@ -1,43 +1,51 @@
 <script lang="ts" setup>
 import { onMounted, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
-import { Page } from '@vben/common-ui';
-import { listProjectsApi } from '#/api/project-manager/project';
+import { useRoute } from 'vue-router';
 
-import ProjectSidebar from './ProjectSidebar.vue';
+import { ElEmpty } from 'element-plus';
+
+import { listProjectsApi } from '#/api/project-manager/project';
+import { FuPage } from '#/components/fu-page';
+
 import ProjectReportContent from './ProjectReportContent.vue';
+import ProjectSidebar from './ProjectSidebar.vue';
 
 defineOptions({ name: 'ProjectDetailReport', keepAlive: true });
 
 const route = useRoute();
-const router = useRouter();
 
-// Get projectId from route
-const currentProjectId = ref(route.params.id && route.params.id !== ':id' ? (route.params.id as string) : '');
+function normalizeRouteProjectId(routeProjectId: unknown) {
+  if (!routeProjectId || typeof routeProjectId !== 'string') return '';
+  return routeProjectId === ':id' ? '' : routeProjectId;
+}
+
+const currentProjectId = ref(normalizeRouteProjectId(route.params.id));
 
 function handleProjectSelect(id: string) {
   if (id === currentProjectId.value) return;
-  router.replace(`/project-manager/report/${id}`);
+  currentProjectId.value = id;
 }
 
-// Watch route changes to update data
 watch(
   () => route.params.id,
   (newId) => {
-    if (newId && typeof newId === 'string' && newId !== ':id') {
-      currentProjectId.value = newId;
-    } else {
-      redirectToDefaultProject();
+    const normalizedId = normalizeRouteProjectId(newId);
+    if (normalizedId) {
+      currentProjectId.value = normalizedId;
+      return;
     }
-  }
+    if (!currentProjectId.value) {
+      void redirectToDefaultProject();
+    }
+  },
 );
 
 async function redirectToDefaultProject() {
   try {
     const res = await listProjectsApi({ pageSize: 1, is_closed: false });
-    if (res.items && res.items.length > 0) {
-      const firstProject = res.items[0];
-      router.replace(`/project-manager/report/${firstProject.id}`);
+    const firstProject = res.items?.[0];
+    if (firstProject) {
+      currentProjectId.value = firstProject.id;
     }
   } catch (error) {
     console.error(error);
@@ -52,21 +60,33 @@ onMounted(() => {
 </script>
 
 <template>
-  <Page auto-content-height>
-    <div class="flex h-full w-full bg-gray-50/50 dark:bg-black overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm">
-      <!-- Sidebar -->
-      <div class="w-[280px] flex-shrink-0 h-full border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-[#151515]">
-         <ProjectSidebar :current-id="currentProjectId" @select="handleProjectSelect" />
-      </div>
+  <FuPage
+    left-width="300px"
+    :left-min-width="260"
+    :left-max-width="420"
+    :left-collapsible="false"
+    :left-padding="false"
+    :right-padding="false"
+    left-content-class="h-full"
+    right-content-class="h-full"
+  >
+    <template #left>
+      <ProjectSidebar
+        :current-id="currentProjectId"
+        @select="handleProjectSelect"
+      />
+    </template>
 
-      <!-- Main Content -->
-      <div class="flex-1 h-full overflow-hidden flex flex-col bg-white/50 dark:bg-[#151515]/50">
-         <ProjectReportContent
-           v-if="currentProjectId"
-           :project-id="currentProjectId"
-           :key="currentProjectId"
-         />
+    <template #right>
+      <div class="h-full bg-white dark:bg-[#151515]">
+        <ProjectReportContent
+          v-if="currentProjectId"
+          :project-id="currentProjectId"
+        />
+        <div v-else class="flex h-full items-center justify-center">
+          <ElEmpty description="暂无可展示的项目报告" />
+        </div>
       </div>
-    </div>
-  </Page>
+    </template>
+  </FuPage>
 </template>

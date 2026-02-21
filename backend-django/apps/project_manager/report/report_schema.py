@@ -1,4 +1,4 @@
-from ninja import Schema
+from ninja import Field, Schema
 from typing import List, Optional
 from datetime import date
 from apps.dashboard.schemas import (
@@ -61,6 +61,27 @@ class QGNode(Schema):
     has_risk: bool = False
     risk_status: Optional[str] = None # 'pending', 'confirmed', 'normal'
 
+class HardwareItem(Schema):
+    point: str
+    board: str
+    bomid: str = ""
+
+class HardwarePhaseConfig(Schema):
+    stage_name: str
+    stage_start: Optional[date] = None
+    stage_end: Optional[date] = None
+    scenario: str
+    vehicle_hardware: List[HardwareItem] = Field(default_factory=list)
+    cdc_platform_name: Optional[str] = None
+    smart_screen_version_name: Optional[str] = None
+
+class HardwareConfigSummary(Schema):
+    enabled: bool = False
+    domain: str
+    scenario: str
+    viu_platform_name: Optional[str] = None
+    phases: List[HardwarePhaseConfig] = Field(default_factory=list)
+
 class ProjectReportSchema(Schema):
     project_id: str
     project_name: str
@@ -88,3 +109,4 @@ class ProjectReportSchema(Schema):
     iteration: Optional[IterationSummary]
     iteration_detail: Optional[IterationDetailMetrics] = None
     dts_summary: Optional[DtsSummary]
+    hardware_config: HardwareConfigSummary

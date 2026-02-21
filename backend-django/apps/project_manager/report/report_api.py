@@ -18,13 +18,15 @@ def get_project_report(request, project_id: str):
         task_iter = ReportService.get_iteration_data(project)
         task_dts = ReportService.get_dts_data(project)
         task_ms = ReportService.get_milestone_data(project)
+        task_hardware = ReportService.get_hardware_config_data(project)
         
         results = await asyncio.gather(
             task_managers, 
             task_cq, 
             task_iter, 
             task_dts, 
-            task_ms
+            task_ms,
+            task_hardware,
         )
         return project, results
 
@@ -44,7 +46,8 @@ def get_project_report(request, project_id: str):
         dts_team_critical_rate_trend,
         dts_score,
     ), \
-    (milestones_list, ms_score) = results
+    (milestones_list, ms_score), \
+    hardware_config = results
     
     # --- Radar & Health ---
     s_quality = cq_score
@@ -86,5 +89,6 @@ def get_project_report(request, project_id: str):
         code_quality_details=cq_details,
         iteration=iter_summary,
         iteration_detail=iter_detail,
-        dts_summary=dts_summary
+        dts_summary=dts_summary,
+        hardware_config=hardware_config,
     )

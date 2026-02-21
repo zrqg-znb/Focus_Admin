@@ -98,6 +98,30 @@ export interface DtsSummary {
   solve_rate: number;
 }
 
+export interface HardwareItem {
+  point: string;
+  board: string;
+  bomid?: string;
+}
+
+export interface HardwarePhaseConfig {
+  stage_name: string;
+  stage_start?: string;
+  stage_end?: string;
+  scenario: 'cockpit' | 'vehicle';
+  vehicle_hardware: HardwareItem[];
+  cdc_platform_name?: string | null;
+  smart_screen_version_name?: string | null;
+}
+
+export interface HardwareConfigSummary {
+  enabled: boolean;
+  domain: string;
+  scenario: 'cockpit' | 'vehicle';
+  viu_platform_name?: string | null;
+  phases: HardwarePhaseConfig[];
+}
+
 export interface ProjectReport {
   project_id: string;
   project_name: string;
@@ -117,6 +141,7 @@ export interface ProjectReport {
   iteration: IterationSummary | null;
   iteration_detail?: IterationDetailMetrics | null;
   dts_summary: DtsSummary | null;
+  hardware_config: HardwareConfigSummary;
 }
 
 export async function getProjectReportApi(projectId: string) {

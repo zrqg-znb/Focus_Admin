@@ -11,6 +11,7 @@ import MilestoneFishbone from './MilestoneFishbone.vue';
 import DtsTrendChart from './DtsTrendChart.vue';
 import IterationCard from './IterationCard.vue';
 import CodeQualityCard from './CodeQualityCard.vue';
+import HardwareConfigCard from './HardwareConfigCard.vue';
 
 const props = defineProps<{
   projectId: string;
@@ -144,7 +145,10 @@ function toggleQuality(expanded: boolean) {
                 :di-trend="reportData.dts_team_di_trend"
               />
 
-              <!-- Row 3: Detail Cards -->
+              <!-- Row 3: Hardware Config -->
+              <HardwareConfigCard :data="reportData.hardware_config" />
+
+              <!-- Row 4: Detail Cards -->
               <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                  <IterationCard
                    v-if="reportData.iteration"
