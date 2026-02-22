@@ -16,10 +16,7 @@ import { IconifyIcon } from '@vben/icons';
 import { preferences } from '@vben/preferences';
 import { useUserStore } from '@vben/stores';
 
-import {
-  ElRadioButton,
-  ElRadioGroup,
-} from 'element-plus';
+import { ElRadioButton, ElRadioGroup } from 'element-plus';
 
 import {
   getCoreMetrics,
@@ -39,9 +36,9 @@ const viewScope = ref<'all' | 'favorites'>('all');
 // 独立的状态变量
 const coreMetrics = ref<null | {
   code_quality: CodeQualitySummary;
+  dts: DtsSummary;
   iteration: IterationSummary;
   performance: PerformanceSummary;
-  dts: DtsSummary;
 }>(null);
 const projectTimelines = ref<FavoriteProjectDetail[]>([]);
 const projectDistribution = ref<null | ProjectDistribution>(null);
@@ -103,14 +100,19 @@ async function loadData() {
     // Milestones
     fetchMilestones(false);
   } else {
-      loadingDistribution.value = false;
-      loadingMilestones.value = false;
+    loadingDistribution.value = false;
+    loadingMilestones.value = false;
   }
 }
 
 function fetchProjectTimelines() {
   loadingTimelines.value = true;
-  getProjectTimelines(viewScope.value, projectPage.value, projectPageSize.value, projectSearchName.value)
+  getProjectTimelines(
+    viewScope.value,
+    projectPage.value,
+    projectPageSize.value,
+    projectSearchName.value,
+  )
     .then((data) => {
       projectTimelines.value = data.items;
       projectTotal.value = data.total;
@@ -140,7 +142,12 @@ async function fetchMilestones(isFilter = false, qgs: string[] = []) {
 
   try {
     const params = qgs.length > 0 ? qgs : undefined;
-    const data = await getUpcomingMilestones(params, viewScope.value, milestonePage.value, milestonePageSize.value);
+    const data = await getUpcomingMilestones(
+      params,
+      viewScope.value,
+      milestonePage.value,
+      milestonePageSize.value,
+    );
 
     // Update total
     milestoneTotal.value = data.total;
@@ -223,17 +230,12 @@ onMounted(() => {
         v-if="viewScope === 'all'"
         :loading-core="loadingCore"
         :core-metrics="coreMetrics"
-        :loading-timelines="loadingTimelines"
-        :project-timelines="projectTimelines"
-        :project-total="projectTotal"
         :loading-distribution="loadingDistribution"
         :project-distribution="projectDistribution"
         :loading-milestones="loadingMilestones"
         :milestone-filtering="milestoneFiltering"
         :milestone-total="milestoneTotal"
         :filtered-milestones="filteredMilestones"
-        @search-project="onProjectSearch"
-        @page-change-project="onProjectPageChange"
         @page-change-milestone="onMilestonePageChange"
         @filter-milestone="onMilestoneFilter"
       />
