@@ -292,8 +292,11 @@ function usePlatformColumns(
 }
 
 const [Grid, gridApi] = useVbenVxeGrid({
+  showSearchForm: false,
+  separator: false,
   formOptions: {
     schema: useSearchFormSchema(),
+    showCollapseButton: false,
     submitOnChange: true,
   },
   gridOptions: {
@@ -337,6 +340,13 @@ const [Grid, gridApi] = useVbenVxeGrid({
 });
 
 const [ViuGrid, viuGridApi] = useVbenVxeGrid({
+  showSearchForm: false,
+  separator: false,
+  formOptions: {
+    schema: useSearchFormSchema(),
+    showCollapseButton: false,
+    submitOnChange: true,
+  },
   gridOptions: {
     autoResize: true,
     border: true,
@@ -346,13 +356,21 @@ const [ViuGrid, viuGridApi] = useVbenVxeGrid({
     pagerConfig: { enabled: true },
     proxyConfig: {
       ajax: {
-        query: async ({ page }) => {
+        query: async ({ page }, formValues) => {
           const data = await queryPlatformList('viu');
+          const keyword = (formValues.keyword || '').toLowerCase();
+          const filtered = keyword
+            ? data.filter(
+                (item) =>
+                  item.name.toLowerCase().includes(keyword) ||
+                  (item.remark || '').toLowerCase().includes(keyword),
+              )
+            : data;
           const start = (page.currentPage - 1) * page.pageSize;
           const end = start + page.pageSize;
           return {
-            items: data.slice(start, end),
-            total: data.length,
+            items: filtered.slice(start, end),
+            total: filtered.length,
           };
         },
       },
@@ -360,12 +378,20 @@ const [ViuGrid, viuGridApi] = useVbenVxeGrid({
     toolbarConfig: {
       custom: true,
       refresh: { code: 'query' },
+      search: true,
       zoom: true,
     },
   } as VxeTableGridOptions<PlatformConfig>,
 });
 
 const [CdcGrid, cdcGridApi] = useVbenVxeGrid({
+  showSearchForm: false,
+  separator: false,
+  formOptions: {
+    schema: useSearchFormSchema(),
+    showCollapseButton: false,
+    submitOnChange: true,
+  },
   gridOptions: {
     autoResize: true,
     border: true,
@@ -375,13 +401,21 @@ const [CdcGrid, cdcGridApi] = useVbenVxeGrid({
     pagerConfig: { enabled: true },
     proxyConfig: {
       ajax: {
-        query: async ({ page }) => {
+        query: async ({ page }, formValues) => {
           const data = await queryPlatformList('cdc');
+          const keyword = (formValues.keyword || '').toLowerCase();
+          const filtered = keyword
+            ? data.filter(
+                (item) =>
+                  item.name.toLowerCase().includes(keyword) ||
+                  (item.remark || '').toLowerCase().includes(keyword),
+              )
+            : data;
           const start = (page.currentPage - 1) * page.pageSize;
           const end = start + page.pageSize;
           return {
-            items: data.slice(start, end),
-            total: data.length,
+            items: filtered.slice(start, end),
+            total: filtered.length,
           };
         },
       },
@@ -389,12 +423,20 @@ const [CdcGrid, cdcGridApi] = useVbenVxeGrid({
     toolbarConfig: {
       custom: true,
       refresh: { code: 'query' },
+      search: true,
       zoom: true,
     },
   } as VxeTableGridOptions<PlatformConfig>,
 });
 
 const [SmartGrid, smartGridApi] = useVbenVxeGrid({
+  showSearchForm: false,
+  separator: false,
+  formOptions: {
+    schema: useSearchFormSchema(),
+    showCollapseButton: false,
+    submitOnChange: true,
+  },
   gridOptions: {
     autoResize: true,
     border: true,
@@ -404,13 +446,21 @@ const [SmartGrid, smartGridApi] = useVbenVxeGrid({
     pagerConfig: { enabled: true },
     proxyConfig: {
       ajax: {
-        query: async ({ page }) => {
+        query: async ({ page }, formValues) => {
           const data = await queryPlatformList('smart');
+          const keyword = (formValues.keyword || '').toLowerCase();
+          const filtered = keyword
+            ? data.filter(
+                (item) =>
+                  item.name.toLowerCase().includes(keyword) ||
+                  (item.remark || '').toLowerCase().includes(keyword),
+              )
+            : data;
           const start = (page.currentPage - 1) * page.pageSize;
           const end = start + page.pageSize;
           return {
-            items: data.slice(start, end),
-            total: data.length,
+            items: filtered.slice(start, end),
+            total: filtered.length,
           };
         },
       },
@@ -418,6 +468,7 @@ const [SmartGrid, smartGridApi] = useVbenVxeGrid({
     toolbarConfig: {
       custom: true,
       refresh: { code: 'query' },
+      search: true,
       zoom: true,
     },
   } as VxeTableGridOptions<PlatformConfig>,
