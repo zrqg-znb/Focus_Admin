@@ -534,69 +534,88 @@ function handleClose() {
   >
     <template #header>
       <div
-        class="bg-background-deep mb-4 flex h-14 w-full items-center justify-between rounded-[8px] px-6 shadow-sm"
+        class="bg-background-deep mb-4 w-full rounded-[8px] px-4 py-3 shadow-sm"
       >
-        <div class="flex items-center gap-3">
-          <span class="text-foreground/70 text-base font-medium">新增项目</span>
-        </div>
-        <div class="absolute left-1/2 flex -translate-x-1/2 items-center">
-          <template v-for="(step, index) in steps" :key="index">
-            <div
-              class="flex cursor-pointer items-center px-4 py-1"
-              @click="index < currentStep ? (currentStep = index) : null"
+        <div class="mb-3 flex items-center justify-between gap-3">
+          <div class="flex min-w-0 items-center gap-3">
+            <span class="text-foreground/80 font-medium">新增项目</span>
+            <ElTag type="primary">
+              步骤 {{ currentStep + 1 }} / {{ steps.length }}
+            </ElTag>
+            <span class="text-muted-foreground truncate text-sm">
+              {{ steps[currentStep]?.title }}
+            </span>
+          </div>
+          <div class="flex shrink-0 items-center gap-2">
+            <ElButton v-if="canGoPrev" @click="handlePrev">上一步</ElButton>
+            <ElButton
+              v-if="!isLastStep"
+              type="primary"
+              :disabled="!canGoNext"
+              :loading="loading"
+              @click="handleNext"
             >
-              <div
-                class="flex items-center justify-center rounded-full border px-3 py-1 text-sm transition-all"
-                :class="[
-                  index === currentStep
-                    ? 'border-primary text-primary bg-primary/10 font-medium'
-                    : index < currentStep
-                      ? 'border-primary/50 text-primary/80 bg-transparent'
-                      : 'border-border text-muted-foreground bg-transparent',
-                ]"
-              >
-                <span
-                  class="mr-2 flex h-5 w-5 items-center justify-center rounded-full text-xs"
-                  :class="
-                    index === currentStep
-                      ? 'bg-primary text-white'
-                      : index < currentStep
-                        ? 'bg-primary/80 text-white'
-                        : 'bg-muted text-muted-foreground'
-                  "
-                >
-                  {{ step.index }}
-                </span>
-                {{ step.title }}
-              </div>
-            </div>
-            <div
-              v-if="index < steps.length - 1"
-              class="bg-border h-[1px] w-8"
-              :class="{ 'bg-primary/50': index < currentStep }"
-            ></div>
-          </template>
+              下一步
+            </ElButton>
+            <ElButton
+              v-if="isLastStep"
+              type="primary"
+              :loading="loading"
+              @click="handleSave"
+            >
+              完成
+            </ElButton>
+            <ElButton @click="handleClose">关闭</ElButton>
+          </div>
         </div>
-        <div class="flex items-center gap-3">
-          <ElButton v-if="canGoPrev" @click="handlePrev">上一步</ElButton>
-          <ElButton
-            v-if="!isLastStep"
-            type="primary"
-            :disabled="!canGoNext"
-            :loading="loading"
-            @click="handleNext"
-          >
-            下一步
-          </ElButton>
-          <ElButton
-            v-if="isLastStep"
-            type="primary"
-            :loading="loading"
-            @click="handleSave"
-          >
-            完成
-          </ElButton>
-          <ElButton @click="handleClose">关闭</ElButton>
+
+        <div class="overflow-x-auto pb-1">
+          <div class="flex justify-center">
+            <div class="mx-auto flex w-max items-center gap-2 px-2">
+              <template v-for="(step, index) in steps" :key="index">
+                <button
+                  type="button"
+                  class="flex w-36 shrink-0 cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-left transition-all"
+                  :class="[
+                    index === currentStep
+                      ? 'border-primary/40 bg-primary/10'
+                      : index < currentStep
+                        ? 'border-primary/30 bg-primary/5'
+                        : 'border-border bg-background',
+                  ]"
+                  @click="index < currentStep ? (currentStep = index) : null"
+                >
+                  <div
+                    class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-medium"
+                    :class="[
+                      index === currentStep
+                        ? 'bg-primary text-white'
+                        : index < currentStep
+                          ? 'bg-primary/80 text-white'
+                          : 'bg-muted text-muted-foreground',
+                    ]"
+                  >
+                    {{ step.index }}
+                  </div>
+                  <div
+                    class="text-xs leading-4"
+                    :class="
+                      index <= currentStep
+                        ? 'text-foreground'
+                        : 'text-muted-foreground'
+                    "
+                  >
+                    {{ step.title }}
+                  </div>
+                </button>
+                <div
+                  v-if="index < steps.length - 1"
+                  class="bg-border h-[1px] w-6 shrink-0"
+                  :class="{ 'bg-primary/50': index < currentStep }"
+                ></div>
+              </template>
+            </div>
+          </div>
         </div>
       </div>
     </template>
