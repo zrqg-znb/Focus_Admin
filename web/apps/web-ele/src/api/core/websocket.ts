@@ -318,20 +318,7 @@ export function createWebSocket(
   endpoint: string,
   callbacks?: WebSocketApi.WebSocketCallbacks,
 ): WebSocketManager {
-  // 构建WebSocket URL
-  let wsUrl: string;
-
-  if (import.meta.env.DEV) {
-    // 开发环境：直接连接到后端服务器
-    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    wsUrl = `${wsProtocol}//localhost:8000${endpoint}`;
-  } else {
-    // 生产环境：使用当前域名
-    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsHost = location.host;
-    wsUrl = `${wsProtocol}//${wsHost}${endpoint}`;
-    // wsUrl = `${wsProtocol}//116.204.90.201:8000${endpoint}`;
-  }
+  const wsUrl = resolveWebSocketUrl(endpoint);
 
   const config: WebSocketApi.WebSocketConfig = {
     url: wsUrl,
@@ -343,6 +330,30 @@ export function createWebSocket(
   };
 
   return new WebSocketManager(config, callbacks);
+}
+
+function resolveWebSocketUrl(endpoint: string): string {
+  const wsEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const apiBase = (import.meta.env.VITE_GLOB_API_URL || '').trim();
+
+  if (/^https?:\/\//i.test(apiBase)) {
+    const apiUrl = new URL(apiBase);
+    const wsProtocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+    const basePath = normalizeBasePath(apiUrl.pathname);
+    return `${wsProtocol}//${apiUrl.host}${basePath}${wsEndpoint}`;
+  }
+
+  const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const basePath = normalizeBasePath(apiBase);
+  return `${wsProtocol}//${location.host}${basePath}${wsEndpoint}`;
+}
+
+function normalizeBasePath(path: string): string {
+  if (!path) {
+    return '';
+  }
+  const trimmed = path.replace(/^\/+|\/+$/g, '');
+  return trimmed ? `/${trimmed}` : '';
 }
 
 /**

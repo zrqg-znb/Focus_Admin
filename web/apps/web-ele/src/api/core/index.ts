@@ -10,5 +10,6 @@ export * from './dept';
 export * from './scheduler';
 export * from './server-monitor';
 export * from './database-manager';
+export * from './message';
 // 注意: login-log 模块请直接导入以避免 PaginatedResponse 类型冲突
 // import { getLoginLogListApi, ... } from '#/api/core/login-log';
