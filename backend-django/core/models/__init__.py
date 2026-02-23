@@ -13,5 +13,5 @@ from core.menu.menu_model import Menu
 from core.dict.dict_model import Dict
 from core.dict_item.dict_item_model import DictItem
 from core.operation_log.operation_log_model import OperationLog
-
+from core.message.message_model import Announcement, UserMessage
 
