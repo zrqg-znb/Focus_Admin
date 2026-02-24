@@ -1,6 +1,8 @@
 import os
 import hashlib
 import logging
+import base64
+import binascii
 from datetime import datetime
 from django.shortcuts import get_object_or_404
 from django.conf import settings
@@ -32,19 +34,22 @@ class ScanService:
     @staticmethod
     def handle_upload(project_key: str, tool_name: str, file_obj) -> ScanTask:
         """接收文件上传并触发解析"""
+        normalized_tool = (tool_name or "").strip().lower()
+        if not normalized_tool:
+            normalized_tool = "tscan"
         try:
             project = ScanProject.objects.get(project_key=project_key)
         except ScanProject.DoesNotExist:
             raise ValueError("无效的项目标识 (project_key)")
 
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        file_name = f"scan_reports/{project.id}/{timestamp}_{tool_name}_{file_obj.name}"
+        file_name = f"scan_reports/{project.id}/{timestamp}_{normalized_tool}_{file_obj.name}"
         saved_path = default_storage.save(file_name, ContentFile(file_obj.read()))
         full_path = os.path.join(settings.MEDIA_ROOT, saved_path)
 
         task = ScanTask.objects.create(
             project=project,
-            tool_name=tool_name,
+            tool_name=normalized_tool,
             status="processing",
             source="pipeline",
             report_file=full_path,
@@ -62,10 +67,13 @@ class ScanService:
         return task
 
     @staticmethod
-    def handle_chunk_upload(project_key: str, tool_name: str, chunk_index: int, total_chunks: int, chunk_content: str, file_id: str, file_ext: str = "xml") -> dict:
+    def handle_chunk_upload(project_key: str, tool_name: str, chunk_index: int, total_chunks: int, chunk_content: str, file_id: str, file_ext: str = None) -> dict:
         """
         处理分片上传的 JSON 文本内容
         """
+        normalized_tool = (tool_name or "").strip().lower()
+        if not normalized_tool:
+            normalized_tool = "tscan"
         try:
             project = ScanProject.objects.get(project_key=project_key)
         except ScanProject.DoesNotExist:
@@ -94,21 +102,33 @@ class ScanService:
             
             # 保存到文件
             timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+            file_ext = (file_ext or "").strip().lower().lstrip(".")
             # 兼容处理 file_ext，默认使用 xml (针对 tscancode)
             if not file_ext:
-                if tool_name in ["tscan", "cppcheck"]:
+                if normalized_tool in ["tscan", "cppcheck"]:
                     file_ext = "xml"
+                elif normalized_tool in ["cooddy"]:
+                    file_ext = "csv"
+                elif normalized_tool in ["weggli", "binexplorer", "clang-tidy", "clang_tidy", "clangtidy"]:
+                    file_ext = "xlsx"
                 else:
                     file_ext = "json"
             
-            file_name = f"scan_reports/{project.id}/{timestamp}_{tool_name}_{file_id}.{file_ext}"
-            saved_path = default_storage.save(file_name, ContentFile(full_content.encode('utf-8')))
+            payload_bytes = full_content.encode("utf-8")
+            if file_ext in {"xlsx", "xls"}:
+                try:
+                    payload_bytes = base64.b64decode(full_content, validate=True)
+                except (binascii.Error, ValueError):
+                    payload_bytes = full_content.encode("utf-8")
+
+            file_name = f"scan_reports/{project.id}/{timestamp}_{normalized_tool}_{file_id}.{file_ext}"
+            saved_path = default_storage.save(file_name, ContentFile(payload_bytes))
             full_path = os.path.join(settings.MEDIA_ROOT, saved_path)
             
             # 创建扫描任务
             task = ScanTask.objects.create(
                 project=project,
-                tool_name=tool_name,
+                tool_name=normalized_tool,
                 status='processing',
                 source='pipeline',
                 report_file=full_path,

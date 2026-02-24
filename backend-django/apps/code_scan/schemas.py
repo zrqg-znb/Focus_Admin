@@ -81,7 +81,7 @@ class ChunkUploadSchema(Schema):
     total_chunks: int
     chunk_content: str  # Base64 or plain text content of the chunk
     file_id: str # Unique ID for the file session
-    file_ext: Optional[str] = "xml" # File extension, default to xml
+    file_ext: Optional[str] = None
 
 class ProjectOverviewSchema(Schema):
     project_id: str

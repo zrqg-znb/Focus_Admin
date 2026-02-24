@@ -20,7 +20,17 @@ const shieldForm = ref({
   reason: '',
 });
 
+const ALL_SCAN_TOOLS = [
+  'tscan',
+  'cppcheck',
+  'weggli',
+  'cooddy',
+  'binexplorer',
+  'clang-tidy',
+];
+
 const tools = ref<string[]>([]);
+const toolCountMap = ref<Record<string, number>>({});
 const activeTool = ref('');
 
 const summaryGridOptions: any = {
@@ -43,29 +53,28 @@ const summaryGridOptions: any = {
         const itemsData = res.items || [];
         const total = res.total || 0;
 
-        const toolSet = new Set<string>();
-        // Ensure tscan and cppcheck are always present if needed, 
-        // or just let them be dynamic. 
-        // If we want to force columns, we can add them here.
-        // But dynamic is usually better. 
-        // If 'cppcheck' exists in data, it should appear.
+        const toolSet = new Set<string>(ALL_SCAN_TOOLS);
         for (const row of itemsData) {
           const keys = Object.keys(row.tool_counts || {});
           for (const k of keys) toolSet.add(k);
         }
-        // Explicitly include tscan and cppcheck if they are missing but expected to be shown as 0
-        if (!toolSet.has('tscan')) toolSet.add('tscan');
-        if (!toolSet.has('cppcheck')) toolSet.add('cppcheck');
-        if (!toolSet.has('weggli')) toolSet.add('weggli');
-
-        const toolNames = Array.from(toolSet).sort();
+        const extraTools = Array.from(toolSet).filter(
+          (tool) => !ALL_SCAN_TOOLS.includes(tool),
+        );
+        const toolNames = [...ALL_SCAN_TOOLS, ...extraTools];
         
         // Reload columns explicitly
         summaryGridApi.setGridOptions({
             columns: useSummaryColumns(toolNames)
         });
 
-        const items = itemsData.map((row: any) => ({ ...row, ...(row.tool_counts || {}) }));
+        const items = itemsData.map((row: any) => {
+          const normalizedCounts: Record<string, number> = {};
+          for (const tool of toolNames) {
+            normalizedCounts[tool] = Number(row.tool_counts?.[tool] || 0);
+          }
+          return { ...row, ...normalizedCounts };
+        });
         return { items, total };
       },
     },
@@ -112,24 +121,41 @@ const [SummaryGrid, summaryGridApi] = useVbenVxeGrid({ gridOptions: summaryGridO
 const [DetailGrid, detailGridApi] = useVbenVxeGrid({ gridOptions: detailGridOptions });
 
 async function loadTools() {
-    if (!projectId.value) return;
-    try {
-        const res: any = await listProjectOverviewApi();
-        const items = res.items || res; // 兼容分页返回结构 {items: [], total: N} 和数组返回
-        const project = Array.isArray(items) ? items.find((p: any) => p.project_id === projectId.value) : null;
-        
-        if (project && project.tool_counts) {
-            tools.value = Object.keys(project.tool_counts).sort();
-            if (tools.value.length > 0) {
-                // If activeTool is not in the list (e.g. initial load), set to first
-                if (!activeTool.value || !tools.value.includes(activeTool.value)) {
-                    activeTool.value = tools.value[0] || '';
-                }
-            }
+  if (!projectId.value) return;
+
+  tools.value = [...ALL_SCAN_TOOLS];
+  toolCountMap.value = Object.fromEntries(
+    ALL_SCAN_TOOLS.map((tool) => [tool, 0]),
+  );
+  if (!activeTool.value || !tools.value.includes(activeTool.value)) {
+    activeTool.value = tools.value[0] || '';
+  }
+
+  try {
+    const res: any = await listProjectOverviewApi({
+      page: 1,
+      pageSize: 500,
+    });
+    const items = res.items || res;
+    const project = Array.isArray(items)
+      ? items.find((p: any) => p.project_id === projectId.value)
+      : null;
+
+    if (project?.tool_counts) {
+      for (const tool of Object.keys(project.tool_counts)) {
+        if (!tools.value.includes(tool)) {
+          tools.value.push(tool);
         }
-    } catch (e) {
-        console.error(e);
+      }
+      const merged: Record<string, number> = {};
+      for (const tool of tools.value) {
+        merged[tool] = Number(project.tool_counts?.[tool] || 0);
+      }
+      toolCountMap.value = merged;
     }
+  } catch (e) {
+    console.error(e);
+  }
 }
 
 function handleTabChange() {
@@ -259,7 +285,12 @@ async function handleExpandTabChange(resultId: string, name: any) {
 
       <div v-else class="h-full flex flex-col">
           <ElTabs v-model="activeTool" @tab-change="handleTabChange" class="mb-2">
-              <ElTabPane v-for="tool in tools" :key="tool" :label="tool" :name="tool" />
+              <ElTabPane
+                v-for="tool in tools"
+                :key="tool"
+                :label="`${tool} (${toolCountMap[tool] ?? 0})`"
+                :name="tool"
+              />
           </ElTabs>
           <div class="flex-1 min-h-0 overflow-hidden">
               <DetailGrid>

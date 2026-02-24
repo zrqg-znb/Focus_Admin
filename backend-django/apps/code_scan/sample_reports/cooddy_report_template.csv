@@ -1,0 +1,2 @@
+Path,File,Function,Line,Column,Checker,Profile,ProblemType,Source,Reason
+/workspace/project/src/core,pointer_guard.c,validate_input,64,17,NullDereferenceChecker,default,NullPointerDereference,if (*ptr == 0) {,ptr 可能为空，解引用前缺少空指针判断
