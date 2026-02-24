@@ -37,6 +37,7 @@ import {
 } from '#/api/project-manager/milestone';
 import {
   createProjectApi,
+  getProjectApi,
   updateProjectApi,
 } from '#/api/project-manager/project';
 import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
@@ -83,6 +84,7 @@ type PhaseConfigFormItem = {
 };
 const phaseConfigs = ref<PhaseConfigFormItem[]>([]);
 const hardwareLoading = ref(false);
+const detailLoading = ref(false);
 const activeTab = ref('basic');
 const dtsConfig = ref({
   ws_id: '',
@@ -118,10 +120,17 @@ const [Form, formApi] = useVbenForm({
 const [Drawer, drawerApi] = useVbenDrawer({
   onConfirm: onSubmit,
   async onOpenChange(isOpen) {
-    if (isOpen) {
-      activeTab.value = 'basic';
-      const data = drawerApi.getData<any>();
-      if (data) {
+    if (!isOpen) return;
+
+    activeTab.value = 'basic';
+    detailLoading.value = true;
+    const drawerData = drawerApi.getData<any>();
+
+    try {
+      if (drawerData) {
+        const data = drawerData.id
+          ? await getProjectApi(drawerData.id)
+          : drawerData;
         formData.value = data;
         const normalized = {
           ...formData.value,
@@ -129,7 +138,6 @@ const [Drawer, drawerApi] = useVbenDrawer({
             ? formData.value.managers_info.map((m: any) => m.id)
             : [],
         };
-        // 初始化开关状态
         enableMilestone.value = !!data.enable_milestone;
         enableIteration.value = !!data.enable_iteration;
         enableQuality.value = !!data.enable_quality;
@@ -137,21 +145,26 @@ const [Drawer, drawerApi] = useVbenDrawer({
         enableHardwareConfig.value = !!data.enable_hardware_config;
         viuPlatformId.value = data.viu_platform_id || data.viu_platform || '';
         projectDomain.value = data.domain || '';
-
-        // 回填配置项（无条件回填，确保开关开启时有数据）
         iterationConfig.value.design_id = data.design_id || '';
         iterationConfig.value.sub_teams = Array.isArray(data.sub_teams)
           ? data.sub_teams
           : [];
-
         dtsConfig.value.ws_id = data.ws_id || '';
         dtsConfig.value.di_teams = Array.isArray(data.di_teams)
           ? data.di_teams
           : [];
-
         normalizePhaseConfigs(data.phase_configs || []);
+        milestoneForm.value = {
+          qg1_date: '',
+          qg2_date: '',
+          qg3_date: '',
+          qg4_date: '',
+          qg5_date: '',
+          qg6_date: '',
+          qg7_date: '',
+          qg8_date: '',
+        };
 
-        // 回填里程碑数据
         try {
           const milestones = await getMilestoneBoardApi({ keyword: data.name });
           const current = milestones.find((m) => m.project_id === data.id);
@@ -171,7 +184,6 @@ const [Drawer, drawerApi] = useVbenDrawer({
           console.error('Failed to fetch milestone data', error);
         }
 
-        // 回填代码质量模块
         if (data.enable_quality) {
           try {
             const details = await getProjectQualityDetailsApi(data.id);
@@ -194,28 +206,32 @@ const [Drawer, drawerApi] = useVbenDrawer({
 
         formApi.setValues(normalized);
         await loadHardwarePoints();
-      } else {
-        formApi.resetForm();
-        iterationConfig.value = { design_id: '', sub_teams: [] };
-        dtsConfig.value = { ws_id: '', di_teams: [] };
-        moduleRows.value = [];
-        milestoneForm.value = {
-          qg1_date: '',
-          qg2_date: '',
-          qg3_date: '',
-          qg4_date: '',
-          qg5_date: '',
-          qg6_date: '',
-          qg7_date: '',
-          qg8_date: '',
-        };
-        enableMilestone.value = false;
-        enableIteration.value = false;
-        enableQuality.value = false;
-        enableDts.value = false;
-        resetHardwareConfig();
-        await loadHardwarePoints();
+        return;
       }
+
+      formData.value = undefined;
+      formApi.resetForm();
+      iterationConfig.value = { design_id: '', sub_teams: [] };
+      dtsConfig.value = { ws_id: '', di_teams: [] };
+      moduleRows.value = [];
+      milestoneForm.value = {
+        qg1_date: '',
+        qg2_date: '',
+        qg3_date: '',
+        qg4_date: '',
+        qg5_date: '',
+        qg6_date: '',
+        qg7_date: '',
+        qg8_date: '',
+      };
+      enableMilestone.value = false;
+      enableIteration.value = false;
+      enableQuality.value = false;
+      enableDts.value = false;
+      resetHardwareConfig();
+      await loadHardwarePoints();
+    } finally {
+      detailLoading.value = false;
     }
   },
 });
@@ -258,9 +274,10 @@ function ensureCockpitSingleConfig() {
     phaseConfigs.value = [createEmptyCockpitConfig()];
     return;
   }
-  const first = phaseConfigs.value[0];
+  const first = phaseConfigs.value[0] ?? createEmptyCockpitConfig();
   phaseConfigs.value = [
     {
+      ...createEmptyCockpitConfig(),
       ...first,
       stage_name: cockpitStageName,
       stage_range: [],
@@ -305,8 +322,9 @@ function normalizePhaseConfigs(
     cdc_platform_id: item.cdc_platform_id || '',
     smart_screen_version_id: item.smart_screen_version_id || '',
   }));
+  const firstMapped = mapped[0] ?? createEmptyCockpitConfig();
   phaseConfigs.value =
-    hardwareScenario.value === 'cockpit' ? [mapped[0]] : mapped;
+    hardwareScenario.value === 'cockpit' ? [firstMapped] : mapped;
 }
 
 function addPhase() {
@@ -622,7 +640,12 @@ async function onSubmit() {
 
 <template>
   <Drawer class="w-full max-w-[1100px]" :title="getDrawerTitle">
-    <ElTabs v-model="activeTab" class="px-4">
+    <div
+      v-loading="detailLoading"
+      class="min-h-[420px]"
+      element-loading-text="正在加载项目配置..."
+    >
+      <ElTabs v-model="activeTab" class="px-4">
       <ElTabPane label="基础信息" name="basic">
         <Form class="mt-2" />
       </ElTabPane>
@@ -1081,6 +1104,7 @@ async function onSubmit() {
           </ElForm>
         </div>
       </ElTabPane>
-    </ElTabs>
+      </ElTabs>
+    </div>
   </Drawer>
 </template>

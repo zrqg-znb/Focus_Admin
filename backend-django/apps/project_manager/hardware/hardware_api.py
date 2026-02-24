@@ -1,6 +1,8 @@
 from typing import List
 
+from django.db import IntegrityError
 from ninja import Router
+from ninja.errors import HttpError
 
 from common import fu_crud
 from common.fu_auth import BearerAuth as GlobalAuth
@@ -23,6 +25,20 @@ from .hardware_schema import (
 )
 
 router = Router(tags=["HardwareConfig"], auth=GlobalAuth())
+
+
+def _normalize_point_code(code: str | None) -> str:
+    return (code or "").strip()
+
+
+def _ensure_point_code_unique(code: str, exclude_id: str | None = None):
+    if not code:
+        return
+    queryset = HardwarePoint.objects.filter(code=code)
+    if exclude_id:
+        queryset = queryset.exclude(id=exclude_id)
+    if queryset.exists():
+        raise HttpError(409, f"硬件点位已存在: {code}")
 
 
 @router.get("/options", response=HardwareConfigOptionsOut, summary="获取典配配置项")
@@ -52,12 +68,30 @@ def list_points(request):
 
 @router.post("/points", response=HardwarePointOut, summary="创建硬件点位")
 def create_point(request, data: HardwarePointIn):
-    return fu_crud.create(request, data, HardwarePoint)
+    payload = data.dict()
+    payload["code"] = _normalize_point_code(payload.get("code"))
+    _ensure_point_code_unique(payload["code"])
+    try:
+        return fu_crud.create(request, payload, HardwarePoint)
+    except IntegrityError as error:
+        if "pm_hardware_point.code" in str(error) or "code" in str(error):
+            raise HttpError(409, f"硬件点位已存在: {payload['code']}")
+        raise error
 
 
 @router.put("/points/{point_id}", response=HardwarePointOut, summary="更新硬件点位")
 def update_point(request, point_id: str, data: HardwarePointUpdate):
-    return fu_crud.update(request, point_id, data, HardwarePoint)
+    payload = data.dict(exclude_none=True)
+    if "code" in payload:
+        payload["code"] = _normalize_point_code(payload.get("code"))
+        _ensure_point_code_unique(payload["code"], exclude_id=point_id)
+    try:
+        return fu_crud.update(request, point_id, payload, HardwarePoint)
+    except IntegrityError as error:
+        if "pm_hardware_point.code" in str(error) or "code" in str(error):
+            conflict_code = payload.get("code") or ""
+            raise HttpError(409, f"硬件点位已存在: {conflict_code}")
+        raise error
 
 
 @router.delete("/points/{point_id}", response=HardwarePointOut, summary="删除硬件点位")

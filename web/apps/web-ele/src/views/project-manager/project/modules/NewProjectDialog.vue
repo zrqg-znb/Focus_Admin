@@ -167,9 +167,10 @@ function ensureCockpitSingleConfig() {
     phaseConfigs.value = [createEmptyCockpitConfig()];
     return;
   }
-  const first = phaseConfigs.value[0];
+  const first = phaseConfigs.value[0] ?? createEmptyCockpitConfig();
   phaseConfigs.value = [
     {
+      ...createEmptyCockpitConfig(),
       ...first,
       stage_name: cockpitStageName,
       stage_range: [],
