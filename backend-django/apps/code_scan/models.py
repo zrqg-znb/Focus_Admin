@@ -10,6 +10,7 @@ class ScanProject(RootModel):
     project_key = models.CharField(max_length=64, unique=True, default=uuid.uuid4, verbose_name="项目标识", help_text="用于流水线认证的唯一标识")
     description = models.TextField(null=True, blank=True, verbose_name="描述", help_text="项目描述")
     caretaker = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='scan_projects', verbose_name="数据看护责任人")
+    path_shield_prefixes = models.JSONField(default=list, blank=True, verbose_name="路径前缀屏蔽规则", help_text="按文件路径前缀自动屏蔽")
 
     class Meta:
         db_table = 'scan_project'

@@ -38,6 +38,16 @@ export function getFormSchema(): VbenFormSchema[] {
         type: 'textarea',
       },
     },
+    {
+      component: 'Input',
+      fieldName: 'path_shield_prefixes_text',
+      label: '路径前缀屏蔽规则',
+      componentProps: {
+        type: 'textarea',
+        rows: 4,
+        placeholder: '每行一个路径前缀，例如：\n/src/generated/\n/third_party/',
+      },
+    },
   ];
 }
 

@@ -23,6 +23,7 @@ class ScanProjectCreateSchema(Schema):
     branch: str = "master"
     description: Optional[str] = None
     caretaker_id: Optional[str] = None
+    path_shield_prefixes: Optional[List[str]] = None
 
 class ScanTaskSchema(ModelSchema):
     class Config:

@@ -4,6 +4,7 @@ import logging
 import base64
 import binascii
 from datetime import datetime
+from typing import Any, Iterable
 from django.shortcuts import get_object_or_404
 from django.conf import settings
 from django.db import transaction
@@ -16,17 +17,59 @@ from core.user.user_model import User
 logger = logging.getLogger(__name__)
 
 class ScanService:
+    @staticmethod
+    def _normalize_path(value: str | None) -> str:
+        return (value or "").strip().replace("\\", "/")
+
+    @staticmethod
+    def _normalize_path_prefixes(raw_value: Any) -> list[str]:
+        if raw_value is None:
+            return []
+
+        values: Iterable[Any]
+        if isinstance(raw_value, str):
+            values = raw_value.replace(",", "\n").splitlines()
+        elif isinstance(raw_value, (list, tuple, set)):
+            values = raw_value
+        else:
+            return []
+
+        prefixes: list[str] = []
+        seen: set[str] = set()
+        for item in values:
+            prefix = ScanService._normalize_path(str(item))
+            if not prefix or prefix in seen:
+                continue
+            seen.add(prefix)
+            prefixes.append(prefix)
+        return prefixes
+
+    @staticmethod
+    def _is_path_prefix_shielded(file_path: str, path_prefixes: list[str]) -> bool:
+        normalized_path = ScanService._normalize_path(file_path)
+        if not normalized_path or not path_prefixes:
+            return False
+        return any(normalized_path.startswith(prefix) for prefix in path_prefixes)
     
     @staticmethod
     def create_project(data: dict, user: User) -> ScanProject:
         """创建扫描项目"""
-        return ScanProject.objects.create(**data, sys_creator=user)
+        payload = dict(data)
+        payload["path_shield_prefixes"] = ScanService._normalize_path_prefixes(
+            payload.get("path_shield_prefixes"),
+        )
+        return ScanProject.objects.create(**payload, sys_creator=user)
 
     @staticmethod
     def update_project(project_id: str, data: dict, user: User) -> ScanProject:
         """更新扫描项目"""
         project = get_object_or_404(ScanProject, id=project_id)
-        for key, value in data.items():
+        payload = dict(data)
+        if "path_shield_prefixes" in payload:
+            payload["path_shield_prefixes"] = ScanService._normalize_path_prefixes(
+                payload.get("path_shield_prefixes"),
+            )
+        for key, value in payload.items():
             setattr(project, key, value)
         project.save()
         return project
@@ -157,6 +200,9 @@ class ScanService:
         try:
             parser = ParserFactory.get_parser(task.tool_name)
             defects = parser.parse(task.report_file)
+            project_prefix_rules = ScanService._normalize_path_prefixes(
+                getattr(task.project, "path_shield_prefixes", []),
+            )
             
             with transaction.atomic():
                 # 如果是重跑任务，清除旧结果
@@ -175,8 +221,13 @@ class ScanService:
                         fingerprint=fingerprint,
                         shield_status='Shielded'
                     ).exists()
+
+                    is_path_rule_shielded = ScanService._is_path_prefix_shielded(
+                        item['file_path'],
+                        project_prefix_rules,
+                    )
                     
-                    status = 'Shielded' if is_shielded else 'Normal'
+                    status = 'Shielded' if (is_shielded or is_path_rule_shielded) else 'Normal'
                     
                     results_to_create.append(ScanResult(
                         task=task,
