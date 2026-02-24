@@ -256,22 +256,57 @@ function go(path: string) {
     <QGRiskCard scope="all" />
 
     <!-- 2. 图表区域 -->
-    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+    <div class="space-y-6">
       <template v-if="loadingDistribution">
-        <ElSkeleton :count="2" class="h-[350px]" />
+        <ElSkeleton :count="5" class="h-[350px]" />
       </template>
       <template v-else-if="projectDistribution">
-        <div
-          class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-[#151515]"
-        >
-          <h3 class="mb-4 text-lg font-bold">项目领域分布</h3>
-          <ProjectPie :data="projectDistribution.by_domain" title="领域分布" />
+        <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <div
+            class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-[#151515]"
+          >
+            <h3 class="mb-4 text-lg font-bold">项目领域分布</h3>
+            <ProjectPie
+              :data="projectDistribution.by_domain"
+              title="领域分布"
+            />
+          </div>
+          <div
+            class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-[#151515]"
+          >
+            <h3 class="mb-4 text-lg font-bold">项目类型分布</h3>
+            <ProjectBar :data="projectDistribution.by_type" title="类型分布" />
+          </div>
         </div>
-        <div
-          class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-[#151515]"
-        >
-          <h3 class="mb-4 text-lg font-bold">项目类型分布</h3>
-          <ProjectBar :data="projectDistribution.by_type" title="类型分布" />
+
+        <div class="grid grid-cols-1 gap-6 xl:grid-cols-3">
+          <div
+            class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-[#151515]"
+          >
+            <h3 class="mb-4 text-lg font-bold">车控领域平台项目占比</h3>
+            <ProjectPie
+              :data="projectDistribution.vehicle_by_platform"
+              title="车控平台占比"
+            />
+          </div>
+          <div
+            class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-[#151515]"
+          >
+            <h3 class="mb-4 text-lg font-bold">座舱领域 CDC 平台占比</h3>
+            <ProjectPie
+              :data="projectDistribution.cockpit_by_cdc_platform"
+              title="CDC 平台占比"
+            />
+          </div>
+          <div
+            class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-[#151515]"
+          >
+            <h3 class="mb-4 text-lg font-bold">座舱领域智慧屏版本占比</h3>
+            <ProjectPie
+              :data="projectDistribution.cockpit_by_smart_screen_version"
+              title="智慧屏版本占比"
+            />
+          </div>
         </div>
       </template>
     </div>

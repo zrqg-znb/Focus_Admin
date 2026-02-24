@@ -44,6 +44,9 @@ export interface NameValue {
 export interface ProjectDistribution {
   by_domain: NameValue[];
   by_type: NameValue[];
+  vehicle_by_platform: NameValue[];
+  cockpit_by_cdc_platform: NameValue[];
+  cockpit_by_smart_screen_version: NameValue[];
 }
 
 export interface UpcomingMilestone {

@@ -1,5 +1,6 @@
 from ninja import Router, Query
 from typing import List, Optional
+from collections import Counter
 from django.db.models import Sum, Avg, Count, Max, Q
 from django.utils import timezone
 from .schemas import (
@@ -36,6 +37,13 @@ def get_projects_by_scope(request, scope: str = 'all'):
     if scope == 'favorites' and request.auth:
         return base_qs.filter(favorited_by=request.auth)
     return base_qs
+
+
+def _counter_to_name_values(counter: Counter[str]) -> List[NameValue]:
+    return [
+        NameValue(name=name, value=value)
+        for name, value in sorted(counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
 
 @router.get("/milestones", response=PaginatedMilestones, summary="即将到达的里程碑")
 def get_upcoming_milestones(request, qg_types: List[str] = Query(None), scope: str = 'all', page: int = 1, page_size: int = 5):
@@ -285,10 +293,47 @@ def get_project_distribution(request, scope: str = 'all'):
     
     type_counts = projects.values('type').annotate(count=Count('id'))
     by_type = [NameValue(name=item['type'] or "未分类", value=item['count']) for item in type_counts]
+
+    vehicle_counter = Counter()
+    vehicle_projects = projects.filter(domain__icontains='车控').select_related('viu_platform')
+    for project in vehicle_projects:
+        platform_name = project.viu_platform.name if project.viu_platform else "未配置VIU平台"
+        vehicle_counter[platform_name] += 1
+
+    cockpit_cdc_counter = Counter()
+    cockpit_smart_counter = Counter()
+    cockpit_projects = projects.filter(domain__icontains='座舱').prefetch_related(
+        'phase_configs__cdc_platform',
+        'phase_configs__smart_screen_version',
+    )
+    for project in cockpit_projects:
+        cockpit_config = next(
+            (
+                config
+                for config in project.phase_configs.all()
+                if config.scenario == 'cockpit'
+            ),
+            None,
+        )
+        cdc_name = (
+            cockpit_config.cdc_platform.name
+            if cockpit_config and cockpit_config.cdc_platform
+            else "未配置CDC平台"
+        )
+        smart_name = (
+            cockpit_config.smart_screen_version.name
+            if cockpit_config and cockpit_config.smart_screen_version
+            else "未配置智慧屏版本"
+        )
+        cockpit_cdc_counter[cdc_name] += 1
+        cockpit_smart_counter[smart_name] += 1
     
     return ProjectDistribution(
         by_domain=by_domain,
-        by_type=by_type
+        by_type=by_type,
+        vehicle_by_platform=_counter_to_name_values(vehicle_counter),
+        cockpit_by_cdc_platform=_counter_to_name_values(cockpit_cdc_counter),
+        cockpit_by_smart_screen_version=_counter_to_name_values(cockpit_smart_counter),
     )
 
 @router.get("/project-timelines", response=PaginatedProjectTimeline, summary="项目里程碑时间轴数据")

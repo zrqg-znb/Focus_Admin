@@ -40,6 +40,9 @@ class NameValue(Schema):
 class ProjectDistribution(Schema):
     by_domain: List[NameValue]
     by_type: List[NameValue]
+    vehicle_by_platform: List[NameValue]
+    cockpit_by_cdc_platform: List[NameValue]
+    cockpit_by_smart_screen_version: List[NameValue]
 
 class UpcomingMilestone(Schema):
     project_name: str
