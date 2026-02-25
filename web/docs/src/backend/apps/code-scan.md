@@ -58,6 +58,11 @@
 | --- | --- | --- | --- |
 | TScanCode | `tscan` | XML | 腾讯开源静态代码分析工具 |
 | CppCheck | `cppcheck` | XML | C/C++ 静态分析工具 |
+| Weggli | `weggli` | XLSX / JSON / TXT | 语义模式匹配工具 |
+| Cooddy | `cooddy` | CSV | C/C++ 缺陷分析工具 |
+| BinExplorer | `binexplorer` | XLSX | 二进制扫描工具 |
+| Clang-Tidy | `clang-tidy` | XLSX | Clang 静态检查工具 |
+| Valgrind | `valgrind` | LOG / TXT / XML / JSON | 运行时内存与并发问题检测工具 |
 
 ### 缺陷严重程度
 
@@ -96,9 +101,9 @@ Pending (申请中)
 ```
 CI/CD 流水线
     │
-    │ 执行 TScan/CppCheck 扫描
+    │ 执行扫描工具（tscan/cppcheck/valgrind 等）
     ▼
-生成报告文件 (XML)
+生成报告文件（XML/CSV/XLSX/LOG）
     │
     │ POST /api/code-scan/upload
     │ (携带 project_key + 报告文件)
@@ -146,6 +151,11 @@ class ParserFactory:
     _parsers = {
         'tscan': TScanParser,
         'cppcheck': CppCheckParser,
+        'weggli': WeggliParser,
+        'cooddy': CooddyParser,
+        'binexplorer': BinExplorerParser,
+        'clang-tidy': ClangTidyParser,
+        'valgrind': ValgrindParser,
     }
     
     @classmethod
@@ -188,12 +198,18 @@ apps/code_scan/
 │   ├── base.py             # 解析器基类
 │   ├── factory.py          # 工厂模式
 │   ├── tscan_parser.py     # TScanCode 解析器
-│   └── cppcheck_parser.py  # CppCheck 解析器
+│   ├── cppcheck_parser.py  # CppCheck 解析器
+│   ├── weggli_parser.py    # Weggli 解析器
+│   ├── cooddy_parser.py    # Cooddy 解析器
+│   ├── binexplorer_parser.py # BinExplorer 解析器
+│   ├── clang_tidy_parser.py  # Clang-Tidy 解析器
+│   └── valgrind_parser.py    # Valgrind 解析器
 │
 ├── api.py                   # API 接口
 ├── models.py                # 数据模型
 ├── schemas.py               # Pydantic Schema
-└── services.py              # 业务服务
+├── services.py              # 业务服务
+└── utils/parse_valgrind_log.py # Valgrind 日志解析脚本
 ```
 
 ## API 路由
@@ -239,6 +255,7 @@ class CoverityParser(BaseParser):
 _parsers = {
     'tscan': TScanParser,
     'cppcheck': CppCheckParser,
+    'valgrind': ValgrindParser,
     'coverity': CoverityParser,  # 新增
 }
 ```
@@ -254,4 +271,35 @@ curl -X POST "${API_BASE}/api/code-scan/upload" \
   -F "project_key=${PROJECT_KEY}" \
   -F "tool_name=tscan" \
   -F "file=@result.xml"
+```
+
+### Valgrind 日志解析脚本（流水线可直接调用）
+
+```bash
+# 1. 执行 valgrind，输出日志
+valgrind --tool=memcheck --leak-check=full --track-origins=yes \
+  --log-file=valgrind.log ./build/demo_app
+
+# 2. 解析日志为标准结果 JSON
+python apps/code_scan/utils/parse_valgrind_log.py \
+  --input ./valgrind.log \
+  --output ./valgrind_findings.json \
+  --pretty
+
+# 3. 上传（可直接传原始日志，也可传解析后 JSON）
+curl -X POST "${API_BASE}/api/code-scan/upload" \
+  -F "project_key=${PROJECT_KEY}" \
+  -F "tool_name=valgrind" \
+  -F "file=@valgrind.log"
+```
+
+### Valgrind 一体化流水线脚本（解析后上传）
+
+```bash
+python apps/code_scan/utils/pipeline_valgrind_parse_and_upload.py \
+  --log ./artifacts/valgrind.log \
+  --project-key "${PROJECT_KEY}" \
+  --api-base "${API_BASE}" \
+  --upload-mode auto \
+  --pretty
 ```

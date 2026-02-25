@@ -27,6 +27,7 @@ const ALL_SCAN_TOOLS = [
   'cooddy',
   'binexplorer',
   'clang-tidy',
+  'valgrind',
 ];
 
 const tools = ref<string[]>([]);

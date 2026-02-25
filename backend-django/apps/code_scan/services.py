@@ -50,6 +50,19 @@ class ScanService:
         if not normalized_path or not path_prefixes:
             return False
         return any(normalized_path.startswith(prefix) for prefix in path_prefixes)
+
+    @staticmethod
+    def _normalize_tool_name(tool_name: str | None) -> str:
+        normalized = (tool_name or "").strip().lower()
+        if not normalized:
+            return "tscan"
+
+        aliases = {
+            "memcheck": "valgrind",
+            "helgrind": "valgrind",
+            "drd": "valgrind",
+        }
+        return aliases.get(normalized, normalized)
     
     @staticmethod
     def create_project(data: dict, user: User) -> ScanProject:
@@ -77,9 +90,7 @@ class ScanService:
     @staticmethod
     def handle_upload(project_key: str, tool_name: str, file_obj) -> ScanTask:
         """接收文件上传并触发解析"""
-        normalized_tool = (tool_name or "").strip().lower()
-        if not normalized_tool:
-            normalized_tool = "tscan"
+        normalized_tool = ScanService._normalize_tool_name(tool_name)
         try:
             project = ScanProject.objects.get(project_key=project_key)
         except ScanProject.DoesNotExist:
@@ -114,9 +125,7 @@ class ScanService:
         """
         处理分片上传的 JSON 文本内容
         """
-        normalized_tool = (tool_name or "").strip().lower()
-        if not normalized_tool:
-            normalized_tool = "tscan"
+        normalized_tool = ScanService._normalize_tool_name(tool_name)
         try:
             project = ScanProject.objects.get(project_key=project_key)
         except ScanProject.DoesNotExist:
@@ -152,6 +161,8 @@ class ScanService:
                     file_ext = "xml"
                 elif normalized_tool in ["cooddy"]:
                     file_ext = "csv"
+                elif normalized_tool in ["valgrind"]:
+                    file_ext = "log"
                 elif normalized_tool in ["weggli", "binexplorer", "clang-tidy", "clang_tidy", "clangtidy"]:
                     file_ext = "xlsx"
                 else:

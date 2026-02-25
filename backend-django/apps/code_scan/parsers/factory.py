@@ -6,6 +6,7 @@ from .weggli_parser import WeggliParser
 from .cooddy_parser import CooddyParser
 from .binexplorer_parser import BinExplorerParser
 from .clang_tidy_parser import ClangTidyParser
+from .valgrind_parser import ValgrindParser
 
 class ParserFactory:
     _parsers = {
@@ -18,6 +19,10 @@ class ParserFactory:
         'clang-tidy': ClangTidyParser,
         'clang_tidy': ClangTidyParser,
         'clangtidy': ClangTidyParser,
+        'valgrind': ValgrindParser,
+        'memcheck': ValgrindParser,
+        'helgrind': ValgrindParser,
+        'drd': ValgrindParser,
     }
     
     @classmethod
