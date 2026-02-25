@@ -71,7 +71,8 @@ class ShieldApplySchema(Schema):
     reason: str
 
 class ShieldAuditSchema(Schema):
-    application_id: str
+    application_id: Optional[str] = None
+    application_ids: Optional[List[str]] = None
     status: str  # Approved or Rejected
     audit_comment: Optional[str] = None
 

@@ -40,7 +40,12 @@ export const listApplicationsApi = (mode: 'my_apply' | 'my_audit', params?: any)
   return requestClient.get('/api/code-scan/shield/applications', { params: { mode, ...params } });
 };
 
-export const auditShieldApi = (data: { application_id: string; status: string; audit_comment?: string }) => {
+export const auditShieldApi = (data: {
+  application_id?: string;
+  application_ids?: string[];
+  status: string;
+  audit_comment?: string;
+}) => {
   return requestClient.post('/api/code-scan/shield/audit', data);
 };
 

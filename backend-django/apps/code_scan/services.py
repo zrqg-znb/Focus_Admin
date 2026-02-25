@@ -291,3 +291,33 @@ class ScanService:
             else:
                 result.shield_status = 'Rejected'
             result.save()
+
+    @staticmethod
+    def audit_shield_batch(user, application_ids, status, comment):
+        """批量审批屏蔽申请"""
+        if not application_ids:
+            return 0
+
+        query_set = ShieldApplication.objects.filter(
+            id__in=application_ids,
+            approver=user,
+            is_deleted=False,
+            status='Pending',
+        ).select_related('result')
+
+        processed = 0
+        with transaction.atomic():
+            for app in query_set:
+                app.status = status
+                app.audit_comment = comment
+                app.save(update_fields=['status', 'audit_comment', 'sys_update_datetime'])
+
+                result = app.result
+                if status == 'Approved':
+                    result.shield_status = 'Shielded'
+                else:
+                    result.shield_status = 'Rejected'
+                result.save(update_fields=['shield_status', 'sys_update_datetime'])
+                processed += 1
+
+        return processed

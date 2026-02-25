@@ -1,6 +1,7 @@
 from typing import List
 from ninja import Router, File, UploadedFile, Form
 from django.shortcuts import get_object_or_404
+from ninja.errors import HttpError
 from apps.code_scan.models import ScanProject, ScanTask, ScanResult, ShieldApplication
 from apps.code_scan.schemas import (
     ScanProjectSchema, ScanProjectCreateSchema,
@@ -291,5 +292,20 @@ def list_applications(request, mode: str = "my_apply", page: int = 1, pageSize: 
 
 @router.post("/shield/audit", auth=BearerAuth(), summary="审核屏蔽申请")
 def audit_shield(request, data: ShieldAuditSchema):
-    ScanService.audit_shield(request.auth, data.application_id, data.status, data.audit_comment)
-    return {"message": "Audit completed"}
+    application_ids = list(data.application_ids or [])
+    if data.application_id:
+        application_ids.append(data.application_id)
+    application_ids = list(dict.fromkeys([item for item in application_ids if item]))
+
+    if not application_ids:
+        raise HttpError(400, "application_id 或 application_ids 至少传一个")
+    if data.status not in ["Approved", "Rejected"]:
+        raise HttpError(400, "status 仅支持 Approved 或 Rejected")
+
+    processed = ScanService.audit_shield_batch(
+        request.auth,
+        application_ids,
+        data.status,
+        data.audit_comment,
+    )
+    return {"message": "Audit completed", "processed": processed}
