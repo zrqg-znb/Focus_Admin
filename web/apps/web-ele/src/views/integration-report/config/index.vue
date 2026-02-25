@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import type { VxeGridProps } from '#/adapter/vxe-table';
-import type { ProjectConfigManageRow, ProjectConfigUpsertIn } from '#/api/integration-report';
+import type {
+  ProjectConfigManageRow,
+  ProjectConfigUpsertIn,
+} from '#/api/integration-report';
 
 import { ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 import { IconifyIcon } from '@vben/icons';
 import { useVbenVxeGrid } from '@vben/plugins/vxe-table';
+
 import {
   ElButton,
   ElDialog,
@@ -20,10 +24,9 @@ import {
   ElSwitch,
 } from 'element-plus';
 
-import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
-
 import {
   createIntegrationConfigApi,
+  deleteIntegrationConfigApi,
   initIntegrationConfigsApi,
   listIntegrationConfigsApi,
   mockCollectIntegrationApi,
@@ -31,8 +34,9 @@ import {
   updateIntegrationConfigApi,
 } from '#/api/integration-report';
 import { listProjectsApi } from '#/api/project-manager/project';
+import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
 
-import { useSearchFormSchema, useColumns } from './data';
+import { useColumns, useSearchFormSchema } from './data';
 
 defineOptions({ name: 'DailyIntegrationConfig' });
 
@@ -40,7 +44,9 @@ defineOptions({ name: 'DailyIntegrationConfig' });
 const dialogVisible = ref(false);
 const dialogMode = ref<'create' | 'edit'>('create');
 const dialogSaving = ref(false);
-const allProjects = ref<Array<{ id: string; name: string; domain: string; type: string }>>([]);
+const allProjects = ref<
+  Array<{ domain: string; id: string; name: string; type: string }>
+>([]);
 const formConfigId = ref<string>('');
 const form = ref<ProjectConfigUpsertIn>({
   project_id: '',
@@ -52,6 +58,7 @@ const form = ref<ProjectConfigUpsertIn>({
   build_check_task_id: '',
   compile_check_task_id: '',
   dt_project_id: '',
+  code_scan_project_key: '',
 });
 
 // --- Grid Setup ---
@@ -72,13 +79,13 @@ const gridOptions: VxeGridProps<ProjectConfigManageRow> = {
       query: async ({ page }, formValues) => {
         const params = {
           page: page.currentPage,
-          pageSize: page.pageSize,
+          page_size: page.pageSize,
           ...formValues,
         };
         const res = await listIntegrationConfigsApi(params);
         return {
           items: res.items,
-          total: res.count,
+          total: res.count ?? res.total ?? 0,
         };
       },
     },
@@ -113,20 +120,25 @@ function payloadOf(r: ProjectConfigManageRow): ProjectConfigUpsertIn {
     build_check_task_id: r.build_check_task_id || '',
     compile_check_task_id: r.compile_check_task_id || '',
     dt_project_id: r.dt_project_id || '',
+    code_scan_project_key: r.code_scan_project_key || '',
   };
 }
 
 async function ensureProjectsLoaded() {
-  if (allProjects.value.length) return;
+  if (allProjects.value.length > 0) return;
   try {
-    const resp = await listProjectsApi({ page: 1, pageSize: 1000, is_closed: false });
+    const resp = await listProjectsApi({
+      page: 1,
+      pageSize: 1000,
+      is_closed: false,
+    });
     allProjects.value = (resp.items || []).map((p) => ({
       id: p.id,
       name: p.name,
       domain: p.domain,
       type: p.type,
     }));
-  } catch (e) {
+  } catch {
     allProjects.value = [];
     ElMessage.error('获取项目列表失败，请检查权限或接口');
   }
@@ -147,6 +159,7 @@ function openCreate() {
     build_check_task_id: '',
     compile_check_task_id: '',
     dt_project_id: '',
+    code_scan_project_key: '',
   };
   dialogVisible.value = true;
   ensureProjectsLoaded();
@@ -164,7 +177,7 @@ async function saveRow(r: ProjectConfigManageRow) {
   try {
     await updateIntegrationConfigApi(r.id, payloadOf(r));
     ElMessage.success('状态更新成功');
-  } catch (e) {
+  } catch {
     ElMessage.error('更新失败');
   }
 }
@@ -195,8 +208,18 @@ async function initRows() {
     const created = await initIntegrationConfigsApi();
     ElMessage.success(`初始化完成，新增 ${created} 条配置`);
     gridApi.reload();
-  } catch (e) {
+  } catch {
     ElMessage.error('初始化失败');
+  }
+}
+
+async function deleteRow(r: ProjectConfigManageRow) {
+  try {
+    await deleteIntegrationConfigApi(r.id);
+    ElMessage.success('删除成功');
+    gridApi.reload();
+  } catch {
+    ElMessage.error('删除失败');
   }
 }
 
@@ -207,9 +230,11 @@ async function batchMockCollect() {
   try {
     const todayStr = new Date().toISOString().slice(0, 10);
     await mockCollectIntegrationApi(todayStr, isBatch ? ids : undefined);
-    ElMessage.success(isBatch ? `Mock 采集完成 (${ids.length}条)` : 'Mock 采集完成 (全部)');
+    ElMessage.success(
+      isBatch ? `Mock 采集完成 (${ids.length}条)` : 'Mock 采集完成 (全部)',
+    );
     gridApi.reload();
-  } catch (e) {
+  } catch {
     ElMessage.error('采集失败');
   }
 }
@@ -219,7 +244,7 @@ async function mockSendEmails() {
     const todayStr = new Date().toISOString().slice(0, 10);
     const sent = await mockSendIntegrationEmailsApi(todayStr);
     ElMessage.success(`Mock 邮件发送完成：${sent} 封`);
-  } catch (e) {
+  } catch {
     ElMessage.error('发送失败');
   }
 }
@@ -235,7 +260,10 @@ async function mockSendEmails() {
             <template #icon><IconifyIcon icon="lucide:plus" /></template>
             新建配置
           </ElButton>
-          <ElPopconfirm title="初始化配置将为无配置的项目创建默认记录，继续？" @confirm="initRows">
+          <ElPopconfirm
+            title="初始化配置将为无配置的项目创建默认记录，继续？"
+            @confirm="initRows"
+          >
             <template #reference>
               <ElButton size="small" plain>
                 <template #icon><IconifyIcon icon="lucide:wand-2" /></template>
@@ -256,12 +284,26 @@ async function mockSendEmails() {
 
       <!-- Enabled Switch -->
       <template #enabled_default="{ row }">
-        <ElSwitch v-model="row.enabled" size="small" @change="() => saveRow(row)" />
+        <ElSwitch
+          v-model="row.enabled"
+          size="small"
+          @change="() => saveRow(row)"
+        />
       </template>
 
       <!-- Actions -->
       <template #action_default="{ row }">
-        <ElButton size="small" type="primary" link @click="openEdit(row)"> 编辑 </ElButton>
+        <ElButton size="small" type="primary" link @click="openEdit(row)">
+          编辑
+        </ElButton>
+        <ElPopconfirm
+          title="删除后该配置将不再参与统计和邮件，确认删除？"
+          @confirm="() => deleteRow(row)"
+        >
+          <template #reference>
+            <ElButton size="small" type="danger" link> 删除 </ElButton>
+          </template>
+        </ElPopconfirm>
       </template>
     </Grid>
 
@@ -318,6 +360,12 @@ async function mockSendEmails() {
         <ElFormItem label="CompileCheck ID">
           <ElInput v-model="form.compile_check_task_id" placeholder="Task ID" />
         </ElFormItem>
+        <ElFormItem label="CodeScan ProjectKey">
+          <ElInput
+            v-model="form.code_scan_project_key"
+            placeholder="项目管理中的 project_key"
+          />
+        </ElFormItem>
         <ElFormItem label="DT Project ID">
           <ElInput v-model="form.dt_project_id" placeholder="Project ID" />
         </ElFormItem>
@@ -326,7 +374,13 @@ async function mockSendEmails() {
       <template #footer>
         <div class="flex justify-end gap-2">
           <ElButton @click="dialogVisible = false">取消</ElButton>
-          <ElButton type="primary" :loading="dialogSaving" @click="submitDialog">保存</ElButton>
+          <ElButton
+            type="primary"
+            :loading="dialogSaving"
+            @click="submitDialog"
+          >
+            保存
+          </ElButton>
         </div>
       </template>
     </ElDialog>

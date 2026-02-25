@@ -26,6 +26,12 @@ class IntegrationProjectConfig(RootModel):
     build_check_task_id = models.CharField(max_length=128, blank=True, default="", verbose_name="构建检测任务ID")
     compile_check_task_id = models.CharField(max_length=128, blank=True, default="", verbose_name="编译检测任务ID")
     dt_project_id = models.CharField(max_length=128, blank=True, default="", verbose_name="DT项目ID")
+    code_scan_project_key = models.CharField(
+        max_length=128,
+        blank=True,
+        default="",
+        verbose_name="代码扫描项目Key",
+    )
 
     class Meta:
         db_table = "ir_project_config"

@@ -1,14 +1,14 @@
 import { requestClient } from '#/api/request';
 
-export type MetricLevel = 'normal' | 'warning' | 'danger';
+export type MetricLevel = 'danger' | 'normal' | 'warning';
 
 export interface MetricCell {
   key: string;
   name: string;
-  value?: number | null;
-  text?: string | null;
-  unit?: string | null;
-  url?: string | null;
+  value?: null | number;
+  text?: null | string;
+  unit?: null | string;
+  url?: null | string;
   level: MetricLevel;
 }
 
@@ -23,7 +23,8 @@ export interface ProjectConfigOut {
   managers: string;
   enabled: boolean;
   subscribed: boolean;
-  latest_date?: string | null;
+  latest_date?: null | string;
+  code_scan_project_key?: string;
   code_metrics: MetricCell[];
   dt_metrics: MetricCell[];
 }
@@ -41,10 +42,11 @@ export interface ProjectConfigManageRow {
   build_check_task_id: string;
   compile_check_task_id: string;
   dt_project_id: string;
+  code_scan_project_key: string;
 }
 
 export interface ProjectConfigUpsertIn {
-  project_id?: string | null;
+  project_id?: null | string;
   name: string;
   managers: string[];
   enabled: boolean;
@@ -53,6 +55,7 @@ export interface ProjectConfigUpsertIn {
   build_check_task_id: string;
   compile_check_task_id: string;
   dt_project_id: string;
+  code_scan_project_key: string;
 }
 
 export interface HistoryRow {
@@ -70,18 +73,23 @@ export interface HistoryQueryOut {
 
 export async function listIntegrationProjectsApi(params?: ConfigFilterParams) {
   // Returns configs for subscription page
-  return requestClient.get<PaginatedResponse<ProjectConfigOut>>('/api/integration-report/projects', { params });
+  return requestClient.get<PaginatedResponse<ProjectConfigOut>>(
+    '/api/integration-report/projects',
+    { params },
+  );
 }
 
 export interface ConfigFilterParams {
   project_name?: string;
   page?: number;
   pageSize?: number;
+  page_size?: number;
 }
 
 export interface PaginatedResponse<T> {
   items: T[];
-  count: number;
+  count?: number;
+  total?: number;
 }
 
 export async function listIntegrationConfigsApi(params?: ConfigFilterParams) {
@@ -91,7 +99,9 @@ export async function listIntegrationConfigsApi(params?: ConfigFilterParams) {
   );
 }
 
-export async function createIntegrationConfigApi(payload: ProjectConfigUpsertIn) {
+export async function createIntegrationConfigApi(
+  payload: ProjectConfigUpsertIn,
+) {
   return requestClient.post<string>('/api/integration-report/configs', payload);
 }
 
@@ -99,14 +109,26 @@ export async function updateIntegrationConfigApi(
   configId: string,
   payload: ProjectConfigUpsertIn,
 ) {
-  return requestClient.put<boolean>(`/api/integration-report/configs/${configId}`, payload);
+  return requestClient.put<boolean>(
+    `/api/integration-report/configs/${configId}`,
+    payload,
+  );
+}
+
+export async function deleteIntegrationConfigApi(configId: string) {
+  return requestClient.delete<boolean>(
+    `/api/integration-report/configs/${configId}`,
+  );
 }
 
 export async function initIntegrationConfigsApi() {
   return requestClient.post<number>('/api/integration-report/configs/init');
 }
 
-export async function mockCollectIntegrationApi(recordDate?: string, configIds?: string[]) {
+export async function mockCollectIntegrationApi(
+  recordDate?: string,
+  configIds?: string[],
+) {
   return requestClient.post<boolean>('/api/integration-report/mock/collect', {
     record_date: recordDate,
     config_ids: configIds,
@@ -121,31 +143,39 @@ export async function mockSendIntegrationEmailsApi(recordDate?: string) {
   );
 }
 
-export async function toggleIntegrationSubscriptionApi(configId: string, enabled: boolean) {
-  return requestClient.post<boolean>(`/api/integration-report/subscriptions/${configId}`, {
-    enabled,
-  });
+export async function toggleIntegrationSubscriptionApi(
+  configId: string,
+  enabled: boolean,
+) {
+  return requestClient.post<boolean>(
+    `/api/integration-report/subscriptions/${configId}`,
+    {
+      enabled,
+    },
+  );
 }
 
 export async function queryIntegrationHistoryApi(params: {
   config_ids?: string[];
-  start: string;
   end: string;
   keyword?: string;
+  start: string;
 }) {
-  return requestClient.get<HistoryQueryOut>('/api/integration-report/history', { params });
+  return requestClient.get<HistoryQueryOut>('/api/integration-report/history', {
+    params,
+  });
 }
 
 export interface EmailDeliveryRow {
   id: string;
   record_date: string;
   user_id: string;
-  user_name?: string | null;
+  user_name?: null | string;
   to_email: string;
   subject: string;
   status: string; // pending|sent|failed
-  error_message?: string | null;
-  sys_create_datetime?: string | null;
+  error_message?: null | string;
+  sys_create_datetime?: null | string;
 }
 
 export interface EmailDeliveryQueryParams {
@@ -158,7 +188,9 @@ export interface EmailDeliveryQueryParams {
   pageSize?: number;
 }
 
-export async function listEmailDeliveriesApi(params?: EmailDeliveryQueryParams) {
+export async function listEmailDeliveriesApi(
+  params?: EmailDeliveryQueryParams,
+) {
   return requestClient.get<PaginatedResponse<EmailDeliveryRow>>(
     '/api/integration-report/email-deliveries',
     { params },

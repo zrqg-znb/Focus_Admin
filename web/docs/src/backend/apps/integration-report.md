@@ -97,7 +97,21 @@ class IntegrationProjectConfig(RootModel):
     build_check_task_id = models.CharField(max_length=128)     # 构建检测任务
     compile_check_task_id = models.CharField(max_length=128)   # 编译检测任务
     dt_project_id = models.CharField(max_length=128)           # DT项目ID
+    code_scan_project_key = models.CharField(max_length=128)   # 代码扫描项目 project_key
 ```
+
+### 代码扫描工具指标（并入 CODE_KEYS）
+
+当配置了 `code_scan_project_key` 后，会在每日采集时关联代码扫描项目，并增加以下指标：
+
+| 指标Key | 说明 |
+| --- | --- |
+| `tscan_error_num` | TScan 未屏蔽问题数 |
+| `cppcheck_error_num` | Cppcheck 未屏蔽问题数 |
+| `weggli_error_num` | Weggli 未屏蔽问题数 |
+| `cooddy_error_num` | Cooddy 未屏蔽问题数 |
+| `binexplorer_error_num` | BinExplorer 未屏蔽问题数 |
+| `clang_tidy_error_num` | Clang-Tidy 未屏蔽问题数 |
 
 ### IntegrationMetricDefinition（指标定义）
 

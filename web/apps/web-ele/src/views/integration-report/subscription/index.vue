@@ -6,6 +6,7 @@ import { onMounted } from 'vue';
 
 import { Page } from '@vben/common-ui';
 import { useVbenVxeGrid } from '@vben/plugins/vxe-table';
+
 import { ElMessage, ElSwitch, ElTag } from 'element-plus';
 
 import {
@@ -49,18 +50,14 @@ const gridOptions: VxeGridProps<ProjectConfigOut> = {
       query: async ({ page }, formValues: any) => {
         const params = {
           page: page.currentPage,
-          pageSize: page.pageSize,
+          page_size: page.pageSize,
           ...formValues,
         };
         const res = await listIntegrationProjectsApi(params);
-        const k = formValues?.keyword?.toLowerCase().trim();
-        if (!k) return { items: res.items, total: res.count };
-        // 前端筛选（保持原有逻辑，但注意这会使得分页不准确）
-        const filtered = res.items.filter(
-          (i) =>
-            i.name.toLowerCase().includes(k) || i.project_name.toLowerCase().includes(k),
-        );
-        return { items: filtered, total: filtered.length };
+        return {
+          items: res.items,
+          total: res.count ?? res.total ?? 0,
+        };
       },
     },
   },
@@ -73,7 +70,7 @@ const [Grid, gridApi] = useVbenVxeGrid({
   formOptions: {
     schema: [
       {
-        fieldName: 'keyword',
+        fieldName: 'project_name',
         label: '搜索',
         component: 'Input',
         componentProps: {
@@ -95,7 +92,7 @@ async function toggle(row: ProjectConfigOut, val: boolean) {
     await toggleIntegrationSubscriptionApi(row.id, val);
     row.subscribed = val;
     ElMessage.success(val ? '订阅成功' : '已取消订阅');
-  } catch (e) {
+  } catch {
     row.subscribed = !val; // Revert
   }
 }
@@ -105,7 +102,11 @@ async function toggle(row: ProjectConfigOut, val: boolean) {
   <Page auto-content-height>
     <Grid>
       <template #subscribed_default="{ row }">
-        <ElSwitch v-model="row.subscribed" size="small" @change="(v) => toggle(row, !!v)" />
+        <ElSwitch
+          v-model="row.subscribed"
+          size="small"
+          @change="(v) => toggle(row, !!v)"
+        />
       </template>
 
       <template #status_default="{ row }">

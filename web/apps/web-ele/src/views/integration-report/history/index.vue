@@ -1,10 +1,20 @@
 <script setup lang="ts">
 import type { HistoryRow, MetricCell } from '#/api/integration-report';
+
 import { computed, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 import { IconifyIcon } from '@vben/icons';
-import { ElButton, ElDatePicker, ElInput, ElLink, ElMessage, ElSkeleton, ElTag } from 'element-plus';
+
+import {
+  ElButton,
+  ElDatePicker,
+  ElInput,
+  ElLink,
+  ElMessage,
+  ElSkeleton,
+  ElTag,
+} from 'element-plus';
 
 import { queryIntegrationHistoryApi } from '#/api/integration-report';
 
@@ -30,6 +40,12 @@ const CODE_COLS = [
   { key: 'bin_scope_error_num', name: 'Bin Scope 错误数' },
   { key: 'build_check_error_num', name: 'Build 检测错误数' },
   { key: 'compile_error_num', name: 'Compile 错误数' },
+  { key: 'tscan_error_num', name: 'TScan 问题数' },
+  { key: 'cppcheck_error_num', name: 'Cppcheck 问题数' },
+  { key: 'weggli_error_num', name: 'Weggli 问题数' },
+  { key: 'cooddy_error_num', name: 'Cooddy 问题数' },
+  { key: 'binexplorer_error_num', name: 'BinExplorer 问题数' },
+  { key: 'clang_tidy_error_num', name: 'Clang-Tidy 问题数' },
 ];
 
 const DT_COLS = [
@@ -67,7 +83,7 @@ async function query() {
       keyword: keyword.value,
     });
     rows.value = res.items;
-  } catch (e) {
+  } catch {
     ElMessage.error('查询失败');
   } finally {
     loading.value = false;
@@ -82,16 +98,27 @@ onMounted(() => {
 
 <template>
   <Page auto-content-height>
-    <div class="p-4 space-y-4">
-      <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-[#151515]">
+    <div class="space-y-4 p-4">
+      <div
+        class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-[#151515]"
+      >
         <div class="flex items-center justify-between gap-3">
           <div class="flex items-center gap-2">
-            <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 border border-amber-100 dark:bg-amber-900/20 dark:border-amber-800">
-              <IconifyIcon icon="lucide:history" class="text-xl text-amber-600 dark:text-amber-400" />
+            <div
+              class="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-100 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20"
+            >
+              <IconifyIcon
+                icon="lucide:history"
+                class="text-xl text-amber-600 dark:text-amber-400"
+              />
             </div>
             <div>
-              <div class="text-base font-bold text-gray-900 dark:text-white">每日集成监测历史数据</div>
-              <div class="text-xs text-gray-400">展示选定日期范围内的各项目指标</div>
+              <div class="text-base font-bold text-gray-900 dark:text-white">
+                每日集成监测历史数据
+              </div>
+              <div class="text-xs text-gray-400">
+                展示选定日期范围内的各项目指标
+              </div>
             </div>
           </div>
           <div class="flex items-center gap-2">
@@ -103,8 +130,19 @@ onMounted(() => {
               size="small"
               @keyup.enter="query"
             />
-            <ElDatePicker v-model="range" :clearable="false" size="small" type="date" />
-            <ElButton :loading="loading" plain size="small" type="primary" @click="query">
+            <ElDatePicker
+              v-model="range"
+              :clearable="false"
+              size="small"
+              type="date"
+            />
+            <ElButton
+              :loading="loading"
+              plain
+              size="small"
+              type="primary"
+              @click="query"
+            >
               <template #icon><IconifyIcon icon="lucide:search" /></template>
               查询
             </ElButton>
@@ -115,42 +153,77 @@ onMounted(() => {
       <ElSkeleton :loading="loading" animated>
         <template #default>
           <div class="grid grid-cols-1 gap-4">
-            <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-[#151515]">
+            <div
+              class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-[#151515]"
+            >
               <div class="mb-3 flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <span class="h-4 w-1 rounded-full bg-blue-500" />
-                  <span class="font-bold text-gray-900 dark:text-white">代码检测类</span>
+                  <span class="h-4 w-1 rounded-full bg-blue-500"></span>
+                  <span class="font-bold text-gray-900 dark:text-white">
+                    代码检测类
+                  </span>
                 </div>
                 <ElTag type="info" size="small">红色为预警项</ElTag>
               </div>
 
               <div class="overflow-auto">
-                <table class="min-w-[1100px] w-full text-sm">
+                <table class="w-full min-w-[1800px] text-sm">
                   <thead>
                     <tr class="text-left text-xs text-gray-500">
                       <th class="py-2 pr-3">日期</th>
                       <th class="py-2 pr-3">配置</th>
                       <th class="py-2 pr-3">项目</th>
-                      <th v-for="col in CODE_COLS" :key="col.key" class="py-2 pr-3">{{ col.name }}</th>
+                      <th
+                        v-for="col in CODE_COLS"
+                        :key="col.key"
+                        class="py-2 pr-3"
+                      >
+                        {{ col.name }}
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="r in rows" :key="`${r.record_date}-${r.config_id}`" class="border-t border-gray-100 dark:border-gray-800">
-                      <td class="py-3 pr-3 text-gray-500">{{ r.record_date }}</td>
-                      <td class="py-3 pr-3 font-bold text-gray-900 dark:text-white">{{ r.config_name }}</td>
-                      <td class="py-3 pr-3 text-gray-500 text-xs">{{ r.project_name }}</td>
-                      <td v-for="col in CODE_COLS" :key="col.key" class="py-3 pr-3">
+                    <tr
+                      v-for="r in rows"
+                      :key="`${r.record_date}-${r.config_id}`"
+                      class="border-t border-gray-100 dark:border-gray-800"
+                    >
+                      <td class="py-3 pr-3 text-gray-500">
+                        {{ r.record_date }}
+                      </td>
+                      <td
+                        class="py-3 pr-3 font-bold text-gray-900 dark:text-white"
+                      >
+                        {{ r.config_name }}
+                      </td>
+                      <td class="py-3 pr-3 text-xs text-gray-500">
+                        {{ r.project_name }}
+                      </td>
+                      <td
+                        v-for="col in CODE_COLS"
+                        :key="col.key"
+                        class="py-3 pr-3"
+                      >
                         <ElLink
                           v-if="getMetric(r.code_metrics, col.key)?.url"
-                          :href="getMetric(r.code_metrics, col.key)?.url || undefined"
+                          :href="
+                            getMetric(r.code_metrics, col.key)?.url || undefined
+                          "
                           target="_blank"
                           :underline="false"
                         >
-                          <span :class="cellClass(getMetric(r.code_metrics, col.key))">
+                          <span
+                            :class="
+                              cellClass(getMetric(r.code_metrics, col.key))
+                            "
+                          >
                             {{ cellText(getMetric(r.code_metrics, col.key)) }}
                           </span>
                         </ElLink>
-                        <span v-else :class="cellClass(getMetric(r.code_metrics, col.key))">
+                        <span
+                          v-else
+                          :class="cellClass(getMetric(r.code_metrics, col.key))"
+                        >
                           {{ cellText(getMetric(r.code_metrics, col.key)) }}
                         </span>
                       </td>
@@ -160,42 +233,75 @@ onMounted(() => {
               </div>
             </div>
 
-            <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-[#151515]">
+            <div
+              class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-[#151515]"
+            >
               <div class="mb-3 flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <span class="h-4 w-1 rounded-full bg-emerald-500" />
-                  <span class="font-bold text-gray-900 dark:text-white">DT 测试数据</span>
+                  <span class="h-4 w-1 rounded-full bg-emerald-500"></span>
+                  <span class="font-bold text-gray-900 dark:text-white">
+                    DT 测试数据
+                  </span>
                 </div>
                 <ElTag type="info" size="small">点击单元格跳转详情</ElTag>
               </div>
 
               <div class="overflow-auto">
-                <table class="min-w-[1100px] w-full text-sm">
+                <table class="w-full min-w-[1100px] text-sm">
                   <thead>
                     <tr class="text-left text-xs text-gray-500">
                       <th class="py-2 pr-3">日期</th>
                       <th class="py-2 pr-3">配置</th>
                       <th class="py-2 pr-3">项目</th>
-                      <th v-for="col in DT_COLS" :key="col.key" class="py-2 pr-3">{{ col.name }}</th>
+                      <th
+                        v-for="col in DT_COLS"
+                        :key="col.key"
+                        class="py-2 pr-3"
+                      >
+                        {{ col.name }}
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="r in rows" :key="`dt-${r.record_date}-${r.config_id}`" class="border-t border-gray-100 dark:border-gray-800">
-                      <td class="py-3 pr-3 text-gray-500">{{ r.record_date }}</td>
-                      <td class="py-3 pr-3 font-bold text-gray-900 dark:text-white">{{ r.config_name }}</td>
-                      <td class="py-3 pr-3 text-gray-500 text-xs">{{ r.project_name }}</td>
-                      <td v-for="col in DT_COLS" :key="col.key" class="py-3 pr-3">
+                    <tr
+                      v-for="r in rows"
+                      :key="`dt-${r.record_date}-${r.config_id}`"
+                      class="border-t border-gray-100 dark:border-gray-800"
+                    >
+                      <td class="py-3 pr-3 text-gray-500">
+                        {{ r.record_date }}
+                      </td>
+                      <td
+                        class="py-3 pr-3 font-bold text-gray-900 dark:text-white"
+                      >
+                        {{ r.config_name }}
+                      </td>
+                      <td class="py-3 pr-3 text-xs text-gray-500">
+                        {{ r.project_name }}
+                      </td>
+                      <td
+                        v-for="col in DT_COLS"
+                        :key="col.key"
+                        class="py-3 pr-3"
+                      >
                         <ElLink
                           v-if="getMetric(r.dt_metrics, col.key)?.url"
-                          :href="getMetric(r.dt_metrics, col.key)?.url || undefined"
+                          :href="
+                            getMetric(r.dt_metrics, col.key)?.url || undefined
+                          "
                           target="_blank"
                           :underline="false"
                         >
-                          <span :class="cellClass(getMetric(r.dt_metrics, col.key))">
+                          <span
+                            :class="cellClass(getMetric(r.dt_metrics, col.key))"
+                          >
                             {{ cellText(getMetric(r.dt_metrics, col.key)) }}
                           </span>
                         </ElLink>
-                        <span v-else :class="cellClass(getMetric(r.dt_metrics, col.key))">
+                        <span
+                          v-else
+                          :class="cellClass(getMetric(r.dt_metrics, col.key))"
+                        >
                           {{ cellText(getMetric(r.dt_metrics, col.key)) }}
                         </span>
                       </td>

@@ -25,6 +25,7 @@ class ProjectConfigOut(Schema):
     enabled: bool
     subscribed: bool
     latest_date: Optional[date] = None
+    code_scan_project_key: str = ""
     code_metrics: List[MetricCell] = []
     dt_metrics: List[MetricCell] = []
 
@@ -39,6 +40,7 @@ class ProjectConfigUpsertIn(Schema):
     build_check_task_id: str = ""
     compile_check_task_id: str = ""
     dt_project_id: str = ""
+    code_scan_project_key: str = ""
 
 
 class ConfigFilterSchema(Schema):
@@ -58,6 +60,7 @@ class ProjectConfigManageRow(Schema):
     build_check_task_id: str
     compile_check_task_id: str
     dt_project_id: str
+    code_scan_project_key: str
 
 
 class SubscriptionToggleIn(Schema):

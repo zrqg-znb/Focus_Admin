@@ -16,7 +16,7 @@ export function useSearchFormSchema(): VbenFormSchema[] {
 }
 
 export function useColumns(
-  onActionClick?: OnActionClickFn<ProjectConfigManageRow>,
+  _onActionClick?: OnActionClickFn<ProjectConfigManageRow>,
 ): VxeTableGridOptions<ProjectConfigManageRow>['columns'] {
   return [
     { type: 'checkbox', width: 50, fixed: 'left' },
@@ -34,11 +34,16 @@ export function useColumns(
     { field: 'bin_scope_task_id', title: 'BinScope ID', minWidth: 150 },
     { field: 'build_check_task_id', title: 'BuildCheck ID', minWidth: 150 },
     { field: 'compile_check_task_id', title: 'CompileCheck ID', minWidth: 150 },
+    {
+      field: 'code_scan_project_key',
+      title: 'CodeScan ProjectKey',
+      minWidth: 180,
+    },
     { field: 'dt_project_id', title: 'DT Project ID', minWidth: 150 },
     {
       field: 'action',
       title: '操作',
-      width: 100,
+      width: 150,
       fixed: 'right',
       slots: { default: 'action_default' },
     },

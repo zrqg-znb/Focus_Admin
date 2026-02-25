@@ -1,6 +1,7 @@
 from datetime import date
 from typing import List, Optional
 
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from ninja import Router, Query
 from ninja.pagination import paginate
@@ -23,7 +24,12 @@ from .integration_schema import (
     EmailDeliveryQueryIn,
     EmailDeliveryQueryOut
 )
-from .integration_models import IntegrationMetricDefinition, IntegrationProjectMetricValue, IntegrationEmailDelivery, IntegrationEmailSubscription
+from .integration_models import (
+    IntegrationMetricDefinition,
+    IntegrationProjectMetricValue,
+    IntegrationEmailDelivery,
+    IntegrationEmailSubscription,
+)
 from . import integration_service
 from .integration_models import IntegrationProjectConfig
 
@@ -33,18 +39,24 @@ router = Router(tags=["Integration Report"], auth=GlobalAuth())
 
 @router.get("/projects", response=List[ProjectConfigOut], summary="集成报告配置列表（用于订阅页）")
 @paginate
-def list_projects(request):
-    # Actually returns Configs now
-    return integration_service.list_configs_with_latest(request.auth)
+def list_projects(request, filters: ConfigFilterSchema = Query(...)):
+    return integration_service.list_configs_with_latest(request.auth, filters.project_name)
 
 
 @router.get("/configs", response=List[ProjectConfigManageRow], summary="配置列表（维护用）")
 @paginate
 def list_configs(request, filters: ConfigFilterSchema = Query(...)):
-    qs = IntegrationProjectConfig.objects.select_related("project").filter(is_deleted=False).order_by("-sys_update_datetime")
+    qs = (
+        IntegrationProjectConfig.objects.select_related("project")
+        .prefetch_related("managers")
+        .filter(is_deleted=False)
+        .order_by("-sys_update_datetime")
+    )
     if filters.project_name:
-        # Search by project name OR config name
-        qs = qs.filter(project__name__icontains=filters.project_name) | qs.filter(name__icontains=filters.project_name)
+        qs = qs.filter(
+            Q(project__name__icontains=filters.project_name)
+            | Q(name__icontains=filters.project_name),
+        )
 
     rows = []
     for cfg in qs:
@@ -63,6 +75,7 @@ def list_configs(request, filters: ConfigFilterSchema = Query(...)):
                 build_check_task_id=cfg.build_check_task_id,
                 compile_check_task_id=cfg.compile_check_task_id,
                 dt_project_id=cfg.dt_project_id,
+                code_scan_project_key=cfg.code_scan_project_key,
             )
         )
     return rows
@@ -84,6 +97,7 @@ def create_config(request, payload: ProjectConfigUpsertIn):
         build_check_task_id=payload.build_check_task_id,
         compile_check_task_id=payload.compile_check_task_id,
         dt_project_id=payload.dt_project_id,
+        code_scan_project_key=payload.code_scan_project_key,
     )
     if payload.managers:
         cfg.managers.set(payload.managers)
@@ -92,7 +106,7 @@ def create_config(request, payload: ProjectConfigUpsertIn):
 
 @router.put("/configs/{config_id}", response=bool, summary="更新配置")
 def update_config(request, config_id: str, payload: ProjectConfigUpsertIn):
-    cfg = get_object_or_404(IntegrationProjectConfig, id=config_id)
+    cfg = get_object_or_404(IntegrationProjectConfig, id=config_id, is_deleted=False)
     cfg.name = payload.name
     fields_set = getattr(payload, "model_fields_set", None) or getattr(payload, "__fields_set__", None) or set()
     if "project_id" in fields_set:
@@ -111,7 +125,21 @@ def update_config(request, config_id: str, payload: ProjectConfigUpsertIn):
     cfg.build_check_task_id = payload.build_check_task_id
     cfg.compile_check_task_id = payload.compile_check_task_id
     cfg.dt_project_id = payload.dt_project_id
+    cfg.code_scan_project_key = payload.code_scan_project_key
     cfg.save()
+    return True
+
+
+@router.delete("/configs/{config_id}", response=bool, summary="删除配置")
+def delete_config(request, config_id: str):
+    cfg = get_object_or_404(IntegrationProjectConfig, id=config_id, is_deleted=False)
+    cfg.is_deleted = True
+    cfg.enabled = False
+    cfg.save(update_fields=["is_deleted", "enabled", "sys_update_datetime"])
+    IntegrationEmailSubscription.objects.filter(
+        config=cfg,
+        is_deleted=False,
+    ).update(is_deleted=True, enabled=False)
     return True
 
 
@@ -121,7 +149,7 @@ def init_configs(request):
     projects = Project.objects.filter(is_deleted=False, is_closed=False)
     for p in projects:
         # If project has NO config, create one
-        if not IntegrationProjectConfig.objects.filter(project=p).exists():
+        if not IntegrationProjectConfig.objects.filter(project=p, is_deleted=False).exists():
             cfg = IntegrationProjectConfig.objects.create(project=p, name=p.name)
             
             # Auto subscribe all active users
@@ -135,7 +163,10 @@ def init_configs(request):
 
 @router.post("/subscriptions/{config_id}", response=bool, summary="订阅/取消订阅配置")
 def toggle_sub(request, config_id: str, payload: SubscriptionToggleIn):
-    return integration_service.toggle_subscription(request.auth, config_id, payload.enabled)
+    try:
+        return integration_service.toggle_subscription(request.auth, config_id, payload.enabled)
+    except ValueError as exc:
+        raise HttpError(404, str(exc))
 
 
 @router.get("/history", response=HistoryQueryOut, summary="历史监测数据（按日）")
@@ -149,6 +180,7 @@ def history(
     if not start or not end:
         raise HttpError(400, "start/end 必填")
 
+    integration_service.ensure_default_metric_definitions()
     defs = {d.key: d for d in IntegrationMetricDefinition.objects.filter(is_deleted=False, enabled=True)}
     qs = IntegrationProjectMetricValue.objects.select_related("config", "config__project", "metric").filter(
         is_deleted=False,
@@ -160,7 +192,6 @@ def history(
         qs = qs.filter(config_id__in=config_ids)
     
     if keyword:
-        from django.db.models import Q
         qs = qs.filter(Q(config__name__icontains=keyword) | Q(config__project__name__icontains=keyword))
 
     by_key = {}

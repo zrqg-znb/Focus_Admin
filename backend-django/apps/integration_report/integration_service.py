@@ -1,11 +1,11 @@
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date
 from typing import Dict, List, Optional
 
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import Count, Max, Q
 
-from apps.project_manager.project.project_model import Project
+from apps.code_scan.models import ScanProject, ScanResult, ScanTask
 from core.user.user_model import User
 
 from .integration_models import (
@@ -25,6 +25,12 @@ CODE_KEYS = [
     "bin_scope_error_num",
     "build_check_error_num",
     "compile_error_num",
+    "tscan_error_num",
+    "cppcheck_error_num",
+    "weggli_error_num",
+    "cooddy_error_num",
+    "binexplorer_error_num",
+    "clang_tidy_error_num",
 ]
 DT_KEYS = [
     "dt_pass_rate",
@@ -32,6 +38,15 @@ DT_KEYS = [
     "dt_line_coverage",
     "dt_method_coverage",
 ]
+
+SCAN_METRIC_TOOL_ALIAS_MAP = {
+    "tscan_error_num": {"tscan"},
+    "cppcheck_error_num": {"cppcheck"},
+    "weggli_error_num": {"weggli"},
+    "cooddy_error_num": {"cooddy"},
+    "binexplorer_error_num": {"binexplorer"},
+    "clang_tidy_error_num": {"clang-tidy", "clang_tidy", "clangtidy"},
+}
 
 
 def _eval_level(defn: IntegrationMetricDefinition, value: Optional[float]) -> str:
@@ -55,12 +70,77 @@ def _eval_level(defn: IntegrationMetricDefinition, value: Optional[float]) -> st
     return "danger" if hit else "normal"
 
 
+def _build_scan_metric_defaults() -> Dict[str, tuple[float, str]]:
+    return {metric_key: (0.0, "") for metric_key in SCAN_METRIC_TOOL_ALIAS_MAP}
+
+
+def _fetch_code_scan_metrics(
+    config: IntegrationProjectConfig,
+    record_date: date,
+) -> Dict[str, tuple[float, str]]:
+    metric_payload = _build_scan_metric_defaults()
+    project_key = (config.code_scan_project_key or "").strip()
+    if not project_key:
+        return metric_payload
+
+    scan_project = ScanProject.objects.filter(
+        is_deleted=False,
+        project_key=project_key,
+    ).first()
+    if not scan_project:
+        return metric_payload
+
+    latest_task_by_metric: Dict[str, str] = {}
+    tasks = (
+        ScanTask.objects.filter(
+            is_deleted=False,
+            project=scan_project,
+            status="success",
+            sys_create_datetime__date__lte=record_date,
+        )
+        .order_by("-sys_create_datetime")
+        .values("id", "tool_name")
+    )
+    for item in tasks:
+        raw_tool = (item.get("tool_name") or "").strip().lower()
+        if not raw_tool:
+            continue
+        for metric_key, aliases in SCAN_METRIC_TOOL_ALIAS_MAP.items():
+            if raw_tool in aliases and metric_key not in latest_task_by_metric:
+                latest_task_by_metric[metric_key] = str(item["id"])
+
+    if not latest_task_by_metric:
+        detail_url = f"/code_scan/result?projectId={scan_project.id}"
+        return {key: (0.0, detail_url) for key in SCAN_METRIC_TOOL_ALIAS_MAP}
+
+    task_ids = list(set(latest_task_by_metric.values()))
+    counts = (
+        ScanResult.objects.filter(task_id__in=task_ids, is_deleted=False)
+        .exclude(shield_status="Shielded")
+        .values("task_id")
+        .annotate(cnt=Count("id"))
+    )
+    count_map = {str(row["task_id"]): float(row["cnt"]) for row in counts}
+
+    detail_url = f"/code_scan/result?projectId={scan_project.id}"
+    for metric_key, task_id in latest_task_by_metric.items():
+        metric_payload[metric_key] = (count_map.get(task_id, 0.0), detail_url)
+
+    return metric_payload
+
+
 def ensure_default_metric_definitions():
     defaults = [
         ("code", "codecheck_error_num", "CodeCheck 错误数", "number", "", ">", 0),
         ("code", "bin_scope_error_num", "Bin Scope 错误数", "number", "", ">", 0),
         ("code", "build_check_error_num", "Build 检测错误数", "number", "", ">", 0),
         ("code", "compile_error_num", "Compile 错误数", "number", "", ">", 0),
+        ("code", "tscan_error_num", "TScan 问题数", "number", "", ">", 0),
+        ("code", "cppcheck_error_num", "Cppcheck 问题数", "number", "", ">", 0),
+        ("code", "weggli_error_num", "Weggli 问题数", "number", "", ">", 0),
+        ("code", "cooddy_error_num", "Cooddy 问题数", "number", "", ">", 0),
+        ("code", "binexplorer_error_num", "BinExplorer 问题数", "number", "", ">", 0),
+        ("code", "clang_tidy_error_num", "Clang-Tidy 问题数", "number", "", ">", 0),
         ("dt", "dt_pass_rate", "DT 通过率", "percent", "%", "<", 95),
         ("dt", "dt_pass_num", "DT 通过数", "number", "", "", None),
         ("dt", "dt_line_coverage", "行覆盖率", "percent", "%", "<", 80),
@@ -99,6 +179,7 @@ def collect_daily_metrics(record_date: Optional[date] = None, config_ids: Option
     for cfg in configs:
         fetcher = IntegrationDataFetcher(cfg).set_date(record_date)
         payload = fetcher.fetch_metrics()
+        payload.update(_fetch_code_scan_metrics(cfg, record_date))
 
         for key, (val, url) in payload.items():
             defn = def_map.get(key)
@@ -120,16 +201,26 @@ def collect_daily_metrics(record_date: Optional[date] = None, config_ids: Option
 mock_collect_daily = collect_daily_metrics
 
 
-def list_configs_with_latest(user: User) -> List[ProjectConfigOut]:
+def list_configs_with_latest(user: User, keyword: Optional[str] = None) -> List[ProjectConfigOut]:
     ensure_default_metric_definitions()
 
     configs = (
         IntegrationProjectConfig.objects.select_related("project")
+        .prefetch_related("managers")
         .filter(is_deleted=False)
         .order_by("-sys_update_datetime")
     )
+    if keyword:
+        configs = configs.filter(
+            Q(name__icontains=keyword) | Q(project__name__icontains=keyword),
+        )
     subscribed_ids = set(
-        IntegrationEmailSubscription.objects.filter(is_deleted=False, user=user, enabled=True).values_list("config_id", flat=True)
+        IntegrationEmailSubscription.objects.filter(
+            is_deleted=False,
+            user=user,
+            enabled=True,
+            config__is_deleted=False,
+        ).values_list("config_id", flat=True)
     )
     latest_dates = (
         IntegrationProjectMetricValue.objects.filter(is_deleted=False)
@@ -189,6 +280,7 @@ def list_configs_with_latest(user: User) -> List[ProjectConfigOut]:
                 enabled=cfg.enabled,
                 subscribed=str(cfg.id) in subscribed_ids,
                 latest_date=latest_date,
+                code_scan_project_key=cfg.code_scan_project_key,
                 code_metrics=make_cells(CODE_KEYS),
                 dt_metrics=make_cells(DT_KEYS),
             )
@@ -198,6 +290,8 @@ def list_configs_with_latest(user: User) -> List[ProjectConfigOut]:
 
 @transaction.atomic
 def toggle_subscription(user: User, config_id: str, enabled: bool) -> bool:
+    if not IntegrationProjectConfig.objects.filter(id=config_id, is_deleted=False).exists():
+        raise ValueError("配置不存在")
     sub, _ = IntegrationEmailSubscription.objects.update_or_create(
         user=user,
         config_id=config_id,
@@ -213,7 +307,13 @@ def send_daily_emails(record_date: Optional[date] = None) -> int:
     ensure_default_metric_definitions()
     subs = (
         IntegrationEmailSubscription.objects.select_related("user", "config", "config__project")
-        .filter(is_deleted=False, enabled=True, user__is_active=True)
+        .filter(
+            is_deleted=False,
+            enabled=True,
+            user__is_active=True,
+            config__is_deleted=False,
+            config__enabled=True,
+        )
         .order_by("user_id")
     )
     by_user: Dict[str, List[IntegrationProjectConfig]] = defaultdict(list)
