@@ -118,6 +118,7 @@ class ScanService:
             task.log = str(e)
             task.save()
 
+        task.refresh_from_db()
         return task
 
     @staticmethod

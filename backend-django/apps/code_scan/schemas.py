@@ -26,9 +26,24 @@ class ScanProjectCreateSchema(Schema):
     path_shield_prefixes: Optional[List[str]] = None
 
 class ScanTaskSchema(ModelSchema):
+    id: str
+    project: str
+
     class Config:
         model = ScanTask
         model_fields = "__all__"
+
+    @staticmethod
+    def resolve_id(obj):
+        return str(obj.id) if getattr(obj, "id", None) is not None else ""
+
+    @staticmethod
+    def resolve_project(obj):
+        project_id = getattr(obj, "project_id", None)
+        if project_id is not None:
+            return str(project_id)
+        project = getattr(obj, "project", None)
+        return str(getattr(project, "id", "")) if project else ""
 
 class ScanResultSchema(ModelSchema):
     class Config:

@@ -1,4 +1,5 @@
 import csv
+import io
 import os
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -118,22 +119,33 @@ def _load_xlsx_rows(file_path: str) -> Tuple[List[Any], List[List[Any]]]:
 
 
 def _load_csv_rows(file_path: str) -> Tuple[List[Any], List[List[Any]]]:
+    raw_content = _read_file_bytes(file_path)
     last_error: Optional[Exception] = None
-    for encoding in ("utf-8-sig", "utf-8", "gbk", "latin-1"):
+    for encoding in _candidate_csv_encodings(raw_content):
         try:
-            with open(file_path, "r", encoding=encoding, newline="") as f:
-                sample = f.read(4096)
-                f.seek(0)
-                try:
-                    dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-                except Exception:
-                    dialect = csv.excel
-                reader = csv.reader(f, dialect)
-                rows = [row for row in reader if _has_content(row)]
-                if not rows:
-                    return [], []
-                header = rows[0]
-                return header, rows[1:]
+            text = raw_content.decode(encoding)
+            if not text.strip():
+                return [], []
+            if "\x00" in text:
+                continue
+
+            stream = io.StringIO(text)
+            sample = stream.read(4096)
+            stream.seek(0)
+            try:
+                dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+            except Exception:
+                dialect = csv.excel
+
+            reader = csv.reader(stream, dialect)
+            rows = [row for row in reader if _has_content(row)]
+            if not rows:
+                return [], []
+
+            header = rows[0]
+            if not _has_content(header):
+                continue
+            return header, rows[1:]
         except Exception as exc:
             last_error = exc
             continue
@@ -147,3 +159,18 @@ def _has_content(row: Optional[Iterable[Any]]) -> bool:
         if as_text(cell):
             return True
     return False
+
+
+def _read_file_bytes(file_path: str) -> bytes:
+    with open(file_path, "rb") as file_handle:
+        return file_handle.read()
+
+
+def _candidate_csv_encodings(raw_content: bytes) -> List[str]:
+    if raw_content.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return ["utf-16", "utf-16-le", "utf-16-be", "utf-8-sig", "utf-8", "gbk", "latin-1"]
+
+    if b"\x00" in raw_content:
+        return ["utf-16", "utf-16-le", "utf-16-be", "utf-8-sig", "utf-8", "gbk", "latin-1"]
+
+    return ["utf-8-sig", "utf-8", "gbk", "utf-16", "utf-16-le", "utf-16-be", "latin-1"]

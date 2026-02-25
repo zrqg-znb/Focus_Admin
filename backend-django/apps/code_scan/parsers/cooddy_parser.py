@@ -1,4 +1,5 @@
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Tuple
 
 from .base import BaseParser
 from .tabular_utils import (
@@ -34,12 +35,14 @@ class CooddyParser(BaseParser):
                 value_by_index(row, path_idx),
                 value_by_index(row, file_idx),
             ) or "unknown"
-            line_number = as_int(value_by_index(row, line_idx), 0)
+            line_number, column = self._parse_location(
+                as_text(value_by_index(row, line_idx)),
+                as_text(value_by_index(row, column_idx)),
+            )
 
             checker = as_text(value_by_index(row, checker_idx))
             profile = as_text(value_by_index(row, profile_idx))
             function = as_text(value_by_index(row, function_idx))
-            column = as_text(value_by_index(row, column_idx))
             problem_type = as_text(value_by_index(row, problem_type_idx))
             source = as_text(value_by_index(row, source_idx))
             reason = as_text(value_by_index(row, reason_idx))
@@ -66,6 +69,23 @@ class CooddyParser(BaseParser):
                 }
             )
         return results
+
+    def _parse_location(self, line_value: str, column_value: str) -> Tuple[int, str]:
+        line_number = as_int(line_value, 0)
+        column_text = column_value
+
+        if line_value:
+            matched = re.search(r"(\d+)\s*[:：]\s*(\d+)", line_value)
+            if matched:
+                line_number = as_int(matched.group(1), line_number)
+                if not column_text:
+                    column_text = matched.group(2)
+            elif not line_number:
+                first_number = re.search(r"\d+", line_value)
+                if first_number:
+                    line_number = as_int(first_number.group(0), 0)
+
+        return line_number, column_text
 
     def _map_severity(self, value: str) -> str:
         normalized = (value or "").strip().lower()
