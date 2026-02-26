@@ -7,11 +7,19 @@ export interface ProjectQualitySummary {
   project_type: string;
   project_managers: string;
   record_date?: string;
+  oem_name?: string;
   total_loc: number;
   total_function_count: number;
   total_dangerous_func_count: number;
   avg_duplication_rate: number;
   module_count: number;
+  clean_code_achieve_rate: number;
+  clean_code_pass_modules: number;
+  total_node_count: number;
+  warning_node_count: number;
+  warning_count?: number;
+  warning_metrics?: string[];
+  metric_values?: QualityMetricValue[];
 }
 
 export interface CodeModuleOut {
@@ -19,8 +27,8 @@ export interface CodeModuleOut {
   project_id: string;
   oem_name: string;
   module: string;
-  owner_names?: string[] | null;
-  owner_ids?: string[] | null;
+  owner_names?: null | string[];
+  owner_ids?: null | string[];
 }
 
 export interface CodeMetricOut {
@@ -32,6 +40,29 @@ export interface CodeMetricOut {
   dangerous_func_count: number;
   duplication_rate: number;
   is_clean_code: boolean;
+}
+
+export interface QualityMetricValue {
+  key: string;
+  label: string;
+  display: string;
+  num?: null | number;
+  is_warning: boolean;
+  raw?: any;
+}
+
+export interface QualityTreeNode {
+  id: string;
+  node_key: string;
+  version_name: string;
+  depth: number;
+  clean_code_rate: number;
+  is_clean_code: boolean;
+  unachieved_clean_code: string[];
+  warning_count: number;
+  warning_metrics: string[];
+  metric_values: QualityMetricValue[];
+  children: QualityTreeNode[];
 }
 
 export interface ModuleQualityDetail {
@@ -46,6 +77,16 @@ export interface ModuleQualityDetail {
   dangerous_func_count: number;
   duplication_rate: number;
   is_clean_code: boolean;
+  clean_code_rate: number;
+  clean_code_total: number;
+  unachieved_clean_code: string[];
+  warning_count: number;
+  warning_metrics: string[];
+  total_node_count: number;
+  warning_node_count: number;
+  root_version_name: string;
+  metric_values: QualityMetricValue[];
+  nodes: QualityTreeNode[];
 }
 
 export interface ModuleConfigPayload {
@@ -59,7 +100,9 @@ export interface ModuleConfigPayload {
 const base = '/api/project-manager/code_quality';
 
 export async function getQualityOverviewApi(params?: any) {
-  return requestClient.get<ProjectQualitySummary[]>(`${base}/overview`, { params });
+  return requestClient.get<ProjectQualitySummary[]>(`${base}/overview`, {
+    params,
+  });
 }
 
 export async function configModuleApi(data: ModuleConfigPayload) {
@@ -67,7 +110,16 @@ export async function configModuleApi(data: ModuleConfigPayload) {
 }
 
 export async function getProjectQualityDetailsApi(projectId: string) {
-  return requestClient.get<ModuleQualityDetail[]>(`${base}/project/${projectId}/details`);
+  return requestClient.get<ModuleQualityDetail[]>(
+    `${base}/project/${projectId}/details`,
+  );
+}
+
+export async function getProjectQualityDetailsLiteApi(projectId: string) {
+  return requestClient.get<ModuleQualityDetail[]>(
+    `${base}/project/${projectId}/details`,
+    { params: { lite: true } },
+  );
 }
 
 export async function refreshProjectQualityApi(projectId: string) {

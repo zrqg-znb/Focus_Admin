@@ -26,8 +26,11 @@ def config_module(request, data: ModuleConfigSchema):
     return code_quality_service.config_module(request, data)
 
 @router.get("/project/{project_id}/details", response=List[ModuleQualityDetailSchema], summary="获取项目代码质量详情(模块列表)")
-def get_project_quality_details(request, project_id: str):
-    return code_quality_service.get_project_quality_details(project_id)
+def get_project_quality_details(request, project_id: str, lite: bool = False):
+    return code_quality_service.get_project_quality_details(
+        project_id,
+        include_tree=not lite,
+    )
 
 from apps.project_manager.utils.sync_executor import run_sync_task
 

@@ -1,7 +1,12 @@
-from ninja import Schema, ModelSchema, Field
-from typing import Optional, List
+from __future__ import annotations
+
 from datetime import date
+from typing import Any, List, Optional
+
+from ninja import Field, ModelSchema, Schema
+
 from .code_quality_model import CodeModule, CodeMetric
+
 
 class ModuleConfigSchema(Schema):
     id: Optional[str] = None
@@ -10,6 +15,7 @@ class ModuleConfigSchema(Schema):
     module: str
     owner_ids: Optional[List[str]] = None
 
+
 class CodeMetricSchema(Schema):
     record_date: date
     loc: int
@@ -17,6 +23,7 @@ class CodeMetricSchema(Schema):
     dangerous_func_count: int
     duplication_rate: float
     is_clean_code: bool
+
 
 class CodeMetricOut(ModelSchema):
     module_id: str
@@ -28,6 +35,7 @@ class CodeMetricOut(ModelSchema):
     @staticmethod
     def resolve_module_id(obj):
         return str(obj.module_id)
+
 
 class CodeModuleOut(ModelSchema):
     project_id: str
@@ -50,6 +58,30 @@ class CodeModuleOut(ModelSchema):
     def resolve_project_id(obj):
         return str(obj.project_id)
 
+
+class QualityMetricValueSchema(Schema):
+    key: str
+    label: str
+    display: str
+    num: Optional[float] = None
+    is_warning: bool = False
+    raw: Optional[Any] = None
+
+
+class QualityTreeNodeSchema(Schema):
+    id: str
+    node_key: str
+    version_name: str
+    depth: int = 0
+    clean_code_rate: float = 0.0
+    is_clean_code: bool = False
+    unachieved_clean_code: List[str] = Field(default_factory=list)
+    warning_count: int = 0
+    warning_metrics: List[str] = Field(default_factory=list)
+    metric_values: List[QualityMetricValueSchema] = Field(default_factory=list)
+    children: List["QualityTreeNodeSchema"] = Field(default_factory=list)
+
+
 class ProjectQualitySummarySchema(Schema):
     project_id: str
     project_name: str
@@ -57,11 +89,20 @@ class ProjectQualitySummarySchema(Schema):
     project_type: str
     project_managers: str
     record_date: Optional[date] = None
+    oem_name: str = ""
     total_loc: int = 0
     total_function_count: int = 0
     total_dangerous_func_count: int = 0
     avg_duplication_rate: float = 0.0
     module_count: int = 0
+    clean_code_achieve_rate: float = 0.0
+    clean_code_pass_modules: int = 0
+    total_node_count: int = 0
+    warning_node_count: int = 0
+    warning_count: int = 0
+    warning_metrics: List[str] = Field(default_factory=list)
+    metric_values: List[QualityMetricValueSchema] = Field(default_factory=list)
+
 
 class ModuleQualityDetailSchema(Schema):
     id: str
@@ -75,3 +116,13 @@ class ModuleQualityDetailSchema(Schema):
     dangerous_func_count: int = 0
     duplication_rate: float = 0.0
     is_clean_code: bool = False
+    clean_code_rate: float = 0.0
+    clean_code_total: int = 11
+    unachieved_clean_code: List[str] = Field(default_factory=list)
+    warning_count: int = 0
+    warning_metrics: List[str] = Field(default_factory=list)
+    total_node_count: int = 0
+    warning_node_count: int = 0
+    root_version_name: str = ""
+    metric_values: List[QualityMetricValueSchema] = Field(default_factory=list)
+    nodes: List[QualityTreeNodeSchema] = Field(default_factory=list)

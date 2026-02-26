@@ -28,7 +28,7 @@ import {
 import { useVbenForm } from '#/adapter/form';
 import {
   configModuleApi,
-  getProjectQualityDetailsApi,
+  getProjectQualityDetailsLiteApi,
 } from '#/api/project-manager/code_quality';
 import { listHardwareConfigOptionsApi } from '#/api/project-manager/hardware';
 import {
@@ -186,7 +186,7 @@ const [Drawer, drawerApi] = useVbenDrawer({
 
         if (data.enable_quality) {
           try {
-            const details = await getProjectQualityDetailsApi(data.id);
+            const details = await getProjectQualityDetailsLiteApi(data.id);
             moduleRows.value =
               details && details.length > 0
                 ? details.map((d) => ({
