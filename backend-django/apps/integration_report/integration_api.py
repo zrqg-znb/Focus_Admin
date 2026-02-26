@@ -37,6 +37,21 @@ from .integration_models import IntegrationProjectConfig
 router = Router(tags=["Integration Report"], auth=GlobalAuth())
 
 
+def _normalize_config_ids(config_ids: Optional[List[str]]) -> List[str]:
+    if not config_ids:
+        return []
+    if isinstance(config_ids, str):
+        return [item.strip() for item in config_ids.split(",") if item.strip()]
+    if isinstance(config_ids, (list, tuple, set)):
+        normalized = []
+        for item in config_ids:
+            value = str(item).strip()
+            if value:
+                normalized.append(value)
+        return normalized
+    return []
+
+
 @router.get("/projects", response=List[ProjectConfigOut], summary="集成报告配置列表（用于订阅页）")
 @paginate
 def list_projects(request, filters: ConfigFilterSchema = Query(...)):
@@ -188,8 +203,9 @@ def history(
         record_date__lte=end,
         metric__enabled=True,
     )
-    if config_ids:
-        qs = qs.filter(config_id__in=config_ids)
+    normalized_config_ids = _normalize_config_ids(config_ids)
+    if normalized_config_ids:
+        qs = qs.filter(config_id__in=normalized_config_ids)
     
     if keyword:
         qs = qs.filter(Q(config__name__icontains=keyword) | Q(config__project__name__icontains=keyword))

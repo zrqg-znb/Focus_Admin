@@ -138,8 +138,21 @@ def upload_chunk(request, data: ChunkUploadSchema):
 # --- 任务管理 ---
 
 @router.get("/tasks", response=PaginatedScanTaskSchema, auth=BearerAuth(), summary="获取扫描任务列表")
-def list_tasks(request, project_id: str, page: int = 1, pageSize: int = 20):
-    qs = ScanTask.objects.filter(project_id=project_id, is_deleted=False)
+def list_tasks(
+    request,
+    project_id: str = None,
+    tool_name: str = None,
+    status: str = None,
+    page: int = 1,
+    pageSize: int = 20,
+):
+    qs = ScanTask.objects.filter(is_deleted=False)
+    if project_id:
+        qs = qs.filter(project_id=project_id)
+    if tool_name:
+        qs = qs.filter(tool_name=tool_name)
+    if status:
+        qs = qs.filter(status=status)
     total = qs.count()
     start = (page - 1) * pageSize
     end = start + pageSize

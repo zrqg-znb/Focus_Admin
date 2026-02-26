@@ -16,8 +16,21 @@ export const updateProjectApi = (id: string, data: any) => {
   return requestClient.put(`/api/code-scan/projects/${id}`, data);
 };
 
-export const listTasksApi = (projectId: string) => {
-  return requestClient.get('/api/code-scan/tasks', { params: { project_id: projectId } });
+export const listTasksApi = (
+  projectId?: string,
+  params?: {
+    page?: number;
+    pageSize?: number;
+    status?: string;
+    tool_name?: string;
+  },
+) => {
+  return requestClient.get('/api/code-scan/tasks', {
+    params: {
+      project_id: projectId,
+      ...params,
+    },
+  });
 };
 
 export const runScanTaskApi = (projectId: string) => {

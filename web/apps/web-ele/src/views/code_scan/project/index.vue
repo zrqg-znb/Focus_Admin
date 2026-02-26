@@ -153,6 +153,12 @@ function handleViewResults(row: any) {
   });
 }
 
+function handleViewTaskLogs() {
+  router.push({
+    path: '/code_scan/report_log',
+  });
+}
+
 function copyProjectKey(key: string) {
   copy(key);
   ElMessage.success('Project Key 已复制');
@@ -200,6 +206,9 @@ async function handlePreviewPathRule() {
       <template #action="{ row }">
         <ElButton type="primary" link @click="handleViewResults(row)">
           查看结果
+        </ElButton>
+        <ElButton type="primary" link @click="handleViewTaskLogs">
+          解析日志
         </ElButton>
         <ElButton type="primary" link @click="handleEdit(row)">编辑</ElButton>
       </template>
