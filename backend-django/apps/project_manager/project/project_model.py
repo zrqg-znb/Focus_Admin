@@ -24,6 +24,22 @@ class Project(RootModel):
     enable_milestone = models.BooleanField(default=True, verbose_name="是否统计里程碑")
     enable_iteration = models.BooleanField(default=True, verbose_name="是否统计迭代数据")
     sub_teams = models.JSONField(default=list, null=True, blank=True, verbose_name="迭代责任团队")
+    enable_iteration_quality_metrics = models.BooleanField(
+        default=False,
+        verbose_name="是否启用迭代代码质量出口指标",
+    )
+    iteration_quality_oem_name = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        verbose_name="迭代代码质量OEM名称",
+    )
+    iteration_quality_module = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        verbose_name="迭代代码质量模块名",
+    )
 
     # Quality
     enable_quality = models.BooleanField(default=False, verbose_name="是否统计代码质量")

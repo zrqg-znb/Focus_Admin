@@ -1,6 +1,7 @@
 from django.db import transaction
 from common import fu_crud
 from apps.project_manager.project.project_model import Project
+from apps.project_manager.code_quality.code_quality_model import CodeModule
 from .iteration_model import Iteration, IterationMetric
 from .iteration_schema import IterationCreateSchema, IterationMetricSchema, IterationDetailSchema, IterationDashboardSchema, IterationMetricOut, IterationManualUpdateSchema
 from .iteration_sync import sync_project_iterations
@@ -63,12 +64,105 @@ def _calculate_rates(metric: IterationMetric) -> dict:
         "code_coverage_rate": metric.code_coverage_rate,
     }
 
+
+def _to_float(value) -> float | None:
+    if value is None:
+        return None
+
+    if isinstance(value, (float, int)):
+        return float(value)
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.endswith("%"):
+            text = text[:-1]
+        try:
+            return float(text)
+        except Exception:
+            return None
+
+    return None
+
+
+def _normalize_ratio(value) -> float:
+    parsed = _to_float(value)
+    if parsed is None:
+        return 0.0
+
+    ratio = parsed / 100 if parsed > 1 else parsed
+    if ratio < 0:
+        return 0.0
+    if ratio > 1:
+        return 1.0
+    return ratio
+
+
+def _extract_summary_ratio(summary_metrics: dict, metric_key: str) -> float:
+    metric_payload = summary_metrics.get(metric_key)
+    if isinstance(metric_payload, dict):
+        parsed_value = _to_float(metric_payload.get("num"))
+        if parsed_value is None:
+            parsed_value = _to_float(metric_payload.get("display"))
+        return _normalize_ratio(parsed_value)
+
+    return _normalize_ratio(metric_payload)
+
+
+def _get_iteration_quality_metrics(project: Project) -> dict:
+    if not project.enable_iteration_quality_metrics:
+        return {}
+
+    oem_name = str(project.iteration_quality_oem_name or "").strip()
+    module_name = str(project.iteration_quality_module or "").strip()
+    if not oem_name or not module_name:
+        return {}
+
+    module = (
+        CodeModule.objects.filter(
+            project=project,
+            oem_name=oem_name,
+            module=module_name,
+            is_deleted=False,
+        )
+        .order_by("-sys_create_datetime")
+        .first()
+    )
+    if not module:
+        return {}
+
+    latest_metric = (
+        module.metrics.filter(is_deleted=False)
+        .order_by("-record_date", "-sys_create_datetime")
+        .first()
+    )
+    if not latest_metric:
+        return {}
+
+    summary_metrics = latest_metric.summary_metrics
+    if not isinstance(summary_metrics, dict):
+        summary_metrics = {}
+
+    return {
+        "quality_ut_file_coverage_rate": _extract_summary_ratio(
+            summary_metrics,
+            "UT_file_coverage",
+        ),
+        "quality_ut_line_coverage_rate": _extract_summary_ratio(
+            summary_metrics,
+            "UT_line_coverage",
+        ),
+        "quality_clean_code_rate": _normalize_ratio(latest_metric.clean_code_rate),
+    }
+
+
 def get_iteration_dashboard():
     projects = Project.objects.filter(
         is_deleted=False,
         enable_iteration=True,
         is_closed=False
-    )
+    ).prefetch_related("managers")
     
     result = []
     for project in projects:
@@ -85,6 +179,7 @@ def get_iteration_dashboard():
             "project_type": project.type,
             "project_managers": ",".join([m.name for m in project.managers.all()]),
         }
+        dashboard_data.update(_get_iteration_quality_metrics(project))
         
         if current_iter:
             dashboard_data.update({
@@ -127,6 +222,18 @@ def get_iteration_dashboard():
             bug_fix_rate=dashboard_data.get('bug_fix_rate', 0.0),
             code_review_rate=dashboard_data.get('code_review_rate', 0.0),
             code_coverage_rate=dashboard_data.get('code_coverage_rate', 0.0),
+            quality_ut_file_coverage_rate=dashboard_data.get(
+                'quality_ut_file_coverage_rate',
+                0.0,
+            ),
+            quality_ut_line_coverage_rate=dashboard_data.get(
+                'quality_ut_line_coverage_rate',
+                0.0,
+            ),
+            quality_clean_code_rate=dashboard_data.get(
+                'quality_clean_code_rate',
+                0.0,
+            ),
             sr_num=dashboard_data.get('sr_num', 0),
             dr_num=dashboard_data.get('dr_num', 0),
             ar_num=dashboard_data.get('ar_num', 0),

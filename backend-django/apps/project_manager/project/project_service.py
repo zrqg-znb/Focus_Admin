@@ -22,6 +22,38 @@ from .project_model import (
 from .project_schema import ProjectCreateSchema, ProjectUpdateSchema
 
 
+def _normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_iteration_quality_config(
+    *,
+    enable_iteration: bool,
+    enable_iteration_quality_metrics: bool,
+    iteration_quality_oem_name: str | None,
+    iteration_quality_module: str | None,
+) -> tuple[bool, str | None, str | None]:
+    if not enable_iteration:
+        return False, None, None
+
+    if not enable_iteration_quality_metrics:
+        return False, None, None
+
+    normalized_oem_name = _normalize_optional_text(iteration_quality_oem_name)
+    normalized_module = _normalize_optional_text(iteration_quality_module)
+
+    if not normalized_oem_name or not normalized_module:
+        raise HttpError(
+            422,
+            "开启健康迭代代码质量出口指标后，OEMName和模块名不能为空",
+        )
+
+    return True, normalized_oem_name, normalized_module
+
+
 def _resolve_phase_scenario(domain: str) -> str:
     if "座舱" in (domain or ""):
         return PHASE_SCENARIO_COCKPIT
@@ -199,6 +231,19 @@ def create_project(request, data: ProjectCreateSchema):
         data_dict = data.dict()
         manager_ids = data_dict.pop("manager_ids", [])
         phase_configs = data_dict.pop("phase_configs", None)
+        normalized_quality_switch, normalized_quality_oem_name, normalized_quality_module = (
+            _normalize_iteration_quality_config(
+                enable_iteration=bool(data_dict.get("enable_iteration", True)),
+                enable_iteration_quality_metrics=bool(
+                    data_dict.get("enable_iteration_quality_metrics", False)
+                ),
+                iteration_quality_oem_name=data_dict.get("iteration_quality_oem_name"),
+                iteration_quality_module=data_dict.get("iteration_quality_module"),
+            )
+        )
+        data_dict["enable_iteration_quality_metrics"] = normalized_quality_switch
+        data_dict["iteration_quality_oem_name"] = normalized_quality_oem_name
+        data_dict["iteration_quality_module"] = normalized_quality_module
 
         project = fu_crud.create(request, data_dict, Project)
 
@@ -241,6 +286,32 @@ def update_project(request, id: str, data: ProjectUpdateSchema):
     data_dict = data.dict(exclude_unset=True)
     manager_ids = data_dict.pop("manager_ids", None)
     phase_configs = data_dict.pop("phase_configs", phase_configs_sentinel)
+    enable_iteration = bool(data_dict.get("enable_iteration", project.enable_iteration))
+    enable_iteration_quality_metrics = bool(
+        data_dict.get(
+            "enable_iteration_quality_metrics",
+            project.enable_iteration_quality_metrics,
+        )
+    )
+    iteration_quality_oem_name = data_dict.get(
+        "iteration_quality_oem_name",
+        project.iteration_quality_oem_name,
+    )
+    iteration_quality_module = data_dict.get(
+        "iteration_quality_module",
+        project.iteration_quality_module,
+    )
+    normalized_quality_switch, normalized_quality_oem_name, normalized_quality_module = (
+        _normalize_iteration_quality_config(
+            enable_iteration=enable_iteration,
+            enable_iteration_quality_metrics=enable_iteration_quality_metrics,
+            iteration_quality_oem_name=iteration_quality_oem_name,
+            iteration_quality_module=iteration_quality_module,
+        )
+    )
+    data_dict["enable_iteration_quality_metrics"] = normalized_quality_switch
+    data_dict["iteration_quality_oem_name"] = normalized_quality_oem_name
+    data_dict["iteration_quality_module"] = normalized_quality_module
 
     project = fu_crud.update(request, id, data_dict, Project)
 

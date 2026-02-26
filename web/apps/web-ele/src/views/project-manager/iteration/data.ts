@@ -20,7 +20,7 @@ const formatRate = ({ cellValue }: { cellValue: number }) => {
 };
 
 export function useDashboardColumns(
-  onNameClick: (row: IterationDashboardItem) => void,
+  _onNameClick: (row: IterationDashboardItem) => void,
 ): VxeTableGridOptions<IterationDashboardItem>['columns'] {
   return [
     {
@@ -142,6 +142,24 @@ export function useDashboardColumns(
           field: 'code_coverage_rate',
           title: '代码覆盖率',
           minWidth: 100,
+          formatter: formatRate,
+        },
+        {
+          field: 'quality_ut_file_coverage_rate',
+          title: 'UT文件覆盖率',
+          minWidth: 120,
+          formatter: formatRate,
+        },
+        {
+          field: 'quality_ut_line_coverage_rate',
+          title: 'UT行覆盖率',
+          minWidth: 120,
+          formatter: formatRate,
+        },
+        {
+          field: 'quality_clean_code_rate',
+          title: 'CleanCode达成率',
+          minWidth: 130,
           formatter: formatRate,
         },
       ],

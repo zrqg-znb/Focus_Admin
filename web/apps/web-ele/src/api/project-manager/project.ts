@@ -12,6 +12,9 @@ export interface ProjectOut {
   remark?: string;
   enable_milestone: boolean;
   enable_iteration: boolean;
+  enable_iteration_quality_metrics: boolean;
+  iteration_quality_oem_name?: null | string;
+  iteration_quality_module?: null | string;
   enable_quality: boolean;
   enable_dts: boolean;
   enable_hardware_config: boolean;
@@ -54,6 +57,9 @@ export interface ProjectCreatePayload {
   remark?: string;
   enable_milestone?: boolean;
   enable_iteration?: boolean;
+  enable_iteration_quality_metrics?: boolean;
+  iteration_quality_oem_name?: null | string;
+  iteration_quality_module?: null | string;
   enable_quality?: boolean;
   enable_dts?: boolean;
   enable_hardware_config?: boolean;
@@ -74,6 +80,9 @@ export interface ProjectUpdatePayload {
   remark?: string;
   enable_milestone?: boolean;
   enable_iteration?: boolean;
+  enable_iteration_quality_metrics?: boolean;
+  iteration_quality_oem_name?: null | string;
+  iteration_quality_module?: null | string;
   enable_quality?: boolean;
   enable_dts?: boolean;
   enable_hardware_config?: boolean;
@@ -108,7 +117,9 @@ export interface PaginatedResponse<T> {
 const listEndpoint = '/api/project-manager/projects/';
 
 export async function listProjectsApi(params?: ProjectFilterParams) {
-  return requestClient.get<PaginatedResponse<ProjectOut>>(listEndpoint, { params });
+  return requestClient.get<PaginatedResponse<ProjectOut>>(listEndpoint, {
+    params,
+  });
 }
 
 export async function createProjectApi(data: ProjectCreatePayload) {
@@ -116,7 +127,10 @@ export async function createProjectApi(data: ProjectCreatePayload) {
 }
 
 export async function updateProjectApi(id: string, data: ProjectUpdatePayload) {
-  return requestClient.put<ProjectOut>(`/api/project-manager/projects/${id}`, data);
+  return requestClient.put<ProjectOut>(
+    `/api/project-manager/projects/${id}`,
+    data,
+  );
 }
 
 export async function deleteProjectApi(id: string) {
@@ -128,9 +142,13 @@ export async function getProjectApi(id: string) {
 }
 
 export async function favoriteProjectApi(id: string) {
-  return requestClient.post<boolean>(`/api/project-manager/projects/${id}/favorite`);
+  return requestClient.post<boolean>(
+    `/api/project-manager/projects/${id}/favorite`,
+  );
 }
 
 export async function unfavoriteProjectApi(id: string) {
-  return requestClient.delete<boolean>(`/api/project-manager/projects/${id}/favorite`);
+  return requestClient.delete<boolean>(
+    `/api/project-manager/projects/${id}/favorite`,
+  );
 }

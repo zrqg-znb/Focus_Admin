@@ -63,6 +63,11 @@ const iterationConfig = ref({
   design_id: '',
   sub_teams: [] as string[],
 });
+const iterationQualityConfig = ref({
+  enable_quality_metrics: false,
+  module: '',
+  oem_name: '',
+});
 const enableMilestone = ref(false);
 const enableIteration = ref(false);
 const enableQuality = ref(false);
@@ -149,6 +154,12 @@ const [Drawer, drawerApi] = useVbenDrawer({
         iterationConfig.value.sub_teams = Array.isArray(data.sub_teams)
           ? data.sub_teams
           : [];
+        iterationQualityConfig.value.enable_quality_metrics =
+          !!data.enable_iteration_quality_metrics;
+        iterationQualityConfig.value.oem_name =
+          data.iteration_quality_oem_name || '';
+        iterationQualityConfig.value.module =
+          data.iteration_quality_module || '';
         dtsConfig.value.ws_id = data.ws_id || '';
         dtsConfig.value.di_teams = Array.isArray(data.di_teams)
           ? data.di_teams
@@ -212,6 +223,11 @@ const [Drawer, drawerApi] = useVbenDrawer({
       formData.value = undefined;
       formApi.resetForm();
       iterationConfig.value = { design_id: '', sub_teams: [] };
+      iterationQualityConfig.value = {
+        enable_quality_metrics: false,
+        oem_name: '',
+        module: '',
+      };
       dtsConfig.value = { ws_id: '', di_teams: [] };
       moduleRows.value = [];
       milestoneForm.value = {
@@ -467,6 +483,22 @@ function isHardwareConfigValid(showMessage = false) {
   return true;
 }
 
+function isIterationQualityConfigValid(showMessage = false) {
+  if (!enableIteration.value || !iterationQualityConfig.value.enable_quality_metrics) {
+    return true;
+  }
+
+  const oemName = iterationQualityConfig.value.oem_name.trim();
+  const moduleName = iterationQualityConfig.value.module.trim();
+  if (!oemName || !moduleName) {
+    if (showMessage) {
+      ElMessage.warning('请填写健康迭代代码质量出口指标的OEMName和模块名');
+    }
+    return false;
+  }
+  return true;
+}
+
 async function loadHardwarePoints() {
   if (
     (hardwarePoints.value.length > 0 ||
@@ -530,6 +562,14 @@ watch(
   },
 );
 
+watch(
+  () => enableIteration.value,
+  (enabled) => {
+    if (enabled) return;
+    iterationQualityConfig.value.enable_quality_metrics = false;
+  },
+);
+
 async function onSubmit() {
   const { valid } = await formApi.validate();
   if (valid) {
@@ -537,6 +577,10 @@ async function onSubmit() {
     projectDomain.value = data.domain || '';
     if (!isHardwareConfigValid(true)) {
       activeTab.value = 'hardware';
+      return;
+    }
+    if (!isIterationQualityConfigValid(true)) {
+      activeTab.value = 'iteration';
       return;
     }
     drawerApi.lock();
@@ -562,6 +606,8 @@ async function onSubmit() {
         enable_iteration: enableIteration.value,
         enable_quality: enableQuality.value,
         enable_dts: enableDts.value,
+        enable_iteration_quality_metrics:
+          enableIteration.value && iterationQualityConfig.value.enable_quality_metrics,
         enable_hardware_config: enableHardwareConfig.value,
         viu_platform_id:
           enableHardwareConfig.value && hardwareScenario.value === 'vehicle'
@@ -576,6 +622,14 @@ async function onSubmit() {
         sub_teams: enableIteration.value
           ? iterationConfig.value.sub_teams
           : undefined,
+        iteration_quality_oem_name:
+          enableIteration.value && iterationQualityConfig.value.enable_quality_metrics
+            ? iterationQualityConfig.value.oem_name.trim()
+            : null,
+        iteration_quality_module:
+          enableIteration.value && iterationQualityConfig.value.enable_quality_metrics
+            ? iterationQualityConfig.value.module.trim()
+            : null,
         ws_id: enableDts.value ? dtsConfig.value.ws_id : undefined,
         di_teams: enableDts.value ? dtsConfig.value.di_teams : undefined,
       };
@@ -782,6 +836,28 @@ async function onSubmit() {
                 </div>
               </div>
             </ElFormItem>
+            <ElFormItem label="代码质量出口指标">
+              <ElSwitch
+                v-model="iterationQualityConfig.enable_quality_metrics"
+                inline-prompt
+                active-text="开"
+                inactive-text="关"
+              />
+            </ElFormItem>
+            <template v-if="iterationQualityConfig.enable_quality_metrics">
+              <ElFormItem label="OEMName">
+                <ElInput
+                  v-model="iterationQualityConfig.oem_name"
+                  placeholder="请输入OEMName"
+                />
+              </ElFormItem>
+              <ElFormItem label="模块名">
+                <ElInput
+                  v-model="iterationQualityConfig.module"
+                  placeholder="请输入模块名"
+                />
+              </ElFormItem>
+            </template>
           </ElForm>
         </div>
       </ElTabPane>

@@ -34,6 +34,18 @@ class ProjectCreateSchema(Schema):
     remark: Optional[str] = Field(None, description="备注")
     enable_milestone: bool = Field(True, description="是否统计里程碑")
     enable_iteration: bool = Field(True, description="是否统计迭代数据")
+    enable_iteration_quality_metrics: bool = Field(
+        False,
+        description="是否启用健康迭代代码质量出口指标",
+    )
+    iteration_quality_oem_name: Optional[str] = Field(
+        None,
+        description="健康迭代代码质量配置OEMName",
+    )
+    iteration_quality_module: Optional[str] = Field(
+        None,
+        description="健康迭代代码质量配置模块名",
+    )
     enable_quality: bool = Field(True, description="是否统计代码质量")
     enable_dts: bool = Field(False, description="是否统计问题单")
     design_id: Optional[str] = Field(None, description="迭代中台配置 id")
@@ -58,6 +70,9 @@ class ProjectUpdateSchema(Schema):
     remark: Optional[str] = None
     enable_milestone: Optional[bool] = None
     enable_iteration: Optional[bool] = None
+    enable_iteration_quality_metrics: Optional[bool] = None
+    iteration_quality_oem_name: Optional[str] = None
+    iteration_quality_module: Optional[str] = None
     enable_quality: Optional[bool] = None
     enable_dts: Optional[bool] = None
     design_id: Optional[str] = None

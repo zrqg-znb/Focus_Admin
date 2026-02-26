@@ -95,6 +95,9 @@ class IterationDashboardSchema(Schema):
     bug_fix_rate: float = 0.0
     code_review_rate: float = 0.0
     code_coverage_rate: float = 0.0
+    quality_ut_file_coverage_rate: float = 0.0
+    quality_ut_line_coverage_rate: float = 0.0
+    quality_clean_code_rate: float = 0.0
     
     # Raw counts for context if needed (optional)
     sr_num: int = 0

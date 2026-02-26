@@ -15,7 +15,7 @@ export interface IterationMetricOut {
   id: string;
   iteration_id: string;
   record_date: string;
-  
+
   // Calculated Rates
   sr_breakdown_rate: number;
   dr_breakdown_rate: number;
@@ -30,7 +30,7 @@ export interface IterationMetricOut {
   bug_fix_rate: number;
   code_review_rate: number;
   code_coverage_rate: number;
-  
+
   // Raw data (optional, but good to have)
   sr_num: number;
   dr_num: number;
@@ -49,7 +49,7 @@ export interface IterationDashboardItem {
   end_date?: string;
   is_healthy: boolean;
   iteration_id?: string;
-  
+
   // Calculated Rates
   sr_breakdown_rate: number;
   dr_breakdown_rate: number;
@@ -64,7 +64,10 @@ export interface IterationDashboardItem {
   bug_fix_rate: number;
   code_review_rate: number;
   code_coverage_rate: number;
-  
+  quality_ut_file_coverage_rate: number;
+  quality_ut_line_coverage_rate: number;
+  quality_clean_code_rate: number;
+
   // Raw counts
   sr_num: number;
   dr_num: number;
@@ -78,11 +81,15 @@ export interface IterationDetailItem extends IterationOut {
 const base = '/api/project-manager/iterations';
 
 export async function getIterationOverviewApi(params?: any) {
-  return requestClient.get<IterationDashboardItem[]>(`${base}/overview`, { params });
+  return requestClient.get<IterationDashboardItem[]>(`${base}/overview`, {
+    params,
+  });
 }
 
 export async function listProjectIterationsApi(projectId: string) {
-  return requestClient.get<IterationDetailItem[]>(`${base}/project/${projectId}`);
+  return requestClient.get<IterationDetailItem[]>(
+    `${base}/project/${projectId}`,
+  );
 }
 
 export async function refreshProjectIterationApi(projectId: string) {
@@ -94,6 +101,12 @@ export interface IterationManualUpdateData {
   test_case_execution_rate?: number;
 }
 
-export async function updateManualMetricApi(iterationId: string, data: IterationManualUpdateData) {
-  return requestClient.put<boolean>(`${base}/metric/${iterationId}/manual`, data);
+export async function updateManualMetricApi(
+  iterationId: string,
+  data: IterationManualUpdateData,
+) {
+  return requestClient.put<boolean>(
+    `${base}/metric/${iterationId}/manual`,
+    data,
+  );
 }

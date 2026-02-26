@@ -88,6 +88,11 @@ const iterationConfig = ref({
   design_id: '',
   sub_teams: [] as string[],
 });
+const iterationQualityConfig = ref({
+  enable_quality_metrics: false,
+  module: '',
+  oem_name: '',
+});
 // 临时输入框，用于添加团队
 const newSubTeam = ref('');
 
@@ -383,14 +388,31 @@ watch(
   },
 );
 
+watch(
+  () => enableIteration.value,
+  (enabled) => {
+    if (enabled) return;
+    iterationQualityConfig.value.enable_quality_metrics = false;
+  },
+);
+
 const canGoNext = computed(() => {
   if (currentStep.value === 0) {
     return true;
   }
   if (currentStep.value === 2 && enableIteration.value) {
-    return (
+    const basicReady =
       iterationConfig.value.design_id &&
-      iterationConfig.value.sub_teams.length > 0
+      iterationConfig.value.sub_teams.length > 0;
+    if (!basicReady) {
+      return false;
+    }
+    if (!iterationQualityConfig.value.enable_quality_metrics) {
+      return true;
+    }
+    return !!(
+      iterationQualityConfig.value.oem_name.trim() &&
+      iterationQualityConfig.value.module.trim()
     );
   }
   if (currentStep.value === 3 && enableQuality.value) {
@@ -440,6 +462,11 @@ function resetAll() {
     design_id: '',
     sub_teams: [],
   };
+  iterationQualityConfig.value = {
+    enable_quality_metrics: false,
+    oem_name: '',
+    module: '',
+  };
   dtsConfig.value = {
     ws_id: '',
     di_teams: [],
@@ -465,10 +492,23 @@ async function handleSave() {
       currentStep.value = hardwareStepIndex;
       return;
     }
+    if (
+      enableIteration.value &&
+      iterationQualityConfig.value.enable_quality_metrics &&
+      (!iterationQualityConfig.value.oem_name.trim() ||
+        !iterationQualityConfig.value.module.trim())
+    ) {
+      ElMessage.warning('请填写健康迭代代码质量出口指标的OEMName和模块名');
+      currentStep.value = 2;
+      return;
+    }
     const payload = {
       ...baseData,
       enable_milestone: enableMilestone.value,
       enable_iteration: enableIteration.value,
+      enable_iteration_quality_metrics:
+        enableIteration.value &&
+        iterationQualityConfig.value.enable_quality_metrics,
       enable_quality: enableQuality.value,
       enable_dts: enableDts.value,
       enable_hardware_config: enableHardwareConfig.value,
@@ -483,6 +523,16 @@ async function handleSave() {
       sub_teams: enableIteration.value
         ? iterationConfig.value.sub_teams
         : undefined,
+      iteration_quality_oem_name:
+        enableIteration.value &&
+        iterationQualityConfig.value.enable_quality_metrics
+          ? iterationQualityConfig.value.oem_name.trim()
+          : null,
+      iteration_quality_module:
+        enableIteration.value &&
+        iterationQualityConfig.value.enable_quality_metrics
+          ? iterationQualityConfig.value.module.trim()
+          : null,
       ws_id: enableDts.value ? dtsConfig.value.ws_id : undefined,
       di_teams: enableDts.value ? dtsConfig.value.di_teams : undefined,
     };
@@ -771,6 +821,25 @@ function handleClose() {
                     </div>
                   </div>
                 </ElFormItem>
+                <ElFormItem label="代码质量出口指标">
+                  <ElSwitch
+                    v-model="iterationQualityConfig.enable_quality_metrics"
+                  />
+                </ElFormItem>
+                <template v-if="iterationQualityConfig.enable_quality_metrics">
+                  <ElFormItem label="OEMName">
+                    <ElInput
+                      v-model="iterationQualityConfig.oem_name"
+                      placeholder="请输入OEMName"
+                    />
+                  </ElFormItem>
+                  <ElFormItem label="模块名">
+                    <ElInput
+                      v-model="iterationQualityConfig.module"
+                      placeholder="请输入模块名"
+                    />
+                  </ElFormItem>
+                </template>
               </div>
             </ElForm>
           </div>
