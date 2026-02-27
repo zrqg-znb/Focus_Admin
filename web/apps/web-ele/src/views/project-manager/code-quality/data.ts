@@ -75,6 +75,19 @@ export interface CodeQualityTreeRow {
   children?: CodeQualityTreeRow[];
   [key: string]: any;
 }
+function withCenterAlign(columns: Record<string, any>[]) {
+  return columns.map((column) => {
+    const nextColumn: Record<string, any> = {
+      ...column,
+      align: column.align ?? 'center',
+      headerAlign: column.headerAlign ?? 'center',
+    };
+    if (Array.isArray(column.children)) {
+      nextColumn.children = withCenterAlign(column.children);
+    }
+    return nextColumn;
+  });
+}
 
 export function useSearchFormSchema(): VbenFormSchema[] {
   return [
@@ -92,16 +105,25 @@ export function useSearchFormSchema(): VbenFormSchema[] {
 }
 
 export function useSummaryColumns(): VxeTableGridOptions<CodeQualityOverviewRow>['columns'] {
-  return [
+  return withCenterAlign([
     { type: 'seq', width: 60, fixed: 'left' },
     {
       field: 'project_name',
       title: '项目名',
       minWidth: 180,
       fixed: 'left',
+      align: 'left',
+      headerAlign: 'left',
       slots: { default: 'name_slot' },
     },
-    { field: 'oem_name', title: 'OEMName', minWidth: 140, fixed: 'left' },
+    {
+      field: 'oem_name',
+      title: 'OEMName',
+      minWidth: 140,
+      fixed: 'left',
+      align: 'left',
+      headerAlign: 'left',
+    },
     { field: 'project_managers', title: '项目经理', minWidth: 150 },
     { field: 'record_date', title: '更新日期', minWidth: 120 },
     {
@@ -109,9 +131,9 @@ export function useSummaryColumns(): VxeTableGridOptions<CodeQualityOverviewRow>
       title: 'CleanCode达成率',
       minWidth: 140,
       slots: { default: 'clean_code_achieve_rate_slot' },
-      formatter: ({ cellValue }) =>
+      formatter: ({ cellValue }: { cellValue: number | string }) =>
         `${((Number(cellValue) || 0) * 100).toFixed(2)}%`,
-      className: ({ row }) =>
+      className: ({ row }: { row: CodeQualityOverviewRow }) =>
         Number(row.clean_code_achieve_rate || 0) <
         THRESHOLDS.CLEAN_CODE_ACHIEVE_RATE
           ? 'text-red-500 font-bold'
@@ -121,8 +143,9 @@ export function useSummaryColumns(): VxeTableGridOptions<CodeQualityOverviewRow>
       field: 'avg_duplication_rate',
       title: '平均重复率',
       minWidth: 120,
-      formatter: ({ cellValue }) => `${cellValue}%`,
-      className: ({ row }) =>
+      formatter: ({ cellValue }: { cellValue: number | string }) =>
+        `${cellValue}%`,
+      className: ({ row }: { row: CodeQualityOverviewRow }) =>
         Number(row.avg_duplication_rate || 0) > THRESHOLDS.CODE_DUPLICATION_RATE
           ? 'text-red-500 font-bold'
           : '',
@@ -131,7 +154,7 @@ export function useSummaryColumns(): VxeTableGridOptions<CodeQualityOverviewRow>
       field: 'total_loc',
       title: '总代码规模',
       minWidth: 120,
-      formatter: ({ cellValue }) =>
+      formatter: ({ cellValue }: { cellValue: number | string }) =>
         `${Number(cellValue || 0).toLocaleString()}`,
     },
     ...QUALITY_METRIC_COLUMNS.map((metric) => ({
@@ -142,7 +165,7 @@ export function useSummaryColumns(): VxeTableGridOptions<CodeQualityOverviewRow>
         row.metric_warning_map?.[metric.key] ? 'text-red-500 font-bold' : '',
       showOverflow: true,
     })),
-  ];
+  ]);
 }
 
 export function useDetailSearchFormSchema(): VbenFormSchema[] {
@@ -166,19 +189,30 @@ export function useDetailSearchFormSchema(): VbenFormSchema[] {
 }
 
 export function useDetailColumns(): VxeTableGridOptions<CodeQualityTreeRow>['columns'] {
-  return [
+  return withCenterAlign([
     {
       field: 'node_name',
       title: '树节点',
       treeNode: true,
       minWidth: 240,
       fixed: 'left',
+      align: 'left',
+      headerAlign: 'left',
     },
-    { field: 'oem_name', title: 'OEMName', minWidth: 140, fixed: 'left' },
+    {
+      field: 'oem_name',
+      title: 'OEMName',
+      minWidth: 140,
+      fixed: 'left',
+      align: 'left',
+      headerAlign: 'left',
+    },
     {
       field: 'owner_names_text',
       title: '责任人',
       minWidth: 220,
+      align: 'left',
+      headerAlign: 'left',
       slots: { default: 'owner_editor_slot' },
     },
     { field: 'record_date', title: '更新日期', width: 120 },
@@ -187,9 +221,9 @@ export function useDetailColumns(): VxeTableGridOptions<CodeQualityTreeRow>['col
       title: 'CleanCode达成率',
       width: 140,
       slots: { default: 'clean_code_rate_slot' },
-      formatter: ({ cellValue }) =>
+      formatter: ({ cellValue }: { cellValue: number | string }) =>
         `${((Number(cellValue) || 0) * 100).toFixed(2)}%`,
-      className: ({ row }) =>
+      className: ({ row }: { row: CodeQualityTreeRow }) =>
         Number(row.clean_code_rate || 0) < 1
           ? 'text-red-500 font-bold'
           : 'text-green-600 font-bold',
@@ -202,5 +236,5 @@ export function useDetailColumns(): VxeTableGridOptions<CodeQualityTreeRow>['col
         row.metric_warning_map?.[metric.key] ? 'text-red-500 font-bold' : '',
       showOverflow: true,
     })),
-  ];
+  ]);
 }

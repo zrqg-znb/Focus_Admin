@@ -1,6 +1,8 @@
+import type { Column } from 'element-plus';
+
 import type { VbenFormSchema } from '#/adapter/form';
-import type { OnActionClickFn, VxeTableGridOptions } from '#/adapter/vxe-table';
 import type { ProjectOut } from '#/api/project-manager/project';
+import type { ZqTableGridOptions } from '#/components/zq-table';
 
 import { z } from '#/adapter/form';
 
@@ -78,128 +80,82 @@ export function useSearchFormSchema(): VbenFormSchema[] {
   ];
 }
 
-export function useColumns(
-  onActionClick?: OnActionClickFn<ProjectOut>,
-): VxeTableGridOptions<ProjectOut>['columns'] {
-  return [
-    { field: 'name', title: '项目名', minWidth: 160 },
-    { field: 'domain', title: '项目领域', minWidth: 120 },
-    { field: 'type', title: '项目类型', minWidth: 120 },
-    { field: 'code', title: '项目编码', minWidth: 140 },
+export function useZqColumns(): ZqTableGridOptions<ProjectOut>['columns'] {
+  const columns: Column<ProjectOut>[] = [
     {
-      field: 'managers_info',
+      key: 'name',
+      dataKey: 'name',
+      title: '项目名',
+      width: 180,
+      fixed: true,
+    },
+    { key: 'domain', dataKey: 'domain', title: '项目领域', width: 120 },
+    { key: 'type', dataKey: 'type', title: '项目类型', width: 120 },
+    { key: 'code', dataKey: 'code', title: '项目编码', width: 160 },
+    {
+      key: 'managers_info',
+      dataKey: 'managers_info',
       title: '项目经理',
-      minWidth: 160,
-      formatter: ({ cellValue }) =>
-        (cellValue || []).map((i: any) => i.name).join('、'),
+      width: 180,
     },
     {
-      field: 'is_closed',
+      key: 'is_closed',
+      dataKey: 'is_closed',
       title: '是否结项',
-      minWidth: 100,
-      cellRender: {
-        name: 'CellTag',
-        options: [
-          { label: '关闭', value: true, type: 'info' },
-          { label: '开启', value: false, type: 'success' },
-        ],
-      },
+      width: 110,
+      align: 'center',
     },
-    { field: 'repo_url', title: '制品仓号', minWidth: 200 },
+    { key: 'repo_url', dataKey: 'repo_url', title: '制品仓号', width: 220 },
     {
-      field: 'enable_milestone',
+      key: 'enable_milestone',
+      dataKey: 'enable_milestone',
       title: '统计里程碑',
-      minWidth: 120,
-      cellRender: {
-        name: 'CellTag',
-        options: [
-          { label: '开启', value: true, type: 'success' },
-          { label: '关闭', value: false, type: 'danger' },
-        ],
-      },
+      width: 120,
+      align: 'center',
     },
     {
-      field: 'enable_iteration',
+      key: 'enable_iteration',
+      dataKey: 'enable_iteration',
       title: '统计迭代',
-      minWidth: 120,
-      cellRender: {
-        name: 'CellTag',
-        options: [
-          { label: '开启', value: true, type: 'success' },
-          { label: '关闭', value: false, type: 'danger' },
-        ],
-      },
+      width: 120,
+      align: 'center',
     },
     {
-      field: 'enable_quality',
+      key: 'enable_quality',
+      dataKey: 'enable_quality',
       title: '统计代码质量',
-      minWidth: 130,
-      cellRender: {
-        name: 'CellTag',
-        options: [
-          { label: '开启', value: true, type: 'success' },
-          { label: '关闭', value: false, type: 'danger' },
-        ],
-      },
+      width: 130,
+      align: 'center',
     },
     {
-      field: 'enable_hardware_config',
+      key: 'enable_hardware_config',
+      dataKey: 'enable_hardware_config',
       title: '开启典配',
-      minWidth: 120,
-      cellRender: {
-        name: 'CellTag',
-        options: [
-          { label: '开启', value: true, type: 'success' },
-          { label: '关闭', value: false, type: 'danger' },
-        ],
-      },
+      width: 120,
+      align: 'center',
     },
-    { field: 'sys_create_datetime', title: '创建时间', minWidth: 160 },
     {
-      align: 'right',
-      cellRender: {
-        attrs: {
-          nameField: 'name',
-          nameTitle: '项目名',
-          onClick: onActionClick,
-        },
-        name: 'CellOperation',
-        options: (row: any) => {
-          const favoriteAction = {
-            code: 'favorite',
-            icon: row.is_favorited ? 'ep:star-filled' : 'ep:star',
-            type: row.is_favorited ? 'warning' : 'info',
-            title: row.is_favorited ? '取消收藏' : '收藏', // 鼠标悬停提示
-          };
-          const reportAction = {
-            code: 'report',
-            icon: 'lucide:file-bar-chart-2',
-            type: 'primary',
-            title: '查看详细报告',
-          };
-          const qgConfigAction = {
-            code: 'qg_config',
-            icon: 'lucide:settings',
-            type: 'info',
-            title: 'QG预警配置',
-          };
-          return [
-            'edit',
-            favoriteAction,
-            reportAction,
-            qgConfigAction,
-            'delete',
-          ];
-        },
-      } as any,
-      field: 'operation',
-      fixed: 'right',
-      headerAlign: 'center',
-      showOverflow: false,
+      key: 'sys_create_datetime',
+      dataKey: 'sys_create_datetime',
+      title: '创建时间',
+      width: 180,
+    },
+    {
+      key: 'actions',
+      dataKey: 'actions',
       title: '操作',
-      minWidth: 200,
+      width: 240,
+      showOverflowTooltip: false,
     },
   ];
+
+  return columns.map((column) => {
+    return {
+      align: 'center',
+      headerAlign: 'center',
+      ...column,
+    };
+  });
 }
 
 export function getProjectFormSchema(): VbenFormSchema[] {

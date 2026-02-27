@@ -1,16 +1,14 @@
 <script lang="ts" setup>
 import type {
-  OnActionClickParams,
-  VxeTableGridOptions,
-} from '#/adapter/vxe-table';
-import type {
   HardwarePoint,
   PlatformConfig,
 } from '#/api/project-manager/hardware';
+import type { ZqTableGridOptions } from '#/components/zq-table';
 
 import { nextTick, ref, watch } from 'vue';
 
 import { Page } from '@vben/common-ui';
+import { IconifyIcon } from '@vben/icons';
 
 import {
   ElButton,
@@ -22,9 +20,9 @@ import {
   ElTabPane,
   ElTabs,
   ElTag,
+  ElTooltip,
 } from 'element-plus';
 
-import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import {
   createCdcPlatformApi,
   createHardwarePointApi,
@@ -43,8 +41,13 @@ import {
   updateSmartScreenVersionApi,
   updateViuPlatformApi,
 } from '#/api/project-manager/hardware';
+import { useZqTable } from '#/components/zq-table';
 
-import { useColumns, useSearchFormSchema } from './data';
+import {
+  usePlatformColumns,
+  usePointColumns,
+  useSearchFormSchema,
+} from './data';
 
 defineOptions({ name: 'HardwareConfigAdmin' });
 
@@ -75,6 +78,13 @@ const configForm = ref<{ id?: string; name: string; remark: string }>({
   name: '',
   remark: '',
 });
+interface ZqQueryParams {
+  form?: Record<string, any>;
+  page: {
+    currentPage: number;
+    pageSize: number;
+  };
+}
 
 function openPointCreate() {
   pointDialogMode.value = 'create';
@@ -139,10 +149,7 @@ async function submitPointDialog() {
   }
 }
 
-async function onPointActionClick({
-  code,
-  row,
-}: OnActionClickParams<HardwarePoint>) {
+async function onPointActionClick(code: 'delete' | 'edit', row: HardwarePoint) {
   if (code === 'edit') {
     openPointEdit(row);
     return;
@@ -250,7 +257,8 @@ async function deletePlatform(type: PlatformType, row: PlatformConfig) {
 
 async function onPlatformActionClick(
   type: PlatformType,
-  { code, row }: OnActionClickParams<PlatformConfig>,
+  code: 'delete' | 'edit',
+  row: PlatformConfig,
 ) {
   if (code === 'edit') {
     openConfigEdit(type, row);
@@ -261,56 +269,41 @@ async function onPlatformActionClick(
   }
 }
 
-function usePlatformColumns(
-  type: PlatformType,
-  title: string,
-): VxeTableGridOptions<PlatformConfig>['columns'] {
-  return [
-    { field: 'name', title, minWidth: 220 },
-    { field: 'remark', title: '备注', minWidth: 220 },
-    {
-      align: 'right',
-      cellRender: {
-        attrs: {
-          nameField: 'name',
-          nameTitle: title,
-          onClick: (params: OnActionClickParams<PlatformConfig>) => {
-            void onPlatformActionClick(type, params);
-          },
-        },
-        name: 'CellOperation',
-        options: ['edit', 'delete'],
-      } as any,
-      field: 'operation',
-      fixed: 'right',
-      headerAlign: 'center',
-      showOverflow: false,
-      title: '操作',
-      minWidth: 140,
-    },
-  ];
+function toPagedResult<T>(items: T[], page: ZqQueryParams['page']) {
+  const start = (page.currentPage - 1) * page.pageSize;
+  const end = start + page.pageSize;
+  return {
+    items: items.slice(start, end),
+    total: items.length,
+  };
 }
 
-const [Grid, gridApi] = useVbenVxeGrid({
+const baseToolbarConfig = {
+  custom: true,
+  refresh: true,
+  search: true,
+  zoom: true,
+};
+const baseFormOptions = {
+  schema: useSearchFormSchema(),
+  showCollapseButton: false,
+  submitOnChange: true,
+};
+
+const [Grid, gridApi] = useZqTable({
   showSearchForm: false,
   separator: false,
-  formOptions: {
-    schema: useSearchFormSchema(),
-    showCollapseButton: false,
-    submitOnChange: true,
-  },
+  formOptions: baseFormOptions,
   gridOptions: {
-    autoResize: true,
-    columns: useColumns(onPointActionClick),
+    columns: usePointColumns(),
     border: true,
-    height: '100%',
-    keepSource: true,
-    pagerConfig: { enabled: true },
+    stripe: true,
     proxyConfig: {
+      autoLoad: true,
       ajax: {
-        query: async ({ page }, formValues) => {
+        query: async ({ page, form }: ZqQueryParams) => {
           const data = await listHardwarePointsApi();
-          const keyword = (formValues.keyword || '').toLowerCase();
+          const keyword = String(form?.keyword || '').toLowerCase();
           const filtered = keyword
             ? data.filter(
                 (item) =>
@@ -320,45 +313,29 @@ const [Grid, gridApi] = useVbenVxeGrid({
                   ),
               )
             : data;
-
-          const start = (page.currentPage - 1) * page.pageSize;
-          const end = start + page.pageSize;
-          return {
-            items: filtered.slice(start, end),
-            total: filtered.length,
-          };
+          return toPagedResult(filtered, page);
         },
       },
     },
-    toolbarConfig: {
-      custom: true,
-      refresh: { code: 'query' },
-      search: true,
-      zoom: true,
-    },
-  } as VxeTableGridOptions<HardwarePoint>,
+    pagerConfig: { enabled: true, pageSize: 20 },
+    toolbarConfig: baseToolbarConfig,
+  } as ZqTableGridOptions<HardwarePoint>,
 });
 
-const [ViuGrid, viuGridApi] = useVbenVxeGrid({
+const [ViuGrid, viuGridApi] = useZqTable({
   showSearchForm: false,
   separator: false,
-  formOptions: {
-    schema: useSearchFormSchema(),
-    showCollapseButton: false,
-    submitOnChange: true,
-  },
+  formOptions: baseFormOptions,
   gridOptions: {
-    autoResize: true,
+    columns: usePlatformColumns('VIU 平台'),
     border: true,
-    columns: usePlatformColumns('viu', 'VIU 平台'),
-    height: '100%',
-    keepSource: true,
-    pagerConfig: { enabled: true },
+    stripe: true,
     proxyConfig: {
+      autoLoad: true,
       ajax: {
-        query: async ({ page }, formValues) => {
+        query: async ({ page, form }: ZqQueryParams) => {
           const data = await queryPlatformList('viu');
-          const keyword = (formValues.keyword || '').toLowerCase();
+          const keyword = String(form?.keyword || '').toLowerCase();
           const filtered = keyword
             ? data.filter(
                 (item) =>
@@ -366,44 +343,29 @@ const [ViuGrid, viuGridApi] = useVbenVxeGrid({
                   (item.remark || '').toLowerCase().includes(keyword),
               )
             : data;
-          const start = (page.currentPage - 1) * page.pageSize;
-          const end = start + page.pageSize;
-          return {
-            items: filtered.slice(start, end),
-            total: filtered.length,
-          };
+          return toPagedResult(filtered, page);
         },
       },
     },
-    toolbarConfig: {
-      custom: true,
-      refresh: { code: 'query' },
-      search: true,
-      zoom: true,
-    },
-  } as VxeTableGridOptions<PlatformConfig>,
+    pagerConfig: { enabled: true, pageSize: 20 },
+    toolbarConfig: baseToolbarConfig,
+  } as ZqTableGridOptions<PlatformConfig>,
 });
 
-const [CdcGrid, cdcGridApi] = useVbenVxeGrid({
+const [CdcGrid, cdcGridApi] = useZqTable({
   showSearchForm: false,
   separator: false,
-  formOptions: {
-    schema: useSearchFormSchema(),
-    showCollapseButton: false,
-    submitOnChange: true,
-  },
+  formOptions: baseFormOptions,
   gridOptions: {
-    autoResize: true,
+    columns: usePlatformColumns('CDC 平台'),
     border: true,
-    columns: usePlatformColumns('cdc', 'CDC 平台'),
-    height: '100%',
-    keepSource: true,
-    pagerConfig: { enabled: true },
+    stripe: true,
     proxyConfig: {
+      autoLoad: true,
       ajax: {
-        query: async ({ page }, formValues) => {
+        query: async ({ page, form }: ZqQueryParams) => {
           const data = await queryPlatformList('cdc');
-          const keyword = (formValues.keyword || '').toLowerCase();
+          const keyword = String(form?.keyword || '').toLowerCase();
           const filtered = keyword
             ? data.filter(
                 (item) =>
@@ -411,44 +373,29 @@ const [CdcGrid, cdcGridApi] = useVbenVxeGrid({
                   (item.remark || '').toLowerCase().includes(keyword),
               )
             : data;
-          const start = (page.currentPage - 1) * page.pageSize;
-          const end = start + page.pageSize;
-          return {
-            items: filtered.slice(start, end),
-            total: filtered.length,
-          };
+          return toPagedResult(filtered, page);
         },
       },
     },
-    toolbarConfig: {
-      custom: true,
-      refresh: { code: 'query' },
-      search: true,
-      zoom: true,
-    },
-  } as VxeTableGridOptions<PlatformConfig>,
+    pagerConfig: { enabled: true, pageSize: 20 },
+    toolbarConfig: baseToolbarConfig,
+  } as ZqTableGridOptions<PlatformConfig>,
 });
 
-const [SmartGrid, smartGridApi] = useVbenVxeGrid({
+const [SmartGrid, smartGridApi] = useZqTable({
   showSearchForm: false,
   separator: false,
-  formOptions: {
-    schema: useSearchFormSchema(),
-    showCollapseButton: false,
-    submitOnChange: true,
-  },
+  formOptions: baseFormOptions,
   gridOptions: {
-    autoResize: true,
+    columns: usePlatformColumns('智慧屏版本'),
     border: true,
-    columns: usePlatformColumns('smart', '智慧屏版本'),
-    height: '100%',
-    keepSource: true,
-    pagerConfig: { enabled: true },
+    stripe: true,
     proxyConfig: {
+      autoLoad: true,
       ajax: {
-        query: async ({ page }, formValues) => {
+        query: async ({ page, form }: ZqQueryParams) => {
           const data = await queryPlatformList('smart');
-          const keyword = (formValues.keyword || '').toLowerCase();
+          const keyword = String(form?.keyword || '').toLowerCase();
           const filtered = keyword
             ? data.filter(
                 (item) =>
@@ -456,22 +403,13 @@ const [SmartGrid, smartGridApi] = useVbenVxeGrid({
                   (item.remark || '').toLowerCase().includes(keyword),
               )
             : data;
-          const start = (page.currentPage - 1) * page.pageSize;
-          const end = start + page.pageSize;
-          return {
-            items: filtered.slice(start, end),
-            total: filtered.length,
-          };
+          return toPagedResult(filtered, page);
         },
       },
     },
-    toolbarConfig: {
-      custom: true,
-      refresh: { code: 'query' },
-      search: true,
-      zoom: true,
-    },
-  } as VxeTableGridOptions<PlatformConfig>,
+    pagerConfig: { enabled: true, pageSize: 20 },
+    toolbarConfig: baseToolbarConfig,
+  } as ZqTableGridOptions<PlatformConfig>,
 });
 
 watch(
@@ -479,21 +417,17 @@ watch(
   async (tab) => {
     await nextTick();
     if (tab === 'points') {
-      (gridApi.grid as any)?.recalculate?.();
       await gridApi.reload();
       return;
     }
     if (tab === 'viu') {
-      (viuGridApi.grid as any)?.recalculate?.();
       await viuGridApi.reload();
       return;
     }
     if (tab === 'cdc') {
-      (cdcGridApi.grid as any)?.recalculate?.();
       await cdcGridApi.reload();
       return;
     }
-    (smartGridApi.grid as any)?.recalculate?.();
     await smartGridApi.reload();
   },
 );
@@ -528,6 +462,35 @@ watch(
                       新增点位
                     </ElButton>
                   </template>
+                  <template #cell-boards="{ row }">
+                    {{ (row.boards || []).join('、') || '-' }}
+                  </template>
+                  <template #cell-actions="{ row }">
+                    <div class="flex items-center justify-center gap-1">
+                      <ElTooltip content="编辑" placement="top">
+                        <ElButton
+                          circle
+                          link
+                          size="small"
+                          type="primary"
+                          @click="onPointActionClick('edit', row)"
+                        >
+                          <IconifyIcon icon="ep:edit" />
+                        </ElButton>
+                      </ElTooltip>
+                      <ElTooltip content="删除" placement="top">
+                        <ElButton
+                          circle
+                          link
+                          size="small"
+                          type="danger"
+                          @click="onPointActionClick('delete', row)"
+                        >
+                          <IconifyIcon icon="ep:delete" />
+                        </ElButton>
+                      </ElTooltip>
+                    </div>
+                  </template>
                 </Grid>
               </div>
             </section>
@@ -551,6 +514,32 @@ watch(
                     <ElButton type="primary" @click="openConfigCreate('viu')">
                       新增 VIU 平台
                     </ElButton>
+                  </template>
+                  <template #cell-actions="{ row }">
+                    <div class="flex items-center justify-center gap-1">
+                      <ElTooltip content="编辑" placement="top">
+                        <ElButton
+                          circle
+                          link
+                          size="small"
+                          type="primary"
+                          @click="onPlatformActionClick('viu', 'edit', row)"
+                        >
+                          <IconifyIcon icon="ep:edit" />
+                        </ElButton>
+                      </ElTooltip>
+                      <ElTooltip content="删除" placement="top">
+                        <ElButton
+                          circle
+                          link
+                          size="small"
+                          type="danger"
+                          @click="onPlatformActionClick('viu', 'delete', row)"
+                        >
+                          <IconifyIcon icon="ep:delete" />
+                        </ElButton>
+                      </ElTooltip>
+                    </div>
                   </template>
                 </ViuGrid>
               </div>
@@ -576,6 +565,32 @@ watch(
                       新增 CDC 平台
                     </ElButton>
                   </template>
+                  <template #cell-actions="{ row }">
+                    <div class="flex items-center justify-center gap-1">
+                      <ElTooltip content="编辑" placement="top">
+                        <ElButton
+                          circle
+                          link
+                          size="small"
+                          type="primary"
+                          @click="onPlatformActionClick('cdc', 'edit', row)"
+                        >
+                          <IconifyIcon icon="ep:edit" />
+                        </ElButton>
+                      </ElTooltip>
+                      <ElTooltip content="删除" placement="top">
+                        <ElButton
+                          circle
+                          link
+                          size="small"
+                          type="danger"
+                          @click="onPlatformActionClick('cdc', 'delete', row)"
+                        >
+                          <IconifyIcon icon="ep:delete" />
+                        </ElButton>
+                      </ElTooltip>
+                    </div>
+                  </template>
                 </CdcGrid>
               </div>
             </section>
@@ -599,6 +614,32 @@ watch(
                     <ElButton type="primary" @click="openConfigCreate('smart')">
                       新增智慧屏版本
                     </ElButton>
+                  </template>
+                  <template #cell-actions="{ row }">
+                    <div class="flex items-center justify-center gap-1">
+                      <ElTooltip content="编辑" placement="top">
+                        <ElButton
+                          circle
+                          link
+                          size="small"
+                          type="primary"
+                          @click="onPlatformActionClick('smart', 'edit', row)"
+                        >
+                          <IconifyIcon icon="ep:edit" />
+                        </ElButton>
+                      </ElTooltip>
+                      <ElTooltip content="删除" placement="top">
+                        <ElButton
+                          circle
+                          link
+                          size="small"
+                          type="danger"
+                          @click="onPlatformActionClick('smart', 'delete', row)"
+                        >
+                          <IconifyIcon icon="ep:delete" />
+                        </ElButton>
+                      </ElTooltip>
+                    </div>
                   </template>
                 </SmartGrid>
               </div>

@@ -1,12 +1,12 @@
 <script lang="ts" setup>
 import type { CodeQualityTreeRow, QualityMetricKey } from './data';
 
-import type { VxeTableGridOptions } from '#/adapter/vxe-table';
 import type {
   ModuleQualityDetail,
   QualityMetricValue,
   QualityTreeNode,
 } from '#/api/project-manager/code_quality';
+import type { ZqTableGridOptions } from '#/components/zq-table';
 
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -15,7 +15,6 @@ import { Page } from '@vben/common-ui';
 
 import { ElButton, ElDialog, ElMessage } from 'element-plus';
 
-import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import {
   getProjectQualityDetailsApi,
   refreshProjectQualityApi,
@@ -23,16 +22,23 @@ import {
 } from '#/api/project-manager/code_quality';
 import { getProjectApi } from '#/api/project-manager/project';
 import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
+import { useZqTable } from '#/components/zq-table';
 
 import CleanCodeRateCell from './components/CleanCodeRateCell.vue';
 import {
   getMetricFieldName,
   QUALITY_METRIC_COLUMNS,
-  useDetailColumns,
   useDetailSearchFormSchema,
 } from './data';
 
 defineOptions({ name: 'CodeQualityDetail' });
+interface DetailQueryParams {
+  form?: Record<string, any>;
+  page: {
+    currentPage: number;
+    pageSize: number;
+  };
+}
 
 const route = useRoute();
 const router = useRouter();
@@ -300,65 +306,86 @@ function filterTreeRows(
   });
 }
 
-const [Grid, gridApi] = useVbenVxeGrid({
-  gridEvents: {
-    menuClick: ({ menu, row }: any) => {
-      if (menu?.code === 'edit_owner' && row?.owner_editable) {
-        openOwnerDialog(row as CodeQualityTreeRow);
-      }
+function useColumns(): ZqTableGridOptions<CodeQualityTreeRow>['columns'] {
+  const columns: NonNullable<
+    ZqTableGridOptions<CodeQualityTreeRow>['columns']
+  > = [
+    {
+      key: 'node_name',
+      dataKey: 'node_name',
+      title: '树节点',
+      width: 260,
+      fixed: true,
     },
-  },
+    { key: 'oem_name', dataKey: 'oem_name', title: 'OEMName', width: 150 },
+    {
+      key: 'owner_names_text',
+      dataKey: 'owner_names_text',
+      title: '责任人',
+      width: 240,
+    },
+    {
+      key: 'record_date',
+      dataKey: 'record_date',
+      title: '更新日期',
+      width: 120,
+    },
+    {
+      key: 'clean_code_rate',
+      dataKey: 'clean_code_rate',
+      title: 'CleanCode达成率',
+      width: 150,
+    },
+    ...QUALITY_METRIC_COLUMNS.map((metric) => ({
+      key: getMetricFieldName(metric.key),
+      dataKey: getMetricFieldName(metric.key),
+      title: metric.title,
+      width: 140,
+    })),
+  ];
+
+  return columns.map((column) => ({
+    align: 'center',
+    headerAlign: 'center',
+    ...column,
+  }));
+}
+
+const [Grid, gridApi] = useZqTable({
   formOptions: {
     schema: useDetailSearchFormSchema(),
     submitOnChange: true,
   },
   gridOptions: {
-    autoResize: true,
     border: true,
-    columns: useDetailColumns(),
-    height: '100%',
-    keepSource: true,
-    treeConfig: {
-      transform: false,
-      rowField: 'id',
-      parentField: 'parent_id',
-      childrenField: 'children',
-      expandAll: true,
-    },
-    menuConfig: {
-      body: {
-        options: [
-          [
-            {
-              code: 'edit_owner',
-              name: '编辑责任人',
-            },
-          ],
-        ],
-      },
-      visibleMethod: ({ column, row }: any) => {
-        return (
-          column?.field === 'owner_names_text' && Boolean(row?.owner_editable)
-        );
-      },
+    stripe: true,
+    columns: useColumns(),
+    rowKey: 'id',
+    defaultExpandAll: true,
+    treeProps: {
+      children: 'children',
     },
     proxyConfig: {
+      autoLoad: true,
       ajax: {
-        query: async (_, formValues) => {
+        query: async ({ form }: DetailQueryParams) => {
           const rows = await fetchDetails();
+          const filteredRows = filterTreeRows(rows, form || {});
           return {
-            items: filterTreeRows(rows, formValues),
+            items: filteredRows,
+            total: filteredRows.length,
           };
         },
       },
     },
+    pagerConfig: { enabled: false },
     toolbarConfig: {
       custom: true,
-      refresh: { code: 'query' },
+      refresh: true,
       search: true,
       zoom: true,
     },
-  } as VxeTableGridOptions<CodeQualityTreeRow>,
+  } as ZqTableGridOptions<CodeQualityTreeRow>,
 });
 
 async function fetchProjectInfo() {
@@ -389,7 +416,7 @@ async function handleRefresh() {
     loading.value = true;
     await refreshProjectQualityApi(projectId);
     ElMessage.success('刷新任务已提交，正在重新加载最新数据');
-    await gridApi.query();
+    await gridApi.reload();
   } catch (error) {
     console.error(error);
     ElMessage.error('刷新失败');
@@ -413,7 +440,7 @@ async function handleOwnerChange(row: CodeQualityTreeRow, ownerIds: string[]) {
       owner_ids: ownerIds || [],
     });
     ElMessage.success('节点责任人更新成功');
-    await gridApi.query();
+    await gridApi.reload();
   } catch (error) {
     console.error(error);
     ElMessage.error('节点责任人更新失败');
@@ -443,7 +470,7 @@ async function saveOwnerDialog() {
 }
 
 onMounted(async () => {
-  await Promise.all([fetchProjectInfo(), gridApi.query()]);
+  await Promise.all([fetchProjectInfo(), gridApi.reload()]);
 });
 </script>
 
@@ -489,14 +516,18 @@ onMounted(async () => {
               <span class="text-gray-500">责任人列支持右键编辑</span>
             </div>
           </template>
-          <template #clean_code_rate_slot="{ row }">
+          <template #cell-clean_code_rate="{ row }">
             <CleanCodeRateCell
               :rate="Number(row.clean_code_rate || 0)"
               :reason-text="row.unachieved_clean_code_text"
             />
           </template>
-          <template #owner_editor_slot="{ row }">
-            <span :class="row.owner_editable ? 'cursor-context-menu' : ''">
+          <template #cell-owner_names_text="{ row }">
+            <span
+              :class="row.owner_editable ? 'cursor-context-menu' : ''"
+              @click="row.owner_editable && openOwnerDialog(row)"
+              @contextmenu.prevent="row.owner_editable && openOwnerDialog(row)"
+            >
               {{ row.owner_names_text || '-' }}
             </span>
           </template>

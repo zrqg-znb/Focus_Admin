@@ -46,7 +46,7 @@ export function useSearchFormSchema(): VbenFormSchema[] {
 }
 
 export function useTableColumns(): VxeTableGridOptions<MilestoneBoardItem>['columns'] {
-  return [
+  const columns: VxeTableGridOptions<MilestoneBoardItem>['columns'] = [
     { field: 'project_name', title: '项目名称', minWidth: 200, fixed: 'left' },
     { field: 'project_domain', title: '领域', minWidth: 100 },
     { field: 'project_type', title: '类型', minWidth: 100 },
@@ -108,7 +108,13 @@ export function useTableColumns(): VxeTableGridOptions<MilestoneBoardItem>['colu
       slots: { default: 'risk_action' },
       title: '风险处理',
       fixed: 'right',
-      width: 120,
+      width: 90,
     },
   ];
+
+  return columns.map((column) => ({
+    align: 'center',
+    headerAlign: 'center',
+    ...column,
+  }));
 }

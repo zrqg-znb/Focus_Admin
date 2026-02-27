@@ -1,40 +1,47 @@
 <script lang="ts" setup>
 import type { CodeQualityOverviewRow, QualityMetricKey } from './data';
 
-import type { VxeTableGridOptions } from '#/adapter/vxe-table';
 import type {
   ProjectQualitySummary,
   QualityMetricValue,
 } from '#/api/project-manager/code_quality';
+import type { ZqTableGridOptions } from '#/components/zq-table';
 
+import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
 import { ElLink } from 'element-plus';
 
-import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import { getQualityOverviewApi } from '#/api/project-manager/code_quality';
+import { useZqTable } from '#/components/zq-table';
 
 import CleanCodeRateCell from './components/CleanCodeRateCell.vue';
 import {
   getMetricFieldName,
   QUALITY_METRIC_COLUMNS,
   useSearchFormSchema,
-  useSummaryColumns,
 } from './data';
 
 defineOptions({ name: 'CodeQualityDashboard' });
+interface QualityQueryParams {
+  form?: Record<string, any>;
+  page: {
+    currentPage: number;
+    pageSize: number;
+  };
+}
 
 const router = useRouter();
 const metricKeys = new Set<string>(
   QUALITY_METRIC_COLUMNS.map((item) => item.key),
 );
+const currentPageRows = ref<CodeQualityOverviewRow[]>([]);
 
 function onNameClick(row: CodeQualityOverviewRow) {
   router.push(`/project-manager/code-quality/detail/${row.project_id}`);
 }
-
 function toMetricMaps(metricValues: QualityMetricValue[] = []) {
   const displayMap: Record<string, string> = {};
   const warningMap: Record<string, boolean> = {};
@@ -50,7 +57,6 @@ function toMetricMaps(metricValues: QualityMetricValue[] = []) {
   }
   return { displayMap, warningMap };
 }
-
 function normalizeRows(rows: ProjectQualitySummary[] = []) {
   return rows
     .map((item) => {
@@ -96,7 +102,6 @@ function normalizeRows(rows: ProjectQualitySummary[] = []) {
       return first.oem_name.localeCompare(second.oem_name, 'zh-CN');
     });
 }
-
 function filterRows(
   rows: CodeQualityOverviewRow[],
   formValues: Record<string, any>,
@@ -128,78 +133,143 @@ function filterRows(
   }
   return filtered;
 }
-
-function projectSpanMethod({ column, row, rowIndex, visibleData }: any) {
-  if (column.field !== 'project_name') {
-    return { colspan: 1, rowspan: 1 };
+function projectSpanMethod({ row, column, rowIndex }: any) {
+  const prop = String(column.property || column.prop || '');
+  if (prop !== 'project_name') {
+    return [1, 1];
   }
-
-  const prevRow = visibleData[rowIndex - 1];
+  const rows = currentPageRows.value;
+  const prevRow = rows[rowIndex - 1];
   if (prevRow && prevRow.project_id === row.project_id) {
-    return { colspan: 0, rowspan: 0 };
+    return [0, 0];
   }
 
   let rowspan = 1;
-  for (let index = rowIndex + 1; index < visibleData.length; index += 1) {
-    if (visibleData[index].project_id === row.project_id) {
+  for (let index = rowIndex + 1; index < rows.length; index += 1) {
+    if (rows[index]?.project_id === row.project_id) {
       rowspan += 1;
     } else {
       break;
     }
   }
-  return { colspan: 1, rowspan };
+  return [rowspan, 1];
+}
+function useColumns(): ZqTableGridOptions<CodeQualityOverviewRow>['columns'] {
+  const columns: NonNullable<
+    ZqTableGridOptions<CodeQualityOverviewRow>['columns']
+  > = [
+    {
+      key: 'project_name',
+      dataKey: 'project_name',
+      title: '项目名',
+      width: 180,
+      fixed: true,
+    },
+    {
+      key: 'oem_name',
+      dataKey: 'oem_name',
+      title: 'OEMName',
+      width: 140,
+      fixed: true,
+    },
+    {
+      key: 'project_managers',
+      dataKey: 'project_managers',
+      title: '项目经理',
+      width: 150,
+    },
+    {
+      key: 'record_date',
+      dataKey: 'record_date',
+      title: '更新日期',
+      width: 120,
+    },
+    {
+      key: 'clean_code_achieve_rate',
+      dataKey: 'clean_code_achieve_rate',
+      title: 'CleanCode达成率',
+      width: 150,
+    },
+    {
+      key: 'avg_duplication_rate',
+      dataKey: 'avg_duplication_rate',
+      title: '平均重复率',
+      width: 120,
+    },
+    { key: 'total_loc', dataKey: 'total_loc', title: '总代码规模', width: 140 },
+    ...QUALITY_METRIC_COLUMNS.map((metric) => ({
+      key: getMetricFieldName(metric.key),
+      dataKey: getMetricFieldName(metric.key),
+      title: metric.title,
+      width: 140,
+    })),
+  ];
+
+  return columns.map((column) => ({
+    align: 'center',
+    headerAlign: 'center',
+    ...column,
+  }));
 }
 
-const [Grid] = useVbenVxeGrid({
+const [Grid] = useZqTable({
   formOptions: {
     schema: useSearchFormSchema(),
     submitOnChange: true,
+    showCollapseButton: false,
   },
   gridOptions: {
     border: true,
-    columns: useSummaryColumns(),
-    height: 'auto',
-    keepSource: true,
-    pagerConfig: { enabled: true },
+    stripe: true,
+    columns: useColumns(),
+    spanMethod: projectSpanMethod,
     proxyConfig: {
+      autoLoad: true,
       ajax: {
-        query: async ({ page }, formValues) => {
+        query: async ({ page, form }: QualityQueryParams) => {
           const rows = normalizeRows(await getQualityOverviewApi());
-          const filtered = filterRows(rows, formValues);
+          const filtered = filterRows(rows, form || {});
 
           const start = (page.currentPage - 1) * page.pageSize;
           const end = start + page.pageSize;
+          currentPageRows.value = filtered.slice(start, end);
           return {
-            items: filtered.slice(start, end),
+            items: currentPageRows.value,
             total: filtered.length,
           };
         },
       },
     },
-    spanMethod: projectSpanMethod,
+    pagerConfig: { enabled: true, pageSize: 20 },
     toolbarConfig: {
       custom: true,
-      refresh: { code: 'query' },
+      refresh: true,
       search: true,
       zoom: true,
     },
-  } as VxeTableGridOptions<CodeQualityOverviewRow>,
+  } as ZqTableGridOptions<CodeQualityOverviewRow>,
 });
 </script>
 
 <template>
   <Page auto-content-height>
-    <Grid>
-      <template #name_slot="{ row }">
+    <Grid class="h-full">
+      <template #cell-project_name="{ row }">
         <ElLink type="primary" @click="onNameClick(row)">
           {{ row.project_name }}
         </ElLink>
       </template>
-      <template #clean_code_achieve_rate_slot="{ row }">
+      <template #cell-clean_code_achieve_rate="{ row }">
         <CleanCodeRateCell
           :rate="Number(row.clean_code_achieve_rate || 0)"
           :reason-text="row.unachieved_clean_code_text"
         />
+      </template>
+      <template #cell-avg_duplication_rate="{ row }">
+        {{ Number(row.avg_duplication_rate || 0).toFixed(2) }}%
+      </template>
+      <template #cell-total_loc="{ row }">
+        {{ Number(row.total_loc || 0).toLocaleString() }}
       </template>
     </Grid>
   </Page>

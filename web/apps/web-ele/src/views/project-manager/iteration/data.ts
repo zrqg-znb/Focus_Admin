@@ -18,11 +18,24 @@ const formatRate = ({ cellValue }: { cellValue: number }) => {
     ? `${(cellValue * 100).toFixed(1)}%`
     : '-';
 };
+function withCenterAlign(columns: Record<string, any>[]) {
+  return columns.map((column) => {
+    const nextColumn: Record<string, any> = {
+      ...column,
+      align: column.align ?? 'center',
+      headerAlign: column.headerAlign ?? 'center',
+    };
+    if (Array.isArray(column.children)) {
+      nextColumn.children = withCenterAlign(column.children);
+    }
+    return nextColumn;
+  });
+}
 
 export function useDashboardColumns(
   _onNameClick: (row: IterationDashboardItem) => void,
 ): VxeTableGridOptions<IterationDashboardItem>['columns'] {
-  return [
+  return withCenterAlign([
     {
       field: 'project_name',
       title: '项目名',
@@ -166,11 +179,11 @@ export function useDashboardColumns(
     },
     { field: 'start_date', title: '开始时间', minWidth: 110 },
     { field: 'end_date', title: '结束时间', minWidth: 110 },
-  ];
+  ]);
 }
 
 export function useDetailColumns(): VxeTableGridOptions<IterationDetailItem>['columns'] {
-  return [
+  return withCenterAlign([
     { field: 'name', title: '迭代名称', minWidth: 150, fixed: 'left' },
     { field: 'code', title: '编码', minWidth: 120 },
     { field: 'start_date', title: '开始时间', minWidth: 120 },
@@ -285,5 +298,5 @@ export function useDetailColumns(): VxeTableGridOptions<IterationDetailItem>['co
         },
       ],
     },
-  ];
+  ]);
 }
