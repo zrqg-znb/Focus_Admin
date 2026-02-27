@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from functools import cmp_to_key
 from typing import List, Optional
 from django.db import transaction
 from django.db.models import Q
@@ -37,6 +38,8 @@ def get_milestone_board(filters: dict):
     # 获取 QG 筛选条件
     qg_filters = filters.get('qg_filters')
     today = date.today()
+    sort_field = filters.get('sort_field')
+    sort_order = str(filters.get('sort_order') or 'asc').lower()
 
     # 批量获取风险状态
     # Structure: { project_id: { 'QG1': 'high', 'QG2': 'medium' } }
@@ -106,8 +109,44 @@ def get_milestone_board(filters: dict):
         }
         result.append(item_dict)
         
-    # Sort by next_date if qg_filters are applied
-    if qg_filters:
+    # 后端排序：QG3/QG4/QG5 支持“未过点优先”排序（全量数据）
+    qg_sort_fields = {"qg3_date", "qg4_date", "qg5_date"}
+    if sort_field in qg_sort_fields:
+        direction = -1 if sort_order == "desc" else 1
+
+        def _rank_sort_value(item_date: Optional[date]):
+            if item_date is None:
+                return 2
+            return 0 if item_date >= today else 1
+
+        def _compare_items(left: dict, right: dict):
+            left_date = left.get(sort_field)
+            right_date = right.get(sort_field)
+
+            left_rank = _rank_sort_value(left_date)
+            right_rank = _rank_sort_value(right_date)
+            if left_rank != right_rank:
+                return left_rank - right_rank
+
+            if left_date is None and right_date is None:
+                left_name = left.get("project_name", "")
+                right_name = right.get("project_name", "")
+                return (left_name > right_name) - (left_name < right_name)
+            if left_date is None:
+                return 1
+            if right_date is None:
+                return -1
+
+            if left_date != right_date:
+                return -direction if left_date < right_date else direction
+
+            left_name = left.get("project_name", "")
+            right_name = right.get("project_name", "")
+            return (left_name > right_name) - (left_name < right_name)
+
+        result.sort(key=cmp_to_key(_compare_items))
+    # Sort by next_date if qg_filters are applied and no explicit sort
+    elif qg_filters:
         # Sort projects with earlier next_date first.
         # Projects with no next_date (shouldn't happen due to filter logic, but safe to handle) go last.
         result.sort(key=lambda x: x['_sort_date'] or date.max)

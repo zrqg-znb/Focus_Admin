@@ -1,3 +1,144 @@
+<script setup lang="ts">
+import type { VxeTableGridOptions } from '#/adapter/vxe-table';
+import type { MilestoneBoardItem } from '#/api/project-manager/milestone';
+
+import { ref } from 'vue';
+
+import { Page } from '@vben/common-ui';
+import { IconifyIcon } from '@vben/icons';
+
+import { ElButton, ElTooltip } from 'element-plus';
+
+import { useVbenForm } from '#/adapter/form';
+import { useVbenVxeGrid } from '#/adapter/vxe-table';
+import { getMilestoneOverviewApi } from '#/api/project-manager/milestone';
+
+import MilestoneGantt from './components/MilestoneGantt.vue';
+import RiskLogDrawer from './components/RiskLogDrawer.vue';
+import { useSearchFormSchema, useTableColumns } from './data';
+
+defineOptions({ name: 'MilestoneDashboard' });
+
+const loading = ref(false);
+const milestoneData = ref<MilestoneBoardItem[]>([]);
+const riskDrawerRef = ref();
+const QG_SORT_FIELDS = new Set(['qg3_date', 'qg4_date', 'qg5_date']);
+const currentSort = ref<null | { field: string; order: 'asc' }>(null);
+
+function isSortActive(field: string) {
+  return (
+    currentSort.value?.field === field && currentSort.value.order === 'asc'
+  );
+}
+
+async function toggleQGSort(field: string) {
+  if (!QG_SORT_FIELDS.has(field)) {
+    return;
+  }
+
+  currentSort.value = isSortActive(field) ? null : { field, order: 'asc' };
+
+  await gridApi.query();
+}
+
+function handleOpenRiskDrawer(row: MilestoneBoardItem) {
+  riskDrawerRef.value?.open(row.project_id, row.project_name);
+}
+
+function getQGName(field: string) {
+  return field.replace('_date', '').toUpperCase();
+}
+
+function getRisk(row: MilestoneBoardItem, field: string) {
+  if (!row.risks) return undefined;
+  const qg = getQGName(field);
+  return row.risks[qg];
+}
+
+function getRiskIcon(row: MilestoneBoardItem, field: string) {
+  const risk = getRisk(row, field);
+  if (!risk) return '';
+  return 'lucide:alert-triangle';
+}
+
+function getRiskClass(row: MilestoneBoardItem, field: string) {
+  const risk = getRisk(row, field);
+  if (!risk) return '';
+  return risk.level === 'high' ? 'text-red-500' : 'text-yellow-500';
+}
+
+function isNextQG(row: MilestoneBoardItem, column: any) {
+  if (!row.next_qg || row.next_qg.length === 0) return false;
+  const qg = getQGName(column.field);
+  return row.next_qg.includes(qg);
+}
+
+const [Form, formApi] = useVbenForm({
+  schema: useSearchFormSchema(),
+  handleSubmit: handleSearch,
+  showCollapseButton: false,
+  layout: 'inline',
+  submitOnChange: true,
+  submitButtonOptions: {
+    content: '搜索',
+  },
+  resetButtonOptions: {
+    content: '重置',
+  },
+});
+
+const [Grid, gridApi] = useVbenVxeGrid({
+  gridOptions: {
+    columns: useTableColumns(),
+    height: 'auto',
+    pagerConfig: {
+      enabled: true,
+    },
+    proxyConfig: {
+      ajax: {
+        query: async (params, formValues) => {
+          loading.value = true;
+          try {
+            const { page } = params;
+            // Merge form values from the separate form instance
+            const values = await formApi.getValues();
+            const data = await getMilestoneOverviewApi({
+              ...values,
+              ...formValues,
+              sort_field: currentSort.value?.field,
+              sort_order: currentSort.value?.order,
+            });
+
+            // Update the Gantt chart data with the full result set (sorted by backend)
+            milestoneData.value = data;
+
+            const currentPage = page?.currentPage || 1;
+            const pageSize =
+              page?.pageSize ?? (data.length > 0 ? data.length : 20);
+            const start = (currentPage - 1) * pageSize;
+            const end = start + pageSize;
+            const pageItems = data.slice(start, end);
+
+            return { items: pageItems, total: data.length };
+          } finally {
+            loading.value = false;
+          }
+        },
+      },
+    },
+    toolbarConfig: {
+      refresh: { code: 'query' },
+      zoom: true,
+      custom: true,
+    },
+  } as VxeTableGridOptions<MilestoneBoardItem>,
+});
+
+async function handleSearch() {
+  await gridApi.query();
+}
+</script>
+
 <template>
   <Page auto-content-height>
     <div class="flex h-full flex-col gap-4 p-4">
@@ -25,6 +166,26 @@
 
         <div class="flex-1 overflow-hidden">
           <Grid>
+            <template #qg_sort_header="{ column }">
+              <div class="flex items-center gap-1">
+                <span>{{ column.title }}</span>
+                <ElButton
+                  link
+                  type="primary"
+                  class="!p-0"
+                  @click.stop="toggleQGSort(column.field)"
+                >
+                  <IconifyIcon
+                    icon="lucide:arrow-up"
+                    :class="
+                      isSortActive(column.field)
+                        ? 'text-[var(--el-color-primary)]'
+                        : 'text-gray-400'
+                    "
+                  />
+                </ElButton>
+              </div>
+            </template>
             <template #qg_cell="{ row, column }">
               <div class="flex items-center gap-1">
                 <span :style="isNextQG(row, column) ? 'font-weight: 700' : ''">
@@ -56,130 +217,6 @@
     <RiskLogDrawer ref="riskDrawerRef" />
   </Page>
 </template>
-
-<script setup lang="ts">
-import type { VxeTableGridOptions } from '#/adapter/vxe-table';
-import type { MilestoneBoardItem } from '#/api/project-manager/milestone';
-
-import { onMounted, ref } from 'vue';
-
-import { Page } from '@vben/common-ui';
-import { IconifyIcon } from '@vben/icons';
-
-import { ElButton, ElTooltip } from 'element-plus';
-
-import { useVbenForm } from '#/adapter/form';
-import { useVbenVxeGrid } from '#/adapter/vxe-table';
-import { getMilestoneOverviewApi } from '#/api/project-manager/milestone';
-
-import MilestoneGantt from './components/MilestoneGantt.vue';
-import RiskLogDrawer from './components/RiskLogDrawer.vue';
-import { useSearchFormSchema, useTableColumns } from './data';
-
-defineOptions({ name: 'MilestoneDashboard' });
-
-const loading = ref(false);
-const milestoneData = ref<MilestoneBoardItem[]>([]);
-const riskDrawerRef = ref();
-
-function handleOpenRiskDrawer(row: MilestoneBoardItem) {
-  riskDrawerRef.value?.open(row.project_id, row.project_name);
-}
-
-function getQGName(field: string) {
-  return field.replace('_date', '').toUpperCase();
-}
-
-function getRisk(row: MilestoneBoardItem, field: string) {
-  if (!row.risks) return undefined;
-  const qg = getQGName(field);
-  return row.risks[qg];
-}
-
-function getRiskIcon(row: MilestoneBoardItem, field: string) {
-  const risk = getRisk(row, field);
-  if (!risk) return '';
-  return 'lucide:alert-triangle';
-}
-
-function getRiskClass(row: MilestoneBoardItem, field: string) {
-  const risk = getRisk(row, field);
-  if (!risk) return '';
-  return risk.level === 'high' ? 'text-red-500' : 'text-yellow-500';
-}
-
-function isNextQG(row: MilestoneBoardItem, column: any) {
-   if (!row.next_qg || !row.next_qg.length) return false;
-   const qg = getQGName(column.field);
-   return row.next_qg.includes(qg);
-}
-
-const [Form, formApi] = useVbenForm({
-  schema: useSearchFormSchema(),
-  handleSubmit: handleSearch,
-  showCollapseButton: false,
-  layout: 'inline',
-  submitOnChange: true,
-  submitButtonOptions: {
-    content: '搜索',
-  },
-  resetButtonOptions: {
-    content: '重置',
-  },
-});
-
-const [Grid, gridApi] = useVbenVxeGrid({
-  gridOptions: {
-    columns: useTableColumns(),
-    height: 'auto',
-    pagerConfig: {
-      enabled: true,
-    },
-    proxyConfig: {
-      ajax: {
-        query: async ({ page }, formValues) => {
-          loading.value = true;
-          try {
-            // Merge form values from the separate form instance
-            const values = await formApi.getValues();
-            const data = await getMilestoneOverviewApi({
-              ...values,
-              ...formValues,
-            });
-
-            // Update the Gantt chart data with the full result set
-            milestoneData.value = data;
-
-            // Perform frontend pagination for the table
-            const start = (page.currentPage - 1) * page.pageSize;
-            const end = start + page.pageSize;
-            const pageItems = data.slice(start, end);
-
-            return { items: pageItems, total: data.length };
-          } finally {
-            loading.value = false;
-          }
-        },
-      },
-    },
-    toolbarConfig: {
-      refresh: { code: 'query' },
-      zoom: true,
-      custom: true,
-    },
-  } as VxeTableGridOptions<MilestoneBoardItem>,
-});
-
-async function handleSearch() {
-  gridApi.reload();
-}
-
-onMounted(() => {
-  // Initial load
-  // gridApi.reload() is called automatically if autoLoad is true (default in adapter)
-  // But we want to ensure it uses the form values if any defaults exist
-});
-</script>
 
 <style scoped>
 .bg-card {

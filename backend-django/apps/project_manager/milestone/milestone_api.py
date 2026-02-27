@@ -14,7 +14,9 @@ def get_milestone_board(
     keyword: Optional[str] = None,
     project_type: Optional[str] = None,
     manager_id: Optional[str] = None,
-    qg_filters: Optional[str] = None  # Change to str to receive JSON
+    qg_filters: Optional[str] = None,  # Change to str to receive JSON
+    sort_field: Optional[str] = None,
+    sort_order: Optional[str] = None,
 ):
     filters = {}
     if keyword:
@@ -29,6 +31,10 @@ def get_milestone_board(
             filters['qg_filters'] = json.loads(qg_filters)
         except json.JSONDecodeError:
             pass # Or handle error appropriately
+    if sort_field:
+        filters['sort_field'] = sort_field
+    if sort_order:
+        filters['sort_order'] = sort_order
         
     return milestone_service.get_milestone_board(filters)
 
