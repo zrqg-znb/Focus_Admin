@@ -72,6 +72,8 @@ class QualityTreeNodeSchema(Schema):
     id: str
     node_key: str
     version_name: str
+    owner_names: List[str] = Field(default_factory=list)
+    owner_ids: List[str] = Field(default_factory=list)
     depth: int = 0
     clean_code_rate: float = 0.0
     is_clean_code: bool = False
@@ -101,6 +103,7 @@ class ProjectQualitySummarySchema(Schema):
     warning_node_count: int = 0
     warning_count: int = 0
     warning_metrics: List[str] = Field(default_factory=list)
+    unachieved_clean_code: List[str] = Field(default_factory=list)
     metric_values: List[QualityMetricValueSchema] = Field(default_factory=list)
 
 
@@ -126,3 +129,9 @@ class ModuleQualityDetailSchema(Schema):
     root_version_name: str = ""
     metric_values: List[QualityMetricValueSchema] = Field(default_factory=list)
     nodes: List[QualityTreeNodeSchema] = Field(default_factory=list)
+
+
+class NodeOwnerUpdateSchema(Schema):
+    module_id: str
+    node_key: str
+    owner_ids: List[str] = Field(default_factory=list)

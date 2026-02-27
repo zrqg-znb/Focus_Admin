@@ -48,12 +48,17 @@ export interface CodeQualityOverviewRow {
   avg_duplication_rate: number;
   total_loc: number;
   warning_metrics_text: string;
+  unachieved_clean_code_text: string;
   metric_warning_map: Record<string, boolean>;
   [key: string]: any;
 }
 
 export interface CodeQualityTreeRow {
   id: string;
+  module_id: string;
+  node_key: string;
+  owner_editable: boolean;
+  owner_ids: string[];
   row_type: 'module' | 'node';
   node_name: string;
   oem_name: string;
@@ -103,6 +108,7 @@ export function useSummaryColumns(): VxeTableGridOptions<CodeQualityOverviewRow>
       field: 'clean_code_achieve_rate',
       title: 'CleanCode达成率',
       minWidth: 140,
+      slots: { default: 'clean_code_achieve_rate_slot' },
       formatter: ({ cellValue }) =>
         `${((Number(cellValue) || 0) * 100).toFixed(2)}%`,
       className: ({ row }) =>
@@ -169,13 +175,18 @@ export function useDetailColumns(): VxeTableGridOptions<CodeQualityTreeRow>['col
       fixed: 'left',
     },
     { field: 'oem_name', title: 'OEMName', minWidth: 140, fixed: 'left' },
-    { field: 'module', title: '模块名', minWidth: 180, fixed: 'left' },
-    { field: 'owner_names_text', title: '责任人', minWidth: 180 },
+    {
+      field: 'owner_names_text',
+      title: '责任人',
+      minWidth: 220,
+      slots: { default: 'owner_editor_slot' },
+    },
     { field: 'record_date', title: '更新日期', width: 120 },
     {
       field: 'clean_code_rate',
       title: 'CleanCode达成率',
       width: 140,
+      slots: { default: 'clean_code_rate_slot' },
       formatter: ({ cellValue }) =>
         `${((Number(cellValue) || 0) * 100).toFixed(2)}%`,
       className: ({ row }) =>

@@ -8,11 +8,17 @@ from ninja.errors import HttpError
 
 from common import fu_crud
 from apps.project_manager.project.project_model import Project
-from .code_quality_model import CodeMetric, CodeMetricNode, CodeModule
+from .code_quality_model import (
+    CodeMetric,
+    CodeMetricNode,
+    CodeModule,
+    CodeNodeOwnerConfig,
+)
 from .code_quality_schema import (
     CodeMetricSchema,
     ModuleConfigSchema,
     ModuleQualityDetailSchema,
+    NodeOwnerUpdateSchema,
     ProjectQualitySummarySchema,
     QualityMetricValueSchema,
     QualityTreeNodeSchema,
@@ -52,9 +58,55 @@ def _module_owner_ids(module: CodeModule) -> List[str]:
     return [str(item.id) for item in module.owners.all()]
 
 
+def _node_owner_config_map(
+    modules: List[CodeModule],
+) -> Dict[Tuple[str, str], Dict[str, List[str]]]:
+    module_ids = [module.id for module in modules]
+    if not module_ids:
+        return {}
+
+    configs = (
+        CodeNodeOwnerConfig.objects.filter(
+            module_id__in=module_ids,
+            is_deleted=False,
+        )
+        .prefetch_related("owners")
+        .order_by("module_id", "node_key")
+    )
+    owner_map: Dict[Tuple[str, str], Dict[str, List[str]]] = {}
+    for config in configs:
+        owner_map[(str(config.module_id), config.node_key)] = {
+            "owner_ids": [str(item.id) for item in config.owners.all()],
+            "owner_names": [
+                item.name or item.username
+                for item in config.owners.all()
+            ],
+        }
+    return owner_map
+
+
 def _latest_metric(module: CodeModule) -> CodeMetric | None:
     return (
         module.metrics.filter(is_deleted=False)
+        .only(
+            "id",
+            "module_id",
+            "record_date",
+            "loc",
+            "function_count",
+            "dangerous_func_count",
+            "duplication_rate",
+            "is_clean_code",
+            "clean_code_rate",
+            "clean_code_total",
+            "unachieved_clean_code",
+            "warning_count",
+            "warning_metrics",
+            "total_node_count",
+            "warning_node_count",
+            "version_name",
+            "summary_metrics",
+        )
         .order_by("-record_date", "-sys_create_datetime")
         .first()
     )
@@ -214,12 +266,33 @@ def _aggregate_oem_metric_values(metrics: List[CodeMetric]) -> List[QualityMetri
     return aggregated
 
 
-def _build_metric_tree(metric: CodeMetric) -> List[QualityTreeNodeSchema]:
+def _build_metric_tree(
+    metric: CodeMetric,
+    module: CodeModule,
+    owner_map: Dict[Tuple[str, str], Dict[str, List[str]]],
+) -> List[QualityTreeNodeSchema]:
+    module_owner_names = _module_owner_names(module)
+    module_owner_ids = _module_owner_ids(module)
+
     node_rows = list(
         CodeMetricNode.objects.filter(metric=metric, is_deleted=False).order_by(
             "depth",
             "order_index",
             "sys_create_datetime",
+        ).only(
+            "id",
+            "parent_id",
+            "node_key",
+            "version_name",
+            "depth",
+            "order_index",
+            "metric_values",
+            "warning_metrics",
+            "warning_count",
+            "clean_code_rate",
+            "clean_code_total",
+            "unachieved_clean_code",
+            "is_clean_code",
         )
     )
     if not node_rows:
@@ -230,10 +303,23 @@ def _build_metric_tree(metric: CodeMetric) -> List[QualityTreeNodeSchema]:
     row_map = {str(item.id): item for item in node_rows}
 
     for row in node_rows:
+        owner_info = owner_map.get((str(module.id), row.node_key))
+        owner_names = (
+            list(owner_info.get("owner_names") or [])
+            if owner_info
+            else list(module_owner_names)
+        )
+        owner_ids = (
+            list(owner_info.get("owner_ids") or [])
+            if owner_info
+            else list(module_owner_ids)
+        )
         node_payload_map[str(row.id)] = QualityTreeNodeSchema(
             id=str(row.id),
             node_key=row.node_key,
             version_name=row.version_name,
+            owner_names=owner_names,
+            owner_ids=owner_ids,
             depth=row.depth,
             clean_code_rate=row.clean_code_rate,
             is_clean_code=row.is_clean_code,
@@ -293,6 +379,7 @@ def get_quality_overview():
             duplication_rates: List[float] = []
             clean_code_rates: List[float] = []
             clean_code_pass_modules = 0
+            unachieved_clean_code: List[str] = []
             total_node_count = 0
             warning_node_count = 0
             latest_date = None
@@ -305,6 +392,10 @@ def get_quality_overview():
                 clean_code_rates.append(float(latest.clean_code_rate or 0.0))
                 total_node_count += int(latest.total_node_count or 0)
                 warning_node_count += int(latest.warning_node_count or 0)
+                for issue in latest.unachieved_clean_code or []:
+                    issue_text = str(issue or "").strip()
+                    if issue_text and issue_text not in unachieved_clean_code:
+                        unachieved_clean_code.append(issue_text)
                 if latest.is_clean_code:
                     clean_code_pass_modules += 1
                 if latest_date is None or latest.record_date > latest_date:
@@ -348,6 +439,7 @@ def get_quality_overview():
                     warning_node_count=warning_node_count,
                     warning_count=len(set(warning_metrics)),
                     warning_metrics=list(dict.fromkeys(warning_metrics)),
+                    unachieved_clean_code=unachieved_clean_code,
                     metric_values=metric_values,
                 )
             )
@@ -362,6 +454,7 @@ def get_project_quality_details(project_id: str, include_tree: bool = True):
         .prefetch_related("owners")
         .order_by("oem_name", "module")
     )
+    owner_map = _node_owner_config_map(list(modules))
 
     result: List[ModuleQualityDetailSchema] = []
     for module in modules:
@@ -371,7 +464,11 @@ def get_project_quality_details(project_id: str, include_tree: bool = True):
             if include_tree
             else []
         )
-        nodes = _build_metric_tree(latest) if latest and include_tree else []
+        nodes = (
+            _build_metric_tree(latest, module, owner_map)
+            if latest and include_tree
+            else []
+        )
         result.append(
             ModuleQualityDetailSchema(
                 id=str(module.id),
@@ -479,3 +576,53 @@ def record_module_metric(module_id: str, data: CodeMetricSchema):
         defaults=data.dict(exclude={"record_date"}),
     )
     return metric
+
+
+def update_node_owner(data: NodeOwnerUpdateSchema):
+    module = CodeModule.objects.filter(
+        id=data.module_id,
+        is_deleted=False,
+    ).first()
+    if not module:
+        raise HttpError(404, "模块不存在")
+
+    node_key = str(data.node_key or "").strip()
+    if not node_key:
+        raise HttpError(422, "node_key不能为空")
+
+    owner_ids = [str(item).strip() for item in (data.owner_ids or []) if str(item).strip()]
+    owner_ids = list(dict.fromkeys(owner_ids))
+
+    latest_metric = _latest_metric(module)
+    if latest_metric:
+        exists = CodeMetricNode.objects.filter(
+            metric=latest_metric,
+            node_key=node_key,
+            is_deleted=False,
+        ).exists()
+        if not exists:
+            raise HttpError(404, "节点不存在")
+
+    config = CodeNodeOwnerConfig.objects.filter(
+        module=module,
+        node_key=node_key,
+    ).first()
+
+    if not owner_ids:
+        if config:
+            config.owners.clear()
+            config.is_deleted = True
+            config.save(update_fields=["is_deleted", "sys_update_datetime"])
+        return True
+
+    if not config:
+        config = CodeNodeOwnerConfig.objects.create(
+            module=module,
+            node_key=node_key,
+        )
+    elif config.is_deleted:
+        config.is_deleted = False
+        config.save(update_fields=["is_deleted", "sys_update_datetime"])
+
+    config.owners.set(owner_ids)
+    return True

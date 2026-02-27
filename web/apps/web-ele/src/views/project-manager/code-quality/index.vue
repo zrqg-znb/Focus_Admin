@@ -16,6 +16,7 @@ import { ElLink } from 'element-plus';
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import { getQualityOverviewApi } from '#/api/project-manager/code_quality';
 
+import CleanCodeRateCell from './components/CleanCodeRateCell.vue';
 import {
   getMetricFieldName,
   QUALITY_METRIC_COLUMNS,
@@ -73,6 +74,10 @@ function normalizeRows(rows: ProjectQualitySummary[] = []) {
         warning_metrics_text:
           item.warning_metrics && item.warning_metrics.length > 0
             ? item.warning_metrics.join('、')
+            : '-',
+        unachieved_clean_code_text:
+          item.unachieved_clean_code && item.unachieved_clean_code.length > 0
+            ? item.unachieved_clean_code.join('；')
             : '-',
         metric_warning_map: warningMap,
       };
@@ -189,6 +194,12 @@ const [Grid] = useVbenVxeGrid({
         <ElLink type="primary" @click="onNameClick(row)">
           {{ row.project_name }}
         </ElLink>
+      </template>
+      <template #clean_code_achieve_rate_slot="{ row }">
+        <CleanCodeRateCell
+          :rate="Number(row.clean_code_achieve_rate || 0)"
+          :reason-text="row.unachieved_clean_code_text"
+        />
       </template>
     </Grid>
   </Page>

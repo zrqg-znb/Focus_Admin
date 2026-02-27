@@ -11,5 +11,6 @@ from apps.project_manager.code_quality.code_quality_model import (
     CodeMetric,
     CodeMetricNode,
     CodeModule,
+    CodeNodeOwnerConfig,
 )
 from apps.project_manager.models.sync_log_model import SyncLog

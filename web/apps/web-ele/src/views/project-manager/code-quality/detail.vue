@@ -13,15 +13,18 @@ import { useRoute, useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
-import { ElButton, ElMessage } from 'element-plus';
+import { ElButton, ElDialog, ElMessage } from 'element-plus';
 
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import {
   getProjectQualityDetailsApi,
   refreshProjectQualityApi,
+  updateNodeOwnerApi,
 } from '#/api/project-manager/code_quality';
 import { getProjectApi } from '#/api/project-manager/project';
+import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
 
+import CleanCodeRateCell from './components/CleanCodeRateCell.vue';
 import {
   getMetricFieldName,
   QUALITY_METRIC_COLUMNS,
@@ -37,7 +40,11 @@ const projectId = route.params.id as string;
 
 const projectInfo = ref<any>({});
 const loading = ref(false);
-const detailsLoading = ref(false);
+const detailsLoading = ref(true);
+const ownerDialogVisible = ref(false);
+const ownerSaving = ref(false);
+const ownerEditIds = ref<string[]>([]);
+const ownerEditRow = ref<CodeQualityTreeRow | null>(null);
 const treeRows = ref<CodeQualityTreeRow[]>([]);
 const metricKeys = new Set<string>(
   QUALITY_METRIC_COLUMNS.map((item) => item.key),
@@ -107,17 +114,39 @@ function countDescendantWarnings(nodes: QualityTreeNode[] = []): number {
   return total;
 }
 
-function mapNodeRows(nodes: QualityTreeNode[] = []): CodeQualityTreeRow[] {
+function mapNodeRows(
+  nodes: QualityTreeNode[] = [],
+  moduleId: string,
+  fallbackOwnerIds: string[] = [],
+  fallbackOwnerNamesText = '-',
+): CodeQualityTreeRow[] {
   return nodes.map((node) => {
     const { displayMap, warningMap } = toMetricMaps(node.metric_values || []);
-    const children = mapNodeRows(node.children || []);
+    const nodeOwnerIds =
+      node.owner_ids && node.owner_ids.length > 0
+        ? node.owner_ids
+        : fallbackOwnerIds;
+    const nodeOwnerNames =
+      node.owner_names && node.owner_names.length > 0
+        ? node.owner_names.join('、')
+        : fallbackOwnerNamesText;
+    const children = mapNodeRows(
+      node.children || [],
+      moduleId,
+      fallbackOwnerIds,
+      fallbackOwnerNamesText,
+    );
     const row: CodeQualityTreeRow = {
       id: `node-${node.id}`,
+      module_id: moduleId,
+      node_key: node.node_key || '',
+      owner_editable: true,
+      owner_ids: [...nodeOwnerIds],
       row_type: 'node',
       node_name: node.version_name || '-',
       oem_name: '-',
       module: '-',
-      owner_names_text: '-',
+      owner_names_text: nodeOwnerNames || '-',
       record_date: '-',
       clean_code_rate: Number(node.clean_code_rate || 0),
       warning_count: Number(node.warning_count || 0),
@@ -146,6 +175,11 @@ function normalizeTreeRows(details: ModuleQualityDetail[] = []) {
   return details
     .map((item) => {
       const { displayMap, warningMap } = toMetricMaps(item.metric_values || []);
+      const moduleOwnerIds = item.owner_ids || [];
+      const moduleOwnerNamesText =
+        item.owner_names && item.owner_names.length > 0
+          ? item.owner_names.join('、')
+          : '-';
       let nodeChildrenSource = item.nodes || [];
       if (
         nodeChildrenSource.length === 1 &&
@@ -157,14 +191,15 @@ function normalizeTreeRows(details: ModuleQualityDetail[] = []) {
 
       const row: CodeQualityTreeRow = {
         id: `module-${item.id}`,
+        module_id: item.id,
+        node_key: item.root_version_name || item.module || '',
+        owner_editable: false,
+        owner_ids: [...moduleOwnerIds],
         row_type: 'module',
         node_name: item.root_version_name || item.module || '-',
         oem_name: item.oem_name || '-',
         module: item.module || '-',
-        owner_names_text:
-          item.owner_names && item.owner_names.length > 0
-            ? item.owner_names.join('、')
-            : '-',
+        owner_names_text: moduleOwnerNamesText,
         record_date: item.record_date || '-',
         clean_code_rate: Number(item.clean_code_rate || 0),
         warning_count: Number(item.warning_count || 0),
@@ -179,7 +214,12 @@ function normalizeTreeRows(details: ModuleQualityDetail[] = []) {
             ? item.warning_metrics.join('、')
             : '-',
         metric_warning_map: warningMap,
-        children: mapNodeRows(nodeChildrenSource),
+        children: mapNodeRows(
+          nodeChildrenSource,
+          item.id,
+          moduleOwnerIds,
+          moduleOwnerNamesText,
+        ),
       };
       for (const metric of QUALITY_METRIC_COLUMNS) {
         const field = getMetricFieldName(metric.key);
@@ -261,6 +301,13 @@ function filterTreeRows(
 }
 
 const [Grid, gridApi] = useVbenVxeGrid({
+  gridEvents: {
+    menuClick: ({ menu, row }: any) => {
+      if (menu?.code === 'edit_owner' && row?.owner_editable) {
+        openOwnerDialog(row as CodeQualityTreeRow);
+      }
+    },
+  },
   formOptions: {
     schema: useDetailSearchFormSchema(),
     submitOnChange: true,
@@ -278,11 +325,29 @@ const [Grid, gridApi] = useVbenVxeGrid({
       childrenField: 'children',
       expandAll: true,
     },
+    menuConfig: {
+      body: {
+        options: [
+          [
+            {
+              code: 'edit_owner',
+              name: '编辑责任人',
+            },
+          ],
+        ],
+      },
+      visibleMethod: ({ column, row }: any) => {
+        return (
+          column?.field === 'owner_names_text' && Boolean(row?.owner_editable)
+        );
+      },
+    },
     proxyConfig: {
       ajax: {
         query: async (_, formValues) => {
+          const rows = await fetchDetails();
           return {
-            items: filterTreeRows(treeRows.value, formValues),
+            items: filterTreeRows(rows, formValues),
           };
         },
       },
@@ -309,10 +374,11 @@ async function fetchDetails() {
     detailsLoading.value = true;
     const details = await getProjectQualityDetailsApi(projectId);
     treeRows.value = normalizeTreeRows(details || []);
-    await gridApi.query();
+    return treeRows.value;
   } catch (error) {
     console.error(error);
     ElMessage.error('获取代码质量详情失败');
+    return [];
   } finally {
     detailsLoading.value = false;
   }
@@ -323,7 +389,7 @@ async function handleRefresh() {
     loading.value = true;
     await refreshProjectQualityApi(projectId);
     ElMessage.success('刷新任务已提交，正在重新加载最新数据');
-    await fetchDetails();
+    await gridApi.query();
   } catch (error) {
     console.error(error);
     ElMessage.error('刷新失败');
@@ -336,9 +402,48 @@ function handleBack() {
   router.back();
 }
 
+async function handleOwnerChange(row: CodeQualityTreeRow, ownerIds: string[]) {
+  if (!row.owner_editable || !row.module_id || !row.node_key) {
+    return;
+  }
+  try {
+    await updateNodeOwnerApi({
+      module_id: row.module_id,
+      node_key: row.node_key,
+      owner_ids: ownerIds || [],
+    });
+    ElMessage.success('节点责任人更新成功');
+    await gridApi.query();
+  } catch (error) {
+    console.error(error);
+    ElMessage.error('节点责任人更新失败');
+  }
+}
+
+function openOwnerDialog(row: CodeQualityTreeRow) {
+  if (!row.owner_editable) {
+    return;
+  }
+  ownerEditRow.value = row;
+  ownerEditIds.value = [...(row.owner_ids || [])];
+  ownerDialogVisible.value = true;
+}
+
+async function saveOwnerDialog() {
+  if (!ownerEditRow.value) {
+    return;
+  }
+  ownerSaving.value = true;
+  try {
+    await handleOwnerChange(ownerEditRow.value, ownerEditIds.value || []);
+    ownerDialogVisible.value = false;
+  } finally {
+    ownerSaving.value = false;
+  }
+}
+
 onMounted(async () => {
-  await fetchProjectInfo();
-  await fetchDetails();
+  await Promise.all([fetchProjectInfo(), gridApi.query()]);
 });
 </script>
 
@@ -381,10 +486,49 @@ onMounted(async () => {
                   formatPercent(summary.avgCleanCodeRate)
                 }}
               </span>
+              <span class="text-gray-500">责任人列支持右键编辑</span>
             </div>
+          </template>
+          <template #clean_code_rate_slot="{ row }">
+            <CleanCodeRateCell
+              :rate="Number(row.clean_code_rate || 0)"
+              :reason-text="row.unachieved_clean_code_text"
+            />
+          </template>
+          <template #owner_editor_slot="{ row }">
+            <span :class="row.owner_editable ? 'cursor-context-menu' : ''">
+              {{ row.owner_names_text || '-' }}
+            </span>
           </template>
         </Grid>
       </div>
     </div>
+    <ElDialog
+      v-model="ownerDialogVisible"
+      :append-to-body="true"
+      :close-on-click-modal="false"
+      title="编辑节点责任人"
+      width="520px"
+    >
+      <div class="mb-3 text-sm">
+        <span class="text-gray-500">节点：</span>
+        <span class="font-medium">{{ ownerEditRow?.node_name || '-' }}</span>
+      </div>
+      <UserSelector
+        v-model="ownerEditIds"
+        :multiple="true"
+        placeholder="请选择节点责任人"
+      />
+      <template #footer>
+        <ElButton @click="ownerDialogVisible = false">取消</ElButton>
+        <ElButton
+          type="primary"
+          :loading="ownerSaving"
+          @click="saveOwnerDialog"
+        >
+          保存
+        </ElButton>
+      </template>
+    </ElDialog>
   </Page>
 </template>

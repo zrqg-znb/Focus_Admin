@@ -1,18 +1,14 @@
-from typing import List, Dict
-from ninja import Router, Schema
-from datetime import date, timedelta
-from django.utils import timezone
+from typing import List
+from ninja import Router
 
 from common.fu_auth import BearerAuth as GlobalAuth
 from .code_quality_schema import (
-    ModuleConfigSchema, 
+    ModuleConfigSchema,
     CodeModuleOut,
-    CodeMetricSchema,
-    CodeMetricOut,
     ModuleQualityDetailSchema,
-    ProjectQualitySummarySchema
+    NodeOwnerUpdateSchema,
+    ProjectQualitySummarySchema,
 )
-from .code_quality_model import CodeModule, CodeMetric
 from . import code_quality_service
 
 router = Router(tags=["CodeQuality"], auth=GlobalAuth())
@@ -48,3 +44,8 @@ def refresh_project_quality(request, project_id: str):
         func_args=(project_id,)
     )
     return True
+
+
+@router.put("/node-owner", response=bool, summary="更新代码质量节点责任人")
+def update_node_owner(request, data: NodeOwnerUpdateSchema):
+    return code_quality_service.update_node_owner(data)

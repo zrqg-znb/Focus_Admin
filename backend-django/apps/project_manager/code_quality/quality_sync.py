@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from datetime import date
 from random import Random
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -13,7 +12,7 @@ from apps.project_manager.code_quality.code_quality_model import (
 from apps.project_manager.project.project_model import Project
 
 DEFAULT_CLEAN_CODE_INDICATOR_TOTAL = 11
-TREE_RESERVED_KEYS = {"children", "versionName", "unachieved_clean_code"}
+TREE_RESERVED_KEYS = {"children", "versionName", "title", "unachieved_clean_code"}
 
 QUALITY_METRIC_LABELS: Dict[str, str] = {
     "UT_branch_coverage": "UT分支覆盖率",
@@ -32,6 +31,17 @@ QUALITY_METRIC_LABELS: Dict[str, str] = {
     "redundant_code_kloc": "冗余代码KLOC",
     "redundant_code_total": "冗余代码总量",
     "safety_defect_density": "安全缺陷密度",
+}
+
+PERCENT_METRIC_KEYS = {
+    "UT_branch_coverage",
+    "UT_line_coverage",
+    "UT_file_coverage",
+    "UT_function_coverage",
+    "UT_mcdc_coverage",
+    "cmetrics_pass_rate",
+    "code_duplication_ratio",
+    "huge_headerfile_ratio",
 }
 
 QUALITY_WARNING_RULES: Dict[str, Dict[str, float | str]] = {
@@ -75,6 +85,9 @@ def _to_float(value: Any) -> Optional[float]:
             return None
         if text.endswith("%"):
             text = text[:-1]
+        if text.lower().endswith("k"):
+            text = text[:-1]
+        text = text.replace(",", "")
         try:
             return float(text)
         except Exception:
@@ -82,23 +95,27 @@ def _to_float(value: Any) -> Optional[float]:
     return None
 
 
-def _to_display(value: Any, num_value: Optional[float]) -> str:
-    if isinstance(value, dict):
-        rate = value.get("rate")
-        if isinstance(rate, str) and rate.strip():
-            return rate.strip()
-        if num_value is not None:
-            return f"{round(num_value, 2)}"
-        return str(value)
-    if isinstance(value, list):
-        return f"{len(value)}项"
-    if isinstance(value, str):
-        return value
-    if num_value is not None:
-        if float(num_value).is_integer():
-            return str(int(num_value))
-        return str(round(num_value, 4))
-    return str(value)
+def _to_display(metric_key: str, value: Any, num_value: Optional[float]) -> str:
+    if num_value is None:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return "-"
+
+    if metric_key in PERCENT_METRIC_KEYS:
+        return f"{round(num_value, 2)}%"
+
+    if float(num_value).is_integer():
+        return str(int(num_value))
+    return str(round(num_value, 4))
+
+
+def _resolve_node_title(node_payload: Dict[str, Any], fallback: str = "") -> str:
+    for key in ("title", "versionName", "name"):
+        value = node_payload.get(key)
+        text = str(value or "").strip()
+        if text:
+            return text
+    return fallback
 
 
 def _check_warning(metric_key: str, num_value: Optional[float]) -> bool:
@@ -129,9 +146,10 @@ def _normalize_metric_values(node_payload: Dict[str, Any]) -> Tuple[Dict[str, Di
     metric_values: Dict[str, Dict[str, Any]] = {}
     warning_metrics: List[str] = []
 
-    for key, value in node_payload.items():
-        if key in TREE_RESERVED_KEYS:
+    for key, label in QUALITY_METRIC_LABELS.items():
+        if key not in node_payload:
             continue
+        value = node_payload.get(key)
 
         num_value = _to_float(value)
         is_warning = _check_warning(key, num_value)
@@ -140,11 +158,11 @@ def _normalize_metric_values(node_payload: Dict[str, Any]) -> Tuple[Dict[str, Di
 
         metric_values[key] = {
             "key": key,
-            "label": QUALITY_METRIC_LABELS.get(key, key),
-            "display": _to_display(value, num_value),
+            "label": label,
+            "display": _to_display(key, value, num_value),
             "num": num_value,
             "is_warning": is_warning,
-            "raw": value,
+            "raw": None,
         }
     return metric_values, warning_metrics
 
@@ -174,11 +192,11 @@ def _find_node_by_version_name(
     stack: List[Dict[str, Any]] = [root]
     while stack:
         node = stack.pop()
-        current = str(node.get("versionName") or "").strip()
+        current = _resolve_node_title(node)
         if current == target:
-            return deepcopy(node)
+            return node
         if current.lower() == target.lower():
-            return deepcopy(node)
+            return node
         children = node.get("children") or []
         if isinstance(children, list):
             for child in reversed(children):
@@ -241,7 +259,7 @@ def _save_module_tree_metric(
     record_date: date,
     subtree: Dict[str, Any],
 ) -> None:
-    root_name = str(subtree.get("versionName") or module.module or "").strip()
+    root_name = _resolve_node_title(subtree, module.module or "unknown")
     metric_values, warning_metrics = _normalize_metric_values(subtree)
     unachieved, clean_code_rate, is_clean_code = _compute_clean_code(subtree)
 
@@ -266,7 +284,7 @@ def _save_module_tree_metric(
             "warning_node_count": 0,
             "version_name": root_name,
             "summary_metrics": _build_summary_metrics(metric_values),
-            "raw_tree": subtree,
+            "raw_tree": {},
         },
     )
 
@@ -283,11 +301,11 @@ def _save_module_tree_metric(
         parent_key: str,
     ) -> None:
         nonlocal total_node_count, warning_node_count
-        version_name = str(node_payload.get("versionName") or "").strip() or "unknown"
+        version_name = _resolve_node_title(node_payload, "unknown")
         node_key = (
-            f"{parent_key}/{version_name}[{order_index}]"
+            f"{parent_key}/{version_name}"
             if parent_key
-            else f"{version_name}[{order_index}]"
+            else f"{version_name}"
         )
 
         node_metric_values, node_warning_metrics = _normalize_metric_values(node_payload)
@@ -309,7 +327,7 @@ def _save_module_tree_metric(
             clean_code_total=DEFAULT_CLEAN_CODE_INDICATOR_TOTAL,
             unachieved_clean_code=node_unachieved,
             is_clean_code=node_is_clean,
-            raw_payload=node_payload,
+            raw_payload={},
         )
         total_node_count += 1
         if node.warning_count > 0:

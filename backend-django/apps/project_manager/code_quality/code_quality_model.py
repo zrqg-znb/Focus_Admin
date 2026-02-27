@@ -77,3 +77,27 @@ class CodeMetricNode(RootModel):
             models.Index(fields=["metric", "depth"], name="idx_pm_cq_node_metric_depth"),
             models.Index(fields=["metric", "parent"], name="idx_pm_cq_node_metric_parent"),
         ]
+
+
+class CodeNodeOwnerConfig(RootModel):
+    module = models.ForeignKey(
+        CodeModule,
+        on_delete=models.CASCADE,
+        related_name="node_owner_configs",
+        verbose_name="所属模块",
+    )
+    node_key = models.CharField(max_length=512, verbose_name="节点路径键")
+    owners = models.ManyToManyField(
+        "core.User",
+        related_name="owned_code_metric_nodes",
+        verbose_name="节点责任人",
+    )
+
+    class Meta:
+        db_table = "pm_code_node_owner_config"
+        verbose_name = "代码质量节点责任人配置"
+        verbose_name_plural = verbose_name
+        unique_together = ("module", "node_key")
+        indexes = [
+            models.Index(fields=["module"], name="idx_pm_cq_node_owner_module"),
+        ]

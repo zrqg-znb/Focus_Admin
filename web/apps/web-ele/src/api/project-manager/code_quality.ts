@@ -19,6 +19,7 @@ export interface ProjectQualitySummary {
   warning_node_count: number;
   warning_count?: number;
   warning_metrics?: string[];
+  unachieved_clean_code?: string[];
   metric_values?: QualityMetricValue[];
 }
 
@@ -55,6 +56,8 @@ export interface QualityTreeNode {
   id: string;
   node_key: string;
   version_name: string;
+  owner_names?: string[];
+  owner_ids?: string[];
   depth: number;
   clean_code_rate: number;
   is_clean_code: boolean;
@@ -97,6 +100,12 @@ export interface ModuleConfigPayload {
   owner_ids?: string[];
 }
 
+export interface NodeOwnerUpdatePayload {
+  module_id: string;
+  node_key: string;
+  owner_ids: string[];
+}
+
 const base = '/api/project-manager/code_quality';
 
 export async function getQualityOverviewApi(params?: any) {
@@ -124,4 +133,8 @@ export async function getProjectQualityDetailsLiteApi(projectId: string) {
 
 export async function refreshProjectQualityApi(projectId: string) {
   return requestClient.post<boolean>(`${base}/project/${projectId}/refresh`);
+}
+
+export async function updateNodeOwnerApi(data: NodeOwnerUpdatePayload) {
+  return requestClient.put<boolean>(`${base}/node-owner`, data);
 }
