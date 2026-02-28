@@ -1,6 +1,6 @@
 import type { VbenFormSchema } from '#/adapter/form';
-import type { VxeTableGridOptions } from '#/adapter/vxe-table';
 import type { PerformanceDashboardItem } from '#/api/core/performance';
+import type { ZqTableGridOptions } from '#/components/zq-table';
 
 /**
  * Get search form schema
@@ -68,58 +68,71 @@ export function getStatusType(row: PerformanceDashboardItem) {
 /**
  * Get table columns configuration
  */
-export function useColumns(): VxeTableGridOptions<PerformanceDashboardItem>['columns'] {
-  return [
+export function useColumns(): ZqTableGridOptions<PerformanceDashboardItem>['columns'] {
+  const columns: NonNullable<
+    ZqTableGridOptions<PerformanceDashboardItem>['columns']
+  > = [
     {
-      field: 'data_date',
+      key: 'data_date',
+      dataKey: 'data_date',
       title: '数据日期',
-      minWidth: 120,
+      width: 120,
       sortable: true,
     },
     {
-      field: 'project',
+      key: 'project',
+      dataKey: 'project',
       title: '项目',
-      minWidth: 120,
+      width: 120,
     },
     {
-      field: 'module',
+      key: 'module',
+      dataKey: 'module',
       title: '模块',
-      minWidth: 120,
+      width: 120,
     },
     {
-      field: 'chip_type',
+      key: 'chip_type',
+      dataKey: 'chip_type',
       title: '芯片',
-      minWidth: 100,
+      width: 100,
     },
     {
-      field: 'name',
+      key: 'name',
+      dataKey: 'name',
       title: '指标名称',
-      minWidth: 150,
+      width: 150,
     },
     {
-      field: 'baseline_value',
+      key: 'baseline_value',
+      dataKey: 'baseline_value',
       title: '基线值',
-      minWidth: 120,
-      formatter: ({ row }) =>
-        `${row.baseline_value} ${row.baseline_unit || ''}`,
+      width: 120,
     },
     {
-      field: 'current_value',
+      key: 'current_value',
+      dataKey: 'current_value',
       title: '当前值',
-      minWidth: 120,
+      width: 120,
     },
     {
-      field: 'fluctuation_value',
+      key: 'fluctuation_value',
+      dataKey: 'fluctuation_value',
       title: '浮动',
-      minWidth: 120,
-      slots: { default: 'fluctuation' },
+      width: 120,
     },
     {
-      field: 'action',
+      key: 'actions',
+      dataKey: 'actions',
       title: '操作',
       fixed: 'right',
       width: 150,
-      slots: { default: 'action' },
     },
   ];
+
+  return columns.map((column) => ({
+    ...column,
+    align: 'center',
+    headerAlign: 'center',
+  }));
 }

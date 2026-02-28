@@ -1,18 +1,26 @@
 <script lang="ts" setup>
-import type { OnActionClickParams, VxeTableGridOptions } from '#/adapter/vxe-table';
 import type {
   PerformanceChipType,
   PerformanceIndicator,
   PerformanceTreeNode,
 } from '#/api/core/performance';
+import type { ZqTableGridOptions } from '#/components/zq-table';
 
 import { computed, onMounted, ref, watch } from 'vue';
+
 import { Page, useVbenDrawer } from '@vben/common-ui';
+import { Edit, Plus, Trash2, Upload } from '@vben/icons';
+import { useUserStore } from '@vben/stores';
+
 import {
   ElButton,
   ElDialog,
+  ElForm,
+  ElFormItem,
   ElInput,
   ElLink,
+  ElMessage,
+  ElMessageBox,
   ElOption,
   ElProgress,
   ElSelect,
@@ -20,24 +28,21 @@ import {
   ElSkeletonItem,
   ElTree,
   ElUpload,
-  ElForm,
-  ElFormItem,
 } from 'element-plus';
-import { ElMessage, ElMessageBox } from 'element-plus';
-import { Plus, Upload, Edit, Trash2 } from '@vben/icons';
-import { useVbenVxeGrid } from '#/adapter/vxe-table';
+
 import {
-  deleteIndicatorApi,
-  getChipTypesApi,
-  getIndicatorListApi,
-  getIndicatorTreeApi,
-  getIndicatorImportTaskApi,
-  startIndicatorImportTaskApi,
   batchDeleteIndicatorsApi,
   batchUpdateIndicatorsApi,
+  deleteIndicatorApi,
+  getChipTypesApi,
+  getIndicatorImportTaskApi,
+  getIndicatorListApi,
+  getIndicatorTreeApi,
+  startIndicatorImportTaskApi,
 } from '#/api/core/performance';
-
 import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
+import { useZqTable } from '#/components/zq-table';
+
 import { useColumns } from './data';
 import Form from './modules/form.vue';
 
@@ -51,7 +56,7 @@ const [FormDrawer, formDrawerApi] = useVbenDrawer({
 const importDialogVisible = ref(false);
 const importing = ref(false);
 const importPercent = ref(0);
-const importStage = ref<'uploading' | 'processing'>('uploading');
+const importStage = ref<'processing' | 'uploading'>('uploading');
 const importTaskId = ref('');
 const importMessage = ref('');
 let importTimer: any = null;
@@ -59,7 +64,7 @@ let importTimer: any = null;
 const treeLoading = ref(false);
 const treeData = ref<PerformanceTreeNode[]>([]);
 
-const selectedCategory = ref<'vehicle' | 'cockpit'>('vehicle');
+const selectedCategory = ref<'cockpit' | 'vehicle'>('vehicle');
 const selectedProject = ref<string>('');
 const selectedModule = ref<string>('');
 
@@ -71,6 +76,7 @@ const initialized = ref(false);
 const chipTypeUpdating = ref(false);
 const pageInitializing = ref(true);
 const gridLoading = ref(false);
+const userStore = useUserStore();
 
 const selectedRows = ref<PerformanceIndicator[]>([]);
 const batchEditVisible = ref(false);
@@ -97,18 +103,17 @@ const currentFilters = computed(() => ({
   search: keyword.value,
 }));
 
-const [Grid, gridApi] = useVbenVxeGrid({
+const [Grid, gridApi] = useZqTable({
+  showSearchForm: false,
+  separator: false,
   gridOptions: {
-    columns: useColumns(onActionClick),
-    height: 'auto',
-    keepSource: true,
+    columns: useColumns(),
+    border: true,
+    stripe: true,
+    showSelection: true,
     pagerConfig: {
       enabled: true,
-    },
-    checkboxConfig: {
-      reserve: true,
-      highlight: true,
-      range: true,
+      pageSize: 20,
     },
     proxyConfig: {
       autoLoad: false,
@@ -131,42 +136,19 @@ const [Grid, gridApi] = useVbenVxeGrid({
     toolbarConfig: {
       custom: true,
       export: true,
-      refresh: { code: 'query' },
-      search: true,
+      refresh: true,
+      search: false,
       zoom: true,
     },
-  } as VxeTableGridOptions<PerformanceIndicator>,
-  gridEvents: {
-    checkboxChange: handleSelectionChange,
-    checkboxAll: handleSelectionChange,
-  },
+  } as ZqTableGridOptions<PerformanceIndicator>,
 });
 
-function handleSelectionChange(params: any) {
-  // Try to get from event params
-  if (params && (params.records || params.reserves)) {
-    const records = params.records || [];
-    const reserves = params.reserves || [];
-    selectedRows.value = [...records, ...reserves];
-    return;
-  }
-  // Fallback to API
-  const grid = gridApi.grid;
-  if (grid) {
-    selectedRows.value = [
-      ...grid.getCheckboxRecords(),
-      ...grid.getCheckboxReserveRecords(),
-    ];
-  } else {
-    selectedRows.value = [];
-  }
+function handleSelectionChange(rows: Record<string, any>[]) {
+  selectedRows.value = rows as PerformanceIndicator[];
 }
 
 function clearSelection() {
   selectedRows.value = [];
-  const grid = gridApi.grid;
-  grid?.clearCheckboxRow?.();
-  grid?.clearCheckboxReserve?.();
 }
 
 function handleBatchDelete() {
@@ -186,7 +168,7 @@ function handleBatchDelete() {
       ElMessage.success(`成功删除 ${count} 个指标`);
       clearSelection();
       gridApi.query();
-    } catch (error) {
+    } catch {
       // handled
     }
   });
@@ -208,24 +190,30 @@ async function confirmBatchEdit() {
   batchEditLoading.value = true;
   try {
     const ids = selectedRows.value.map((r) => r.id);
-    const count = await batchUpdateIndicatorsApi(ids, batchEditField.value, batchEditValue.value);
+    const count = await batchUpdateIndicatorsApi(
+      ids,
+      batchEditField.value,
+      batchEditValue.value,
+    );
     ElMessage.success(`成功更新 ${count} 个指标`);
     batchEditVisible.value = false;
     clearSelection();
     gridApi.query();
-  } catch (error) {
+  } catch {
     // handled
   } finally {
     batchEditLoading.value = false;
   }
 }
 
-function onActionClick({ code, row }: OnActionClickParams<PerformanceIndicator>) {
-  if (code === 'edit') {
-    openEdit(row);
-  } else if (code === 'delete') {
-    handleDelete(row);
-  }
+function canManageRow(row: PerformanceIndicator) {
+  const currentUserId = userStore.userInfo?.id;
+  const isSuperuser =
+    userStore.userInfo?.is_superuser ||
+    userStore.userInfo?.username === 'admin';
+  return Boolean(
+    isSuperuser || String(row.owner_id || '') === String(currentUserId || ''),
+  );
 }
 
 function openCreate() {
@@ -253,7 +241,7 @@ async function handleDelete(row: PerformanceIndicator) {
     await deleteIndicatorApi(row.id);
     ElMessage.success('删除成功');
     gridApi.query();
-  } catch (error) {
+  } catch {
     // Error handled by global interceptor usually
   }
 }
@@ -261,13 +249,13 @@ async function handleDelete(row: PerformanceIndicator) {
 function parseNodeKey(key: string) {
   const parts = key.split(':');
   if (parts.length === 1) {
-    return { category: parts[0] as 'vehicle' | 'cockpit' };
+    return { category: parts[0] as 'cockpit' | 'vehicle' };
   }
   if (parts.length === 2) {
-    return { category: parts[0] as 'vehicle' | 'cockpit', project: parts[1] };
+    return { category: parts[0] as 'cockpit' | 'vehicle', project: parts[1] };
   }
   return {
-    category: parts[0] as 'vehicle' | 'cockpit',
+    category: parts[0] as 'cockpit' | 'vehicle',
     project: parts[1],
     module: parts.slice(2).join(':'),
   };
@@ -297,7 +285,9 @@ async function loadChipTypes() {
     module: selectedModule.value,
   });
   const nextVal = chipTypeOptions.value[0]?.chip_type || '';
-  if (!chipTypeOptions.value.some((i) => i.chip_type === selectedChipType.value)) {
+  if (
+    !chipTypeOptions.value.some((i) => i.chip_type === selectedChipType.value)
+  ) {
     chipTypeUpdating.value = true;
     selectedChipType.value = nextVal;
     chipTypeUpdating.value = false;
@@ -344,7 +334,9 @@ async function handleImportRequest(options: any) {
           importTimer = null;
           importing.value = false;
           importPercent.value = 100;
-          ElMessage.success(`导入成功：${task.success_count}条，失败${task.error_count}条`);
+          ElMessage.success(
+            `导入成功：${task.success_count}条，失败${task.error_count}条`,
+          );
           importDialogVisible.value = false;
           await loadTree();
           gridApi.query();
@@ -356,10 +348,9 @@ async function handleImportRequest(options: any) {
           importPercent.value = 100;
           ElMessage.error(task.message || '导入失败');
         }
-      } catch (e) {
-      }
+      } catch {}
     }, 800);
-  } catch (error) {
+  } catch {
     // 错误提示由全局拦截器统一处理
   } finally {
     if (!importTaskId.value) importing.value = false;
@@ -367,22 +358,28 @@ async function handleImportRequest(options: any) {
 }
 
 function downloadTemplate() {
-    const csvContent = "Code,Category,Name,Module,Project,Chip Type,Value Type,Baseline Value,Baseline Unit,Fluctuation Range,Fluctuation Direction,Owner\nTEST_001,vehicle,示例指标1,load,ProjA,ChipA,avg,100,ms,10,down,UserA";
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a");
-    if (link.download !== undefined) {
-        const url = URL.createObjectURL(blob);
-        link.setAttribute("href", url);
-        link.setAttribute("download", "performance_indicator_template.csv");
-        link.style.visibility = 'hidden';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    }
+  const csvContent =
+    'Code,Category,Name,Module,Project,Chip Type,Value Type,Baseline Value,Baseline Unit,Fluctuation Range,Fluctuation Direction,Owner\nTEST_001,vehicle,示例指标1,load,ProjA,ChipA,avg,100,ms,10,down,UserA';
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  if (link.download !== undefined) {
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'performance_indicator_template.csv');
+    link.style.visibility = 'hidden';
+    document.body.append(link);
+    link.click();
+    link.remove();
+  }
 }
 
 watch(
-  () => [selectedCategory.value, selectedProject.value, selectedModule.value] as const,
+  () =>
+    [
+      selectedCategory.value,
+      selectedProject.value,
+      selectedModule.value,
+    ] as const,
   async () => {
     if (!initialized.value) return;
     clearSelection();
@@ -439,22 +436,34 @@ onMounted(async () => {
     <ElSkeleton :loading="pageInitializing" animated>
       <template #template>
         <div class="flex h-full gap-4">
-          <div class="w-[280px] shrink-0 overflow-hidden rounded bg-[var(--el-bg-color)] p-3">
+          <div
+            class="w-[280px] shrink-0 overflow-hidden rounded bg-[var(--el-bg-color)] p-3"
+          >
             <ElSkeletonItem variant="text" class="mb-3 w-24" />
             <div class="space-y-2">
-              <ElSkeletonItem v-for="i in 8" :key="i" variant="text" class="w-full" />
+              <ElSkeletonItem
+                v-for="i in 8"
+                :key="i"
+                variant="text"
+                class="w-full"
+              />
             </div>
           </div>
           <div class="min-w-0 flex-1 rounded bg-[var(--el-bg-color)] p-3">
             <div class="mb-3 flex items-center gap-2">
               <ElSkeletonItem variant="rect" class="h-8 w-[240px]" />
               <ElSkeletonItem variant="rect" class="h-8 w-[200px]" />
-              <div class="flex-1" />
+              <div class="flex-1"></div>
               <ElSkeletonItem variant="rect" class="h-8 w-24" />
               <ElSkeletonItem variant="rect" class="h-8 w-20" />
             </div>
             <div class="space-y-2">
-              <ElSkeletonItem v-for="i in 10" :key="i" variant="rect" class="h-9 w-full" />
+              <ElSkeletonItem
+                v-for="i in 10"
+                :key="i"
+                variant="rect"
+                class="h-9 w-full"
+              />
             </div>
           </div>
         </div>
@@ -462,9 +471,14 @@ onMounted(async () => {
 
       <template #default>
         <div class="flex h-full gap-4">
-          <div class="w-[280px] shrink-0 overflow-hidden rounded bg-[var(--el-bg-color)] p-3">
+          <div
+            class="w-[280px] shrink-0 overflow-hidden rounded bg-[var(--el-bg-color)] p-3"
+          >
             <div class="mb-2 text-sm font-medium">指标项目分类</div>
-            <div class="h-[calc(100%-28px)] overflow-auto">
+            <div
+              class="h-[calc(100%-28px)] overflow-auto"
+              v-loading="treeLoading"
+            >
               <ElTree
                 :data="treeData"
                 :props="{ children: 'children', label: 'label' }"
@@ -476,7 +490,50 @@ onMounted(async () => {
           </div>
 
           <div class="min-w-0 flex-1" v-loading="gridLoading">
-            <Grid>
+            <Grid class="h-full" @selection-change="handleSelectionChange">
+              <template #cell-category="{ row }">
+                {{ row.category === 'cockpit' ? '座舱' : '车控' }}
+              </template>
+
+              <template #cell-baseline_value="{ row }">
+                {{ `${row.baseline_value} ${row.baseline_unit || ''}` }}
+              </template>
+
+              <template #cell-fluctuation_direction="{ row }">
+                {{
+                  row.fluctuation_direction === 'up'
+                    ? '越大越好'
+                    : row.fluctuation_direction === 'down'
+                      ? '越小越好'
+                      : '-'
+                }}
+              </template>
+
+              <template #cell-owner_name="{ row }">
+                {{ row.owner_name || '-' }}
+              </template>
+
+              <template #cell-actions="{ row }">
+                <div class="flex items-center justify-center gap-1">
+                  <ElButton
+                    link
+                    type="primary"
+                    :disabled="!canManageRow(row)"
+                    @click="openEdit(row)"
+                  >
+                    编辑
+                  </ElButton>
+                  <ElButton
+                    link
+                    type="danger"
+                    :disabled="!canManageRow(row)"
+                    @click="handleDelete(row)"
+                  >
+                    删除
+                  </ElButton>
+                </div>
+              </template>
+
               <template #toolbar-actions>
                 <div class="flex flex-1 items-center gap-2">
                   <ElInput
@@ -500,7 +557,7 @@ onMounted(async () => {
                     />
                   </ElSelect>
 
-                  <div class="flex-1" />
+                  <div class="flex-1"></div>
 
                   <ElButton
                     type="danger"
@@ -542,7 +599,11 @@ onMounted(async () => {
     >
       <ElForm label-position="top">
         <ElFormItem label="选择字段">
-          <ElSelect v-model="batchEditField" placeholder="请选择要修改的字段" class="w-full">
+          <ElSelect
+            v-model="batchEditField"
+            placeholder="请选择要修改的字段"
+            class="w-full"
+          >
             <ElOption
               v-for="opt in batchEditFieldOptions"
               :key="opt.value"
@@ -552,24 +613,32 @@ onMounted(async () => {
           </ElSelect>
         </ElFormItem>
         <ElFormItem label="新值">
-           <ElSelect v-if="batchEditField === 'fluctuation_direction'" v-model="batchEditValue" class="w-full">
-             <ElOption label="向上" value="up" />
-             <ElOption label="向下" value="down" />
-             <ElOption label="无" value="none" />
-           </ElSelect>
-           <UserSelector
-             v-else-if="batchEditField === 'owner_id'"
-             v-model="batchEditValue"
-             placeholder="请选择责任人"
-             :multiple="false"
-             class="w-full"
-           />
-           <ElInput v-else v-model="batchEditValue" placeholder="请输入新值" />
+          <ElSelect
+            v-if="batchEditField === 'fluctuation_direction'"
+            v-model="batchEditValue"
+            class="w-full"
+          >
+            <ElOption label="向上" value="up" />
+            <ElOption label="向下" value="down" />
+            <ElOption label="无" value="none" />
+          </ElSelect>
+          <UserSelector
+            v-else-if="batchEditField === 'owner_id'"
+            v-model="batchEditValue"
+            placeholder="请选择责任人"
+            :multiple="false"
+            class="w-full"
+          />
+          <ElInput v-else v-model="batchEditValue" placeholder="请输入新值" />
         </ElFormItem>
       </ElForm>
       <template #footer>
         <ElButton @click="batchEditVisible = false">取消</ElButton>
-        <ElButton type="primary" :loading="batchEditLoading" @click="confirmBatchEdit">
+        <ElButton
+          type="primary"
+          :loading="batchEditLoading"
+          @click="confirmBatchEdit"
+        >
           确定更新
         </ElButton>
       </template>
@@ -583,36 +652,41 @@ onMounted(async () => {
       :close-on-press-escape="!importing"
       :show-close="!importing"
     >
-        <div class="mb-4 text-right">
-            <ElLink type="primary" :underline="false" @click="downloadTemplate">下载模板 CSV</ElLink>
+      <div class="mb-4 text-right">
+        <ElLink type="primary" :underline="false" @click="downloadTemplate">
+          下载模板 CSV
+        </ElLink>
+      </div>
+      <div v-if="importing" class="mb-3">
+        <div class="mb-2 text-sm text-[var(--el-text-color-secondary)]">
+          {{
+            importStage === 'uploading'
+              ? '正在上传文件，请勿关闭弹窗'
+              : '正在解析并导入，请勿关闭弹窗'
+          }}
         </div>
-        <div v-if="importing" class="mb-3">
-          <div class="mb-2 text-sm text-[var(--el-text-color-secondary)]">
-            {{ importStage === 'uploading' ? '正在上传文件，请勿关闭弹窗' : '正在解析并导入，请勿关闭弹窗' }}
-          </div>
-          <div v-if="importMessage" class="mb-2 text-xs text-[var(--el-text-color-secondary)]">
-            {{ importMessage }}
-          </div>
-          <ElProgress :percentage="importPercent" :stroke-width="10" />
-        </div>
-        <ElUpload
-          class="upload-demo"
-          drag
-          action="#"
-          :http-request="handleImportRequest"
-          :show-file-list="false"
-          accept=".xlsx,.csv"
-          :disabled="importing"
+        <div
+          v-if="importMessage"
+          class="mb-2 text-xs text-[var(--el-text-color-secondary)]"
         >
-          <div class="el-upload__text">
-            将文件拖到此处，或 <em>点击上传</em>
-          </div>
-          <template #tip>
-             <div class="el-upload__tip">
-                支持 .xlsx 或 .csv 文件
-             </div>
-          </template>
-        </ElUpload>
+          {{ importMessage }}
+        </div>
+        <ElProgress :percentage="importPercent" :stroke-width="10" />
+      </div>
+      <ElUpload
+        class="upload-demo"
+        drag
+        action="#"
+        :http-request="handleImportRequest"
+        :show-file-list="false"
+        accept=".xlsx,.csv"
+        :disabled="importing"
+      >
+        <div class="el-upload__text">将文件拖到此处，或 <em>点击上传</em></div>
+        <template #tip>
+          <div class="el-upload__tip">支持 .xlsx 或 .csv 文件</div>
+        </template>
+      </ElUpload>
     </ElDialog>
   </Page>
 </template>

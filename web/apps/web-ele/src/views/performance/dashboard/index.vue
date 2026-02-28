@@ -1,13 +1,17 @@
 <script lang="ts" setup>
-import type { VxeTableGridOptions } from '#/adapter/vxe-table';
-import type { PerformanceDashboardItem, PerformanceTreeNode, PerformanceChipType } from '#/api/core/performance';
+import type {
+  PerformanceChipType,
+  PerformanceDashboardItem,
+  PerformanceTreeNode,
+} from '#/api/core/performance';
+import type { ZqTableGridOptions } from '#/components/zq-table';
 
-import dayjs from 'dayjs';
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
+import dayjs from 'dayjs';
 import {
   ElButton,
   ElDatePicker,
@@ -19,8 +23,12 @@ import {
   ElTag,
 } from 'element-plus';
 
-import { useVbenVxeGrid } from '#/adapter/vxe-table';
-import { getDashboardDataApi, getIndicatorTreeApi, getChipTypesApi } from '#/api/core/performance';
+import {
+  getChipTypesApi,
+  getDashboardDataApi,
+  getIndicatorTreeApi,
+} from '#/api/core/performance';
+import { useZqTable } from '#/components/zq-table';
 
 import TrendChart from './components/TrendChart.vue';
 import { getStatusType, useColumns } from './data';
@@ -28,19 +36,19 @@ import { getStatusType, useColumns } from './data';
 defineOptions({ name: 'PerformanceDashboard' });
 
 const treeData = ref<PerformanceTreeNode[]>([]);
-const category = ref<'vehicle' | 'cockpit'>('vehicle');
+const category = ref<'cockpit' | 'vehicle'>('vehicle');
 const project = ref<string>('');
 const module = ref<string>('');
 const chipType = ref<string>('');
 const chipTypes = ref<PerformanceChipType[]>([]);
 const sortOption = ref<
-  | 'default'
-  | 'current_value_desc'
-  | 'current_value_asc'
-  | 'fluctuation_value_desc'
-  | 'fluctuation_value_asc'
-  | 'baseline_value_desc'
   | 'baseline_value_asc'
+  | 'baseline_value_desc'
+  | 'current_value_asc'
+  | 'current_value_desc'
+  | 'default'
+  | 'fluctuation_value_asc'
+  | 'fluctuation_value_desc'
 >('default');
 
 const dateRange = ref<[string, string]>([
@@ -50,13 +58,19 @@ const dateRange = ref<[string, string]>([
 
 const projectOptions = computed(() => {
   const catNode = treeData.value.find((i) => i.key === category.value);
-  return (catNode?.children || []).map((i) => ({ label: i.label, value: i.label }));
+  return (catNode?.children || []).map((i) => ({
+    label: i.label,
+    value: i.label,
+  }));
 });
 
 const moduleOptions = computed(() => {
   const catNode = treeData.value.find((i) => i.key === category.value);
   const projNode = catNode?.children?.find((i) => i.label === project.value);
-  return (projNode?.children || []).map((i) => ({ label: i.label, value: i.label }));
+  return (projNode?.children || []).map((i) => ({
+    label: i.label,
+    value: i.label,
+  }));
 });
 
 const startDate = computed(() => dateRange.value[0]);
@@ -83,15 +97,19 @@ const currentIndicatorId = ref('');
 const currentIndicatorName = ref('');
 const currentBaselineValue = ref<number | undefined>(undefined);
 
-const [Grid, gridApi] = useVbenVxeGrid({
+const [Grid, gridApi] = useZqTable({
+  showSearchForm: false,
+  separator: false,
   gridOptions: {
     columns: useColumns(),
-    height: 'auto',
-    keepSource: true,
+    border: true,
+    stripe: true,
     pagerConfig: {
       enabled: true,
+      pageSize: 20,
     },
     proxyConfig: {
+      autoLoad: false,
       ajax: {
         query: async ({ page }) => {
           const params = {
@@ -112,11 +130,11 @@ const [Grid, gridApi] = useVbenVxeGrid({
     toolbarConfig: {
       custom: true,
       export: true,
-      refresh: { code: 'query' },
-      search: true,
+      refresh: true,
+      search: false,
       zoom: true,
     },
-  } as VxeTableGridOptions<PerformanceDashboardItem>,
+  } as ZqTableGridOptions<PerformanceDashboardItem>,
 });
 
 function showTrend(row: PerformanceDashboardItem) {
@@ -201,120 +219,136 @@ onMounted(async () => {
 
 <template>
   <Page auto-content-height>
-    <div class="mb-4 flex flex-col gap-4 border-b pb-4 px-4">
-      <!-- 顶部：分类切换 -->
-      <div class="flex items-center">
-        <ElRadioGroup v-model="category" size="large">
-          <ElRadioButton label="vehicle">车控应用</ElRadioButton>
-          <ElRadioButton label="cockpit">座舱应用</ElRadioButton>
-        </ElRadioGroup>
+    <div class="flex h-full min-h-0 flex-col">
+      <div class="mb-4 flex flex-col gap-4 border-b px-4 pb-4">
+        <!-- 顶部：分类切换 -->
+        <div class="flex items-center">
+          <ElRadioGroup v-model="category" size="large">
+            <ElRadioButton label="vehicle">车控应用</ElRadioButton>
+            <ElRadioButton label="cockpit">座舱应用</ElRadioButton>
+          </ElRadioGroup>
+        </div>
+
+        <!-- 筛选栏 -->
+        <div class="flex flex-wrap items-center gap-4">
+          <div class="flex items-center gap-2">
+            <div class="text-sm text-[var(--el-text-color-regular)]">项目</div>
+            <ElSelect
+              v-model="project"
+              class="w-[180px]"
+              filterable
+              placeholder="选择项目"
+            >
+              <ElOption
+                v-for="p in projectOptions"
+                :key="p.value"
+                :label="p.label"
+                :value="p.value"
+              />
+            </ElSelect>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <div class="text-sm text-[var(--el-text-color-regular)]">模块</div>
+            <ElSelect
+              v-model="module"
+              class="w-[180px]"
+              filterable
+              clearable
+              placeholder="全部模块"
+            >
+              <ElOption
+                v-for="m in moduleOptions"
+                :key="m.value"
+                :label="m.label"
+                :value="m.value"
+              />
+            </ElSelect>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <div class="text-sm text-[var(--el-text-color-regular)]">
+              芯片类型
+            </div>
+            <ElSelect
+              v-model="chipType"
+              class="w-[180px]"
+              filterable
+              clearable
+              placeholder="全部芯片"
+            >
+              <ElOption
+                v-for="c in chipTypes"
+                :key="c.chip_type"
+                :label="c.chip_type"
+                :value="c.chip_type"
+              />
+            </ElSelect>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <div class="text-sm text-[var(--el-text-color-regular)]">
+              日期范围
+            </div>
+            <ElDatePicker
+              v-model="dateRange"
+              type="daterange"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              value-format="YYYY-MM-DD"
+              class="!w-[260px]"
+            />
+          </div>
+
+          <div class="flex items-center gap-2">
+            <div class="text-sm text-[var(--el-text-color-regular)]">排序</div>
+            <ElSelect v-model="sortOption" class="w-[200px]" placeholder="默认">
+              <ElOption label="默认（按日期）" value="default" />
+              <ElOption label="当前值：从大到小" value="current_value_desc" />
+              <ElOption label="当前值：从小到大" value="current_value_asc" />
+              <ElOption label="浮动：从大到小" value="fluctuation_value_desc" />
+              <ElOption label="浮动：从小到大" value="fluctuation_value_asc" />
+              <ElOption label="基线值：从大到小" value="baseline_value_desc" />
+              <ElOption label="基线值：从小到大" value="baseline_value_asc" />
+            </ElSelect>
+          </div>
+        </div>
       </div>
 
-      <!-- 筛选栏 -->
-      <div class="flex flex-wrap items-center gap-4">
-        <div class="flex items-center gap-2">
-          <div class="text-sm text-[var(--el-text-color-regular)]">项目</div>
-          <ElSelect
-            v-model="project"
-            class="w-[180px]"
-            filterable
-            placeholder="选择项目"
-          >
-            <ElOption
-              v-for="p in projectOptions"
-              :key="p.value"
-              :label="p.label"
-              :value="p.value"
-            />
-          </ElSelect>
-        </div>
+      <div class="min-h-0 flex-1">
+        <Grid class="h-full">
+          <template #cell-baseline_value="{ row }">
+            {{ `${row.baseline_value} ${row.baseline_unit || ''}` }}
+          </template>
 
-        <div class="flex items-center gap-2">
-          <div class="text-sm text-[var(--el-text-color-regular)]">模块</div>
-          <ElSelect
-            v-model="module"
-            class="w-[180px]"
-            filterable
-            clearable
-            placeholder="全部模块"
-          >
-            <ElOption
-              v-for="m in moduleOptions"
-              :key="m.value"
-              :label="m.label"
-              :value="m.value"
-            />
-          </ElSelect>
-        </div>
+          <template #cell-fluctuation_value="{ row }">
+            <ElTag
+              :type="getStatusType(row)"
+              v-if="row.fluctuation_value !== null"
+            >
+              {{ row.fluctuation_value?.toFixed(2) }}
+            </ElTag>
+            <span v-else>-</span>
+          </template>
 
-        <div class="flex items-center gap-2">
-          <div class="text-sm text-[var(--el-text-color-regular)]">芯片类型</div>
-          <ElSelect
-            v-model="chipType"
-            class="w-[180px]"
-            filterable
-            clearable
-            placeholder="全部芯片"
-          >
-            <ElOption
-              v-for="c in chipTypes"
-              :key="c.chip_type"
-              :label="c.chip_type"
-              :value="c.chip_type"
-            />
-          </ElSelect>
-        </div>
-
-        <div class="flex items-center gap-2">
-          <div class="text-sm text-[var(--el-text-color-regular)]">日期范围</div>
-          <ElDatePicker
-            v-model="dateRange"
-            type="daterange"
-            range-separator="至"
-            start-placeholder="开始日期"
-            end-placeholder="结束日期"
-            value-format="YYYY-MM-DD"
-            class="!w-[260px]"
-          />
-        </div>
-
-        <div class="flex items-center gap-2">
-          <div class="text-sm text-[var(--el-text-color-regular)]">排序</div>
-          <ElSelect v-model="sortOption" class="w-[200px]" placeholder="默认">
-            <ElOption label="默认（按日期）" value="default" />
-            <ElOption label="当前值：从大到小" value="current_value_desc" />
-            <ElOption label="当前值：从小到大" value="current_value_asc" />
-            <ElOption label="浮动：从大到小" value="fluctuation_value_desc" />
-            <ElOption label="浮动：从小到大" value="fluctuation_value_asc" />
-            <ElOption label="基线值：从大到小" value="baseline_value_desc" />
-            <ElOption label="基线值：从小到大" value="baseline_value_asc" />
-          </ElSelect>
-        </div>
+          <template #cell-actions="{ row }">
+            <ElButton type="primary" size="small" @click="showTrend(row)">
+              趋势
+            </ElButton>
+            <ElButton
+              v-if="getStatusType(row) !== 'success'"
+              type="danger"
+              size="small"
+              class="ml-2"
+              @click="gotoRisk(row)"
+            >
+              风险记录
+            </ElButton>
+          </template>
+        </Grid>
       </div>
     </div>
-
-    <Grid>
-      <template #fluctuation="{ row }">
-        <ElTag :type="getStatusType(row)" v-if="row.fluctuation_value !== null">
-          {{ row.fluctuation_value?.toFixed(2) }}
-        </ElTag>
-      </template>
-
-      <template #action="{ row }">
-        <ElButton type="primary" size="small" @click="showTrend(row)">
-          趋势
-        </ElButton>
-        <ElButton
-          v-if="getStatusType(row) !== 'success'"
-          type="danger"
-          size="small"
-          class="ml-2"
-          @click="gotoRisk(row)"
-        >
-          风险记录
-        </ElButton>
-      </template>
-    </Grid>
 
     <ElDialog
       v-model="trendVisible"

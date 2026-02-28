@@ -1,8 +1,8 @@
 import type { VbenFormSchema } from '#/adapter/form';
-import type { OnActionClickFn, VxeTableGridOptions } from '#/adapter/vxe-table';
 import type { PerformanceIndicator } from '#/api/core/performance';
+import type { ZqTableGridOptions } from '#/components/zq-table';
+
 import { z } from '#/adapter/form';
-import { useUserStore } from '@vben/stores';
 
 /**
  * Get search form schema
@@ -101,10 +101,10 @@ export function getFormSchema(): VbenFormSchema[] {
       defaultValue: 'avg',
       componentProps: {
         options: [
-            { label: '平均值', value: 'avg' },
-            { label: '最大值', value: 'max' },
-            { label: '最小值', value: 'min' },
-        ]
+          { label: '平均值', value: 'avg' },
+          { label: '最大值', value: 'max' },
+          { label: '最小值', value: 'min' },
+        ],
       },
     },
     {
@@ -137,10 +137,10 @@ export function getFormSchema(): VbenFormSchema[] {
       defaultValue: 'none',
       componentProps: {
         options: [
-            { label: '越大越好', value: 'up' },
-            { label: '越小越好', value: 'down' },
-            { label: '无方向', value: 'none' },
-        ]
+          { label: '越大越好', value: 'up' },
+          { label: '越小越好', value: 'down' },
+          { label: '无方向', value: 'none' },
+        ],
       },
     },
     {
@@ -159,114 +159,82 @@ export function getFormSchema(): VbenFormSchema[] {
 /**
  * Get table columns configuration
  */
-export function useColumns(
-  onActionClick?: OnActionClickFn<PerformanceIndicator>,
-): VxeTableGridOptions<PerformanceIndicator>['columns'] {
-  const userStore = useUserStore();
-
-  return [
+export function useColumns(): ZqTableGridOptions<PerformanceIndicator>['columns'] {
+  const columns: NonNullable<
+    ZqTableGridOptions<PerformanceIndicator>['columns']
+  > = [
     {
-      type: 'checkbox',
-      width: 60,
-      align: 'center',
-      fixed: 'left',
-    },
-    {
-      field: 'code',
+      key: 'code',
+      dataKey: 'code',
       title: 'Code',
-      minWidth: 150,
+      width: 150,
     },
     {
-      field: 'category',
+      key: 'category',
+      dataKey: 'category',
       title: '分类',
-      minWidth: 90,
-      formatter: ({ row }) => (row.category === 'cockpit' ? '座舱' : '车控'),
+      width: 90,
     },
     {
-      field: 'name',
+      key: 'name',
+      dataKey: 'name',
       title: '名称',
-      minWidth: 150,
+      width: 150,
     },
     {
-      field: 'project',
+      key: 'project',
+      dataKey: 'project',
       title: '项目',
-      minWidth: 100,
+      width: 100,
     },
     {
-      field: 'module',
+      key: 'module',
+      dataKey: 'module',
       title: '模块',
-      minWidth: 100,
+      width: 100,
     },
     {
-      field: 'chip_type',
+      key: 'chip_type',
+      dataKey: 'chip_type',
       title: '芯片',
-      minWidth: 100,
+      width: 100,
     },
     {
-      field: 'baseline_value',
+      key: 'baseline_value',
+      dataKey: 'baseline_value',
       title: '基线值',
-      minWidth: 120,
-      formatter: ({ row }) => `${row.baseline_value} ${row.baseline_unit || ''}`,
+      width: 120,
     },
     {
-      field: 'fluctuation_range',
+      key: 'fluctuation_range',
+      dataKey: 'fluctuation_range',
       title: '允许浮动',
-      minWidth: 100,
+      width: 100,
     },
     {
-      field: 'fluctuation_direction',
+      key: 'fluctuation_direction',
+      dataKey: 'fluctuation_direction',
       title: '方向',
-      minWidth: 100,
-      formatter: ({ row }) => {
-        if (row.fluctuation_direction === 'up') return '越大越好';
-        if (row.fluctuation_direction === 'down') return '越小越好';
-        return '-';
-      }
+      width: 100,
     },
     {
-      field: 'owner_name',
+      key: 'owner_name',
+      dataKey: 'owner_name',
       title: '责任人',
-      minWidth: 100,
-      formatter: ({ row }) => {
-          return row.owner_name || '-';
-      },
+      width: 100,
     },
     {
-      field: 'action',
+      key: 'actions',
+      dataKey: 'actions',
       title: '操作',
       fixed: 'right',
-      align: 'center',
       width: 150,
-      cellRender: {
-        name: 'CellOperation',
-        attrs: {
-            onClick: onActionClick
-        },
-        options: [
-            {
-                code: 'edit',
-                text: '编辑',
-                disabled: (row: PerformanceIndicator) => {
-                    const currentUserId = userStore.userInfo?.id;
-                    const isSuperuser = userStore.userInfo?.is_superuser || userStore.userInfo?.username === 'admin';
-                    const rowOwnerId = row.owner_id;
-                    // 如果是超级管理员，或者当前用户是责任人，则不禁用
-                    return !(isSuperuser || String(rowOwnerId) === String(currentUserId));
-                }
-            },
-            {
-                code: 'delete',
-                text: '删除',
-                status: 'danger',
-                disabled: (row: PerformanceIndicator) => {
-                    const currentUserId = userStore.userInfo?.id;
-                    const isSuperuser = userStore.userInfo?.is_superuser || userStore.userInfo?.username === 'admin';
-                    const rowOwnerId = row.owner_id;
-                    return !(isSuperuser || String(rowOwnerId) === String(currentUserId));
-                }
-            }
-        ],
-      }
     },
   ];
+
+  return columns.map((column) => ({
+    ...column,
+    align: 'center',
+    headerAlign: 'center',
+  }));
 }
