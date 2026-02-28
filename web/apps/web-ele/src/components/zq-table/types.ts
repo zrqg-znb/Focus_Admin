@@ -44,6 +44,27 @@ export interface ZqToolbarConfig {
   refresh?: boolean; // 是否显示刷新按钮
   zoom?: boolean; // 是否显示全屏按钮
   custom?: boolean; // 是否显示列设置
+  export?:
+    | {
+        /**
+         * 是否尝试导出全部数据（需提供 proxyConfig.ajax.queryAll）
+         * 兼容旧配置，建议改用 defaultScope
+         */
+        all?: boolean;
+        /**
+         * 默认勾选导出列（值为列的 key）
+         */
+        defaultColumns?: string[];
+        /**
+         * 导出默认范围
+         */
+        defaultScope?: 'all' | 'current';
+        /**
+         * 导出文件名（不带后缀）
+         */
+        filename?: string;
+      }
+    | boolean;
   tools?: any[]; // 自定义工具栏按钮
 }
 

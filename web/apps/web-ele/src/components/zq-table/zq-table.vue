@@ -21,23 +21,37 @@ import { EmptyIcon, IconifyIcon } from '@vben/icons';
 import { $t } from '@vben/locales';
 import { cn, isBoolean, isEqual, mergeWithArrayOverride } from '@vben/utils';
 
-import { FullScreen, Refresh, Search, Setting } from '@element-plus/icons-vue';
+import {
+  Download,
+  FullScreen,
+  Refresh,
+  Search,
+  Setting,
+} from '@element-plus/icons-vue';
 import { useResizeObserver } from '@vueuse/core';
 import {
   ElButton,
   ElCheckbox,
+  ElCheckboxGroup,
+  ElDialog,
   ElDivider,
   ElIcon,
+  ElInput,
+  ElMessage,
   ElPagination,
   ElPopover,
+  ElRadioButton,
+  ElRadioGroup,
   ElScrollbar,
   ElTable,
   ElTableColumn,
   ElTooltip,
 } from 'element-plus';
 import draggable from 'vuedraggable';
+import * as XLSX from 'xlsx';
 
 import { useTableForm } from './init';
+import TableHeaderHelp from './table-header-help.vue';
 
 import './style.css';
 
@@ -51,6 +65,34 @@ interface ColumnState {
   visible: boolean;
   fixed: 'left' | 'right' | false;
   originalIndex: number;
+}
+
+interface HeaderHelpConfig {
+  definition?: string;
+  editableHint?: string;
+  formula?: string;
+  placement?:
+    | 'bottom'
+    | 'bottom-end'
+    | 'bottom-start'
+    | 'left'
+    | 'right'
+    | 'top'
+    | 'top-end'
+    | 'top-start';
+  width?: number;
+}
+type ExportScope = 'all' | 'current';
+
+interface ExportColumnOption {
+  key: string;
+  label: string;
+  prop: string;
+}
+interface ExportColumnGroup {
+  columns: ExportColumnOption[];
+  key: string;
+  label: string;
 }
 const props = withDefaults(defineProps<Props>(), {});
 const emit = defineEmits([
@@ -335,11 +377,365 @@ const pagerPageSizes = computed<number[]>(() => {
 const pagerLayout = computed(
   () =>
     gridOptions.value?.pagerConfig?.layout ||
-    'total, sizes, prev, pager, next, jumper',
+    'total, sizes, ->, prev, pager, next, jumper',
 );
 const pagerBackground = computed(
   () => gridOptions.value?.pagerConfig?.background !== false,
 );
+const exportLoading = ref(false);
+const exportDialogVisible = ref(false);
+const exportFilename = ref('');
+const exportScope = ref<ExportScope>('current');
+const exportColumnKeys = ref<string[]>([]);
+
+function normalizeItems(result: any): Record<string, any>[] {
+  if (Array.isArray(result)) {
+    return result;
+  }
+  if (result && typeof result === 'object') {
+    if (Array.isArray(result.items)) {
+      return result.items;
+    }
+    if (Array.isArray(result.data)) {
+      return result.data;
+    }
+  }
+  return [];
+}
+
+function collectExportColumnGroups(cols: any[]): ExportColumnGroup[] {
+  const groupMap = new Map<string, ExportColumnGroup>();
+  const seenColumnKey = new Set<string>();
+
+  const ensureGroup = (groupKey: string, label: string) => {
+    if (!groupMap.has(groupKey)) {
+      groupMap.set(groupKey, {
+        key: groupKey,
+        label,
+        columns: [],
+      });
+    }
+    return groupMap.get(groupKey)!;
+  };
+
+  const visit = (column: any, ancestors: string[]) => {
+    const childColumns = Array.isArray(column.children) ? column.children : [];
+    if (childColumns.length > 0) {
+      const groupLabel = column.label || column.title;
+      const nextAncestors = groupLabel
+        ? [...ancestors, String(groupLabel)]
+        : ancestors;
+      childColumns.forEach((child) => visit(child, nextAncestors));
+      return;
+    }
+
+    if (column.type || !column.prop) return;
+    const prop = String(column.prop);
+    if (prop === 'actions' || prop === 'operation') return;
+    const columnKey = String(column.key || prop);
+    if (seenColumnKey.has(columnKey)) return;
+    seenColumnKey.add(columnKey);
+
+    const groupKey =
+      ancestors.length > 0 ? ancestors.join(' / ') : '__zq_export_base__';
+    const groupLabel = ancestors.at(-1) || '基础字段';
+    ensureGroup(groupKey, groupLabel).columns.push({
+      key: columnKey,
+      label: String(column.label || column.title || prop),
+      prop,
+    });
+  };
+
+  cols.forEach((column) => visit(column, []));
+  return [...groupMap.values()];
+}
+
+function normalizeCellValue(value: any): number | string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return value;
+}
+
+const exportConfig = computed(() => gridOptions.value?.toolbarConfig?.export);
+const exportColumnGroups = computed<ExportColumnGroup[]>(() => {
+  return collectExportColumnGroups(columns.value);
+});
+const exportColumnOptions = computed<ExportColumnOption[]>(() => {
+  return exportColumnGroups.value.flatMap((group) => group.columns);
+});
+const exportColumnOptionKeys = computed<string[]>(() => {
+  return exportColumnOptions.value.map((column) => column.key);
+});
+const isAllExportColumnsChecked = computed(() => {
+  if (exportColumnOptionKeys.value.length === 0) {
+    return false;
+  }
+  return exportColumnKeys.value.length === exportColumnOptionKeys.value.length;
+});
+const isExportColumnsIndeterminate = computed(() => {
+  return (
+    exportColumnKeys.value.length > 0 &&
+    exportColumnKeys.value.length < exportColumnOptionKeys.value.length
+  );
+});
+
+function getExportBaseName() {
+  const currentExportConfig = exportConfig.value;
+  if (
+    currentExportConfig &&
+    typeof currentExportConfig === 'object' &&
+    currentExportConfig.filename
+  ) {
+    return currentExportConfig.filename;
+  }
+  if (tableTitle.value) {
+    return String(tableTitle.value);
+  }
+  return 'table-export';
+}
+
+function getDefaultExportScope(): ExportScope {
+  const currentExportConfig = exportConfig.value;
+  if (currentExportConfig && typeof currentExportConfig === 'object') {
+    if (currentExportConfig.defaultScope === 'all') {
+      return 'all';
+    }
+    if (currentExportConfig.defaultScope === 'current') {
+      return 'current';
+    }
+    if (currentExportConfig.all) {
+      return 'all';
+    }
+  }
+  return 'current';
+}
+
+function getDefaultExportColumns(): string[] {
+  const currentExportConfig = exportConfig.value;
+  if (
+    currentExportConfig &&
+    typeof currentExportConfig === 'object' &&
+    Array.isArray(currentExportConfig.defaultColumns)
+  ) {
+    return currentExportConfig.defaultColumns.map(String);
+  }
+  return [];
+}
+
+async function getExportRowsByScope(scope: ExportScope) {
+  if (scope === 'current') {
+    return tableData.value;
+  }
+
+  let formData: Record<string, any> = {};
+  try {
+    formData = await formApi.getValues();
+  } catch {
+    formData = {};
+  }
+
+  const queryAll = gridOptions.value?.proxyConfig?.ajax?.queryAll as
+    | ((params: {
+        form: Record<string, any>;
+        sort: Record<string, any>;
+      }) => Promise<any>)
+    | undefined;
+  if (typeof queryAll === 'function') {
+    const result = await queryAll({
+      form: formData,
+      sort: {},
+    });
+    const items = normalizeItems(result);
+    if (items.length > 0) {
+      return items;
+    }
+  }
+
+  const query = gridOptions.value?.proxyConfig?.ajax?.query as
+    | ((params: {
+        form: Record<string, any>;
+        page: {
+          currentPage: number;
+          pageSize: number;
+          total: number;
+        };
+        sort: Record<string, any>;
+      }) => Promise<any>)
+    | undefined;
+  if (typeof query !== 'function') {
+    return tableData.value;
+  }
+
+  const pageSize = Math.max(Number(pagination.pageSize || 20), 200);
+  const firstResult = await query({
+    form: formData,
+    page: {
+      currentPage: 1,
+      pageSize,
+      total: 0,
+    },
+    sort: {},
+  });
+  if (Array.isArray(firstResult)) {
+    return firstResult;
+  }
+
+  const firstItems = normalizeItems(firstResult);
+  const total =
+    typeof firstResult?.total === 'number' && Number.isFinite(firstResult.total)
+      ? firstResult.total
+      : firstItems.length;
+  if (total <= firstItems.length) {
+    return firstItems.length > 0 ? firstItems : tableData.value;
+  }
+
+  const mergedItems = [...firstItems];
+  const totalPages = Math.ceil(total / pageSize);
+  for (let page = 2; page <= totalPages; page++) {
+    const pageResult = await query({
+      form: formData,
+      page: {
+        currentPage: page,
+        pageSize,
+        total,
+      },
+      sort: {},
+    });
+    const pageItems = normalizeItems(pageResult);
+    if (pageItems.length === 0) {
+      break;
+    }
+    mergedItems.push(...pageItems);
+    if (mergedItems.length >= total) {
+      break;
+    }
+  }
+  return mergedItems.length > 0 ? mergedItems : tableData.value;
+}
+
+function handleExportCheckAll(checked: boolean) {
+  exportColumnKeys.value = checked ? [...exportColumnOptionKeys.value] : [];
+}
+
+function isGroupChecked(group: ExportColumnGroup) {
+  if (group.columns.length === 0) return false;
+  const selectedKeys = new Set(exportColumnKeys.value);
+  return group.columns.every((column) => selectedKeys.has(column.key));
+}
+
+function isGroupIndeterminate(group: ExportColumnGroup) {
+  if (group.columns.length === 0) return false;
+  const selectedKeys = new Set(exportColumnKeys.value);
+  const selectedCount = group.columns.filter((column) =>
+    selectedKeys.has(column.key),
+  ).length;
+  return selectedCount > 0 && selectedCount < group.columns.length;
+}
+
+function handleGroupCheck(group: ExportColumnGroup, checked: boolean) {
+  const selectedKeys = new Set(exportColumnKeys.value);
+  if (checked) {
+    group.columns.forEach((column) => {
+      selectedKeys.add(column.key);
+    });
+  } else {
+    group.columns.forEach((column) => {
+      selectedKeys.delete(column.key);
+    });
+  }
+  exportColumnKeys.value = [...selectedKeys];
+}
+
+function openExportDialog() {
+  if (exportColumnOptions.value.length === 0) {
+    ElMessage.warning('暂无可导出的列');
+    return;
+  }
+
+  exportFilename.value = getExportBaseName();
+  const preferredScope = getDefaultExportScope();
+  exportScope.value = preferredScope;
+
+  const allowedKeys = new Set(exportColumnOptionKeys.value);
+  const preferredColumns = getDefaultExportColumns().filter((key) =>
+    allowedKeys.has(key),
+  );
+  exportColumnKeys.value =
+    preferredColumns.length > 0
+      ? preferredColumns
+      : [...exportColumnOptionKeys.value];
+
+  exportDialogVisible.value = true;
+}
+
+async function onExportBtnClick() {
+  if (exportLoading.value) {
+    return;
+  }
+  openExportDialog();
+}
+
+async function handleExportConfirm() {
+  if (exportColumnKeys.value.length === 0) {
+    ElMessage.warning('请至少选择一列进行导出');
+    return;
+  }
+
+  const filename = exportFilename.value.trim() || getExportBaseName();
+  const selectedKeySet = new Set(exportColumnKeys.value);
+  const selectedColumns = exportColumnOptions.value.filter((column) =>
+    selectedKeySet.has(column.key),
+  );
+  if (selectedColumns.length === 0) {
+    ElMessage.warning('请至少选择一列进行导出');
+    return;
+  }
+
+  exportLoading.value = true;
+  try {
+    const xlsx = (XLSX as any)?.utils ? (XLSX as any) : (XLSX as any)?.default;
+    if (!xlsx?.utils) {
+      throw new TypeError('xlsx utils unavailable');
+    }
+    const writeFile = xlsx.writeFileXLSX || xlsx.writeFile;
+    if (typeof writeFile !== 'function') {
+      throw new TypeError('xlsx writeFile unavailable');
+    }
+    const rows = await getExportRowsByScope(exportScope.value);
+    if (rows.length === 0) {
+      ElMessage.warning('暂无可导出数据');
+      return;
+    }
+    const exportRows = rows.map((row) => {
+      const line: Record<string, any> = {};
+      selectedColumns.forEach((column) => {
+        line[column.label] = normalizeCellValue(row[column.prop]);
+      });
+      return line;
+    });
+
+    const worksheet = xlsx.utils.json_to_sheet(exportRows);
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+    const stamp = new Date().toISOString().slice(0, 10);
+    writeFile(workbook, `${filename}-${stamp}.xlsx`);
+    exportDialogVisible.value = false;
+    ElMessage.success('导出成功');
+  } catch (error) {
+    console.error('[zq-table export failed]', error);
+    ElMessage.error('导出失败，请检查依赖或数据格式');
+  } finally {
+    exportLoading.value = false;
+  }
+}
 
 onMounted(() => {
   props.api.mount(formApi);
@@ -404,6 +800,14 @@ const TableColumnRenderer = defineComponent({
       if (column.headerSlotName && slots[column.headerSlotName]) {
         columnSlots.header = (scope: any) =>
           slots[column.headerSlotName]?.({ ...scope, column });
+      } else if (column.headerHelp && !column.type) {
+        const headerHelp = (column.headerHelp || {}) as HeaderHelpConfig;
+        const headerLabel = column.label || column.title || column.prop || '';
+        columnSlots.header = () =>
+          h(TableHeaderHelp, {
+            ...headerHelp,
+            label: String(headerLabel),
+          });
       }
 
       if (hasChildren) {
@@ -702,6 +1106,14 @@ function handleSortChange(data: any) {
           </ElIcon>
         </ElButton>
         <ElButton
+          v-if="gridOptions?.toolbarConfig?.export"
+          circle
+          :icon="Download"
+          :loading="exportLoading"
+          @click="onExportBtnClick"
+          title="导出 XLSX"
+        />
+        <ElButton
           v-if="gridOptions?.toolbarConfig?.zoom !== false"
           circle
           :type="isFullscreen ? 'primary' : ''"
@@ -828,10 +1240,7 @@ function handleSortChange(data: any) {
     </div>
 
     <!-- Pagination -->
-    <div
-      v-if="gridOptions?.pagerConfig?.enabled !== false"
-      class="flex justify-end p-4"
-    >
+    <div v-if="gridOptions?.pagerConfig?.enabled !== false" class="p-4">
       <ElPagination
         v-model:current-page="pagination.currentPage"
         v-model:page-size="pagination.pageSize"
@@ -839,11 +1248,98 @@ function handleSortChange(data: any) {
         :page-sizes="pagerPageSizes"
         :layout="pagerLayout"
         :background="pagerBackground"
+        class="w-full"
         size="small"
         @current-change="onPageChange"
         @size-change="onPageSizeChange"
       />
     </div>
+
+    <ElDialog
+      v-model="exportDialogVisible"
+      width="640px"
+      destroy-on-close
+      title="导出配置"
+    >
+      <div class="flex flex-col gap-4">
+        <div>
+          <div class="mb-2 text-sm font-medium">导出文件名</div>
+          <ElInput
+            v-model="exportFilename"
+            clearable
+            maxlength="80"
+            placeholder="请输入文件名（不含后缀）"
+          />
+        </div>
+
+        <div>
+          <div class="mb-2 text-sm font-medium">数据范围</div>
+          <ElRadioGroup v-model="exportScope">
+            <ElRadioButton label="current">本页数据</ElRadioButton>
+            <ElRadioButton label="all">全量数据</ElRadioButton>
+          </ElRadioGroup>
+        </div>
+
+        <div>
+          <div class="mb-2 flex items-center justify-between">
+            <span class="text-sm font-medium">导出列</span>
+            <ElCheckbox
+              :model-value="isAllExportColumnsChecked"
+              :indeterminate="isExportColumnsIndeterminate"
+              @change="handleExportCheckAll"
+            >
+              全选
+            </ElCheckbox>
+          </div>
+
+          <ElScrollbar max-height="260px" wrap-class="pr-1">
+            <div class="flex flex-col gap-3">
+              <div
+                v-for="group in exportColumnGroups"
+                :key="group.key"
+                class="bg-muted/20 rounded-md border p-3"
+              >
+                <div class="mb-2 flex items-center justify-between">
+                  <div class="text-sm font-medium">{{ group.label }}</div>
+                  <ElCheckbox
+                    :model-value="isGroupChecked(group)"
+                    :indeterminate="isGroupIndeterminate(group)"
+                    @change="(checked) => handleGroupCheck(group, !!checked)"
+                  >
+                    本组全选
+                  </ElCheckbox>
+                </div>
+                <ElCheckboxGroup
+                  v-model="exportColumnKeys"
+                  class="grid grid-cols-2 gap-2"
+                >
+                  <ElCheckbox
+                    v-for="exportColumn in group.columns"
+                    :key="exportColumn.key"
+                    :label="exportColumn.key"
+                  >
+                    {{ exportColumn.label }}
+                  </ElCheckbox>
+                </ElCheckboxGroup>
+              </div>
+            </div>
+          </ElScrollbar>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <ElButton @click="exportDialogVisible = false">取消</ElButton>
+          <ElButton
+            type="primary"
+            :loading="exportLoading"
+            @click="handleExportConfirm"
+          >
+            导出
+          </ElButton>
+        </div>
+      </template>
+    </ElDialog>
   </div>
 </template>
 

@@ -94,8 +94,49 @@ interface ZqProxyConfig {
     //   form: 表单数据
     //   sort: 排序数据
     query?: (params: { page: any; form: any; sort: any }) => Promise<any>;
+    // 导出全部数据时可选（配合 toolbarConfig.export.all 使用）
+    queryAll?: (params: { form: any; sort: any }) => Promise<any>;
   };
 }
+```
+
+#### `toolbarConfig.export`
+
+```typescript
+toolbarConfig: {
+  export: true; // 打开导出配置弹窗（列/范围/文件名）
+  // 或
+  export: {
+    filename: '项目列表',
+    defaultScope: 'all', // 默认全量
+    defaultColumns: ['name', 'status'], // 默认选中列（列 key）
+  };
+}
+```
+
+导出弹窗中的列选择为“按表头分组”展示（如入口指标、出口指标），支持全选、分组全选、单列勾选。
+
+当选择“全量数据”时：
+- 优先调用 `proxyConfig.ajax.queryAll`
+- 若未配置 `queryAll`，会回退为调用 `proxyConfig.ajax.query` 自动分页拉取全量
+
+#### 列表头说明（`headerHelp`）
+
+支持在列配置中直接声明表头说明，渲染为“标题 + 提示图标”，悬浮展示指标定义、计算规则、编辑说明。
+
+```typescript
+columns: [
+  {
+    key: 'test_automation_rate',
+    dataKey: 'test_automation_rate',
+    title: '测试自动化率',
+    headerHelp: {
+      definition: '用于衡量自动化执行覆盖水平',
+      formula: '自动化执行用例数 ÷ 总执行用例数',
+      editableHint: '支持双击单元格编辑',
+    },
+  },
+];
 ```
 
 #### `TableApi`
