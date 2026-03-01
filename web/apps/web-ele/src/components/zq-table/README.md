@@ -110,6 +110,9 @@ toolbarConfig: {
     filename: '项目列表',
     defaultScope: 'all', // 默认全量
     defaultColumns: ['name', 'status'], // 默认选中列（列 key）
+    allowAll: true, // 是否允许“全量数据”选项
+    pagedFallback: true, // 无 queryAll 时是否自动分页拉取全量
+    maxAutoPages: 200, // 自动分页拉取的最大页数保护
   };
 }
 ```
@@ -118,7 +121,9 @@ toolbarConfig: {
 
 当选择“全量数据”时：
 - 优先调用 `proxyConfig.ajax.queryAll`
-- 若未配置 `queryAll`，会回退为调用 `proxyConfig.ajax.query` 自动分页拉取全量
+- 若未配置 `queryAll`，默认会回退为调用 `proxyConfig.ajax.query` 自动分页拉取全量（可通过 `pagedFallback: false` 关闭）
+- 若 `allowAll: false`，导出弹窗仅显示“本页数据”
+- 对于大数据量，建议后端提供 `queryAll`（或独立导出接口）以避免前端长时间分页拉取
 
 #### 列表头说明（`headerHelp`）
 

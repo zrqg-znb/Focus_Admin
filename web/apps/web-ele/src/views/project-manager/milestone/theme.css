@@ -1,0 +1,78 @@
+.milestone-board-theme {
+  --milestone-board-surface-hsl: 214 100% 97.5%;
+  --milestone-board-surface-strong-hsl: 214 100% 96.1%;
+  --milestone-board-border-hsl: 213 56% 88%;
+  --milestone-board-text-hsl: 218 20% 52%;
+
+  --milestone-board-header-bg: hsl(var(--milestone-board-surface-hsl));
+  --milestone-board-header-bg-strong: hsl(
+    var(--milestone-board-surface-strong-hsl)
+  );
+  --milestone-board-header-border: hsl(var(--milestone-board-border-hsl));
+  --milestone-board-header-text: hsl(var(--milestone-board-text-hsl));
+  --milestone-board-header-shadow: inset 0 -1px 0 rgb(231 239 252 / 92%);
+  --milestone-board-header-track: linear-gradient(
+    90deg,
+    rgb(63 140 255 / 12%) 0%,
+    rgb(34 160 107 / 11%) 20%,
+    rgb(229 162 53 / 11%) 40%,
+    rgb(225 106 106 / 11%) 58%,
+    rgb(139 124 247 / 11%) 76%,
+    rgb(38 181 165 / 11%) 100%
+  );
+
+  --milestone-board-controls-bg: var(--milestone-board-header-bg);
+  --milestone-board-controls-border: var(--milestone-board-header-border);
+  --milestone-board-controls-shadow: inset 0 1px 0 rgb(255 255 255 / 72%);
+  --milestone-board-controls-text: var(--milestone-board-header-text);
+
+  --milestone-board-qg1: #3f8cff;
+  --milestone-board-qg2: #22a06b;
+  --milestone-board-qg3: #e5a235;
+  --milestone-board-qg4: #e16a6a;
+  --milestone-board-qg5: #8b7cf7;
+  --milestone-board-qg6: #e272b1;
+  --milestone-board-qg7: #6a79ff;
+  --milestone-board-qg8: #26b5a5;
+
+  --milestone-board-risk-high: #ef4444;
+  --milestone-board-risk-medium: #f59e0b;
+  --milestone-board-risk-high-rgb: 239, 68, 68;
+  --milestone-board-risk-medium-rgb: 245, 158, 11;
+
+  --background-deep: var(--milestone-board-surface-hsl);
+}
+
+.dark .milestone-board-theme {
+  --milestone-board-surface-hsl: 218 36% 20%;
+  --milestone-board-surface-strong-hsl: 218 39% 24%;
+  --milestone-board-border-hsl: 216 31% 39%;
+  --milestone-board-text-hsl: 216 41% 77%;
+
+  --milestone-board-header-shadow: inset 0 -1px 0 rgb(47 73 110 / 90%);
+  --milestone-board-header-track: linear-gradient(
+    90deg,
+    rgb(101 168 255 / 22%) 0%,
+    rgb(54 198 144 / 20%) 20%,
+    rgb(243 186 80 / 20%) 40%,
+    rgb(244 134 134 / 20%) 58%,
+    rgb(166 152 255 / 20%) 76%,
+    rgb(76 209 192 / 20%) 100%
+  );
+
+  --milestone-board-controls-shadow: none;
+
+  --milestone-board-qg1: #65a8ff;
+  --milestone-board-qg2: #36c690;
+  --milestone-board-qg3: #f3ba50;
+  --milestone-board-qg4: #f48686;
+  --milestone-board-qg5: #a698ff;
+  --milestone-board-qg6: #f095c7;
+  --milestone-board-qg7: #8ea0ff;
+  --milestone-board-qg8: #4cd1c0;
+
+  --milestone-board-risk-high: #fb7185;
+  --milestone-board-risk-medium: #fbbf24;
+  --milestone-board-risk-high-rgb: 251, 113, 133;
+  --milestone-board-risk-medium-rgb: 251, 191, 36;
+}

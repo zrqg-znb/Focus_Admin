@@ -47,10 +47,27 @@ export interface ZqToolbarConfig {
   export?:
     | {
         /**
-         * 是否尝试导出全部数据（需提供 proxyConfig.ajax.queryAll）
-         * 兼容旧配置，建议改用 defaultScope
+         * 是否允许导出全量数据
+         * - true: 弹窗展示“全量数据”
+         * - false: 仅允许“本页数据”
+         * 兼容旧配置字段，建议使用 allowAll
          */
         all?: boolean;
+        /**
+         * 是否允许导出全量数据（推荐）
+         */
+        allowAll?: boolean;
+        /**
+         * 仅在未提供 queryAll 时生效：
+         * 是否允许回退为自动分页拉取全量
+         * - true: 自动翻页拉取
+         * - false: 禁止回退（需后端提供 queryAll）
+         */
+        pagedFallback?: boolean;
+        /**
+         * 自动分页拉取全量时的最大页数保护，默认 200
+         */
+        maxAutoPages?: number;
         /**
          * 默认勾选导出列（值为列的 key）
          */

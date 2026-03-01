@@ -1,9 +1,7 @@
 import type { VbenFormSchema } from '#/adapter/form';
-import type { VxeTableGridOptions } from '#/adapter/vxe-table';
-import type {
-  IterationDashboardItem,
-  IterationDetailItem,
-} from '#/api/project-manager/iteration';
+import type { IterationDashboardItem } from '#/api/project-manager/iteration';
+
+type TableColumns = Record<string, any>[];
 
 export function useSearchFormSchema(): VbenFormSchema[] {
   return [
@@ -34,7 +32,7 @@ function withCenterAlign(columns: Record<string, any>[]) {
 
 export function useDashboardColumns(
   _onNameClick: (row: IterationDashboardItem) => void,
-): VxeTableGridOptions<IterationDashboardItem>['columns'] {
+): TableColumns {
   return withCenterAlign([
     {
       field: 'project_name',
@@ -123,20 +121,12 @@ export function useDashboardColumns(
           field: 'test_automation_rate',
           title: '迭代测试自动化率',
           minWidth: 140,
-          editRender: {
-            name: 'VxeNumberInput',
-            props: { type: 'float', min: 0, max: 1, step: 0.01 },
-          },
           formatter: formatRate,
         },
         {
           field: 'test_case_execution_rate',
           title: '用例执行率',
           minWidth: 120,
-          editRender: {
-            name: 'VxeNumberInput',
-            props: { type: 'float', min: 0, max: 1, step: 0.01 },
-          },
           formatter: formatRate,
         },
         {
@@ -182,7 +172,7 @@ export function useDashboardColumns(
   ]);
 }
 
-export function useDetailColumns(): VxeTableGridOptions<IterationDetailItem>['columns'] {
+export function useDetailColumns(): TableColumns {
   return withCenterAlign([
     { field: 'name', title: '迭代名称', minWidth: 150, fixed: 'left' },
     { field: 'code', title: '编码', minWidth: 120 },
@@ -262,20 +252,12 @@ export function useDetailColumns(): VxeTableGridOptions<IterationDetailItem>['co
           field: 'latest_metric.test_automation_rate',
           title: '测试自动化率',
           minWidth: 140,
-          editRender: {
-            name: 'VxeNumberInput',
-            props: { type: 'float', min: 0, max: 1, step: 0.01 },
-          },
           formatter: formatRate,
         },
         {
           field: 'latest_metric.test_case_execution_rate',
           title: '用例执行率',
           minWidth: 120,
-          editRender: {
-            name: 'VxeNumberInput',
-            props: { type: 'float', min: 0, max: 1, step: 0.01 },
-          },
           formatter: formatRate,
         },
         {

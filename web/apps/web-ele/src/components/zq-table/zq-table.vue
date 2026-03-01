@@ -131,7 +131,10 @@ useResizeObserver(tableContainerRef, (entries) => {
   const entry = entries[0];
   if (!entry) return;
   const { height } = entry.contentRect;
-  tableHeight.value = height;
+  const nextHeight = Math.max(0, Math.floor(height));
+  if (Math.abs(nextHeight - tableHeight.value) >= 1) {
+    tableHeight.value = nextHeight;
+  }
 });
 
 const FORM_SLOT_PREFIX = 'form-';
@@ -368,7 +371,7 @@ watch(
   () => {
     initColumnState();
   },
-  { immediate: true, deep: true },
+  { immediate: true },
 );
 
 function handleResetColumn() {
@@ -421,6 +424,19 @@ const pagerLayout = computed(
 const pagerBackground = computed(
   () => gridOptions.value?.pagerConfig?.background !== false,
 );
+const tableProps = computed<Record<string, any>>(() => {
+  const options = (gridOptions.value || {}) as Record<string, any>;
+  const {
+    columns: _columns,
+    proxyConfig: _proxyConfig,
+    pagerConfig: _pagerConfig,
+    showIndex: _showIndex,
+    showSelection: _showSelection,
+    toolbarConfig: _toolbarConfig,
+    ...rest
+  } = options;
+  return rest;
+});
 const exportLoading = ref(false);
 const exportDialogVisible = ref(false);
 const exportFilename = ref('');
@@ -464,7 +480,7 @@ function collectExportColumnGroups(cols: any[]): ExportColumnGroup[] {
       const nextAncestors = groupLabel
         ? [...ancestors, String(groupLabel)]
         : ancestors;
-      childColumns.forEach((child) => visit(child, nextAncestors));
+      childColumns.forEach((child: any) => visit(child, nextAncestors));
       return;
     }
 
@@ -504,6 +520,49 @@ function normalizeCellValue(value: any): number | string {
 }
 
 const exportConfig = computed(() => gridOptions.value?.toolbarConfig?.export);
+const exportConfigObject = computed<
+  | undefined
+  | {
+      all?: boolean;
+      allowAll?: boolean;
+      defaultColumns?: string[];
+      defaultScope?: ExportScope;
+      filename?: string;
+      maxAutoPages?: number;
+      pagedFallback?: boolean;
+    }
+>(() => {
+  const currentExportConfig = exportConfig.value;
+  if (!currentExportConfig || typeof currentExportConfig !== 'object') {
+    return undefined;
+  }
+  return currentExportConfig;
+});
+const allowExportAll = computed(() => {
+  const current = exportConfigObject.value;
+  if (!current) {
+    return true;
+  }
+  if (typeof current.allowAll === 'boolean') {
+    return current.allowAll;
+  }
+  if (typeof current.all === 'boolean') {
+    return current.all;
+  }
+  return true;
+});
+const allowPagedFallback = computed(() => {
+  const current = exportConfigObject.value;
+  if (!current) return true;
+  return current.pagedFallback !== false;
+});
+const maxAutoExportPages = computed(() => {
+  const configured = Number(exportConfigObject.value?.maxAutoPages ?? 200);
+  if (!Number.isFinite(configured) || configured <= 0) {
+    return 200;
+  }
+  return Math.floor(configured);
+});
 const exportColumnGroups = computed<ExportColumnGroup[]>(() => {
   return collectExportColumnGroups(columns.value);
 });
@@ -527,12 +586,8 @@ const isExportColumnsIndeterminate = computed(() => {
 });
 
 function getExportBaseName() {
-  const currentExportConfig = exportConfig.value;
-  if (
-    currentExportConfig &&
-    typeof currentExportConfig === 'object' &&
-    currentExportConfig.filename
-  ) {
+  const currentExportConfig = exportConfigObject.value;
+  if (currentExportConfig?.filename) {
     return currentExportConfig.filename;
   }
   if (tableTitle.value) {
@@ -542,9 +597,12 @@ function getExportBaseName() {
 }
 
 function getDefaultExportScope(): ExportScope {
-  const currentExportConfig = exportConfig.value;
-  if (currentExportConfig && typeof currentExportConfig === 'object') {
-    if (currentExportConfig.defaultScope === 'all') {
+  if (!allowExportAll.value) {
+    return 'current';
+  }
+  const currentExportConfig = exportConfigObject.value;
+  if (currentExportConfig) {
+    if (currentExportConfig.defaultScope === 'all' && allowExportAll.value) {
       return 'all';
     }
     if (currentExportConfig.defaultScope === 'current') {
@@ -558,10 +616,9 @@ function getDefaultExportScope(): ExportScope {
 }
 
 function getDefaultExportColumns(): string[] {
-  const currentExportConfig = exportConfig.value;
+  const currentExportConfig = exportConfigObject.value;
   if (
     currentExportConfig &&
-    typeof currentExportConfig === 'object' &&
     Array.isArray(currentExportConfig.defaultColumns)
   ) {
     return currentExportConfig.defaultColumns.map(String);
@@ -571,6 +628,9 @@ function getDefaultExportColumns(): string[] {
 
 async function getExportRowsByScope(scope: ExportScope) {
   if (scope === 'current') {
+    return tableData.value;
+  }
+  if (!allowExportAll.value) {
     return tableData.value;
   }
 
@@ -596,6 +656,9 @@ async function getExportRowsByScope(scope: ExportScope) {
     if (items.length > 0) {
       return items;
     }
+  }
+  if (!allowPagedFallback.value) {
+    throw new Error('未配置 queryAll，且已禁用分页回退导出');
   }
 
   const query = gridOptions.value?.proxyConfig?.ajax?.query as
@@ -638,6 +701,11 @@ async function getExportRowsByScope(scope: ExportScope) {
 
   const mergedItems = [...firstItems];
   const totalPages = Math.ceil(total / pageSize);
+  if (totalPages > maxAutoExportPages.value) {
+    throw new Error(
+      `全量导出页数(${totalPages})超过上限(${maxAutoExportPages.value})`,
+    );
+  }
   for (let page = 2; page <= totalPages; page++) {
     const pageResult = await query({
       form: formData,
@@ -660,8 +728,9 @@ async function getExportRowsByScope(scope: ExportScope) {
   return mergedItems.length > 0 ? mergedItems : tableData.value;
 }
 
-function handleExportCheckAll(checked: boolean) {
-  exportColumnKeys.value = checked ? [...exportColumnOptionKeys.value] : [];
+function handleExportCheckAll(checked: any) {
+  exportColumnKeys.value =
+    checked === true ? [...exportColumnOptionKeys.value] : [];
 }
 
 function isGroupChecked(group: ExportColumnGroup) {
@@ -701,7 +770,10 @@ function openExportDialog() {
 
   exportFilename.value = getExportBaseName();
   const preferredScope = getDefaultExportScope();
-  exportScope.value = preferredScope;
+  exportScope.value =
+    preferredScope === 'all' && !allowExportAll.value
+      ? 'current'
+      : preferredScope;
 
   const allowedKeys = new Set(exportColumnOptionKeys.value);
   const preferredColumns = getDefaultExportColumns().filter((key) =>
@@ -770,7 +842,11 @@ async function handleExportConfirm() {
     ElMessage.success('导出成功');
   } catch (error) {
     console.error('[zq-table export failed]', error);
-    ElMessage.error('导出失败，请检查依赖或数据格式');
+    const message =
+      error instanceof Error && error.message
+        ? `导出失败：${error.message}`
+        : '导出失败，请检查依赖或数据格式';
+    ElMessage.error(message);
   } finally {
     exportLoading.value = false;
   }
@@ -1305,7 +1381,7 @@ function handleFilterChange(data: Record<string, any[]>) {
     >
       <div class="h-full w-full" ref="tableContainerRef">
         <ElTable
-          v-bind="gridOptions"
+          v-bind="tableProps"
           :data="tableData"
           :height="tableHeight"
           :style="{ width: '100%' }"
@@ -1371,7 +1447,9 @@ function handleFilterChange(data: Record<string, any[]>) {
           <div class="mb-2 text-sm font-medium">数据范围</div>
           <ElRadioGroup v-model="exportScope">
             <ElRadioButton label="current">本页数据</ElRadioButton>
-            <ElRadioButton label="all">全量数据</ElRadioButton>
+            <ElRadioButton v-if="allowExportAll" label="all">
+              全量数据
+            </ElRadioButton>
           </ElRadioGroup>
         </div>
 

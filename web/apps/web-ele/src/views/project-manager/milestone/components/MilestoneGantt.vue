@@ -1,203 +1,7 @@
-<template>
-  <div class="milestone-gantt-container" ref="ganttContainerRef">
-    <!-- 头部区域 -->
-    <div class="gantt-header">
-      <!-- 左侧：项目名称列 -->
-      <div class="table-header" :style="{ width: `${projectColumnWidth}px` }">
-        <div class="header-cell">项目名称</div>
-        <div class="column-resizer" @mousedown.stop="handleResizeStart"></div>
-      </div>
-
-      <!-- 右侧：时间轴头部 -->
-      <div
-        class="timeline-header-container"
-        ref="timelineContainerRef"
-        @mousedown="handleMouseDown"
-      >
-        <div
-          class="timeline-content"
-          :style="{
-            width: `${timelineTotalWidth}px`,
-            transform: `translateX(${offsetX}px)`,
-          }"
-        >
-          <div class="timeline-scale">
-            <div
-              v-for="date in timelineScale"
-              :key="date.timestamp"
-              class="scale-item"
-              :class="{ 'is-today': date.isToday }"
-              :style="{ left: `${date.position}px` }"
-            >
-              <div class="scale-line"></div>
-              <div class="scale-label">{{ date.label }}</div>
-            </div>
-          </div>
-          <div class="today-line" :style="{ left: `${todayPosition}px` }"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 主体区域 -->
-    <div class="gantt-body" ref="ganttBodyRef" @mousedown="handleMouseDown">
-      <div v-for="row in data" :key="row.project_id" class="gantt-row">
-        <!-- 左侧：项目名称 -->
-        <div class="table-row" :style="{ width: `${projectColumnWidth}px` }">
-          <div class="row-cell" :title="row.project_name">
-            {{ row.project_name }}
-          </div>
-        </div>
-
-        <!-- 右侧：时间轴行 -->
-        <div class="timeline-row-container">
-          <div
-            class="timeline-content"
-            :style="{
-              width: `${timelineTotalWidth}px`,
-              transform: `translateX(${offsetX}px)`,
-            }"
-          >
-            <!-- 甘特条（阶段） -->
-            <div
-              v-for="(segment, index) in getProjectSegments(row)"
-              :key="`seg-${index}`"
-              class="gantt-bar"
-              :style="{
-                left: `${segment.start}px`,
-                width: `${segment.width}px`,
-                backgroundColor: segment.color,
-              }"
-              @mouseenter="(e) => showBarTooltip(e, segment, row)"
-              @mousemove="(e) => updateTooltipPosition(e)"
-              @mouseleave="hideBarTooltip"
-            >
-              <span class="bar-label">{{ segment.label }}</span>
-            </div>
-
-            <!-- 里程碑节点 -->
-            <div
-              v-for="milestone in getProjectMilestones(row)"
-              :key="`ms-${milestone.key}`"
-              class="milestone-node"
-              :class="{
-                'has-risk': milestone.hasRisk,
-                'risk-confirmed': milestone.riskInfo?.level === 'medium'
-              }"
-              :style="{
-                left: `${milestone.position}px`,
-                backgroundColor: milestone.hasRisk
-                  ? (milestone.riskInfo?.level === 'medium' ? '#f59e0b' : '#ef4444')
-                  : milestone.color,
-                borderColor: milestone.hasRisk
-                  ? (milestone.riskInfo?.level === 'medium' ? '#f59e0b' : '#ef4444')
-                  : 'var(--el-bg-color)',
-              }"
-              @click.stop="() => handleRiskClick(milestone, row)"
-              @mouseenter="(e) => showMilestoneTooltip(e, milestone, row)"
-              @mousemove="(e) => updateTooltipPosition(e)"
-              @mouseleave="hideBarTooltip"
-            >
-              <div v-if="milestone.hasRisk" class="risk-indicator">!</div>
-            </div>
-
-            <div
-              class="today-line"
-              :style="{ left: `${todayPosition}px` }"
-            ></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 控制栏 -->
-    <div class="gantt-controls">
-      <div class="control-group">
-        <el-button-group size="small">
-          <el-button @click="zoomOut" :disabled="zoomLevel <= 0.5">-</el-button>
-          <el-button disabled class="scale-text"
-            >{{ Math.round(zoomLevel * 100) }}%</el-button
-          >
-          <el-button @click="zoomIn" :disabled="zoomLevel >= 3">+</el-button>
-        </el-button-group>
-        <el-button size="small" @click="resetView">重置视图</el-button>
-        <el-button size="small" @click="toggleFullscreen">
-          <el-icon class="mr-1"><FullScreen /></el-icon>
-          {{ isFullscreen ? '退出全屏' : '全屏' }}
-        </el-button>
-      </div>
-      <div class="legend">
-        <div
-          v-for="config in milestoneConfigs"
-          :key="config.key"
-          class="legend-item"
-        >
-          <span
-            class="legend-color"
-            :style="{ backgroundColor: config.color }"
-          ></span>
-          <span>{{ config.label }}</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Risk Handle Dialog -->
-    <RiskHandleDialog ref="riskHandleDialogRef" @success="handleRiskSuccess" />
-
-    <!-- Tooltip -->
-    <Teleport to="body">
-      <div
-        v-if="tooltip.visible"
-        class="gantt-tooltip"
-        :style="{
-          left: `${tooltip.x}px`,
-          top: `${tooltip.y}px`,
-        }"
-      >
-        <div class="tooltip-header">{{ tooltip.title }}</div>
-        <div class="tooltip-body">
-          <div v-if="tooltip.type === 'segment'">
-            <div class="tooltip-row">
-              <span>阶段:</span>
-              <span>{{ tooltip.content.label }}</span>
-            </div>
-            <div class="tooltip-row">
-              <span>开始:</span>
-              <span>{{ tooltip.content.startDate }}</span>
-            </div>
-            <div class="tooltip-row">
-              <span>结束:</span>
-              <span>{{ tooltip.content.endDate }}</span>
-            </div>
-            <div class="tooltip-row">
-              <span>时长:</span>
-              <span>{{ tooltip.content.duration }} 天</span>
-            </div>
-          </div>
-          <div v-else-if="tooltip.type === 'milestone'">
-            <div class="tooltip-row">
-              <span>节点:</span>
-              <span>{{ tooltip.content.label }}</span>
-            </div>
-            <div class="tooltip-row">
-              <span>日期:</span>
-              <span>{{ tooltip.content.date }}</span>
-            </div>
-            <div v-if="tooltip.content.hasRisk" class="tooltip-row risk-row">
-              <span :class="tooltip.content.riskLevel === 'medium' ? 'text-yellow-500' : 'text-red-500'">风险:</span>
-              <span :class="tooltip.content.riskLevel === 'medium' ? 'text-yellow-500 font-bold' : 'text-red-500 font-bold'">
-                {{ tooltip.content.riskLevel === 'medium' ? '已确认 (持续跟踪)' : '存在高风险' }}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-  </div>
-</template>
-
 <script setup lang="ts">
-import type { MilestoneBoardItem } from '#/api/project-manager/milestone';
 import type { MilestoneConfig } from './types';
+
+import type { MilestoneBoardItem } from '#/api/project-manager/milestone';
 
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 
@@ -213,7 +17,7 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  basePixelsPerDay: 2,
+  basePixelsPerDay: 5,
 });
 
 const emit = defineEmits(['refresh']);
@@ -221,7 +25,7 @@ const emit = defineEmits(['refresh']);
 // Risk Handle Dialog
 const riskHandleDialogRef = ref();
 
-function handleRiskClick(milestone: any, row: MilestoneBoardItem) {
+function handleRiskClick(milestone: any) {
   if (milestone.hasRisk && milestone.riskInfo) {
     // 直接打开风险处理弹窗
     // 这里假设 milestone.riskInfo 包含了 RiskItem 所需的完整信息（特别是 id）
@@ -234,10 +38,14 @@ function handleRiskSuccess() {
   emit('refresh');
 }
 
-// Mock risk check (should be real data from API)
+// 风险信息来自里程碑概览接口返回的 row.risks 字段
 function getRiskInfo(row: MilestoneBoardItem, qgKey: string): any | null {
   const risks = (row as any).risks || {};
-  const qgName = qgKey.split('_')[0].toUpperCase();
+  const [qgPrefix = ''] = qgKey.split('_');
+  const qgName = qgPrefix.toUpperCase();
+  if (!qgName) {
+    return null;
+  }
   const risk = risks[qgName];
   if (risk) {
     return risk;
@@ -247,14 +55,14 @@ function getRiskInfo(row: MilestoneBoardItem, qgKey: string): any | null {
 
 // 配置信息
 const milestoneConfigs: MilestoneConfig[] = [
-  { key: 'qg1_date', label: 'QG1', color: '#3b82f6' },
-  { key: 'qg2_date', label: 'QG2', color: '#10b981' },
-  { key: 'qg3_date', label: 'QG3', color: '#f59e0b' },
-  { key: 'qg4_date', label: 'QG4', color: '#ef4444' },
-  { key: 'qg5_date', label: 'QG5', color: '#8b5cf6' },
-  { key: 'qg6_date', label: 'QG6', color: '#ec4899' },
-  { key: 'qg7_date', label: 'QG7', color: '#6366f1' },
-  { key: 'qg8_date', label: 'QG8', color: '#14b8a6' },
+  { key: 'qg1_date', label: 'QG1', color: 'var(--milestone-qg1)' },
+  { key: 'qg2_date', label: 'QG2', color: 'var(--milestone-qg2)' },
+  { key: 'qg3_date', label: 'QG3', color: 'var(--milestone-qg3)' },
+  { key: 'qg4_date', label: 'QG4', color: 'var(--milestone-qg4)' },
+  { key: 'qg5_date', label: 'QG5', color: 'var(--milestone-qg5)' },
+  { key: 'qg6_date', label: 'QG6', color: 'var(--milestone-qg6)' },
+  { key: 'qg7_date', label: 'QG7', color: 'var(--milestone-qg7)' },
+  { key: 'qg8_date', label: 'QG8', color: 'var(--milestone-qg8)' },
 ];
 
 // 状态
@@ -272,14 +80,15 @@ const timelineContainerRef = ref<HTMLElement>();
 const ganttBodyRef = ref<HTMLElement>();
 const ganttContainerRef = ref<HTMLElement>();
 
-const { isFullscreen, toggle: toggleFullscreen } = useFullscreen(ganttContainerRef);
+const { isFullscreen, toggle: toggleFullscreen } =
+  useFullscreen(ganttContainerRef);
 
 const tooltip = ref({
   visible: false,
   x: 0,
   y: 0,
   title: '',
-  type: 'segment' as 'segment' | 'milestone',
+  type: 'segment' as 'milestone' | 'segment',
   content: {} as any,
 });
 
@@ -329,10 +138,10 @@ const todayPosition = computed(() => {
 
 const timelineScale = computed(() => {
   const scales: Array<{
-    timestamp: number;
-    position: number;
-    label: string;
     isToday: boolean;
+    label: string;
+    position: number;
+    timestamp: number;
   }> = [];
 
   const start = new Date(dateRange.value.start);
@@ -340,10 +149,13 @@ const timelineScale = computed(() => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const current = new Date(start);
-  current.setDate(1);
+  const startMonth = new Date(start);
+  startMonth.setDate(1);
+  const endTime = end.getTime();
+  let cursor = startMonth.getTime();
 
-  while (current <= end) {
+  while (cursor <= endTime) {
+    const current = new Date(cursor);
     const isToday =
       current.getMonth() === today.getMonth() &&
       current.getFullYear() === today.getFullYear();
@@ -354,6 +166,7 @@ const timelineScale = computed(() => {
       isToday,
     });
     current.setMonth(current.getMonth() + 1);
+    cursor = current.getTime();
   }
   return scales;
 });
@@ -416,12 +229,12 @@ function getProjectSegments(row: MilestoneBoardItem) {
 
 function getProjectMilestones(row: MilestoneBoardItem) {
   const milestones: Array<{
-    key: string;
-    position: number;
     color: string;
-    label: string;
     date: string;
     hasRisk: boolean;
+    key: string;
+    label: string;
+    position: number;
     riskInfo?: any;
   }> = [];
   milestoneConfigs.forEach((config) => {
@@ -475,7 +288,7 @@ function showMilestoneTooltip(
       label: milestone.label,
       date: milestone.date,
       hasRisk: milestone.hasRisk,
-      riskLevel: milestone.riskInfo?.level
+      riskLevel: milestone.riskInfo?.level,
     },
   };
 }
@@ -512,20 +325,7 @@ function adjustOffsetAfterZoom(oldZoom: number, newZoom: number) {
   if (!timelineContainerRef.value) return;
   const containerWidth = timelineContainerRef.value.clientWidth;
   const centerX = containerWidth / 2;
-  // 当前中心点对应的时间偏移量（像素）
-  const contentCenterX = (centerX - offsetX.value) / oldZoom;
-  // 新的偏移量 = 中心点 - (时间偏移 * 新倍率)
-  // 注意：这里 contentCenterX 是 "basePixels 坐标系下的位置"，所以要乘 newZoom
-  // 等等，之前的逻辑是 (centerX - offset) / oldScale 得到的是 "缩放前的像素位置"?
-  // 实际上 dateToPosition 返回的是 pixelsPerDay * zoom.
-  // 所以 (centerX - offset) 是 "当前视图中心点相对于时间轴起点的像素距离"
-  // 这个距离是 zoom 后的。
-  // 我们需要保持这个"时间点"不变。
-  // TimePoint = (centerX - offset) / pixelsPerDay_Current
-  // NewOffset = centerX - (TimePoint * pixelsPerDay_New)
-
   const timePointFactor = (centerX - offsetX.value) / oldZoom;
-  // 因为 pixelsPerDay = base * zoom, 所以除以 zoom 就得到 basePixels 下的位置
 
   offsetX.value = centerX - timePointFactor * newZoom;
   applyBoundary();
@@ -616,36 +416,334 @@ onUnmounted(() => {
 });
 </script>
 
+<template>
+  <div class="milestone-gantt-container" ref="ganttContainerRef">
+    <!-- 头部区域 -->
+    <div class="gantt-header">
+      <!-- 左侧：项目名称列 -->
+      <div class="table-header" :style="{ width: `${projectColumnWidth}px` }">
+        <div class="header-cell">项目名称</div>
+        <div class="column-resizer" @mousedown.stop="handleResizeStart"></div>
+      </div>
+
+      <!-- 右侧：时间轴头部 -->
+      <div
+        class="timeline-header-container"
+        ref="timelineContainerRef"
+        @mousedown="handleMouseDown"
+      >
+        <div
+          class="timeline-content"
+          :style="{
+            width: `${timelineTotalWidth}px`,
+            transform: `translateX(${offsetX}px)`,
+          }"
+        >
+          <div class="timeline-scale">
+            <div
+              v-for="date in timelineScale"
+              :key="date.timestamp"
+              class="scale-item"
+              :class="{ 'is-today': date.isToday }"
+              :style="{ left: `${date.position}px` }"
+            >
+              <div class="scale-line"></div>
+              <div class="scale-label">{{ date.label }}</div>
+            </div>
+          </div>
+          <div class="today-line" :style="{ left: `${todayPosition}px` }"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 主体区域 -->
+    <div class="gantt-body" ref="ganttBodyRef" @mousedown="handleMouseDown">
+      <div v-for="row in data" :key="row.project_id" class="gantt-row">
+        <!-- 左侧：项目名称 -->
+        <div class="table-row" :style="{ width: `${projectColumnWidth}px` }">
+          <div class="row-cell" :title="row.project_name">
+            {{ row.project_name }}
+          </div>
+        </div>
+
+        <!-- 右侧：时间轴行 -->
+        <div class="timeline-row-container">
+          <div
+            class="timeline-content"
+            :style="{
+              width: `${timelineTotalWidth}px`,
+              transform: `translateX(${offsetX}px)`,
+            }"
+          >
+            <!-- 甘特条（阶段） -->
+            <div
+              v-for="(segment, index) in getProjectSegments(row)"
+              :key="`seg-${index}`"
+              class="gantt-bar"
+              :style="{
+                left: `${segment.start}px`,
+                width: `${segment.width}px`,
+                backgroundColor: segment.color,
+              }"
+              @mouseenter="(e) => showBarTooltip(e, segment, row)"
+              @mousemove="(e) => updateTooltipPosition(e)"
+              @mouseleave="hideBarTooltip"
+            >
+              <span class="bar-label">{{ segment.label }}</span>
+            </div>
+
+            <!-- 里程碑节点 -->
+            <div
+              v-for="milestone in getProjectMilestones(row)"
+              :key="`ms-${milestone.key}`"
+              class="milestone-node"
+              :class="{
+                'has-risk': milestone.hasRisk,
+                'risk-confirmed': milestone.riskInfo?.level === 'medium',
+              }"
+              :style="{
+                left: `${milestone.position}px`,
+                backgroundColor: milestone.hasRisk
+                  ? milestone.riskInfo?.level === 'medium'
+                    ? 'var(--milestone-risk-medium)'
+                    : 'var(--milestone-risk-high)'
+                  : milestone.color,
+                borderColor: milestone.hasRisk
+                  ? milestone.riskInfo?.level === 'medium'
+                    ? 'var(--milestone-risk-medium)'
+                    : 'var(--milestone-risk-high)'
+                  : 'var(--milestone-node-border)',
+              }"
+              @click.stop="() => handleRiskClick(milestone)"
+              @mouseenter="(e) => showMilestoneTooltip(e, milestone, row)"
+              @mousemove="(e) => updateTooltipPosition(e)"
+              @mouseleave="hideBarTooltip"
+            >
+              <div v-if="milestone.hasRisk" class="risk-indicator">!</div>
+            </div>
+
+            <div
+              class="today-line"
+              :style="{ left: `${todayPosition}px` }"
+            ></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 控制栏 -->
+    <div class="gantt-controls">
+      <div class="control-group">
+        <ElButtonGroup size="small">
+          <ElButton @click="zoomOut" :disabled="zoomLevel <= 0.5">-</ElButton>
+          <ElButton disabled class="scale-text">
+            {{ Math.round(zoomLevel * 100) }}%
+          </ElButton>
+          <ElButton @click="zoomIn" :disabled="zoomLevel >= 3">+</ElButton>
+        </ElButtonGroup>
+        <ElButton size="small" @click="resetView">重置视图</ElButton>
+        <ElButton size="small" @click="toggleFullscreen">
+          <ElIcon class="mr-1"><FullScreen /></ElIcon>
+          {{ isFullscreen ? '退出全屏' : '全屏' }}
+        </ElButton>
+      </div>
+      <div class="legend">
+        <div
+          v-for="config in milestoneConfigs"
+          :key="config.key"
+          class="legend-item"
+        >
+          <span
+            class="legend-color"
+            :style="{ backgroundColor: config.color }"
+          ></span>
+          <span>{{ config.label }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Risk Handle Dialog -->
+    <RiskHandleDialog ref="riskHandleDialogRef" @success="handleRiskSuccess" />
+
+    <!-- Tooltip -->
+    <Teleport to="body">
+      <div
+        v-if="tooltip.visible"
+        class="gantt-tooltip"
+        :style="{
+          left: `${tooltip.x}px`,
+          top: `${tooltip.y}px`,
+        }"
+      >
+        <div class="tooltip-header">{{ tooltip.title }}</div>
+        <div class="tooltip-body">
+          <div v-if="tooltip.type === 'segment'">
+            <div class="tooltip-row">
+              <span>阶段:</span>
+              <span>{{ tooltip.content.label }}</span>
+            </div>
+            <div class="tooltip-row">
+              <span>开始:</span>
+              <span>{{ tooltip.content.startDate }}</span>
+            </div>
+            <div class="tooltip-row">
+              <span>结束:</span>
+              <span>{{ tooltip.content.endDate }}</span>
+            </div>
+            <div class="tooltip-row">
+              <span>时长:</span>
+              <span>{{ tooltip.content.duration }} 天</span>
+            </div>
+          </div>
+          <div v-else-if="tooltip.type === 'milestone'">
+            <div class="tooltip-row">
+              <span>节点:</span>
+              <span>{{ tooltip.content.label }}</span>
+            </div>
+            <div class="tooltip-row">
+              <span>日期:</span>
+              <span>{{ tooltip.content.date }}</span>
+            </div>
+            <div v-if="tooltip.content.hasRisk" class="tooltip-row risk-row">
+              <span
+                :class="
+                  tooltip.content.riskLevel === 'medium'
+                    ? 'text-yellow-500'
+                    : 'text-red-500'
+                "
+              >
+                风险:
+              </span>
+              <span
+                :class="
+                  tooltip.content.riskLevel === 'medium'
+                    ? 'font-bold text-yellow-500'
+                    : 'font-bold text-red-500'
+                "
+              >
+                {{
+                  tooltip.content.riskLevel === 'medium'
+                    ? '已确认 (持续跟踪)'
+                    : '存在高风险'
+                }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+  </div>
+</template>
+
 <style scoped lang="scss">
 .milestone-gantt-container {
+  --milestone-bg: var(--el-bg-color);
+  --milestone-bg-soft: var(--el-fill-color-light);
+  --milestone-bg-soft-strong: var(--el-fill-color);
+  --milestone-border: var(--el-border-color);
+  --milestone-border-soft: var(--el-border-color-lighter);
+  --milestone-text: var(--el-text-color-primary);
+  --milestone-text-muted: var(--el-text-color-secondary);
+  --milestone-text-regular: var(--el-text-color-regular);
+  --milestone-primary: var(--el-color-primary);
+  --milestone-header-bg: var(--milestone-board-header-bg, #f7faff);
+  --milestone-header-bg-strong: var(
+    --milestone-board-header-bg-strong,
+    #f2f7ff
+  );
+  --milestone-header-border: var(--milestone-board-header-border, #dbe7fa);
+  --milestone-header-text: var(--milestone-board-header-text, #6a7b95);
+  --milestone-header-shadow: var(
+    --milestone-board-header-shadow,
+    inset 0 -1px 0 #e7effc
+  );
+  --milestone-header-track: var(
+    --milestone-board-header-track,
+    linear-gradient(
+      90deg,
+      rgb(63 140 255 / 14%) 0%,
+      rgb(34 160 107 / 13%) 20%,
+      rgb(229 162 53 / 13%) 40%,
+      rgb(225 106 106 / 13%) 58%,
+      rgb(139 124 247 / 13%) 76%,
+      rgb(38 181 165 / 13%) 100%
+    )
+  );
+  --milestone-controls-bg: var(--milestone-board-controls-bg, #f7faff);
+  --milestone-controls-border: var(--milestone-board-controls-border, #dbe7fa);
+  --milestone-controls-shadow: var(
+    --milestone-board-controls-shadow,
+    inset 0 1px 0 rgb(255 255 255 / 70%)
+  );
+  --milestone-controls-text: var(--milestone-board-controls-text, #6a7b95);
+  --milestone-node-border: var(--el-bg-color);
+  --milestone-bar-shadow: 0 1px 2px rgb(15 23 42 / 18%);
+  --milestone-bar-shadow-hover: 0 4px 10px rgb(15 23 42 / 24%);
+  --milestone-node-shadow: 0 2px 5px rgb(15 23 42 / 22%);
+  --milestone-tooltip-bg: var(--el-bg-color-overlay);
+  --milestone-tooltip-shadow: var(--el-box-shadow-dark);
+
+  --milestone-qg1: var(--milestone-board-qg1, #3f8cff);
+  --milestone-qg2: var(--milestone-board-qg2, #22a06b);
+  --milestone-qg3: var(--milestone-board-qg3, #e5a235);
+  --milestone-qg4: var(--milestone-board-qg4, #e16a6a);
+  --milestone-qg5: var(--milestone-board-qg5, #8b7cf7);
+  --milestone-qg6: var(--milestone-board-qg6, #e272b1);
+  --milestone-qg7: var(--milestone-board-qg7, #6a79ff);
+  --milestone-qg8: var(--milestone-board-qg8, #26b5a5);
+
+  --milestone-risk-high: var(--milestone-board-risk-high, #ef4444);
+  --milestone-risk-medium: var(--milestone-board-risk-medium, #f59e0b);
+  --milestone-risk-high-rgb: var(--milestone-board-risk-high-rgb, 239, 68, 68);
+  --milestone-risk-medium-rgb: var(
+    --milestone-board-risk-medium-rgb,
+    245,
+    158,
+    11
+  );
+
   display: flex;
   flex-direction: column;
   height: 100%;
   width: 100%;
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color);
-  border-radius: 6px;
+  background: var(--milestone-bg);
+  border: 1px solid var(--milestone-border);
+  border-radius: 10px;
   overflow: hidden;
   font-size: 14px;
-  color: var(--el-text-color-primary);
+  color: var(--milestone-text);
 }
 
 .gantt-header {
   display: flex;
   height: 48px;
-  background: var(--el-fill-color-light);
-  border-bottom: 1px solid var(--el-border-color);
+  background: var(--milestone-header-bg);
+  border-bottom: 1px solid var(--milestone-header-border);
+  box-shadow: var(--milestone-header-shadow);
   flex-shrink: 0;
+  position: relative;
+
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 2px;
+    background: var(--milestone-header-track);
+    opacity: 0.95;
+    pointer-events: none;
+  }
 
   .table-header {
     position: relative;
-    border-right: 1px solid var(--el-border-color);
-    background: var(--el-fill-color);
+    border-right: 1px solid var(--milestone-header-border);
+    background: var(--milestone-header-bg-strong);
     display: flex;
     align-items: center;
     padding-left: 12px;
     font-weight: 600;
-    color: var(--el-text-color-regular);
+    color: var(--milestone-header-text);
 
     .column-resizer {
       position: absolute;
@@ -656,11 +754,13 @@ onUnmounted(() => {
       cursor: col-resize;
       z-index: 10;
       opacity: 0;
-      transition: opacity 0.2s, background-color 0.2s;
+      transition:
+        opacity 0.2s,
+        background-color 0.2s;
 
       &:hover {
         opacity: 1;
-        background-color: var(--el-color-primary);
+        background-color: var(--milestone-primary);
       }
     }
   }
@@ -669,7 +769,9 @@ onUnmounted(() => {
     flex: 1;
     overflow: hidden;
     position: relative;
+    background: var(--milestone-header-bg);
     cursor: grab;
+
     &:active {
       cursor: grabbing;
     }
@@ -681,31 +783,32 @@ onUnmounted(() => {
   overflow-y: auto;
   overflow-x: hidden;
   position: relative;
-  background: var(--el-bg-color);
+  background: var(--milestone-bg);
 }
 
 .gantt-row {
   display: flex;
   height: 48px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  border-bottom: 1px solid var(--milestone-border-soft);
   transition: background-color 0.2s;
+
   &:hover {
-    background-color: var(--el-fill-color-light);
+    background-color: var(--milestone-bg-soft);
   }
 
   .table-row {
-    border-right: 1px solid var(--el-border-color);
-    background: var(--el-bg-color);
+    border-right: 1px solid var(--milestone-border);
+    background: var(--milestone-bg);
     flex-shrink: 0;
     display: flex;
     align-items: center;
     padding-left: 12px;
 
     .row-cell {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        color: var(--el-text-color-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--milestone-text);
     }
   }
 
@@ -714,6 +817,7 @@ onUnmounted(() => {
     position: relative;
     overflow: hidden;
     cursor: grab;
+
     &:active {
       cursor: grabbing;
     }
@@ -725,7 +829,6 @@ onUnmounted(() => {
   position: relative;
 }
 
-/* Timeline Elements */
 .timeline-scale {
   position: relative;
   height: 100%;
@@ -743,19 +846,19 @@ onUnmounted(() => {
       top: 0;
       bottom: 0;
       width: 1px;
-      background: var(--el-border-color-lighter);
+      background: var(--milestone-header-border);
     }
 
     .scale-label {
       margin-left: 6px;
       font-size: 12px;
-      color: var(--el-text-color-secondary);
+      color: var(--milestone-header-text);
       font-weight: 500;
     }
 
     &.is-today .scale-label {
-      color: var(--el-color-primary);
-      font-weight: 600;
+      color: var(--milestone-primary);
+      font-weight: 700;
     }
   }
 }
@@ -765,10 +868,10 @@ onUnmounted(() => {
   top: 0;
   bottom: 0;
   width: 2px;
-  background: var(--el-color-primary);
+  background: var(--milestone-primary);
   z-index: 10;
   pointer-events: none;
-  opacity: 0.5;
+  opacity: 0.55;
 }
 
 .gantt-bar {
@@ -776,98 +879,105 @@ onUnmounted(() => {
   top: 50%;
   transform: translateY(-50%);
   height: 24px;
-  border-radius: 4px;
-  opacity: 0.8;
+  border-radius: 6px;
+  opacity: 0.86;
   display: flex;
   align-items: center;
   padding: 0 8px;
   cursor: pointer;
-  transition: opacity 0.2s, box-shadow 0.2s;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  transition:
+    opacity 0.2s,
+    box-shadow 0.2s,
+    height 0.2s;
+  box-shadow: var(--milestone-bar-shadow);
 
   &:hover {
     opacity: 1;
     height: 28px;
     z-index: 20;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--milestone-bar-shadow-hover);
   }
 
   .bar-label {
     font-size: 11px;
-    color: #fff; /* Always white for contrast on colored bars */
+    color: #fff;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    text-shadow: 0 1px 2px rgb(15 23 42 / 32%);
   }
 }
 
 .milestone-node {
-    position: absolute;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    border: 2px solid var(--el-bg-color);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-    z-index: 15;
-    cursor: pointer;
-    transition: transform 0.2s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--milestone-node-border);
+  box-shadow: var(--milestone-node-shadow);
+  z-index: 15;
+  cursor: pointer;
+  transition: transform 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 
-    &:hover {
-      transform: translate(-50%, -50%) scale(1.4);
-      z-index: 25;
-    }
-
-    &.has-risk {
-      animation: pulse-red 2s infinite;
-    }
-
-    &.risk-confirmed {
-      animation: pulse-yellow 2s infinite;
-    }
-
-    .risk-indicator {
-      color: white;
-      font-size: 10px;
-      font-weight: bold;
-      line-height: 1;
-    }
+  &:hover {
+    transform: translate(-50%, -50%) scale(1.35);
+    z-index: 25;
   }
 
-  @keyframes pulse-red {
-    0% {
-      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
-    }
-    70% {
-      box-shadow: 0 0 0 6px rgba(239, 68, 68, 0);
-    }
-    100% {
-      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
-    }
+  &.has-risk {
+    animation: pulse-red 2s infinite;
   }
 
-  @keyframes pulse-yellow {
-    0% {
-      box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7);
-    }
-    70% {
-      box-shadow: 0 0 0 6px rgba(245, 158, 11, 0);
-    }
-    100% {
-      box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
-    }
+  &.risk-confirmed {
+    animation: pulse-yellow 2s infinite;
   }
 
-  /* Controls */
+  .risk-indicator {
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+  }
+}
+
+@keyframes pulse-red {
+  0% {
+    box-shadow: 0 0 0 0 rgba(var(--milestone-risk-high-rgb), 0.72);
+  }
+
+  70% {
+    box-shadow: 0 0 0 6px rgba(var(--milestone-risk-high-rgb), 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(var(--milestone-risk-high-rgb), 0);
+  }
+}
+
+@keyframes pulse-yellow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(var(--milestone-risk-medium-rgb), 0.72);
+  }
+
+  70% {
+    box-shadow: 0 0 0 6px rgba(var(--milestone-risk-medium-rgb), 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(var(--milestone-risk-medium-rgb), 0);
+  }
+}
+
 .gantt-controls {
   padding: 8px 16px;
-  border-top: 1px solid var(--el-border-color);
-  background: var(--el-fill-color-light);
+  border-top: 1px solid var(--milestone-controls-border);
+  background: var(--milestone-controls-bg);
+  box-shadow: var(--milestone-controls-shadow);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -877,6 +987,7 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     gap: 12px;
+
     .scale-text {
       width: 60px;
     }
@@ -886,11 +997,13 @@ onUnmounted(() => {
     display: flex;
     gap: 16px;
     font-size: 12px;
-    color: var(--el-text-color-regular);
+    color: var(--milestone-controls-text);
+
     .legend-item {
       display: flex;
       align-items: center;
       gap: 6px;
+
       .legend-color {
         width: 10px;
         height: 10px;
@@ -900,26 +1013,25 @@ onUnmounted(() => {
   }
 }
 
-/* Tooltip */
 .gantt-tooltip {
   position: fixed;
-  background: var(--el-bg-color-overlay);
-  color: var(--el-text-color-primary);
+  background: var(--milestone-tooltip-bg);
+  color: var(--milestone-text);
   padding: 12px;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 13px;
   z-index: 9999;
   pointer-events: none;
-  box-shadow: var(--el-box-shadow-dark);
+  box-shadow: var(--milestone-tooltip-shadow);
   backdrop-filter: blur(4px);
   min-width: 200px;
-  border: 1px solid var(--el-border-color-lighter);
+  border: 1px solid var(--milestone-border-soft);
 
   .tooltip-header {
     font-weight: 600;
     margin-bottom: 8px;
     padding-bottom: 8px;
-    border-bottom: 1px solid var(--el-border-color-lighter);
+    border-bottom: 1px solid var(--milestone-border-soft);
   }
 
   .tooltip-body {
@@ -932,9 +1044,11 @@ onUnmounted(() => {
     display: flex;
     justify-content: space-between;
     gap: 16px;
+
     span:first-child {
-      color: var(--el-text-color-secondary);
+      color: var(--milestone-text-muted);
     }
+
     span:last-child {
       font-weight: 500;
     }

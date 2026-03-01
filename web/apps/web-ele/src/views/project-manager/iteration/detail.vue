@@ -55,6 +55,7 @@ const route = useRoute();
 const router = useRouter();
 const projectId = route.params.id as string;
 const projectInfo = ref<any>({});
+const initialLoading = ref(true);
 const loading = ref(false);
 const exportLoading = ref(false);
 const activeTab = ref<DetailTabKey>('metrics');
@@ -266,6 +267,17 @@ async function handleRefresh() {
 async function handleReloadList() {
   await fetchIterationRows();
   await reloadActiveTabGrid();
+}
+
+async function bootstrapPage() {
+  initialLoading.value = true;
+  try {
+    await fetchProjectInfo();
+    await fetchIterationRows();
+    await reloadActiveTabGrid();
+  } finally {
+    initialLoading.value = false;
+  }
 }
 
 function handleBack() {
@@ -881,6 +893,7 @@ async function handleUnresolvedHeaderFilterChange(
 watch(
   () => activeTab.value,
   async () => {
+    if (initialLoading.value) return;
     await reloadActiveTabGrid();
   },
 );
@@ -888,6 +901,7 @@ watch(
 watch(
   () => selectedIterationId.value,
   async () => {
+    if (initialLoading.value) return;
     if (activeTab.value === 'idpca') {
       await idpcaGridApi.reload();
       return;
@@ -901,6 +915,7 @@ watch(
 watch(
   () => selectedMetricIterationIds.value,
   async () => {
+    if (initialLoading.value) return;
     if (activeTab.value === 'metrics') {
       await entryGridApi.reload();
       await exitGridApi.reload();
@@ -1085,10 +1100,7 @@ async function handleExportAll() {
 }
 
 onMounted(async () => {
-  await fetchProjectInfo();
-  await fetchIterationRows();
-  await entryGridApi.reload();
-  await exitGridApi.reload();
+  await bootstrapPage();
 });
 </script>
 
@@ -1111,7 +1123,7 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div class="min-h-0 flex-1 px-4 pb-4">
+      <div class="min-h-0 flex-1 px-4 pb-4" v-loading="initialLoading">
         <div class="flex h-full min-h-0 flex-col">
           <ElTabs v-model="activeTab">
             <ElTabPane label="迭代指标数据表格" name="metrics" />
@@ -1119,7 +1131,7 @@ onMounted(async () => {
             <ElTabPane label="未分解需求" name="unresolved" />
           </ElTabs>
 
-          <div class="min-h-0 flex-1">
+          <div v-if="!initialLoading" class="min-h-0 flex-1">
             <div v-if="activeTab === 'metrics'" class="h-full">
               <div class="flex h-full min-h-0 flex-col gap-3">
                 <div class="flex items-center gap-2">
