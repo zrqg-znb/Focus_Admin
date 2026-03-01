@@ -60,6 +60,7 @@ interface Props extends ZqTableProps {
 }
 
 interface ColumnState {
+  depth: number;
   key: string;
   title: string;
   visible: boolean;
@@ -98,6 +99,7 @@ const props = withDefaults(defineProps<Props>(), {});
 const emit = defineEmits([
   'selectionChange',
   'sortChange',
+  'filterChange',
   'row-click',
   'row-dblclick',
 ]);
@@ -108,8 +110,13 @@ function getColumnDataKey(col: any): string | undefined {
   }
   return String(rawKey);
 }
-function getColumnStateKey(col: any, index: number): string {
-  return getColumnDataKey(col) || `__zq_col_${index}`;
+
+function getColumnStateKey(col: any, path: number[]): string {
+  const dataKey = getColumnDataKey(col);
+  if (dataKey) {
+    return dataKey;
+  }
+  return `__zq_col_${path.join('_')}`;
 }
 
 const tableContainerRef = ref<HTMLElement>();
@@ -312,16 +319,48 @@ const columnState = ref<ColumnState[]>([]);
 
 function initColumnState() {
   const cols = gridOptions.value?.columns;
-  if (cols) {
-    columnState.value = cols.map((col: any, index: number) => ({
-      key: getColumnStateKey(col, index),
-      title:
-        col.title || col.label || getColumnDataKey(col) || `列-${index + 1}`, // el-table uses label
-      visible: col.hidden !== true,
-      fixed: col.fixed === true ? 'left' : col.fixed || false,
-      originalIndex: index,
-    }));
+  if (!cols) {
+    columnState.value = [];
+    return;
   }
+
+  const flattenedState: ColumnState[] = [];
+  let leafIndex = 0;
+
+  const visitColumns = (
+    sourceColumns: any[],
+    path: number[] = [],
+    titlePath: string[] = [],
+  ) => {
+    sourceColumns.forEach((col, index) => {
+      const currentPath = [...path, index];
+      const currentTitle =
+        col?.title ||
+        col?.label ||
+        getColumnDataKey(col) ||
+        `列-${flattenedState.length + 1}`;
+      const nextTitlePath = [...titlePath, String(currentTitle)];
+      const children = Array.isArray(col?.children) ? col.children : [];
+
+      if (children.length > 0) {
+        visitColumns(children, currentPath, nextTitlePath);
+        return;
+      }
+
+      flattenedState.push({
+        key: getColumnStateKey(col, currentPath),
+        title: nextTitlePath.join(' / '),
+        visible: col.hidden !== true,
+        fixed: col.fixed === true ? 'left' : col.fixed || false,
+        originalIndex: leafIndex,
+        depth: Math.max(0, nextTitlePath.length - 1),
+      });
+      leafIndex += 1;
+    });
+  };
+
+  visitColumns(cols as any[]);
+  columnState.value = flattenedState;
 }
 
 watch(
@@ -889,11 +928,21 @@ function setFlexColumn(cols: any[]) {
 // Table Columns
 const columns = computed(() => {
   const cols = (gridOptions.value?.columns || []) as any[];
+  const stateMap = new Map(columnState.value.map((item) => [item.key, item]));
+  const orderMap = new Map(
+    columnState.value.map((item, index) => [item.key, index]),
+  );
 
-  const processCol = (col: any) => {
-    const colKey = getColumnDataKey(col);
-    const customCellSlotName = col?.slots?.default;
-    const customHeaderSlotName = col?.slots?.header;
+  const processCol = (column: any, path: number[]): any | null => {
+    const colKey = getColumnDataKey(column);
+    const stateKey = getColumnStateKey(column, path);
+    const stateItem = stateMap.get(stateKey);
+    if (stateItem && !stateItem.visible) {
+      return null;
+    }
+
+    const customCellSlotName = column?.slots?.default;
+    const customHeaderSlotName = column?.slots?.header;
     const slotName =
       (customCellSlotName && slots[customCellSlotName]
         ? customCellSlotName
@@ -903,27 +952,69 @@ const columns = computed(() => {
         ? customHeaderSlotName
         : undefined) || (colKey ? headerSlotNames.value[colKey] : undefined);
 
-    const children = Array.isArray(col.children)
-      ? col.children.map((child: any) => processCol(child))
-      : undefined;
-    const hasChildren = Boolean(children && children.length > 0);
+    const rawChildren = Array.isArray(column.children) ? column.children : [];
+    const children = rawChildren
+      .map((child: any, index: number) => processCol(child, [...path, index]))
+      .filter(Boolean);
+    const hasChildren = children.length > 0;
+
+    if (!hasChildren && rawChildren.length > 0) {
+      return null;
+    }
+
+    const columnProps = { ...column };
+    delete columnProps.children;
+    delete columnProps.slotName;
+    delete columnProps.headerSlotName;
+    if (hasChildren) {
+      delete columnProps.prop;
+      delete columnProps.field;
+      delete columnProps.dataKey;
+    }
 
     return {
-      ...col,
+      ...columnProps,
+      fixed: stateItem?.fixed ?? columnProps.fixed,
       prop: hasChildren ? undefined : colKey, // group column must not set prop
-      label: col.title || col.label, // el-table uses label
+      label: column.title || column.label, // el-table uses label
       slotName: slotName && slots[slotName] ? slotName : undefined,
       headerSlotName:
         headerSlotName && slots[headerSlotName] ? headerSlotName : undefined,
-      resizable: col.resizable ?? true,
-      showOverflowTooltip: col.showOverflowTooltip ?? true, // 默认开启溢出提示
+      resizable: column.resizable ?? true,
+      showOverflowTooltip: column.showOverflowTooltip ?? true, // 默认开启溢出提示
       children,
+      __order: hasChildren
+        ? Math.min(
+            ...children.map((item: any) =>
+              Number.isFinite(item?.__order)
+                ? item.__order
+                : Number.MAX_SAFE_INTEGER,
+            ),
+          )
+        : (orderMap.get(stateKey) ??
+          stateItem?.originalIndex ??
+          Number.MAX_SAFE_INTEGER),
     };
+  };
+
+  const stripOrderField = (column: any): any => {
+    const { __order, children, ...rest } = column;
+    if (Array.isArray(children) && children.length > 0) {
+      return {
+        ...rest,
+        children: [...children]
+          .sort((a: any, b: any) => (a.__order ?? 0) - (b.__order ?? 0))
+          .map((item: any) => stripOrderField(item)),
+      };
+    }
+    return rest;
   };
 
   // 如果没有初始化 columnState，直接返回所有列
   if (columnState.value.length === 0) {
-    const processedCols = cols.map((column) => processCol(column));
+    const processedCols = cols
+      .map((column, index) => processCol(column, [index]))
+      .filter(Boolean) as any[];
 
     // 处理 Selection 和 Index
     const prefixCols: any[] = [];
@@ -945,7 +1036,10 @@ const columns = computed(() => {
       });
     }
 
-    const final = [...prefixCols, ...processedCols];
+    const final = [
+      ...prefixCols,
+      ...processedCols.map((item: any) => stripOrderField(item)),
+    ];
 
     // 强制 actions 列在最后且固定右侧
     const actionIndex = final.findIndex(
@@ -981,20 +1075,13 @@ const columns = computed(() => {
     });
   }
 
-  columnState.value.forEach((state) => {
-    if (!state.visible) return;
-
-    const originalCol = cols.find(
-      (c, index) => getColumnStateKey(c, index) === state.key,
-    );
-    if (originalCol) {
-      const processedCol = processCol(originalCol);
-      finalCols.push({
-        ...processedCol,
-        fixed: state.fixed,
-      });
-    }
-  });
+  const processedCols = cols
+    .map((column, index) => processCol(column, [index]))
+    .filter(Boolean) as any[];
+  processedCols
+    .sort((a: any, b: any) => (a.__order ?? 0) - (b.__order ?? 0))
+    .map((item: any) => stripOrderField(item))
+    .forEach((col) => finalCols.push(col));
 
   // 强制 actions 列在最后且固定右侧
   const actionIndex = finalCols.findIndex(
@@ -1016,6 +1103,10 @@ function handleSelectionChange(val: any[]) {
 
 function handleSortChange(data: any) {
   emit('sortChange', data);
+}
+
+function handleFilterChange(data: Record<string, any[]>) {
+  emit('filterChange', data);
 }
 </script>
 
@@ -1154,6 +1245,9 @@ function handleSortChange(data: any) {
                 <template #item="{ element }">
                   <div
                     class="hover:bg-accent/50 group mb-1 flex items-center rounded p-1"
+                    :style="{
+                      paddingLeft: `${Math.min(element.depth || 0, 4) * 10 + 4}px`,
+                    }"
                   >
                     <IconifyIcon
                       icon="lucide:grip-vertical"
@@ -1218,6 +1312,7 @@ function handleSortChange(data: any) {
           header-row-class-name="zq-table-header"
           @selection-change="handleSelectionChange"
           @sort-change="handleSortChange"
+          @filter-change="handleFilterChange"
         >
           <TableColumnRenderer
             v-for="(col, colIndex) in columns"

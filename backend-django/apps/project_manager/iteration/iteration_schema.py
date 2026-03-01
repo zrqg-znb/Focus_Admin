@@ -1,5 +1,5 @@
-from ninja import Schema, ModelSchema, Field
-from typing import Optional, List
+from ninja import Schema, ModelSchema
+from typing import Optional, List, Literal
 from datetime import date
 from .iteration_model import Iteration, IterationMetric
 
@@ -103,3 +103,22 @@ class IterationDashboardSchema(Schema):
     sr_num: int = 0
     dr_num: int = 0
     ar_num: int = 0
+
+
+class IterationRequirementItemSchema(Schema):
+    requirement_id: str
+    title: str
+    requirement_type: Literal["ar", "dr", "sr"]
+    idpca_status: Literal["A", "C", "D", "I", "P"]
+    owner_team: str = ""
+    need_breakdown: bool = False
+    is_decomposed: bool = True
+    workload_man_filled: bool = False
+    workload_loc_filled: bool = False
+
+
+class IterationRequirementPageSchema(Schema):
+    items: List[IterationRequirementItemSchema]
+    total: int
+    page: int
+    page_size: int

@@ -1,10 +1,19 @@
 from django.db import transaction
+
 from common import fu_crud
-from apps.project_manager.project.project_model import Project
 from apps.project_manager.code_quality.code_quality_model import CodeModule
+from apps.project_manager.project.project_model import Project
+
 from .iteration_model import Iteration, IterationMetric
-from .iteration_schema import IterationCreateSchema, IterationMetricSchema, IterationDetailSchema, IterationDashboardSchema, IterationMetricOut, IterationManualUpdateSchema
-from .iteration_sync import sync_project_iterations
+from .iteration_schema import (
+    IterationCreateSchema,
+    IterationDashboardSchema,
+    IterationDetailSchema,
+    IterationManualUpdateSchema,
+    IterationMetricOut,
+    IterationMetricSchema,
+)
+from .iteration_sync import get_cached_iteration_requirements, sync_project_iterations
 
 @transaction.atomic
 def create_iteration(request, data: IterationCreateSchema):
@@ -246,6 +255,7 @@ def refresh_project_iteration(project_id: str):
     sync_project_iterations(project)
     return True
 
+
 def get_project_iterations(project_id: str):
     iterations = Iteration.objects.filter(
         project_id=project_id,
@@ -286,8 +296,113 @@ def get_project_iterations(project_id: str):
         
     return result
 
+
+def _paginate_items(items: list[dict], page: int, page_size: int) -> dict:
+    page = max(int(page or 1), 1)
+    page_size = max(int(page_size or 20), 1)
+    total = len(items)
+    start = (page - 1) * page_size
+    end = start + page_size
+    return {
+        "items": items[start:end],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+def _normalize_requirement_type(value: str | None) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"sr", "dr", "ar"}:
+        return normalized
+    return None
+
+
+def _normalize_idpca_status(value: str | None) -> str | None:
+    normalized = str(value or "").strip().upper()
+    if normalized in {"I", "D", "P", "C", "A"}:
+        return normalized
+    return None
+
+
+def _normalize_requirement_item(item: dict) -> dict:
+    requirement_type = _normalize_requirement_type(str(item.get("requirement_type") or "")) or "sr"
+    idpca_status = _normalize_idpca_status(str(item.get("idpca_status") or "")) or "I"
+    return {
+        "requirement_id": str(item.get("requirement_id") or ""),
+        "title": str(item.get("title") or ""),
+        "requirement_type": requirement_type,
+        "idpca_status": idpca_status,
+        "owner_team": str(item.get("owner_team") or ""),
+        "need_breakdown": bool(item.get("need_breakdown")),
+        "is_decomposed": bool(item.get("is_decomposed", True)),
+        "workload_man_filled": bool(item.get("workload_man_filled")),
+        "workload_loc_filled": bool(item.get("workload_loc_filled")),
+    }
+
+
+def list_iteration_requirements(
+    iteration_id: str,
+    page: int = 1,
+    page_size: int = 20,
+    idpca_status: str | None = None,
+    requirement_type: str | None = None,
+):
+    iteration = (
+        Iteration.objects.select_related("project")
+        .filter(id=iteration_id, is_deleted=False)
+        .first()
+    )
+    if not iteration:
+        return _paginate_items([], page, page_size)
+
+    status_filter = _normalize_idpca_status(idpca_status)
+    type_filter = _normalize_requirement_type(requirement_type)
+    requirement_items = get_cached_iteration_requirements(iteration)
+
+    filtered: list[dict] = []
+    for item in requirement_items:
+        normalized_item = _normalize_requirement_item(item)
+        if type_filter and normalized_item["requirement_type"] != type_filter:
+            continue
+        if status_filter and normalized_item["idpca_status"] != status_filter:
+            continue
+        filtered.append(normalized_item)
+
+    return _paginate_items(filtered, page, page_size)
+
+
+def list_unresolved_requirements(
+    iteration_id: str,
+    page: int = 1,
+    page_size: int = 20,
+    requirement_type: str | None = None,
+):
+    iteration = (
+        Iteration.objects.select_related("project")
+        .filter(id=iteration_id, is_deleted=False)
+        .first()
+    )
+    if not iteration:
+        return _paginate_items([], page, page_size)
+
+    type_filter = _normalize_requirement_type(requirement_type)
+    requirement_items = get_cached_iteration_requirements(iteration)
+
+    filtered: list[dict] = []
+    for item in requirement_items:
+        normalized_item = _normalize_requirement_item(item)
+        if not normalized_item["need_breakdown"] or normalized_item["is_decomposed"]:
+            continue
+        if type_filter and normalized_item["requirement_type"] != type_filter:
+            continue
+        filtered.append(normalized_item)
+
+    return _paginate_items(filtered, page, page_size)
+
+
 def record_daily_metric(iteration_id: str, data: IterationMetricSchema):
-    metric, created = IterationMetric.objects.update_or_create(
+    metric, _ = IterationMetric.objects.update_or_create(
         iteration_id=iteration_id,
         record_date=data.record_date,
         defaults=data.dict(exclude={'record_date'})

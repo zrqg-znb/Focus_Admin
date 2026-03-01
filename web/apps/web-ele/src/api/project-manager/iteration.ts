@@ -110,3 +110,54 @@ export async function updateManualMetricApi(
     data,
   );
 }
+
+export type IterationRequirementType = 'ar' | 'dr' | 'sr';
+export type IdpcaStatusType = 'A' | 'C' | 'D' | 'I' | 'P';
+
+export interface IterationRequirementItem {
+  requirement_id: string;
+  title: string;
+  requirement_type: IterationRequirementType;
+  idpca_status: IdpcaStatusType;
+  owner_team: string;
+  need_breakdown: boolean;
+  is_decomposed: boolean;
+  workload_man_filled: boolean;
+  workload_loc_filled: boolean;
+}
+
+export interface IterationRequirementPageResponse {
+  items: IterationRequirementItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export async function listIterationRequirementsApi(
+  iterationId: string,
+  params?: {
+    idpca_status?: string;
+    page?: number;
+    page_size?: number;
+    requirement_type?: string;
+  },
+) {
+  return requestClient.get<IterationRequirementPageResponse>(
+    `${base}/iteration/${iterationId}/requirements`,
+    { params },
+  );
+}
+
+export async function listUnresolvedRequirementsApi(
+  iterationId: string,
+  params?: {
+    page?: number;
+    page_size?: number;
+    requirement_type?: string;
+  },
+) {
+  return requestClient.get<IterationRequirementPageResponse>(
+    `${base}/iteration/${iterationId}/unresolved-requirements`,
+    { params },
+  );
+}
