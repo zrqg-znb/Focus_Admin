@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import date
 from typing import Any, Dict, List, Tuple
 
 from django.db import IntegrityError
@@ -110,6 +111,46 @@ def _latest_metric(module: CodeModule) -> CodeMetric | None:
         .order_by("-record_date", "-sys_create_datetime")
         .first()
     )
+
+
+def _pick_metric_by_date(
+    module: CodeModule,
+    record_date: date | None = None,
+) -> CodeMetric | None:
+    metrics = (
+        module.metrics.filter(is_deleted=False)
+        .only(
+            "id",
+            "module_id",
+            "record_date",
+            "loc",
+            "function_count",
+            "dangerous_func_count",
+            "duplication_rate",
+            "is_clean_code",
+            "clean_code_rate",
+            "clean_code_total",
+            "unachieved_clean_code",
+            "warning_count",
+            "warning_metrics",
+            "total_node_count",
+            "warning_node_count",
+            "version_name",
+            "summary_metrics",
+        )
+        .order_by("-record_date", "-sys_create_datetime")
+    )
+
+    if record_date is not None:
+        exact = metrics.filter(record_date=record_date).first()
+        if exact is not None:
+            return exact
+
+        nearest_before = metrics.filter(record_date__lte=record_date).first()
+        if nearest_before is not None:
+            return nearest_before
+
+    return metrics.first()
 
 
 def _metric_values_to_list(raw_metric_values: Any) -> List[QualityMetricValueSchema]:
@@ -448,7 +489,11 @@ def get_quality_overview():
     return result
 
 
-def get_project_quality_details(project_id: str, include_tree: bool = True):
+def get_project_quality_details(
+    project_id: str,
+    include_tree: bool = True,
+    record_date: date | None = None,
+):
     modules = (
         CodeModule.objects.filter(project_id=project_id, is_deleted=False)
         .prefetch_related("owners")
@@ -458,7 +503,7 @@ def get_project_quality_details(project_id: str, include_tree: bool = True):
 
     result: List[ModuleQualityDetailSchema] = []
     for module in modules:
-        latest = _latest_metric(module)
+        latest = _pick_metric_by_date(module, record_date)
         metric_values = (
             _metric_values_to_list(latest.summary_metrics if latest else {})
             if include_tree

@@ -449,6 +449,7 @@ function useExitColumns(): ZqTableGridOptions<IterationDetailRow>['columns'] {
       key: 'a_rate_group',
       dataKey: 'a_rate_group',
       title: '置A率（考核指标）',
+      width: 240,
       labelClassName: 'metric-group-kpi',
       headerHelp: {
         definition: '考核型质量指标，关注需求达成的正向结果。',
@@ -484,6 +485,7 @@ function useExitColumns(): ZqTableGridOptions<IterationDetailRow>['columns'] {
       key: 'c_rate_group',
       dataKey: 'c_rate_group',
       title: '置C率（度量指标）',
+      width: 240,
       labelClassName: 'metric-group-measure',
       headerHelp: {
         definition: '度量型质量指标，关注需求质量稳定性。',
@@ -519,6 +521,7 @@ function useExitColumns(): ZqTableGridOptions<IterationDetailRow>['columns'] {
       key: 'process_rate_group',
       dataKey: 'process_rate_group',
       title: '过程指标',
+      width: 240,
       labelClassName: 'metric-group-process',
       headerHelp: {
         definition: '过程执行质量类指标，用于衡量迭代执行稳定性。',
@@ -580,6 +583,7 @@ function useExitColumns(): ZqTableGridOptions<IterationDetailRow>['columns'] {
       key: 'reference_group',
       dataKey: 'reference_group',
       title: '参考指标',
+      width: 240,
       labelClassName: 'metric-group-reference',
       headerHelp: {
         definition: '参考观测类指标，用于辅助评估整体质量趋势。',

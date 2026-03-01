@@ -1,8 +1,8 @@
 <script lang="ts" setup>
 import type { PhaseBoardRow } from './data';
 
-import type { VxeTableGridOptions } from '#/adapter/vxe-table';
 import type { ProjectOut } from '#/api/project-manager/project';
+import type { ZqTableGridOptions } from '#/components/zq-table';
 
 import { nextTick, ref, watch } from 'vue';
 
@@ -10,8 +10,8 @@ import { Page } from '@vben/common-ui';
 
 import { ElTabPane, ElTabs } from 'element-plus';
 
-import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import { listProjectsApi } from '#/api/project-manager/project';
+import { useZqTable } from '#/components/zq-table';
 
 import {
   useCockpitColumns,
@@ -23,6 +23,7 @@ import {
 defineOptions({ name: 'HardwareConfigDashboard' });
 
 const activeView = ref<'cockpit' | 'vehicle'>('vehicle');
+const currentVehicleRows = ref<PhaseBoardRow[]>([]);
 
 function toPhaseRows(projects: ProjectOut[]): PhaseBoardRow[] {
   const rows: PhaseBoardRow[] = [];
@@ -80,19 +81,24 @@ function filterRows(
   return filtered;
 }
 
-function vehicleProjectSpanMethod({ column, row, rowIndex, visibleData }: any) {
-  if (column.field !== 'project_name') {
+function vehicleProjectSpanMethod({ column, row, rowIndex }: any) {
+  const columnField = String(
+    column.property || column.prop || column.field || '',
+  );
+  if (columnField !== 'project_name') {
     return { rowspan: 1, colspan: 1 };
   }
 
-  const prevRow = visibleData[rowIndex - 1];
+  const rows = currentVehicleRows.value;
+  const prevRow = rows[rowIndex - 1];
   if (prevRow && prevRow.project_id === row.project_id) {
     return { rowspan: 0, colspan: 0 };
   }
 
   let rowspan = 1;
-  for (let index = rowIndex + 1; index < visibleData.length; index += 1) {
-    if (visibleData[index].project_id === row.project_id) {
+  for (let index = rowIndex + 1; index < rows.length; index += 1) {
+    const currentRow = rows[index];
+    if (currentRow && currentRow.project_id === row.project_id) {
       rowspan += 1;
     } else {
       break;
@@ -123,7 +129,7 @@ async function loadRowsByScenario(
   };
 }
 
-const [VehicleGrid, vehicleGridApi] = useVbenVxeGrid({
+const [VehicleGrid, vehicleGridApi] = useZqTable({
   separator: false,
   formOptions: {
     schema: useVehicleSearchFormSchema(),
@@ -131,28 +137,36 @@ const [VehicleGrid, vehicleGridApi] = useVbenVxeGrid({
     submitOnChange: true,
   },
   gridOptions: {
-    autoResize: true,
     border: true,
+    stripe: true,
     columns: useVehicleColumns(),
-    height: '100%',
-    keepSource: true,
+    rowKey: 'project_id',
     pagerConfig: {
       enabled: true,
-      autoHidden: false,
       pageSize: 20,
       pageSizes: [10, 20, 50, 100],
     },
+    toolbarConfig: {
+      custom: true,
+      refresh: true,
+      search: true,
+      zoom: true,
+    },
     proxyConfig: {
+      autoLoad: true,
       ajax: {
-        query: async ({ page }, formValues) =>
-          await loadRowsByScenario(page, formValues, 'vehicle'),
+        query: async ({ page, form }) => {
+          const result = await loadRowsByScenario(page, form || {}, 'vehicle');
+          currentVehicleRows.value = result.items || [];
+          return result;
+        },
       },
     },
     spanMethod: vehicleProjectSpanMethod,
-  } as VxeTableGridOptions<PhaseBoardRow>,
+  } as ZqTableGridOptions<PhaseBoardRow>,
 });
 
-const [CockpitGrid, cockpitGridApi] = useVbenVxeGrid({
+const [CockpitGrid, cockpitGridApi] = useZqTable({
   separator: false,
   formOptions: {
     schema: useCockpitSearchFormSchema(),
@@ -160,37 +174,38 @@ const [CockpitGrid, cockpitGridApi] = useVbenVxeGrid({
     submitOnChange: true,
   },
   gridOptions: {
-    autoResize: true,
     border: true,
+    stripe: true,
     columns: useCockpitColumns(),
-    height: '100%',
-    keepSource: true,
+    rowKey: 'project_id',
     pagerConfig: {
       enabled: true,
-      autoHidden: false,
       pageSize: 20,
       pageSizes: [10, 20, 50, 100],
     },
+    toolbarConfig: {
+      custom: true,
+      refresh: true,
+      search: true,
+      zoom: true,
+    },
     proxyConfig: {
+      autoLoad: true,
       ajax: {
-        query: async ({ page }, formValues) =>
-          await loadRowsByScenario(page, formValues, 'cockpit'),
+        query: async ({ page, form }) =>
+          await loadRowsByScenario(page, form || {}, 'cockpit'),
       },
     },
-  } as VxeTableGridOptions<PhaseBoardRow>,
+  } as ZqTableGridOptions<PhaseBoardRow>,
 });
 
 watch(
   () => activeView.value,
   async (value) => {
     await nextTick();
-    if (value === 'vehicle') {
-      (vehicleGridApi.grid as any)?.recalculate?.();
-      await vehicleGridApi.reload();
-    } else {
-      (cockpitGridApi.grid as any)?.recalculate?.();
-      await cockpitGridApi.reload();
-    }
+    await (value === 'vehicle'
+      ? vehicleGridApi.reload()
+      : cockpitGridApi.reload());
   },
 );
 </script>

@@ -118,9 +118,17 @@ export async function configModuleApi(data: ModuleConfigPayload) {
   return requestClient.post<CodeModuleOut>(`${base}/modules`, data);
 }
 
-export async function getProjectQualityDetailsApi(projectId: string) {
+export async function getProjectQualityDetailsApi(
+  projectId: string,
+  params?: {
+    record_date?: string;
+  },
+) {
   return requestClient.get<ModuleQualityDetail[]>(
     `${base}/project/${projectId}/details`,
+    {
+      params,
+    },
   );
 }
 

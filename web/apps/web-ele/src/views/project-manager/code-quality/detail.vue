@@ -26,8 +26,11 @@ import { useZqTable } from '#/components/zq-table';
 
 import CleanCodeRateCell from './components/CleanCodeRateCell.vue';
 import {
+  createThresholdCellClassName,
+  getDetailColumns,
   getMetricFieldName,
   QUALITY_METRIC_COLUMNS,
+  QUALITY_THRESHOLD_CONFIG,
   useDetailSearchFormSchema,
 } from './data';
 
@@ -86,6 +89,7 @@ function formatPercent(rate: null | number | undefined) {
 
 function toMetricMaps(metricValues: QualityMetricValue[] = []) {
   const displayMap: Record<string, string> = {};
+  const numberMap: Record<string, null | number> = {};
   const warningMap: Record<string, boolean> = {};
 
   for (const metric of metricValues) {
@@ -95,9 +99,13 @@ function toMetricMaps(metricValues: QualityMetricValue[] = []) {
     }
     const field = getMetricFieldName(metricKey as QualityMetricKey);
     displayMap[field] = String(metric.display || '-');
+    numberMap[metricKey] =
+      metric.num === null || metric.num === undefined
+        ? null
+        : Number(metric.num);
     warningMap[metricKey] = Boolean(metric.is_warning);
   }
-  return { displayMap, warningMap };
+  return { displayMap, numberMap, warningMap };
 }
 
 function countDescendantNodes(nodes: QualityTreeNode[] = []): number {
@@ -127,7 +135,9 @@ function mapNodeRows(
   fallbackOwnerNamesText = '-',
 ): CodeQualityTreeRow[] {
   return nodes.map((node) => {
-    const { displayMap, warningMap } = toMetricMaps(node.metric_values || []);
+    const { displayMap, numberMap, warningMap } = toMetricMaps(
+      node.metric_values || [],
+    );
     const nodeOwnerIds =
       node.owner_ids && node.owner_ids.length > 0
         ? node.owner_ids
@@ -167,10 +177,11 @@ function mapNodeRows(
           ? node.warning_metrics.join('、')
           : '-',
       metric_warning_map: warningMap,
+      metric_num_map: numberMap,
       children,
     };
     for (const metric of QUALITY_METRIC_COLUMNS) {
-      const field = getMetricFieldName(metric.key);
+      const field = getMetricFieldName(metric.key as QualityMetricKey);
       row[field] = displayMap[field] || '-';
     }
     return row;
@@ -180,7 +191,9 @@ function mapNodeRows(
 function normalizeTreeRows(details: ModuleQualityDetail[] = []) {
   return details
     .map((item) => {
-      const { displayMap, warningMap } = toMetricMaps(item.metric_values || []);
+      const { displayMap, numberMap, warningMap } = toMetricMaps(
+        item.metric_values || [],
+      );
       const moduleOwnerIds = item.owner_ids || [];
       const moduleOwnerNamesText =
         item.owner_names && item.owner_names.length > 0
@@ -220,6 +233,7 @@ function normalizeTreeRows(details: ModuleQualityDetail[] = []) {
             ? item.warning_metrics.join('、')
             : '-',
         metric_warning_map: warningMap,
+        metric_num_map: numberMap,
         children: mapNodeRows(
           nodeChildrenSource,
           item.id,
@@ -228,7 +242,7 @@ function normalizeTreeRows(details: ModuleQualityDetail[] = []) {
         ),
       };
       for (const metric of QUALITY_METRIC_COLUMNS) {
-        const field = getMetricFieldName(metric.key);
+        const field = getMetricFieldName(metric.key as QualityMetricKey);
         row[field] = displayMap[field] || '-';
       }
       return row;
@@ -276,6 +290,7 @@ function filterTreeRows(
     .trim()
     .toLowerCase();
   const warningOnly = String(formValues.warning_only || '');
+  const date = String(formValues.date || '').trim();
 
   return rows.filter((row) => {
     if (keyword && !rowContainsKeyword(row, keyword)) {
@@ -285,6 +300,9 @@ function filterTreeRows(
       return false;
     }
     if (moduleName && !row.module.toLowerCase().includes(moduleName)) {
+      return false;
+    }
+    if (date && row.record_date !== date) {
       return false;
     }
 
@@ -306,51 +324,6 @@ function filterTreeRows(
   });
 }
 
-function useColumns(): ZqTableGridOptions<CodeQualityTreeRow>['columns'] {
-  const columns: NonNullable<
-    ZqTableGridOptions<CodeQualityTreeRow>['columns']
-  > = [
-    {
-      key: 'node_name',
-      dataKey: 'node_name',
-      title: '树节点',
-      width: 260,
-      fixed: true,
-    },
-    { key: 'oem_name', dataKey: 'oem_name', title: 'OEMName', width: 150 },
-    {
-      key: 'owner_names_text',
-      dataKey: 'owner_names_text',
-      title: '责任人',
-      width: 240,
-    },
-    {
-      key: 'record_date',
-      dataKey: 'record_date',
-      title: '更新日期',
-      width: 120,
-    },
-    {
-      key: 'clean_code_rate',
-      dataKey: 'clean_code_rate',
-      title: 'CleanCode达成率',
-      width: 150,
-    },
-    ...QUALITY_METRIC_COLUMNS.map((metric) => ({
-      key: getMetricFieldName(metric.key),
-      dataKey: getMetricFieldName(metric.key),
-      title: metric.title,
-      width: 140,
-    })),
-  ];
-
-  return columns.map((column) => ({
-    align: 'center',
-    headerAlign: 'center',
-    ...column,
-  }));
-}
-
 const [Grid, gridApi] = useZqTable({
   formOptions: {
     schema: useDetailSearchFormSchema(),
@@ -359,7 +332,8 @@ const [Grid, gridApi] = useZqTable({
   gridOptions: {
     border: true,
     stripe: true,
-    columns: useColumns(),
+    columns: getDetailColumns(),
+    cellClassName: createThresholdCellClassName(() => QUALITY_THRESHOLD_CONFIG),
     rowKey: 'id',
     defaultExpandAll: true,
     treeProps: {
@@ -369,7 +343,7 @@ const [Grid, gridApi] = useZqTable({
       autoLoad: true,
       ajax: {
         query: async ({ form }: DetailQueryParams) => {
-          const rows = await fetchDetails();
+          const rows = await fetchDetails(String(form?.date || '').trim());
           const filteredRows = filterTreeRows(rows, form || {});
           return {
             items: filteredRows,
@@ -396,10 +370,12 @@ async function fetchProjectInfo() {
   }
 }
 
-async function fetchDetails() {
+async function fetchDetails(recordDate = '') {
   try {
     detailsLoading.value = true;
-    const details = await getProjectQualityDetailsApi(projectId);
+    const details = await getProjectQualityDetailsApi(projectId, {
+      record_date: recordDate || undefined,
+    });
     treeRows.value = normalizeTreeRows(details || []);
     return treeRows.value;
   } catch (error) {
@@ -497,11 +473,6 @@ onMounted(async () => {
         <Grid class="h-full">
           <template #table-title>
             <div class="flex flex-wrap items-center gap-4 text-sm">
-              <span>模块数：{{ summary.moduleCount }}</span>
-              <span>节点总数：{{ summary.totalNodeCount }}</span>
-              <span class="font-semibold text-red-500">
-                预警节点：{{ summary.warningNodeCount }}
-              </span>
               <span
                 :class="
                   summary.avgCleanCodeRate < 1
@@ -534,6 +505,7 @@ onMounted(async () => {
         </Grid>
       </div>
     </div>
+
     <ElDialog
       v-model="ownerDialogVisible"
       :append-to-body="true"

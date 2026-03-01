@@ -1,4 +1,6 @@
 <script lang="ts" setup>
+import type { DtsTeamTableRow } from './data';
+
 import type { DtsDefect, DtsTeam } from '#/api/project-manager/dts';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
@@ -28,21 +30,7 @@ const projectInfo = ref<any>({});
 const loading = ref(false);
 const activeTab = ref('dashboard');
 
-interface DtsTeamRow extends DtsTeam {
-  critical_solve_rate: null | string;
-  di: null | number;
-  fatal_num: null | number;
-  major_num: null | number;
-  minor_num: null | number;
-  solve_rate: null | string;
-  suggestion_num: null | number;
-  target_di: null | number;
-  today_in_di: null | number;
-  today_out_di: null | number;
-  children: DtsTeamRow[];
-}
-
-function mapTeamRows(items: DtsTeam[]): DtsTeamRow[] {
+function mapTeamRows(items: DtsTeam[]): DtsTeamTableRow[] {
   return items.map((item) => {
     const latest = item.latest_data;
     return {
@@ -118,7 +106,7 @@ const [Grid, gridApi] = useZqTable({
       refresh: true,
       zoom: true,
     },
-  } as ZqTableGridOptions<DtsTeamRow>,
+  } as ZqTableGridOptions<DtsTeamTableRow>,
 });
 
 const [DetailGrid, detailGridApi] = useZqTable({

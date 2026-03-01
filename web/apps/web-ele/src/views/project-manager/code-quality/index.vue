@@ -19,8 +19,11 @@ import { useZqTable } from '#/components/zq-table';
 
 import CleanCodeRateCell from './components/CleanCodeRateCell.vue';
 import {
+  createThresholdCellClassName,
   getMetricFieldName,
+  getOverviewColumns,
   QUALITY_METRIC_COLUMNS,
+  QUALITY_THRESHOLD_CONFIG,
   useSearchFormSchema,
 } from './data';
 
@@ -42,8 +45,10 @@ const currentPageRows = ref<CodeQualityOverviewRow[]>([]);
 function onNameClick(row: CodeQualityOverviewRow) {
   router.push(`/project-manager/code-quality/detail/${row.project_id}`);
 }
+
 function toMetricMaps(metricValues: QualityMetricValue[] = []) {
   const displayMap: Record<string, string> = {};
+  const numberMap: Record<string, null | number> = {};
   const warningMap: Record<string, boolean> = {};
 
   for (const metric of metricValues) {
@@ -53,14 +58,21 @@ function toMetricMaps(metricValues: QualityMetricValue[] = []) {
     }
     const field = getMetricFieldName(metricKey as QualityMetricKey);
     displayMap[field] = String(metric.display || '-');
+    numberMap[metricKey] =
+      metric.num === null || metric.num === undefined
+        ? null
+        : Number(metric.num);
     warningMap[metricKey] = Boolean(metric.is_warning);
   }
-  return { displayMap, warningMap };
+  return { displayMap, numberMap, warningMap };
 }
+
 function normalizeRows(rows: ProjectQualitySummary[] = []) {
   return rows
     .map((item) => {
-      const { displayMap, warningMap } = toMetricMaps(item.metric_values || []);
+      const { displayMap, numberMap, warningMap } = toMetricMaps(
+        item.metric_values || [],
+      );
       const row: CodeQualityOverviewRow = {
         project_id: item.project_id,
         project_name: item.project_name || '-',
@@ -86,9 +98,10 @@ function normalizeRows(rows: ProjectQualitySummary[] = []) {
             ? item.unachieved_clean_code.join('；')
             : '-',
         metric_warning_map: warningMap,
+        metric_num_map: numberMap,
       };
       for (const metric of QUALITY_METRIC_COLUMNS) {
-        const field = getMetricFieldName(metric.key);
+        const field = getMetricFieldName(metric.key as QualityMetricKey);
         row[field] = displayMap[field] || '-';
       }
       return row;
@@ -102,6 +115,7 @@ function normalizeRows(rows: ProjectQualitySummary[] = []) {
       return first.oem_name.localeCompare(second.oem_name, 'zh-CN');
     });
 }
+
 function filterRows(
   rows: CodeQualityOverviewRow[],
   formValues: Record<string, any>,
@@ -133,6 +147,7 @@ function filterRows(
   }
   return filtered;
 }
+
 function projectSpanMethod({ row, column, rowIndex }: any) {
   const prop = String(column.property || column.prop || '');
   if (prop !== 'project_name') {
@@ -154,63 +169,6 @@ function projectSpanMethod({ row, column, rowIndex }: any) {
   }
   return [rowspan, 1];
 }
-function useColumns(): ZqTableGridOptions<CodeQualityOverviewRow>['columns'] {
-  const columns: NonNullable<
-    ZqTableGridOptions<CodeQualityOverviewRow>['columns']
-  > = [
-    {
-      key: 'project_name',
-      dataKey: 'project_name',
-      title: '项目名',
-      width: 180,
-      fixed: true,
-    },
-    {
-      key: 'oem_name',
-      dataKey: 'oem_name',
-      title: 'OEMName',
-      width: 140,
-      fixed: true,
-    },
-    {
-      key: 'project_managers',
-      dataKey: 'project_managers',
-      title: '项目经理',
-      width: 150,
-    },
-    {
-      key: 'record_date',
-      dataKey: 'record_date',
-      title: '更新日期',
-      width: 120,
-    },
-    {
-      key: 'clean_code_achieve_rate',
-      dataKey: 'clean_code_achieve_rate',
-      title: 'CleanCode达成率',
-      width: 150,
-    },
-    {
-      key: 'avg_duplication_rate',
-      dataKey: 'avg_duplication_rate',
-      title: '平均重复率',
-      width: 120,
-    },
-    { key: 'total_loc', dataKey: 'total_loc', title: '总代码规模', width: 140 },
-    ...QUALITY_METRIC_COLUMNS.map((metric) => ({
-      key: getMetricFieldName(metric.key),
-      dataKey: getMetricFieldName(metric.key),
-      title: metric.title,
-      width: 140,
-    })),
-  ];
-
-  return columns.map((column) => ({
-    align: 'center',
-    headerAlign: 'center',
-    ...column,
-  }));
-}
 
 const [Grid] = useZqTable({
   formOptions: {
@@ -221,7 +179,8 @@ const [Grid] = useZqTable({
   gridOptions: {
     border: true,
     stripe: true,
-    columns: useColumns(),
+    columns: getOverviewColumns(),
+    cellClassName: createThresholdCellClassName(() => QUALITY_THRESHOLD_CONFIG),
     spanMethod: projectSpanMethod,
     proxyConfig: {
       autoLoad: true,
@@ -254,20 +213,27 @@ const [Grid] = useZqTable({
 <template>
   <Page auto-content-height>
     <Grid class="h-full">
+      <template #table-title>
+        <span class="text-sm font-medium">代码质量概览</span>
+      </template>
+
       <template #cell-project_name="{ row }">
         <ElLink type="primary" @click="onNameClick(row)">
           {{ row.project_name }}
         </ElLink>
       </template>
+
       <template #cell-clean_code_achieve_rate="{ row }">
         <CleanCodeRateCell
           :rate="Number(row.clean_code_achieve_rate || 0)"
           :reason-text="row.unachieved_clean_code_text"
         />
       </template>
+
       <template #cell-avg_duplication_rate="{ row }">
         {{ Number(row.avg_duplication_rate || 0).toFixed(2) }}%
       </template>
+
       <template #cell-total_loc="{ row }">
         {{ Number(row.total_loc || 0).toLocaleString() }}
       </template>

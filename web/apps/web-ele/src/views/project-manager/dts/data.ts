@@ -1,4 +1,28 @@
+import type { VbenFormSchema } from '#/adapter/form';
+import type {
+  DtsDefect,
+  DtsProjectOverview,
+  DtsTeam,
+} from '#/api/project-manager/dts';
 import type { ZqTableGridOptions } from '#/components/zq-table';
+
+export interface DtsTeamTableRow extends DtsTeam {
+  children: DtsTeamTableRow[];
+  critical_solve_rate: null | string;
+  di: null | number;
+  fatal_num: null | number;
+  major_num: null | number;
+  minor_num: null | number;
+  solve_rate: null | string;
+  suggestion_num: null | number;
+  target_di: null | number;
+  today_in_di: null | number;
+  today_out_di: null | number;
+}
+
+type DashboardColumns = ZqTableGridOptions<DtsProjectOverview>['columns'];
+type DetailColumns = ZqTableGridOptions<DtsTeamTableRow>['columns'];
+type DefectColumns = ZqTableGridOptions<DtsDefect>['columns'];
 
 function withCenterAlign(columns: Record<string, any>[]) {
   return columns.map((column) => {
@@ -14,7 +38,7 @@ function withCenterAlign(columns: Record<string, any>[]) {
   });
 }
 
-export function useDashboardColumns(): ZqTableGridOptions['columns'] {
+export function useDashboardColumns(): DashboardColumns {
   return withCenterAlign([
     {
       key: 'project_name',
@@ -23,11 +47,26 @@ export function useDashboardColumns(): ZqTableGridOptions['columns'] {
       minWidth: 180,
       fixed: true,
     },
-    { key: 'project_domain', dataKey: 'project_domain', title: '领域', width: 120 },
+    {
+      key: 'project_domain',
+      dataKey: 'project_domain',
+      title: '领域',
+      width: 120,
+    },
     { key: 'project_type', dataKey: 'project_type', title: '类型', width: 120 },
-    { key: 'project_managers', dataKey: 'project_managers', title: '项目经理', minWidth: 160 },
+    {
+      key: 'project_managers',
+      dataKey: 'project_managers',
+      title: '项目经理',
+      minWidth: 160,
+    },
     { key: 'ws_id', dataKey: 'ws_id', title: '中台配置ID', width: 150 },
-    { key: 'root_teams_count', dataKey: 'root_teams_count', title: '责任团队数', width: 110 },
+    {
+      key: 'root_teams_count',
+      dataKey: 'root_teams_count',
+      title: '责任团队数',
+      width: 110,
+    },
     {
       key: 'has_data_today',
       dataKey: 'has_data_today',
@@ -41,10 +80,10 @@ export function useDashboardColumns(): ZqTableGridOptions['columns'] {
       width: 100,
       fixed: 'right',
     },
-  ]);
+  ]) as DashboardColumns;
 }
 
-export function useDetailColumns(): ZqTableGridOptions['columns'] {
+export function useDetailColumns(): DetailColumns {
   return withCenterAlign([
     {
       key: 'team_name',
@@ -55,29 +94,59 @@ export function useDetailColumns(): ZqTableGridOptions['columns'] {
     },
     { key: 'di', dataKey: 'di', title: 'DI值', width: 90 },
     { key: 'target_di', dataKey: 'target_di', title: '目标DI', width: 90 },
-    { key: 'today_in_di', dataKey: 'today_in_di', title: '今日流入', width: 100 },
-    { key: 'today_out_di', dataKey: 'today_out_di', title: '今日流出', width: 100 },
+    {
+      key: 'today_in_di',
+      dataKey: 'today_in_di',
+      title: '今日流入',
+      width: 100,
+    },
+    {
+      key: 'today_out_di',
+      dataKey: 'today_out_di',
+      title: '今日流出',
+      width: 100,
+    },
     { key: 'solve_rate', dataKey: 'solve_rate', title: '解决率', width: 100 },
-    { key: 'critical_solve_rate', dataKey: 'critical_solve_rate', title: '严重解决率', width: 120 },
+    {
+      key: 'critical_solve_rate',
+      dataKey: 'critical_solve_rate',
+      title: '严重解决率',
+      width: 120,
+    },
     { key: 'fatal_num', dataKey: 'fatal_num', title: '关键', width: 80 },
     { key: 'major_num', dataKey: 'major_num', title: '严重', width: 80 },
     { key: 'minor_num', dataKey: 'minor_num', title: '提示', width: 80 },
-    { key: 'suggestion_num', dataKey: 'suggestion_num', title: '建议', width: 80 },
-  ]);
+    {
+      key: 'suggestion_num',
+      dataKey: 'suggestion_num',
+      title: '建议',
+      width: 80,
+    },
+  ]) as DetailColumns;
 }
 
-export function useDefectListColumns(): ZqTableGridOptions['columns'] {
+export function useDefectListColumns(): DefectColumns {
   return withCenterAlign([
     { key: 'defectNo', dataKey: 'defectNo', title: '问题单号', width: 160 },
     { key: 'brief', dataKey: 'brief', title: '简述', minWidth: 220 },
     { key: 'severity', dataKey: 'severity', title: '严重程度', width: 100 },
-    { key: 'currentHandler', dataKey: 'currentHandler', title: '当前处理人', width: 150 },
-    { key: 'currentStageStayDay', dataKey: 'currentStageStayDay', title: '停留天数', width: 100 },
+    {
+      key: 'currentHandler',
+      dataKey: 'currentHandler',
+      title: '当前处理人',
+      width: 150,
+    },
+    {
+      key: 'currentStageStayDay',
+      dataKey: 'currentStageStayDay',
+      title: '停留天数',
+      width: 100,
+    },
     { key: 'progress', dataKey: 'progress', title: '进展', minWidth: 220 },
-  ]);
+  ]) as DefectColumns;
 }
 
-export function useSearchFormSchema() {
+export function useSearchFormSchema(): VbenFormSchema[] {
   return [
     {
       fieldName: 'keyword',
