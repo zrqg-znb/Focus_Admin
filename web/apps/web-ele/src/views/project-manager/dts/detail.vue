@@ -1,6 +1,6 @@
 <script lang="ts" setup>
-import type { VxeTableGridOptions } from '#/adapter/vxe-table';
 import type { DtsDefect, DtsTeam } from '#/api/project-manager/dts';
+import type { ZqTableGridOptions } from '#/components/zq-table';
 
 import { nextTick, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -9,13 +9,13 @@ import { Page } from '@vben/common-ui';
 
 import { ElButton, ElMessage, ElTabPane, ElTabs } from 'element-plus';
 
-import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import {
   getDtsDashboardApi,
   getDtsDetailsApi,
   syncDtsApi,
 } from '#/api/project-manager/dts';
 import { getProjectApi } from '#/api/project-manager/project';
+import { useZqTable } from '#/components/zq-table';
 
 import { useDefectListColumns, useDetailColumns } from './data';
 
@@ -27,6 +27,40 @@ const projectId = route.params.id as string;
 const projectInfo = ref<any>({});
 const loading = ref(false);
 const activeTab = ref('dashboard');
+
+interface DtsTeamRow extends DtsTeam {
+  critical_solve_rate: null | string;
+  di: null | number;
+  fatal_num: null | number;
+  major_num: null | number;
+  minor_num: null | number;
+  solve_rate: null | string;
+  suggestion_num: null | number;
+  target_di: null | number;
+  today_in_di: null | number;
+  today_out_di: null | number;
+  children: DtsTeamRow[];
+}
+
+function mapTeamRows(items: DtsTeam[]): DtsTeamRow[] {
+  return items.map((item) => {
+    const latest = item.latest_data;
+    return {
+      ...item,
+      di: latest?.di ?? null,
+      target_di: latest?.target_di ?? null,
+      today_in_di: latest?.today_in_di ?? null,
+      today_out_di: latest?.today_out_di ?? null,
+      solve_rate: latest?.solve_rate ?? null,
+      critical_solve_rate: latest?.critical_solve_rate ?? null,
+      fatal_num: latest?.fatal_num ?? null,
+      major_num: latest?.major_num ?? null,
+      minor_num: latest?.minor_num ?? null,
+      suggestion_num: latest?.suggestion_num ?? null,
+      children: mapTeamRows(item.children || []),
+    };
+  });
+}
 
 async function fetchProjectInfo() {
   try {
@@ -43,9 +77,9 @@ async function handleRefresh() {
     ElMessage.success('同步任务已提交，请稍后查看同步日志或刷新页面');
     await nextTick();
     if (activeTab.value === 'dashboard') {
-      gridApi.query();
+      gridApi.reload();
     } else {
-      detailGridApi.query();
+      detailGridApi.reload();
     }
   } catch (error) {
     console.error(error);
@@ -58,39 +92,45 @@ function handleBack() {
   router.back();
 }
 
-const [Grid, gridApi] = useVbenVxeGrid({
+const [Grid, gridApi] = useZqTable({
+  showSearchForm: false,
+  separator: false,
   gridOptions: {
     columns: useDetailColumns(),
-    height: 'auto',
-    treeConfig: {
-      transform: false,
-      rowField: 'id',
-      parentField: 'parent_id',
-      childrenField: 'children',
-      expandAll: true,
-    },
+    border: true,
+    stripe: true,
+    rowKey: 'id',
+    treeProps: { children: 'children' },
+    defaultExpandAll: true,
     proxyConfig: {
+      autoLoad: false,
       ajax: {
         query: async () => {
           const data = await getDtsDashboardApi(projectId);
-          return { items: data.root_teams || [] };
+          const treeRows = mapTeamRows(data.root_teams || []);
+          return { items: treeRows, total: treeRows.length };
         },
       },
     },
+    pagerConfig: { enabled: false },
     toolbarConfig: {
       custom: true,
-      refresh: { code: 'query' },
+      refresh: true,
       zoom: true,
     },
-  } as VxeTableGridOptions<DtsTeam>,
+  } as ZqTableGridOptions<DtsTeamRow>,
 });
 
-const [DetailGrid, detailGridApi] = useVbenVxeGrid({
+const [DetailGrid, detailGridApi] = useZqTable({
+  showSearchForm: false,
+  separator: false,
   gridOptions: {
     columns: useDefectListColumns(),
-    height: 'auto',
-    pagerConfig: { enabled: true },
+    border: true,
+    stripe: true,
+    pagerConfig: { enabled: true, pageSize: 20 },
     proxyConfig: {
+      autoLoad: false,
       ajax: {
         query: async ({ page }) => {
           const res = await getDtsDetailsApi(
@@ -107,15 +147,15 @@ const [DetailGrid, detailGridApi] = useVbenVxeGrid({
     },
     toolbarConfig: {
       custom: true,
-      refresh: { code: 'query' },
+      refresh: true,
       zoom: true,
     },
-  } as VxeTableGridOptions<DtsDefect>,
+  } as ZqTableGridOptions<DtsDefect>,
 });
 
 onMounted(() => {
   fetchProjectInfo();
-  gridApi.query();
+  gridApi.reload();
 });
 
 watch(
@@ -123,9 +163,9 @@ watch(
   async (tab) => {
     await nextTick();
     if (tab === 'dashboard') {
-      gridApi.query();
+      gridApi.reload();
     } else {
-      detailGridApi.query();
+      detailGridApi.reload();
     }
   },
 );
