@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Dict, List, Tuple
 
 from django.db import IntegrityError
@@ -145,12 +145,23 @@ def _pick_metric_by_date(
         exact = metrics.filter(record_date=record_date).first()
         if exact is not None:
             return exact
-
-        nearest_before = metrics.filter(record_date__lte=record_date).first()
-        if nearest_before is not None:
-            return nearest_before
+        return None
 
     return metrics.first()
+
+
+def parse_record_date(record_date: str | None = None) -> date | None:
+    text = str(record_date or "").strip()
+    if not text:
+        return None
+
+    for fmt in ("%Y-%m-%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+
+    raise HttpError(400, "record_date格式错误，支持YYYY-MM-DD或YYYYMMDD")
 
 
 def _metric_values_to_list(raw_metric_values: Any) -> List[QualityMetricValueSchema]:
@@ -504,6 +515,8 @@ def get_project_quality_details(
     result: List[ModuleQualityDetailSchema] = []
     for module in modules:
         latest = _pick_metric_by_date(module, record_date)
+        if record_date is not None and latest is None:
+            continue
         metric_values = (
             _metric_values_to_list(latest.summary_metrics if latest else {})
             if include_tree
@@ -540,6 +553,21 @@ def get_project_quality_details(
             )
         )
     return result
+
+
+def get_project_record_dates(project_id: str) -> List[str]:
+    record_dates = (
+        CodeMetric.objects.filter(
+            module__project_id=project_id,
+            module__is_deleted=False,
+            is_deleted=False,
+        )
+        .exclude(record_date__isnull=True)
+        .values_list("record_date", flat=True)
+        .distinct()
+        .order_by("-record_date")
+    )
+    return [item.strftime("%Y%m%d") for item in record_dates if item]
 
 
 def refresh_project_quality(project_id: str):

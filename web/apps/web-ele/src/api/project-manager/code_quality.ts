@@ -132,6 +132,10 @@ export async function getProjectQualityDetailsApi(
   );
 }
 
+export async function getProjectQualityRecordDatesApi(projectId: string) {
+  return requestClient.get<string[]>(`${base}/project/${projectId}/record-dates`);
+}
+
 export async function getProjectQualityDetailsLiteApi(projectId: string) {
   return requestClient.get<ModuleQualityDetail[]>(
     `${base}/project/${projectId}/details`,

@@ -1,4 +1,3 @@
-from datetime import date
 from typing import List, Optional
 from ninja import Router
 
@@ -18,6 +17,15 @@ router = Router(tags=["CodeQuality"], auth=GlobalAuth())
 def get_quality_overview(request):
     return code_quality_service.get_quality_overview()
 
+
+@router.get(
+    "/project/{project_id}/record-dates",
+    response=List[str],
+    summary="获取项目代码质量可选日期",
+)
+def get_project_quality_record_dates(request, project_id: str):
+    return code_quality_service.get_project_record_dates(project_id)
+
 @router.post("/modules", response=CodeModuleOut, summary="配置代码模块")
 def config_module(request, data: ModuleConfigSchema):
     return code_quality_service.config_module(request, data)
@@ -27,12 +35,13 @@ def get_project_quality_details(
     request,
     project_id: str,
     lite: bool = False,
-    record_date: Optional[date] = None,
+    record_date: Optional[str] = None,
 ):
+    parsed_record_date = code_quality_service.parse_record_date(record_date)
     return code_quality_service.get_project_quality_details(
         project_id,
         include_tree=not lite,
-        record_date=record_date,
+        record_date=parsed_record_date,
     )
 
 from apps.project_manager.utils.sync_executor import run_sync_task

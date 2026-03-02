@@ -116,25 +116,48 @@ function normalizeRows(rows: ProjectQualitySummary[] = []) {
     });
 }
 
+function normalizeProjectType(value: string) {
+  const text = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (!text) return '';
+  if (text.includes('vehicle') || text.includes('车控')) return 'vehicle';
+  if (text.includes('cockpit') || text.includes('座舱')) return 'cockpit';
+  return text;
+}
+
 function filterRows(
   rows: CodeQualityOverviewRow[],
   formValues: Record<string, any>,
 ) {
-  const keyword = String(formValues.keyword || '')
+  const projectName = String(formValues.project_name || '')
     .trim()
     .toLowerCase();
+  const projectManager = String(formValues.project_manager || '')
+    .trim()
+    .toLowerCase();
+  const projectType = normalizeProjectType(String(formValues.project_type || ''));
   const oemName = String(formValues.oem_name || '')
     .trim()
     .toLowerCase();
   const date = String(formValues.date || '').trim();
 
   let filtered = rows;
-  if (keyword) {
+  if (projectName) {
     filtered = filtered.filter((item) =>
-      [item.project_name, item.oem_name, item.project_managers]
-        .join('|')
+      item.project_name.toLowerCase().includes(projectName),
+    );
+  }
+  if (projectManager) {
+    filtered = filtered.filter((item) =>
+      String(item.project_managers || '')
         .toLowerCase()
-        .includes(keyword),
+        .includes(projectManager),
+    );
+  }
+  if (projectType) {
+    filtered = filtered.filter(
+      (item) => normalizeProjectType(item.project_type) === projectType,
     );
   }
   if (oemName) {

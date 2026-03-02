@@ -755,42 +755,42 @@ export function getDetailColumns(): ZqTableGridOptions<CodeQualityTreeRow>['colu
 
 export function useSearchFormSchema(): VbenFormSchema[] {
   return [
-    { component: 'Input', fieldName: 'keyword', label: '关键词' },
-    { component: 'Input', fieldName: 'oem_name', label: 'OEMName' },
     {
-      component: 'DatePicker',
-      fieldName: 'date',
-      label: '日期',
+      component: 'Input',
+      fieldName: 'project_name',
+      label: '项目名称',
       componentProps: {
-        valueFormat: 'YYYY-MM-DD',
+        placeholder: '输入项目名称',
       },
     },
-  ];
-}
-
-export function useDetailSearchFormSchema(): VbenFormSchema[] {
-  return [
-    { component: 'Input', fieldName: 'keyword', label: '关键词' },
-    { component: 'Input', fieldName: 'oem_name', label: 'OEMName' },
-    { component: 'Input', fieldName: 'module', label: '模块名' },
     {
-      component: 'DatePicker',
-      fieldName: 'date',
-      label: '日期',
+      component: 'Input',
+      fieldName: 'project_manager',
+      label: '项目负责人',
       componentProps: {
-        valueFormat: 'YYYY-MM-DD',
+        placeholder: '输入负责人关键词',
       },
     },
     {
       component: 'Select',
-      fieldName: 'warning_only',
-      label: '预警筛选',
+      fieldName: 'project_type',
+      label: '项目类型',
       componentProps: {
         options: [
           { label: '全部', value: '' },
-          { label: '仅预警', value: 'yes' },
-          { label: '仅正常', value: 'no' },
+          { label: '车控', value: 'vehicle' },
+          { label: '座舱', value: 'cockpit' },
         ],
+        placeholder: '全部',
+      },
+    },
+    { component: 'Input', fieldName: 'oem_name', label: 'OEMName' },
+    {
+      component: 'DatePicker',
+      fieldName: 'date',
+      label: '日期',
+      componentProps: {
+        valueFormat: 'YYYY-MM-DD',
       },
     },
   ];

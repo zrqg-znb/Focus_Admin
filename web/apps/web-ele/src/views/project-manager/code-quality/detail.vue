@@ -8,15 +8,17 @@ import type {
 } from '#/api/project-manager/code_quality';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
-import { computed, onMounted, ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
-import { ElButton, ElDialog, ElMessage } from 'element-plus';
+import dayjs from 'dayjs';
+import { ElButton, ElDatePicker, ElDialog, ElMessage } from 'element-plus';
 
 import {
   getProjectQualityDetailsApi,
+  getProjectQualityRecordDatesApi,
   refreshProjectQualityApi,
   updateNodeOwnerApi,
 } from '#/api/project-manager/code_quality';
@@ -31,60 +33,52 @@ import {
   getMetricFieldName,
   QUALITY_METRIC_COLUMNS,
   QUALITY_THRESHOLD_CONFIG,
-  useDetailSearchFormSchema,
 } from './data';
 
 defineOptions({ name: 'CodeQualityDetail' });
-interface DetailQueryParams {
-  form?: Record<string, any>;
-  page: {
-    currentPage: number;
-    pageSize: number;
-  };
-}
 
 const route = useRoute();
 const router = useRouter();
 const projectId = route.params.id as string;
 
 const projectInfo = ref<any>({});
+const selectedDate = ref('');
+const availableDates = ref<string[]>([]);
 const loading = ref(false);
 const detailsLoading = ref(true);
 const ownerDialogVisible = ref(false);
 const ownerSaving = ref(false);
 const ownerEditIds = ref<string[]>([]);
 const ownerEditRow = ref<CodeQualityTreeRow | null>(null);
-const treeRows = ref<CodeQualityTreeRow[]>([]);
 const metricKeys = new Set<string>(
   QUALITY_METRIC_COLUMNS.map((item) => item.key),
 );
 
-const summary = computed(() => {
-  const rows = treeRows.value;
-  const moduleCount = rows.length;
-  const totalNodeCount = rows.reduce(
-    (sum, item) => sum + Number(item.total_node_count || 0),
-    0,
-  );
-  const warningNodeCount = rows.reduce(
-    (sum, item) => sum + Number(item.warning_node_count || 0),
-    0,
-  );
-  const avgCleanCodeRate =
-    moduleCount > 0
-      ? rows.reduce((sum, item) => sum + Number(item.clean_code_rate || 0), 0) /
-        moduleCount
-      : 0;
-  return {
-    avgCleanCodeRate,
-    moduleCount,
-    totalNodeCount,
-    warningNodeCount,
-  };
-});
+function toCompactDate(isoDate: string) {
+  return String(isoDate || '').replaceAll('-', '');
+}
 
-function formatPercent(rate: null | number | undefined) {
-  return `${((Number(rate || 0) || 0) * 100).toFixed(2)}%`;
+function toIsoDate(compactDate: string) {
+  const text = String(compactDate || '').trim();
+  if (!/^\d{8}$/.test(text)) return '';
+  return `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)}`;
+}
+
+function hasAvailableDate(isoDate: string) {
+  return availableDates.value.includes(isoDate);
+}
+
+function isDateDisabled(value: Date) {
+  const isoDate = dayjs(value).format('YYYY-MM-DD');
+  return !hasAvailableDate(isoDate);
+}
+
+function getDateCellStatus(cell: any) {
+  if (!cell || cell.type !== 'normal' || !cell.dayjs) {
+    return 'other';
+  }
+  const isoDate = cell.dayjs.format('YYYY-MM-DD');
+  return hasAvailableDate(isoDate) ? 'available' : 'empty';
 }
 
 function toMetricMaps(metricValues: QualityMetricValue[] = []) {
@@ -254,81 +248,7 @@ function normalizeTreeRows(details: ModuleQualityDetail[] = []) {
     });
 }
 
-function rowContainsKeyword(row: CodeQualityTreeRow, keyword: string): boolean {
-  const currentHit = [
-    row.node_name,
-    row.oem_name,
-    row.module,
-    row.owner_names_text,
-    row.unachieved_clean_code_text,
-    row.warning_metrics_text,
-  ]
-    .join('|')
-    .toLowerCase()
-    .includes(keyword);
-  if (currentHit) return true;
-
-  for (const child of row.children || []) {
-    if (rowContainsKeyword(child, keyword)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function filterTreeRows(
-  rows: CodeQualityTreeRow[],
-  formValues: Record<string, any>,
-) {
-  const keyword = String(formValues.keyword || '')
-    .trim()
-    .toLowerCase();
-  const oemName = String(formValues.oem_name || '')
-    .trim()
-    .toLowerCase();
-  const moduleName = String(formValues.module || '')
-    .trim()
-    .toLowerCase();
-  const warningOnly = String(formValues.warning_only || '');
-  const date = String(formValues.date || '').trim();
-
-  return rows.filter((row) => {
-    if (keyword && !rowContainsKeyword(row, keyword)) {
-      return false;
-    }
-    if (oemName && !row.oem_name.toLowerCase().includes(oemName)) {
-      return false;
-    }
-    if (moduleName && !row.module.toLowerCase().includes(moduleName)) {
-      return false;
-    }
-    if (date && row.record_date !== date) {
-      return false;
-    }
-
-    if (warningOnly === 'yes') {
-      return (
-        Number(row.warning_count || 0) > 0 ||
-        Number(row.warning_node_count || 0) > 0 ||
-        row.unachieved_clean_code_text !== '-'
-      );
-    }
-    if (warningOnly === 'no') {
-      return (
-        Number(row.warning_count || 0) === 0 &&
-        Number(row.warning_node_count || 0) === 0 &&
-        row.unachieved_clean_code_text === '-'
-      );
-    }
-    return true;
-  });
-}
-
 const [Grid, gridApi] = useZqTable({
-  formOptions: {
-    schema: useDetailSearchFormSchema(),
-    submitOnChange: true,
-  },
   gridOptions: {
     border: true,
     stripe: true,
@@ -342,12 +262,11 @@ const [Grid, gridApi] = useZqTable({
     proxyConfig: {
       autoLoad: true,
       ajax: {
-        query: async ({ form }: DetailQueryParams) => {
-          const rows = await fetchDetails(String(form?.date || '').trim());
-          const filteredRows = filterTreeRows(rows, form || {});
+        query: async () => {
+          const rows = await fetchDetails(selectedDate.value);
           return {
-            items: filteredRows,
-            total: filteredRows.length,
+            items: rows,
+            total: rows.length,
           };
         },
       },
@@ -362,6 +281,51 @@ const [Grid, gridApi] = useZqTable({
   } as ZqTableGridOptions<CodeQualityTreeRow>,
 });
 
+async function loadAvailableDates(showMessage = true) {
+  try {
+    const compactDates = await getProjectQualityRecordDatesApi(projectId);
+    const normalizedDates = [
+      ...new Set(
+        (compactDates || []).map((item) => toIsoDate(item)).filter(Boolean),
+      ),
+    ].sort((first, second) => second.localeCompare(first));
+
+    availableDates.value = normalizedDates;
+
+    if (normalizedDates.length === 0) {
+      selectedDate.value = '';
+      if (showMessage) {
+        ElMessage.warning('数据湖暂无代码质量数据，请稍后重试');
+      }
+      return;
+    }
+
+    if (selectedDate.value && !hasAvailableDate(selectedDate.value)) {
+      selectedDate.value = '';
+    }
+  } catch (error) {
+    console.error(error);
+    ElMessage.error('获取可用日期失败');
+  }
+}
+
+async function handleDateFilterChange(value?: string) {
+  const nextDate = String(value || selectedDate.value || '').trim();
+  if (!nextDate) {
+    selectedDate.value = '';
+    await gridApi.reload();
+    return;
+  }
+  if (!hasAvailableDate(nextDate)) {
+    ElMessage.warning(
+      `数据湖 ${toCompactDate(nextDate)} 没有数据，请选择可用日期`,
+    );
+    selectedDate.value = '';
+    return;
+  }
+  await gridApi.reload();
+}
+
 async function fetchProjectInfo() {
   try {
     projectInfo.value = await getProjectApi(projectId);
@@ -373,11 +337,11 @@ async function fetchProjectInfo() {
 async function fetchDetails(recordDate = '') {
   try {
     detailsLoading.value = true;
+    const queryDate = String(recordDate || '').trim();
     const details = await getProjectQualityDetailsApi(projectId, {
-      record_date: recordDate || undefined,
+      record_date: queryDate ? toCompactDate(queryDate) : undefined,
     });
-    treeRows.value = normalizeTreeRows(details || []);
-    return treeRows.value;
+    return normalizeTreeRows(details || []);
   } catch (error) {
     console.error(error);
     ElMessage.error('获取代码质量详情失败');
@@ -391,6 +355,7 @@ async function handleRefresh() {
   try {
     loading.value = true;
     await refreshProjectQualityApi(projectId);
+    await loadAvailableDates(false);
     ElMessage.success('刷新任务已提交，正在重新加载最新数据');
     await gridApi.reload();
   } catch (error) {
@@ -446,7 +411,8 @@ async function saveOwnerDialog() {
 }
 
 onMounted(async () => {
-  await Promise.all([fetchProjectInfo(), gridApi.reload()]);
+  await fetchProjectInfo();
+  await loadAvailableDates();
 });
 </script>
 
@@ -472,19 +438,35 @@ onMounted(async () => {
       >
         <Grid class="h-full">
           <template #table-title>
-            <div class="flex flex-wrap items-center gap-4 text-sm">
-              <span
-                :class="
-                  summary.avgCleanCodeRate < 1
-                    ? 'font-semibold text-red-500'
-                    : 'font-semibold text-green-600'
-                "
+            <div class="flex flex-wrap items-center gap-2 text-sm">
+              <span class="font-medium">日期筛选</span>
+              <ElDatePicker
+                v-model="selectedDate"
+                type="date"
+                clearable
+                :editable="false"
+                value-format="YYYY-MM-DD"
+                placeholder="选择记录日期"
+                popper-class="cq-quality-date-picker"
+                :disabled-date="isDateDisabled"
+                @change="handleDateFilterChange"
               >
-                平均CleanCode达成率：{{
-                  formatPercent(summary.avgCleanCodeRate)
-                }}
+                <template #default="cell">
+                  <div
+                    class="cq-date-cell"
+                    :class="`cq-date-cell--${getDateCellStatus(cell)}`"
+                  >
+                    <span>{{ cell.text }}</span>
+                    <span
+                      v-if="getDateCellStatus(cell) !== 'other'"
+                      class="cq-date-cell-dot"
+                    ></span>
+                  </div>
+                </template>
+              </ElDatePicker>
+              <span class="cq-date-hint">
+                绿色点：有数据可选；红色点：数据湖无数据不可选
               </span>
-              <span class="text-gray-500">责任人列支持右键编辑</span>
             </div>
           </template>
           <template #cell-clean_code_rate="{ row }">
@@ -535,3 +517,44 @@ onMounted(async () => {
     </ElDialog>
   </Page>
 </template>
+
+<style>
+.cq-date-hint {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.cq-quality-date-picker .cq-date-cell {
+  align-items: center;
+  display: flex;
+  height: 100%;
+  justify-content: center;
+  position: relative;
+  width: 100%;
+}
+
+.cq-quality-date-picker .cq-date-cell-dot {
+  border-radius: 50%;
+  bottom: 2px;
+  height: 5px;
+  position: absolute;
+  width: 5px;
+}
+
+.cq-quality-date-picker .cq-date-cell--available .cq-date-cell-dot {
+  background: #67c23a;
+}
+
+.cq-quality-date-picker .cq-date-cell--empty {
+  color: #c0c4cc;
+}
+
+.cq-quality-date-picker .cq-date-cell--empty .cq-date-cell-dot {
+  background: #f56c6c;
+}
+
+.cq-quality-date-picker td.is-disabled .cq-date-cell {
+  cursor: not-allowed;
+  opacity: 0.88;
+}
+</style>
