@@ -93,6 +93,7 @@ export interface ProjectUpdatePayload {
 }
 
 export interface ProjectFilterParams {
+  hardware_scenario?: 'cockpit' | 'vehicle';
   keyword?: string;
   domain?: string;
   type?: string;

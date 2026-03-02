@@ -33,11 +33,53 @@ function withCenterAlign(columns: Record<string, any>[]) {
 }
 
 export function useVehicleSearchFormSchema(): VbenFormSchema[] {
-  return [{ component: 'Input', fieldName: 'keyword', label: '项目/编码' }];
+  return [
+    {
+      component: 'Input',
+      fieldName: 'project_keyword',
+      label: '项目名称',
+      componentProps: {
+        placeholder: '请输入项目名称关键词',
+      },
+    },
+    {
+      component: 'Input',
+      fieldName: 'viu_platform_keyword',
+      label: 'VIU 平台',
+      componentProps: {
+        placeholder: '请输入 VIU 平台关键词',
+      },
+    },
+  ];
 }
 
 export function useCockpitSearchFormSchema(): VbenFormSchema[] {
-  return [{ component: 'Input', fieldName: 'keyword', label: '项目/编码' }];
+  return [
+    {
+      component: 'Input',
+      fieldName: 'project_keyword',
+      label: '项目名称',
+      componentProps: {
+        placeholder: '请输入项目名称关键词',
+      },
+    },
+    {
+      component: 'Input',
+      fieldName: 'cdc_platform_keyword',
+      label: 'CDC 平台',
+      componentProps: {
+        placeholder: '请输入 CDC 平台关键词',
+      },
+    },
+    {
+      component: 'Input',
+      fieldName: 'smart_screen_keyword',
+      label: '智慧屏版本',
+      componentProps: {
+        placeholder: '请输入智慧屏版本关键词',
+      },
+    },
+  ];
 }
 
 export function useVehicleColumns(): PhaseBoardColumns {
@@ -63,10 +105,6 @@ export function useVehicleColumns(): PhaseBoardColumns {
       dataKey: 'stage_start',
       title: '阶段起止',
       minWidth: 220,
-      formatter: ({ row }: { row: PhaseBoardRow }) => {
-        if (!row.stage_start && !row.stage_end) return '-';
-        return `${row.stage_start || '-'} ~ ${row.stage_end || '-'}`;
-      },
     },
     {
       key: 'viu_platform_name',

@@ -51,6 +51,9 @@ def list_projects(request, filters: ProjectFilterSchema = Query(...)):
         
     if filters.manager_id:
         query &= Q(managers__id=filters.manager_id)
+
+    if filters.hardware_scenario:
+        query &= Q(phase_configs__scenario=filters.hardware_scenario)
         
     if filters.is_closed is not None:
         query &= Q(is_closed=filters.is_closed)

@@ -148,15 +148,23 @@ def _build_phase_config_rows(
             smart_screen_version_id = str(
                 item.get("smart_screen_version_id") or ""
             ).strip()
-            if not cdc_platform_id or not smart_screen_version_id:
-                raise HttpError(422, f"阶段 {stage_name} 需要配置CDC平台和智慧屏版本")
+            if not cdc_platform_id and not smart_screen_version_id:
+                raise HttpError(
+                    422,
+                    f"阶段 {stage_name} 至少需要配置CDC平台或智慧屏版本",
+                )
 
-            cdc_platform = cdc_platforms.get(cdc_platform_id)
-            if not cdc_platform:
-                raise HttpError(422, f"阶段 {stage_name} 的CDC平台不存在")
-            smart_version = smart_versions.get(smart_screen_version_id)
-            if not smart_version:
-                raise HttpError(422, f"阶段 {stage_name} 的智慧屏版本不存在")
+            cdc_platform = None
+            if cdc_platform_id:
+                cdc_platform = cdc_platforms.get(cdc_platform_id)
+                if not cdc_platform:
+                    raise HttpError(422, f"阶段 {stage_name} 的CDC平台不存在")
+
+            smart_version = None
+            if smart_screen_version_id:
+                smart_version = smart_versions.get(smart_screen_version_id)
+                if not smart_version:
+                    raise HttpError(422, f"阶段 {stage_name} 的智慧屏版本不存在")
 
             rows.append(
                 ProjectPhaseConfig(

@@ -89,6 +89,10 @@ class ProjectFilterSchema(Schema):
     domain: Optional[str] = None
     type: Optional[str] = None
     manager_id: Optional[str] = Field(None, description="项目经理ID")
+    hardware_scenario: Optional[str] = Field(
+        None,
+        description="典配场景筛选(vehicle/cockpit)",
+    )
     is_closed: Optional[bool] = None
     enable_milestone: Optional[bool] = None
     enable_iteration: Optional[bool] = None

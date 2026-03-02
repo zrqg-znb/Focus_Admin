@@ -56,26 +56,44 @@ function filterRows(
   formValues: Record<string, any>,
   scenario: 'cockpit' | 'vehicle',
 ) {
-  const keyword = (formValues.keyword || '').toLowerCase();
-  const domain = (formValues.domain || '').toLowerCase();
-  const stage = (formValues.stage || '').toLowerCase();
+  const projectKeyword = String(formValues.project_keyword || '')
+    .trim()
+    .toLowerCase();
+  const viuPlatformKeyword = String(formValues.viu_platform_keyword || '')
+    .trim()
+    .toLowerCase();
+  const cdcPlatformKeyword = String(formValues.cdc_platform_keyword || '')
+    .trim()
+    .toLowerCase();
+  const smartScreenKeyword = String(formValues.smart_screen_keyword || '')
+    .trim()
+    .toLowerCase();
 
   let filtered = rows.filter((item) => item.scenario === scenario);
-  if (keyword) {
-    filtered = filtered.filter(
-      (item) =>
-        item.project_name.toLowerCase().includes(keyword) ||
-        (item.project_code || '').toLowerCase().includes(keyword),
+  if (projectKeyword) {
+    filtered = filtered.filter((item) =>
+      item.project_name.toLowerCase().includes(projectKeyword),
     );
   }
-  if (domain) {
+  if (scenario === 'vehicle' && viuPlatformKeyword) {
     filtered = filtered.filter((item) =>
-      item.domain.toLowerCase().includes(domain),
+      String(item.viu_platform_name || '')
+        .toLowerCase()
+        .includes(viuPlatformKeyword),
     );
   }
-  if (scenario === 'vehicle' && stage) {
+  if (scenario === 'cockpit' && cdcPlatformKeyword) {
     filtered = filtered.filter((item) =>
-      item.stage_name.toLowerCase().includes(stage),
+      String(item.cdc_platform_name || '')
+        .toLowerCase()
+        .includes(cdcPlatformKeyword),
+    );
+  }
+  if (scenario === 'cockpit' && smartScreenKeyword) {
+    filtered = filtered.filter((item) =>
+      String(item.smart_screen_version_name || '')
+        .toLowerCase()
+        .includes(smartScreenKeyword),
     );
   }
   return filtered;
@@ -112,7 +130,10 @@ async function loadRowsByScenario(
   formValues: Record<string, any>,
   scenario: 'cockpit' | 'vehicle',
 ) {
+  const projectKeyword = String(formValues.project_keyword || '').trim();
   const data = await listProjectsApi({
+    hardware_scenario: scenario,
+    keyword: projectKeyword || undefined,
     page: 1,
     pageSize: 1000,
     enable_hardware_config: true,
@@ -190,7 +211,7 @@ const [CockpitGrid, cockpitGridApi] = useZqTable({
       zoom: true,
     },
     proxyConfig: {
-      autoLoad: true,
+      autoLoad: false,
       ajax: {
         query: async ({ page, form }) =>
           await loadRowsByScenario(page, form || {}, 'cockpit'),
@@ -225,7 +246,15 @@ watch(
               class="border-border bg-background flex h-full min-h-0 flex-col rounded-lg border p-3"
             >
               <div class="min-h-0 flex-1">
-                <VehicleGrid class="h-full" />
+                <VehicleGrid class="h-full">
+                  <template #cell-stage_start="{ row }">
+                    {{
+                      !row.stage_start && !row.stage_end
+                        ? '-'
+                        : `${row.stage_start || '-'} ~ ${row.stage_end || '-'}`
+                    }}
+                  </template>
+                </VehicleGrid>
               </div>
             </section>
           </ElTabPane>

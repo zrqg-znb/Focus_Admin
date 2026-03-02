@@ -472,10 +472,11 @@ function isHardwareConfigValid(showMessage = false) {
 
     if (
       hardwareScenario.value === 'cockpit' &&
-      (!phase.cdc_platform_id || !phase.smart_screen_version_id)
+      !phase.cdc_platform_id &&
+      !phase.smart_screen_version_id
     ) {
       if (showMessage) {
-        ElMessage.warning('请完整配置 CDC 平台和智慧屏版本');
+        ElMessage.warning('请至少配置 CDC 平台或智慧屏版本');
       }
       return false;
     }
@@ -1000,7 +1001,7 @@ async function onSubmit() {
                 车控项目：配置点位硬件组合
               </ElTag>
               <ElTag v-else-if="hardwareScenario === 'cockpit'" type="warning">
-                座舱项目：配置 CDC 平台 + 智慧屏版本
+                座舱项目：至少配置 CDC 平台或智慧屏版本
               </ElTag>
               <span v-else class="text-muted-foreground text-sm">
                 当前项目领域不是车控/座舱，请先在基础信息里填写正确领域。
