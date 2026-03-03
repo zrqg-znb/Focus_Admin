@@ -10,7 +10,7 @@ import { ElEmpty, ElInput, ElScrollbar, ElTree } from 'element-plus';
 
 import {
   listCdcPlatformsApi,
-  listViuPlatformsApi,
+  listIdvpPlatformsApi,
 } from '#/api/project-manager/hardware';
 import { listProjectsApi } from '#/api/project-manager/project';
 
@@ -26,7 +26,7 @@ const loading = ref(false);
 const filterText = ref('');
 const treeRef = ref<InstanceType<typeof ElTree>>();
 const projects = ref<ProjectOut[]>([]);
-const viuPlatforms = ref<PlatformConfig[]>([]);
+const idvpPlatforms = ref<PlatformConfig[]>([]);
 const cdcPlatforms = ref<PlatformConfig[]>([]);
 
 // Tree Data Structure
@@ -61,7 +61,7 @@ function getCockpitPlatformName(project: ProjectOut) {
 
 function getSecondLevelCategory(project: ProjectOut, domainType: DomainType) {
   if (domainType === 'vehicle') {
-    return project.viu_platform_name?.trim() || UNCONFIGURED_LABEL;
+    return project.idvp_platform_name?.trim() || UNCONFIGURED_LABEL;
   }
   if (domainType === 'cockpit') {
     return getCockpitPlatformName(project).trim() || UNCONFIGURED_LABEL;
@@ -120,7 +120,7 @@ const treeData = computed<TreeNode[]>(() => {
 
       const configuredCategories =
         domainType === 'vehicle'
-          ? viuPlatforms.value.map((platform) => platform.name)
+          ? idvpPlatforms.value.map((platform) => platform.name)
           : cdcPlatforms.value.map((platform) => platform.name);
       const categoryMap: Record<string, ProjectOut[]> = {};
       for (const name of configuredCategories) {
@@ -175,13 +175,13 @@ const handleNodeClick = (data: TreeNode) => {
 async function fetchProjects() {
   loading.value = true;
   try {
-    const [projectRes, viuRes, cdcRes] = await Promise.all([
+    const [projectRes, idvpRes, cdcRes] = await Promise.all([
       listProjectsApi({ pageSize: 1000, is_closed: false }),
-      listViuPlatformsApi(),
+      listIdvpPlatformsApi(),
       listCdcPlatformsApi(),
     ]);
     projects.value = projectRes.items || [];
-    viuPlatforms.value = viuRes || [];
+    idvpPlatforms.value = idvpRes || [];
     cdcPlatforms.value = cdcRes || [];
   } catch (error) {
     console.error('Failed to fetch projects', error);

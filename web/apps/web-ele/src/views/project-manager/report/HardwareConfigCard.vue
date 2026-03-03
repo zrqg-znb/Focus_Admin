@@ -32,15 +32,17 @@ function getPointText(phase: HardwarePhaseConfig, point: string) {
     (hardware) => hardware.point.toLowerCase() === point.toLowerCase(),
   );
   if (!item) return '-';
-  if (!item.bomid) return item.board || '-';
-  return `${item.board || '-'} / BOMID: ${item.bomid}`;
+  const board = item.board || '-';
+  const configType = item.config_type || '-';
+  if (!item.bomid) return `${board} / ${configType}`;
+  return `${board} / ${configType} / BOMID: ${item.bomid}`;
 }
 
 const vehicleRows = computed(() => {
   return phases.value.map((phase) => ({
     stage_name: phase.stage_name || '-',
     stage_range: formatPhaseRange(phase),
-    viu_platform_name: hardwareData.value?.viu_platform_name || '-',
+    idvp_platform_name: hardwareData.value?.idvp_platform_name || '-',
     viu0: getPointText(phase, 'viu0'),
     viu1: getPointText(phase, 'viu1'),
     viu2: getPointText(phase, 'viu2'),
@@ -87,7 +89,9 @@ const cockpitPhase = computed(() => phases.value[0] || null);
       <template v-else-if="isVehicleScenario">
         <div class="mb-3 flex items-center gap-2 text-sm text-gray-500">
           <IconifyIcon icon="lucide:car-front" />
-          <span>车控项目按阶段展示 VIU 平台与各点位板子 / BOMID</span>
+          <span>
+            车控项目按阶段展示 IDVP 平台与各点位单板 / 典配类型 / BOMID
+          </span>
         </div>
         <ElTable
           :data="vehicleRows"
@@ -99,8 +103,8 @@ const cockpitPhase = computed(() => phases.value[0] || null);
           <ElTableColumn prop="stage_name" label="阶段" min-width="140" />
           <ElTableColumn prop="stage_range" label="阶段起止" min-width="220" />
           <ElTableColumn
-            prop="viu_platform_name"
-            label="VIU 平台"
+            prop="idvp_platform_name"
+            label="IDVP 平台"
             min-width="180"
           />
           <ElTableColumn prop="viu0" label="viu0" min-width="220" />

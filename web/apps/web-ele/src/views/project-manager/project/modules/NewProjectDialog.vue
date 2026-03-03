@@ -2,6 +2,7 @@
 import type {
   HardwarePoint,
   PlatformConfig,
+  ViuHardwarePlatform,
 } from '#/api/project-manager/hardware';
 
 import { computed, ref, watch } from 'vue';
@@ -113,16 +114,22 @@ const newDiTeam = ref('');
 const enableHardwareConfig = ref(false);
 const projectDomain = ref('');
 const hardwarePoints = ref<HardwarePoint[]>([]);
-const viuPlatforms = ref<PlatformConfig[]>([]);
+const viuPlatforms = ref<ViuHardwarePlatform[]>([]);
+const idvpPlatforms = ref<PlatformConfig[]>([]);
 const cdcPlatforms = ref<PlatformConfig[]>([]);
 const smartScreenVersions = ref<PlatformConfig[]>([]);
-const viuPlatformId = ref('');
+const idvpPlatformId = ref('');
 type PhaseConfigFormItem = {
   cdc_platform_id: string;
   smart_screen_version_id: string;
   stage_name: string;
   stage_range: string[];
-  vehicle_hardware: Array<{ board: string; bomid: string; point: string }>;
+  vehicle_hardware: Array<{
+    board: string;
+    bomid: string;
+    config_type: string;
+    point: string;
+  }>;
 };
 const phaseConfigs = ref<PhaseConfigFormItem[]>([]);
 const hardwareLoading = ref(false);
@@ -150,7 +157,7 @@ function createEmptyVehiclePhase(): PhaseConfigFormItem {
   return {
     stage_name: '',
     stage_range: [],
-    vehicle_hardware: [{ point: '', board: '', bomid: '' }],
+    vehicle_hardware: [{ point: '', board: '', config_type: '', bomid: '' }],
     cdc_platform_id: '',
     smart_screen_version_id: '',
   };
@@ -160,7 +167,7 @@ function createEmptyCockpitConfig(): PhaseConfigFormItem {
   return {
     stage_name: cockpitStageName,
     stage_range: [],
-    vehicle_hardware: [{ point: '', board: '', bomid: '' }],
+    vehicle_hardware: [{ point: '', board: '', config_type: '', bomid: '' }],
     cdc_platform_id: '',
     smart_screen_version_id: '',
   };
@@ -197,7 +204,12 @@ function removePhase(index: number) {
 }
 
 function addVehicleHardwareRow(phase: PhaseConfigFormItem) {
-  phase.vehicle_hardware.push({ point: '', board: '', bomid: '' });
+  phase.vehicle_hardware.push({
+    point: '',
+    board: '',
+    config_type: '',
+    bomid: '',
+  });
 }
 
 function removeVehicleHardwareRow(phase: PhaseConfigFormItem, index: number) {
@@ -207,6 +219,11 @@ function removeVehicleHardwareRow(phase: PhaseConfigFormItem, index: number) {
 function getBoardsByPoint(point: string) {
   const currentPoint = hardwarePoints.value.find((item) => item.code === point);
   return currentPoint?.boards || [];
+}
+
+function getConfigTypesByBoard(board: string) {
+  const currentBoard = viuPlatforms.value.find((item) => item.name === board);
+  return currentBoard?.configs || [];
 }
 
 function getPhasePayload() {
@@ -228,10 +245,13 @@ function getPhasePayload() {
     };
     if (hardwareScenario.value === 'vehicle') {
       payload.vehicle_hardware = phase.vehicle_hardware
-        .filter((item) => item.point && item.board && item.bomid)
+        .filter(
+          (item) => item.point && item.board && item.config_type && item.bomid,
+        )
         .map((item) => ({
           point: item.point,
           board: item.board,
+          config_type: item.config_type,
           bomid: item.bomid,
         }));
     }
@@ -282,15 +302,25 @@ function isHardwareConfigValid(showMessage = false) {
         return false;
       }
       stageSet.add(stageName);
-      if (!viuPlatformId.value) {
+      if (!idvpPlatformId.value) {
         if (showMessage) {
-          ElMessage.warning('请选择 VIU 平台');
+          ElMessage.warning('请选择 IDVP 软件平台');
         }
         return false;
       }
       const hasPartialRow = phase.vehicle_hardware.some((item) => {
-        const hasAny = !!(item.point || item.board || item.bomid);
-        const hasAll = !!(item.point && item.board && item.bomid);
+        const hasAny = !!(
+          item.point ||
+          item.board ||
+          item.config_type ||
+          item.bomid
+        );
+        const hasAll = !!(
+          item.point &&
+          item.board &&
+          item.config_type &&
+          item.bomid
+        );
         return hasAny && !hasAll;
       });
       if (hasPartialRow) {
@@ -300,11 +330,29 @@ function isHardwareConfigValid(showMessage = false) {
         return false;
       }
       const validRows = phase.vehicle_hardware.filter(
-        (item) => item.point && item.board && item.bomid,
+        (item) => item.point && item.board && item.config_type && item.bomid,
       );
       if (validRows.length === 0) {
         if (showMessage) {
-          ElMessage.warning(`阶段 ${stageName} 需要完整填写点位、板子和BOMID`);
+          ElMessage.warning(
+            `阶段 ${stageName} 需要完整填写点位、板子、典配类型和BOMID`,
+          );
+        }
+        return false;
+      }
+      const invalidConfigRow = phase.vehicle_hardware.find((item) => {
+        if (!item.board || !item.config_type) return false;
+        const configOptions = getConfigTypesByBoard(item.board);
+        return (
+          configOptions.length === 0 ||
+          !configOptions.includes(item.config_type)
+        );
+      });
+      if (invalidConfigRow) {
+        if (showMessage) {
+          ElMessage.warning(
+            `阶段 ${stageName} 的板子 ${invalidConfigRow.board} 与典配类型不匹配`,
+          );
         }
         return false;
       }
@@ -328,6 +376,7 @@ async function ensureHardwarePointsLoaded() {
   if (
     (hardwarePoints.value.length > 0 ||
       viuPlatforms.value.length > 0 ||
+      idvpPlatforms.value.length > 0 ||
       cdcPlatforms.value.length > 0 ||
       smartScreenVersions.value.length > 0) &&
     !hardwareLoading.value
@@ -339,6 +388,7 @@ async function ensureHardwarePointsLoaded() {
     const options = await listHardwareConfigOptionsApi();
     hardwarePoints.value = options.points || [];
     viuPlatforms.value = options.viu_platforms || [];
+    idvpPlatforms.value = options.idvp_platforms || [];
     cdcPlatforms.value = options.cdc_platforms || [];
     smartScreenVersions.value = options.smart_screen_versions || [];
   } catch (error) {
@@ -375,7 +425,7 @@ watch(
   (enabled) => {
     if (!enabled) {
       phaseConfigs.value = [];
-      viuPlatformId.value = '';
+      idvpPlatformId.value = '';
       return;
     }
     if (hardwareScenario.value === 'cockpit') {
@@ -448,7 +498,7 @@ function resetAll() {
   enableDts.value = false;
   enableHardwareConfig.value = false;
   projectDomain.value = '';
-  viuPlatformId.value = '';
+  idvpPlatformId.value = '';
   milestoneForm.value = {
     qg1_date: '',
     qg2_date: '',
@@ -513,9 +563,9 @@ async function handleSave() {
       enable_quality: enableQuality.value,
       enable_dts: enableDts.value,
       enable_hardware_config: enableHardwareConfig.value,
-      viu_platform_id:
+      idvp_platform_id:
         enableHardwareConfig.value && hardwareScenario.value === 'vehicle'
-          ? viuPlatformId.value || undefined
+          ? idvpPlatformId.value || undefined
           : undefined,
       phase_configs: enableHardwareConfig.value ? getPhasePayload() : undefined,
       design_id: enableIteration.value
@@ -1000,16 +1050,16 @@ function handleClose() {
                 </ElFormItem>
                 <ElFormItem
                   v-if="hardwareScenario === 'vehicle'"
-                  label="VIU 平台"
+                  label="IDVP 软件平台"
                 >
                   <ElSelect
-                    v-model="viuPlatformId"
-                    placeholder="选择 VIU 平台"
+                    v-model="idvpPlatformId"
+                    placeholder="选择 IDVP 软件平台"
                     clearable
                     class="w-full"
                   >
                     <ElOption
-                      v-for="platform in viuPlatforms"
+                      v-for="platform in idvpPlatforms"
                       :key="platform.id"
                       :label="platform.name"
                       :value="platform.id"
@@ -1084,6 +1134,12 @@ function handleClose() {
                                 placeholder="选择点位"
                                 clearable
                                 class="w-full"
+                                @change="
+                                  () => {
+                                    row.board = '';
+                                    row.config_type = '';
+                                  }
+                                "
                               >
                                 <ElOption
                                   v-for="point in hardwarePoints"
@@ -1101,12 +1157,32 @@ function handleClose() {
                                 placeholder="选择板子"
                                 clearable
                                 class="w-full"
+                                @change="row.config_type = ''"
                               >
                                 <ElOption
                                   v-for="board in getBoardsByPoint(row.point)"
                                   :key="board"
                                   :label="board"
                                   :value="board"
+                                />
+                              </ElSelect>
+                            </template>
+                          </ElTableColumn>
+                          <ElTableColumn label="典配类型" min-width="220">
+                            <template #default="{ row }">
+                              <ElSelect
+                                v-model="row.config_type"
+                                placeholder="选择典配类型"
+                                clearable
+                                class="w-full"
+                              >
+                                <ElOption
+                                  v-for="configType in getConfigTypesByBoard(
+                                    row.board,
+                                  )"
+                                  :key="configType"
+                                  :label="configType"
+                                  :value="configType"
                                 />
                               </ElSelect>
                             </template>

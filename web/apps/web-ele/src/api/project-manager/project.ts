@@ -20,6 +20,8 @@ export interface ProjectOut {
   enable_hardware_config: boolean;
   viu_platform_id?: string;
   viu_platform_name?: string;
+  idvp_platform_id?: string;
+  idvp_platform_name?: string;
   phase_configs?: ProjectPhaseConfig[];
   ws_id?: string;
   di_teams?: string[];
@@ -30,6 +32,7 @@ export interface ProjectOut {
 export interface VehicleHardwareItem {
   point: string;
   board: string;
+  config_type: string;
   bomid: string;
 }
 
@@ -63,7 +66,7 @@ export interface ProjectCreatePayload {
   enable_quality?: boolean;
   enable_dts?: boolean;
   enable_hardware_config?: boolean;
-  viu_platform_id?: string;
+  idvp_platform_id?: string;
   phase_configs?: ProjectPhaseConfig[];
   ws_id?: string;
   di_teams?: string[];
@@ -86,7 +89,7 @@ export interface ProjectUpdatePayload {
   enable_quality?: boolean;
   enable_dts?: boolean;
   enable_hardware_config?: boolean;
-  viu_platform_id?: string;
+  idvp_platform_id?: string;
   phase_configs?: ProjectPhaseConfig[];
   ws_id?: string;
   di_teams?: string[];

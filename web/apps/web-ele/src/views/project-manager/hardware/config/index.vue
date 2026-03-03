@@ -2,6 +2,7 @@
 import type {
   HardwarePoint,
   PlatformConfig,
+  ViuHardwarePlatform,
 } from '#/api/project-manager/hardware';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
@@ -17,6 +18,8 @@ import {
   ElFormItem,
   ElInput,
   ElMessage,
+  ElOption,
+  ElSelect,
   ElTabPane,
   ElTabs,
   ElTag,
@@ -26,18 +29,22 @@ import {
 import {
   createCdcPlatformApi,
   createHardwarePointApi,
+  createIdvpPlatformApi,
   createSmartScreenVersionApi,
   createViuPlatformApi,
   deleteCdcPlatformApi,
   deleteHardwarePointApi,
+  deleteIdvpPlatformApi,
   deleteSmartScreenVersionApi,
   deleteViuPlatformApi,
   listCdcPlatformsApi,
   listHardwarePointsApi,
+  listIdvpPlatformsApi,
   listSmartScreenVersionsApi,
   listViuPlatformsApi,
   updateCdcPlatformApi,
   updateHardwarePointApi,
+  updateIdvpPlatformApi,
   updateSmartScreenVersionApi,
   updateViuPlatformApi,
 } from '#/api/project-manager/hardware';
@@ -47,11 +54,12 @@ import {
   usePlatformColumns,
   usePointColumns,
   useSearchFormSchema,
+  useViuPlatformColumns,
 } from './data';
 
 defineOptions({ name: 'HardwareConfigAdmin' });
 
-const activeTab = ref<'cdc' | 'points' | 'smart' | 'viu'>('points');
+const activeTab = ref<'cdc' | 'idvp' | 'points' | 'smart' | 'viu'>('points');
 
 const pointDialogVisible = ref(false);
 const pointDialogMode = ref<'create' | 'edit'>('create');
@@ -66,15 +74,23 @@ const pointForm = ref<{
   boards: [],
   remark: '',
 });
-const boardInput = ref('');
 
-type PlatformType = 'cdc' | 'smart' | 'viu';
+const viuPlatforms = ref<ViuHardwarePlatform[]>([]);
+const viuConfigInput = ref('');
+
+type PlatformType = 'cdc' | 'idvp' | 'smart' | 'viu';
 
 const configDialogVisible = ref(false);
 const configDialogMode = ref<'create' | 'edit'>('create');
 const configDialogType = ref<PlatformType>('cdc');
 const configDialogSaving = ref(false);
-const configForm = ref<{ id?: string; name: string; remark: string }>({
+const configForm = ref<{
+  configs: string[];
+  id?: string;
+  name: string;
+  remark: string;
+}>({
+  configs: [],
   name: '',
   remark: '',
 });
@@ -86,14 +102,20 @@ interface ZqQueryParams {
   };
 }
 
-function openPointCreate() {
+async function ensureViuPlatformsLoaded() {
+  const data = await listViuPlatformsApi();
+  viuPlatforms.value = data || [];
+}
+
+async function openPointCreate() {
+  await ensureViuPlatformsLoaded();
   pointDialogMode.value = 'create';
   pointForm.value = { code: '', boards: [], remark: '' };
-  boardInput.value = '';
   pointDialogVisible.value = true;
 }
 
-function openPointEdit(row: HardwarePoint) {
+async function openPointEdit(row: HardwarePoint) {
+  await ensureViuPlatformsLoaded();
   pointDialogMode.value = 'edit';
   pointForm.value = {
     id: row.id,
@@ -101,23 +123,7 @@ function openPointEdit(row: HardwarePoint) {
     boards: Array.isArray(row.boards) ? [...row.boards] : [],
     remark: row.remark || '',
   };
-  boardInput.value = '';
   pointDialogVisible.value = true;
-}
-
-function addBoard() {
-  const value = boardInput.value.trim();
-  if (!value) return;
-  if (!pointForm.value.boards.includes(value)) {
-    pointForm.value.boards.push(value);
-  }
-  boardInput.value = '';
-}
-
-function removeBoard(board: string) {
-  pointForm.value.boards = pointForm.value.boards.filter(
-    (item) => item !== board,
-  );
 }
 
 async function submitPointDialog() {
@@ -151,7 +157,7 @@ async function submitPointDialog() {
 
 async function onPointActionClick(code: 'delete' | 'edit', row: HardwarePoint) {
   if (code === 'edit') {
-    openPointEdit(row);
+    await openPointEdit(row);
     return;
   }
   if (code === 'delete') {
@@ -169,64 +175,134 @@ async function onPointActionClick(code: 'delete' | 'edit', row: HardwarePoint) {
 function openConfigCreate(type: PlatformType) {
   configDialogType.value = type;
   configDialogMode.value = 'create';
-  configForm.value = { name: '', remark: '' };
+  configForm.value = { configs: [], name: '', remark: '' };
+  viuConfigInput.value = '';
   configDialogVisible.value = true;
 }
 
-function openConfigEdit(type: PlatformType, row: PlatformConfig) {
+function openConfigEdit(
+  type: PlatformType,
+  row: PlatformConfig | ViuHardwarePlatform,
+) {
   configDialogType.value = type;
   configDialogMode.value = 'edit';
   configForm.value = {
+    configs:
+      type === 'viu' && Array.isArray((row as ViuHardwarePlatform).configs)
+        ? [...(row as ViuHardwarePlatform).configs]
+        : [],
     id: row.id,
     name: row.name,
     remark: row.remark || '',
   };
+  viuConfigInput.value = '';
   configDialogVisible.value = true;
 }
 
+function addViuConfig() {
+  const value = viuConfigInput.value.trim();
+  if (!value) return;
+  if (!configForm.value.configs.includes(value)) {
+    configForm.value.configs.push(value);
+  }
+  viuConfigInput.value = '';
+}
+
+function removeViuConfig(config: string) {
+  configForm.value.configs = configForm.value.configs.filter(
+    (item) => item !== config,
+  );
+}
+
 async function queryPlatformList(type: PlatformType) {
-  if (type === 'viu') return (await listViuPlatformsApi()) || [];
+  if (type === 'viu') {
+    const data = (await listViuPlatformsApi()) || [];
+    viuPlatforms.value = data;
+    return data;
+  }
+  if (type === 'idvp') return (await listIdvpPlatformsApi()) || [];
   if (type === 'cdc') return (await listCdcPlatformsApi()) || [];
   return (await listSmartScreenVersionsApi()) || [];
 }
 
 async function reloadPlatformGrid(type: PlatformType) {
-  if (type === 'viu') {
-    await viuGridApi.reload();
-  } else if (type === 'cdc') {
-    await cdcGridApi.reload();
-  } else {
-    await smartGridApi.reload();
+  switch (type) {
+    case 'cdc': {
+      await cdcGridApi.reload();
+
+      break;
+    }
+    case 'idvp': {
+      await idvpGridApi.reload();
+
+      break;
+    }
+    case 'viu': {
+      await viuGridApi.reload();
+
+      break;
+    }
+    default: {
+      await smartGridApi.reload();
+    }
   }
 }
 
 async function submitConfigDialog() {
-  if (!configForm.value.name) {
+  const configName = configForm.value.name.trim();
+  if (!configName) {
     ElMessage.warning('请输入配置名称');
     return;
   }
   configDialogSaving.value = true;
   try {
     const payload = {
-      name: configForm.value.name,
+      name: configName,
       remark: configForm.value.remark || undefined,
     };
-    if (configDialogType.value === 'viu') {
-      if (configDialogMode.value === 'create') {
-        await createViuPlatformApi(payload);
-      } else if (configForm.value.id) {
-        await updateViuPlatformApi(configForm.value.id, payload);
+    switch (configDialogType.value) {
+      case 'cdc': {
+        if (configDialogMode.value === 'create') {
+          await createCdcPlatformApi(payload);
+        } else if (configForm.value.id) {
+          await updateCdcPlatformApi(configForm.value.id, payload);
+        }
+
+        break;
       }
-    } else if (configDialogType.value === 'cdc') {
-      if (configDialogMode.value === 'create') {
-        await createCdcPlatformApi(payload);
-      } else if (configForm.value.id) {
-        await updateCdcPlatformApi(configForm.value.id, payload);
+      case 'idvp': {
+        if (configDialogMode.value === 'create') {
+          await createIdvpPlatformApi(payload);
+        } else if (configForm.value.id) {
+          await updateIdvpPlatformApi(configForm.value.id, payload);
+        }
+
+        break;
       }
-    } else if (configDialogMode.value === 'create') {
-      await createSmartScreenVersionApi(payload);
-    } else if (configForm.value.id) {
-      await updateSmartScreenVersionApi(configForm.value.id, payload);
+      case 'viu': {
+        if (configForm.value.configs.length === 0) {
+          ElMessage.warning('请至少添加一个典配类型');
+          return;
+        }
+        const viuPayload = {
+          ...payload,
+          configs: configForm.value.configs || [],
+        };
+        if (configDialogMode.value === 'create') {
+          await createViuPlatformApi(viuPayload);
+        } else if (configForm.value.id) {
+          await updateViuPlatformApi(configForm.value.id, viuPayload);
+        }
+
+        break;
+      }
+      default: {
+        if (configDialogMode.value === 'create') {
+          await createSmartScreenVersionApi(payload);
+        } else if (configForm.value.id) {
+          await updateSmartScreenVersionApi(configForm.value.id, payload);
+        }
+      }
     }
     ElMessage.success(
       configDialogMode.value === 'create' ? '创建成功' : '更新成功',
@@ -238,14 +314,30 @@ async function submitConfigDialog() {
   }
 }
 
-async function deletePlatform(type: PlatformType, row: PlatformConfig) {
+async function deletePlatform(
+  type: PlatformType,
+  row: PlatformConfig | ViuHardwarePlatform,
+) {
   try {
-    if (type === 'viu') {
-      await deleteViuPlatformApi(row.id);
-    } else if (type === 'cdc') {
-      await deleteCdcPlatformApi(row.id);
-    } else {
-      await deleteSmartScreenVersionApi(row.id);
+    switch (type) {
+      case 'cdc': {
+        await deleteCdcPlatformApi(row.id);
+
+        break;
+      }
+      case 'idvp': {
+        await deleteIdvpPlatformApi(row.id);
+
+        break;
+      }
+      case 'viu': {
+        await deleteViuPlatformApi(row.id);
+
+        break;
+      }
+      default: {
+        await deleteSmartScreenVersionApi(row.id);
+      }
     }
     ElMessage.success('删除成功');
     await reloadPlatformGrid(type);
@@ -258,7 +350,7 @@ async function deletePlatform(type: PlatformType, row: PlatformConfig) {
 async function onPlatformActionClick(
   type: PlatformType,
   code: 'delete' | 'edit',
-  row: PlatformConfig,
+  row: PlatformConfig | ViuHardwarePlatform,
 ) {
   if (code === 'edit') {
     openConfigEdit(type, row);
@@ -327,14 +419,49 @@ const [ViuGrid, viuGridApi] = useZqTable({
   separator: false,
   formOptions: baseFormOptions,
   gridOptions: {
-    columns: usePlatformColumns('VIU 平台'),
+    columns: useViuPlatformColumns(),
     border: true,
     stripe: true,
     proxyConfig: {
       autoLoad: true,
       ajax: {
         query: async ({ page, form }: ZqQueryParams) => {
-          const data = await queryPlatformList('viu');
+          const data = (await queryPlatformList(
+            'viu',
+          )) as ViuHardwarePlatform[];
+          const keyword = String(form?.keyword || '').toLowerCase();
+          const filtered = keyword
+            ? data.filter(
+                (item) =>
+                  item.name.toLowerCase().includes(keyword) ||
+                  (item.configs || []).some((config) =>
+                    config.toLowerCase().includes(keyword),
+                  ) ||
+                  (item.remark || '').toLowerCase().includes(keyword),
+              )
+            : data;
+          return toPagedResult(filtered, page);
+        },
+      },
+    },
+    pagerConfig: { enabled: true, pageSize: 20 },
+    toolbarConfig: baseToolbarConfig,
+  } as ZqTableGridOptions<ViuHardwarePlatform>,
+});
+
+const [IdvpGrid, idvpGridApi] = useZqTable({
+  showSearchForm: false,
+  separator: false,
+  formOptions: baseFormOptions,
+  gridOptions: {
+    columns: usePlatformColumns('IDVP 软件平台'),
+    border: true,
+    stripe: true,
+    proxyConfig: {
+      autoLoad: true,
+      ajax: {
+        query: async ({ page, form }: ZqQueryParams) => {
+          const data = (await queryPlatformList('idvp')) as PlatformConfig[];
           const keyword = String(form?.keyword || '').toLowerCase();
           const filtered = keyword
             ? data.filter(
@@ -424,6 +551,10 @@ watch(
       await viuGridApi.reload();
       return;
     }
+    if (tab === 'idvp') {
+      await idvpGridApi.reload();
+      return;
+    }
     if (tab === 'cdc') {
       await cdcGridApi.reload();
       return;
@@ -452,7 +583,7 @@ watch(
                   硬件点位管理
                 </h3>
                 <p class="text-muted-foreground mt-1 text-sm">
-                  维护车控场景下的硬件点位与板子型号映射，供项目阶段配置引用。
+                  维护车控场景下的硬件点位与 VIU 单板映射，供项目阶段配置引用。
                 </p>
               </header>
               <div class="min-h-0 flex-1">
@@ -496,24 +627,27 @@ watch(
             </section>
           </ElTabPane>
 
-          <ElTabPane label="VIU 平台配置" name="viu">
+          <ElTabPane label="VIU 硬件平台配置" name="viu">
             <section
               class="bg-background flex h-full min-h-0 flex-col rounded-lg"
             >
               <header class="mb-4 shrink-0">
                 <h3 class="text-foreground text-base font-semibold">
-                  VIU 平台配置
+                  VIU 硬件平台配置
                 </h3>
                 <p class="text-muted-foreground mt-1 text-sm">
-                  维护车控项目可选的 VIU 平台选项，项目启用典配时进行绑定。
+                  维护 VIU 单板型号及其典配列表，供硬件点位与项目阶段联动选择。
                 </p>
               </header>
               <div class="min-h-0 flex-1">
                 <ViuGrid class="hardware-points-grid h-full">
                   <template #table-title>
                     <ElButton type="primary" @click="openConfigCreate('viu')">
-                      新增 VIU 平台
+                      新增 VIU 硬件平台
                     </ElButton>
+                  </template>
+                  <template #cell-configs="{ row }">
+                    {{ (row.configs || []).join('、') || '-' }}
                   </template>
                   <template #cell-actions="{ row }">
                     <div class="flex items-center justify-center gap-1">
@@ -542,6 +676,56 @@ watch(
                     </div>
                   </template>
                 </ViuGrid>
+              </div>
+            </section>
+          </ElTabPane>
+
+          <ElTabPane label="IDVP 软件平台配置" name="idvp">
+            <section
+              class="bg-background flex h-full min-h-0 flex-col rounded-lg"
+            >
+              <header class="mb-4 shrink-0">
+                <h3 class="text-foreground text-base font-semibold">
+                  IDVP 软件平台配置
+                </h3>
+                <p class="text-muted-foreground mt-1 text-sm">
+                  维护车控项目可选 IDVP 软件平台版本，项目启用典配时进行绑定。
+                </p>
+              </header>
+              <div class="min-h-0 flex-1">
+                <IdvpGrid class="hardware-points-grid h-full">
+                  <template #table-title>
+                    <ElButton type="primary" @click="openConfigCreate('idvp')">
+                      新增 IDVP 软件平台
+                    </ElButton>
+                  </template>
+                  <template #cell-actions="{ row }">
+                    <div class="flex items-center justify-center gap-1">
+                      <ElTooltip content="编辑" placement="top">
+                        <ElButton
+                          circle
+                          link
+                          size="small"
+                          type="primary"
+                          @click="onPlatformActionClick('idvp', 'edit', row)"
+                        >
+                          <IconifyIcon icon="ep:edit" />
+                        </ElButton>
+                      </ElTooltip>
+                      <ElTooltip content="删除" placement="top">
+                        <ElButton
+                          circle
+                          link
+                          size="small"
+                          type="danger"
+                          @click="onPlatformActionClick('idvp', 'delete', row)"
+                        >
+                          <IconifyIcon icon="ep:delete" />
+                        </ElButton>
+                      </ElTooltip>
+                    </div>
+                  </template>
+                </IdvpGrid>
               </div>
             </section>
           </ElTabPane>
@@ -657,31 +841,28 @@ watch(
         <ElFormItem label="硬件点位">
           <ElInput v-model="pointForm.code" placeholder="如：viu0" />
         </ElFormItem>
-        <ElFormItem label="板子列表">
+        <ElFormItem label="单板列表">
           <div class="w-full">
-            <div class="mb-2 flex gap-2">
-              <ElInput
-                v-model="boardInput"
-                placeholder="输入板子型号，如：VIU270"
-                @keyup.enter="addBoard"
+            <ElSelect
+              v-model="pointForm.boards"
+              multiple
+              filterable
+              clearable
+              class="w-full"
+              placeholder="请选择 VIU 硬件单板型号"
+            >
+              <ElOption
+                v-for="platform in viuPlatforms"
+                :key="platform.id"
+                :label="platform.name"
+                :value="platform.name"
               />
-              <ElButton @click="addBoard">添加</ElButton>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <ElTag
-                v-for="board in pointForm.boards"
-                :key="board"
-                closable
-                @close="removeBoard(board)"
-              >
-                {{ board }}
-              </ElTag>
-              <div
-                v-if="pointForm.boards.length === 0"
-                class="text-muted-foreground text-sm"
-              >
-                暂无板子配置
-              </div>
+            </ElSelect>
+            <div
+              v-if="viuPlatforms.length === 0"
+              class="text-muted-foreground mt-2 text-sm"
+            >
+              暂无 VIU 硬件平台数据，请先在“VIU 硬件平台配置”中新增。
             </div>
           </div>
         </ElFormItem>
@@ -705,15 +886,45 @@ watch(
       v-model="configDialogVisible"
       :title="`${configDialogMode === 'create' ? '新增' : '编辑'}${
         configDialogType === 'viu'
-          ? 'VIU 平台'
-          : configDialogType === 'cdc'
-            ? 'CDC 平台'
-            : '智慧屏版本'
+          ? 'VIU 硬件平台'
+          : configDialogType === 'idvp'
+            ? 'IDVP 软件平台'
+            : configDialogType === 'cdc'
+              ? 'CDC 平台'
+              : '智慧屏版本'
       }`"
     >
       <ElForm label-width="120px">
         <ElFormItem label="名称">
           <ElInput v-model="configForm.name" />
+        </ElFormItem>
+        <ElFormItem v-if="configDialogType === 'viu'" label="典配列表">
+          <div class="w-full">
+            <div class="mb-2 flex gap-2">
+              <ElInput
+                v-model="viuConfigInput"
+                placeholder="输入典配类型，如：标准版"
+                @keyup.enter="addViuConfig"
+              />
+              <ElButton @click="addViuConfig">添加</ElButton>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <ElTag
+                v-for="config in configForm.configs"
+                :key="config"
+                closable
+                @close="removeViuConfig(config)"
+              >
+                {{ config }}
+              </ElTag>
+              <div
+                v-if="configForm.configs.length === 0"
+                class="text-muted-foreground text-sm"
+              >
+                暂无典配类型
+              </div>
+            </div>
+          </div>
         </ElFormItem>
         <ElFormItem label="备注">
           <ElInput v-model="configForm.remark" />

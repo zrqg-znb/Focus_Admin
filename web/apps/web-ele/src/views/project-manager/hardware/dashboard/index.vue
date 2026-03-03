@@ -25,6 +25,17 @@ defineOptions({ name: 'HardwareConfigDashboard' });
 const activeView = ref<'cockpit' | 'vehicle'>('vehicle');
 const currentVehicleRows = ref<PhaseBoardRow[]>([]);
 
+function getVehiclePointText(row: PhaseBoardRow, point: string) {
+  const item = (row.vehicle_hardware || []).find(
+    (hardware) => hardware.point.toLowerCase() === point.toLowerCase(),
+  );
+  if (!item) return '-';
+  const board = item.board || '-';
+  const configType = item.config_type || '-';
+  if (!item.bomid) return `${board} / ${configType}`;
+  return `${board} / ${configType} / BOMID: ${item.bomid}`;
+}
+
 function toPhaseRows(projects: ProjectOut[]): PhaseBoardRow[] {
   const rows: PhaseBoardRow[] = [];
   for (const project of projects) {
@@ -41,7 +52,7 @@ function toPhaseRows(projects: ProjectOut[]): PhaseBoardRow[] {
         scenario:
           phase.scenario ||
           (project.domain.includes('座舱') ? 'cockpit' : 'vehicle'),
-        viu_platform_name: project.viu_platform_name,
+        idvp_platform_name: project.idvp_platform_name,
         vehicle_hardware: phase.vehicle_hardware || [],
         cdc_platform_name: phase.cdc_platform_name,
         smart_screen_version_name: phase.smart_screen_version_name,
@@ -59,7 +70,7 @@ function filterRows(
   const projectKeyword = String(formValues.project_keyword || '')
     .trim()
     .toLowerCase();
-  const viuPlatformKeyword = String(formValues.viu_platform_keyword || '')
+  const idvpPlatformKeyword = String(formValues.idvp_platform_keyword || '')
     .trim()
     .toLowerCase();
   const cdcPlatformKeyword = String(formValues.cdc_platform_keyword || '')
@@ -75,11 +86,11 @@ function filterRows(
       item.project_name.toLowerCase().includes(projectKeyword),
     );
   }
-  if (scenario === 'vehicle' && viuPlatformKeyword) {
+  if (scenario === 'vehicle' && idvpPlatformKeyword) {
     filtered = filtered.filter((item) =>
-      String(item.viu_platform_name || '')
+      String(item.idvp_platform_name || '')
         .toLowerCase()
-        .includes(viuPlatformKeyword),
+        .includes(idvpPlatformKeyword),
     );
   }
   if (scenario === 'cockpit' && cdcPlatformKeyword) {
@@ -253,6 +264,18 @@ watch(
                         ? '-'
                         : `${row.stage_start || '-'} ~ ${row.stage_end || '-'}`
                     }}
+                  </template>
+                  <template #cell-viu0="{ row }">
+                    {{ getVehiclePointText(row, 'viu0') }}
+                  </template>
+                  <template #cell-viu1="{ row }">
+                    {{ getVehiclePointText(row, 'viu1') }}
+                  </template>
+                  <template #cell-viu2="{ row }">
+                    {{ getVehiclePointText(row, 'viu2') }}
+                  </template>
+                  <template #cell-viu3="{ row }">
+                    {{ getVehiclePointText(row, 'viu3') }}
                   </template>
                 </VehicleGrid>
               </div>

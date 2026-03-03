@@ -17,9 +17,14 @@ export interface PlatformConfig {
   sys_update_datetime?: string;
 }
 
+export interface ViuHardwarePlatform extends PlatformConfig {
+  configs: string[];
+}
+
 export interface HardwareConfigOptions {
   points: HardwarePoint[];
-  viu_platforms: PlatformConfig[];
+  viu_platforms: ViuHardwarePlatform[];
+  idvp_platforms: PlatformConfig[];
   cdc_platforms: PlatformConfig[];
   smart_screen_versions: PlatformConfig[];
 }
@@ -41,8 +46,13 @@ export interface PlatformConfigPayload {
   remark?: string;
 }
 
+export interface ViuPlatformPayload extends PlatformConfigPayload {
+  configs: string[];
+}
+
 const pointBase = '/api/project-manager/hardware/points';
 const viuBase = '/api/project-manager/hardware/viu-platforms';
+const idvpBase = '/api/project-manager/hardware/idvp-platforms';
 const cdcBase = '/api/project-manager/hardware/cdc-platforms';
 const smartBase = '/api/project-manager/hardware/smart-screen-versions';
 
@@ -76,22 +86,41 @@ export async function listCdcPlatformsApi() {
 }
 
 export async function listViuPlatformsApi() {
-  return requestClient.get<PlatformConfig[]>(viuBase);
+  return requestClient.get<ViuHardwarePlatform[]>(viuBase);
 }
 
-export async function createViuPlatformApi(data: PlatformConfigPayload) {
-  return requestClient.post<PlatformConfig>(viuBase, data);
+export async function createViuPlatformApi(data: ViuPlatformPayload) {
+  return requestClient.post<ViuHardwarePlatform>(viuBase, data);
 }
 
 export async function updateViuPlatformApi(
   id: string,
-  data: PlatformConfigPayload,
+  data: ViuPlatformPayload,
 ) {
-  return requestClient.put<PlatformConfig>(`${viuBase}/${id}`, data);
+  return requestClient.put<ViuHardwarePlatform>(`${viuBase}/${id}`, data);
 }
 
 export async function deleteViuPlatformApi(id: string) {
-  return requestClient.delete<PlatformConfig>(`${viuBase}/${id}`);
+  return requestClient.delete<ViuHardwarePlatform>(`${viuBase}/${id}`);
+}
+
+export async function listIdvpPlatformsApi() {
+  return requestClient.get<PlatformConfig[]>(idvpBase);
+}
+
+export async function createIdvpPlatformApi(data: PlatformConfigPayload) {
+  return requestClient.post<PlatformConfig>(idvpBase, data);
+}
+
+export async function updateIdvpPlatformApi(
+  id: string,
+  data: PlatformConfigPayload,
+) {
+  return requestClient.put<PlatformConfig>(`${idvpBase}/${id}`, data);
+}
+
+export async function deleteIdvpPlatformApi(id: string) {
+  return requestClient.delete<PlatformConfig>(`${idvpBase}/${id}`);
 }
 
 export async function createCdcPlatformApi(data: PlatformConfigPayload) {

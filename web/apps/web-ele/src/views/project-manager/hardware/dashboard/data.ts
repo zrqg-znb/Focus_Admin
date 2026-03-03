@@ -12,8 +12,13 @@ export interface PhaseBoardRow {
   stage_end?: string;
   stage_name: string;
   stage_start?: string;
-  vehicle_hardware?: Array<{ board: string; bomid?: string; point: string }>;
-  viu_platform_name?: string;
+  vehicle_hardware?: Array<{
+    board: string;
+    bomid?: string;
+    config_type?: string;
+    point: string;
+  }>;
+  idvp_platform_name?: string;
 }
 
 type PhaseBoardColumns = ZqTableGridOptions<PhaseBoardRow>['columns'];
@@ -44,10 +49,10 @@ export function useVehicleSearchFormSchema(): VbenFormSchema[] {
     },
     {
       component: 'Input',
-      fieldName: 'viu_platform_keyword',
-      label: 'VIU 平台',
+      fieldName: 'idvp_platform_keyword',
+      label: 'IDVP 软件平台',
       componentProps: {
-        placeholder: '请输入 VIU 平台关键词',
+        placeholder: '请输入 IDVP 软件平台关键词',
       },
     },
   ];
@@ -83,15 +88,6 @@ export function useCockpitSearchFormSchema(): VbenFormSchema[] {
 }
 
 export function useVehicleColumns(): PhaseBoardColumns {
-  const getPointValue = (row: PhaseBoardRow, point: string) => {
-    const item = (row.vehicle_hardware || []).find(
-      (hardware) => hardware.point.toLowerCase() === point.toLowerCase(),
-    );
-    if (!item) return '-';
-    if (!item.bomid) return item.board || '-';
-    return `${item.board || '-'} / BOMID: ${item.bomid}`;
-  };
-
   return withCenterAlign([
     {
       key: 'project_name',
@@ -107,9 +103,9 @@ export function useVehicleColumns(): PhaseBoardColumns {
       minWidth: 220,
     },
     {
-      key: 'viu_platform_name',
-      dataKey: 'viu_platform_name',
-      title: 'VIU 平台',
+      key: 'idvp_platform_name',
+      dataKey: 'idvp_platform_name',
+      title: 'IDVP 软件平台',
       minWidth: 160,
     },
     {
@@ -117,32 +113,24 @@ export function useVehicleColumns(): PhaseBoardColumns {
       dataKey: 'viu0',
       title: 'viu0',
       minWidth: 220,
-      formatter: ({ row }: { row: PhaseBoardRow }) =>
-        getPointValue(row, 'viu0'),
     },
     {
       key: 'viu1',
       dataKey: 'viu1',
       title: 'viu1',
       minWidth: 220,
-      formatter: ({ row }: { row: PhaseBoardRow }) =>
-        getPointValue(row, 'viu1'),
     },
     {
       key: 'viu2',
       dataKey: 'viu2',
       title: 'viu2',
       minWidth: 220,
-      formatter: ({ row }: { row: PhaseBoardRow }) =>
-        getPointValue(row, 'viu2'),
     },
     {
       key: 'viu3',
       dataKey: 'viu3',
       title: 'viu3',
       minWidth: 220,
-      formatter: ({ row }: { row: PhaseBoardRow }) =>
-        getPointValue(row, 'viu3'),
     },
   ]) as PhaseBoardColumns;
 }
