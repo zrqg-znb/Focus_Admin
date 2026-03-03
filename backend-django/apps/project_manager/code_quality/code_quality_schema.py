@@ -107,6 +107,17 @@ class ProjectQualitySummarySchema(Schema):
     metric_values: List[QualityMetricValueSchema] = Field(default_factory=list)
 
 
+class QualityOverviewFilterSchema(Schema):
+    project_name: Optional[str] = Field(None, description="项目名称关键词")
+    project_manager: Optional[str] = Field(None, description="项目负责人关键词")
+    project_type: Optional[str] = Field(None, description="项目类型筛选(vehicle/cockpit)")
+    oem_name: Optional[str] = Field(None, description="OEM名称关键词")
+    date: Optional[str] = Field(
+        None,
+        description="记录日期筛选，支持YYYY-MM-DD或YYYYMMDD",
+    )
+
+
 class ModuleQualityDetailSchema(Schema):
     id: str
     oem_name: str

@@ -100,6 +100,14 @@ export interface ModuleConfigPayload {
   owner_ids?: string[];
 }
 
+export interface QualityOverviewQuery {
+  date?: string;
+  oem_name?: string;
+  project_manager?: string;
+  project_name?: string;
+  project_type?: string;
+}
+
 export interface NodeOwnerUpdatePayload {
   module_id: string;
   node_key: string;
@@ -108,7 +116,7 @@ export interface NodeOwnerUpdatePayload {
 
 const base = '/api/project-manager/code_quality';
 
-export async function getQualityOverviewApi(params?: any) {
+export async function getQualityOverviewApi(params?: QualityOverviewQuery) {
   return requestClient.get<ProjectQualitySummary[]>(`${base}/overview`, {
     params,
   });
@@ -116,6 +124,10 @@ export async function getQualityOverviewApi(params?: any) {
 
 export async function configModuleApi(data: ModuleConfigPayload) {
   return requestClient.post<CodeModuleOut>(`${base}/modules`, data);
+}
+
+export async function deleteModuleApi(moduleId: string) {
+  return requestClient.delete<boolean>(`${base}/modules/${moduleId}`);
 }
 
 export async function getProjectQualityDetailsApi(

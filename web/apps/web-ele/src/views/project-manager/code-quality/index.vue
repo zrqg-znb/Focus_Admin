@@ -116,61 +116,6 @@ function normalizeRows(rows: ProjectQualitySummary[] = []) {
     });
 }
 
-function normalizeProjectType(value: string) {
-  const text = String(value || '')
-    .trim()
-    .toLowerCase();
-  if (!text) return '';
-  if (text.includes('vehicle') || text.includes('车控')) return 'vehicle';
-  if (text.includes('cockpit') || text.includes('座舱')) return 'cockpit';
-  return text;
-}
-
-function filterRows(
-  rows: CodeQualityOverviewRow[],
-  formValues: Record<string, any>,
-) {
-  const projectName = String(formValues.project_name || '')
-    .trim()
-    .toLowerCase();
-  const projectManager = String(formValues.project_manager || '')
-    .trim()
-    .toLowerCase();
-  const projectType = normalizeProjectType(String(formValues.project_type || ''));
-  const oemName = String(formValues.oem_name || '')
-    .trim()
-    .toLowerCase();
-  const date = String(formValues.date || '').trim();
-
-  let filtered = rows;
-  if (projectName) {
-    filtered = filtered.filter((item) =>
-      item.project_name.toLowerCase().includes(projectName),
-    );
-  }
-  if (projectManager) {
-    filtered = filtered.filter((item) =>
-      String(item.project_managers || '')
-        .toLowerCase()
-        .includes(projectManager),
-    );
-  }
-  if (projectType) {
-    filtered = filtered.filter(
-      (item) => normalizeProjectType(item.project_type) === projectType,
-    );
-  }
-  if (oemName) {
-    filtered = filtered.filter((item) =>
-      item.oem_name.toLowerCase().includes(oemName),
-    );
-  }
-  if (date) {
-    filtered = filtered.filter((item) => item.record_date === date);
-  }
-  return filtered;
-}
-
 function projectSpanMethod({ row, column, rowIndex }: any) {
   const prop = String(column.property || column.prop || '');
   if (prop !== 'project_name') {
@@ -209,15 +154,14 @@ const [Grid] = useZqTable({
       autoLoad: true,
       ajax: {
         query: async ({ page, form }: QualityQueryParams) => {
-          const rows = normalizeRows(await getQualityOverviewApi());
-          const filtered = filterRows(rows, form || {});
+          const rows = normalizeRows(await getQualityOverviewApi(form || {}));
 
           const start = (page.currentPage - 1) * page.pageSize;
           const end = start + page.pageSize;
-          currentPageRows.value = filtered.slice(start, end);
+          currentPageRows.value = rows.slice(start, end);
           return {
             items: currentPageRows.value,
-            total: filtered.length,
+            total: rows.length,
           };
         },
       },

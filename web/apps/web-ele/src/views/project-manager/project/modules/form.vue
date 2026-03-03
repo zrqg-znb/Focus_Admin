@@ -28,6 +28,7 @@ import {
 import { useVbenForm } from '#/adapter/form';
 import {
   configModuleApi,
+  deleteModuleApi,
   getProjectQualityDetailsLiteApi,
 } from '#/api/project-manager/code_quality';
 import { listHardwareConfigOptionsApi } from '#/api/project-manager/hardware';
@@ -104,6 +105,11 @@ type ModuleRow = {
   owner_ids: string[];
 };
 const moduleRows = ref<ModuleRow[]>([]);
+const originalModuleIds = ref<string[]>([]);
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
 
 const [Form, formApi] = useVbenForm({
   commonConfig: {
@@ -207,12 +213,17 @@ const [Drawer, drawerApi] = useVbenDrawer({
                     owner_ids: d.owner_ids || [],
                   }))
                 : [];
+            originalModuleIds.value = moduleRows.value
+              .map((item) => item.id)
+              .filter((item): item is string => isNonEmptyString(item));
           } catch (error) {
             console.error('Failed to fetch quality modules', error);
             moduleRows.value = [];
+            originalModuleIds.value = [];
           }
         } else {
           moduleRows.value = [];
+          originalModuleIds.value = [];
         }
 
         formApi.setValues(normalized);
@@ -230,6 +241,7 @@ const [Drawer, drawerApi] = useVbenDrawer({
       };
       dtsConfig.value = { ws_id: '', di_teams: [] };
       moduleRows.value = [];
+      originalModuleIds.value = [];
       milestoneForm.value = {
         qg1_date: '',
         qg2_date: '',
@@ -485,7 +497,10 @@ function isHardwareConfigValid(showMessage = false) {
 }
 
 function isIterationQualityConfigValid(showMessage = false) {
-  if (!enableIteration.value || !iterationQualityConfig.value.enable_quality_metrics) {
+  if (
+    !enableIteration.value ||
+    !iterationQualityConfig.value.enable_quality_metrics
+  ) {
     return true;
   }
 
@@ -590,10 +605,12 @@ async function onSubmit() {
       if (enableQuality.value && moduleRows.value.length > 0) {
         const seen = new Set();
         for (const row of moduleRows.value) {
-          if (!row.oem_name || !row.module) continue;
-          const key = `${row.oem_name}|${row.module}`;
+          const oemName = row.oem_name.trim();
+          const moduleName = row.module.trim();
+          if (!oemName || !moduleName) continue;
+          const key = `${oemName}|${moduleName}`;
           if (seen.has(key)) {
-            ElMessage.error(`重复的模块配置: ${row.oem_name} - ${row.module}`);
+            ElMessage.error(`重复的模块配置: ${oemName} - ${moduleName}`);
             return;
           }
           seen.add(key);
@@ -608,7 +625,8 @@ async function onSubmit() {
         enable_quality: enableQuality.value,
         enable_dts: enableDts.value,
         enable_iteration_quality_metrics:
-          enableIteration.value && iterationQualityConfig.value.enable_quality_metrics,
+          enableIteration.value &&
+          iterationQualityConfig.value.enable_quality_metrics,
         enable_hardware_config: enableHardwareConfig.value,
         viu_platform_id:
           enableHardwareConfig.value && hardwareScenario.value === 'vehicle'
@@ -624,11 +642,13 @@ async function onSubmit() {
           ? iterationConfig.value.sub_teams
           : undefined,
         iteration_quality_oem_name:
-          enableIteration.value && iterationQualityConfig.value.enable_quality_metrics
+          enableIteration.value &&
+          iterationQualityConfig.value.enable_quality_metrics
             ? iterationQualityConfig.value.oem_name.trim()
             : null,
         iteration_quality_module:
-          enableIteration.value && iterationQualityConfig.value.enable_quality_metrics
+          enableIteration.value &&
+          iterationQualityConfig.value.enable_quality_metrics
             ? iterationQualityConfig.value.module.trim()
             : null,
         ws_id: enableDts.value ? dtsConfig.value.ws_id : undefined,
@@ -650,13 +670,25 @@ async function onSubmit() {
         if (enableIteration.value) {
           // 迭代数据仅通过项目属性(design_id, sub_teams)由后端联动更新，无需直接调用 iteration API
         }
+        const currentModuleIds = new Set(
+          (enableQuality.value
+            ? moduleRows.value.map((row) => row.id)
+            : []
+          ).filter((item): item is string => isNonEmptyString(item)),
+        );
+        const removedModuleIds = originalModuleIds.value.filter(
+          (moduleId) => !currentModuleIds.has(moduleId),
+        );
+        for (const moduleId of removedModuleIds) {
+          await deleteModuleApi(moduleId);
+        }
         if (enableQuality.value && moduleRows.value.length > 0) {
           for (const row of moduleRows.value) {
             await configModuleApi({
               id: row.id,
               project_id: projectId,
-              oem_name: row.oem_name,
-              module: row.module,
+              oem_name: row.oem_name.trim(),
+              module: row.module.trim(),
               owner_ids: row.owner_ids,
             });
           }
@@ -676,8 +708,8 @@ async function onSubmit() {
             await configModuleApi({
               id: row.id,
               project_id: projectId,
-              oem_name: row.oem_name,
-              module: row.module,
+              oem_name: row.oem_name.trim(),
+              module: row.module.trim(),
               owner_ids: row.owner_ids,
             });
           }

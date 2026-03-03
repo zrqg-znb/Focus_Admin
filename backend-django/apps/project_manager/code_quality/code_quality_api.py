@@ -1,5 +1,5 @@
 from typing import List, Optional
-from ninja import Router
+from ninja import Query, Router
 
 from common.fu_auth import BearerAuth as GlobalAuth
 from .code_quality_schema import (
@@ -8,14 +8,18 @@ from .code_quality_schema import (
     ModuleQualityDetailSchema,
     NodeOwnerUpdateSchema,
     ProjectQualitySummarySchema,
+    QualityOverviewFilterSchema,
 )
 from . import code_quality_service
 
 router = Router(tags=["CodeQuality"], auth=GlobalAuth())
 
 @router.get("/overview", response=List[ProjectQualitySummarySchema], summary="代码质量看板概览")
-def get_quality_overview(request):
-    return code_quality_service.get_quality_overview()
+def get_quality_overview(
+    request,
+    filters: QualityOverviewFilterSchema = Query(...),
+):
+    return code_quality_service.get_quality_overview(filters)
 
 
 @router.get(
@@ -29,6 +33,11 @@ def get_project_quality_record_dates(request, project_id: str):
 @router.post("/modules", response=CodeModuleOut, summary="配置代码模块")
 def config_module(request, data: ModuleConfigSchema):
     return code_quality_service.config_module(request, data)
+
+
+@router.delete("/modules/{module_id}", response=bool, summary="删除代码模块")
+def delete_module(request, module_id: str):
+    return code_quality_service.delete_module(module_id)
 
 @router.get("/project/{project_id}/details", response=List[ModuleQualityDetailSchema], summary="获取项目代码质量详情(模块列表)")
 def get_project_quality_details(

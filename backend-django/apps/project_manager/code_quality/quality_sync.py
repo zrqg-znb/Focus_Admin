@@ -4,10 +4,13 @@ from datetime import date
 from random import Random
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from django.utils import timezone
+
 from apps.project_manager.code_quality.code_quality_model import (
     CodeMetric,
     CodeMetricNode,
     CodeModule,
+    CodeNodeOwnerConfig,
 )
 from apps.project_manager.project.project_model import Project
 
@@ -228,6 +231,22 @@ def _build_summary_metrics(metric_values: Dict[str, Dict[str, Any]]) -> Dict[str
     return summary
 
 
+def _mark_deleted_node_owner_configs(
+    module: CodeModule,
+    valid_node_keys: set[str],
+) -> None:
+    query = CodeNodeOwnerConfig.objects.filter(
+        module=module,
+        is_deleted=False,
+    )
+    if valid_node_keys:
+        query = query.exclude(node_key__in=list(valid_node_keys))
+    query.update(
+        is_deleted=True,
+        sys_update_datetime=timezone.now(),
+    )
+
+
 def _save_empty_metric(module: CodeModule, record_date: date) -> None:
     message = f"未找到模块节点: {module.module}"
     metric, _ = CodeMetric.objects.update_or_create(
@@ -252,6 +271,7 @@ def _save_empty_metric(module: CodeModule, record_date: date) -> None:
         },
     )
     CodeMetricNode.objects.filter(metric=metric).delete()
+    _mark_deleted_node_owner_configs(module, valid_node_keys=set())
 
 
 def _save_module_tree_metric(
@@ -292,6 +312,7 @@ def _save_module_tree_metric(
 
     total_node_count = 0
     warning_node_count = 0
+    latest_node_keys: set[str] = set()
 
     def save_node(
         node_payload: Dict[str, Any],
@@ -307,6 +328,7 @@ def _save_module_tree_metric(
             if parent_key
             else f"{version_name}"
         )
+        latest_node_keys.add(node_key)
 
         node_metric_values, node_warning_metrics = _normalize_metric_values(node_payload)
         node_unachieved, node_clean_rate, node_is_clean = _compute_clean_code(node_payload)
@@ -358,6 +380,7 @@ def _save_module_tree_metric(
     metric.total_node_count = total_node_count
     metric.warning_node_count = warning_node_count
     metric.save(update_fields=["total_node_count", "warning_node_count", "sys_update_datetime"])
+    _mark_deleted_node_owner_configs(module, valid_node_keys=latest_node_keys)
 
 
 class CodeQualityMock:

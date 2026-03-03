@@ -5,6 +5,7 @@ from datetime import date, datetime
 from typing import Any, Dict, List, Tuple
 
 from django.db import IntegrityError
+from django.db.models import Q
 from ninja.errors import HttpError
 
 from common import fu_crud
@@ -21,6 +22,7 @@ from .code_quality_schema import (
     ModuleQualityDetailSchema,
     NodeOwnerUpdateSchema,
     ProjectQualitySummarySchema,
+    QualityOverviewFilterSchema,
     QualityMetricValueSchema,
     QualityTreeNodeSchema,
 )
@@ -397,12 +399,60 @@ def _build_metric_tree(
     return roots
 
 
-def get_quality_overview():
-    projects = Project.objects.filter(
+def _normalize_filter_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_project_type_filter(value: Any) -> str:
+    text = _normalize_filter_text(value).lower()
+    if not text:
+        return ""
+    if "vehicle" in text or "车控" in text:
+        return "vehicle"
+    if "cockpit" in text or "座舱" in text:
+        return "cockpit"
+    return text
+
+
+def _build_project_type_query(project_type_filter: str) -> Q:
+    if not project_type_filter:
+        return Q()
+    if project_type_filter == "vehicle":
+        return Q(type__icontains="车控") | Q(type__icontains="vehicle")
+    if project_type_filter == "cockpit":
+        return Q(type__icontains="座舱") | Q(type__icontains="cockpit")
+    return Q(type__icontains=project_type_filter)
+
+
+def get_quality_overview(
+    filters: QualityOverviewFilterSchema | None = None,
+):
+    filters = filters or QualityOverviewFilterSchema()
+    project_name = _normalize_filter_text(filters.project_name)
+    project_manager = _normalize_filter_text(filters.project_manager)
+    project_type = _normalize_project_type_filter(filters.project_type)
+    oem_name_keyword = _normalize_filter_text(filters.oem_name).lower()
+    filter_record_date = parse_record_date(filters.date)
+
+    query = Q(
         is_deleted=False,
         enable_quality=True,
         is_closed=False,
-    ).prefetch_related("managers")
+    )
+    if project_name:
+        query &= Q(name__icontains=project_name)
+    if project_manager:
+        query &= (
+            Q(managers__name__icontains=project_manager)
+            | Q(managers__username__icontains=project_manager)
+        )
+    query &= _build_project_type_query(project_type)
+
+    projects = (
+        Project.objects.filter(query)
+        .prefetch_related("managers")
+        .distinct()
+    )
 
     result: List[ProjectQualitySummarySchema] = []
     for project in projects:
@@ -419,6 +469,9 @@ def get_quality_overview():
             modules_by_oem[oem_key].append(module)
 
         for oem_name, oem_modules in modules_by_oem.items():
+            if oem_name_keyword and oem_name_keyword not in oem_name.lower():
+                continue
+
             latest_metrics: List[Tuple[CodeModule, CodeMetric]] = []
             for module in oem_modules:
                 latest = _latest_metric(module)
@@ -452,6 +505,9 @@ def get_quality_overview():
                     clean_code_pass_modules += 1
                 if latest_date is None or latest.record_date > latest_date:
                     latest_date = latest.record_date
+
+            if filter_record_date and latest_date != filter_record_date:
+                continue
 
             metric_values = _aggregate_oem_metric_values(
                 [metric for _, metric in latest_metrics],
@@ -640,6 +696,14 @@ def config_module(request, data: ModuleConfigSchema):
     except Exception as exc:
         print(f"Initial quality sync failed: {exc}")
     return module
+
+
+def delete_module(module_id: str):
+    module = CodeModule.objects.filter(id=module_id, is_deleted=False).first()
+    if not module:
+        raise HttpError(404, "模块配置不存在")
+    module.delete()
+    return True
 
 
 def record_module_metric(module_id: str, data: CodeMetricSchema):
