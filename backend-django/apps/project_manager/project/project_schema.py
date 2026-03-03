@@ -9,6 +9,7 @@ from .project_model import Project
 class VehicleHardwareItem(Schema):
     point: str = Field(..., description="硬件点位")
     board: str = Field(..., description="板子型号")
+    config_type: str = Field("", description="典配类型")
     bomid: str = Field("", description="BOMID")
 
 
@@ -53,7 +54,7 @@ class ProjectCreateSchema(Schema):
     ws_id: Optional[str] = Field(None, description="数据中台配置ID")
     di_teams: Optional[List[str]] = Field(None, description="问题单责任团队")
     enable_hardware_config: bool = Field(False, description="是否开启典配")
-    viu_platform_id: Optional[str] = Field(None, description="VIU平台ID")
+    idvp_platform_id: Optional[str] = Field(None, description="IDVP平台ID")
     phase_configs: Optional[List[ProjectPhaseConfigIn]] = Field(
         None, description="项目阶段典配配置"
     )
@@ -80,7 +81,7 @@ class ProjectUpdateSchema(Schema):
     ws_id: Optional[str] = None
     di_teams: Optional[List[str]] = None
     enable_hardware_config: Optional[bool] = None
-    viu_platform_id: Optional[str] = None
+    idvp_platform_id: Optional[str] = None
     phase_configs: Optional[List[ProjectPhaseConfigIn]] = None
 
 
@@ -119,12 +120,14 @@ class ProjectOut(ModelSchema):
     is_favorited: bool = Field(False, description="当前用户是否收藏")
     viu_platform_id: Optional[str] = None
     viu_platform_name: Optional[str] = None
+    idvp_platform_id: Optional[str] = None
+    idvp_platform_name: Optional[str] = None
     phase_configs: List[ProjectPhaseConfigOut] = Field([], description="阶段典配配置")
 
     class Meta:
         model = Project
         fields = "__all__"
-        exclude = ["managers", "favorited_by", "viu_platform"]
+        exclude = ["managers", "favorited_by", "viu_platform", "idvp_platform"]
 
     @staticmethod
     def resolve_managers_info(obj):
@@ -144,6 +147,14 @@ class ProjectOut(ModelSchema):
     @staticmethod
     def resolve_viu_platform_name(obj):
         return obj.viu_platform.name if obj.viu_platform else None
+
+    @staticmethod
+    def resolve_idvp_platform_id(obj):
+        return str(obj.idvp_platform_id) if obj.idvp_platform_id else None
+
+    @staticmethod
+    def resolve_idvp_platform_name(obj):
+        return obj.idvp_platform.name if obj.idvp_platform else None
 
     @staticmethod
     def resolve_phase_configs(obj):

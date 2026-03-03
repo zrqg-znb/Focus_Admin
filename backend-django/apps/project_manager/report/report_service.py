@@ -412,6 +412,7 @@ class ReportService:
                     HardwareItem(
                         point=str(item.get("point") or ""),
                         board=str(item.get("board") or ""),
+                        config_type=str(item.get("config_type") or ""),
                         bomid=str(item.get("bomid") or ""),
                     )
                 )
@@ -463,8 +464,8 @@ class ReportService:
                 enabled=bool(project.enable_hardware_config),
                 domain=project_domain,
                 scenario=default_scenario,
-                viu_platform_name=(
-                    project.viu_platform.name if project.viu_platform else None
+                idvp_platform_name=(
+                    project.idvp_platform.name if project.idvp_platform else None
                 ),
                 phases=phases,
             )

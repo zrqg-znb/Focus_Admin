@@ -4,6 +4,7 @@ from typing import List, Optional
 from .hardware_model import (
     CdcPlatform,
     HardwarePoint,
+    IdvpPlatform,
     SmartScreenVersion,
     ViuPlatform,
 )
@@ -43,9 +44,27 @@ class CdcPlatformOut(ModelSchema):
         fields = "__all__"
 
 
+class ViuPlatformIn(Schema):
+    name: str = Field(..., description="VIU硬件平台名称")
+    configs: List[str] = Field(default_factory=list, description="典配列表")
+    remark: Optional[str] = Field(None, description="备注")
+
+
+class ViuPlatformUpdate(Schema):
+    name: Optional[str] = None
+    configs: Optional[List[str]] = None
+    remark: Optional[str] = None
+
+
 class ViuPlatformOut(ModelSchema):
     class Meta:
         model = ViuPlatform
+        fields = "__all__"
+
+
+class IdvpPlatformOut(ModelSchema):
+    class Meta:
+        model = IdvpPlatform
         fields = "__all__"
 
 
@@ -58,5 +77,6 @@ class SmartScreenVersionOut(ModelSchema):
 class HardwareConfigOptionsOut(Schema):
     points: List[HardwarePointOut]
     viu_platforms: List[ViuPlatformOut]
+    idvp_platforms: List[IdvpPlatformOut]
     cdc_platforms: List[CdcPlatformOut]
     smart_screen_versions: List[SmartScreenVersionOut]

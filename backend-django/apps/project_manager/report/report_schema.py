@@ -64,6 +64,7 @@ class QGNode(Schema):
 class HardwareItem(Schema):
     point: str
     board: str
+    config_type: str = ""
     bomid: str = ""
 
 class HardwarePhaseConfig(Schema):
@@ -79,7 +80,7 @@ class HardwareConfigSummary(Schema):
     enabled: bool = False
     domain: str
     scenario: str
-    viu_platform_name: Optional[str] = None
+    idvp_platform_name: Optional[str] = None
     phases: List[HardwarePhaseConfig] = Field(default_factory=list)
 
 class ProjectReportSchema(Schema):

@@ -9,6 +9,7 @@ from common.fu_auth import BearerAuth as GlobalAuth
 from .hardware_model import (
     CdcPlatform,
     HardwarePoint,
+    IdvpPlatform,
     SmartScreenVersion,
     ViuPlatform,
 )
@@ -18,10 +19,13 @@ from .hardware_schema import (
     HardwarePointIn,
     HardwarePointOut,
     HardwarePointUpdate,
+    IdvpPlatformOut,
     PlatformConfigIn,
     PlatformConfigUpdate,
     SmartScreenVersionOut,
+    ViuPlatformIn,
     ViuPlatformOut,
+    ViuPlatformUpdate,
 )
 
 router = Router(tags=["HardwareConfig"], auth=GlobalAuth())
@@ -29,6 +33,22 @@ router = Router(tags=["HardwareConfig"], auth=GlobalAuth())
 
 def _normalize_point_code(code: str | None) -> str:
     return (code or "").strip()
+
+
+def _normalize_name(name: str | None) -> str:
+    return (name or "").strip()
+
+
+def _normalize_text_list(items: list[str] | None) -> list[str]:
+    values: list[str] = []
+    seen = set()
+    for item in items or []:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        values.append(text)
+        seen.add(text)
+    return values
 
 
 def _ensure_point_code_unique(code: str, exclude_id: str | None = None):
@@ -41,6 +61,18 @@ def _ensure_point_code_unique(code: str, exclude_id: str | None = None):
         raise HttpError(409, f"硬件点位已存在: {code}")
 
 
+def _ensure_point_boards_valid(boards: list[str]):
+    if not boards:
+        return
+    available_boards = set(
+        ViuPlatform.objects.filter(is_deleted=False).values_list("name", flat=True)
+    )
+    invalid_boards = [board for board in boards if board not in available_boards]
+    if invalid_boards:
+        invalid_values = "、".join(invalid_boards)
+        raise HttpError(422, f"板子型号未在VIU硬件平台中配置: {invalid_values}")
+
+
 @router.get("/options", response=HardwareConfigOptionsOut, summary="获取典配配置项")
 def list_options(request):
     return {
@@ -48,6 +80,9 @@ def list_options(request):
             "-sort", "-sys_create_datetime"
         ),
         "viu_platforms": ViuPlatform.objects.filter(is_deleted=False).order_by(
+            "-sort", "-sys_create_datetime"
+        ),
+        "idvp_platforms": IdvpPlatform.objects.filter(is_deleted=False).order_by(
             "-sort", "-sys_create_datetime"
         ),
         "cdc_platforms": CdcPlatform.objects.filter(is_deleted=False).order_by(
@@ -70,7 +105,9 @@ def list_points(request):
 def create_point(request, data: HardwarePointIn):
     payload = data.dict()
     payload["code"] = _normalize_point_code(payload.get("code"))
+    payload["boards"] = _normalize_text_list(payload.get("boards"))
     _ensure_point_code_unique(payload["code"])
+    _ensure_point_boards_valid(payload["boards"])
     try:
         return fu_crud.create(request, payload, HardwarePoint)
     except IntegrityError as error:
@@ -85,6 +122,9 @@ def update_point(request, point_id: str, data: HardwarePointUpdate):
     if "code" in payload:
         payload["code"] = _normalize_point_code(payload.get("code"))
         _ensure_point_code_unique(payload["code"], exclude_id=point_id)
+    if "boards" in payload:
+        payload["boards"] = _normalize_text_list(payload.get("boards"))
+        _ensure_point_boards_valid(payload["boards"])
     try:
         return fu_crud.update(request, point_id, payload, HardwarePoint)
     except IntegrityError as error:
@@ -113,19 +153,82 @@ def list_viu_platforms(request):
     )
 
 
-@router.post("/viu-platforms", response=ViuPlatformOut, summary="创建VIU平台")
-def create_viu_platform(request, data: PlatformConfigIn):
-    return fu_crud.create(request, data, ViuPlatform)
+@router.post("/viu-platforms", response=ViuPlatformOut, summary="创建VIU硬件平台")
+def create_viu_platform(request, data: ViuPlatformIn):
+    payload = data.dict()
+    payload["name"] = _normalize_name(payload.get("name"))
+    payload["configs"] = _normalize_text_list(payload.get("configs"))
+    if not payload["name"]:
+        raise HttpError(422, "VIU硬件平台名称不能为空")
+    if not payload["configs"]:
+        raise HttpError(422, "VIU硬件平台至少需要配置一个典配类型")
+    return fu_crud.create(request, payload, ViuPlatform)
 
 
-@router.put("/viu-platforms/{platform_id}", response=ViuPlatformOut, summary="更新VIU平台")
-def update_viu_platform(request, platform_id: str, data: PlatformConfigUpdate):
-    return fu_crud.update(request, platform_id, data, ViuPlatform)
+@router.put(
+    "/viu-platforms/{platform_id}",
+    response=ViuPlatformOut,
+    summary="更新VIU硬件平台",
+)
+def update_viu_platform(request, platform_id: str, data: ViuPlatformUpdate):
+    payload = data.dict(exclude_none=True)
+    if "name" in payload:
+        payload["name"] = _normalize_name(payload.get("name"))
+        if not payload["name"]:
+            raise HttpError(422, "VIU硬件平台名称不能为空")
+    if "configs" in payload:
+        payload["configs"] = _normalize_text_list(payload.get("configs"))
+        if not payload["configs"]:
+            raise HttpError(422, "VIU硬件平台至少需要配置一个典配类型")
+    return fu_crud.update(request, platform_id, payload, ViuPlatform)
 
 
-@router.delete("/viu-platforms/{platform_id}", response=ViuPlatformOut, summary="删除VIU平台")
+@router.delete(
+    "/viu-platforms/{platform_id}",
+    response=ViuPlatformOut,
+    summary="删除VIU硬件平台",
+)
 def delete_viu_platform(request, platform_id: str):
     return fu_crud.delete(platform_id, ViuPlatform)
+
+
+@router.get("/idvp-platforms", response=List[IdvpPlatformOut], summary="获取IDVP平台列表")
+def list_idvp_platforms(request):
+    return IdvpPlatform.objects.filter(is_deleted=False).order_by(
+        "-sort", "-sys_create_datetime"
+    )
+
+
+@router.post("/idvp-platforms", response=IdvpPlatformOut, summary="创建IDVP平台")
+def create_idvp_platform(request, data: PlatformConfigIn):
+    payload = data.dict()
+    payload["name"] = _normalize_name(payload.get("name"))
+    if not payload["name"]:
+        raise HttpError(422, "IDVP平台名称不能为空")
+    return fu_crud.create(request, payload, IdvpPlatform)
+
+
+@router.put(
+    "/idvp-platforms/{platform_id}",
+    response=IdvpPlatformOut,
+    summary="更新IDVP平台",
+)
+def update_idvp_platform(request, platform_id: str, data: PlatformConfigUpdate):
+    payload = data.dict(exclude_none=True)
+    if "name" in payload:
+        payload["name"] = _normalize_name(payload.get("name"))
+        if not payload["name"]:
+            raise HttpError(422, "IDVP平台名称不能为空")
+    return fu_crud.update(request, platform_id, payload, IdvpPlatform)
+
+
+@router.delete(
+    "/idvp-platforms/{platform_id}",
+    response=IdvpPlatformOut,
+    summary="删除IDVP平台",
+)
+def delete_idvp_platform(request, platform_id: str):
+    return fu_crud.delete(platform_id, IdvpPlatform)
 
 
 @router.post("/cdc-platforms", response=CdcPlatformOut, summary="创建CDC平台")

@@ -72,7 +72,7 @@ def list_projects(request, filters: ProjectFilterSchema = Query(...)):
 
     return (
         Project.objects.filter(query)
-        .select_related("viu_platform")
+        .select_related("viu_platform", "idvp_platform")
         .distinct()
         .prefetch_related(
             "managers",

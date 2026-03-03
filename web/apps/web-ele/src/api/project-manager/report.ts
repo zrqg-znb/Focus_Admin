@@ -26,12 +26,12 @@ export interface DtsTrendItem {
 export interface DtsTeamDiItem {
   team_name: string;
   di: number;
-  target_di?: number | null;
+  target_di?: null | number;
 }
 
 export interface DtsTeamDiSeries {
   team_name: string;
-  values: Array<number | null>;
+  values: Array<null | number>;
 }
 
 export interface DtsTeamDiTrend {
@@ -41,7 +41,7 @@ export interface DtsTeamDiTrend {
 
 export interface DtsTeamTrendSeries {
   team_name: string;
-  values: Array<number | null>;
+  values: Array<null | number>;
 }
 
 export interface DtsTeamTrend {
@@ -76,7 +76,7 @@ export interface CodeQualityModuleDetail {
   module: string;
   owner_names: string[];
   owner_ids: string[];
-  record_date?: string | null;
+  record_date?: null | string;
   loc: number;
   function_count: number;
   dangerous_func_count: number;
@@ -101,6 +101,7 @@ export interface DtsSummary {
 export interface HardwareItem {
   point: string;
   board: string;
+  config_type?: string;
   bomid?: string;
 }
 
@@ -110,15 +111,15 @@ export interface HardwarePhaseConfig {
   stage_end?: string;
   scenario: 'cockpit' | 'vehicle';
   vehicle_hardware: HardwareItem[];
-  cdc_platform_name?: string | null;
-  smart_screen_version_name?: string | null;
+  cdc_platform_name?: null | string;
+  smart_screen_version_name?: null | string;
 }
 
 export interface HardwareConfigSummary {
   enabled: boolean;
   domain: string;
   scenario: 'cockpit' | 'vehicle';
-  viu_platform_name?: string | null;
+  idvp_platform_name?: null | string;
   phases: HardwarePhaseConfig[];
 }
 
@@ -127,7 +128,7 @@ export interface ProjectReport {
   project_name: string;
   manager: string;
   health_score: number;
-  health_level: 'healthy' | 'warning' | 'error';
+  health_level: 'error' | 'healthy' | 'warning';
   radar_data: RadarIndicator[];
   milestones: QGNode[];
   dts_trend: DtsTrendItem[];

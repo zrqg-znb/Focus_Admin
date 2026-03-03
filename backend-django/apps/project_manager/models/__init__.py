@@ -1,6 +1,7 @@
 from apps.project_manager.hardware.hardware_model import (
     CdcPlatform,
     HardwarePoint,
+    IdvpPlatform,
     SmartScreenVersion,
     ViuPlatform,
 )

@@ -25,12 +25,23 @@ class CdcPlatform(RootModel):
 
 
 class ViuPlatform(RootModel):
-    name = models.CharField(max_length=128, unique=True, verbose_name="VIU平台")
+    name = models.CharField(max_length=128, unique=True, verbose_name="VIU硬件平台")
+    configs = models.JSONField(default=list, blank=True, verbose_name="典配列表")
     remark = models.TextField(null=True, blank=True, verbose_name="备注")
 
     class Meta:
         db_table = "pm_viu_platform"
-        verbose_name = "VIU平台"
+        verbose_name = "VIU硬件平台"
+        verbose_name_plural = verbose_name
+
+
+class IdvpPlatform(RootModel):
+    name = models.CharField(max_length=128, unique=True, verbose_name="IDVP软件平台")
+    remark = models.TextField(null=True, blank=True, verbose_name="备注")
+
+    class Meta:
+        db_table = "pm_idvp_platform"
+        verbose_name = "IDVP软件平台"
         verbose_name_plural = verbose_name
 
 

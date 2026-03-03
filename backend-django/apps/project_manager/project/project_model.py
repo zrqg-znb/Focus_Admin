@@ -60,7 +60,15 @@ class Project(RootModel):
         blank=True,
         on_delete=models.SET_NULL,
         related_name="projects",
-        verbose_name="VIU平台",
+        verbose_name="VIU硬件平台",
+    )
+    idvp_platform = models.ForeignKey(
+        "project_manager.IdvpPlatform",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="projects",
+        verbose_name="IDVP软件平台",
     )
 
     # Favorites

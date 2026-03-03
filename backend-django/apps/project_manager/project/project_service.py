@@ -8,6 +8,7 @@ from apps.project_manager.dts.dts_service import sync_project_dts
 from apps.project_manager.hardware.hardware_model import (
     CdcPlatform,
     HardwarePoint,
+    IdvpPlatform,
     SmartScreenVersion,
     ViuPlatform,
 )
@@ -73,10 +74,15 @@ def _build_phase_config_rows(
     hardware_points = {}
     cdc_platforms = {}
     smart_versions = {}
+    viu_platform_configs = {}
     if scenario == PHASE_SCENARIO_VEHICLE:
         hardware_points = {
             point.code: point
             for point in HardwarePoint.objects.filter(is_deleted=False)
+        }
+        viu_platform_configs = {
+            item.name: set(item.configs or [])
+            for item in ViuPlatform.objects.filter(is_deleted=False)
         }
     else:
         cdc_platforms = {
@@ -117,8 +123,9 @@ def _build_phase_config_rows(
             for hardware in hardware_items:
                 point = (hardware.get("point") or "").strip()
                 board = (hardware.get("board") or "").strip()
+                config_type = (hardware.get("config_type") or "").strip()
                 bomid = (hardware.get("bomid") or "").strip()
-                if not point or not board or not bomid:
+                if not point or not board or not config_type or not bomid:
                     raise HttpError(422, f"阶段 {stage_name} 的硬件组合不完整")
 
                 point_obj = hardware_points.get(point)
@@ -129,8 +136,29 @@ def _build_phase_config_rows(
                         422,
                         f"阶段 {stage_name} 的板子 {board} 不在点位 {point} 可选列表中",
                     )
+                board_config_types = viu_platform_configs.get(board)
+                if board_config_types is None:
+                    raise HttpError(
+                        422,
+                        f"阶段 {stage_name} 的板子 {board} 未在VIU硬件平台配置中维护",
+                    )
+                if not board_config_types:
+                    raise HttpError(
+                        422,
+                        f"阶段 {stage_name} 的板子 {board} 尚未配置典配类型",
+                    )
+                if config_type not in board_config_types:
+                    raise HttpError(
+                        422,
+                        f"阶段 {stage_name} 的板子 {board} 不支持典配类型: {config_type}",
+                    )
                 normalized_hardware.append(
-                    {"point": point, "board": board, "bomid": bomid}
+                    {
+                        "point": point,
+                        "board": board,
+                        "config_type": config_type,
+                        "bomid": bomid,
+                    }
                 )
 
             rows.append(
@@ -190,23 +218,25 @@ def _sync_phase_configs(
 ):
     if not project.enable_hardware_config:
         project.phase_configs.all().delete()
-        if project.viu_platform_id:
+        if project.viu_platform_id or project.idvp_platform_id:
             project.viu_platform = None
-            project.save(update_fields=["viu_platform"])
+            project.idvp_platform = None
+            project.save(update_fields=["viu_platform", "idvp_platform"])
         return
 
     scenario = _resolve_phase_scenario(project.domain)
     if scenario == PHASE_SCENARIO_VEHICLE:
-        if not project.viu_platform_id:
-            raise HttpError(422, "车控项目开启典配后必须选择VIU平台")
-        if not ViuPlatform.objects.filter(
-            id=project.viu_platform_id,
+        if not project.idvp_platform_id:
+            raise HttpError(422, "车控项目开启典配后必须选择IDVP平台")
+        if not IdvpPlatform.objects.filter(
+            id=project.idvp_platform_id,
             is_deleted=False,
         ).exists():
-            raise HttpError(422, "选择的VIU平台不存在")
-    elif project.viu_platform_id:
+            raise HttpError(422, "选择的IDVP平台不存在")
+    elif project.viu_platform_id or project.idvp_platform_id:
         project.viu_platform = None
-        project.save(update_fields=["viu_platform"])
+        project.idvp_platform = None
+        project.save(update_fields=["viu_platform", "idvp_platform"])
 
     if phase_configs is None:
         if require_when_enabled:
@@ -365,7 +395,7 @@ def delete_project(request, id: str):
 
 def get_project(request, id: str):
     return get_object_or_404(
-        Project.objects.select_related("viu_platform").prefetch_related(
+        Project.objects.select_related("viu_platform", "idvp_platform").prefetch_related(
             "managers",
             "phase_configs__cdc_platform",
             "phase_configs__smart_screen_version",
