@@ -733,486 +733,494 @@ async function onSubmit() {
       element-loading-text="正在加载项目配置..."
     >
       <ElTabs v-model="activeTab" class="px-4">
-      <ElTabPane label="基础信息" name="basic">
-        <Form class="mt-2" />
-      </ElTabPane>
-      <ElTabPane label="里程碑配置" name="milestone">
-        <div class="mt-4">
-          <div class="mb-2 flex items-center gap-2">
-            <div class="text-sm font-medium">里程碑配置</div>
-            <ElSwitch
-              v-model="enableMilestone"
-              inline-prompt
-              active-text="开"
-              inactive-text="关"
-            />
-          </div>
-          <ElForm label-width="120px" v-if="enableMilestone">
-            <ElFormItem label="QG1">
-              <ElDatePicker
-                v-model="milestoneForm.qg1_date"
-                type="date"
-                value-format="YYYY-MM-DD"
-              />
-            </ElFormItem>
-            <ElFormItem label="QG2">
-              <ElDatePicker
-                v-model="milestoneForm.qg2_date"
-                type="date"
-                value-format="YYYY-MM-DD"
-              />
-            </ElFormItem>
-            <ElFormItem label="QG3">
-              <ElDatePicker
-                v-model="milestoneForm.qg3_date"
-                type="date"
-                value-format="YYYY-MM-DD"
-              />
-            </ElFormItem>
-            <ElFormItem label="QG4">
-              <ElDatePicker
-                v-model="milestoneForm.qg4_date"
-                type="date"
-                value-format="YYYY-MM-DD"
-              />
-            </ElFormItem>
-            <ElFormItem label="QG5">
-              <ElDatePicker
-                v-model="milestoneForm.qg5_date"
-                type="date"
-                value-format="YYYY-MM-DD"
-              />
-            </ElFormItem>
-            <ElFormItem label="QG6">
-              <ElDatePicker
-                v-model="milestoneForm.qg6_date"
-                type="date"
-                value-format="YYYY-MM-DD"
-              />
-            </ElFormItem>
-            <ElFormItem label="QG7">
-              <ElDatePicker
-                v-model="milestoneForm.qg7_date"
-                type="date"
-                value-format="YYYY-MM-DD"
-              />
-            </ElFormItem>
-            <ElFormItem label="QG8">
-              <ElDatePicker
-                v-model="milestoneForm.qg8_date"
-                type="date"
-                value-format="YYYY-MM-DD"
-              />
-            </ElFormItem>
-          </ElForm>
-        </div>
-      </ElTabPane>
-      <ElTabPane label="健康迭代配置" name="iteration">
-        <div class="mt-4">
-          <div class="mb-2 flex items-center gap-2">
-            <div class="text-sm font-medium">健康迭代配置</div>
-            <ElSwitch
-              v-model="enableIteration"
-              inline-prompt
-              active-text="开"
-              inactive-text="关"
-            />
-          </div>
-          <ElForm label-width="120px" v-if="enableIteration">
-            <ElFormItem label="中台配置ID">
-              <ElInput
-                v-model="iterationConfig.design_id"
-                placeholder="请输入迭代中台配置 ID"
-              />
-            </ElFormItem>
-            <ElFormItem label="迭代责任团队">
-              <div class="mb-2 flex gap-2">
-                <ElInput
-                  v-model="newSubTeam"
-                  placeholder="输入团队名称"
-                  @keyup.enter="
-                    () => {
-                      if (newSubTeam) {
-                        iterationConfig.sub_teams.push(newSubTeam);
-                        newSubTeam = '';
-                      }
-                    }
-                  "
-                />
-                <ElButton
-                  @click="
-                    () => {
-                      if (newSubTeam) {
-                        iterationConfig.sub_teams.push(newSubTeam);
-                        newSubTeam = '';
-                      }
-                    }
-                  "
-                >
-                  添加
-                </ElButton>
-              </div>
-              <div class="flex flex-wrap gap-2">
-                <div
-                  v-for="(team, index) in iterationConfig.sub_teams"
-                  :key="index"
-                  class="flex items-center gap-1 rounded bg-gray-100 px-2 py-1"
-                >
-                  <span>{{ team }}</span>
-                  <ElButton
-                    link
-                    type="danger"
-                    @click="iterationConfig.sub_teams.splice(index, 1)"
-                  >
-                    删除
-                  </ElButton>
-                </div>
-              </div>
-            </ElFormItem>
-            <ElFormItem label="代码质量出口指标">
+        <ElTabPane label="基础信息" name="basic">
+          <Form class="mt-2" />
+        </ElTabPane>
+        <ElTabPane label="里程碑配置" name="milestone">
+          <div class="mt-4">
+            <div class="mb-2 flex items-center gap-2">
+              <div class="text-sm font-medium">里程碑配置</div>
               <ElSwitch
-                v-model="iterationQualityConfig.enable_quality_metrics"
+                v-model="enableMilestone"
                 inline-prompt
                 active-text="开"
                 inactive-text="关"
               />
-            </ElFormItem>
-            <template v-if="iterationQualityConfig.enable_quality_metrics">
-              <ElFormItem label="OEMName">
-                <ElInput
-                  v-model="iterationQualityConfig.oem_name"
-                  placeholder="请输入OEMName"
-                />
-              </ElFormItem>
-              <ElFormItem label="模块名">
-                <ElInput
-                  v-model="iterationQualityConfig.module"
-                  placeholder="请输入模块名"
-                />
-              </ElFormItem>
-            </template>
-          </ElForm>
-        </div>
-      </ElTabPane>
-      <ElTabPane label="代码质量配置" name="quality">
-        <div class="mt-4">
-          <div class="mb-2 flex items-center gap-2">
-            <div class="text-sm font-medium">代码质量模块配置</div>
-            <ElSwitch
-              v-model="enableQuality"
-              inline-prompt
-              active-text="开"
-              inactive-text="关"
-            />
-          </div>
-          <div v-if="enableQuality">
-            <div class="mb-2">
-              <ElButton
-                type="primary"
-                @click="
-                  moduleRows.push({ oem_name: '', module: '', owner_ids: [] })
-                "
-              >
-                新增模块
-              </ElButton>
             </div>
-            <ElTable :data="moduleRows">
-              <ElTableColumn label="OEM名称" width="200">
-                <template #default="{ row }">
-                  <ElInput v-model="row.oem_name" placeholder="OEM名称" />
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="模块名" width="200">
-                <template #default="{ row }">
-                  <ElInput v-model="row.module" placeholder="模块名" />
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="责任人" width="200">
-                <template #default="{ row }">
-                  <UserSelector
-                    v-model="row.owner_ids"
-                    :multiple="true"
-                    placeholder="请选择责任人"
-                  />
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="操作" width="120">
-                <template #default="{ $index }">
-                  <ElButton
-                    type="danger"
-                    link
-                    @click="moduleRows.splice($index, 1)"
-                  >
-                    删除
-                  </ElButton>
-                </template>
-              </ElTableColumn>
-            </ElTable>
-          </div>
-        </div>
-      </ElTabPane>
-      <ElTabPane label="问题单配置" name="dts">
-        <div class="mt-4">
-          <div class="mb-2 flex items-center gap-2">
-            <div class="text-sm font-medium">问题单统计配置</div>
-            <ElSwitch
-              v-model="enableDts"
-              inline-prompt
-              active-text="开"
-              inactive-text="关"
-            />
-          </div>
-          <ElForm label-width="120px" v-if="enableDts">
-            <ElFormItem label="中台配置ID">
-              <ElInput
-                v-model="dtsConfig.ws_id"
-                placeholder="请输入数据中台配置 ID"
-              />
-            </ElFormItem>
-            <ElFormItem label="问题单责任团队">
-              <div class="mb-2 flex gap-2">
-                <ElInput
-                  v-model="newDiTeam"
-                  placeholder="输入团队名称"
-                  @keyup.enter="
-                    () => {
-                      if (newDiTeam) {
-                        dtsConfig.di_teams.push(newDiTeam);
-                        newDiTeam = '';
-                      }
-                    }
-                  "
+            <ElForm label-width="120px" v-if="enableMilestone">
+              <ElFormItem label="QG1">
+                <ElDatePicker
+                  v-model="milestoneForm.qg1_date"
+                  type="date"
+                  value-format="YYYY-MM-DD"
                 />
-                <ElButton
-                  @click="
-                    () => {
-                      if (newDiTeam) {
-                        dtsConfig.di_teams.push(newDiTeam);
-                        newDiTeam = '';
+              </ElFormItem>
+              <ElFormItem label="QG2">
+                <ElDatePicker
+                  v-model="milestoneForm.qg2_date"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                />
+              </ElFormItem>
+              <ElFormItem label="QG3">
+                <ElDatePicker
+                  v-model="milestoneForm.qg3_date"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                />
+              </ElFormItem>
+              <ElFormItem label="QG4">
+                <ElDatePicker
+                  v-model="milestoneForm.qg4_date"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                />
+              </ElFormItem>
+              <ElFormItem label="QG5">
+                <ElDatePicker
+                  v-model="milestoneForm.qg5_date"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                />
+              </ElFormItem>
+              <ElFormItem label="QG6">
+                <ElDatePicker
+                  v-model="milestoneForm.qg6_date"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                />
+              </ElFormItem>
+              <ElFormItem label="QG7">
+                <ElDatePicker
+                  v-model="milestoneForm.qg7_date"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                />
+              </ElFormItem>
+              <ElFormItem label="QG8">
+                <ElDatePicker
+                  v-model="milestoneForm.qg8_date"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                />
+              </ElFormItem>
+            </ElForm>
+          </div>
+        </ElTabPane>
+        <ElTabPane label="健康迭代配置" name="iteration">
+          <div class="mt-4">
+            <div class="mb-2 flex items-center gap-2">
+              <div class="text-sm font-medium">健康迭代配置</div>
+              <ElSwitch
+                v-model="enableIteration"
+                inline-prompt
+                active-text="开"
+                inactive-text="关"
+              />
+            </div>
+            <ElForm label-width="120px" v-if="enableIteration">
+              <ElFormItem label="中台配置ID">
+                <ElInput
+                  v-model="iterationConfig.design_id"
+                  placeholder="请输入迭代中台配置 ID"
+                />
+              </ElFormItem>
+              <ElFormItem label="迭代责任团队">
+                <div class="mb-2 flex gap-2">
+                  <ElInput
+                    v-model="newSubTeam"
+                    placeholder="输入团队名称"
+                    @keyup.enter="
+                      () => {
+                        if (newSubTeam) {
+                          iterationConfig.sub_teams.push(newSubTeam);
+                          newSubTeam = '';
+                        }
                       }
-                    }
+                    "
+                  />
+                  <ElButton
+                    @click="
+                      () => {
+                        if (newSubTeam) {
+                          iterationConfig.sub_teams.push(newSubTeam);
+                          newSubTeam = '';
+                        }
+                      }
+                    "
+                  >
+                    添加
+                  </ElButton>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <div
+                    v-for="(team, index) in iterationConfig.sub_teams"
+                    :key="index"
+                    class="flex items-center gap-1 rounded bg-gray-100 px-2 py-1"
+                  >
+                    <span>{{ team }}</span>
+                    <ElButton
+                      link
+                      type="danger"
+                      @click="iterationConfig.sub_teams.splice(index, 1)"
+                    >
+                      删除
+                    </ElButton>
+                  </div>
+                </div>
+              </ElFormItem>
+              <ElFormItem label="代码质量出口指标">
+                <ElSwitch
+                  v-model="iterationQualityConfig.enable_quality_metrics"
+                  inline-prompt
+                  active-text="开"
+                  inactive-text="关"
+                />
+              </ElFormItem>
+              <template v-if="iterationQualityConfig.enable_quality_metrics">
+                <ElFormItem label="OEMName">
+                  <ElInput
+                    v-model="iterationQualityConfig.oem_name"
+                    placeholder="请输入OEMName"
+                  />
+                </ElFormItem>
+                <ElFormItem label="模块名">
+                  <ElInput
+                    v-model="iterationQualityConfig.module"
+                    placeholder="请输入模块名"
+                  />
+                </ElFormItem>
+              </template>
+            </ElForm>
+          </div>
+        </ElTabPane>
+        <ElTabPane label="代码质量配置" name="quality">
+          <div class="mt-4">
+            <div class="mb-2 flex items-center gap-2">
+              <div class="text-sm font-medium">代码质量模块配置</div>
+              <ElSwitch
+                v-model="enableQuality"
+                inline-prompt
+                active-text="开"
+                inactive-text="关"
+              />
+            </div>
+            <div v-if="enableQuality">
+              <div class="mb-2">
+                <ElButton
+                  type="primary"
+                  @click="
+                    moduleRows.push({ oem_name: '', module: '', owner_ids: [] })
                   "
                 >
-                  添加
+                  新增模块
                 </ElButton>
               </div>
-              <div class="flex flex-wrap gap-2">
-                <div
-                  v-for="(team, index) in dtsConfig.di_teams"
-                  :key="index"
-                  class="flex items-center gap-1 rounded bg-gray-100 px-2 py-1"
-                >
-                  <span>{{ team }}</span>
-                  <ElButton
-                    link
-                    type="danger"
-                    @click="dtsConfig.di_teams.splice(index, 1)"
-                  >
-                    删除
-                  </ElButton>
-                </div>
-              </div>
-            </ElFormItem>
-          </ElForm>
-        </div>
-      </ElTabPane>
-      <ElTabPane label="典配配置" name="hardware">
-        <div class="mt-4">
-          <div class="mb-2 flex items-center gap-2">
-            <div class="text-sm font-medium">典配配置</div>
-            <ElSwitch
-              v-model="enableHardwareConfig"
-              inline-prompt
-              active-text="开"
-              inactive-text="关"
-            />
-          </div>
-          <ElForm label-width="120px" v-if="enableHardwareConfig">
-            <ElFormItem label="领域类型">
-              <ElTag v-if="hardwareScenario === 'vehicle'" type="success">
-                车控项目：配置点位硬件组合
-              </ElTag>
-              <ElTag v-else-if="hardwareScenario === 'cockpit'" type="warning">
-                座舱项目：至少配置 CDC 平台或智慧屏版本
-              </ElTag>
-              <span v-else class="text-muted-foreground text-sm">
-                当前项目领域不是车控/座舱，请先在基础信息里填写正确领域。
-              </span>
-            </ElFormItem>
-            <ElFormItem v-if="hardwareScenario === 'vehicle'" label="VIU 平台">
-              <ElSelect
-                v-model="viuPlatformId"
-                placeholder="选择 VIU 平台"
-                clearable
-                class="w-full"
-              >
-                <ElOption
-                  v-for="platform in viuPlatforms"
-                  :key="platform.id"
-                  :label="platform.name"
-                  :value="platform.id"
-                />
-              </ElSelect>
-            </ElFormItem>
-            <ElFormItem
-              :label="
-                hardwareScenario === 'cockpit' ? '配套版本配置' : '阶段配置'
-              "
-            >
-              <div class="w-full">
-                <div v-if="hardwareScenario === 'vehicle'" class="mb-3">
-                  <ElButton type="primary" @click="addPhase">新增阶段</ElButton>
-                </div>
-                <div
-                  v-if="phaseConfigs.length === 0"
-                  class="text-muted-foreground text-sm"
-                >
-                  {{
-                    hardwareScenario === 'cockpit'
-                      ? '暂无配套版本配置'
-                      : '暂无阶段配置'
-                  }}
-                </div>
-                <div
-                  v-for="(phase, phaseIndex) in phaseConfigs"
-                  :key="phase.id || phaseIndex"
-                  class="mb-4 rounded border p-3"
-                >
-                  <div
-                    v-if="hardwareScenario === 'vehicle'"
-                    class="mb-2 flex items-center justify-between"
-                  >
-                    <div class="text-foreground text-sm font-medium">
-                      阶段 {{ phaseIndex + 1 }}
-                    </div>
+              <ElTable :data="moduleRows">
+                <ElTableColumn label="OEM名称" width="200">
+                  <template #default="{ row }">
+                    <ElInput v-model="row.oem_name" placeholder="OEM名称" />
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn label="模块名" width="200">
+                  <template #default="{ row }">
+                    <ElInput v-model="row.module" placeholder="模块名" />
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn label="责任人" width="200">
+                  <template #default="{ row }">
+                    <UserSelector
+                      v-model="row.owner_ids"
+                      :multiple="true"
+                      placeholder="请选择责任人"
+                    />
+                  </template>
+                </ElTableColumn>
+                <ElTableColumn label="操作" width="120">
+                  <template #default="{ $index }">
                     <ElButton
                       type="danger"
                       link
-                      size="small"
-                      @click="removePhase(phaseIndex)"
+                      @click="moduleRows.splice($index, 1)"
                     >
-                      删除阶段
+                      删除
+                    </ElButton>
+                  </template>
+                </ElTableColumn>
+              </ElTable>
+            </div>
+          </div>
+        </ElTabPane>
+        <ElTabPane label="问题单配置" name="dts">
+          <div class="mt-4">
+            <div class="mb-2 flex items-center gap-2">
+              <div class="text-sm font-medium">问题单统计配置</div>
+              <ElSwitch
+                v-model="enableDts"
+                inline-prompt
+                active-text="开"
+                inactive-text="关"
+              />
+            </div>
+            <ElForm label-width="120px" v-if="enableDts">
+              <ElFormItem label="中台配置ID">
+                <ElInput
+                  v-model="dtsConfig.ws_id"
+                  placeholder="请输入数据中台配置 ID"
+                />
+              </ElFormItem>
+              <ElFormItem label="问题单责任团队">
+                <div class="mb-2 flex gap-2">
+                  <ElInput
+                    v-model="newDiTeam"
+                    placeholder="输入团队名称"
+                    @keyup.enter="
+                      () => {
+                        if (newDiTeam) {
+                          dtsConfig.di_teams.push(newDiTeam);
+                          newDiTeam = '';
+                        }
+                      }
+                    "
+                  />
+                  <ElButton
+                    @click="
+                      () => {
+                        if (newDiTeam) {
+                          dtsConfig.di_teams.push(newDiTeam);
+                          newDiTeam = '';
+                        }
+                      }
+                    "
+                  >
+                    添加
+                  </ElButton>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <div
+                    v-for="(team, index) in dtsConfig.di_teams"
+                    :key="index"
+                    class="flex items-center gap-1 rounded bg-gray-100 px-2 py-1"
+                  >
+                    <span>{{ team }}</span>
+                    <ElButton
+                      link
+                      type="danger"
+                      @click="dtsConfig.di_teams.splice(index, 1)"
+                    >
+                      删除
+                    </ElButton>
+                  </div>
+                </div>
+              </ElFormItem>
+            </ElForm>
+          </div>
+        </ElTabPane>
+        <ElTabPane label="典配配置" name="hardware">
+          <div class="mt-4">
+            <div class="mb-2 flex items-center gap-2">
+              <div class="text-sm font-medium">典配配置</div>
+              <ElSwitch
+                v-model="enableHardwareConfig"
+                inline-prompt
+                active-text="开"
+                inactive-text="关"
+              />
+            </div>
+            <ElForm label-width="120px" v-if="enableHardwareConfig">
+              <ElFormItem label="领域类型">
+                <ElTag v-if="hardwareScenario === 'vehicle'" type="success">
+                  车控项目：配置点位硬件组合
+                </ElTag>
+                <ElTag
+                  v-else-if="hardwareScenario === 'cockpit'"
+                  type="warning"
+                >
+                  座舱项目：至少配置 CDC 平台或智慧屏版本
+                </ElTag>
+                <span v-else class="text-muted-foreground text-sm">
+                  当前项目领域不是车控/座舱，请先在基础信息里填写正确领域。
+                </span>
+              </ElFormItem>
+              <ElFormItem
+                v-if="hardwareScenario === 'vehicle'"
+                label="VIU 平台"
+              >
+                <ElSelect
+                  v-model="viuPlatformId"
+                  placeholder="选择 VIU 平台"
+                  clearable
+                  class="w-full"
+                >
+                  <ElOption
+                    v-for="platform in viuPlatforms"
+                    :key="platform.id"
+                    :label="platform.name"
+                    :value="platform.id"
+                  />
+                </ElSelect>
+              </ElFormItem>
+              <ElFormItem
+                :label="
+                  hardwareScenario === 'cockpit' ? '配套版本配置' : '阶段配置'
+                "
+              >
+                <div class="w-full">
+                  <div v-if="hardwareScenario === 'vehicle'" class="mb-3">
+                    <ElButton type="primary" @click="addPhase">
+                      新增阶段
                     </ElButton>
                   </div>
                   <div
-                    v-if="hardwareScenario === 'vehicle'"
-                    class="mb-3 grid grid-cols-1 gap-3 md:grid-cols-2"
+                    v-if="phaseConfigs.length === 0"
+                    class="text-muted-foreground text-sm"
                   >
-                    <ElInput
-                      v-model="phase.stage_name"
-                      placeholder="阶段名称，如：SOP"
-                    />
-                    <ElDatePicker
-                      v-model="phase.stage_range"
-                      type="daterange"
-                      value-format="YYYY-MM-DD"
-                      start-placeholder="开始日期"
-                      end-placeholder="结束日期"
-                    />
+                    {{
+                      hardwareScenario === 'cockpit'
+                        ? '暂无配套版本配置'
+                        : '暂无阶段配置'
+                    }}
                   </div>
-
-                  <div v-if="hardwareScenario === 'vehicle'">
-                    <ElTable :data="phase.vehicle_hardware" size="small">
-                      <ElTableColumn label="硬件点位" min-width="180">
-                        <template #default="{ row }">
-                          <ElSelect
-                            v-model="row.point"
-                            placeholder="选择点位"
-                            clearable
-                            class="w-full"
-                          >
-                            <ElOption
-                              v-for="point in hardwarePoints"
-                              :key="point.code"
-                              :label="point.code"
-                              :value="point.code"
-                            />
-                          </ElSelect>
-                        </template>
-                      </ElTableColumn>
-                      <ElTableColumn label="板子型号" min-width="220">
-                        <template #default="{ row }">
-                          <ElSelect
-                            v-model="row.board"
-                            placeholder="选择板子"
-                            clearable
-                            class="w-full"
-                          >
-                            <ElOption
-                              v-for="board in getBoardsByPoint(row.point)"
-                              :key="board"
-                              :label="board"
-                              :value="board"
-                            />
-                          </ElSelect>
-                        </template>
-                      </ElTableColumn>
-                      <ElTableColumn label="BOMID" min-width="200">
-                        <template #default="{ row }">
-                          <ElInput
-                            v-model="row.bomid"
-                            placeholder="请输入 BOMID"
-                          />
-                        </template>
-                      </ElTableColumn>
-                      <ElTableColumn label="操作" width="120">
-                        <template #default="{ $index }">
-                          <ElButton
-                            type="danger"
-                            link
-                            @click="removeVehicleHardwareRow(phase, $index)"
-                          >
-                            删除
-                          </ElButton>
-                        </template>
-                      </ElTableColumn>
-                    </ElTable>
-                    <div class="mt-2">
+                  <div
+                    v-for="(phase, phaseIndex) in phaseConfigs"
+                    :key="phase.id || phaseIndex"
+                    class="mb-4 rounded border p-3"
+                  >
+                    <div
+                      v-if="hardwareScenario === 'vehicle'"
+                      class="mb-2 flex items-center justify-between"
+                    >
+                      <div class="text-foreground text-sm font-medium">
+                        阶段 {{ phaseIndex + 1 }}
+                      </div>
                       <ElButton
+                        type="danger"
                         link
-                        type="primary"
-                        @click="addVehicleHardwareRow(phase)"
+                        size="small"
+                        @click="removePhase(phaseIndex)"
                       >
-                        新增硬件组合
+                        删除阶段
                       </ElButton>
                     </div>
-                  </div>
+                    <div
+                      v-if="hardwareScenario === 'vehicle'"
+                      class="mb-3 grid grid-cols-1 gap-3 md:grid-cols-2"
+                    >
+                      <ElInput
+                        v-model="phase.stage_name"
+                        placeholder="阶段名称，如：SOP"
+                      />
+                      <ElDatePicker
+                        v-model="phase.stage_range"
+                        type="daterange"
+                        value-format="YYYY-MM-DD"
+                        start-placeholder="开始日期"
+                        end-placeholder="结束日期"
+                      />
+                    </div>
 
-                  <div
-                    v-else-if="hardwareScenario === 'cockpit'"
-                    class="grid grid-cols-1 gap-3 md:grid-cols-2"
-                  >
-                    <ElSelect
-                      v-model="phase.cdc_platform_id"
-                      placeholder="选择 CDC 平台"
-                      clearable
+                    <div v-if="hardwareScenario === 'vehicle'">
+                      <ElTable :data="phase.vehicle_hardware" size="small">
+                        <ElTableColumn label="硬件点位" min-width="180">
+                          <template #default="{ row }">
+                            <ElSelect
+                              v-model="row.point"
+                              placeholder="选择点位"
+                              clearable
+                              class="w-full"
+                            >
+                              <ElOption
+                                v-for="point in hardwarePoints"
+                                :key="point.code"
+                                :label="point.code"
+                                :value="point.code"
+                              />
+                            </ElSelect>
+                          </template>
+                        </ElTableColumn>
+                        <ElTableColumn label="板子型号" min-width="220">
+                          <template #default="{ row }">
+                            <ElSelect
+                              v-model="row.board"
+                              placeholder="选择板子"
+                              clearable
+                              class="w-full"
+                            >
+                              <ElOption
+                                v-for="board in getBoardsByPoint(row.point)"
+                                :key="board"
+                                :label="board"
+                                :value="board"
+                              />
+                            </ElSelect>
+                          </template>
+                        </ElTableColumn>
+                        <ElTableColumn label="BOMID" min-width="200">
+                          <template #default="{ row }">
+                            <ElInput
+                              v-model="row.bomid"
+                              placeholder="请输入 BOMID"
+                            />
+                          </template>
+                        </ElTableColumn>
+                        <ElTableColumn label="操作" width="120">
+                          <template #default="{ $index }">
+                            <ElButton
+                              type="danger"
+                              link
+                              @click="removeVehicleHardwareRow(phase, $index)"
+                            >
+                              删除
+                            </ElButton>
+                          </template>
+                        </ElTableColumn>
+                      </ElTable>
+                      <div class="mt-2">
+                        <ElButton
+                          link
+                          type="primary"
+                          @click="addVehicleHardwareRow(phase)"
+                        >
+                          新增硬件组合
+                        </ElButton>
+                      </div>
+                    </div>
+
+                    <div
+                      v-else-if="hardwareScenario === 'cockpit'"
+                      class="grid grid-cols-1 gap-3 md:grid-cols-2"
                     >
-                      <ElOption
-                        v-for="platform in cdcPlatforms"
-                        :key="platform.id"
-                        :label="platform.name"
-                        :value="platform.id"
-                      />
-                    </ElSelect>
-                    <ElSelect
-                      v-model="phase.smart_screen_version_id"
-                      placeholder="选择智慧屏版本"
-                      clearable
-                    >
-                      <ElOption
-                        v-for="version in smartScreenVersions"
-                        :key="version.id"
-                        :label="version.name"
-                        :value="version.id"
-                      />
-                    </ElSelect>
+                      <ElSelect
+                        v-model="phase.cdc_platform_id"
+                        placeholder="选择 CDC 平台"
+                        clearable
+                      >
+                        <ElOption
+                          v-for="platform in cdcPlatforms"
+                          :key="platform.id"
+                          :label="platform.name"
+                          :value="platform.id"
+                        />
+                      </ElSelect>
+                      <ElSelect
+                        v-model="phase.smart_screen_version_id"
+                        placeholder="选择智慧屏版本"
+                        clearable
+                      >
+                        <ElOption
+                          v-for="version in smartScreenVersions"
+                          :key="version.id"
+                          :label="version.name"
+                          :value="version.id"
+                        />
+                      </ElSelect>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </ElFormItem>
-          </ElForm>
-        </div>
-      </ElTabPane>
+              </ElFormItem>
+            </ElForm>
+          </div>
+        </ElTabPane>
       </ElTabs>
     </div>
   </Drawer>
