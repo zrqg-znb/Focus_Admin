@@ -23,7 +23,9 @@ const props = defineProps<{
 
 const emit = defineEmits<{ success: [] }>();
 
-const positions = ref<{ name: string; sort?: number; user_ids: string[] }[]>([]);
+const positions = ref<{ name: string; sort?: number; user_ids: string[] }[]>(
+  [],
+);
 const submitLoading = ref(false);
 
 const [Form, formApi] = useVbenForm({
@@ -33,7 +35,7 @@ const [Form, formApi] = useVbenForm({
 });
 
 watch(
-  () => [props.node, props.isEdit],
+  () => [props.node, props.isEdit, props.parentNode?.id],
   () => {
     if (props.isEdit && props.node) {
       formApi.setValues({
@@ -105,7 +107,8 @@ async function onSubmit() {
     emit('success');
   } catch (error: any) {
     console.error('保存失败:', error);
-    const msg = error?.response?.data?.detail || error?.message || '保存失败，请重试';
+    const msg =
+      error?.response?.data?.detail || error?.message || '保存失败，请重试';
     ElMessage.error(msg);
   } finally {
     submitLoading.value = false;

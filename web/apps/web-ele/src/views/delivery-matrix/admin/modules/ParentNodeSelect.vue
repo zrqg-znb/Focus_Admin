@@ -4,6 +4,7 @@ import type { OrgNode } from '#/api/delivery-matrix';
 import { computed, onMounted, ref, watch } from 'vue';
 
 import { IconifyIcon } from '@vben/icons';
+
 import {
   ElButton,
   ElInput,
@@ -16,12 +17,12 @@ import {
 
 import { getTree, getValidParents } from '#/api/delivery-matrix';
 
-type MaybeId = string | null | undefined;
+type MaybeId = null | string | undefined;
 
 const props = defineProps<{
+  currentNodeId?: string;
   modelValue?: MaybeId;
   placeholder?: string;
-  currentNodeId?: string;
 }>();
 
 const emit = defineEmits<{
@@ -33,7 +34,6 @@ const visible = ref(false);
 const loading = ref(false);
 const treeData = ref<OrgNode[]>([]);
 const searchKeyword = ref('');
-const expandedIds = ref<Set<string>>(new Set());
 
 const selectedNode = computed(() =>
   findNode(treeData.value, props.modelValue || undefined),
@@ -41,50 +41,58 @@ const selectedNode = computed(() =>
 
 function highlight(text: string, keyword: string) {
   if (!keyword) return text;
-  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const reg = new RegExp(escaped, 'ig');
-  return text.replace(reg, (m) => `<mark class="bg-yellow-200 text-gray-900">${m}</mark>`);
+  const escaped = keyword.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  const reg = new RegExp(escaped, 'gi');
+  return text.replace(
+    reg,
+    (m) => `<mark class="bg-yellow-200 text-gray-900">${m}</mark>`,
+  );
 }
 
 function filterTreeByKeyword(nodes: OrgNode[], keyword: string) {
   const q = keyword.trim().toLowerCase();
   const expanded = new Set<string>();
 
-  const mapNode = (node: OrgNode): OrgNode & { __matched?: boolean } | null => {
+  const mapNode = (
+    node: OrgNode,
+  ): null | (OrgNode & { __matched?: boolean }) => {
     const selfMatch = node.name.toLowerCase().includes(q);
     const children = (node.children || [])
-      .map(mapNode)
+      .map((child) => mapNode(child))
       .filter(Boolean) as OrgNode[];
 
-    if (!q || selfMatch || children.length) {
+    if (!q || selfMatch || children.length > 0) {
       const copy: OrgNode & { __matched?: boolean } = {
         ...node,
         children,
       };
       if (selfMatch) copy.__matched = true;
-      if (children.length) expanded.add(node.id);
+      if (children.length > 0) expanded.add(node.id);
       return copy;
     }
     return null;
   };
 
-  return { filtered: nodes.map(mapNode).filter(Boolean) as OrgNode[], expanded };
+  return {
+    filtered: nodes.map((node) => mapNode(node)).filter(Boolean) as OrgNode[],
+    expanded,
+  };
 }
 
-const filteredTree = computed(() => {
-  const { filtered, expanded } = filterTreeByKeyword(treeData.value, searchKeyword.value);
-  expandedIds.value = expanded;
-  return filtered;
-});
+const filteredTreeResult = computed(() =>
+  filterTreeByKeyword(treeData.value, searchKeyword.value),
+);
+
+const filteredTree = computed(() => filteredTreeResult.value.filtered);
+
+const expandedKeys = computed(() => [...filteredTreeResult.value.expanded]);
 
 async function loadTree() {
   loading.value = true;
   try {
-    if (props.currentNodeId) {
-      treeData.value = await getValidParents(props.currentNodeId);
-    } else {
-      treeData.value = await getTree();
-    }
+    treeData.value = await (props.currentNodeId
+      ? getValidParents(props.currentNodeId)
+      : getTree());
   } finally {
     loading.value = false;
   }
@@ -160,7 +168,7 @@ watch(
   <div class="w-full">
     <div class="flex items-center gap-2">
       <div
-        class="flex min-h-[38px] flex-1 items-center justify-between rounded-lg border border-gray-200 bg-white px-3 text-sm shadow-sm transition hover:border-primary/60"
+        class="hover:border-primary/60 flex min-h-[38px] flex-1 items-center justify-between rounded-lg border border-gray-200 bg-white px-3 text-sm shadow-sm transition"
       >
         <div class="flex flex-1 items-center gap-2">
           <IconifyIcon icon="carbon:tree-view" class="text-gray-400" />
@@ -170,7 +178,9 @@ watch(
           <span v-else class="text-gray-400">{{ defaultPlaceholder() }}</span>
         </div>
         <div class="flex items-center gap-1">
-          <ElButton v-if="modelValue" link size="small" @click="onClear">清除</ElButton>
+          <ElButton v-if="modelValue" link size="small" @click="onClear">
+            清除
+          </ElButton>
           <ElPopover
             v-model:visible="visible"
             trigger="click"
@@ -178,21 +188,33 @@ watch(
             popper-class="dm-parent-popover"
           >
             <template #reference>
-              <ElButton type="primary" plain size="small">
-                选择
-              </ElButton>
+              <ElButton type="primary" plain size="small"> 选择 </ElButton>
             </template>
             <div class="space-y-3">
-              <div class="rounded-lg bg-gradient-to-r from-sky-50 to-purple-50 p-3">
-                <div class="flex items-center justify-between text-sm text-gray-700">
+              <div
+                class="rounded-lg bg-gradient-to-r from-sky-50 to-purple-50 p-3"
+              >
+                <div
+                  class="flex items-center justify-between text-sm text-gray-700"
+                >
                   <div class="flex items-center gap-2">
-                    <IconifyIcon icon="carbon:parent-child" class="text-base text-primary" />
+                    <IconifyIcon
+                      icon="carbon:parent-child"
+                      class="text-primary text-base"
+                    />
                     <span>选择父节点</span>
                   </div>
-                  <ElTag size="small" effect="light" type="info">留空为根节点</ElTag>
+                  <ElTag size="small" effect="light" type="info">
+                    留空为根节点
+                  </ElTag>
                 </div>
                 <div class="mt-2 flex flex-wrap gap-2">
-                  <ElButton size="small" type="success" plain @click="onSetRoot">
+                  <ElButton
+                    size="small"
+                    type="success"
+                    plain
+                    @click="onSetRoot"
+                  >
                     <IconifyIcon icon="carbon:home" class="mr-1" />
                     设为根节点
                   </ElButton>
@@ -203,10 +225,12 @@ watch(
                 v-model="searchKeyword"
                 placeholder="搜索节点名称"
                 clearable
-                :prefix-icon="'carbon:search'"
+                prefix-icon="carbon:search"
               />
 
-              <div class="max-h-64 overflow-y-auto rounded-lg border border-gray-100 bg-white p-2">
+              <div
+                class="max-h-64 overflow-y-auto rounded-lg border border-gray-100 bg-white p-2"
+              >
                 <ElSkeleton :loading="loading" animated :count="6">
                   <template #template>
                     <div v-for="i in 6" :key="i" class="py-2">
@@ -216,7 +240,8 @@ watch(
                   <ElTree
                     :data="filteredTree"
                     node-key="id"
-                    :default-expanded-keys="[...expandedIds]"
+                    :default-expand-all="true"
+                    :default-expanded-keys="expandedKeys"
                     highlight-current
                     :props="{ label: 'name', children: 'children' }"
                     @node-click="onSelect"
@@ -224,7 +249,9 @@ watch(
                     <template #default="{ data }">
                       <span
                         class="flex items-center gap-2"
-                        :class="{ 'font-semibold text-primary': (data as any).__matched }"
+                        :class="{
+                          'text-primary font-semibold': (data as any).__matched,
+                        }"
                         v-html="highlight(data.name, searchKeyword)"
                       ></span>
                     </template>

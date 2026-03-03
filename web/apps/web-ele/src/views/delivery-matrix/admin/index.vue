@@ -13,15 +13,17 @@ const selectedNode = ref<OrgNode>();
 const isEdit = ref(false);
 const createParent = ref<OrgNode>();
 const showForm = ref(false);
+const formRenderKey = ref(0);
 
 function onSelect(node: OrgNode | undefined) {
   if (!node) {
-      showForm.value = false;
-      return;
+    showForm.value = false;
+    return;
   }
   selectedNode.value = node;
   isEdit.value = true;
   createParent.value = undefined;
+  formRenderKey.value += 1;
   showForm.value = true;
 }
 
@@ -29,6 +31,7 @@ function onAdd(parentNode?: OrgNode) {
   selectedNode.value = undefined;
   isEdit.value = false;
   createParent.value = parentNode;
+  formRenderKey.value += 1;
   showForm.value = true;
 }
 
@@ -58,6 +61,7 @@ function onSuccess() {
         </div>
         <DeliveryForm
           v-else
+          :key="formRenderKey"
           :node="selectedNode"
           :is-edit="isEdit"
           :parent-node="createParent"
