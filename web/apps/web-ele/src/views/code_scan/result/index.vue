@@ -22,6 +22,7 @@ const shieldForm = ref({
 
 const ALL_SCAN_TOOLS = [
   'tscan',
+  'tsan',
   'cppcheck',
   'weggli',
   'cooddy',

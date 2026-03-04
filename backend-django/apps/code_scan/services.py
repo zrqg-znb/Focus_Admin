@@ -61,6 +61,8 @@ class ScanService:
             "memcheck": "valgrind",
             "helgrind": "valgrind",
             "drd": "valgrind",
+            "threadsanitizer": "tsan",
+            "thread-sanitizer": "tsan",
         }
         return aliases.get(normalized, normalized)
     
@@ -163,6 +165,8 @@ class ScanService:
                 elif normalized_tool in ["cooddy"]:
                     file_ext = "csv"
                 elif normalized_tool in ["valgrind"]:
+                    file_ext = "log"
+                elif normalized_tool in ["tsan"]:
                     file_ext = "log"
                 elif normalized_tool in ["weggli", "binexplorer", "clang-tidy", "clang_tidy", "clangtidy"]:
                     file_ext = "xlsx"

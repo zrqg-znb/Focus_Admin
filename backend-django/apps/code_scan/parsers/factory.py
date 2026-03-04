@@ -1,6 +1,7 @@
 from typing import Type
 from .base import BaseParser
 from .tscan_parser import TScanParser
+from .tsan_parser import TSanParser
 from .cppcheck_parser import CppCheckParser
 from .weggli_parser import WeggliParser
 from .cooddy_parser import CooddyParser
@@ -11,6 +12,9 @@ from .valgrind_parser import ValgrindParser
 class ParserFactory:
     _parsers = {
         'tscan': TScanParser,
+        'tsan': TSanParser,
+        'threadsanitizer': TSanParser,
+        'thread-sanitizer': TSanParser,
         'cppcheck': CppCheckParser,
         'weggli': WeggliParser,
         'cooddy': CooddyParser,

@@ -22,6 +22,7 @@ defineOptions({ name: 'CodeScanTaskLog' });
 
 const TOOL_OPTIONS = [
   'tscan',
+  'tsan',
   'cppcheck',
   'weggli',
   'cooddy',

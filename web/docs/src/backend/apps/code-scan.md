@@ -17,7 +17,7 @@
           ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                      ScanTask (扫描任务)                                 │
-│  - 工具名称 (tscan/cppcheck)                                             │
+│  - 工具名称 (tscan/tsan/cppcheck)                                        │
 │  - 来源 (pipeline/manual)                                                │
 │  - 状态 (pending/processing/success/failed)                             │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -57,6 +57,7 @@
 | 工具 | 代码 | 报告格式 | 说明 |
 | --- | --- | --- | --- |
 | TScanCode | `tscan` | XML | 腾讯开源静态代码分析工具 |
+| ThreadSanitizer | `tsan` | LOG / TXT / JSON | 线程并发问题检测工具（数据竞争、死锁风险等） |
 | CppCheck | `cppcheck` | XML | C/C++ 静态分析工具 |
 | Weggli | `weggli` | XLSX / JSON / TXT | 语义模式匹配工具 |
 | Cooddy | `cooddy` | CSV | C/C++ 缺陷分析工具 |
@@ -101,7 +102,7 @@ Pending (申请中)
 ```
 CI/CD 流水线
     │
-    │ 执行扫描工具（tscan/cppcheck/valgrind 等）
+    │ 执行扫描工具（tscan/tsan/cppcheck/valgrind 等）
     ▼
 生成报告文件（XML/CSV/XLSX/LOG）
     │
@@ -150,6 +151,7 @@ ScanResult.shield_status 更新   审批流程结束
 class ParserFactory:
     _parsers = {
         'tscan': TScanParser,
+        'tsan': TSanParser,
         'cppcheck': CppCheckParser,
         'weggli': WeggliParser,
         'cooddy': CooddyParser,
@@ -198,6 +200,7 @@ apps/code_scan/
 │   ├── base.py             # 解析器基类
 │   ├── factory.py          # 工厂模式
 │   ├── tscan_parser.py     # TScanCode 解析器
+│   ├── tsan_parser.py      # ThreadSanitizer 解析器
 │   ├── cppcheck_parser.py  # CppCheck 解析器
 │   ├── weggli_parser.py    # Weggli 解析器
 │   ├── cooddy_parser.py    # Cooddy 解析器
@@ -209,7 +212,11 @@ apps/code_scan/
 ├── models.py                # 数据模型
 ├── schemas.py               # Pydantic Schema
 ├── services.py              # 业务服务
-└── utils/parse_valgrind_log.py # Valgrind 日志解析脚本
+└── utils/
+    ├── parse_valgrind_log.py              # Valgrind 日志解析脚本
+    ├── parse_tsan_log.py                  # TSan 日志解析脚本
+    ├── pipeline_valgrind_parse_and_upload.py # Valgrind 一体化上传脚本
+    └── pipeline_tsan_parse_and_upload.py     # TSan 一体化上传脚本
 ```
 
 ## API 路由
@@ -254,6 +261,7 @@ class CoverityParser(BaseParser):
 # parsers/factory.py
 _parsers = {
     'tscan': TScanParser,
+    'tsan': TSanParser,
     'cppcheck': CppCheckParser,
     'valgrind': ValgrindParser,
     'coverity': CoverityParser,  # 新增
@@ -298,6 +306,36 @@ curl -X POST "${API_BASE}/api/code-scan/upload" \
 ```bash
 python apps/code_scan/utils/pipeline_valgrind_parse_and_upload.py \
   --log ./artifacts/valgrind.log \
+  --project-key "${PROJECT_KEY}" \
+  --api-base "${API_BASE}" \
+  --upload-mode auto \
+  --pretty
+```
+
+### TSan 日志解析脚本（流水线可直接调用）
+
+```bash
+# 1. 使用 ThreadSanitizer 执行程序并输出日志
+TSAN_OPTIONS="halt_on_error=0" ./build/demo_app 2> tsan.log
+
+# 2. 解析日志为标准结果 JSON
+python apps/code_scan/utils/parse_tsan_log.py \
+  --input ./tsan.log \
+  --output ./tsan_findings.json \
+  --pretty
+
+# 3. 上传（可直接传原始日志，也可传解析后 JSON）
+curl -X POST "${API_BASE}/api/code-scan/upload" \
+  -F "project_key=${PROJECT_KEY}" \
+  -F "tool_name=tsan" \
+  -F "file=@tsan.log"
+```
+
+### TSan 一体化流水线脚本（解析后上传）
+
+```bash
+python apps/code_scan/utils/pipeline_tsan_parse_and_upload.py \
+  --log ./artifacts/tsan.log \
   --project-key "${PROJECT_KEY}" \
   --api-base "${API_BASE}" \
   --upload-mode auto \

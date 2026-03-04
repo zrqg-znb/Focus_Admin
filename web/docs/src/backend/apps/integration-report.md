@@ -107,6 +107,7 @@ class IntegrationProjectConfig(RootModel):
 | 指标Key | 说明 |
 | --- | --- |
 | `tscan_error_num` | TScan 未屏蔽问题数 |
+| `tsan_error_num` | TSan 未屏蔽问题数 |
 | `cppcheck_error_num` | Cppcheck 未屏蔽问题数 |
 | `weggli_error_num` | Weggli 未屏蔽问题数 |
 | `cooddy_error_num` | Cooddy 未屏蔽问题数 |

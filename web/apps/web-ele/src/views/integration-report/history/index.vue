@@ -41,6 +41,7 @@ const CODE_COLS = [
   { key: 'build_check_error_num', name: 'Build 检测错误数' },
   { key: 'compile_error_num', name: 'Compile 错误数' },
   { key: 'tscan_error_num', name: 'TScan 问题数' },
+  { key: 'tsan_error_num', name: 'TSan 问题数' },
   { key: 'cppcheck_error_num', name: 'Cppcheck 问题数' },
   { key: 'weggli_error_num', name: 'Weggli 问题数' },
   { key: 'cooddy_error_num', name: 'Cooddy 问题数' },

@@ -26,6 +26,7 @@ CODE_KEYS = [
     "build_check_error_num",
     "compile_error_num",
     "tscan_error_num",
+    "tsan_error_num",
     "cppcheck_error_num",
     "weggli_error_num",
     "cooddy_error_num",
@@ -41,6 +42,7 @@ DT_KEYS = [
 
 SCAN_METRIC_TOOL_ALIAS_MAP = {
     "tscan_error_num": {"tscan"},
+    "tsan_error_num": {"tsan"},
     "cppcheck_error_num": {"cppcheck"},
     "weggli_error_num": {"weggli"},
     "cooddy_error_num": {"cooddy"},
@@ -136,6 +138,7 @@ def ensure_default_metric_definitions():
         ("code", "build_check_error_num", "Build 检测错误数", "number", "", ">", 0),
         ("code", "compile_error_num", "Compile 错误数", "number", "", ">", 0),
         ("code", "tscan_error_num", "TScan 问题数", "number", "", ">", 0),
+        ("code", "tsan_error_num", "TSan 问题数", "number", "", ">", 0),
         ("code", "cppcheck_error_num", "Cppcheck 问题数", "number", "", ">", 0),
         ("code", "weggli_error_num", "Weggli 问题数", "number", "", ">", 0),
         ("code", "cooddy_error_num", "Cooddy 问题数", "number", "", ">", 0),
