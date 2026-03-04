@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'scheduler',
     'apps.performance',
     'apps.project_manager',
+    'apps.requirement_center',
     'apps.integration_report',
     'apps.code_compliance',
     'apps.delivery_matrix',
