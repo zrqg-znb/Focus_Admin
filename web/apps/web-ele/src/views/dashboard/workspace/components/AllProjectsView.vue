@@ -283,10 +283,10 @@ function go(path: string) {
           <div
             class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-[#151515]"
           >
-            <h3 class="mb-4 text-lg font-bold">车控领域平台项目占比</h3>
+            <h3 class="mb-4 text-lg font-bold">车控领域 IDVP 平台项目占比</h3>
             <ProjectPie
               :data="projectDistribution.vehicle_by_platform"
-              title="车控平台占比"
+              title="IDVP 平台占比"
             />
           </div>
           <div

@@ -295,9 +295,11 @@ def get_project_distribution(request, scope: str = 'all'):
     by_type = [NameValue(name=item['type'] or "未分类", value=item['count']) for item in type_counts]
 
     vehicle_counter = Counter()
-    vehicle_projects = projects.filter(domain__icontains='车控').select_related('viu_platform')
+    vehicle_projects = projects.filter(domain__icontains='车控').select_related('idvp_platform')
     for project in vehicle_projects:
-        platform_name = project.viu_platform.name if project.viu_platform else "未配置VIU平台"
+        platform_name = (
+            project.idvp_platform.name if project.idvp_platform else "未配置IDVP平台"
+        )
         vehicle_counter[platform_name] += 1
 
     cockpit_cdc_counter = Counter()

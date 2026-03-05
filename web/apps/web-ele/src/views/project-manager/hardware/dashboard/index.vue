@@ -292,7 +292,15 @@ watch(
               class="border-border bg-background flex h-full min-h-0 flex-col rounded-lg border p-3"
             >
               <div class="min-h-0 flex-1">
-                <CockpitGrid class="h-full" />
+                <CockpitGrid class="h-full">
+                  <template #cell-smart_screen_version_name="{ row }">
+                    {{
+                      (row.smart_screen_version_names || []).join(' / ') ||
+                      row.smart_screen_version_name ||
+                      '-'
+                    }}
+                  </template>
+                </CockpitGrid>
               </div>
             </section>
           </ElTabPane>
