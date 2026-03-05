@@ -3,7 +3,6 @@ from typing import List, Optional
 
 from ninja import Field, ModelSchema, Schema
 
-from apps.project_manager.hardware.hardware_model import SmartScreenVersion
 from .project_model import Project
 
 
@@ -173,72 +172,39 @@ class ProjectOut(ModelSchema):
     def resolve_phase_configs(obj):
         phase_items = list(obj.phase_configs.all())
         phase_items.sort(key=lambda item: (item.stage_start or date.min, item.stage_name))
-
-        version_ids: set[str] = set()
-        normalized_phase_version_ids: dict[str, list[str]] = {}
+        payload = []
         for item in phase_items:
-            raw_ids = item.smart_screen_version_ids or []
-            normalized_ids: list[str] = []
-            seen: set[str] = set()
-            for raw_id in raw_ids:
-                text = str(raw_id or "").strip()
-                if not text or text in seen:
-                    continue
-                seen.add(text)
-                normalized_ids.append(text)
+            smart_screen_versions = list(item.smart_screen_versions.all())
+            smart_screen_version_ids = [str(version.id) for version in smart_screen_versions]
+            smart_screen_version_names = [version.name for version in smart_screen_versions]
 
-            legacy_id = str(item.smart_screen_version_id or "").strip()
-            if legacy_id and legacy_id not in seen:
-                normalized_ids.insert(0, legacy_id)
-                seen.add(legacy_id)
-
-            normalized_phase_version_ids[str(item.id)] = normalized_ids
-            version_ids.update(normalized_ids)
-
-        version_name_map = {
-            str(item.id): item.name
-            for item in SmartScreenVersion.objects.filter(
-                id__in=list(version_ids),
-                is_deleted=False,
+            payload.append(
+                {
+                    "id": str(item.id),
+                    "stage_name": item.stage_name,
+                    "stage_start": item.stage_start,
+                    "stage_end": item.stage_end,
+                    "scenario": item.scenario,
+                    "vehicle_hardware": item.vehicle_hardware or [],
+                    "cdc_platform_id": (
+                        str(item.cdc_platform_id) if item.cdc_platform_id else None
+                    ),
+                    "cdc_platform_name": (
+                        item.cdc_platform.name if item.cdc_platform else None
+                    ),
+                    "smart_screen_version_id": (
+                        smart_screen_version_ids[0] if smart_screen_version_ids else None
+                    ),
+                    "smart_screen_version_name": (
+                        smart_screen_version_names[0]
+                        if smart_screen_version_names
+                        else None
+                    ),
+                    "smart_screen_version_ids": smart_screen_version_ids,
+                    "smart_screen_version_names": smart_screen_version_names,
+                }
             )
-        }
-
-        return [
-            {
-                "id": str(item.id),
-                "stage_name": item.stage_name,
-                "stage_start": item.stage_start,
-                "stage_end": item.stage_end,
-                "scenario": item.scenario,
-                "vehicle_hardware": item.vehicle_hardware or [],
-                "cdc_platform_id": (
-                    str(item.cdc_platform_id) if item.cdc_platform_id else None
-                ),
-                "cdc_platform_name": item.cdc_platform.name if item.cdc_platform else None,
-                "smart_screen_version_id": (
-                    normalized_phase_version_ids.get(str(item.id), [None])[0]
-                    if normalized_phase_version_ids.get(str(item.id))
-                    else None
-                ),
-                "smart_screen_version_name": (
-                    version_name_map.get(
-                        normalized_phase_version_ids.get(str(item.id), [None])[0]
-                    )
-                    if normalized_phase_version_ids.get(str(item.id))
-                    else None
-                ),
-                "smart_screen_version_ids": normalized_phase_version_ids.get(
-                    str(item.id),
-                    [],
-                ),
-                "smart_screen_version_names": [
-                    version_name_map[version_id]
-                    for version_id in normalized_phase_version_ids.get(str(item.id), [])
-                    if version_id in version_name_map
-                ],
-            }
-            for item in phase_items
-        ]
+        return payload
 
     class Config:
         from_attributes = True

@@ -77,7 +77,7 @@ def list_projects(request, filters: ProjectFilterSchema = Query(...)):
         .prefetch_related(
             "managers",
             "phase_configs__cdc_platform",
-            "phase_configs__smart_screen_version",
+            "phase_configs__smart_screen_versions",
         )
         .order_by("-sort", "-sys_create_datetime")
     )

@@ -81,10 +81,10 @@ def _resolve_phase_scenario(domain: str) -> str:
 def _build_phase_config_rows(
     project: Project,
     phase_configs: list[dict],
-) -> list[ProjectPhaseConfig]:
+) -> list[tuple[ProjectPhaseConfig, list[SmartScreenVersion]]]:
     scenario = _resolve_phase_scenario(project.domain)
     stage_names = set()
-    rows: list[ProjectPhaseConfig] = []
+    rows: list[tuple[ProjectPhaseConfig, list[SmartScreenVersion]]] = []
 
     hardware_points = {}
     cdc_platforms = {}
@@ -177,13 +177,16 @@ def _build_phase_config_rows(
                 )
 
             rows.append(
-                ProjectPhaseConfig(
-                    project=project,
-                    stage_name=stage_name,
-                    stage_start=stage_start,
-                    stage_end=stage_end,
-                    scenario=scenario,
-                    vehicle_hardware=normalized_hardware,
+                (
+                    ProjectPhaseConfig(
+                        project=project,
+                        stage_name=stage_name,
+                        stage_start=stage_start,
+                        stage_end=stage_end,
+                        scenario=scenario,
+                        vehicle_hardware=normalized_hardware,
+                    ),
+                    [],
                 )
             )
         else:
@@ -217,23 +220,18 @@ def _build_phase_config_rows(
                     raise HttpError(422, f"阶段 {stage_name} 的智慧屏版本不存在")
                 smart_versions_in_phase.append(smart_version)
 
-            primary_smart_version = (
-                smart_versions_in_phase[0] if smart_versions_in_phase else None
-            )
-
             rows.append(
-                ProjectPhaseConfig(
-                    project=project,
-                    stage_name=stage_name,
-                    stage_start=stage_start,
-                    stage_end=stage_end,
-                    scenario=scenario,
-                    vehicle_hardware=[],
-                    cdc_platform=cdc_platform,
-                    smart_screen_version=primary_smart_version,
-                    smart_screen_version_ids=[
-                        str(version.id) for version in smart_versions_in_phase
-                    ],
+                (
+                    ProjectPhaseConfig(
+                        project=project,
+                        stage_name=stage_name,
+                        stage_start=stage_start,
+                        stage_end=stage_end,
+                        scenario=scenario,
+                        vehicle_hardware=[],
+                        cdc_platform=cdc_platform,
+                    ),
+                    smart_versions_in_phase,
                 )
             )
 
@@ -290,7 +288,10 @@ def _sync_phase_configs(
 
     rows = _build_phase_config_rows(project, phase_configs)
     project.phase_configs.all().delete()
-    ProjectPhaseConfig.objects.bulk_create(rows)
+    for row, smart_versions in rows:
+        row.save()
+        if smart_versions:
+            row.smart_screen_versions.set(smart_versions)
 
 
 @transaction.atomic
@@ -428,7 +429,7 @@ def get_project(request, id: str):
         Project.objects.select_related("viu_platform", "idvp_platform").prefetch_related(
             "managers",
             "phase_configs__cdc_platform",
-            "phase_configs__smart_screen_version",
+            "phase_configs__smart_screen_versions",
         ),
         id=id,
     )

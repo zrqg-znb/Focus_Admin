@@ -304,7 +304,7 @@ def get_project_distribution(request, scope: str = 'all'):
     cockpit_smart_counter = Counter()
     cockpit_projects = projects.filter(domain__icontains='座舱').prefetch_related(
         'phase_configs__cdc_platform',
-        'phase_configs__smart_screen_version',
+        'phase_configs__smart_screen_versions',
     )
     for project in cockpit_projects:
         cockpit_config = next(
@@ -320,11 +320,16 @@ def get_project_distribution(request, scope: str = 'all'):
             if cockpit_config and cockpit_config.cdc_platform
             else "未配置CDC平台"
         )
-        smart_name = (
-            cockpit_config.smart_screen_version.name
-            if cockpit_config and cockpit_config.smart_screen_version
-            else "未配置智慧屏版本"
-        )
+        smart_name = "未配置智慧屏版本"
+        if cockpit_config:
+            smart_screen_version_names = [
+                item.name for item in cockpit_config.smart_screen_versions.all()
+            ]
+            if smart_screen_version_names:
+                for name in smart_screen_version_names:
+                    cockpit_smart_counter[name] += 1
+                cockpit_cdc_counter[cdc_name] += 1
+                continue
         cockpit_cdc_counter[cdc_name] += 1
         cockpit_smart_counter[smart_name] += 1
     
