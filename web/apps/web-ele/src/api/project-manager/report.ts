@@ -113,6 +113,7 @@ export interface HardwarePhaseConfig {
   vehicle_hardware: HardwareItem[];
   cdc_platform_name?: null | string;
   smart_screen_version_name?: null | string;
+  smart_screen_version_names?: string[];
 }
 
 export interface HardwareConfigSummary {

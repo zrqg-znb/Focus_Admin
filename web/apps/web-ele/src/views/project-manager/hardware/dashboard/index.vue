@@ -56,6 +56,7 @@ function toPhaseRows(projects: ProjectOut[]): PhaseBoardRow[] {
         vehicle_hardware: phase.vehicle_hardware || [],
         cdc_platform_name: phase.cdc_platform_name,
         smart_screen_version_name: phase.smart_screen_version_name,
+        smart_screen_version_names: phase.smart_screen_version_names || [],
       });
     }
   }
@@ -102,7 +103,11 @@ function filterRows(
   }
   if (scenario === 'cockpit' && smartScreenKeyword) {
     filtered = filtered.filter((item) =>
-      String(item.smart_screen_version_name || '')
+      String(
+        (item.smart_screen_version_names || []).join(' / ') ||
+          item.smart_screen_version_name ||
+          '',
+      )
         .toLowerCase()
         .includes(smartScreenKeyword),
     );

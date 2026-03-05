@@ -75,6 +75,7 @@ class HardwarePhaseConfig(Schema):
     vehicle_hardware: List[HardwareItem] = Field(default_factory=list)
     cdc_platform_name: Optional[str] = None
     smart_screen_version_name: Optional[str] = None
+    smart_screen_version_names: List[str] = Field(default_factory=list)
 
 class HardwareConfigSummary(Schema):
     enabled: bool = False

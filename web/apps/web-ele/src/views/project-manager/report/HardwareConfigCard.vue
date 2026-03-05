@@ -51,6 +51,13 @@ const vehicleRows = computed(() => {
 });
 
 const cockpitPhase = computed(() => phases.value[0] || null);
+const cockpitSmartScreenVersionText = computed(() => {
+  const names = cockpitPhase.value?.smart_screen_version_names || [];
+  if (names.length > 0) {
+    return names.join(' / ');
+  }
+  return cockpitPhase.value?.smart_screen_version_name || '-';
+});
 </script>
 
 <template>
@@ -133,7 +140,7 @@ const cockpitPhase = computed(() => phases.value[0] || null);
           >
             <p class="text-xs text-gray-500">智慧屏版本</p>
             <p class="mt-2 text-base font-semibold">
-              {{ cockpitPhase?.smart_screen_version_name || '-' }}
+              {{ cockpitSmartScreenVersionText }}
             </p>
           </div>
         </div>

@@ -11,6 +11,7 @@ from apps.project_manager.project.project_model import (
     PHASE_SCENARIO_VEHICLE,
     Project,
 )
+from apps.project_manager.hardware.hardware_model import SmartScreenVersion
 from apps.project_manager.code_quality.code_quality_model import CodeModule, CodeMetric
 from apps.project_manager.code_quality.code_quality_service import get_project_quality_details
 from apps.project_manager.iteration.iteration_model import Iteration, IterationMetric
@@ -433,6 +434,34 @@ class ReportService:
             )
             phase_items.sort(key=lambda item: (item.stage_start or date.min, item.stage_name))
 
+            smart_screen_version_ids: set[str] = set()
+            phase_smart_screen_version_ids: dict[str, list[str]] = {}
+            for item in phase_items:
+                normalized_ids: list[str] = []
+                seen: set[str] = set()
+                for raw_id in (item.smart_screen_version_ids or []):
+                    text = str(raw_id or "").strip()
+                    if not text or text in seen:
+                        continue
+                    seen.add(text)
+                    normalized_ids.append(text)
+
+                legacy_id = str(item.smart_screen_version_id or "").strip()
+                if legacy_id and legacy_id not in seen:
+                    normalized_ids.insert(0, legacy_id)
+                    seen.add(legacy_id)
+
+                phase_smart_screen_version_ids[str(item.id)] = normalized_ids
+                smart_screen_version_ids.update(normalized_ids)
+
+            smart_screen_version_name_map = {
+                str(item.id): item.name
+                for item in SmartScreenVersion.objects.filter(
+                    id__in=list(smart_screen_version_ids),
+                    is_deleted=False,
+                )
+            }
+
             phases = [
                 HardwarePhaseConfig(
                     stage_name=item.stage_name,
@@ -444,10 +473,20 @@ class ReportService:
                         item.cdc_platform.name if item.cdc_platform else None
                     ),
                     smart_screen_version_name=(
-                        item.smart_screen_version.name
-                        if item.smart_screen_version
+                        smart_screen_version_name_map.get(
+                            phase_smart_screen_version_ids.get(str(item.id), [None])[0]
+                        )
+                        if phase_smart_screen_version_ids.get(str(item.id))
                         else None
                     ),
+                    smart_screen_version_names=[
+                        smart_screen_version_name_map[version_id]
+                        for version_id in phase_smart_screen_version_ids.get(
+                            str(item.id),
+                            [],
+                        )
+                        if version_id in smart_screen_version_name_map
+                    ],
                 )
                 for item in phase_items
             ]

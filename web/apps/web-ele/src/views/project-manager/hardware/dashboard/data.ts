@@ -9,6 +9,7 @@ export interface PhaseBoardRow {
   project_name: string;
   scenario: 'cockpit' | 'vehicle';
   smart_screen_version_name?: string;
+  smart_screen_version_names?: string[];
   stage_end?: string;
   stage_name: string;
   stage_start?: string;
@@ -157,7 +158,9 @@ export function useCockpitColumns(): PhaseBoardColumns {
       title: '智慧屏版本',
       minWidth: 220,
       formatter: ({ row }: { row: PhaseBoardRow }) =>
-        row.smart_screen_version_name || '-',
+        (row.smart_screen_version_names || []).join(' / ') ||
+        row.smart_screen_version_name ||
+        '-',
     },
   ]) as PhaseBoardColumns;
 }

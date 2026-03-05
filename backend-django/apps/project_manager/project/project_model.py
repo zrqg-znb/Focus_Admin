@@ -116,6 +116,11 @@ class ProjectPhaseConfig(RootModel):
         related_name="phase_configs",
         verbose_name="智慧屏版本",
     )
+    smart_screen_version_ids = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name="智慧屏版本ID列表",
+    )
 
     class Meta:
         db_table = "pm_project_phase_config"

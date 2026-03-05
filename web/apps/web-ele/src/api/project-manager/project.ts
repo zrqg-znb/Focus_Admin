@@ -47,6 +47,8 @@ export interface ProjectPhaseConfig {
   cdc_platform_name?: string;
   smart_screen_version_id?: string;
   smart_screen_version_name?: string;
+  smart_screen_version_ids?: string[];
+  smart_screen_version_names?: string[];
 }
 
 export interface ProjectCreatePayload {

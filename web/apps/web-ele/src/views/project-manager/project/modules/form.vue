@@ -85,7 +85,7 @@ const idvpPlatformId = ref('');
 type PhaseConfigFormItem = {
   cdc_platform_id: string;
   id?: string;
-  smart_screen_version_id: string;
+  smart_screen_version_ids: string[];
   stage_name: string;
   stage_range: string[];
   vehicle_hardware: Array<{
@@ -289,7 +289,7 @@ function createEmptyVehiclePhase(): PhaseConfigFormItem {
     stage_range: [],
     vehicle_hardware: [{ point: '', board: '', config_type: '', bomid: '' }],
     cdc_platform_id: '',
-    smart_screen_version_id: '',
+    smart_screen_version_ids: [],
   };
 }
 
@@ -299,7 +299,7 @@ function createEmptyCockpitConfig(): PhaseConfigFormItem {
     stage_range: [],
     vehicle_hardware: [{ point: '', board: '', config_type: '', bomid: '' }],
     cdc_platform_id: '',
-    smart_screen_version_id: '',
+    smart_screen_version_ids: [],
   };
 }
 
@@ -325,6 +325,7 @@ function normalizePhaseConfigs(
     cdc_platform_id?: string;
     id?: string;
     smart_screen_version_id?: string;
+    smart_screen_version_ids?: string[];
     stage_end?: string;
     stage_name?: string;
     stage_start?: string;
@@ -336,6 +337,22 @@ function normalizePhaseConfigs(
     }>;
   }>,
 ) {
+  const resolveSmartScreenVersionIds = (item: {
+    smart_screen_version_id?: string;
+    smart_screen_version_ids?: string[];
+  }) => {
+    if (
+      item.smart_screen_version_ids &&
+      item.smart_screen_version_ids.length > 0
+    ) {
+      return item.smart_screen_version_ids;
+    }
+    if (item.smart_screen_version_id) {
+      return [item.smart_screen_version_id];
+    }
+    return [];
+  };
+
   if (!source || source.length === 0) {
     phaseConfigs.value =
       hardwareScenario.value === 'cockpit' ? [createEmptyCockpitConfig()] : [];
@@ -361,7 +378,7 @@ function normalizePhaseConfigs(
           }))
         : [{ point: '', board: '', config_type: '', bomid: '' }],
     cdc_platform_id: item.cdc_platform_id || '',
-    smart_screen_version_id: item.smart_screen_version_id || '',
+    smart_screen_version_ids: resolveSmartScreenVersionIds(item),
   }));
   const firstMapped = mapped[0] ?? createEmptyCockpitConfig();
   phaseConfigs.value =
@@ -407,11 +424,18 @@ function getConfigTypesByBoard(board: string) {
 function getPhasePayload() {
   if (hardwareScenario.value === 'cockpit') {
     const phase = phaseConfigs.value[0] || createEmptyCockpitConfig();
+    const smartScreenVersionIds = (phase.smart_screen_version_ids || []).filter(
+      (value) => !!String(value || '').trim(),
+    );
+    const primarySmartScreenVersionId =
+      smartScreenVersionIds.length > 0 ? smartScreenVersionIds[0] : undefined;
     return [
       {
         stage_name: cockpitStageName,
         cdc_platform_id: phase.cdc_platform_id || undefined,
-        smart_screen_version_id: phase.smart_screen_version_id || undefined,
+        smart_screen_version_ids:
+          smartScreenVersionIds.length > 0 ? smartScreenVersionIds : undefined,
+        smart_screen_version_id: primarySmartScreenVersionId,
       },
     ];
   }
@@ -539,7 +563,8 @@ function isHardwareConfigValid(showMessage = false) {
     if (
       hardwareScenario.value === 'cockpit' &&
       !phase.cdc_platform_id &&
-      !phase.smart_screen_version_id
+      (!phase.smart_screen_version_ids ||
+        phase.smart_screen_version_ids.length === 0)
     ) {
       if (showMessage) {
         ElMessage.warning('请至少配置 CDC 平台或智慧屏版本');
@@ -1285,9 +1310,12 @@ async function onSubmit() {
                         />
                       </ElSelect>
                       <ElSelect
-                        v-model="phase.smart_screen_version_id"
+                        v-model="phase.smart_screen_version_ids"
                         placeholder="选择智慧屏版本"
                         clearable
+                        collapse-tags
+                        collapse-tags-tooltip
+                        multiple
                       >
                         <ElOption
                           v-for="version in smartScreenVersions"

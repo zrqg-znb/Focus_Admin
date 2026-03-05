@@ -30,6 +30,21 @@ def _normalize_optional_text(value: str | None) -> str | None:
     return text or None
 
 
+def _normalize_id_list(raw_values) -> list[str]:
+    if raw_values is None:
+        return []
+    values = raw_values if isinstance(raw_values, list) else [raw_values]
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
+    return normalized
+
+
 def _normalize_iteration_quality_config(
     *,
     enable_iteration: bool,
@@ -173,10 +188,17 @@ def _build_phase_config_rows(
             )
         else:
             cdc_platform_id = str(item.get("cdc_platform_id") or "").strip()
-            smart_screen_version_id = str(
-                item.get("smart_screen_version_id") or ""
-            ).strip()
-            if not cdc_platform_id and not smart_screen_version_id:
+            smart_screen_version_ids = _normalize_id_list(
+                item.get("smart_screen_version_ids"),
+            )
+            if not smart_screen_version_ids:
+                legacy_smart_screen_version_id = str(
+                    item.get("smart_screen_version_id") or ""
+                ).strip()
+                if legacy_smart_screen_version_id:
+                    smart_screen_version_ids = [legacy_smart_screen_version_id]
+
+            if not cdc_platform_id and len(smart_screen_version_ids) == 0:
                 raise HttpError(
                     422,
                     f"阶段 {stage_name} 至少需要配置CDC平台或智慧屏版本",
@@ -188,11 +210,16 @@ def _build_phase_config_rows(
                 if not cdc_platform:
                     raise HttpError(422, f"阶段 {stage_name} 的CDC平台不存在")
 
-            smart_version = None
-            if smart_screen_version_id:
+            smart_versions_in_phase = []
+            for smart_screen_version_id in smart_screen_version_ids:
                 smart_version = smart_versions.get(smart_screen_version_id)
                 if not smart_version:
                     raise HttpError(422, f"阶段 {stage_name} 的智慧屏版本不存在")
+                smart_versions_in_phase.append(smart_version)
+
+            primary_smart_version = (
+                smart_versions_in_phase[0] if smart_versions_in_phase else None
+            )
 
             rows.append(
                 ProjectPhaseConfig(
@@ -203,7 +230,10 @@ def _build_phase_config_rows(
                     scenario=scenario,
                     vehicle_hardware=[],
                     cdc_platform=cdc_platform,
-                    smart_screen_version=smart_version,
+                    smart_screen_version=primary_smart_version,
+                    smart_screen_version_ids=[
+                        str(version.id) for version in smart_versions_in_phase
+                    ],
                 )
             )
 
