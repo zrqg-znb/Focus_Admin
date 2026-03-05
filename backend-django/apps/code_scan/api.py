@@ -18,6 +18,28 @@ from common.fu_auth import ApiKey
 
 router = Router()
 
+
+def _normalize_sub_modules(raw_value: str | List[str] | None) -> list[str]:
+    if not raw_value:
+        return []
+    values: list[str] = []
+    if isinstance(raw_value, str):
+        values = [item.strip() for item in raw_value.split(",")]
+    elif isinstance(raw_value, (list, tuple, set)):
+        values = [str(item).strip() for item in raw_value]
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not value:
+            continue
+        lowered = value.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        normalized.append(value)
+    return normalized
+
 # --- 项目管理 ---
 
 @router.get("/projects", response=PaginatedScanProjectSchema, auth=BearerAuth(), summary="获取项目列表")
@@ -75,11 +97,16 @@ def list_project_overview(request, page: int = 1, pageSize: int = 20):
         )
         counts_by_task = {str(x["task_id"]): int(x["cnt"]) for x in qs}
 
-    overview_by_project: dict[str, dict] = {p["id"]: {"tool_counts": {}, "total": 0} for p in projects}
+    overview_by_project: dict[str, dict] = {
+        p["id"]: {"tool_counts": {}, "total": None}
+        for p in projects
+    }
     for (pid, tool), t in latest_task_by_proj_tool.items():
         task_id = str(t["id"])
         cnt = counts_by_task.get(task_id, 0)
         overview_by_project[pid]["tool_counts"][tool] = cnt
+        if overview_by_project[pid]["total"] is None:
+            overview_by_project[pid]["total"] = 0
         overview_by_project[pid]["total"] += cnt
 
     items = [
@@ -110,12 +137,13 @@ def update_project(request, project_id: str, data: ScanProjectCreateSchema):
 def upload_report(request, 
                  project_key: str = Form(...), 
                  tool_name: str = Form('tscan'),
+                 sub_module: str = Form(""),
                  file: UploadedFile = File(...)):
     """
     接收流水线上传的扫描报告
     Auth: 无强制鉴权，依赖 project_key 校验
     """
-    task = ScanService.handle_upload(project_key, tool_name, file)
+    task = ScanService.handle_upload(project_key, tool_name, file, sub_module=sub_module)
     return task
 
 @router.post("/upload/chunk", auth=None, summary="分片上传扫描报告")
@@ -131,7 +159,8 @@ def upload_chunk(request, data: ChunkUploadSchema):
         data.total_chunks, 
         data.chunk_content, 
         data.file_id,
-        data.file_ext
+        data.file_ext,
+        data.sub_module,
     )
     return result
 
@@ -199,7 +228,14 @@ def list_result_shield_records(request, result_id: str):
     return payload
 
 @router.get("/projects/{project_id}/latest-results", response=PaginatedScanResultSchema, auth=BearerAuth(), summary="获取最新扫描结果")
-def list_latest_results(request, project_id: str, tool_name: str = None, page: int = 1, pageSize: int = 20):
+def list_latest_results(
+    request,
+    project_id: str,
+    tool_name: str = None,
+    sub_modules: str = None,
+    page: int = 1,
+    pageSize: int = 20,
+):
     tasks_qs = ScanTask.objects.filter(project_id=project_id, is_deleted=False, status="success")
     
     if tool_name:
@@ -207,19 +243,48 @@ def list_latest_results(request, project_id: str, tool_name: str = None, page: i
         # Actually, we want latest task per tool, but filter by tool_name if provided
         tasks_qs = tasks_qs.filter(tool_name=tool_name)
 
-    tasks = (
-        tasks_qs
-        .order_by("-sys_create_datetime")
-        .values("id", "tool_name", "sys_create_datetime")
-    )
+    normalized_modules = _normalize_sub_modules(sub_modules)
 
-    latest_task_by_tool: dict[str, str] = {}
-    for t in tasks:
-        tool = t["tool_name"]
-        if tool not in latest_task_by_tool:
-            latest_task_by_tool[tool] = str(t["id"])
+    task_ids: list[str] = []
+    if (
+        tool_name
+        and tool_name.lower() == "valgrind"
+        and normalized_modules
+    ):
+        module_lower_set = {item.lower() for item in normalized_modules}
+        tasks = (
+            tasks_qs.exclude(sub_module="")
+            .order_by("-sys_create_datetime")
+            .values("id", "sub_module")
+        )
+        latest_task_by_module: dict[str, str] = {}
+        for task in tasks:
+            module_value = str(task.get("sub_module") or "").strip()
+            if not module_value:
+                continue
+            module_lower = module_value.lower()
+            if module_lower not in module_lower_set:
+                continue
+            if module_lower in latest_task_by_module:
+                continue
+            latest_task_by_module[module_lower] = str(task["id"])
+            if len(latest_task_by_module) == len(module_lower_set):
+                break
+        task_ids = list(latest_task_by_module.values())
+    else:
+        tasks = (
+            tasks_qs
+            .order_by("-sys_create_datetime")
+            .values("id", "tool_name", "sys_create_datetime")
+        )
 
-    task_ids = list(latest_task_by_tool.values())
+        latest_task_by_tool: dict[str, str] = {}
+        for t in tasks:
+            tool = t["tool_name"]
+            if tool not in latest_task_by_tool:
+                latest_task_by_tool[tool] = str(t["id"])
+        task_ids = list(latest_task_by_tool.values())
+
     if not task_ids:
         return {"items": [], "total": 0}
 
@@ -241,6 +306,7 @@ def list_latest_results(request, project_id: str, tool_name: str = None, page: i
                 "id": str(r.id),
                 "task_id": str(r.task_id),
                 "tool_name": r.task.tool_name,
+                "sub_module": r.task.sub_module,
                 "file_path": r.file_path,
                 "line_number": r.line_number,
                 "defect_type": r.defect_type,

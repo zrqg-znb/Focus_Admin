@@ -41,7 +41,17 @@ export const listResultsApi = (taskId: string) => {
   return requestClient.get('/api/code-scan/results', { params: { task_id: taskId } });
 };
 
-export const listLatestResultsApi = (projectId: string, params?: any) => {
+export interface LatestResultsQueryParams {
+  page?: number;
+  pageSize?: number;
+  sub_modules?: string;
+  tool_name?: string;
+}
+
+export const listLatestResultsApi = (
+  projectId: string,
+  params?: LatestResultsQueryParams,
+) => {
   return requestClient.get(`/api/code-scan/projects/${projectId}/latest-results`, { params });
 };
 

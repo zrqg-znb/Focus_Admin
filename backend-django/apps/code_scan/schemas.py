@@ -99,18 +99,20 @@ class ChunkUploadSchema(Schema):
     chunk_content: str  # Base64 or plain text content of the chunk
     file_id: str # Unique ID for the file session
     file_ext: Optional[str] = None
+    sub_module: Optional[str] = None
 
 class ProjectOverviewSchema(Schema):
     project_id: str
     project_name: str
     tool_counts: dict[str, int]
-    total: int
+    total: Optional[int] = None
     latest_time: Optional[str] = None
 
 class LatestScanResultSchema(Schema):
     id: str
     task_id: str
     tool_name: str
+    sub_module: Optional[str] = None
     file_path: str
     line_number: int
     defect_type: str

@@ -91,6 +91,9 @@ def list_configs(request, filters: ConfigFilterSchema = Query(...)):
                 compile_check_task_id=cfg.compile_check_task_id,
                 dt_project_id=cfg.dt_project_id,
                 code_scan_project_key=cfg.code_scan_project_key,
+                valgrind_sub_modules=integration_service.normalize_sub_modules(
+                    cfg.valgrind_sub_modules,
+                ),
             )
         )
     return rows
@@ -113,6 +116,9 @@ def create_config(request, payload: ProjectConfigUpsertIn):
         compile_check_task_id=payload.compile_check_task_id,
         dt_project_id=payload.dt_project_id,
         code_scan_project_key=payload.code_scan_project_key,
+        valgrind_sub_modules=integration_service.normalize_sub_modules(
+            payload.valgrind_sub_modules,
+        ),
     )
     if payload.managers:
         cfg.managers.set(payload.managers)
@@ -141,6 +147,9 @@ def update_config(request, config_id: str, payload: ProjectConfigUpsertIn):
     cfg.compile_check_task_id = payload.compile_check_task_id
     cfg.dt_project_id = payload.dt_project_id
     cfg.code_scan_project_key = payload.code_scan_project_key
+    cfg.valgrind_sub_modules = integration_service.normalize_sub_modules(
+        payload.valgrind_sub_modules,
+    )
     cfg.save()
     return True
 

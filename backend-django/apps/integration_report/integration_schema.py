@@ -26,6 +26,7 @@ class ProjectConfigOut(Schema):
     subscribed: bool
     latest_date: Optional[date] = None
     code_scan_project_key: str = ""
+    valgrind_sub_modules: List[str] = []
     code_metrics: List[MetricCell] = []
     dt_metrics: List[MetricCell] = []
 
@@ -41,6 +42,7 @@ class ProjectConfigUpsertIn(Schema):
     compile_check_task_id: str = ""
     dt_project_id: str = ""
     code_scan_project_key: str = ""
+    valgrind_sub_modules: List[str] = []
 
 
 class ConfigFilterSchema(Schema):
@@ -61,6 +63,7 @@ class ProjectConfigManageRow(Schema):
     compile_check_task_id: str
     dt_project_id: str
     code_scan_project_key: str
+    valgrind_sub_modules: List[str]
 
 
 class SubscriptionToggleIn(Schema):

@@ -42,6 +42,7 @@ const CODE_COLS = [
   { key: 'compile_error_num', name: 'Compile 错误数' },
   { key: 'tscan_error_num', name: 'TScan 问题数' },
   { key: 'tsan_error_num', name: 'TSan 问题数' },
+  { key: 'valgrind_error_num', name: 'Valgrind 问题数' },
   { key: 'cppcheck_error_num', name: 'Cppcheck 问题数' },
   { key: 'weggli_error_num', name: 'Weggli 问题数' },
   { key: 'cooddy_error_num', name: 'Cooddy 问题数' },
@@ -59,7 +60,7 @@ const DT_COLS = [
 function cellText(c?: MetricCell) {
   if (!c) return '-';
   if (c.text) return c.text;
-  if (c.value === undefined || c.value === null) return '-';
+  if (c.value === undefined || c.value === null) return '未扫描';
   const s = `${c.value}`;
   return c.unit ? `${s}${c.unit}` : s;
 }

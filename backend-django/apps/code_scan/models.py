@@ -36,6 +36,12 @@ class ScanTask(RootModel):
     
     report_file = models.CharField(max_length=500, null=True, blank=True, verbose_name="报告文件路径")
     log = models.TextField(null=True, blank=True, verbose_name="处理日志")
+    sub_module = models.CharField(
+        max_length=128,
+        blank=True,
+        default="",
+        verbose_name="子模块",
+    )
     
     scan_time = models.DateTimeField(null=True, blank=True, verbose_name="扫描时间")
     processed_time = models.DateTimeField(null=True, blank=True, verbose_name="解析完成时间")

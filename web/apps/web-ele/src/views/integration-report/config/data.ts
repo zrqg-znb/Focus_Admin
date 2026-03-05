@@ -39,6 +39,16 @@ export function useColumns(
       title: 'CodeScan ProjectKey',
       minWidth: 180,
     },
+    {
+      field: 'valgrind_sub_modules',
+      title: 'Valgrind 子模块',
+      minWidth: 220,
+      formatter: ({ row }) =>
+        Array.isArray(row.valgrind_sub_modules) &&
+        row.valgrind_sub_modules.length > 0
+          ? row.valgrind_sub_modules.join(', ')
+          : '-',
+    },
     { field: 'dt_project_id', title: 'DT Project ID', minWidth: 150 },
     {
       field: 'action',

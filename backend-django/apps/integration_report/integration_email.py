@@ -13,6 +13,7 @@ CODE_COLUMNS = [
     ("compile_error_num", "Compile 错误数"),
     ("tscan_error_num", "TScan 问题数"),
     ("tsan_error_num", "TSan 问题数"),
+    ("valgrind_error_num", "Valgrind 问题数"),
     ("cppcheck_error_num", "Cppcheck 问题数"),
     ("weggli_error_num", "Weggli 问题数"),
     ("cooddy_error_num", "Cooddy 问题数"),
@@ -138,7 +139,7 @@ def build_daily_email_html(record_date: date, projects: List[Dict]) -> str:
             <h2 class="title">每日集成报告 · {record_date.isoformat()}</h2>
             <div class="sub">本邮件仅包含你订阅的配置；<span class="warn-note">红色指标表示预警</span>，支持点击跳转详情。</div>
           </div>
-          {_render_table("代码检测与代码扫描数据", "CODE_KEYS 大表格（含 tscan / tsan / cppcheck / weggli / cooddy / binexplorer / clang-tidy）", projects, CODE_COLUMNS)}
+          {_render_table("代码检测与代码扫描数据", "CODE_KEYS 大表格（含 tscan / tsan / valgrind / cppcheck / weggli / cooddy / binexplorer / clang-tidy）", projects, CODE_COLUMNS)}
           {_render_table("DT 测试数据", "覆盖率、通过率与通过数", projects, DT_COLUMNS)}
           <div class="footer">
             自动发送于每日任务，如数据缺失会显示为“-”或“0”。

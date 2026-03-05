@@ -16,6 +16,17 @@ import {
 
 defineOptions({ name: 'DailyIntegrationSubscribe' });
 
+function metricText(row: ProjectConfigOut, metricKey: string) {
+  const metric = (row.code_metrics || []).find(
+    (item) => item.key === metricKey,
+  );
+  if (!metric) return '-';
+  if (metric.text) return metric.text;
+  if (metric.value === null || metric.value === undefined) return '-';
+  const value = `${metric.value}`;
+  return metric.unit ? `${value}${metric.unit}` : value;
+}
+
 const gridOptions: VxeGridProps<ProjectConfigOut> = {
   columns: [
     {
@@ -33,6 +44,12 @@ const gridOptions: VxeGridProps<ProjectConfigOut> = {
       formatter: ({ row }) => row.managers || row.project_managers,
     },
     { field: 'latest_date', title: '最新数据', width: 120 },
+    {
+      field: 'valgrind_error_num',
+      title: 'Valgrind 问题数',
+      width: 140,
+      formatter: ({ row }) => metricText(row, 'valgrind_error_num'),
+    },
     {
       field: 'status',
       title: '状态',

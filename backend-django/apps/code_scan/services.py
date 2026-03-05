@@ -65,6 +65,10 @@ class ScanService:
             "thread-sanitizer": "tsan",
         }
         return aliases.get(normalized, normalized)
+
+    @staticmethod
+    def _normalize_sub_module(sub_module: str | None) -> str:
+        return (sub_module or "").strip()
     
     @staticmethod
     def create_project(data: dict, user: User) -> ScanProject:
@@ -90,9 +94,19 @@ class ScanService:
         return project
 
     @staticmethod
-    def handle_upload(project_key: str, tool_name: str, file_obj) -> ScanTask:
+    def handle_upload(
+        project_key: str,
+        tool_name: str,
+        file_obj,
+        sub_module: str | None = None,
+    ) -> ScanTask:
         """接收文件上传并触发解析"""
         normalized_tool = ScanService._normalize_tool_name(tool_name)
+        normalized_sub_module = (
+            ScanService._normalize_sub_module(sub_module)
+            if normalized_tool == "valgrind"
+            else ""
+        )
         try:
             project = ScanProject.objects.get(project_key=project_key)
         except ScanProject.DoesNotExist:
@@ -110,6 +124,7 @@ class ScanService:
             source="pipeline",
             report_file=full_path,
             scan_time=datetime.now(),
+            sub_module=normalized_sub_module,
         )
 
         try:
@@ -124,11 +139,25 @@ class ScanService:
         return task
 
     @staticmethod
-    def handle_chunk_upload(project_key: str, tool_name: str, chunk_index: int, total_chunks: int, chunk_content: str, file_id: str, file_ext: str = None) -> dict:
+    def handle_chunk_upload(
+        project_key: str,
+        tool_name: str,
+        chunk_index: int,
+        total_chunks: int,
+        chunk_content: str,
+        file_id: str,
+        file_ext: str = None,
+        sub_module: str | None = None,
+    ) -> dict:
         """
         处理分片上传的 JSON 文本内容
         """
         normalized_tool = ScanService._normalize_tool_name(tool_name)
+        normalized_sub_module = (
+            ScanService._normalize_sub_module(sub_module)
+            if normalized_tool == "valgrind"
+            else ""
+        )
         try:
             project = ScanProject.objects.get(project_key=project_key)
         except ScanProject.DoesNotExist:
@@ -191,7 +220,8 @@ class ScanService:
                 status='processing',
                 source='pipeline',
                 report_file=full_path,
-                scan_time=datetime.now()
+                scan_time=datetime.now(),
+                sub_module=normalized_sub_module,
             )
             
             # 触发解析处理

@@ -1,6 +1,7 @@
 from collections import defaultdict
 from datetime import date
 from typing import Dict, List, Optional
+from urllib.parse import urlencode
 
 from django.db import transaction
 from django.db.models import Count, Max, Q
@@ -27,6 +28,7 @@ CODE_KEYS = [
     "compile_error_num",
     "tscan_error_num",
     "tsan_error_num",
+    "valgrind_error_num",
     "cppcheck_error_num",
     "weggli_error_num",
     "cooddy_error_num",
@@ -43,11 +45,23 @@ DT_KEYS = [
 SCAN_METRIC_TOOL_ALIAS_MAP = {
     "tscan_error_num": {"tscan"},
     "tsan_error_num": {"tsan"},
+    "valgrind_error_num": {"valgrind"},
     "cppcheck_error_num": {"cppcheck"},
     "weggli_error_num": {"weggli"},
     "cooddy_error_num": {"cooddy"},
     "binexplorer_error_num": {"binexplorer"},
     "clang_tidy_error_num": {"clang-tidy", "clang_tidy", "clangtidy"},
+}
+
+SCAN_METRIC_PRIMARY_TOOL_MAP = {
+    "tscan_error_num": "tscan",
+    "tsan_error_num": "tsan",
+    "valgrind_error_num": "valgrind",
+    "cppcheck_error_num": "cppcheck",
+    "weggli_error_num": "weggli",
+    "cooddy_error_num": "cooddy",
+    "binexplorer_error_num": "binexplorer",
+    "clang_tidy_error_num": "clang-tidy",
 }
 
 
@@ -72,14 +86,53 @@ def _eval_level(defn: IntegrationMetricDefinition, value: Optional[float]) -> st
     return "danger" if hit else "normal"
 
 
-def _build_scan_metric_defaults() -> Dict[str, tuple[float, str]]:
-    return {metric_key: (0.0, "") for metric_key in SCAN_METRIC_TOOL_ALIAS_MAP}
+def _build_scan_metric_defaults() -> Dict[str, tuple[Optional[float], str]]:
+    return {metric_key: (None, "") for metric_key in SCAN_METRIC_TOOL_ALIAS_MAP}
+
+
+def normalize_sub_modules(raw_value) -> List[str]:
+    if raw_value is None:
+        return []
+
+    if isinstance(raw_value, str):
+        values = raw_value.replace(",", "\n").splitlines()
+    elif isinstance(raw_value, (list, tuple, set)):
+        values = raw_value
+    else:
+        return []
+
+    normalized: List[str] = []
+    seen: set[str] = set()
+    for item in values:
+        value = str(item).strip()
+        if not value:
+            continue
+        lowered = value.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        normalized.append(value)
+    return normalized
+
+
+def _build_code_scan_detail_url(
+    scan_project_id: str,
+    metric_key: str,
+    sub_modules: Optional[List[str]] = None,
+) -> str:
+    params = {"projectId": str(scan_project_id)}
+    tool_name = SCAN_METRIC_PRIMARY_TOOL_MAP.get(metric_key)
+    if tool_name:
+        params["tool"] = tool_name
+    if sub_modules:
+        params["sub_modules"] = ",".join(sub_modules)
+    return f"/code_scan/result?{urlencode(params)}"
 
 
 def _fetch_code_scan_metrics(
     config: IntegrationProjectConfig,
     record_date: date,
-) -> Dict[str, tuple[float, str]]:
+) -> Dict[str, tuple[Optional[float], str]]:
     metric_payload = _build_scan_metric_defaults()
     project_key = (config.code_scan_project_key or "").strip()
     if not project_key:
@@ -91,6 +144,11 @@ def _fetch_code_scan_metrics(
     ).first()
     if not scan_project:
         return metric_payload
+
+    fallback_urls = {
+        key: _build_code_scan_detail_url(scan_project.id, key)
+        for key in SCAN_METRIC_TOOL_ALIAS_MAP
+    }
 
     latest_task_by_metric: Dict[str, str] = {}
     tasks = (
@@ -111,22 +169,84 @@ def _fetch_code_scan_metrics(
             if raw_tool in aliases and metric_key not in latest_task_by_metric:
                 latest_task_by_metric[metric_key] = str(item["id"])
 
-    if not latest_task_by_metric:
-        detail_url = f"/code_scan/result?projectId={scan_project.id}"
-        return {key: (0.0, detail_url) for key in SCAN_METRIC_TOOL_ALIAS_MAP}
+    if latest_task_by_metric:
+        task_ids = list(set(latest_task_by_metric.values()))
+        counts = (
+            ScanResult.objects.filter(task_id__in=task_ids, is_deleted=False)
+            .exclude(shield_status="Shielded")
+            .values("task_id")
+            .annotate(cnt=Count("id"))
+        )
+        count_map = {str(row["task_id"]): float(row["cnt"]) for row in counts}
+        for metric_key, task_id in latest_task_by_metric.items():
+            metric_payload[metric_key] = (
+                count_map.get(task_id, 0.0),
+                fallback_urls[metric_key],
+            )
 
-    task_ids = list(set(latest_task_by_metric.values()))
-    counts = (
-        ScanResult.objects.filter(task_id__in=task_ids, is_deleted=False)
-        .exclude(shield_status="Shielded")
-        .values("task_id")
-        .annotate(cnt=Count("id"))
+    valgrind_modules = normalize_sub_modules(
+        getattr(config, "valgrind_sub_modules", []),
     )
-    count_map = {str(row["task_id"]): float(row["cnt"]) for row in counts}
+    if valgrind_modules:
+        module_lower_set = {item.lower() for item in valgrind_modules}
+        valgrind_tasks = (
+            ScanTask.objects.filter(
+                is_deleted=False,
+                project=scan_project,
+                tool_name="valgrind",
+                status="success",
+                sys_create_datetime__date__lte=record_date,
+            )
+            .exclude(sub_module="")
+            .order_by("-sys_create_datetime")
+            .values("id", "sub_module")
+        )
 
-    detail_url = f"/code_scan/result?projectId={scan_project.id}"
-    for metric_key, task_id in latest_task_by_metric.items():
-        metric_payload[metric_key] = (count_map.get(task_id, 0.0), detail_url)
+        latest_task_by_module: Dict[str, str] = {}
+        for task in valgrind_tasks:
+            module_value = str(task.get("sub_module") or "").strip()
+            if not module_value:
+                continue
+            lowered = module_value.lower()
+            if lowered not in module_lower_set:
+                continue
+            if lowered in latest_task_by_module:
+                continue
+            latest_task_by_module[lowered] = str(task["id"])
+            if len(latest_task_by_module) == len(module_lower_set):
+                break
+
+        valgrind_count: Optional[float] = None
+        valgrind_task_ids = list(set(latest_task_by_module.values()))
+        if valgrind_task_ids:
+            valgrind_count = float(
+                ScanResult.objects.filter(
+                    task_id__in=valgrind_task_ids,
+                    is_deleted=False,
+                )
+                .exclude(shield_status="Shielded")
+                .count()
+            )
+
+        metric_payload["valgrind_error_num"] = (
+            valgrind_count,
+            _build_code_scan_detail_url(
+                scan_project.id,
+                "valgrind_error_num",
+                sub_modules=valgrind_modules,
+            ),
+        )
+
+    if not latest_task_by_metric and not valgrind_modules:
+        return {
+            key: (None, fallback_urls[key])
+            for key in SCAN_METRIC_TOOL_ALIAS_MAP
+        }
+
+    for metric_key, (value, url) in list(metric_payload.items()):
+        if url:
+            continue
+        metric_payload[metric_key] = (value, fallback_urls[metric_key])
 
     return metric_payload
 
@@ -139,6 +259,7 @@ def ensure_default_metric_definitions():
         ("code", "compile_error_num", "Compile 错误数", "number", "", ">", 0),
         ("code", "tscan_error_num", "TScan 问题数", "number", "", ">", 0),
         ("code", "tsan_error_num", "TSan 问题数", "number", "", ">", 0),
+        ("code", "valgrind_error_num", "Valgrind 问题数", "number", "", ">", 0),
         ("code", "cppcheck_error_num", "Cppcheck 问题数", "number", "", ">", 0),
         ("code", "weggli_error_num", "Weggli 问题数", "number", "", ">", 0),
         ("code", "cooddy_error_num", "Cooddy 问题数", "number", "", ">", 0),
@@ -194,7 +315,11 @@ def collect_daily_metrics(record_date: Optional[date] = None, config_ids: Option
                 metric=defn,
                 defaults={
                     "value_number": val,
-                    "value_text": "error" if val is None else "",
+                    "value_text": (
+                        ""
+                        if key in SCAN_METRIC_TOOL_ALIAS_MAP
+                        else ("error" if val is None else "")
+                    ),
                     "detail_url": url,
                 },
             )
@@ -284,6 +409,7 @@ def list_configs_with_latest(user: User, keyword: Optional[str] = None) -> List[
                 subscribed=str(cfg.id) in subscribed_ids,
                 latest_date=latest_date,
                 code_scan_project_key=cfg.code_scan_project_key,
+                valgrind_sub_modules=normalize_sub_modules(cfg.valgrind_sub_modules),
                 code_metrics=make_cells(CODE_KEYS),
                 dt_metrics=make_cells(DT_KEYS),
             )

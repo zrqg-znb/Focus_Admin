@@ -12,6 +12,23 @@ const route = useRoute();
 const router = useRouter();
 const projectId = computed(() => route.query.projectId as string | undefined);
 const isDetail = computed(() => Boolean(projectId.value));
+const preferredTool = computed(() => {
+  const tool =
+    (route.query.tool as string | undefined) ||
+    (route.query.tool_name as string | undefined) ||
+    '';
+  return String(tool).trim().toLowerCase();
+});
+const routeSubModules = computed(() => {
+  const raw = route.query.sub_modules;
+  if (Array.isArray(raw)) {
+    return raw
+      .map((item) => String(item).trim())
+      .filter(Boolean)
+      .join(',');
+  }
+  return String(raw || '').trim();
+});
 
 const shieldVisible = ref(false);
 const shieldForm = ref({
@@ -32,7 +49,7 @@ const ALL_SCAN_TOOLS = [
 ];
 
 const tools = ref<string[]>([]);
-const toolCountMap = ref<Record<string, number>>({});
+const toolCountMap = ref<Record<string, null | number>>({});
 const activeTool = ref('');
 
 const summaryGridOptions: any = {
@@ -71,9 +88,13 @@ const summaryGridOptions: any = {
         });
 
         const items = itemsData.map((row: any) => {
-          const normalizedCounts: Record<string, number> = {};
+          const normalizedCounts: Record<string, null | number> = {};
           for (const tool of toolNames) {
-            normalizedCounts[tool] = Number(row.tool_counts?.[tool] || 0);
+            const toolCounts = row.tool_counts || {};
+            const hasValue = Object.prototype.hasOwnProperty.call(toolCounts, tool);
+            normalizedCounts[tool] = hasValue
+              ? Number(toolCounts[tool] || 0)
+              : null;
           }
           return { ...row, ...normalizedCounts };
         });
@@ -97,11 +118,15 @@ const detailGridOptions: any = {
       query: async ({ page }: any) => {
         if (!projectId.value || !activeTool.value) return { items: [], total: 0 };
         try {
-            const res = await listLatestResultsApi(projectId.value, {
+            const params: Record<string, any> = {
                 tool_name: activeTool.value,
                 page: page.currentPage,
                 pageSize: page.pageSize
-            });
+            };
+            if (activeTool.value === 'valgrind' && routeSubModules.value) {
+              params.sub_modules = routeSubModules.value;
+            }
+            const res = await listLatestResultsApi(projectId.value, params);
             // Debug info
             // console.log('Scan Results:', res);
             
@@ -127,11 +152,8 @@ async function loadTools() {
 
   tools.value = [...ALL_SCAN_TOOLS];
   toolCountMap.value = Object.fromEntries(
-    ALL_SCAN_TOOLS.map((tool) => [tool, 0]),
+    ALL_SCAN_TOOLS.map((tool) => [tool, null]),
   );
-  if (!activeTool.value || !tools.value.includes(activeTool.value)) {
-    activeTool.value = tools.value[0] || '';
-  }
 
   try {
     const res: any = await listProjectOverviewApi({
@@ -149,19 +171,42 @@ async function loadTools() {
           tools.value.push(tool);
         }
       }
-      const merged: Record<string, number> = {};
+      const merged: Record<string, null | number> = {};
       for (const tool of tools.value) {
-        merged[tool] = Number(project.tool_counts?.[tool] || 0);
+        const toolCounts = project.tool_counts || {};
+        const hasValue = Object.prototype.hasOwnProperty.call(toolCounts, tool);
+        merged[tool] = hasValue
+          ? Number(toolCounts[tool] || 0)
+          : null;
       }
       toolCountMap.value = merged;
     }
   } catch (e) {
     console.error(e);
   }
+
+  if (preferredTool.value && !tools.value.includes(preferredTool.value)) {
+    tools.value.push(preferredTool.value);
+    if (!(preferredTool.value in toolCountMap.value)) {
+      toolCountMap.value[preferredTool.value] = null;
+    }
+  }
+  if (preferredTool.value && tools.value.includes(preferredTool.value)) {
+    activeTool.value = preferredTool.value;
+    return;
+  }
+  if (!activeTool.value || !tools.value.includes(activeTool.value)) {
+    activeTool.value = tools.value[0] || '';
+  }
 }
 
 function handleTabChange() {
     detailGridApi.reload();
+}
+
+function displayCount(value: null | number | undefined) {
+  if (value === null || value === undefined) return '未扫描';
+  return String(value);
 }
 
 onMounted(async () => {
@@ -174,7 +219,12 @@ onMounted(async () => {
 });
 
 watch(
-  () => route.query.projectId,
+  () => [
+    route.query.projectId,
+    route.query.tool,
+    route.query.tool_name,
+    route.query.sub_modules,
+  ],
   async () => {
     if (isDetail.value) {
       await loadTools();
@@ -290,7 +340,7 @@ async function handleExpandTabChange(resultId: string, name: any) {
               <ElTabPane
                 v-for="tool in tools"
                 :key="tool"
-                :label="`${tool} (${toolCountMap[tool] ?? 0})`"
+                :label="`${tool} (${displayCount(toolCountMap[tool])})`"
                 :name="tool"
               />
           </ElTabs>

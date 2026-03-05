@@ -28,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-key", required=True, help="代码扫描项目 project_key")
     parser.add_argument("--api-base", required=True, help="服务地址，如 http://host:8001")
     parser.add_argument("--tool-name", default="valgrind", help="上传工具名，默认 valgrind")
+    parser.add_argument("--sub-module", default="", help="子模块标识（推荐必填）")
     parser.add_argument("--output", help="解析后 JSON 输出路径，不传则自动生成")
     parser.add_argument(
         "--upload-mode",
@@ -128,6 +129,7 @@ def upload_direct(
     file_path: Path,
     project_key: str,
     tool_name: str,
+    sub_module: str,
     api_base: str,
     timeout: int,
     retries: int,
@@ -140,7 +142,11 @@ def upload_direct(
     file_bytes = file_path.read_bytes()
 
     chunks = []
-    for key, value in (("project_key", project_key), ("tool_name", tool_name)):
+    for key, value in (
+        ("project_key", project_key),
+        ("tool_name", tool_name),
+        ("sub_module", sub_module),
+    ):
         chunks.append(f"--{boundary}".encode("utf-8"))
         chunks.append(
             f'Content-Disposition: form-data; name="{key}"'.encode("utf-8"),
@@ -173,6 +179,7 @@ def upload_chunk(
     file_path: Path,
     project_key: str,
     tool_name: str,
+    sub_module: str,
     api_base: str,
     chunk_size: int,
     timeout: int,
@@ -191,6 +198,7 @@ def upload_chunk(
         payload = {
             "project_key": project_key,
             "tool_name": tool_name,
+            "sub_module": sub_module,
             "chunk_index": index,
             "total_chunks": total_chunks,
             "chunk_content": content[start:end],
@@ -231,6 +239,7 @@ def main() -> int:
             output_path,
             args.project_key,
             args.tool_name,
+            args.sub_module,
             api_base,
             args.timeout,
             args.retries,
@@ -240,6 +249,7 @@ def main() -> int:
             output_path,
             args.project_key,
             args.tool_name,
+            args.sub_module,
             api_base,
             args.chunk_size,
             args.timeout,
@@ -250,6 +260,7 @@ def main() -> int:
     print(f"[pipeline-valgrind] parsed_json: {output_path}")
     print(f"[pipeline-valgrind] findings: {findings_count}")
     print(f"[pipeline-valgrind] upload_mode: {mode}")
+    print(f"[pipeline-valgrind] sub_module: {args.sub_module or '-'}")
     print(
         "[pipeline-valgrind] upload_result: "
         f"{json.dumps(upload_result, ensure_ascii=False)}",

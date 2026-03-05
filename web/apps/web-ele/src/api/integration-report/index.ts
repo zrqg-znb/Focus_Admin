@@ -25,6 +25,7 @@ export interface ProjectConfigOut {
   subscribed: boolean;
   latest_date?: null | string;
   code_scan_project_key?: string;
+  valgrind_sub_modules?: string[];
   code_metrics: MetricCell[];
   dt_metrics: MetricCell[];
 }
@@ -43,6 +44,7 @@ export interface ProjectConfigManageRow {
   compile_check_task_id: string;
   dt_project_id: string;
   code_scan_project_key: string;
+  valgrind_sub_modules: string[];
 }
 
 export interface ProjectConfigUpsertIn {
@@ -56,6 +58,7 @@ export interface ProjectConfigUpsertIn {
   compile_check_task_id: string;
   dt_project_id: string;
   code_scan_project_key: string;
+  valgrind_sub_modules: string[];
 }
 
 export interface HistoryRow {

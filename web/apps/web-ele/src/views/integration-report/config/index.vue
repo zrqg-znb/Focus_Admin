@@ -48,6 +48,7 @@ const allProjects = ref<
   Array<{ domain: string; id: string; name: string; type: string }>
 >([]);
 const formConfigId = ref<string>('');
+const valgrindSubModulesText = ref('');
 const form = ref<ProjectConfigUpsertIn>({
   project_id: '',
   name: '',
@@ -59,6 +60,7 @@ const form = ref<ProjectConfigUpsertIn>({
   compile_check_task_id: '',
   dt_project_id: '',
   code_scan_project_key: '',
+  valgrind_sub_modules: [],
 });
 
 // --- Grid Setup ---
@@ -109,6 +111,25 @@ const [Grid, gridApi] = useVbenVxeGrid({
 
 // --- Helper Functions ---
 
+function normalizeValgrindSubModules(rawValue: string) {
+  const values = rawValue
+    .replaceAll(',', '\n')
+    .split('\n')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const lowered = value.toLowerCase();
+    if (seen.has(lowered)) {
+      continue;
+    }
+    seen.add(lowered);
+    normalized.push(value);
+  }
+  return normalized;
+}
+
 function payloadOf(r: ProjectConfigManageRow): ProjectConfigUpsertIn {
   return {
     project_id: r.project_id,
@@ -121,6 +142,16 @@ function payloadOf(r: ProjectConfigManageRow): ProjectConfigUpsertIn {
     compile_check_task_id: r.compile_check_task_id || '',
     dt_project_id: r.dt_project_id || '',
     code_scan_project_key: r.code_scan_project_key || '',
+    valgrind_sub_modules: r.valgrind_sub_modules || [],
+  };
+}
+
+function buildSubmitPayload(): ProjectConfigUpsertIn {
+  return {
+    ...form.value,
+    valgrind_sub_modules: normalizeValgrindSubModules(
+      valgrindSubModulesText.value,
+    ),
   };
 }
 
@@ -160,7 +191,9 @@ function openCreate() {
     compile_check_task_id: '',
     dt_project_id: '',
     code_scan_project_key: '',
+    valgrind_sub_modules: [],
   };
+  valgrindSubModulesText.value = '';
   dialogVisible.value = true;
   ensureProjectsLoaded();
 }
@@ -169,6 +202,7 @@ function openEdit(r: ProjectConfigManageRow) {
   dialogMode.value = 'edit';
   formConfigId.value = r.id;
   form.value = payloadOf(r);
+  valgrindSubModulesText.value = (r.valgrind_sub_modules || []).join('\n');
   dialogVisible.value = true;
   ensureProjectsLoaded();
 }
@@ -189,11 +223,12 @@ async function submitDialog() {
   }
   try {
     dialogSaving.value = true;
+    const payload = buildSubmitPayload();
     if (dialogMode.value === 'create') {
-      await createIntegrationConfigApi(form.value);
+      await createIntegrationConfigApi(payload);
       ElMessage.success('创建成功');
     } else {
-      await updateIntegrationConfigApi(formConfigId.value, form.value);
+      await updateIntegrationConfigApi(formConfigId.value, payload);
       ElMessage.success('更新成功');
     }
     dialogVisible.value = false;
@@ -364,6 +399,14 @@ async function mockSendEmails() {
           <ElInput
             v-model="form.code_scan_project_key"
             placeholder="项目管理中的 project_key"
+          />
+        </ElFormItem>
+        <ElFormItem label="Valgrind 子模块">
+          <ElInput
+            v-model="valgrindSubModulesText"
+            :rows="4"
+            type="textarea"
+            placeholder="每行一个子模块，例如：&#10;platform-core&#10;customer-a"
           />
         </ElFormItem>
         <ElFormItem label="DT Project ID">

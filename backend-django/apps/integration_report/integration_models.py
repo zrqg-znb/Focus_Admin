@@ -32,6 +32,11 @@ class IntegrationProjectConfig(RootModel):
         default="",
         verbose_name="代码扫描项目Key",
     )
+    valgrind_sub_modules = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name="Valgrind子模块列表",
+    )
 
     class Meta:
         db_table = "ir_project_config"
