@@ -102,11 +102,7 @@ class ScanService:
     ) -> ScanTask:
         """接收文件上传并触发解析"""
         normalized_tool = ScanService._normalize_tool_name(tool_name)
-        normalized_sub_module = (
-            ScanService._normalize_sub_module(sub_module)
-            if normalized_tool == "valgrind"
-            else ""
-        )
+        normalized_sub_module = ScanService._normalize_sub_module(sub_module)
         try:
             project = ScanProject.objects.get(project_key=project_key)
         except ScanProject.DoesNotExist:
@@ -153,11 +149,7 @@ class ScanService:
         处理分片上传的 JSON 文本内容
         """
         normalized_tool = ScanService._normalize_tool_name(tool_name)
-        normalized_sub_module = (
-            ScanService._normalize_sub_module(sub_module)
-            if normalized_tool == "valgrind"
-            else ""
-        )
+        normalized_sub_module = ScanService._normalize_sub_module(sub_module)
         try:
             project = ScanProject.objects.get(project_key=project_key)
         except ScanProject.DoesNotExist:

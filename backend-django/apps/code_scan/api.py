@@ -68,13 +68,18 @@ def list_project_overview(request, page: int = 1, pageSize: int = 20):
     tasks = (
         ScanTask.objects.filter(project_id__in=project_ids, is_deleted=False, status="success")
         .order_by("-sys_create_datetime")
-        .values("id", "project_id", "tool_name", "sys_create_datetime")
+        .values("id", "project_id", "tool_name", "sub_module", "sys_create_datetime")
     )
 
-    latest_task_by_proj_tool: dict[tuple[str, str], dict] = {}
+    latest_task_by_proj_tool: dict[tuple[str, str, str], dict] = {}
     latest_time_by_project: dict[str, str] = {}
     for t in tasks:
-        key = (t["project_id"], t["tool_name"])
+        tool_name = t["tool_name"]
+        sub_module = str(t.get("sub_module") or "").strip().lower()
+        if tool_name == "valgrind" and sub_module:
+            key = (t["project_id"], tool_name, sub_module)
+        else:
+            key = (t["project_id"], tool_name, "")
         if key not in latest_task_by_proj_tool:
             latest_task_by_proj_tool[key] = t
         if t["project_id"] not in latest_time_by_project:
@@ -101,10 +106,11 @@ def list_project_overview(request, page: int = 1, pageSize: int = 20):
         p["id"]: {"tool_counts": {}, "total": None}
         for p in projects
     }
-    for (pid, tool), t in latest_task_by_proj_tool.items():
+    for (pid, tool, _), t in latest_task_by_proj_tool.items():
         task_id = str(t["id"])
         cnt = counts_by_task.get(task_id, 0)
-        overview_by_project[pid]["tool_counts"][tool] = cnt
+        existing_cnt = overview_by_project[pid]["tool_counts"].get(tool, 0)
+        overview_by_project[pid]["tool_counts"][tool] = existing_cnt + cnt
         if overview_by_project[pid]["total"] is None:
             overview_by_project[pid]["total"] = 0
         overview_by_project[pid]["total"] += cnt
@@ -246,11 +252,32 @@ def list_latest_results(
     normalized_modules = _normalize_sub_modules(sub_modules)
 
     task_ids: list[str] = []
-    if (
-        tool_name
-        and tool_name.lower() == "valgrind"
-        and normalized_modules
-    ):
+    if tool_name and tool_name.lower() == "valgrind":
+        module_lower_set = {item.lower() for item in normalized_modules}
+        tasks = (
+            tasks_qs.exclude(sub_module="")
+            .order_by("-sys_create_datetime")
+            .values("id", "sub_module")
+        )
+        latest_task_by_module: dict[str, str] = {}
+        for task in tasks:
+            module_value = str(task.get("sub_module") or "").strip()
+            if not module_value:
+                continue
+            module_lower = module_value.lower()
+            if module_lower_set and module_lower not in module_lower_set:
+                continue
+            if module_lower in latest_task_by_module:
+                continue
+            latest_task_by_module[module_lower] = str(task["id"])
+            if module_lower_set and len(latest_task_by_module) == len(module_lower_set):
+                break
+        task_ids = list(latest_task_by_module.values())
+        if not task_ids and not module_lower_set:
+            fallback_task = tasks_qs.order_by("-sys_create_datetime").values("id").first()
+            if fallback_task:
+                task_ids = [str(fallback_task["id"])]
+    elif tool_name and normalized_modules:
         module_lower_set = {item.lower() for item in normalized_modules}
         tasks = (
             tasks_qs.exclude(sub_module="")

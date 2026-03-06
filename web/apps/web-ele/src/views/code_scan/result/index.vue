@@ -123,7 +123,7 @@ const detailGridOptions: any = {
                 page: page.currentPage,
                 pageSize: page.pageSize
             };
-            if (activeTool.value === 'valgrind' && routeSubModules.value) {
+            if (routeSubModules.value) {
               params.sub_modules = routeSubModules.value;
             }
             const res = await listLatestResultsApi(projectId.value, params);
