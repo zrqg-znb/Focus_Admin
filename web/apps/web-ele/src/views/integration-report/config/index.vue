@@ -44,6 +44,7 @@ defineOptions({ name: 'DailyIntegrationConfig' });
 const dialogVisible = ref(false);
 const dialogMode = ref<'create' | 'edit'>('create');
 const dialogSaving = ref(false);
+const collectSubmitting = ref(false);
 const allProjects = ref<
   Array<{ domain: string; id: string; name: string; type: string }>
 >([]);
@@ -258,25 +259,36 @@ async function deleteRow(r: ProjectConfigManageRow) {
   }
 }
 
+function formatLocalDate(d: Date) {
+  const year = d.getFullYear();
+  const month = `${d.getMonth() + 1}`.padStart(2, '0');
+  const day = `${d.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 async function batchMockCollect() {
   const records = gridApi.grid?.getCheckboxRecords() || [];
   const ids = records.map((r: any) => r.id);
   const isBatch = ids.length > 0;
   try {
-    const todayStr = new Date().toISOString().slice(0, 10);
+    collectSubmitting.value = true;
+    const todayStr = formatLocalDate(new Date());
     await mockCollectIntegrationApi(todayStr, isBatch ? ids : undefined);
     ElMessage.success(
-      isBatch ? `Mock 采集完成 (${ids.length}条)` : 'Mock 采集完成 (全部)',
+      isBatch
+        ? `已提交后台刷新任务（${ids.length} 条配置）`
+        : '已提交后台刷新任务（全部配置）',
     );
-    gridApi.reload();
   } catch {
-    ElMessage.error('采集失败');
+    ElMessage.error('提交后台刷新任务失败');
+  } finally {
+    collectSubmitting.value = false;
   }
 }
 
 async function mockSendEmails() {
   try {
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = formatLocalDate(new Date());
     const sent = await mockSendIntegrationEmailsApi(todayStr);
     ElMessage.success(`Mock 邮件发送完成：${sent} 封`);
   } catch {
@@ -306,7 +318,13 @@ async function mockSendEmails() {
               </ElButton>
             </template>
           </ElPopconfirm>
-          <ElButton size="small" type="primary" plain @click="batchMockCollect">
+          <ElButton
+            :loading="collectSubmitting"
+            size="small"
+            type="primary"
+            plain
+            @click="batchMockCollect"
+          >
             <template #icon><IconifyIcon icon="lucide:database" /></template>
             刷新数据 (Mock)
           </ElButton>

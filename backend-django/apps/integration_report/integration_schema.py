@@ -75,6 +75,7 @@ class HistoryRow(Schema):
     config_id: str
     config_name: str
     project_name: str
+    caretaker_names: str = ""
     code_metrics: List[MetricCell] = []
     dt_metrics: List[MetricCell] = []
 

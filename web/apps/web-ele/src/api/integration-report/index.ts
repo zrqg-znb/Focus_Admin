@@ -66,6 +66,7 @@ export interface HistoryRow {
   config_id: string;
   config_name: string;
   project_name: string;
+  caretaker_names: string;
   code_metrics: MetricCell[];
   dt_metrics: MetricCell[];
 }
@@ -159,6 +160,7 @@ export async function toggleIntegrationSubscriptionApi(
 }
 
 export async function queryIntegrationHistoryApi(params: {
+  caretaker_keyword?: string;
   config_ids?: string[];
   end: string;
   keyword?: string;

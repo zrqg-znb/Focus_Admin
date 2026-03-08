@@ -52,6 +52,20 @@ def _normalize_config_ids(config_ids: Optional[List[str]]) -> List[str]:
     return []
 
 
+def _join_user_names(users) -> str:
+    return ",".join([user.name or user.username for user in users])
+
+
+def _resolve_history_caretaker_names(config: IntegrationProjectConfig) -> str:
+    config_managers = _join_user_names(config.managers.all())
+    if config_managers:
+        return config_managers
+    project = getattr(config, "project", None)
+    if not project:
+        return ""
+    return _join_user_names(project.managers.all())
+
+
 @router.get("/projects", response=List[ProjectConfigOut], summary="集成报告配置列表（用于订阅页）")
 @paginate
 def list_projects(request, filters: ConfigFilterSchema = Query(...)):
@@ -200,24 +214,42 @@ def history(
     start: Optional[date] = None,
     end: Optional[date] = None,
     keyword: Optional[str] = None,
+    caretaker_keyword: Optional[str] = None,
 ):
     if not start or not end:
         raise HttpError(400, "start/end 必填")
 
     integration_service.ensure_default_metric_definitions()
     defs = {d.key: d for d in IntegrationMetricDefinition.objects.filter(is_deleted=False, enabled=True)}
-    qs = IntegrationProjectMetricValue.objects.select_related("config", "config__project", "metric").filter(
-        is_deleted=False,
-        record_date__gte=start,
-        record_date__lte=end,
-        metric__enabled=True,
+    qs = (
+        IntegrationProjectMetricValue.objects.select_related("config", "config__project", "metric")
+        .prefetch_related("config__managers", "config__project__managers")
+        .filter(
+            is_deleted=False,
+            record_date__gte=start,
+            record_date__lte=end,
+            metric__enabled=True,
+        )
     )
     normalized_config_ids = _normalize_config_ids(config_ids)
     if normalized_config_ids:
         qs = qs.filter(config_id__in=normalized_config_ids)
-    
+
     if keyword:
-        qs = qs.filter(Q(config__name__icontains=keyword) | Q(config__project__name__icontains=keyword))
+        qs = qs.filter(
+            Q(config__name__icontains=keyword)
+            | Q(config__project__name__icontains=keyword),
+        )
+
+    if caretaker_keyword:
+        qs = qs.filter(
+            Q(config__managers__name__icontains=caretaker_keyword)
+            | Q(config__managers__username__icontains=caretaker_keyword)
+            | Q(config__project__managers__name__icontains=caretaker_keyword)
+            | Q(config__project__managers__username__icontains=caretaker_keyword),
+        )
+
+    qs = qs.distinct()
 
     by_key = {}
     for v in qs:
@@ -246,6 +278,7 @@ def history(
                 config_id=str(cfg.id),
                 config_name=cfg.name,
                 project_name=cfg.project.name if cfg.project else "",
+                caretaker_names=_resolve_history_caretaker_names(cfg),
                 code_metrics=code_cells,
                 dt_metrics=dt_cells,
             )
@@ -254,9 +287,9 @@ def history(
     return HistoryQueryOut(items=items)
 
 
-@router.post("/mock/collect", response=bool, summary="Mock 采集一次（写入今日数据）")
+@router.post("/mock/collect", response=bool, summary="Mock 采集一次（异步写入今日数据）")
 def mock_collect(request, payload: MockCollectIn):
-    integration_service.mock_collect_daily(payload.record_date, payload.config_ids)
+    integration_service.mock_collect_daily_async(payload.record_date, payload.config_ids)
     return True
 
 

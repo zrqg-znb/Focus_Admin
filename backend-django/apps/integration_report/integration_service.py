@@ -1,9 +1,11 @@
 from collections import defaultdict
+import logging
+import threading
 from datetime import date
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
 
-from django.db import transaction
+from django.db import close_old_connections, transaction
 from django.db.models import Count, Max, Q
 
 from apps.code_scan.models import ScanProject, ScanResult, ScanTask
@@ -65,6 +67,8 @@ SCAN_METRIC_PRIMARY_TOOL_MAP = {
 }
 SUB_MODULE_SCOPED_METRICS = {"tsan_error_num", "valgrind_error_num"}
 EXCLUDED_SHIELD_STATUSES = {"Shielded"}
+
+logger = logging.getLogger(__name__)
 
 
 def _eval_level(defn: IntegrationMetricDefinition, value: Optional[float]) -> str:
@@ -352,8 +356,50 @@ def collect_daily_metrics(record_date: Optional[date] = None, config_ids: Option
             )
 
 
+def collect_daily_metrics_async(record_date: Optional[date] = None, config_ids: Optional[List[str]] = None):
+    normalized_config_ids = [
+        str(config_id).strip()
+        for config_id in (config_ids or [])
+        if str(config_id).strip()
+    ]
+    target_date = record_date or date.today()
+
+    def _worker():
+        close_old_connections()
+        try:
+            logger.info(
+                "integration report mock collect started: date=%s, config_count=%s",
+                target_date.isoformat(),
+                len(normalized_config_ids) or "all",
+            )
+            collect_daily_metrics(
+                record_date=target_date,
+                config_ids=normalized_config_ids or None,
+            )
+            logger.info(
+                "integration report mock collect finished: date=%s, config_count=%s",
+                target_date.isoformat(),
+                len(normalized_config_ids) or "all",
+            )
+        except Exception:
+            logger.exception(
+                "integration report mock collect failed: date=%s, config_count=%s",
+                target_date.isoformat(),
+                len(normalized_config_ids) or "all",
+            )
+        finally:
+            close_old_connections()
+
+    threading.Thread(
+        target=_worker,
+        name="integration-report-mock-collect",
+        daemon=True,
+    ).start()
+
+
 # 保持兼容性，指向新函数
 mock_collect_daily = collect_daily_metrics
+mock_collect_daily_async = collect_daily_metrics_async
 
 
 def list_configs_with_latest(user: User, keyword: Optional[str] = None) -> List[ProjectConfigOut]:
