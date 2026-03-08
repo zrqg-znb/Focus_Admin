@@ -4,14 +4,17 @@ import type { ZqTableGridOptions } from '#/components/zq-table';
 export interface PhaseBoardRow {
   cdc_platform_name?: string;
   domain: string;
+  idvp_platform_name?: string;
   project_code?: string;
   project_id: string;
   project_name: string;
   scenario: 'cockpit' | 'vehicle';
+  smart_screen_display?: string;
   smart_screen_version_name?: string;
   smart_screen_version_names?: string[];
   stage_end?: string;
   stage_name: string;
+  stage_range?: string;
   stage_start?: string;
   vehicle_hardware?: Array<{
     board: string;
@@ -19,7 +22,10 @@ export interface PhaseBoardRow {
     config_type?: string;
     point: string;
   }>;
-  idvp_platform_name?: string;
+  viu0?: string;
+  viu1?: string;
+  viu2?: string;
+  viu3?: string;
 }
 
 type PhaseBoardColumns = ZqTableGridOptions<PhaseBoardRow>['columns'];
@@ -98,8 +104,8 @@ export function useVehicleColumns(): PhaseBoardColumns {
     },
     { key: 'stage_name', dataKey: 'stage_name', title: '阶段', minWidth: 140 },
     {
-      key: 'stage_start',
-      dataKey: 'stage_start',
+      key: 'stage_range',
+      dataKey: 'stage_range',
       title: '阶段起止',
       minWidth: 220,
     },
@@ -153,14 +159,12 @@ export function useCockpitColumns(): PhaseBoardColumns {
         row.cdc_platform_name || '-',
     },
     {
-      key: 'smart_screen_version_name',
-      dataKey: 'smart_screen_version_name',
+      key: 'smart_screen_display',
+      dataKey: 'smart_screen_display',
       title: '智慧屏版本',
       minWidth: 220,
       formatter: ({ row }: { row: PhaseBoardRow }) =>
-        (row.smart_screen_version_names || []).join(' / ') ||
-        row.smart_screen_version_name ||
-        '-',
+        row.smart_screen_display || '-',
     },
   ]) as PhaseBoardColumns;
 }

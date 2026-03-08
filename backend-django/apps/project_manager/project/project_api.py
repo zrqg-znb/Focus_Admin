@@ -54,6 +54,17 @@ def list_projects(request, filters: ProjectFilterSchema = Query(...)):
 
     if filters.hardware_scenario:
         query &= Q(phase_configs__scenario=filters.hardware_scenario)
+
+    if filters.idvp_platform_keyword:
+        query &= Q(idvp_platform__name__icontains=filters.idvp_platform_keyword)
+
+    if filters.cdc_platform_keyword:
+        query &= Q(phase_configs__cdc_platform__name__icontains=filters.cdc_platform_keyword)
+
+    if filters.smart_screen_keyword:
+        query &= Q(
+            phase_configs__smart_screen_versions__name__icontains=filters.smart_screen_keyword,
+        )
         
     if filters.is_closed is not None:
         query &= Q(is_closed=filters.is_closed)

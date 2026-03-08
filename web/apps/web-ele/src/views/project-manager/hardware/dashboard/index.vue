@@ -1,14 +1,19 @@
 <script lang="ts" setup>
 import type { PhaseBoardRow } from './data';
 
-import type { ProjectOut } from '#/api/project-manager/project';
+import type {
+  ProjectFilterParams,
+  ProjectOut,
+} from '#/api/project-manager/project';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
 import { nextTick, ref, watch } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
-import { ElTabPane, ElTabs } from 'element-plus';
+import { Download } from '@element-plus/icons-vue';
+import { ElButton, ElMessage, ElTabPane, ElTabs } from 'element-plus';
+import * as XLSX from 'xlsx';
 
 import { listProjectsApi } from '#/api/project-manager/project';
 import { useZqTable } from '#/components/zq-table';
@@ -22,8 +27,32 @@ import {
 
 defineOptions({ name: 'HardwareConfigDashboard' });
 
-const activeView = ref<'cockpit' | 'vehicle'>('vehicle');
+type HardwareScenario = 'cockpit' | 'vehicle';
+type VehiclePointKey = 'viu0' | 'viu1' | 'viu2' | 'viu3';
+
+const VEHICLE_POINT_KEYS: VehiclePointKey[] = ['viu0', 'viu1', 'viu2', 'viu3'];
+const activeView = ref<HardwareScenario>('vehicle');
 const currentVehicleRows = ref<PhaseBoardRow[]>([]);
+const vehicleFormValues = ref<Record<string, any>>({});
+const cockpitFormValues = ref<Record<string, any>>({});
+const exportLoading = ref(false);
+
+const VEHICLE_EXPORT_COLUMNS = [
+  { label: '项目', prop: 'project_name' },
+  { label: '阶段', prop: 'stage_name' },
+  { label: '阶段起止', prop: 'stage_range' },
+  { label: 'IDVP 软件平台', prop: 'idvp_platform_name' },
+  { label: 'viu0', prop: 'viu0' },
+  { label: 'viu1', prop: 'viu1' },
+  { label: 'viu2', prop: 'viu2' },
+  { label: 'viu3', prop: 'viu3' },
+] as const;
+
+const COCKPIT_EXPORT_COLUMNS = [
+  { label: '项目', prop: 'project_name' },
+  { label: 'CDC 平台版本', prop: 'cdc_platform_name' },
+  { label: '智慧屏版本', prop: 'smart_screen_display' },
+] as const;
 
 function getVehiclePointText(row: PhaseBoardRow, point: string) {
   const item = (row.vehicle_hardware || []).find(
@@ -36,12 +65,26 @@ function getVehiclePointText(row: PhaseBoardRow, point: string) {
   return `${board} / ${configType} / BOMID: ${item.bomid}`;
 }
 
+function formatStageRange(stageStart?: string, stageEnd?: string) {
+  if (!stageStart && !stageEnd) {
+    return '-';
+  }
+  return `${stageStart || '-'} ~ ${stageEnd || '-'}`;
+}
+
+function formatSmartScreenDisplay(
+  smartScreenVersionNames?: string[],
+  smartScreenVersionName?: string,
+) {
+  return smartScreenVersionNames?.join(' / ') || smartScreenVersionName || '-';
+}
+
 function toPhaseRows(projects: ProjectOut[]): PhaseBoardRow[] {
   const rows: PhaseBoardRow[] = [];
   for (const project of projects) {
     const phaseConfigs = project.phase_configs || [];
     for (const phase of phaseConfigs) {
-      rows.push({
+      const baseRow: PhaseBoardRow = {
         project_id: project.id,
         project_name: project.name,
         project_code: project.code,
@@ -49,15 +92,26 @@ function toPhaseRows(projects: ProjectOut[]): PhaseBoardRow[] {
         stage_name: phase.stage_name,
         stage_start: phase.stage_start,
         stage_end: phase.stage_end,
+        stage_range: formatStageRange(phase.stage_start, phase.stage_end),
         scenario:
           phase.scenario ||
           (project.domain.includes('座舱') ? 'cockpit' : 'vehicle'),
-        idvp_platform_name: project.idvp_platform_name,
+        idvp_platform_name: project.idvp_platform_name || '-',
         vehicle_hardware: phase.vehicle_hardware || [],
-        cdc_platform_name: phase.cdc_platform_name,
+        cdc_platform_name: phase.cdc_platform_name || '-',
         smart_screen_version_name: phase.smart_screen_version_name,
         smart_screen_version_names: phase.smart_screen_version_names || [],
+        smart_screen_display: formatSmartScreenDisplay(
+          phase.smart_screen_version_names || [],
+          phase.smart_screen_version_name,
+        ),
+      };
+
+      VEHICLE_POINT_KEYS.forEach((point) => {
+        baseRow[point] = getVehiclePointText(baseRow, point);
       });
+
+      rows.push(baseRow);
     }
   }
   return rows;
@@ -66,7 +120,7 @@ function toPhaseRows(projects: ProjectOut[]): PhaseBoardRow[] {
 function filterRows(
   rows: PhaseBoardRow[],
   formValues: Record<string, any>,
-  scenario: 'cockpit' | 'vehicle',
+  scenario: HardwareScenario,
 ) {
   const projectKeyword = String(formValues.project_keyword || '')
     .trim()
@@ -103,16 +157,146 @@ function filterRows(
   }
   if (scenario === 'cockpit' && smartScreenKeyword) {
     filtered = filtered.filter((item) =>
-      String(
-        (item.smart_screen_version_names || []).join(' / ') ||
-          item.smart_screen_version_name ||
-          '',
-      )
+      String(item.smart_screen_display || '')
         .toLowerCase()
         .includes(smartScreenKeyword),
     );
   }
   return filtered;
+}
+
+function buildScenarioQueryParams(
+  formValues: Record<string, any>,
+  scenario: HardwareScenario,
+  page: number,
+  pageSize: number,
+): ProjectFilterParams {
+  const params: ProjectFilterParams = {
+    hardware_scenario: scenario,
+    keyword: String(formValues.project_keyword || '').trim() || undefined,
+    enable_hardware_config: true,
+    page,
+    pageSize,
+  };
+
+  if (scenario === 'vehicle') {
+    params.idvp_platform_keyword =
+      String(formValues.idvp_platform_keyword || '').trim() || undefined;
+  } else {
+    params.cdc_platform_keyword =
+      String(formValues.cdc_platform_keyword || '').trim() || undefined;
+    params.smart_screen_keyword =
+      String(formValues.smart_screen_keyword || '').trim() || undefined;
+  }
+
+  return params;
+}
+
+async function fetchScenarioProjects(
+  formValues: Record<string, any>,
+  scenario: HardwareScenario,
+  page = 1,
+  pageSize = 1000,
+) {
+  return await listProjectsApi(
+    buildScenarioQueryParams(formValues, scenario, page, pageSize),
+  );
+}
+
+async function fetchAllScenarioProjects(
+  formValues: Record<string, any>,
+  scenario: HardwareScenario,
+) {
+  const allItems: ProjectOut[] = [];
+  const pageSize = 200;
+  let page = 1;
+  let total = 0;
+
+  while (true) {
+    const data = await fetchScenarioProjects(
+      formValues,
+      scenario,
+      page,
+      pageSize,
+    );
+    const currentItems = data.items || [];
+    total = Number(data.total || 0);
+    allItems.push(...currentItems);
+    if (currentItems.length === 0 || allItems.length >= total) {
+      break;
+    }
+    page += 1;
+    if (page > 500) {
+      throw new Error('导出页数超过安全上限，请缩小筛选范围后重试');
+    }
+  }
+
+  return allItems;
+}
+
+async function loadRowsByScenario(
+  page: { currentPage: number; pageSize: number },
+  rawFormValues: Record<string, any>,
+  scenario: HardwareScenario,
+) {
+  const formValues = { ...rawFormValues };
+  if (scenario === 'vehicle') {
+    vehicleFormValues.value = formValues;
+  } else {
+    cockpitFormValues.value = formValues;
+  }
+
+  const projects = await fetchAllScenarioProjects(formValues, scenario);
+  const rows = toPhaseRows(projects);
+  const scenarioRows = filterRows(rows, formValues, scenario);
+  const currentPage = page?.currentPage || 1;
+  const pageSize = page?.pageSize || 20;
+  const start = (currentPage - 1) * pageSize;
+  const end = start + pageSize;
+  const pageRows = scenarioRows.slice(start, end);
+
+  if (scenario === 'vehicle') {
+    currentVehicleRows.value = pageRows;
+  }
+
+  return {
+    items: pageRows,
+    total: scenarioRows.length,
+  };
+}
+
+async function fetchAllRowsByScenario(
+  formValues: Record<string, any>,
+  scenario: HardwareScenario,
+) {
+  const projects = await fetchAllScenarioProjects(formValues, scenario);
+  return filterRows(toPhaseRows(projects), formValues, scenario);
+}
+
+function normalizeExportValue(value: unknown) {
+  if (value === null || value === undefined || value === '') {
+    return '-';
+  }
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return value;
+}
+
+function buildSheetData(
+  rows: PhaseBoardRow[],
+  columns: ReadonlyArray<{ label: string; prop: keyof PhaseBoardRow }>,
+) {
+  return [
+    columns.map((column) => column.label),
+    ...rows.map((row) =>
+      columns.map((column) => normalizeExportValue(row[column.prop])),
+    ),
+  ];
 }
 
 function vehicleProjectSpanMethod({ column, row, rowIndex }: any) {
@@ -141,29 +325,52 @@ function vehicleProjectSpanMethod({ column, row, rowIndex }: any) {
   return { rowspan, colspan: 1 };
 }
 
-async function loadRowsByScenario(
-  page: { currentPage: number; pageSize: number },
-  formValues: Record<string, any>,
-  scenario: 'cockpit' | 'vehicle',
-) {
-  const projectKeyword = String(formValues.project_keyword || '').trim();
-  const data = await listProjectsApi({
-    hardware_scenario: scenario,
-    keyword: projectKeyword || undefined,
-    page: 1,
-    pageSize: 1000,
-    enable_hardware_config: true,
-  });
-  const rows = toPhaseRows(data.items || []);
-  const scenarioRows = filterRows(rows, formValues, scenario);
-  const currentPage = page?.currentPage || 1;
-  const pageSize = page?.pageSize || 20;
-  const start = (currentPage - 1) * pageSize;
-  const end = start + pageSize;
-  return {
-    items: scenarioRows.slice(start, end),
-    total: scenarioRows.length,
-  };
+async function handleExportAllSheets() {
+  if (exportLoading.value) {
+    return;
+  }
+
+  exportLoading.value = true;
+  try {
+    const xlsx = (XLSX as any)?.utils ? (XLSX as any) : (XLSX as any)?.default;
+    if (!xlsx?.utils) {
+      throw new TypeError('xlsx utils unavailable');
+    }
+    const writeFile = xlsx.writeFileXLSX || xlsx.writeFile;
+    if (typeof writeFile !== 'function') {
+      throw new TypeError('xlsx writeFile unavailable');
+    }
+
+    const [vehicleRows, cockpitRows] = await Promise.all([
+      fetchAllRowsByScenario(vehicleFormValues.value, 'vehicle'),
+      fetchAllRowsByScenario(cockpitFormValues.value, 'cockpit'),
+    ]);
+
+    if (vehicleRows.length === 0 && cockpitRows.length === 0) {
+      ElMessage.warning('暂无可导出数据');
+      return;
+    }
+
+    const workbook = xlsx.utils.book_new();
+    const vehicleSheet = xlsx.utils.aoa_to_sheet(
+      buildSheetData(vehicleRows, VEHICLE_EXPORT_COLUMNS),
+    );
+    const cockpitSheet = xlsx.utils.aoa_to_sheet(
+      buildSheetData(cockpitRows, COCKPIT_EXPORT_COLUMNS),
+    );
+
+    xlsx.utils.book_append_sheet(workbook, vehicleSheet, '车控');
+    xlsx.utils.book_append_sheet(workbook, cockpitSheet, '座舱');
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    writeFile(workbook, `硬件配套看板-${stamp}.xlsx`);
+    ElMessage.success('导出成功');
+  } catch (error) {
+    console.error('[hardware dashboard export failed]', error);
+    ElMessage.error('导出失败，请检查筛选条件或数据后重试');
+  } finally {
+    exportLoading.value = false;
+  }
 }
 
 const [VehicleGrid, vehicleGridApi] = useZqTable({
@@ -193,9 +400,7 @@ const [VehicleGrid, vehicleGridApi] = useZqTable({
       autoLoad: true,
       ajax: {
         query: async ({ page, form }) => {
-          const result = await loadRowsByScenario(page, form || {}, 'vehicle');
-          currentVehicleRows.value = result.items || [];
-          return result;
+          return await loadRowsByScenario(page, form || {}, 'vehicle');
         },
       },
     },
@@ -263,24 +468,15 @@ watch(
             >
               <div class="min-h-0 flex-1">
                 <VehicleGrid class="h-full">
-                  <template #cell-stage_start="{ row }">
-                    {{
-                      !row.stage_start && !row.stage_end
-                        ? '-'
-                        : `${row.stage_start || '-'} ~ ${row.stage_end || '-'}`
-                    }}
-                  </template>
-                  <template #cell-viu0="{ row }">
-                    {{ getVehiclePointText(row, 'viu0') }}
-                  </template>
-                  <template #cell-viu1="{ row }">
-                    {{ getVehiclePointText(row, 'viu1') }}
-                  </template>
-                  <template #cell-viu2="{ row }">
-                    {{ getVehiclePointText(row, 'viu2') }}
-                  </template>
-                  <template #cell-viu3="{ row }">
-                    {{ getVehiclePointText(row, 'viu3') }}
+                  <template #toolbar-tools>
+                    <ElButton
+                      :icon="Download"
+                      :loading="exportLoading"
+                      type="primary"
+                      @click="handleExportAllSheets"
+                    >
+                      全量导出
+                    </ElButton>
                   </template>
                 </VehicleGrid>
               </div>
@@ -293,12 +489,15 @@ watch(
             >
               <div class="min-h-0 flex-1">
                 <CockpitGrid class="h-full">
-                  <template #cell-smart_screen_version_name="{ row }">
-                    {{
-                      (row.smart_screen_version_names || []).join(' / ') ||
-                      row.smart_screen_version_name ||
-                      '-'
-                    }}
+                  <template #toolbar-tools>
+                    <ElButton
+                      :icon="Download"
+                      :loading="exportLoading"
+                      type="primary"
+                      @click="handleExportAllSheets"
+                    >
+                      全量导出
+                    </ElButton>
                   </template>
                 </CockpitGrid>
               </div>

@@ -103,6 +103,9 @@ export interface ProjectFilterParams {
   domain?: string;
   type?: string;
   manager_id?: string;
+  idvp_platform_keyword?: string;
+  cdc_platform_keyword?: string;
+  smart_screen_keyword?: string;
   is_closed?: boolean;
   enable_milestone?: boolean;
   enable_iteration?: boolean;

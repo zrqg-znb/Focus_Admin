@@ -98,6 +98,18 @@ class ProjectFilterSchema(Schema):
         None,
         description="典配场景筛选(vehicle/cockpit)",
     )
+    idvp_platform_keyword: Optional[str] = Field(
+        None,
+        description="IDVP平台关键字",
+    )
+    cdc_platform_keyword: Optional[str] = Field(
+        None,
+        description="CDC平台关键字",
+    )
+    smart_screen_keyword: Optional[str] = Field(
+        None,
+        description="智慧屏版本关键字",
+    )
     is_closed: Optional[bool] = None
     enable_milestone: Optional[bool] = None
     enable_iteration: Optional[bool] = None
