@@ -156,10 +156,15 @@ async function loadTools() {
   );
 
   try {
-    const res: any = await listProjectOverviewApi({
+    const params: Record<string, any> = {
       page: 1,
-      pageSize: 500,
-    });
+      pageSize: 1,
+      project_id: projectId.value,
+    };
+    if (routeSubModules.value) {
+      params.sub_modules = routeSubModules.value;
+    }
+    const res: any = await listProjectOverviewApi(params);
     const items = res.items || res;
     const project = Array.isArray(items)
       ? items.find((p: any) => p.project_id === projectId.value)

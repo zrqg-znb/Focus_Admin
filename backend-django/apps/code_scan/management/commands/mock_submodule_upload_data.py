@@ -85,10 +85,33 @@ class Command(BaseCommand):
         ]
         return json.dumps(payload, ensure_ascii=False)
 
+    def _build_tsan_json(self, module_name: str, upload_index: int) -> str:
+        line_base = 300 + upload_index * 10
+        payload = [
+            {
+                "file_path": f"src/{module_name}/tsan_a.cpp",
+                "line_number": line_base,
+                "defect_type": "data_race",
+                "severity": "High",
+                "description": f"TSan data race in {module_name} u{upload_index}",
+            },
+            {
+                "file_path": f"src/{module_name}/tsan_b.cpp",
+                "line_number": line_base + 1,
+                "defect_type": "lock_order",
+                "severity": "High",
+                "description": f"TSan lock order in {module_name} u{upload_index}",
+            },
+        ]
+        return json.dumps(payload, ensure_ascii=False)
+
     def _build_mock_file(self, tool: str, module_name: str, upload_index: int) -> MockFile:
         normalized_tool = (tool or "").strip().lower()
         if normalized_tool == "valgrind":
             content = self._build_valgrind_json(module_name, upload_index)
+            return MockFile(f"mock_{normalized_tool}_{module_name}_{upload_index}.json", content)
+        if normalized_tool == "tsan":
+            content = self._build_tsan_json(module_name, upload_index)
             return MockFile(f"mock_{normalized_tool}_{module_name}_{upload_index}.json", content)
         content = self._build_cppcheck_xml(module_name, upload_index)
         return MockFile(f"mock_{normalized_tool}_{module_name}_{upload_index}.xml", content)

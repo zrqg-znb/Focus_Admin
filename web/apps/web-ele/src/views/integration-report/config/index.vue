@@ -401,12 +401,12 @@ async function mockSendEmails() {
             placeholder="项目管理中的 project_key"
           />
         </ElFormItem>
-        <ElFormItem label="Valgrind 子模块">
+        <ElFormItem label="TSan / Valgrind 子模块">
           <ElInput
             v-model="valgrindSubModulesText"
             :rows="4"
             type="textarea"
-            placeholder="每行一个子模块，例如：&#10;platform-core&#10;customer-a"
+            placeholder="每行一个子模块，TSan 与 Valgrind 共用，例如：&#10;platform-core&#10;customer-a"
           />
         </ElFormItem>
         <ElFormItem label="DT Project ID">

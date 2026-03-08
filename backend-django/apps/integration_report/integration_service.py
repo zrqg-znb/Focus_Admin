@@ -63,6 +63,8 @@ SCAN_METRIC_PRIMARY_TOOL_MAP = {
     "binexplorer_error_num": "binexplorer",
     "clang_tidy_error_num": "clang-tidy",
 }
+SUB_MODULE_SCOPED_METRICS = {"tsan_error_num", "valgrind_error_num"}
+EXCLUDED_SHIELD_STATUSES = {"Shielded"}
 
 
 def _eval_level(defn: IntegrationMetricDefinition, value: Optional[float]) -> str:
@@ -129,6 +131,51 @@ def _build_code_scan_detail_url(
     return f"/code_scan/result?{urlencode(params)}"
 
 
+def _count_results_for_sub_modules(
+    scan_project: ScanProject,
+    tool_name: str,
+    record_date: date,
+    sub_modules: List[str],
+) -> tuple[float, list[str]]:
+    module_lower_set = {item.lower() for item in sub_modules}
+    tasks = (
+        ScanTask.objects.filter(
+            is_deleted=False,
+            project=scan_project,
+            tool_name=tool_name,
+            status="success",
+            sys_create_datetime__date__lte=record_date,
+        )
+        .exclude(sub_module="")
+        .order_by("-sys_create_datetime")
+        .values("id", "sub_module")
+    )
+
+    latest_task_by_module: Dict[str, str] = {}
+    for task in tasks:
+        module_value = str(task.get("sub_module") or "").strip()
+        if not module_value:
+            continue
+        lowered = module_value.lower()
+        if lowered not in module_lower_set:
+            continue
+        if lowered in latest_task_by_module:
+            continue
+        latest_task_by_module[lowered] = str(task["id"])
+        if len(latest_task_by_module) == len(module_lower_set):
+            break
+
+    task_ids = list(set(latest_task_by_module.values()))
+    if not task_ids:
+        return 0.0, []
+    count = float(
+        ScanResult.objects.filter(task_id__in=task_ids, is_deleted=False)
+        .exclude(shield_status__in=EXCLUDED_SHIELD_STATUSES)
+        .count()
+    )
+    return count, task_ids
+
+
 def _fetch_code_scan_metrics(
     config: IntegrationProjectConfig,
     record_date: date,
@@ -173,78 +220,58 @@ def _fetch_code_scan_metrics(
         task_ids = list(set(latest_task_by_metric.values()))
         counts = (
             ScanResult.objects.filter(task_id__in=task_ids, is_deleted=False)
-            .exclude(shield_status="Shielded")
+            .exclude(shield_status__in=EXCLUDED_SHIELD_STATUSES)
             .values("task_id")
             .annotate(cnt=Count("id"))
         )
         count_map = {str(row["task_id"]): float(row["cnt"]) for row in counts}
         for metric_key, task_id in latest_task_by_metric.items():
+            if metric_key in SUB_MODULE_SCOPED_METRICS:
+                continue
             metric_payload[metric_key] = (
                 count_map.get(task_id, 0.0),
                 fallback_urls[metric_key],
             )
 
-    valgrind_modules = normalize_sub_modules(
+    shared_modules = normalize_sub_modules(
         getattr(config, "valgrind_sub_modules", []),
     )
-    if valgrind_modules:
-        module_lower_set = {item.lower() for item in valgrind_modules}
-        valgrind_tasks = (
-            ScanTask.objects.filter(
-                is_deleted=False,
-                project=scan_project,
-                tool_name="valgrind",
-                status="success",
-                sys_create_datetime__date__lte=record_date,
-            )
-            .exclude(sub_module="")
-            .order_by("-sys_create_datetime")
-            .values("id", "sub_module")
+    metric_modules_map = {
+        metric_key: shared_modules
+        for metric_key in SUB_MODULE_SCOPED_METRICS
+    }
+    for metric_key in SUB_MODULE_SCOPED_METRICS:
+        bound_modules = metric_modules_map.get(metric_key) or []
+        if not bound_modules:
+            metric_payload[metric_key] = (None, "")
+            continue
+        tool_name = SCAN_METRIC_PRIMARY_TOOL_MAP[metric_key]
+        count, _ = _count_results_for_sub_modules(
+            scan_project=scan_project,
+            tool_name=tool_name,
+            record_date=record_date,
+            sub_modules=bound_modules,
         )
-
-        latest_task_by_module: Dict[str, str] = {}
-        for task in valgrind_tasks:
-            module_value = str(task.get("sub_module") or "").strip()
-            if not module_value:
-                continue
-            lowered = module_value.lower()
-            if lowered not in module_lower_set:
-                continue
-            if lowered in latest_task_by_module:
-                continue
-            latest_task_by_module[lowered] = str(task["id"])
-            if len(latest_task_by_module) == len(module_lower_set):
-                break
-
-        valgrind_count: Optional[float] = None
-        valgrind_task_ids = list(set(latest_task_by_module.values()))
-        if valgrind_task_ids:
-            valgrind_count = float(
-                ScanResult.objects.filter(
-                    task_id__in=valgrind_task_ids,
-                    is_deleted=False,
-                )
-                .exclude(shield_status="Shielded")
-                .count()
-            )
-
-        metric_payload["valgrind_error_num"] = (
-            valgrind_count,
+        metric_payload[metric_key] = (
+            count,
             _build_code_scan_detail_url(
                 scan_project.id,
-                "valgrind_error_num",
-                sub_modules=valgrind_modules,
+                metric_key,
+                sub_modules=bound_modules,
             ),
         )
 
-    if not latest_task_by_metric and not valgrind_modules:
+    if not latest_task_by_metric and not shared_modules:
         return {
-            key: (None, fallback_urls[key])
+            key: (
+                None,
+                "" if key in SUB_MODULE_SCOPED_METRICS else fallback_urls[key],
+            )
             for key in SCAN_METRIC_TOOL_ALIAS_MAP
         }
 
     for metric_key, (value, url) in list(metric_payload.items()):
-        if url:
+        if url or metric_key in SUB_MODULE_SCOPED_METRICS:
             continue
         metric_payload[metric_key] = (value, fallback_urls[metric_key])
 
@@ -451,6 +478,9 @@ def send_daily_emails(record_date: Optional[date] = None) -> int:
 
     if not by_user:
         return 0
+
+    config_ids = sorted({str(cfg.id) for cfgs in by_user.values() for cfg in cfgs})
+    collect_daily_metrics(record_date=record_date, config_ids=config_ids)
 
     def_map = {d.key: d for d in IntegrationMetricDefinition.objects.filter(is_deleted=False, enabled=True)}
     sent = 0

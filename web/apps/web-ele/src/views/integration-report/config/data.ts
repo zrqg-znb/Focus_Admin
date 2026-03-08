@@ -41,7 +41,7 @@ export function useColumns(
     },
     {
       field: 'valgrind_sub_modules',
-      title: 'Valgrind 子模块',
+      title: 'TSan / Valgrind 子模块',
       minWidth: 220,
       formatter: ({ row }) =>
         Array.isArray(row.valgrind_sub_modules) &&

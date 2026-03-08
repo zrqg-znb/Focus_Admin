@@ -17,6 +17,8 @@ from common.fu_auth import BearerAuth
 from common.fu_auth import ApiKey
 
 router = Router()
+SUB_MODULE_SCOPED_TOOLS = {"valgrind", "tsan"}
+EXCLUDED_SHIELD_STATUSES = {"Shielded"}
 
 
 def _normalize_sub_modules(raw_value: str | List[str] | None) -> list[str]:
@@ -40,6 +42,98 @@ def _normalize_sub_modules(raw_value: str | List[str] | None) -> list[str]:
         normalized.append(value)
     return normalized
 
+
+def _normalize_tool_name(raw_value: str | None) -> str:
+    return str(raw_value or "").strip().lower()
+
+
+def _select_latest_task_rows(
+    task_rows: list[dict],
+    tool_name: str | None = None,
+    sub_modules: list[str] | None = None,
+) -> list[dict]:
+    normalized_tool = _normalize_tool_name(tool_name)
+    module_lower_set = {item.lower() for item in (sub_modules or [])}
+
+    if normalized_tool:
+        filtered_rows = [
+            row for row in task_rows
+            if _normalize_tool_name(row.get("tool_name")) == normalized_tool
+        ]
+        if not filtered_rows:
+            return []
+
+        if normalized_tool in SUB_MODULE_SCOPED_TOOLS:
+            latest_task_by_module: dict[str, dict] = {}
+            for row in filtered_rows:
+                module_value = str(row.get("sub_module") or "").strip()
+                if not module_value:
+                    continue
+                module_lower = module_value.lower()
+                if module_lower_set and module_lower not in module_lower_set:
+                    continue
+                if module_lower in latest_task_by_module:
+                    continue
+                latest_task_by_module[module_lower] = row
+                if module_lower_set and len(latest_task_by_module) == len(module_lower_set):
+                    break
+
+            selected_rows = list(latest_task_by_module.values())
+            if selected_rows:
+                return selected_rows
+            if module_lower_set:
+                return []
+            return filtered_rows[:1]
+
+        return filtered_rows[:1]
+
+    latest_task_by_tool: dict[tuple[str, str], dict] = {}
+    module_tool_seen: set[str] = set()
+    for row in task_rows:
+        current_tool = _normalize_tool_name(row.get("tool_name"))
+        if not current_tool:
+            continue
+
+        current_sub_module = str(row.get("sub_module") or "").strip()
+        current_sub_module_lower = current_sub_module.lower()
+
+        if current_tool in SUB_MODULE_SCOPED_TOOLS:
+            if module_lower_set:
+                if not current_sub_module_lower or current_sub_module_lower not in module_lower_set:
+                    continue
+                key = (current_tool, current_sub_module_lower)
+            elif current_sub_module_lower:
+                key = (current_tool, current_sub_module_lower)
+                module_tool_seen.add(current_tool)
+            else:
+                key = (current_tool, "")
+        else:
+            key = (current_tool, "")
+
+        if key not in latest_task_by_tool:
+            latest_task_by_tool[key] = row
+
+    selected_rows: list[dict] = []
+    for (current_tool, current_sub_module), row in latest_task_by_tool.items():
+        if current_tool in SUB_MODULE_SCOPED_TOOLS and not module_lower_set:
+            if not current_sub_module and current_tool in module_tool_seen:
+                continue
+        selected_rows.append(row)
+    return selected_rows
+
+
+def _select_latest_task_ids(
+    tasks_qs,
+    tool_name: str | None = None,
+    sub_modules: list[str] | None = None,
+) -> list[str]:
+    task_rows = list(
+        tasks_qs
+        .order_by("-sys_create_datetime")
+        .values("id", "tool_name", "sub_module", "sys_create_datetime")
+    )
+    return [str(row["id"]) for row in _select_latest_task_rows(task_rows, tool_name, sub_modules)]
+
 # --- 项目管理 ---
 
 @router.get("/projects", response=PaginatedScanProjectSchema, auth=BearerAuth(), summary="获取项目列表")
@@ -56,8 +150,17 @@ def list_projects(request, keyword: str = None, page: int = 1, pageSize: int = 2
     return {"items": items, "total": total}
 
 @router.get("/projects/overview", response=PaginatedProjectOverviewSchema, auth=BearerAuth(), summary="获取项目概览")
-def list_project_overview(request, page: int = 1, pageSize: int = 20):
-    projects_qs = ScanProject.objects.filter(is_deleted=False).values("id", "name")
+def list_project_overview(
+    request,
+    page: int = 1,
+    pageSize: int = 20,
+    project_id: str = None,
+    sub_modules: str = None,
+):
+    projects_qs = ScanProject.objects.filter(is_deleted=False)
+    if project_id:
+        projects_qs = projects_qs.filter(id=project_id)
+    projects_qs = projects_qs.values("id", "name")
     
     total = projects_qs.count()
     start = (page - 1) * pageSize
@@ -65,38 +168,46 @@ def list_project_overview(request, page: int = 1, pageSize: int = 20):
     projects = list(projects_qs[start:end])
     project_ids = [p["id"] for p in projects]
 
-    tasks = (
+    task_rows = list(
         ScanTask.objects.filter(project_id__in=project_ids, is_deleted=False, status="success")
         .order_by("-sys_create_datetime")
         .values("id", "project_id", "tool_name", "sub_module", "sys_create_datetime")
     )
+    normalized_modules = _normalize_sub_modules(sub_modules)
 
-    latest_task_by_proj_tool: dict[tuple[str, str, str], dict] = {}
-    latest_time_by_project: dict[str, str] = {}
-    for t in tasks:
-        tool_name = t["tool_name"]
-        sub_module = str(t.get("sub_module") or "").strip().lower()
-        if tool_name == "valgrind" and sub_module:
-            key = (t["project_id"], tool_name, sub_module)
-        else:
-            key = (t["project_id"], tool_name, "")
-        if key not in latest_task_by_proj_tool:
-            latest_task_by_proj_tool[key] = t
-        if t["project_id"] not in latest_time_by_project:
-            latest_time_by_project[t["project_id"]] = (
-                t["sys_create_datetime"].isoformat(sep=" ", timespec="seconds")
-                if t.get("sys_create_datetime")
-                else None
+    latest_rows_by_project: dict[str, list[dict]] = {p["id"]: [] for p in projects}
+    project_task_rows: dict[str, list[dict]] = {p["id"]: [] for p in projects}
+    for row in task_rows:
+        pid = str(row["project_id"])
+        if pid in project_task_rows:
+            project_task_rows[pid].append(row)
+
+    latest_task_ids: list[str] = []
+    latest_time_by_project: dict[str, str | None] = {}
+    for project in projects:
+        pid = project["id"]
+        latest_rows = _select_latest_task_rows(
+            project_task_rows.get(pid, []),
+            sub_modules=normalized_modules,
+        )
+        latest_rows_by_project[pid] = latest_rows
+        if latest_rows:
+            latest_dt = max(
+                (row.get("sys_create_datetime") for row in latest_rows if row.get("sys_create_datetime")),
+                default=None,
             )
+            latest_time_by_project[pid] = (
+                latest_dt.isoformat(sep=" ", timespec="seconds") if latest_dt else None
+            )
+            latest_task_ids.extend(str(row["id"]) for row in latest_rows)
 
-    latest_task_ids = [str(v["id"]) for v in latest_task_by_proj_tool.values()]
     counts_by_task: dict[str, int] = {}
     if latest_task_ids:
         from django.db.models import Count
 
         qs = (
             ScanResult.objects.filter(task_id__in=latest_task_ids, is_deleted=False)
-            .exclude(shield_status="Shielded")
+            .exclude(shield_status__in=EXCLUDED_SHIELD_STATUSES)
             .values("task_id")
             .annotate(cnt=Count("id"))
         )
@@ -106,14 +217,21 @@ def list_project_overview(request, page: int = 1, pageSize: int = 20):
         p["id"]: {"tool_counts": {}, "total": None}
         for p in projects
     }
-    for (pid, tool, _), t in latest_task_by_proj_tool.items():
-        task_id = str(t["id"])
-        cnt = counts_by_task.get(task_id, 0)
-        existing_cnt = overview_by_project[pid]["tool_counts"].get(tool, 0)
-        overview_by_project[pid]["tool_counts"][tool] = existing_cnt + cnt
-        if overview_by_project[pid]["total"] is None:
-            overview_by_project[pid]["total"] = 0
-        overview_by_project[pid]["total"] += cnt
+    for pid, latest_rows in latest_rows_by_project.items():
+        tool_counts: dict[str, int] = {}
+        total_count = 0
+        for row in latest_rows:
+            tool = _normalize_tool_name(row.get("tool_name"))
+            if not tool:
+                continue
+            task_id = str(row["id"])
+            cnt = counts_by_task.get(task_id, 0)
+            tool_counts[tool] = tool_counts.get(tool, 0) + cnt
+            total_count += cnt
+
+        overview_by_project[pid]["tool_counts"] = tool_counts
+        if tool_counts:
+            overview_by_project[pid]["total"] = total_count
 
     items = [
         {
@@ -251,72 +369,18 @@ def list_latest_results(
 
     normalized_modules = _normalize_sub_modules(sub_modules)
 
-    task_ids: list[str] = []
-    if tool_name and tool_name.lower() == "valgrind":
-        module_lower_set = {item.lower() for item in normalized_modules}
-        tasks = (
-            tasks_qs.exclude(sub_module="")
-            .order_by("-sys_create_datetime")
-            .values("id", "sub_module")
-        )
-        latest_task_by_module: dict[str, str] = {}
-        for task in tasks:
-            module_value = str(task.get("sub_module") or "").strip()
-            if not module_value:
-                continue
-            module_lower = module_value.lower()
-            if module_lower_set and module_lower not in module_lower_set:
-                continue
-            if module_lower in latest_task_by_module:
-                continue
-            latest_task_by_module[module_lower] = str(task["id"])
-            if module_lower_set and len(latest_task_by_module) == len(module_lower_set):
-                break
-        task_ids = list(latest_task_by_module.values())
-        if not task_ids and not module_lower_set:
-            fallback_task = tasks_qs.order_by("-sys_create_datetime").values("id").first()
-            if fallback_task:
-                task_ids = [str(fallback_task["id"])]
-    elif tool_name and normalized_modules:
-        module_lower_set = {item.lower() for item in normalized_modules}
-        tasks = (
-            tasks_qs.exclude(sub_module="")
-            .order_by("-sys_create_datetime")
-            .values("id", "sub_module")
-        )
-        latest_task_by_module: dict[str, str] = {}
-        for task in tasks:
-            module_value = str(task.get("sub_module") or "").strip()
-            if not module_value:
-                continue
-            module_lower = module_value.lower()
-            if module_lower not in module_lower_set:
-                continue
-            if module_lower in latest_task_by_module:
-                continue
-            latest_task_by_module[module_lower] = str(task["id"])
-            if len(latest_task_by_module) == len(module_lower_set):
-                break
-        task_ids = list(latest_task_by_module.values())
-    else:
-        tasks = (
-            tasks_qs
-            .order_by("-sys_create_datetime")
-            .values("id", "tool_name", "sys_create_datetime")
-        )
-
-        latest_task_by_tool: dict[str, str] = {}
-        for t in tasks:
-            tool = t["tool_name"]
-            if tool not in latest_task_by_tool:
-                latest_task_by_tool[tool] = str(t["id"])
-        task_ids = list(latest_task_by_tool.values())
+    task_ids = _select_latest_task_ids(
+        tasks_qs,
+        tool_name=tool_name,
+        sub_modules=normalized_modules,
+    )
 
     if not task_ids:
         return {"items": [], "total": 0}
 
     results_qs = (
         ScanResult.objects.filter(task_id__in=task_ids, is_deleted=False)
+        .exclude(shield_status__in=EXCLUDED_SHIELD_STATUSES)
         .select_related("task")
         .order_by("-severity", "file_path", "line_number")
     )
