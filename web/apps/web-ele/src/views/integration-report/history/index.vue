@@ -24,7 +24,10 @@ import { queryIntegrationHistoryApi } from '#/api/integration-report';
 defineOptions({ name: 'DailyIntegrationHistory' });
 
 type HistoryTabKey = 'code' | 'dt';
-type CodeSortOrder = 'asc' | 'desc';
+type HistorySortOrder = 'asc' | 'desc';
+type HistoryMetricGroup = 'code_metrics' | 'dt_metrics';
+type HistorySortState = { key: string; order: HistorySortOrder };
+type SortableValue = { category: number; value: number | string };
 
 const loading = ref(false);
 const keyword = ref('');
@@ -71,7 +74,21 @@ const TEXT_SORT_KEYS = new Set([
   'config_name',
   'project_name',
 ]);
-const codeSortState = ref<{ key: string; order: CodeSortOrder }>({
+const EMPTY_SORT_TEXTS = new Set([
+  '',
+  '-',
+  'n/a',
+  'na',
+  'none',
+  'null',
+  'undefined',
+  '未扫描',
+]);
+const codeSortState = ref<HistorySortState>({
+  key: 'record_date',
+  order: 'desc',
+});
+const dtSortState = ref<HistorySortState>({
   key: 'record_date',
   order: 'desc',
 });
@@ -95,70 +112,134 @@ function getMetric(metrics: MetricCell[], key: string) {
   return metrics.find((m) => m.key === key);
 }
 
-function getCodeSortDefaultOrder(key: string): CodeSortOrder {
+function getSortState(tab: HistoryTabKey) {
+  return tab === 'code' ? codeSortState.value : dtSortState.value;
+}
+
+function setSortState(tab: HistoryTabKey, nextState: HistorySortState) {
+  if (tab === 'code') {
+    codeSortState.value = nextState;
+    return;
+  }
+
+  dtSortState.value = nextState;
+}
+
+function isSortActive(tab: HistoryTabKey, key: string) {
+  return getSortState(tab).key === key;
+}
+
+function getSortDefaultOrder(key: string): HistorySortOrder {
   return TEXT_SORT_KEYS.has(key) ? 'asc' : 'desc';
 }
 
-function toggleCodeSort(key: string) {
-  if (codeSortState.value.key === key) {
-    codeSortState.value.order =
-      codeSortState.value.order === 'asc' ? 'desc' : 'asc';
+function toggleSort(tab: HistoryTabKey, key: string) {
+  const currentState = getSortState(tab);
+  if (currentState.key === key) {
+    setSortState(tab, {
+      key,
+      order: currentState.order === 'asc' ? 'desc' : 'asc',
+    });
     return;
   }
-  codeSortState.value = {
+
+  setSortState(tab, {
     key,
-    order: getCodeSortDefaultOrder(key),
-  };
+    order: getSortDefaultOrder(key),
+  });
 }
 
-function codeSortIcon(key: string) {
-  if (codeSortState.value.key !== key) {
+function sortIcon(tab: HistoryTabKey, key: string) {
+  const currentState = getSortState(tab);
+  if (currentState.key !== key) {
     return 'lucide:arrow-up-down';
   }
-  return codeSortState.value.order === 'asc'
-    ? 'lucide:arrow-up'
-    : 'lucide:arrow-down';
+  return currentState.order === 'asc' ? 'lucide:arrow-up' : 'lucide:arrow-down';
 }
 
-function getCodeSortValue(row: HistoryRow, key: string) {
+function normalizeSortText(value?: null | string) {
+  return value?.trim() || '';
+}
+
+function tryParseSortableNumber(value?: null | number | string) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const normalized = value
+    .trim()
+    .replaceAll(',', '')
+    .replace(/[％%]$/, '');
+  if (!normalized || !/^-?\d+(?:\.\d+)?$/.test(normalized)) {
+    return null;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getMetricGroup(row: HistoryRow, group: HistoryMetricGroup) {
+  return group === 'code_metrics' ? row.code_metrics : row.dt_metrics;
+}
+
+function getMetricSortValue(metric?: MetricCell): SortableValue {
+  if (!metric) {
+    return { category: 2, value: '-' };
+  }
+
+  const numericValue = tryParseSortableNumber(metric.value);
+  if (numericValue !== null) {
+    return { category: 0, value: numericValue };
+  }
+
+  const sortText =
+    normalizeSortText(metric.text) || normalizeSortText(cellText(metric));
+  const textNumber = tryParseSortableNumber(sortText);
+  if (textNumber !== null) {
+    return { category: 0, value: textNumber };
+  }
+
+  const normalizedText = sortText.toLowerCase();
+  if (EMPTY_SORT_TEXTS.has(normalizedText)) {
+    return { category: 2, value: sortText || '-' };
+  }
+
+  return { category: 1, value: sortText || '-' };
+}
+
+function getRowSortValue(
+  row: HistoryRow,
+  key: string,
+  metricGroup: HistoryMetricGroup,
+): SortableValue {
   if (key === 'record_date') {
-    return { rank: 3, value: new Date(row.record_date).getTime() };
+    return { category: 0, value: new Date(row.record_date).getTime() };
   }
   if (key === 'config_name') {
-    return { rank: 1, value: row.config_name || '' };
+    return { category: 0, value: normalizeSortText(row.config_name) };
   }
   if (key === 'project_name') {
-    return { rank: 1, value: row.project_name || '' };
+    return { category: 0, value: normalizeSortText(row.project_name) };
   }
   if (key === 'caretaker_names') {
-    return { rank: 1, value: row.caretaker_names || '' };
+    return { category: 0, value: normalizeSortText(row.caretaker_names) };
   }
 
-  const metric = getMetric(row.code_metrics, key);
-  if (metric?.value !== undefined && metric.value !== null) {
-    return { rank: 3, value: Number(metric.value) };
-  }
-
-  const text = cellText(metric);
-  if (text === 'error') {
-    return { rank: 2, value: text };
-  }
-  if (text === '-') {
-    return { rank: -1, value: text };
-  }
-  if (text === '未扫描') {
-    return { rank: 0, value: text };
-  }
-  return { rank: 1, value: text };
+  return getMetricSortValue(getMetric(getMetricGroup(row, metricGroup), key));
 }
 
-function compareCodeSortValue(
-  left: { rank: number; value: number | string },
-  right: { rank: number; value: number | string },
-  order: CodeSortOrder,
+function compareSortValue(
+  left: SortableValue,
+  right: SortableValue,
+  order: HistorySortOrder,
 ) {
-  if (left.rank !== right.rank) {
-    return order === 'asc' ? left.rank - right.rank : right.rank - left.rank;
+  // Numeric values should always be listed before non-numeric placeholders.
+  if (left.category !== right.category) {
+    return left.category - right.category;
   }
 
   if (typeof left.value === 'number' && typeof right.value === 'number') {
@@ -174,12 +255,15 @@ function compareCodeSortValue(
   return order === 'asc' ? result : -result;
 }
 
-const sortedCodeRows = computed(() => {
-  const { key, order } = codeSortState.value;
+function sortRows(
+  metricGroup: HistoryMetricGroup,
+  sortState: HistorySortState,
+) {
+  const { key, order } = sortState;
   return [...rows.value].sort((left, right) => {
-    const diff = compareCodeSortValue(
-      getCodeSortValue(left, key),
-      getCodeSortValue(right, key),
+    const diff = compareSortValue(
+      getRowSortValue(left, key, metricGroup),
+      getRowSortValue(right, key, metricGroup),
       order,
     );
     if (diff !== 0) {
@@ -191,11 +275,23 @@ const sortedCodeRows = computed(() => {
     if (fallbackDateDiff !== 0) {
       return fallbackDateDiff;
     }
-    return left.config_name.localeCompare(right.config_name, 'zh-CN', {
-      numeric: true,
-      sensitivity: 'base',
-    });
+    return (left.config_name || '').localeCompare(
+      right.config_name || '',
+      'zh-CN',
+      {
+        numeric: true,
+        sensitivity: 'base',
+      },
+    );
   });
+}
+
+const sortedCodeRows = computed(() => {
+  return sortRows('code_metrics', codeSortState.value);
+});
+
+const sortedDtRows = computed(() => {
+  return sortRows('dt_metrics', dtSortState.value);
 });
 
 async function query() {
@@ -289,362 +385,466 @@ onMounted(() => {
       >
         <ElTabs v-model="activeTab" class="history-tabs min-h-0 flex-1">
           <ElTabPane label="代码检测类" name="code">
-            <ElSkeleton :loading="loading" animated class="h-full">
-              <template #template>
-                <div class="h-full overflow-auto">
-                  <div
-                    class="history-skeleton-track history-skeleton-track--code"
-                  >
+            <div class="history-tab-panel">
+              <ElSkeleton
+                :loading="loading"
+                animated
+                class="history-tab-skeleton"
+              >
+                <template #template>
+                  <div class="history-table-scroll">
                     <div
-                      class="history-skeleton-row history-skeleton-row--head"
+                      class="history-skeleton-track history-skeleton-track--code"
                     >
-                      <ElSkeletonItem
-                        class="history-skeleton-cell history-skeleton-cell--narrow"
-                        variant="text"
-                      />
-                      <ElSkeletonItem
-                        class="history-skeleton-cell history-skeleton-cell--wide"
-                        variant="text"
-                      />
-                      <ElSkeletonItem
-                        class="history-skeleton-cell"
-                        variant="text"
-                      />
-                      <ElSkeletonItem
-                        class="history-skeleton-cell"
-                        variant="text"
-                      />
-                      <ElSkeletonItem
-                        v-for="index in 8"
-                        :key="`code-head-${index}`"
-                        class="history-skeleton-cell"
-                        variant="text"
-                      />
-                    </div>
-                    <div
-                      v-for="rowIndex in 7"
-                      :key="`code-row-${rowIndex}`"
-                      class="history-skeleton-row"
-                    >
-                      <ElSkeletonItem
-                        class="history-skeleton-cell history-skeleton-cell--narrow"
-                        variant="text"
-                      />
-                      <ElSkeletonItem
-                        class="history-skeleton-cell history-skeleton-cell--wide"
-                        variant="text"
-                      />
-                      <ElSkeletonItem
-                        class="history-skeleton-cell"
-                        variant="text"
-                      />
-                      <ElSkeletonItem
-                        class="history-skeleton-cell"
-                        variant="text"
-                      />
-                      <ElSkeletonItem
-                        v-for="index in 8"
-                        :key="`code-cell-${rowIndex}-${index}`"
-                        class="history-skeleton-cell"
-                        variant="text"
-                      />
+                      <div
+                        class="history-skeleton-row history-skeleton-row--head"
+                      >
+                        <ElSkeletonItem
+                          class="history-skeleton-cell history-skeleton-cell--narrow"
+                          variant="text"
+                        />
+                        <ElSkeletonItem
+                          class="history-skeleton-cell history-skeleton-cell--wide"
+                          variant="text"
+                        />
+                        <ElSkeletonItem
+                          class="history-skeleton-cell"
+                          variant="text"
+                        />
+                        <ElSkeletonItem
+                          class="history-skeleton-cell"
+                          variant="text"
+                        />
+                        <ElSkeletonItem
+                          v-for="index in 8"
+                          :key="`code-head-${index}`"
+                          class="history-skeleton-cell"
+                          variant="text"
+                        />
+                      </div>
+                      <div
+                        v-for="rowIndex in 7"
+                        :key="`code-row-${rowIndex}`"
+                        class="history-skeleton-row"
+                      >
+                        <ElSkeletonItem
+                          class="history-skeleton-cell history-skeleton-cell--narrow"
+                          variant="text"
+                        />
+                        <ElSkeletonItem
+                          class="history-skeleton-cell history-skeleton-cell--wide"
+                          variant="text"
+                        />
+                        <ElSkeletonItem
+                          class="history-skeleton-cell"
+                          variant="text"
+                        />
+                        <ElSkeletonItem
+                          class="history-skeleton-cell"
+                          variant="text"
+                        />
+                        <ElSkeletonItem
+                          v-for="index in 8"
+                          :key="`code-cell-${rowIndex}-${index}`"
+                          class="history-skeleton-cell"
+                          variant="text"
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-              </template>
-              <template #default>
-                <div v-if="hasRows" class="h-full overflow-auto">
-                  <table class="history-table w-full min-w-[1960px] text-sm">
-                    <thead>
-                      <tr class="text-left text-xs text-gray-500">
-                        <th class="py-2 pr-3">
-                          <button
-                            type="button"
-                            class="history-sort-button"
-                            :class="{
-                              'is-active': codeSortState.key === 'record_date',
-                            }"
-                            @click="toggleCodeSort('record_date')"
+                </template>
+                <template #default>
+                  <div v-if="hasRows" class="history-table-scroll">
+                    <table class="history-table w-full min-w-[1960px] text-sm">
+                      <thead>
+                        <tr class="text-left text-xs text-gray-500">
+                          <th class="py-2 pr-3">
+                            <button
+                              type="button"
+                              class="history-sort-button"
+                              :class="{
+                                'is-active': isSortActive(
+                                  'code',
+                                  'record_date',
+                                ),
+                              }"
+                              @click="toggleSort('code', 'record_date')"
+                            >
+                              日期
+                              <IconifyIcon
+                                :icon="sortIcon('code', 'record_date')"
+                                class="history-sort-icon"
+                              />
+                            </button>
+                          </th>
+                          <th class="py-2 pr-3">
+                            <button
+                              type="button"
+                              class="history-sort-button"
+                              :class="{
+                                'is-active': isSortActive(
+                                  'code',
+                                  'config_name',
+                                ),
+                              }"
+                              @click="toggleSort('code', 'config_name')"
+                            >
+                              配置
+                              <IconifyIcon
+                                :icon="sortIcon('code', 'config_name')"
+                                class="history-sort-icon"
+                              />
+                            </button>
+                          </th>
+                          <th class="py-2 pr-3">
+                            <button
+                              type="button"
+                              class="history-sort-button"
+                              :class="{
+                                'is-active': isSortActive(
+                                  'code',
+                                  'project_name',
+                                ),
+                              }"
+                              @click="toggleSort('code', 'project_name')"
+                            >
+                              项目
+                              <IconifyIcon
+                                :icon="sortIcon('code', 'project_name')"
+                                class="history-sort-icon"
+                              />
+                            </button>
+                          </th>
+                          <th class="py-2 pr-3">
+                            <button
+                              type="button"
+                              class="history-sort-button"
+                              :class="{
+                                'is-active': isSortActive(
+                                  'code',
+                                  'caretaker_names',
+                                ),
+                              }"
+                              @click="toggleSort('code', 'caretaker_names')"
+                            >
+                              数据看护人
+                              <IconifyIcon
+                                :icon="sortIcon('code', 'caretaker_names')"
+                                class="history-sort-icon"
+                              />
+                            </button>
+                          </th>
+                          <th
+                            v-for="col in CODE_COLS"
+                            :key="col.key"
+                            class="py-2 pr-3"
                           >
-                            日期
-                            <IconifyIcon
-                              :icon="codeSortIcon('record_date')"
-                              class="history-sort-icon"
-                            />
-                          </button>
-                        </th>
-                        <th class="py-2 pr-3">
-                          <button
-                            type="button"
-                            class="history-sort-button"
-                            :class="{
-                              'is-active': codeSortState.key === 'config_name',
-                            }"
-                            @click="toggleCodeSort('config_name')"
-                          >
-                            配置
-                            <IconifyIcon
-                              :icon="codeSortIcon('config_name')"
-                              class="history-sort-icon"
-                            />
-                          </button>
-                        </th>
-                        <th class="py-2 pr-3">
-                          <button
-                            type="button"
-                            class="history-sort-button"
-                            :class="{
-                              'is-active': codeSortState.key === 'project_name',
-                            }"
-                            @click="toggleCodeSort('project_name')"
-                          >
-                            项目
-                            <IconifyIcon
-                              :icon="codeSortIcon('project_name')"
-                              class="history-sort-icon"
-                            />
-                          </button>
-                        </th>
-                        <th class="py-2 pr-3">
-                          <button
-                            type="button"
-                            class="history-sort-button"
-                            :class="{
-                              'is-active':
-                                codeSortState.key === 'caretaker_names',
-                            }"
-                            @click="toggleCodeSort('caretaker_names')"
-                          >
-                            数据看护人
-                            <IconifyIcon
-                              :icon="codeSortIcon('caretaker_names')"
-                              class="history-sort-icon"
-                            />
-                          </button>
-                        </th>
-                        <th
-                          v-for="col in CODE_COLS"
-                          :key="col.key"
-                          class="py-2 pr-3"
+                            <button
+                              type="button"
+                              class="history-sort-button"
+                              :class="{
+                                'is-active': isSortActive('code', col.key),
+                              }"
+                              @click="toggleSort('code', col.key)"
+                            >
+                              {{ col.name }}
+                              <IconifyIcon
+                                :icon="sortIcon('code', col.key)"
+                                class="history-sort-icon"
+                              />
+                            </button>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          v-for="r in sortedCodeRows"
+                          :key="`${r.record_date}-${r.config_id}`"
+                          class="border-t border-gray-100 dark:border-gray-800"
                         >
-                          <button
-                            type="button"
-                            class="history-sort-button"
-                            :class="{
-                              'is-active': codeSortState.key === col.key,
-                            }"
-                            @click="toggleCodeSort(col.key)"
+                          <td class="py-3 pr-3 text-gray-500">
+                            {{ r.record_date }}
+                          </td>
+                          <td
+                            class="py-3 pr-3 font-bold text-gray-900 dark:text-white"
                           >
-                            {{ col.name }}
-                            <IconifyIcon
-                              :icon="codeSortIcon(col.key)"
-                              class="history-sort-icon"
-                            />
-                          </button>
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr
-                        v-for="r in sortedCodeRows"
-                        :key="`${r.record_date}-${r.config_id}`"
-                        class="border-t border-gray-100 dark:border-gray-800"
-                      >
-                        <td class="py-3 pr-3 text-gray-500">
-                          {{ r.record_date }}
-                        </td>
-                        <td
-                          class="py-3 pr-3 font-bold text-gray-900 dark:text-white"
-                        >
-                          {{ r.config_name }}
-                        </td>
-                        <td class="py-3 pr-3 text-xs text-gray-500">
-                          {{ r.project_name }}
-                        </td>
-                        <td class="py-3 pr-3 text-xs text-gray-500">
-                          {{ r.caretaker_names || '-' }}
-                        </td>
-                        <td
-                          v-for="col in CODE_COLS"
-                          :key="col.key"
-                          class="py-3 pr-3"
-                        >
-                          <ElLink
-                            v-if="getMetric(r.code_metrics, col.key)?.url"
-                            :href="
-                              getMetric(r.code_metrics, col.key)?.url ||
-                              undefined
-                            "
-                            target="_blank"
-                            :underline="false"
+                            {{ r.config_name }}
+                          </td>
+                          <td class="py-3 pr-3 text-xs text-gray-500">
+                            {{ r.project_name }}
+                          </td>
+                          <td class="py-3 pr-3 text-xs text-gray-500">
+                            {{ r.caretaker_names || '-' }}
+                          </td>
+                          <td
+                            v-for="col in CODE_COLS"
+                            :key="col.key"
+                            class="py-3 pr-3"
                           >
+                            <ElLink
+                              v-if="getMetric(r.code_metrics, col.key)?.url"
+                              :href="
+                                getMetric(r.code_metrics, col.key)?.url ||
+                                undefined
+                              "
+                              target="_blank"
+                              :underline="false"
+                            >
+                              <span
+                                :class="
+                                  cellClass(getMetric(r.code_metrics, col.key))
+                                "
+                              >
+                                {{
+                                  cellText(getMetric(r.code_metrics, col.key))
+                                }}
+                              </span>
+                            </ElLink>
                             <span
+                              v-else
                               :class="
                                 cellClass(getMetric(r.code_metrics, col.key))
                               "
                             >
                               {{ cellText(getMetric(r.code_metrics, col.key)) }}
                             </span>
-                          </ElLink>
-                          <span
-                            v-else
-                            :class="
-                              cellClass(getMetric(r.code_metrics, col.key))
-                            "
-                          >
-                            {{ cellText(getMetric(r.code_metrics, col.key)) }}
-                          </span>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-                <div v-else class="flex h-full items-center justify-center">
-                  <ElEmpty description="暂无代码检测历史数据" />
-                </div>
-              </template>
-            </ElSkeleton>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div v-else class="flex h-full items-center justify-center">
+                    <ElEmpty description="暂无代码检测历史数据" />
+                  </div>
+                </template>
+              </ElSkeleton>
+            </div>
           </ElTabPane>
 
           <ElTabPane label="DT 测试数据" name="dt">
-            <ElSkeleton :loading="loading" animated class="h-full">
-              <template #template>
-                <div class="h-full overflow-auto">
-                  <div
-                    class="history-skeleton-track history-skeleton-track--dt"
-                  >
+            <div class="history-tab-panel">
+              <ElSkeleton
+                :loading="loading"
+                animated
+                class="history-tab-skeleton"
+              >
+                <template #template>
+                  <div class="history-table-scroll">
                     <div
-                      class="history-skeleton-row history-skeleton-row--head"
+                      class="history-skeleton-track history-skeleton-track--dt"
                     >
-                      <ElSkeletonItem
-                        class="history-skeleton-cell history-skeleton-cell--narrow"
-                        variant="text"
-                      />
-                      <ElSkeletonItem
-                        class="history-skeleton-cell history-skeleton-cell--wide"
-                        variant="text"
-                      />
-                      <ElSkeletonItem
-                        class="history-skeleton-cell"
-                        variant="text"
-                      />
-                      <ElSkeletonItem
-                        class="history-skeleton-cell"
-                        variant="text"
-                      />
-                      <ElSkeletonItem
-                        v-for="index in 4"
-                        :key="`dt-head-${index}`"
-                        class="history-skeleton-cell"
-                        variant="text"
-                      />
-                    </div>
-                    <div
-                      v-for="rowIndex in 7"
-                      :key="`dt-row-${rowIndex}`"
-                      class="history-skeleton-row"
-                    >
-                      <ElSkeletonItem
-                        class="history-skeleton-cell history-skeleton-cell--narrow"
-                        variant="text"
-                      />
-                      <ElSkeletonItem
-                        class="history-skeleton-cell history-skeleton-cell--wide"
-                        variant="text"
-                      />
-                      <ElSkeletonItem
-                        class="history-skeleton-cell"
-                        variant="text"
-                      />
-                      <ElSkeletonItem
-                        class="history-skeleton-cell"
-                        variant="text"
-                      />
-                      <ElSkeletonItem
-                        v-for="index in 4"
-                        :key="`dt-cell-${rowIndex}-${index}`"
-                        class="history-skeleton-cell"
-                        variant="text"
-                      />
+                      <div
+                        class="history-skeleton-row history-skeleton-row--head"
+                      >
+                        <ElSkeletonItem
+                          class="history-skeleton-cell history-skeleton-cell--narrow"
+                          variant="text"
+                        />
+                        <ElSkeletonItem
+                          class="history-skeleton-cell history-skeleton-cell--wide"
+                          variant="text"
+                        />
+                        <ElSkeletonItem
+                          class="history-skeleton-cell"
+                          variant="text"
+                        />
+                        <ElSkeletonItem
+                          class="history-skeleton-cell"
+                          variant="text"
+                        />
+                        <ElSkeletonItem
+                          v-for="index in 4"
+                          :key="`dt-head-${index}`"
+                          class="history-skeleton-cell"
+                          variant="text"
+                        />
+                      </div>
+                      <div
+                        v-for="rowIndex in 7"
+                        :key="`dt-row-${rowIndex}`"
+                        class="history-skeleton-row"
+                      >
+                        <ElSkeletonItem
+                          class="history-skeleton-cell history-skeleton-cell--narrow"
+                          variant="text"
+                        />
+                        <ElSkeletonItem
+                          class="history-skeleton-cell history-skeleton-cell--wide"
+                          variant="text"
+                        />
+                        <ElSkeletonItem
+                          class="history-skeleton-cell"
+                          variant="text"
+                        />
+                        <ElSkeletonItem
+                          class="history-skeleton-cell"
+                          variant="text"
+                        />
+                        <ElSkeletonItem
+                          v-for="index in 4"
+                          :key="`dt-cell-${rowIndex}-${index}`"
+                          class="history-skeleton-cell"
+                          variant="text"
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-              </template>
-              <template #default>
-                <div v-if="hasRows" class="h-full overflow-auto">
-                  <table class="history-table w-full min-w-[1260px] text-sm">
-                    <thead>
-                      <tr class="text-left text-xs text-gray-500">
-                        <th class="py-2 pr-3">日期</th>
-                        <th class="py-2 pr-3">配置</th>
-                        <th class="py-2 pr-3">项目</th>
-                        <th class="py-2 pr-3">数据看护人</th>
-                        <th
-                          v-for="col in DT_COLS"
-                          :key="col.key"
-                          class="py-2 pr-3"
-                        >
-                          {{ col.name }}
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr
-                        v-for="r in rows"
-                        :key="`dt-${r.record_date}-${r.config_id}`"
-                        class="border-t border-gray-100 dark:border-gray-800"
-                      >
-                        <td class="py-3 pr-3 text-gray-500">
-                          {{ r.record_date }}
-                        </td>
-                        <td
-                          class="py-3 pr-3 font-bold text-gray-900 dark:text-white"
-                        >
-                          {{ r.config_name }}
-                        </td>
-                        <td class="py-3 pr-3 text-xs text-gray-500">
-                          {{ r.project_name }}
-                        </td>
-                        <td class="py-3 pr-3 text-xs text-gray-500">
-                          {{ r.caretaker_names || '-' }}
-                        </td>
-                        <td
-                          v-for="col in DT_COLS"
-                          :key="col.key"
-                          class="py-3 pr-3"
-                        >
-                          <ElLink
-                            v-if="getMetric(r.dt_metrics, col.key)?.url"
-                            :href="
-                              getMetric(r.dt_metrics, col.key)?.url || undefined
-                            "
-                            target="_blank"
-                            :underline="false"
+                </template>
+                <template #default>
+                  <div v-if="hasRows" class="history-table-scroll">
+                    <table class="history-table w-full min-w-[1260px] text-sm">
+                      <thead>
+                        <tr class="text-left text-xs text-gray-500">
+                          <th class="py-2 pr-3">
+                            <button
+                              type="button"
+                              class="history-sort-button"
+                              :class="{
+                                'is-active': isSortActive('dt', 'record_date'),
+                              }"
+                              @click="toggleSort('dt', 'record_date')"
+                            >
+                              日期
+                              <IconifyIcon
+                                :icon="sortIcon('dt', 'record_date')"
+                                class="history-sort-icon"
+                              />
+                            </button>
+                          </th>
+                          <th class="py-2 pr-3">
+                            <button
+                              type="button"
+                              class="history-sort-button"
+                              :class="{
+                                'is-active': isSortActive('dt', 'config_name'),
+                              }"
+                              @click="toggleSort('dt', 'config_name')"
+                            >
+                              配置
+                              <IconifyIcon
+                                :icon="sortIcon('dt', 'config_name')"
+                                class="history-sort-icon"
+                              />
+                            </button>
+                          </th>
+                          <th class="py-2 pr-3">
+                            <button
+                              type="button"
+                              class="history-sort-button"
+                              :class="{
+                                'is-active': isSortActive('dt', 'project_name'),
+                              }"
+                              @click="toggleSort('dt', 'project_name')"
+                            >
+                              项目
+                              <IconifyIcon
+                                :icon="sortIcon('dt', 'project_name')"
+                                class="history-sort-icon"
+                              />
+                            </button>
+                          </th>
+                          <th class="py-2 pr-3">
+                            <button
+                              type="button"
+                              class="history-sort-button"
+                              :class="{
+                                'is-active': isSortActive(
+                                  'dt',
+                                  'caretaker_names',
+                                ),
+                              }"
+                              @click="toggleSort('dt', 'caretaker_names')"
+                            >
+                              数据看护人
+                              <IconifyIcon
+                                :icon="sortIcon('dt', 'caretaker_names')"
+                                class="history-sort-icon"
+                              />
+                            </button>
+                          </th>
+                          <th
+                            v-for="col in DT_COLS"
+                            :key="col.key"
+                            class="py-2 pr-3"
                           >
+                            <button
+                              type="button"
+                              class="history-sort-button"
+                              :class="{
+                                'is-active': isSortActive('dt', col.key),
+                              }"
+                              @click="toggleSort('dt', col.key)"
+                            >
+                              {{ col.name }}
+                              <IconifyIcon
+                                :icon="sortIcon('dt', col.key)"
+                                class="history-sort-icon"
+                              />
+                            </button>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          v-for="r in sortedDtRows"
+                          :key="`dt-${r.record_date}-${r.config_id}`"
+                          class="border-t border-gray-100 dark:border-gray-800"
+                        >
+                          <td class="py-3 pr-3 text-gray-500">
+                            {{ r.record_date }}
+                          </td>
+                          <td
+                            class="py-3 pr-3 font-bold text-gray-900 dark:text-white"
+                          >
+                            {{ r.config_name }}
+                          </td>
+                          <td class="py-3 pr-3 text-xs text-gray-500">
+                            {{ r.project_name }}
+                          </td>
+                          <td class="py-3 pr-3 text-xs text-gray-500">
+                            {{ r.caretaker_names || '-' }}
+                          </td>
+                          <td
+                            v-for="col in DT_COLS"
+                            :key="col.key"
+                            class="py-3 pr-3"
+                          >
+                            <ElLink
+                              v-if="getMetric(r.dt_metrics, col.key)?.url"
+                              :href="
+                                getMetric(r.dt_metrics, col.key)?.url ||
+                                undefined
+                              "
+                              target="_blank"
+                              :underline="false"
+                            >
+                              <span
+                                :class="
+                                  cellClass(getMetric(r.dt_metrics, col.key))
+                                "
+                              >
+                                {{ cellText(getMetric(r.dt_metrics, col.key)) }}
+                              </span>
+                            </ElLink>
                             <span
+                              v-else
                               :class="
                                 cellClass(getMetric(r.dt_metrics, col.key))
                               "
                             >
                               {{ cellText(getMetric(r.dt_metrics, col.key)) }}
                             </span>
-                          </ElLink>
-                          <span
-                            v-else
-                            :class="cellClass(getMetric(r.dt_metrics, col.key))"
-                          >
-                            {{ cellText(getMetric(r.dt_metrics, col.key)) }}
-                          </span>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-                <div v-else class="flex h-full items-center justify-center">
-                  <ElEmpty description="暂无 DT 测试历史数据" />
-                </div>
-              </template>
-            </ElSkeleton>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div v-else class="flex h-full items-center justify-center">
+                    <ElEmpty description="暂无 DT 测试历史数据" />
+                  </div>
+                </template>
+              </ElSkeleton>
+            </div>
           </ElTabPane>
         </ElTabs>
       </div>
@@ -680,13 +880,39 @@ onMounted(() => {
 }
 
 .history-tabs :deep(.el-tabs__content) {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
   overflow: hidden;
 }
 
 .history-tabs :deep(.el-tab-pane) {
+  display: flex;
+  flex-direction: column;
   height: 100%;
+  min-height: 0;
+}
+
+.history-tab-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.history-tab-skeleton {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.history-table-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 .history-sort-button {
