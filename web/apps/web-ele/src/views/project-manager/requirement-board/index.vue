@@ -128,7 +128,6 @@ const teamOptions = computed(() => {
 });
 
 const hasAppliedFilters = computed(() => Boolean(appliedFilters.value));
-const dataResultCount = computed(() => Number(gridApi.total.value || 0));
 const selectedCategoryCount = computed(() => {
   const categories = normalizeStringArray(filters.value.categories);
   return categories.length > 0 ? categories.length : DEFAULT_CATEGORIES.length;
@@ -194,7 +193,7 @@ function getTeamTagType(teamName: string) {
   const palette = ['primary', 'success', 'warning', 'danger', 'info'];
   let hash = 0;
   for (const char of normalized) {
-    hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+    hash = (hash * 31 + char.codePointAt(0) || 0) >>> 0;
   }
   return palette[hash % palette.length];
 }
@@ -248,6 +247,8 @@ const [Grid, gridApi] = useZqTable({
     },
   },
 });
+
+const dataResultCount = computed(() => Number(gridApi.total.value || 0));
 
 async function fetchSummary(force = false) {
   if (!appliedFilters.value) {
@@ -523,7 +524,7 @@ onMounted(async () => {
                       :class="getStatusBadgeClass(row.status_code)"
                       effect="plain"
                     >
-                      <span class="requirement-status-dot" />
+                      <span class="requirement-status-dot"></span>
                       {{ row.status_code }} · {{ row.status_label }}
                     </ElTag>
                   </template>
@@ -538,7 +539,9 @@ onMounted(async () => {
 
               <div v-else class="requirement-data-guide">
                 <div class="requirement-data-guide__panel">
-                  <div class="requirement-data-guide__eyebrow">需求数据看板</div>
+                  <div class="requirement-data-guide__eyebrow">
+                    需求数据看板
+                  </div>
                   <div class="requirement-data-guide__title">
                     先选择筛选条件，再拉取需求明细数据
                   </div>
@@ -551,21 +554,27 @@ onMounted(async () => {
                       <div class="requirement-guide-step__index">1</div>
                       <div class="requirement-guide-step__title">选择项目</div>
                       <div class="requirement-guide-step__desc">
-                        当前已选 {{ filters.project_ids.length }} 个项目；未完成配置的项目已自动禁用。
+                        当前已选
+                        {{ filters.project_ids.length }}
+                        个项目；未完成配置的项目已自动禁用。
                       </div>
                     </div>
                     <div class="requirement-guide-step">
                       <div class="requirement-guide-step__index">2</div>
-                      <div class="requirement-guide-step__title">选择责任团队</div>
+                      <div class="requirement-guide-step__title">
+                        选择责任团队
+                      </div>
                       <div class="requirement-guide-step__desc">
-                        团队选项会随项目自动去重生成；当前已选 {{ filters.sub_teams?.length || 0 }} 个团队。
+                        团队选项会随项目自动去重生成；当前已选
+                        {{ filters.sub_teams?.length || 0 }} 个团队。
                       </div>
                     </div>
                     <div class="requirement-guide-step">
                       <div class="requirement-guide-step__index">3</div>
                       <div class="requirement-guide-step__title">点击查询</div>
                       <div class="requirement-guide-step__desc">
-                        需求类型默认全选；当前生效 {{ selectedCategoryCount }} 种类型。
+                        需求类型默认全选；当前生效
+                        {{ selectedCategoryCount }} 种类型。
                       </div>
                     </div>
                   </div>
@@ -799,6 +808,201 @@ onMounted(async () => {
   margin-top: 10px;
 }
 
+.requirement-data-card {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  border-radius: 18px;
+}
+
+.requirement-data-card :deep(.el-card__header) {
+  padding: 18px 20px 16px;
+  border-bottom-color: #e2e8f0;
+}
+
+.requirement-data-card :deep(.el-card__body) {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  padding: 0 0 16px;
+}
+
+.requirement-data-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.requirement-data-card__title {
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.requirement-data-card__desc {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+  margin-top: 4px;
+  max-width: 720px;
+}
+
+.requirement-data-card__status {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.requirement-data-card__body {
+  flex: 1;
+  min-height: 0;
+}
+
+.requirement-data-guide {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.requirement-data-guide__panel {
+  width: min(100%, 820px);
+  border: 1px dashed #cbd5e1;
+  border-radius: 24px;
+  background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+  padding: 32px;
+}
+
+.requirement-data-guide__eyebrow {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.requirement-data-guide__title {
+  color: #0f172a;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-top: 10px;
+}
+
+.requirement-data-guide__desc {
+  color: #475569;
+  font-size: 14px;
+  line-height: 1.7;
+  margin-top: 10px;
+  max-width: 680px;
+}
+
+.requirement-guide-steps {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-top: 24px;
+}
+
+.requirement-guide-step {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  padding: 18px;
+  min-height: 156px;
+}
+
+.requirement-guide-step__index {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: #0f172a;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.requirement-guide-step__title {
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 700;
+  margin-top: 14px;
+}
+
+.requirement-guide-step__desc {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.7;
+  margin-top: 8px;
+}
+
+.requirement-team-badge {
+  max-width: 100%;
+}
+
+.requirement-team-badge__text {
+  display: inline-block;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.requirement-category-badge {
+  min-width: 54px;
+  font-weight: 600;
+}
+
+.requirement-status-badge {
+  border-width: 1px;
+  font-weight: 600;
+}
+
+.requirement-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.requirement-status-badge--i {
+  background: #fef2f2;
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
+
+.requirement-status-badge--d {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.requirement-status-badge--p {
+  background: #eef2ff;
+  border-color: #a5b4fc;
+  color: #4338ca;
+}
+
+.requirement-status-badge--c {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #c2410c;
+}
+
+.requirement-status-badge--a {
+  background: #f0fdf4;
+  border-color: #86efac;
+  color: #15803d;
+}
+
 .requirement-board-tabs :deep(.el-tabs__header) {
   margin-bottom: 12px;
 }
@@ -819,5 +1023,27 @@ onMounted(async () => {
 
 .requirement-summary-panel {
   padding-right: 4px;
+}
+
+@media (max-width: 768px) {
+  .requirement-data-card__header {
+    flex-direction: column;
+  }
+
+  .requirement-data-card__status {
+    margin-top: 0;
+  }
+
+  .requirement-data-guide {
+    padding: 16px;
+  }
+
+  .requirement-data-guide__panel {
+    padding: 24px;
+  }
+
+  .requirement-data-guide__title {
+    font-size: 24px;
+  }
 }
 </style>
