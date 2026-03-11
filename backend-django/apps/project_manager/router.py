@@ -6,6 +6,7 @@ from .code_quality.code_quality_api import router as code_quality_router
 from .dts.dts_api import router as dts_router
 from .hardware.hardware_api import router as hardware_router
 from .report.report_api import router as report_router
+from .requirement_board.requirement_board_api import router as requirement_board_router
 from .sync_log_api import router as sync_log_router
 
 router = Router()
@@ -17,4 +18,5 @@ router.add_router("/code_quality", code_quality_router)
 router.add_router("/dts", dts_router)
 router.add_router("/hardware", hardware_router)
 router.add_router("/report", report_router)
+router.add_router("/requirement-board", requirement_board_router)
 router.add_router("/", sync_log_router)

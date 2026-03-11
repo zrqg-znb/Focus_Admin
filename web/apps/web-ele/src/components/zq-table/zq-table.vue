@@ -424,6 +424,18 @@ const pagerLayout = computed(
 const pagerBackground = computed(
   () => gridOptions.value?.pagerConfig?.background !== false,
 );
+const resolvedTableHeight = computed<number | string | undefined>(() => {
+  const configuredHeight = gridOptions.value?.height;
+  if (
+    configuredHeight !== undefined &&
+    configuredHeight !== null &&
+    configuredHeight !== ''
+  ) {
+    return configuredHeight;
+  }
+  return tableHeight.value > 0 ? tableHeight.value : undefined;
+});
+
 const tableProps = computed<Record<string, any>>(() => {
   const options = (gridOptions.value || {}) as Record<string, any>;
   const {
@@ -1383,7 +1395,7 @@ function handleFilterChange(data: Record<string, any[]>) {
         <ElTable
           v-bind="tableProps"
           :data="tableData"
-          :height="tableHeight"
+          :height="resolvedTableHeight"
           :style="{ width: '100%' }"
           header-row-class-name="zq-table-header"
           @selection-change="handleSelectionChange"

@@ -137,7 +137,7 @@ const hardwareLoading = ref(false);
 const steps = [
   { title: '基本信息', index: 1 },
   { title: '里程碑配置', index: 2 },
-  { title: '健康迭代配置', index: 3 },
+  { title: '需求数据源/健康迭代', index: 3 },
   { title: '代码质量配置', index: 4 },
   { title: '问题单配置', index: 5 },
   { title: '典配配置', index: 6 },
@@ -380,6 +380,43 @@ function isHardwareConfigValid(showMessage = false) {
   return true;
 }
 
+function normalizeOptionalText(value: string) {
+  const text = String(value || '').trim();
+  return text || null;
+}
+
+function normalizeStringList(values: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of values || []) {
+    const text = String(item || '').trim();
+    if (!text || seen.has(text)) {
+      continue;
+    }
+    seen.add(text);
+    result.push(text);
+  }
+  return result;
+}
+
+function isIterationConfigValid(showMessage = false) {
+  if (!enableIteration.value) {
+    return true;
+  }
+
+  const designId = normalizeOptionalText(iterationConfig.value.design_id);
+  const subTeams = normalizeStringList(iterationConfig.value.sub_teams);
+
+  if (!designId || subTeams.length === 0) {
+    if (showMessage) {
+      ElMessage.warning('开启健康迭代统计后，请先完善需求数据源配置');
+    }
+    return false;
+  }
+
+  return true;
+}
+
 async function ensureHardwarePointsLoaded() {
   if (
     (hardwarePoints.value.length > 0 ||
@@ -460,10 +497,7 @@ const canGoNext = computed(() => {
     return true;
   }
   if (currentStep.value === 2 && enableIteration.value) {
-    const basicReady =
-      iterationConfig.value.design_id &&
-      iterationConfig.value.sub_teams.length > 0;
-    if (!basicReady) {
+    if (!isIterationConfigValid()) {
       return false;
     }
     if (!iterationQualityConfig.value.enable_quality_metrics) {
@@ -551,6 +585,10 @@ async function handleSave() {
       currentStep.value = hardwareStepIndex;
       return;
     }
+    if (!isIterationConfigValid(true)) {
+      currentStep.value = 2;
+      return;
+    }
     if (
       enableIteration.value &&
       iterationQualityConfig.value.enable_quality_metrics &&
@@ -561,6 +599,12 @@ async function handleSave() {
       currentStep.value = 2;
       return;
     }
+    const normalizedDesignId = normalizeOptionalText(
+      iterationConfig.value.design_id,
+    );
+    const normalizedSubTeams = normalizeStringList(
+      iterationConfig.value.sub_teams,
+    );
     const payload = {
       ...baseData,
       enable_milestone: enableMilestone.value,
@@ -576,12 +620,8 @@ async function handleSave() {
           ? idvpPlatformId.value || undefined
           : undefined,
       phase_configs: enableHardwareConfig.value ? getPhasePayload() : undefined,
-      design_id: enableIteration.value
-        ? iterationConfig.value.design_id
-        : undefined,
-      sub_teams: enableIteration.value
-        ? iterationConfig.value.sub_teams
-        : undefined,
+      design_id: normalizedDesignId,
+      sub_teams: normalizedSubTeams,
       iteration_quality_oem_name:
         enableIteration.value &&
         iterationQualityConfig.value.enable_quality_metrics
@@ -826,60 +866,72 @@ function handleClose() {
         <div class="align-self-center w-[700px] translate-y-[-20%]">
           <div class="border-border bg-card rounded-lg border p-8 shadow-sm">
             <ElForm label-width="120px">
-              <ElFormItem label="开启健康迭代统计">
-                <ElSwitch v-model="enableIteration" />
+              <div
+                class="mb-4 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600"
+              >
+                <div class="font-medium text-slate-900">需求数据源配置</div>
+                <div class="mt-1">
+                  design_id
+                  与责任团队对需求看板和健康迭代共用；关闭健康迭代统计时，这组配置仍会保留。
+                </div>
+              </div>
+              <ElFormItem label="中台配置ID">
+                <ElInput
+                  v-model="iterationConfig.design_id"
+                  placeholder="请输入需求/迭代共用的中台配置 ID"
+                />
               </ElFormItem>
-              <div v-if="enableIteration">
-                <ElFormItem label="中台配置ID">
+              <ElFormItem label="责任团队">
+                <div class="mb-2 flex gap-2">
                   <ElInput
-                    v-model="iterationConfig.design_id"
-                    placeholder="请输入迭代中台配置 ID"
+                    v-model="newSubTeam"
+                    placeholder="输入团队名称"
+                    @keyup.enter="
+                      () => {
+                        if (newSubTeam) {
+                          iterationConfig.sub_teams.push(newSubTeam);
+                          newSubTeam = '';
+                        }
+                      }
+                    "
                   />
-                </ElFormItem>
-                <ElFormItem label="迭代责任团队">
-                  <div class="mb-2 flex gap-2">
-                    <ElInput
-                      v-model="newSubTeam"
-                      placeholder="输入团队名称"
-                      @keyup.enter="
-                        () => {
-                          if (newSubTeam) {
-                            iterationConfig.sub_teams.push(newSubTeam);
-                            newSubTeam = '';
-                          }
+                  <ElButton
+                    @click="
+                      () => {
+                        if (newSubTeam) {
+                          iterationConfig.sub_teams.push(newSubTeam);
+                          newSubTeam = '';
                         }
-                      "
-                    />
+                      }
+                    "
+                  >
+                    添加
+                  </ElButton>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <div
+                    v-for="(team, index) in iterationConfig.sub_teams"
+                    :key="index"
+                    class="flex items-center gap-1 rounded bg-gray-100 px-2 py-1"
+                  >
+                    <span>{{ team }}</span>
                     <ElButton
-                      @click="
-                        () => {
-                          if (newSubTeam) {
-                            iterationConfig.sub_teams.push(newSubTeam);
-                            newSubTeam = '';
-                          }
-                        }
-                      "
+                      link
+                      type="danger"
+                      @click="iterationConfig.sub_teams.splice(index, 1)"
                     >
-                      添加
+                      删除
                     </ElButton>
                   </div>
-                  <div class="flex flex-wrap gap-2">
-                    <div
-                      v-for="(team, index) in iterationConfig.sub_teams"
-                      :key="index"
-                      class="flex items-center gap-1 rounded bg-gray-100 px-2 py-1"
-                    >
-                      <span>{{ team }}</span>
-                      <ElButton
-                        link
-                        type="danger"
-                        @click="iterationConfig.sub_teams.splice(index, 1)"
-                      >
-                        删除
-                      </ElButton>
-                    </div>
-                  </div>
-                </ElFormItem>
+                </div>
+              </ElFormItem>
+              <div
+                class="my-6 flex items-center gap-2 border-t border-slate-200 pt-4"
+              >
+                <div class="text-sm font-medium">健康迭代统计</div>
+                <ElSwitch v-model="enableIteration" />
+              </div>
+              <template v-if="enableIteration">
                 <ElFormItem label="代码质量出口指标">
                   <ElSwitch
                     v-model="iterationQualityConfig.enable_quality_metrics"
@@ -899,7 +951,7 @@ function handleClose() {
                     />
                   </ElFormItem>
                 </template>
-              </div>
+              </template>
             </ElForm>
           </div>
         </div>

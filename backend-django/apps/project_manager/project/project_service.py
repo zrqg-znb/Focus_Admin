@@ -45,6 +45,13 @@ def _normalize_id_list(raw_values) -> list[str]:
     return normalized
 
 
+def _normalize_requirement_source_config(
+    design_id: str | None,
+    sub_teams,
+) -> tuple[str | None, list[str]]:
+    return _normalize_optional_text(design_id), _normalize_id_list(sub_teams)
+
+
 def _normalize_iteration_quality_config(
     *,
     enable_iteration: bool,
@@ -310,9 +317,15 @@ def create_project(request, data: ProjectCreateSchema):
                 iteration_quality_module=data_dict.get("iteration_quality_module"),
             )
         )
+        normalized_design_id, normalized_sub_teams = _normalize_requirement_source_config(
+            data_dict.get("design_id"),
+            data_dict.get("sub_teams"),
+        )
         data_dict["enable_iteration_quality_metrics"] = normalized_quality_switch
         data_dict["iteration_quality_oem_name"] = normalized_quality_oem_name
         data_dict["iteration_quality_module"] = normalized_quality_module
+        data_dict["design_id"] = normalized_design_id
+        data_dict["sub_teams"] = normalized_sub_teams
 
         project = fu_crud.create(request, data_dict, Project)
 
@@ -370,6 +383,10 @@ def update_project(request, id: str, data: ProjectUpdateSchema):
         "iteration_quality_module",
         project.iteration_quality_module,
     )
+    normalized_design_id, normalized_sub_teams = _normalize_requirement_source_config(
+        data_dict.get("design_id", project.design_id),
+        data_dict.get("sub_teams", project.sub_teams),
+    )
     normalized_quality_switch, normalized_quality_oem_name, normalized_quality_module = (
         _normalize_iteration_quality_config(
             enable_iteration=enable_iteration,
@@ -381,6 +398,8 @@ def update_project(request, id: str, data: ProjectUpdateSchema):
     data_dict["enable_iteration_quality_metrics"] = normalized_quality_switch
     data_dict["iteration_quality_oem_name"] = normalized_quality_oem_name
     data_dict["iteration_quality_module"] = normalized_quality_module
+    data_dict["design_id"] = normalized_design_id
+    data_dict["sub_teams"] = normalized_sub_teams
 
     project = fu_crud.update(request, id, data_dict, Project)
 

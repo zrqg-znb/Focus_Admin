@@ -575,6 +575,43 @@ function isHardwareConfigValid(showMessage = false) {
   return true;
 }
 
+function normalizeOptionalText(value: string) {
+  const text = String(value || '').trim();
+  return text || null;
+}
+
+function normalizeStringList(values: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of values || []) {
+    const text = String(item || '').trim();
+    if (!text || seen.has(text)) {
+      continue;
+    }
+    seen.add(text);
+    result.push(text);
+  }
+  return result;
+}
+
+function isIterationConfigValid(showMessage = false) {
+  if (!enableIteration.value) {
+    return true;
+  }
+
+  const designId = normalizeOptionalText(iterationConfig.value.design_id);
+  const subTeams = normalizeStringList(iterationConfig.value.sub_teams);
+
+  if (!designId || subTeams.length === 0) {
+    if (showMessage) {
+      ElMessage.warning('开启健康迭代统计后，请先完善需求数据源配置');
+    }
+    return false;
+  }
+
+  return true;
+}
+
 function isIterationQualityConfigValid(showMessage = false) {
   if (
     !enableIteration.value ||
@@ -676,6 +713,10 @@ async function onSubmit() {
       activeTab.value = 'hardware';
       return;
     }
+    if (!isIterationConfigValid(true)) {
+      activeTab.value = 'iteration';
+      return;
+    }
     if (!isIterationQualityConfigValid(true)) {
       activeTab.value = 'iteration';
       return;
@@ -699,6 +740,12 @@ async function onSubmit() {
       }
 
       // 准备提交数据
+      const normalizedDesignId = normalizeOptionalText(
+        iterationConfig.value.design_id,
+      );
+      const normalizedSubTeams = normalizeStringList(
+        iterationConfig.value.sub_teams,
+      );
       const payload = {
         ...data,
         enable_milestone: enableMilestone.value,
@@ -716,12 +763,8 @@ async function onSubmit() {
         phase_configs: enableHardwareConfig.value
           ? getPhasePayload()
           : undefined,
-        design_id: enableIteration.value
-          ? iterationConfig.value.design_id
-          : undefined,
-        sub_teams: enableIteration.value
-          ? iterationConfig.value.sub_teams
-          : undefined,
+        design_id: normalizedDesignId,
+        sub_teams: normalizedSubTeams,
         iteration_quality_oem_name:
           enableIteration.value &&
           iterationQualityConfig.value.enable_quality_metrics
@@ -888,25 +931,25 @@ async function onSubmit() {
             </ElForm>
           </div>
         </ElTabPane>
-        <ElTabPane label="健康迭代配置" name="iteration">
+        <ElTabPane label="需求数据源/健康迭代" name="iteration">
           <div class="mt-4">
-            <div class="mb-2 flex items-center gap-2">
-              <div class="text-sm font-medium">健康迭代配置</div>
-              <ElSwitch
-                v-model="enableIteration"
-                inline-prompt
-                active-text="开"
-                inactive-text="关"
-              />
+            <div
+              class="mb-4 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600"
+            >
+              <div class="font-medium text-slate-900">需求数据源配置</div>
+              <div class="mt-1">
+                design_id
+                与责任团队对需求看板和健康迭代共用；关闭健康迭代统计时，这组配置仍会保留。
+              </div>
             </div>
-            <ElForm label-width="120px" v-if="enableIteration">
+            <ElForm label-width="120px">
               <ElFormItem label="中台配置ID">
                 <ElInput
                   v-model="iterationConfig.design_id"
-                  placeholder="请输入迭代中台配置 ID"
+                  placeholder="请输入需求/迭代共用的中台配置 ID"
                 />
               </ElFormItem>
-              <ElFormItem label="迭代责任团队">
+              <ElFormItem label="责任团队">
                 <div class="mb-2 flex gap-2">
                   <ElInput
                     v-model="newSubTeam"
@@ -950,27 +993,41 @@ async function onSubmit() {
                   </div>
                 </div>
               </ElFormItem>
-              <ElFormItem label="代码质量出口指标">
+
+              <div
+                class="my-6 flex items-center gap-2 border-t border-slate-200 pt-4"
+              >
+                <div class="text-sm font-medium">健康迭代统计</div>
                 <ElSwitch
-                  v-model="iterationQualityConfig.enable_quality_metrics"
+                  v-model="enableIteration"
                   inline-prompt
                   active-text="开"
                   inactive-text="关"
                 />
-              </ElFormItem>
-              <template v-if="iterationQualityConfig.enable_quality_metrics">
-                <ElFormItem label="OEMName">
-                  <ElInput
-                    v-model="iterationQualityConfig.oem_name"
-                    placeholder="请输入OEMName"
+              </div>
+              <template v-if="enableIteration">
+                <ElFormItem label="代码质量出口指标">
+                  <ElSwitch
+                    v-model="iterationQualityConfig.enable_quality_metrics"
+                    inline-prompt
+                    active-text="开"
+                    inactive-text="关"
                   />
                 </ElFormItem>
-                <ElFormItem label="模块名">
-                  <ElInput
-                    v-model="iterationQualityConfig.module"
-                    placeholder="请输入模块名"
-                  />
-                </ElFormItem>
+                <template v-if="iterationQualityConfig.enable_quality_metrics">
+                  <ElFormItem label="OEMName">
+                    <ElInput
+                      v-model="iterationQualityConfig.oem_name"
+                      placeholder="请输入OEMName"
+                    />
+                  </ElFormItem>
+                  <ElFormItem label="模块名">
+                    <ElInput
+                      v-model="iterationQualityConfig.module"
+                      placeholder="请输入模块名"
+                    />
+                  </ElFormItem>
+                </template>
               </template>
             </ElForm>
           </div>

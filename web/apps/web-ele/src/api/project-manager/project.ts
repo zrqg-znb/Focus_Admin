@@ -18,6 +18,8 @@ export interface ProjectOut {
   enable_quality: boolean;
   enable_dts: boolean;
   enable_hardware_config: boolean;
+  design_id?: null | string;
+  sub_teams?: string[];
   viu_platform_id?: string;
   viu_platform_name?: string;
   idvp_platform_id?: string;
@@ -68,6 +70,8 @@ export interface ProjectCreatePayload {
   enable_quality?: boolean;
   enable_dts?: boolean;
   enable_hardware_config?: boolean;
+  design_id?: null | string;
+  sub_teams?: string[];
   idvp_platform_id?: string;
   phase_configs?: ProjectPhaseConfig[];
   ws_id?: string;
@@ -91,6 +95,8 @@ export interface ProjectUpdatePayload {
   enable_quality?: boolean;
   enable_dts?: boolean;
   enable_hardware_config?: boolean;
+  design_id?: null | string;
+  sub_teams?: string[];
   idvp_platform_id?: string;
   phase_configs?: ProjectPhaseConfig[];
   ws_id?: string;
