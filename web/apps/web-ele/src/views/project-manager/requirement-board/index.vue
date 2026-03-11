@@ -132,6 +132,11 @@ const selectedCategoryCount = computed(() => {
   const categories = normalizeStringArray(filters.value.categories);
   return categories.length > 0 ? categories.length : DEFAULT_CATEGORIES.length;
 });
+const summaryTeamCount = computed(() => summary.value.team_summary.length);
+const summaryProjectCount = computed(
+  () => summary.value.project_summary.length,
+);
+const summaryTypeCount = computed(() => summary.value.type_summary.length);
 const statusCards = computed(() => {
   const countMap = new Map(
     (summary.value.status_summary || []).map((item) => [
@@ -639,128 +644,356 @@ onMounted(async () => {
               </div>
 
               <div class="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-                <ElCard shadow="never" header="团队状态堆叠图">
+                <ElCard shadow="never" class="summary-section-card">
+                  <template #header>
+                    <div class="summary-section-card__header">
+                      <div>
+                        <div class="summary-section-card__title">
+                          团队状态堆叠图
+                        </div>
+                        <div class="summary-section-card__desc">
+                          以团队为维度查看 I/D/P/C/A
+                          状态分布，快速识别推进中、已开发完成和已验收完成的需求规模。
+                        </div>
+                      </div>
+                      <ElTag
+                        class="summary-section-card__tag"
+                        type="primary"
+                        effect="plain"
+                      >
+                        {{ summaryTeamCount }} 个团队
+                      </ElTag>
+                    </div>
+                  </template>
                   <div class="h-[420px] w-full">
                     <EchartsUI ref="statusChartRef" />
                   </div>
                 </ElCard>
-                <ElCard shadow="never" header="类型分布">
-                  <ElTable :data="summary.type_summary" size="small">
-                    <ElTableColumn
-                      prop="category"
-                      label="需求类型"
-                      min-width="110"
-                    />
-                    <ElTableColumn
-                      prop="total_count"
-                      label="数量"
-                      min-width="90"
-                    />
+                <ElCard shadow="never" class="summary-section-card">
+                  <template #header>
+                    <div class="summary-section-card__header">
+                      <div>
+                        <div class="summary-section-card__title">类型分布</div>
+                        <div class="summary-section-card__desc">
+                          统计 AR / DR / SR
+                          在当前筛选条件下的数量、工作量和代码量占比。
+                        </div>
+                      </div>
+                      <ElTag
+                        class="summary-section-card__tag"
+                        type="warning"
+                        effect="plain"
+                      >
+                        {{ summaryTypeCount }} 类类型
+                      </ElTag>
+                    </div>
+                  </template>
+                  <ElTable
+                    :data="summary.type_summary"
+                    size="small"
+                    class="summary-simple-table"
+                  >
+                    <ElTableColumn label="需求类型" min-width="110">
+                      <template #default="{ row }">
+                        <ElTag
+                          :type="getCategoryTagType(row.category)"
+                          effect="plain"
+                          class="requirement-category-badge"
+                        >
+                          {{ row.category }}
+                        </ElTag>
+                      </template>
+                    </ElTableColumn>
+                    <ElTableColumn label="数量" min-width="96">
+                      <template #default="{ row }">
+                        <span class="summary-count-pill">{{
+                          row.total_count
+                        }}</span>
+                      </template>
+                    </ElTableColumn>
                     <ElTableColumn label="工作量(人天)" min-width="120">
                       <template #default="{ row }">
-                        {{ formatMetric(row.total_workload_man_day) }}
+                        <span class="summary-metric-text">
+                          {{ formatMetric(row.total_workload_man_day) }}
+                        </span>
                       </template>
                     </ElTableColumn>
                     <ElTableColumn label="代码量(KLOC)" min-width="120">
                       <template #default="{ row }">
-                        {{ formatMetric(row.total_workload_kloc) }}
+                        <span class="summary-metric-text">
+                          {{ formatMetric(row.total_workload_kloc) }}
+                        </span>
                       </template>
                     </ElTableColumn>
                   </ElTable>
                 </ElCard>
               </div>
 
-              <ElCard shadow="never" header="团队完成统计">
-                <ElTable :data="summary.team_summary" size="small">
-                  <ElTableColumn
-                    prop="team_name"
-                    label="团队"
-                    min-width="150"
-                    fixed="left"
-                  />
-                  <ElTableColumn
-                    prop="total_count"
-                    label="总需求数"
-                    min-width="100"
-                  />
+              <ElCard shadow="never" class="summary-section-card">
+                <template #header>
+                  <div class="summary-section-card__header">
+                    <div>
+                      <div class="summary-section-card__title">
+                        团队完成统计
+                      </div>
+                      <div class="summary-section-card__desc">
+                        统一展示每个团队的总需求数、状态分布，以及开发完成和验收完成两套口径的数量、人天和
+                        KLOC 进度。
+                      </div>
+                    </div>
+                    <ElTag
+                      class="summary-section-card__tag"
+                      type="success"
+                      effect="light"
+                    >
+                      {{ summaryTeamCount }} 行团队汇总
+                    </ElTag>
+                  </div>
+                </template>
+                <ElTable
+                  :data="summary.team_summary"
+                  size="small"
+                  class="summary-team-table"
+                >
+                  <ElTableColumn label="团队" min-width="170" fixed="left">
+                    <template #default="{ row }">
+                      <ElTag
+                        :type="getTeamTagType(row.team_name)"
+                        effect="light"
+                        class="requirement-team-badge"
+                      >
+                        <span
+                          class="requirement-team-badge__text requirement-team-badge__text--wide"
+                        >
+                          {{ row.team_name || '未识别团队' }}
+                        </span>
+                      </ElTag>
+                    </template>
+                  </ElTableColumn>
+                  <ElTableColumn label="总需求数" min-width="110">
+                    <template #default="{ row }">
+                      <span class="summary-count-pill">{{
+                        row.total_count
+                      }}</span>
+                    </template>
+                  </ElTableColumn>
                   <ElTableColumn label="总工作量(人天)" min-width="130">
                     <template #default="{ row }">
-                      {{ formatMetric(row.total_workload_man_day) }}
+                      <span class="summary-metric-text">
+                        {{ formatMetric(row.total_workload_man_day) }}
+                      </span>
                     </template>
                   </ElTableColumn>
                   <ElTableColumn label="总代码量(KLOC)" min-width="130">
                     <template #default="{ row }">
-                      {{ formatMetric(row.total_workload_kloc) }}
+                      <span class="summary-metric-text">
+                        {{ formatMetric(row.total_workload_kloc) }}
+                      </span>
                     </template>
                   </ElTableColumn>
-                  <ElTableColumn prop="i_count" label="I" min-width="80" />
-                  <ElTableColumn prop="d_count" label="D" min-width="80" />
-                  <ElTableColumn prop="p_count" label="P" min-width="80" />
-                  <ElTableColumn prop="c_count" label="C" min-width="80" />
-                  <ElTableColumn prop="a_count" label="A" min-width="80" />
-                  <ElTableColumn label="开发完成 数量/占比" min-width="150">
+                  <ElTableColumn label="I" min-width="84">
                     <template #default="{ row }">
-                      {{ row.dev_done.count }} /
-                      {{ formatPercent(row.dev_done.count_rate) }}
+                      <ElTag
+                        class="summary-status-pill"
+                        :class="[getStatusBadgeClass('I')]"
+                        effect="plain"
+                      >
+                        {{ row.i_count }}
+                      </ElTag>
                     </template>
                   </ElTableColumn>
-                  <ElTableColumn label="开发完成 人天/占比" min-width="170">
+                  <ElTableColumn label="D" min-width="84">
                     <template #default="{ row }">
-                      {{ formatMetric(row.dev_done.workload_man_day) }} /
-                      {{ formatPercent(row.dev_done.workload_man_day_rate) }}
+                      <ElTag
+                        class="summary-status-pill"
+                        :class="[getStatusBadgeClass('D')]"
+                        effect="plain"
+                      >
+                        {{ row.d_count }}
+                      </ElTag>
                     </template>
                   </ElTableColumn>
-                  <ElTableColumn label="开发完成 KLOC/占比" min-width="170">
+                  <ElTableColumn label="P" min-width="84">
                     <template #default="{ row }">
-                      {{ formatMetric(row.dev_done.workload_kloc) }} /
-                      {{ formatPercent(row.dev_done.workload_kloc_rate) }}
+                      <ElTag
+                        class="summary-status-pill"
+                        :class="[getStatusBadgeClass('P')]"
+                        effect="plain"
+                      >
+                        {{ row.p_count }}
+                      </ElTag>
                     </template>
                   </ElTableColumn>
-                  <ElTableColumn label="验收完成 数量/占比" min-width="150">
+                  <ElTableColumn label="C" min-width="84">
                     <template #default="{ row }">
-                      {{ row.acceptance_done.count }} /
-                      {{ formatPercent(row.acceptance_done.count_rate) }}
+                      <ElTag
+                        class="summary-status-pill"
+                        :class="[getStatusBadgeClass('C')]"
+                        effect="plain"
+                      >
+                        {{ row.c_count }}
+                      </ElTag>
                     </template>
                   </ElTableColumn>
-                  <ElTableColumn label="验收完成 人天/占比" min-width="170">
+                  <ElTableColumn label="A" min-width="84">
                     <template #default="{ row }">
-                      {{ formatMetric(row.acceptance_done.workload_man_day) }} /
-                      {{
-                        formatPercent(row.acceptance_done.workload_man_day_rate)
-                      }}
+                      <ElTag
+                        class="summary-status-pill"
+                        :class="[getStatusBadgeClass('A')]"
+                        effect="plain"
+                      >
+                        {{ row.a_count }}
+                      </ElTag>
                     </template>
                   </ElTableColumn>
-                  <ElTableColumn label="验收完成 KLOC/占比" min-width="170">
+                  <ElTableColumn label="开发完成 数量/占比" min-width="170">
                     <template #default="{ row }">
-                      {{ formatMetric(row.acceptance_done.workload_kloc) }} /
-                      {{
-                        formatPercent(row.acceptance_done.workload_kloc_rate)
-                      }}
+                      <div
+                        class="summary-progress-chip summary-progress-chip--dev"
+                      >
+                        <div class="summary-progress-chip__value">
+                          {{ row.dev_done.count }}
+                        </div>
+                        <div class="summary-progress-chip__meta">
+                          {{ formatPercent(row.dev_done.count_rate) }}
+                        </div>
+                      </div>
+                    </template>
+                  </ElTableColumn>
+                  <ElTableColumn label="开发完成 人天/占比" min-width="182">
+                    <template #default="{ row }">
+                      <div
+                        class="summary-progress-chip summary-progress-chip--dev"
+                      >
+                        <div class="summary-progress-chip__value">
+                          {{ formatMetric(row.dev_done.workload_man_day) }}
+                        </div>
+                        <div class="summary-progress-chip__meta">
+                          {{
+                            formatPercent(row.dev_done.workload_man_day_rate)
+                          }}
+                        </div>
+                      </div>
+                    </template>
+                  </ElTableColumn>
+                  <ElTableColumn label="开发完成 KLOC/占比" min-width="182">
+                    <template #default="{ row }">
+                      <div
+                        class="summary-progress-chip summary-progress-chip--dev"
+                      >
+                        <div class="summary-progress-chip__value">
+                          {{ formatMetric(row.dev_done.workload_kloc) }}
+                        </div>
+                        <div class="summary-progress-chip__meta">
+                          {{ formatPercent(row.dev_done.workload_kloc_rate) }}
+                        </div>
+                      </div>
+                    </template>
+                  </ElTableColumn>
+                  <ElTableColumn label="验收完成 数量/占比" min-width="170">
+                    <template #default="{ row }">
+                      <div
+                        class="summary-progress-chip summary-progress-chip--acceptance"
+                      >
+                        <div class="summary-progress-chip__value">
+                          {{ row.acceptance_done.count }}
+                        </div>
+                        <div class="summary-progress-chip__meta">
+                          {{ formatPercent(row.acceptance_done.count_rate) }}
+                        </div>
+                      </div>
+                    </template>
+                  </ElTableColumn>
+                  <ElTableColumn label="验收完成 人天/占比" min-width="182">
+                    <template #default="{ row }">
+                      <div
+                        class="summary-progress-chip summary-progress-chip--acceptance"
+                      >
+                        <div class="summary-progress-chip__value">
+                          {{
+                            formatMetric(row.acceptance_done.workload_man_day)
+                          }}
+                        </div>
+                        <div class="summary-progress-chip__meta">
+                          {{
+                            formatPercent(
+                              row.acceptance_done.workload_man_day_rate,
+                            )
+                          }}
+                        </div>
+                      </div>
+                    </template>
+                  </ElTableColumn>
+                  <ElTableColumn label="验收完成 KLOC/占比" min-width="182">
+                    <template #default="{ row }">
+                      <div
+                        class="summary-progress-chip summary-progress-chip--acceptance"
+                      >
+                        <div class="summary-progress-chip__value">
+                          {{ formatMetric(row.acceptance_done.workload_kloc) }}
+                        </div>
+                        <div class="summary-progress-chip__meta">
+                          {{
+                            formatPercent(
+                              row.acceptance_done.workload_kloc_rate,
+                            )
+                          }}
+                        </div>
+                      </div>
                     </template>
                   </ElTableColumn>
                 </ElTable>
               </ElCard>
 
-              <ElCard shadow="never" header="项目分布">
-                <ElTable :data="summary.project_summary" size="small">
-                  <ElTableColumn
-                    prop="project_name"
-                    label="项目"
-                    min-width="180"
-                  />
-                  <ElTableColumn
-                    prop="total_count"
-                    label="需求数量"
-                    min-width="100"
-                  />
+              <ElCard shadow="never" class="summary-section-card">
+                <template #header>
+                  <div class="summary-section-card__header">
+                    <div>
+                      <div class="summary-section-card__title">项目分布</div>
+                      <div class="summary-section-card__desc">
+                        查看各项目在当前筛选条件下的需求来源、工作量与代码量分布，辅助判断整体负载集中度。
+                      </div>
+                    </div>
+                    <ElTag
+                      class="summary-section-card__tag"
+                      type="info"
+                      effect="plain"
+                    >
+                      {{ summaryProjectCount }} 个项目
+                    </ElTag>
+                  </div>
+                </template>
+                <ElTable
+                  :data="summary.project_summary"
+                  size="small"
+                  class="summary-simple-table"
+                >
+                  <ElTableColumn label="项目" min-width="190">
+                    <template #default="{ row }">
+                      <span class="summary-project-name">{{
+                        row.project_name
+                      }}</span>
+                    </template>
+                  </ElTableColumn>
+                  <ElTableColumn label="需求数量" min-width="110">
+                    <template #default="{ row }">
+                      <span class="summary-count-pill">{{
+                        row.total_count
+                      }}</span>
+                    </template>
+                  </ElTableColumn>
                   <ElTableColumn label="工作量(人天)" min-width="120">
                     <template #default="{ row }">
-                      {{ formatMetric(row.total_workload_man_day) }}
+                      <span class="summary-metric-text">
+                        {{ formatMetric(row.total_workload_man_day) }}
+                      </span>
                     </template>
                   </ElTableColumn>
                   <ElTableColumn label="代码量(KLOC)" min-width="120">
                     <template #default="{ row }">
-                      {{ formatMetric(row.total_workload_kloc) }}
+                      <span class="summary-metric-text">
+                        {{ formatMetric(row.total_workload_kloc) }}
+                      </span>
                     </template>
                   </ElTableColumn>
                 </ElTable>
@@ -806,6 +1039,111 @@ onMounted(async () => {
   font-weight: 700;
   line-height: 1.2;
   margin-top: 10px;
+}
+
+.summary-section-card {
+  border-radius: 18px;
+}
+
+.summary-section-card :deep(.el-card__header) {
+  padding: 18px 20px 16px;
+  border-bottom-color: #e2e8f0;
+}
+
+.summary-section-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.summary-section-card__title {
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.summary-section-card__desc {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+  margin-top: 4px;
+  max-width: 720px;
+}
+
+.summary-section-card__tag {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.summary-team-table :deep(.el-table__cell),
+.summary-simple-table :deep(.el-table__cell) {
+  vertical-align: middle;
+}
+
+.summary-count-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 7px 10px;
+}
+
+.summary-metric-text {
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.summary-project-name {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.summary-status-pill {
+  min-width: 46px;
+  justify-content: center;
+  font-weight: 700;
+}
+
+.summary-progress-chip {
+  display: inline-flex;
+  min-width: 96px;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid #dbeafe;
+  border-radius: 14px;
+  padding: 8px 10px;
+}
+
+.summary-progress-chip__value {
+  color: #0f172a;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.summary-progress-chip__meta {
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.summary-progress-chip--dev {
+  background: linear-gradient(180deg, #fff7ed 0%, #ffffff 100%);
+  border-color: #fdba74;
+}
+
+.summary-progress-chip--acceptance {
+  background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 100%);
+  border-color: #86efac;
 }
 
 .requirement-data-card {
@@ -953,6 +1291,10 @@ onMounted(async () => {
   white-space: nowrap;
 }
 
+.requirement-team-badge__text--wide {
+  max-width: 150px;
+}
+
 .requirement-category-badge {
   min-width: 54px;
   font-weight: 600;
@@ -1026,11 +1368,13 @@ onMounted(async () => {
 }
 
 @media (max-width: 768px) {
-  .requirement-data-card__header {
+  .requirement-data-card__header,
+  .summary-section-card__header {
     flex-direction: column;
   }
 
-  .requirement-data-card__status {
+  .requirement-data-card__status,
+  .summary-section-card__tag {
     margin-top: 0;
   }
 
