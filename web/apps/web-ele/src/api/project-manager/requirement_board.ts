@@ -1,9 +1,22 @@
 import { requestClient } from '#/api/request';
 
+export type RequirementTimeField =
+  | 'accepted_time'
+  | 'completed_time'
+  | 'due_date'
+  | 'planned_test_time';
+
 export interface RequirementBoardFilterPayload {
   project_ids: string[];
   sub_teams?: string[];
   categories?: string[];
+  develop_users?: string[];
+  test_users?: string[];
+  time_field?: RequirementTimeField;
+  time_start?: string;
+  time_end?: string;
+  accepted_time_start?: string;
+  accepted_time_end?: string;
 }
 
 export interface RequirementBoardQuery extends RequirementBoardFilterPayload {
@@ -36,8 +49,16 @@ export interface RequirementBoardItem {
   team_name: string;
   planned_test_time?: null | string;
   due_date?: null | string;
+  completed_time?: null | string;
+  accepted_time?: null | string;
+  is_dev_delayed: boolean;
+  is_test_delayed: boolean;
   workload_kloc: number;
   workload_man_day: number;
+  develop_users: string[];
+  test_users: string[];
+  develop_user_display: string;
+  test_user_display: string;
   develop_user: string;
   test_user: string;
 }
@@ -54,6 +75,9 @@ export interface RequirementStatusSummary {
   status_code: string;
   status_label: string;
   count: number;
+  count_rate: number;
+  workload_man_day: number;
+  workload_kloc: number;
 }
 
 export interface RequirementTypeSummary {
@@ -94,6 +118,35 @@ export interface RequirementTeamSummary {
   acceptance_done: RequirementCompletionSummary;
 }
 
+export interface RequirementUserSummaryItem {
+  username: string;
+  task_count: number;
+  workload_man_day: number;
+  workload_kloc: number;
+}
+
+export interface RequirementUserSummary {
+  develop_users: RequirementUserSummaryItem[];
+  test_users: RequirementUserSummaryItem[];
+}
+
+export interface RequirementDelayBucketSummary {
+  count: number;
+  rate: number;
+  preview_items: RequirementBoardItem[];
+}
+
+export interface RequirementDelaySummary {
+  development: RequirementDelayBucketSummary;
+  acceptance: RequirementDelayBucketSummary;
+}
+
+export interface RequirementDeliveryTrendItem {
+  month: string;
+  planned_count: number;
+  actual_count: number;
+}
+
 export interface RequirementBoardSummary {
   total_count: number;
   total_workload_man_day: number;
@@ -102,6 +155,10 @@ export interface RequirementBoardSummary {
   type_summary: RequirementTypeSummary[];
   project_summary: RequirementProjectSummary[];
   team_summary: RequirementTeamSummary[];
+  user_summary: RequirementUserSummary;
+  delay_summary: RequirementDelaySummary;
+  development_delivery_trend: RequirementDeliveryTrendItem[];
+  acceptance_delivery_trend: RequirementDeliveryTrendItem[];
 }
 
 const base = '/api/project-manager/requirement-board';

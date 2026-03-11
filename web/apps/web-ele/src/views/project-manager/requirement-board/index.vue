@@ -5,6 +5,9 @@ import type {
   RequirementBoardFilterPayload,
   RequirementBoardProjectOption,
   RequirementBoardSummary,
+  RequirementDeliveryTrendItem,
+  RequirementTimeField,
+  RequirementUserSummaryItem,
 } from '#/api/project-manager/requirement_board';
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
@@ -15,11 +18,13 @@ import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 import {
   ElButton,
   ElCard,
+  ElDatePicker,
   ElEmpty,
   ElForm,
   ElFormItem,
   ElMessage,
   ElOption,
+  ElProgress,
   ElSelect,
   ElTable,
   ElTableColumn,
@@ -28,6 +33,7 @@ import {
   ElTag,
 } from 'element-plus';
 
+import { searchUserApi } from '#/api/core/user';
 import {
   getRequirementBoardDataApi,
   getRequirementBoardFilterOptionsApi,
@@ -39,28 +45,61 @@ import {
   CATEGORY_OPTIONS,
   createEmptyRequirementSummary,
   DEFAULT_CATEGORIES,
+  DEFAULT_TIME_FIELD,
+  formatDateTime,
   formatMetric,
   formatPercent,
   STATUS_META,
+  STATUS_META_MAP,
+  TIME_FIELD_OPTIONS,
   useRequirementColumns,
 } from './data';
 
 defineOptions({ name: 'RequirementBoard' });
 
+interface UserOption {
+  label: string;
+  value: string;
+}
+
 const activeTab = ref('data');
 const optionsLoading = ref(false);
 const summaryLoading = ref(false);
+const developUserLoading = ref(false);
+const testUserLoading = ref(false);
 const projectOptions = ref<RequirementBoardProjectOption[]>([]);
+const developUserOptions = ref<UserOption[]>([]);
+const testUserOptions = ref<UserOption[]>([]);
 const filters = ref<RequirementBoardFilterPayload>({
   project_ids: [],
   sub_teams: [],
   categories: [...DEFAULT_CATEGORIES],
+  develop_users: [],
+  test_users: [],
+  time_field: DEFAULT_TIME_FIELD,
+  time_start: '',
+  time_end: '',
 });
+const dateRange = ref<[Date, Date] | null>(null);
 const appliedFilters = ref<null | RequirementBoardFilterPayload>(null);
 const summary = ref<RequirementBoardSummary>(createEmptyRequirementSummary());
 const summaryFingerprint = ref('');
-const statusChartRef = ref<EchartsUIType>();
-const { renderEcharts } = useEcharts(statusChartRef);
+
+const teamStatusChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderTeamStatusChart } = useEcharts(teamStatusChartRef);
+const developmentTrendChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderDevelopmentTrendChart } = useEcharts(
+  developmentTrendChartRef,
+);
+const acceptanceTrendChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderAcceptanceTrendChart } = useEcharts(
+  acceptanceTrendChartRef,
+);
+const developOwnerChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderDevelopOwnerChart } =
+  useEcharts(developOwnerChartRef);
+const testOwnerChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderTestOwnerChart } = useEcharts(testOwnerChartRef);
 
 function normalizeStringArray(values?: string[]) {
   const seen = new Set<string>();
@@ -76,12 +115,35 @@ function normalizeStringArray(values?: string[]) {
   return result;
 }
 
-function cloneFilterPayload(source: RequirementBoardFilterPayload) {
+function formatDateBoundary(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+watch(dateRange, (value) => {
+  if (value && value.length === 2) {
+    filters.value.time_start = formatDateBoundary(value[0]);
+    filters.value.time_end = formatDateBoundary(value[1]);
+  } else {
+    filters.value.time_start = '';
+    filters.value.time_end = '';
+  }
+});
+
+function cloneFilterPayload(
+  source: RequirementBoardFilterPayload,
+): RequirementBoardFilterPayload {
   const categories = normalizeStringArray(source.categories);
   return {
     project_ids: normalizeStringArray(source.project_ids),
     sub_teams: normalizeStringArray(source.sub_teams),
     categories: categories.length > 0 ? categories : [...DEFAULT_CATEGORIES],
+    develop_users: normalizeStringArray(source.develop_users),
+    test_users: normalizeStringArray(source.test_users),
+    time_field: (source.time_field ||
+      DEFAULT_TIME_FIELD) as RequirementTimeField,
+    time_start: source.time_start || '',
+    time_end: source.time_end || '',
   };
 }
 
@@ -93,6 +155,11 @@ function buildFingerprint(payload: null | RequirementBoardFilterPayload) {
     project_ids: [...(payload.project_ids || [])].sort(),
     sub_teams: [...(payload.sub_teams || [])].sort(),
     categories: [...(payload.categories || [])].sort(),
+    develop_users: [...(payload.develop_users || [])].sort(),
+    test_users: [...(payload.test_users || [])].sort(),
+    time_field: payload.time_field || '',
+    time_start: payload.time_start || '',
+    time_end: payload.time_end || '',
   });
 }
 
@@ -106,9 +173,7 @@ const selectedProjects = computed(() => {
   );
   return normalizeStringArray(filters.value.project_ids)
     .map((item) => projectMap.get(item))
-    .filter(
-      (item): item is RequirementBoardProjectOption => item !== undefined,
-    );
+    .filter(Boolean);
 });
 
 const teamOptions = computed(() => {
@@ -137,18 +202,83 @@ const summaryProjectCount = computed(
   () => summary.value.project_summary.length,
 );
 const summaryTypeCount = computed(() => summary.value.type_summary.length);
+const activeTimeFieldLabel = computed(() => {
+  return (
+    TIME_FIELD_OPTIONS.find((item) => item.value === filters.value.time_field)
+      ?.label || '测试完成时间'
+  );
+});
+
 const statusCards = computed(() => {
   const countMap = new Map(
     (summary.value.status_summary || []).map((item) => [
       item.status_code,
-      item.count,
+      item,
     ]),
   );
   return STATUS_META.map((item) => ({
     ...item,
-    count: Number(countMap.get(item.status_code) || 0),
+    ...countMap.get(item.status_code),
   }));
 });
+
+const overallCompletion = computed(() => {
+  const statusMap = new Map(
+    statusCards.value.map((item) => [item.status_code, item]),
+  );
+  const c = statusMap.get('C');
+  const a = statusMap.get('A');
+  const totalCount = summary.value.total_count || 0;
+  const totalManDay = summary.value.total_workload_man_day || 0;
+  const totalKloc = summary.value.total_workload_kloc || 0;
+  const developmentCount = Number(c?.count || 0) + Number(a?.count || 0);
+  const developmentManDay =
+    Number(c?.workload_man_day || 0) + Number(a?.workload_man_day || 0);
+  const developmentKloc =
+    Number(c?.workload_kloc || 0) + Number(a?.workload_kloc || 0);
+  const acceptanceCount = Number(a?.count || 0);
+  const acceptanceManDay = Number(a?.workload_man_day || 0);
+  const acceptanceKloc = Number(a?.workload_kloc || 0);
+
+  return {
+    development: {
+      count: developmentCount,
+      countRate: totalCount ? developmentCount / totalCount : 0,
+      workloadManDay: developmentManDay,
+      workloadManDayRate: totalManDay ? developmentManDay / totalManDay : 0,
+      workloadKloc: developmentKloc,
+      workloadKlocRate: totalKloc ? developmentKloc / totalKloc : 0,
+    },
+    acceptance: {
+      count: acceptanceCount,
+      countRate: totalCount ? acceptanceCount / totalCount : 0,
+      workloadManDay: acceptanceManDay,
+      workloadManDayRate: totalManDay ? acceptanceManDay / totalManDay : 0,
+      workloadKloc: acceptanceKloc,
+      workloadKlocRate: totalKloc ? acceptanceKloc / totalKloc : 0,
+    },
+  };
+});
+
+function currentMonthKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function resolveMonthlySnapshot(rows: RequirementDeliveryTrendItem[]) {
+  const row = rows.find((item) => item.month === currentMonthKey());
+  return {
+    planned_count: Number(row?.planned_count || 0),
+    actual_count: Number(row?.actual_count || 0),
+  };
+}
+
+const developmentMonthSnapshot = computed(() =>
+  resolveMonthlySnapshot(summary.value.development_delivery_trend || []),
+);
+const acceptanceMonthSnapshot = computed(() =>
+  resolveMonthlySnapshot(summary.value.acceptance_delivery_trend || []),
+);
 
 function getStatusValue(
   row: RequirementBoardSummary['team_summary'][number],
@@ -184,24 +314,107 @@ function getCategoryTagType(category: string) {
 }
 
 function getStatusBadgeClass(statusCode: string) {
-  return `requirement-status-badge requirement-status-badge--${String(
-    statusCode || 'I',
-  ).toLowerCase()}`;
+  return `requirement-status-badge ${
+    STATUS_META_MAP[statusCode]?.badgeClass || 'requirement-status-badge--i'
+  }`;
 }
 
-function getTeamTagType(teamName: string) {
-  const normalized = String(teamName || '').trim();
-  if (!normalized || normalized === '未识别团队') {
+function getStatusAccent(statusCode: string) {
+  return STATUS_META_MAP[statusCode]?.accent || '#0f172a';
+}
+
+function getStableTagType(text: string) {
+  const normalized = String(text || '').trim();
+  if (!normalized) {
     return 'info';
   }
-
   const palette = ['primary', 'success', 'warning', 'danger', 'info'];
   let hash = 0;
   for (const char of normalized) {
-    hash = (hash * 31 + char.codePointAt(0) || 0) >>> 0;
+    hash = (hash * 31 + (char.codePointAt(0) || 0)) >>> 0;
   }
   return palette[hash % palette.length];
 }
+
+function getTeamTagType(teamName: string) {
+  if (!String(teamName || '').trim() || teamName === '未识别团队') {
+    return 'info';
+  }
+  return getStableTagType(teamName);
+}
+
+function buildUserOption(item: { name?: string; username?: string }) {
+  const username = String(item.username || '').trim();
+  const name = String(item.name || '').trim();
+  return {
+    label: name ? `${username} · ${name}` : username,
+    value: username,
+  };
+}
+
+function mergeUserOptions(
+  target: typeof developUserOptions,
+  selectedValues?: string[],
+  incoming?: UserOption[],
+) {
+  const next = new Map<string, UserOption>();
+  [...(target.value || []), ...(incoming || [])].forEach((item) => {
+    if (!item?.value) {
+      return;
+    }
+    next.set(item.value, item);
+  });
+  (selectedValues || []).forEach((item) => {
+    if (!next.has(item)) {
+      next.set(item, { label: item, value: item });
+    }
+  });
+  target.value = [...next.values()].sort((a, b) =>
+    a.value.localeCompare(b.value),
+  );
+}
+
+async function searchUsers(keyword: string, type: 'develop' | 'test') {
+  const target = type === 'develop' ? developUserOptions : testUserOptions;
+  const loading = type === 'develop' ? developUserLoading : testUserLoading;
+  const selectedValues =
+    type === 'develop' ? filters.value.develop_users : filters.value.test_users;
+  const normalizedKeyword = String(keyword || '').trim();
+  if (!normalizedKeyword) {
+    mergeUserOptions(target, selectedValues);
+    return;
+  }
+
+  loading.value = true;
+  try {
+    const response = await searchUserApi(normalizedKeyword);
+    const incoming = (response.items || [])
+      .map((item) => buildUserOption(item))
+      .filter((item) => item.value);
+    mergeUserOptions(target, selectedValues, incoming);
+  } catch (error) {
+    console.error(error);
+    ElMessage.error('检索责任人失败');
+  } finally {
+    loading.value = false;
+  }
+}
+
+watch(
+  () => filters.value.develop_users,
+  (value) => {
+    mergeUserOptions(developUserOptions, value);
+  },
+  { deep: true, immediate: true },
+);
+
+watch(
+  () => filters.value.test_users,
+  (value) => {
+    mergeUserOptions(testUserOptions, value);
+  },
+  { deep: true, immediate: true },
+);
 
 async function loadFilterOptions() {
   optionsLoading.value = true;
@@ -221,6 +434,7 @@ const [Grid, gridApi] = useZqTable({
     columns: useRequirementColumns(),
     border: true,
     stripe: true,
+    rowKey: 'requirement_id',
     proxyConfig: {
       autoLoad: false,
       ajax: {
@@ -244,6 +458,7 @@ const [Grid, gridApi] = useZqTable({
     pagerConfig: {
       enabled: true,
       pageSize: 20,
+      pageSizes: [20, 50, 100, 200, 500],
     },
     toolbarConfig: {
       custom: true,
@@ -307,7 +522,15 @@ async function handleReset() {
     project_ids: [],
     sub_teams: [],
     categories: [...DEFAULT_CATEGORIES],
+    develop_users: [],
+    test_users: [],
+    time_field: DEFAULT_TIME_FIELD,
+    time_start: '',
+    time_end: '',
   };
+  dateRange.value = null;
+  developUserOptions.value = [];
+  testUserOptions.value = [];
   appliedFilters.value = null;
   summary.value = createEmptyRequirementSummary();
   summaryFingerprint.value = '';
@@ -335,54 +558,202 @@ watch(
   },
 );
 
+function renderEmptyChart(
+  render: (options: Record<string, any>) => void,
+  title: string,
+) {
+  render({
+    title: {
+      text: title,
+      left: 'center',
+      top: 'middle',
+      textStyle: {
+        color: '#94a3b8',
+        fontSize: 14,
+        fontWeight: 400,
+      },
+    },
+    xAxis: { show: false },
+    yAxis: { show: false },
+    series: [],
+  });
+}
+
 watch(
   () => summary.value.team_summary,
   (rows) => {
     if (rows.length === 0) {
-      renderEcharts({
-        title: {
-          text: '暂无团队分布数据',
-          left: 'center',
-          top: 'middle',
-          textStyle: {
-            color: '#94a3b8',
-            fontSize: 14,
-            fontWeight: 400,
-          },
-        },
-        xAxis: { show: false },
-        yAxis: { show: false },
-        series: [],
-      });
+      renderEmptyChart(renderTeamStatusChart, '暂无团队状态分布');
       return;
     }
 
-    const colors: Record<string, string> = {
-      I: '#ef4444',
-      D: '#38bdf8',
-      P: '#6366f1',
-      C: '#f59e0b',
-      A: '#22c55e',
-    };
-
-    renderEcharts({
+    renderTeamStatusChart({
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
       legend: { type: 'scroll', bottom: 0 },
       grid: { left: '3%', right: '4%', bottom: '14%', containLabel: true },
       xAxis: { type: 'value' },
       yAxis: {
         type: 'category',
-        data: rows.map((item) => item.team_name),
+        data: rows.map((item) => item.team_name || '未识别团队'),
       },
       series: STATUS_META.map((item) => ({
         name: `${item.status_code} · ${item.status_label}`,
         type: 'bar',
         stack: 'total',
         emphasis: { focus: 'series' },
-        itemStyle: { color: colors[item.status_code] },
+        itemStyle: { color: item.accent },
         data: rows.map((row) => getStatusValue(row, item.status_code)),
       })),
     });
+  },
+  { deep: true, immediate: true },
+);
+
+function renderTrendChart(
+  render: (options: Record<string, any>) => void,
+  rows: RequirementDeliveryTrendItem[],
+  title: string,
+  plannedLabel: string,
+  actualLabel: string,
+  plannedColor: string,
+  actualColor: string,
+) {
+  if (rows.length === 0) {
+    renderEmptyChart(render, `${title}暂无数据`);
+    return;
+  }
+
+  render({
+    tooltip: { trigger: 'axis' },
+    legend: { top: 0 },
+    grid: { left: '3%', right: '4%', top: 46, bottom: 16, containLabel: true },
+    xAxis: {
+      type: 'category',
+      data: rows.map((item) => item.month),
+    },
+    yAxis: { type: 'value', minInterval: 1 },
+    series: [
+      {
+        name: plannedLabel,
+        type: 'bar',
+        data: rows.map((item) => item.planned_count),
+        itemStyle: { color: plannedColor, borderRadius: [6, 6, 0, 0] },
+      },
+      {
+        name: actualLabel,
+        type: 'line',
+        smooth: true,
+        data: rows.map((item) => item.actual_count),
+        lineStyle: { color: actualColor, width: 3 },
+        itemStyle: { color: actualColor },
+      },
+    ],
+  });
+}
+
+watch(
+  () => summary.value.development_delivery_trend,
+  (rows) => {
+    renderTrendChart(
+      renderDevelopmentTrendChart,
+      rows,
+      '开发交付趋势',
+      '计划转测',
+      '实际开发完成',
+      '#93c5fd',
+      '#f97316',
+    );
+  },
+  { deep: true, immediate: true },
+);
+
+watch(
+  () => summary.value.acceptance_delivery_trend,
+  (rows) => {
+    renderTrendChart(
+      renderAcceptanceTrendChart,
+      rows,
+      '测试交付趋势',
+      '计划完成',
+      '实际验收完成',
+      '#86efac',
+      '#0f766e',
+    );
+  },
+  { deep: true, immediate: true },
+);
+
+function renderOwnerRankChart(
+  render: (options: Record<string, any>) => void,
+  rows: RequirementUserSummaryItem[],
+  title: string,
+  color: string,
+) {
+  const displayRows = [...rows].slice(0, 10).reverse();
+  if (displayRows.length === 0) {
+    renderEmptyChart(render, `${title}暂无数据`);
+    return;
+  }
+
+  render({
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter(params: Array<{ dataIndex: number; value: number }>) {
+        const index = params?.[0]?.dataIndex ?? 0;
+        const row = displayRows[index];
+        return [
+          row.username,
+          `任务数：${row.task_count}`,
+          `工作量：${formatMetric(row.workload_man_day)} 人天`,
+          `代码量：${formatMetric(row.workload_kloc)} KLOC`,
+        ].join('<br/>');
+      },
+    },
+    grid: { left: '4%', right: '6%', top: 16, bottom: 18, containLabel: true },
+    xAxis: { type: 'value', minInterval: 1 },
+    yAxis: {
+      type: 'category',
+      data: displayRows.map((item) => item.username),
+      axisLabel: {
+        width: 110,
+        overflow: 'truncate',
+      },
+    },
+    series: [
+      {
+        name: title,
+        type: 'bar',
+        barWidth: 18,
+        itemStyle: { color, borderRadius: [0, 8, 8, 0] },
+        data: displayRows.map((item) => item.task_count),
+      },
+    ],
+  });
+}
+
+watch(
+  () => summary.value.user_summary.develop_users,
+  (rows) => {
+    renderOwnerRankChart(
+      renderDevelopOwnerChart,
+      rows,
+      '开发责任人排行',
+      '#2563eb',
+    );
+  },
+  { deep: true, immediate: true },
+);
+
+watch(
+  () => summary.value.user_summary.test_users,
+  (rows) => {
+    renderOwnerRankChart(
+      renderTestOwnerChart,
+      rows,
+      '测试责任人排行',
+      '#059669',
+    );
   },
   { deep: true, immediate: true },
 );
@@ -395,7 +766,20 @@ onMounted(async () => {
 <template>
   <Page auto-content-height>
     <div class="flex h-full min-h-0 flex-col gap-4">
-      <ElCard shadow="never">
+      <ElCard shadow="never" class="requirement-filter-card">
+        <div class="requirement-filter-card__header">
+          <div>
+            <div class="requirement-filter-card__title">需求看板筛选</div>
+            <div class="requirement-filter-card__desc">
+              项目/团队/类型为基础筛选，责任人和时间区间支持组合查询；责任人命中任一
+              username 即计入结果。
+            </div>
+          </div>
+          <ElTag type="primary" effect="light">
+            {{ configuredProjectOptions.length }} 个项目可查询
+          </ElTag>
+        </div>
+
         <ElForm inline :model="filters" class="requirement-filter-form">
           <ElFormItem label="项目">
             <ElSelect
@@ -422,6 +806,7 @@ onMounted(async () => {
               />
             </ElSelect>
           </ElFormItem>
+
           <ElFormItem label="责任团队">
             <ElSelect
               v-model="filters.sub_teams"
@@ -442,6 +827,7 @@ onMounted(async () => {
               />
             </ElSelect>
           </ElFormItem>
+
           <ElFormItem label="需求类型">
             <ElSelect
               v-model="filters.categories"
@@ -461,15 +847,102 @@ onMounted(async () => {
               />
             </ElSelect>
           </ElFormItem>
+
+          <ElFormItem label="开发责任人">
+            <ElSelect
+              v-model="filters.develop_users"
+              class="!w-[250px]"
+              multiple
+              collapse-tags
+              collapse-tags-tooltip
+              filterable
+              remote
+              reserve-keyword
+              clearable
+              :loading="developUserLoading"
+              placeholder="按 username 搜索"
+              :remote-method="(value: string) => searchUsers(value, 'develop')"
+            >
+              <ElOption
+                v-for="item in developUserOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </ElSelect>
+          </ElFormItem>
+
+          <ElFormItem label="测试责任人">
+            <ElSelect
+              v-model="filters.test_users"
+              class="!w-[250px]"
+              multiple
+              collapse-tags
+              collapse-tags-tooltip
+              filterable
+              remote
+              reserve-keyword
+              clearable
+              :loading="testUserLoading"
+              placeholder="按 username 搜索"
+              :remote-method="(value: string) => searchUsers(value, 'test')"
+            >
+              <ElOption
+                v-for="item in testUserOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </ElSelect>
+          </ElFormItem>
+
+          <ElFormItem label="时间维度">
+            <ElSelect
+              v-model="filters.time_field"
+              class="!w-[180px]"
+              clearable
+              placeholder="默认测试完成时间"
+            >
+              <ElOption
+                v-for="item in TIME_FIELD_OPTIONS"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </ElSelect>
+          </ElFormItem>
+
+          <ElFormItem label="时间区间">
+            <ElDatePicker
+              v-model="dateRange"
+              type="daterange"
+              range-separator="-"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              style="width: 280px"
+            />
+          </ElFormItem>
+
           <ElFormItem>
             <ElButton type="primary" @click="handleSearch">查询</ElButton>
             <ElButton @click="handleReset">重置</ElButton>
           </ElFormItem>
         </ElForm>
-        <div class="mt-3 text-xs text-slate-500">
-          当前可查询项目
-          {{ configuredProjectOptions.length }}
-          个；需求数据源配置不完整的项目会自动禁用。
+
+        <div class="requirement-filter-card__footer">
+          <span>
+            当前可查询项目
+            {{ configuredProjectOptions.length }}
+            个；团队随项目自动去重，未完成配置的项目已禁用。
+          </span>
+          <span>
+            当前时间维度：{{
+              activeTimeFieldLabel
+            }}；只有选择时间区间后才参与筛选。
+          </span>
+          <span>
+            多责任人统计按“每位责任人全量计入”口径汇总，因此责任人排行总量可能大于全局总量。
+          </span>
         </div>
       </ElCard>
 
@@ -485,7 +958,7 @@ onMounted(async () => {
                   <div>
                     <div class="requirement-data-card__title">需求明细表</div>
                     <div class="requirement-data-card__desc">
-                      按当前筛选条件展示分页后的需求明细，支持横向滚动查看项目、团队、状态与工作量字段。
+                      分页展示需求明细，可快速查看团队、状态、时间节点、延期标签与多责任人分布。
                     </div>
                   </div>
                   <ElTag
@@ -503,7 +976,7 @@ onMounted(async () => {
               </template>
 
               <div v-if="hasAppliedFilters" class="requirement-data-card__body">
-                <Grid class="h-full">
+                <Grid class="requirement-data-grid h-full min-h-0">
                   <template #cell-team_name="{ row }">
                     <ElTag
                       :type="getTeamTagType(row.team_name)"
@@ -515,6 +988,7 @@ onMounted(async () => {
                       </span>
                     </ElTag>
                   </template>
+
                   <template #cell-category="{ row }">
                     <ElTag
                       :type="getCategoryTagType(row.category)"
@@ -524,6 +998,7 @@ onMounted(async () => {
                       {{ row.category }}
                     </ElTag>
                   </template>
+
                   <template #cell-status_code="{ row }">
                     <ElTag
                       :class="getStatusBadgeClass(row.status_code)"
@@ -533,11 +1008,89 @@ onMounted(async () => {
                       {{ row.status_code }} · {{ row.status_label }}
                     </ElTag>
                   </template>
+
+                  <template #cell-planned_test_time="{ row }">
+                    {{ formatDateTime(row.planned_test_time) }}
+                  </template>
+
+                  <template #cell-due_date="{ row }">
+                    {{ formatDateTime(row.due_date) }}
+                  </template>
+
+                  <template #cell-completed_time="{ row }">
+                    {{ formatDateTime(row.completed_time) }}
+                  </template>
+
+                  <template #cell-accepted_time="{ row }">
+                    {{ formatDateTime(row.accepted_time) }}
+                  </template>
+
+                  <template #cell-is_dev_delayed="{ row }">
+                    <ElTag
+                      :type="row.is_dev_delayed ? 'danger' : 'success'"
+                      :effect="row.is_dev_delayed ? 'dark' : 'plain'"
+                      class="delay-indicator"
+                    >
+                      {{ row.is_dev_delayed ? '延期' : '正常' }}
+                    </ElTag>
+                  </template>
+
+                  <template #cell-is_test_delayed="{ row }">
+                    <ElTag
+                      :type="row.is_test_delayed ? 'danger' : 'success'"
+                      :effect="row.is_test_delayed ? 'dark' : 'plain'"
+                      class="delay-indicator"
+                    >
+                      {{ row.is_test_delayed ? '延期' : '正常' }}
+                    </ElTag>
+                  </template>
+
                   <template #cell-workload_kloc="{ row }">
                     {{ formatMetric(row.workload_kloc) }}
                   </template>
+
                   <template #cell-workload_man_day="{ row }">
                     {{ formatMetric(row.workload_man_day) }}
+                  </template>
+
+                  <template #cell-develop_user_display="{ row }">
+                    <div class="owner-tag-list">
+                      <ElTag
+                        v-for="item in row.develop_users"
+                        :key="`dev-${row.requirement_id}-${item}`"
+                        :type="getStableTagType(item)"
+                        effect="plain"
+                        class="owner-tag"
+                      >
+                        {{ item }}
+                      </ElTag>
+                      <span
+                        v-if="!row.develop_users?.length"
+                        class="text-slate-400"
+                      >
+                        --
+                      </span>
+                    </div>
+                  </template>
+
+                  <template #cell-test_user_display="{ row }">
+                    <div class="owner-tag-list">
+                      <ElTag
+                        v-for="item in row.test_users"
+                        :key="`test-${row.requirement_id}-${item}`"
+                        :type="getStableTagType(item)"
+                        effect="plain"
+                        class="owner-tag"
+                      >
+                        {{ item }}
+                      </ElTag>
+                      <span
+                        v-if="!row.test_users?.length"
+                        class="text-slate-400"
+                      >
+                        --
+                      </span>
+                    </div>
                   </template>
                 </Grid>
               </div>
@@ -548,10 +1101,10 @@ onMounted(async () => {
                     需求数据看板
                   </div>
                   <div class="requirement-data-guide__title">
-                    先选择筛选条件，再拉取需求明细数据
+                    先组合筛选条件，再拉取需求明细
                   </div>
                   <div class="requirement-data-guide__desc">
-                    数据看板不会预加载全量需求。请选择项目，可按项目动态筛选责任团队，并按需求类型组合查询。
+                    数据看板不会预加载全量需求。请选择项目，可按团队、类型、责任人和自定义时间区间进行组合查询。
                   </div>
 
                   <div class="requirement-guide-steps">
@@ -567,19 +1120,30 @@ onMounted(async () => {
                     <div class="requirement-guide-step">
                       <div class="requirement-guide-step__index">2</div>
                       <div class="requirement-guide-step__title">
-                        选择责任团队
+                        选择团队与类型
                       </div>
                       <div class="requirement-guide-step__desc">
-                        团队选项会随项目自动去重生成；当前已选
-                        {{ filters.sub_teams?.length || 0 }} 个团队。
+                        当前已选 {{ filters.sub_teams?.length || 0 }} 个团队、{{
+                          selectedCategoryCount
+                        }}
+                        种需求类型。
                       </div>
                     </div>
                     <div class="requirement-guide-step">
                       <div class="requirement-guide-step__index">3</div>
+                      <div class="requirement-guide-step__title">
+                        补充责任人与时间
+                      </div>
+                      <div class="requirement-guide-step__desc">
+                        可按开发/测试责任人筛选；时间维度当前为
+                        {{ activeTimeFieldLabel }}。
+                      </div>
+                    </div>
+                    <div class="requirement-guide-step">
+                      <div class="requirement-guide-step__index">4</div>
                       <div class="requirement-guide-step__title">点击查询</div>
                       <div class="requirement-guide-step__desc">
-                        需求类型默认全选；当前生效
-                        {{ selectedCategoryCount }} 种类型。
+                        查询后切换到总结看板，可直接复用同一组筛选条件查看统计结果。
                       </div>
                     </div>
                   </div>
@@ -589,7 +1153,7 @@ onMounted(async () => {
                       开始查询明细
                     </ElButton>
                     <span class="text-xs text-slate-500">
-                      查询后将保留筛选条件，可直接切换到总结看板查看团队汇总。
+                      查询后保留筛选条件，可直接切换到总结看板查看趋势、延期和责任人排行。
                     </span>
                   </div>
                 </div>
@@ -608,38 +1172,278 @@ onMounted(async () => {
               description="请选择项目并点击查询后查看总结"
             />
             <template v-else>
-              <div class="summary-grid">
+              <div class="summary-overview-grid">
                 <ElCard
                   shadow="never"
-                  class="summary-card summary-card--primary"
+                  class="dense-overview-card dense-overview-card--hero"
                 >
-                  <div class="summary-card__label">总需求数</div>
-                  <div class="summary-card__value">
+                  <div class="dense-overview-card__title-row">
+                    <div class="dense-overview-card__title">总览卡</div>
+                    <ElTag type="primary" effect="light">当前筛选</ElTag>
+                  </div>
+                  <div class="dense-overview-card__hero-value">
                     {{ summary.total_count }}
                   </div>
-                </ElCard>
-                <ElCard shadow="never" class="summary-card">
-                  <div class="summary-card__label">总工作量(人天)</div>
-                  <div class="summary-card__value">
-                    {{ formatMetric(summary.total_workload_man_day) }}
+                  <div class="dense-overview-card__hero-label">总需求数</div>
+                  <div class="dense-overview-card__metric-grid">
+                    <div class="dense-metric-block">
+                      <div class="dense-metric-block__label">总人天</div>
+                      <div class="dense-metric-block__value">
+                        {{ formatMetric(summary.total_workload_man_day) }}
+                      </div>
+                    </div>
+                    <div class="dense-metric-block">
+                      <div class="dense-metric-block__label">总 KLOC</div>
+                      <div class="dense-metric-block__value">
+                        {{ formatMetric(summary.total_workload_kloc) }}
+                      </div>
+                    </div>
                   </div>
                 </ElCard>
-                <ElCard shadow="never" class="summary-card">
-                  <div class="summary-card__label">总代码量(KLOC)</div>
-                  <div class="summary-card__value">
-                    {{ formatMetric(summary.total_workload_kloc) }}
+
+                <ElCard shadow="never" class="dense-overview-card">
+                  <div class="dense-overview-card__title-row">
+                    <div class="dense-overview-card__title">整体完成卡</div>
+                    <ElTag type="success" effect="light">C+A / A</ElTag>
+                  </div>
+                  <div class="dense-completion-grid">
+                    <div
+                      class="dense-completion-panel dense-completion-panel--dev"
+                    >
+                      <div class="dense-completion-panel__title">
+                        开发完成（C+A）
+                      </div>
+                      <div class="dense-completion-panel__headline">
+                        {{ overallCompletion.development.count }} /
+                        {{
+                          formatPercent(overallCompletion.development.countRate)
+                        }}
+                      </div>
+                      <ElProgress
+                        :percentage="
+                          Number(
+                            (
+                              overallCompletion.development.countRate * 100
+                            ).toFixed(1),
+                          )
+                        "
+                        :stroke-width="8"
+                        :show-text="false"
+                        color="#f97316"
+                      />
+                      <div class="dense-completion-panel__meta">
+                        <span>
+                          人天
+                          {{
+                            formatMetric(
+                              overallCompletion.development.workloadManDay,
+                            )
+                          }}
+                          /
+                          {{
+                            formatPercent(
+                              overallCompletion.development.workloadManDayRate,
+                            )
+                          }}
+                        </span>
+                        <span>
+                          KLOC
+                          {{
+                            formatMetric(
+                              overallCompletion.development.workloadKloc,
+                            )
+                          }}
+                          /
+                          {{
+                            formatPercent(
+                              overallCompletion.development.workloadKlocRate,
+                            )
+                          }}
+                        </span>
+                      </div>
+                    </div>
+                    <div
+                      class="dense-completion-panel dense-completion-panel--acceptance"
+                    >
+                      <div class="dense-completion-panel__title">
+                        验收完成（A）
+                      </div>
+                      <div class="dense-completion-panel__headline">
+                        {{ overallCompletion.acceptance.count }} /
+                        {{
+                          formatPercent(overallCompletion.acceptance.countRate)
+                        }}
+                      </div>
+                      <ElProgress
+                        :percentage="
+                          Number(
+                            (
+                              overallCompletion.acceptance.countRate * 100
+                            ).toFixed(1),
+                          )
+                        "
+                        :stroke-width="8"
+                        :show-text="false"
+                        color="#16a34a"
+                      />
+                      <div class="dense-completion-panel__meta">
+                        <span>
+                          人天
+                          {{
+                            formatMetric(
+                              overallCompletion.acceptance.workloadManDay,
+                            )
+                          }}
+                          /
+                          {{
+                            formatPercent(
+                              overallCompletion.acceptance.workloadManDayRate,
+                            )
+                          }}
+                        </span>
+                        <span>
+                          KLOC
+                          {{
+                            formatMetric(
+                              overallCompletion.acceptance.workloadKloc,
+                            )
+                          }}
+                          /
+                          {{
+                            formatPercent(
+                              overallCompletion.acceptance.workloadKlocRate,
+                            )
+                          }}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </ElCard>
+
+                <ElCard shadow="never" class="dense-overview-card">
+                  <div class="dense-overview-card__title-row">
+                    <div class="dense-overview-card__title">开发交付卡</div>
+                    <ElTag type="warning" effect="light">转测维度</ElTag>
+                  </div>
+                  <div
+                    class="dense-overview-card__metric-grid dense-overview-card__metric-grid--three"
+                  >
+                    <div class="dense-metric-block dense-metric-block--warning">
+                      <div class="dense-metric-block__label">开发延期</div>
+                      <div class="dense-metric-block__value">
+                        {{ summary.delay_summary.development.count }}
+                      </div>
+                      <div class="dense-metric-block__subtext">
+                        {{
+                          formatPercent(summary.delay_summary.development.rate)
+                        }}
+                      </div>
+                    </div>
+                    <div class="dense-metric-block">
+                      <div class="dense-metric-block__label">本月计划转测</div>
+                      <div class="dense-metric-block__value">
+                        {{ developmentMonthSnapshot.planned_count }}
+                      </div>
+                    </div>
+                    <div class="dense-metric-block">
+                      <div class="dense-metric-block__label">本月实际完成</div>
+                      <div class="dense-metric-block__value">
+                        {{ developmentMonthSnapshot.actual_count }}
+                      </div>
+                    </div>
+                  </div>
+                </ElCard>
+
+                <ElCard shadow="never" class="dense-overview-card">
+                  <div class="dense-overview-card__title-row">
+                    <div class="dense-overview-card__title">测试交付卡</div>
+                    <ElTag type="success" effect="light">验收维度</ElTag>
+                  </div>
+                  <div
+                    class="dense-overview-card__metric-grid dense-overview-card__metric-grid--three"
+                  >
+                    <div class="dense-metric-block dense-metric-block--danger">
+                      <div class="dense-metric-block__label">测试延期</div>
+                      <div class="dense-metric-block__value">
+                        {{ summary.delay_summary.acceptance.count }}
+                      </div>
+                      <div class="dense-metric-block__subtext">
+                        {{
+                          formatPercent(summary.delay_summary.acceptance.rate)
+                        }}
+                      </div>
+                    </div>
+                    <div class="dense-metric-block">
+                      <div class="dense-metric-block__label">本月计划交付</div>
+                      <div class="dense-metric-block__value">
+                        {{ acceptanceMonthSnapshot.planned_count }}
+                      </div>
+                    </div>
+                    <div class="dense-metric-block">
+                      <div class="dense-metric-block__label">本月实际验收</div>
+                      <div class="dense-metric-block__value">
+                        {{ acceptanceMonthSnapshot.actual_count }}
+                      </div>
+                    </div>
+                  </div>
+                </ElCard>
+              </div>
+
+              <div class="status-density-grid">
                 <ElCard
                   v-for="item in statusCards"
                   :key="item.status_code"
                   shadow="never"
-                  class="summary-card"
+                  class="status-density-card"
+                  :style="{
+                    '--status-accent': getStatusAccent(item.status_code),
+                  }"
                 >
-                  <div class="summary-card__label">
-                    {{ item.status_code }} · {{ item.status_label }}
+                  <div class="status-density-card__top">
+                    <div class="status-density-card__code">
+                      <span class="status-density-card__code-text">{{
+                        item.status_code
+                      }}</span>
+                      <span class="status-density-card__hint">{{
+                        item.shortHint
+                      }}</span>
+                    </div>
+                    <ElTag
+                      :class="getStatusBadgeClass(item.status_code)"
+                      effect="plain"
+                    >
+                      {{ item.status_label }}
+                    </ElTag>
                   </div>
-                  <div class="summary-card__value">{{ item.count }}</div>
+                  <div class="status-density-card__desc">
+                    {{ item.description }}
+                  </div>
+                  <div class="status-density-card__metrics">
+                    <div>
+                      <div class="status-density-card__metric-label">数量</div>
+                      <div class="status-density-card__metric-value">
+                        {{ item.count }}
+                      </div>
+                    </div>
+                    <div>
+                      <div class="status-density-card__metric-label">占比</div>
+                      <div class="status-density-card__metric-value">
+                        {{ formatPercent(item.count_rate) }}
+                      </div>
+                    </div>
+                    <div>
+                      <div class="status-density-card__metric-label">人天</div>
+                      <div class="status-density-card__metric-value">
+                        {{ formatMetric(item.workload_man_day) }}
+                      </div>
+                    </div>
+                    <div>
+                      <div class="status-density-card__metric-label">KLOC</div>
+                      <div class="status-density-card__metric-value">
+                        {{ formatMetric(item.workload_kloc) }}
+                      </div>
+                    </div>
+                  </div>
                 </ElCard>
               </div>
 
@@ -653,7 +1457,7 @@ onMounted(async () => {
                         </div>
                         <div class="summary-section-card__desc">
                           以团队为维度查看 I/D/P/C/A
-                          状态分布，快速识别推进中、已开发完成和已验收完成的需求规模。
+                          状态分布，快速识别推进中、待验收和已完成的需求规模。
                         </div>
                       </div>
                       <ElTag
@@ -666,9 +1470,10 @@ onMounted(async () => {
                     </div>
                   </template>
                   <div class="h-[420px] w-full">
-                    <EchartsUI ref="statusChartRef" />
+                    <EchartsUI ref="teamStatusChartRef" />
                   </div>
                 </ElCard>
+
                 <ElCard shadow="never" class="summary-section-card">
                   <template #header>
                     <div class="summary-section-card__header">
@@ -693,7 +1498,7 @@ onMounted(async () => {
                     size="small"
                     class="summary-simple-table"
                   >
-                    <ElTableColumn label="需求类型" min-width="110">
+                    <ElTableColumn label="类型" min-width="120">
                       <template #default="{ row }">
                         <ElTag
                           :type="getCategoryTagType(row.category)"
@@ -704,7 +1509,7 @@ onMounted(async () => {
                         </ElTag>
                       </template>
                     </ElTableColumn>
-                    <ElTableColumn label="数量" min-width="96">
+                    <ElTableColumn label="需求数" min-width="100">
                       <template #default="{ row }">
                         <span class="summary-count-pill">{{
                           row.total_count
@@ -729,6 +1534,298 @@ onMounted(async () => {
                 </ElCard>
               </div>
 
+              <div class="grid gap-4 xl:grid-cols-2">
+                <ElCard shadow="never" class="summary-section-card">
+                  <template #header>
+                    <div class="summary-section-card__header">
+                      <div>
+                        <div class="summary-section-card__title">
+                          开发交付趋势图
+                        </div>
+                        <div class="summary-section-card__desc">
+                          以月为维度对比计划转测数量与实际开发完成数量，判断开发交付节奏是否稳定。
+                        </div>
+                      </div>
+                      <ElTag
+                        class="summary-section-card__tag"
+                        type="warning"
+                        effect="light"
+                      >
+                        planned_test_time vs completed_time
+                      </ElTag>
+                    </div>
+                  </template>
+                  <div class="h-[320px] w-full">
+                    <EchartsUI ref="developmentTrendChartRef" />
+                  </div>
+                </ElCard>
+
+                <ElCard shadow="never" class="summary-section-card">
+                  <template #header>
+                    <div class="summary-section-card__header">
+                      <div>
+                        <div class="summary-section-card__title">
+                          测试交付趋势图
+                        </div>
+                        <div class="summary-section-card__desc">
+                          以月为维度对比计划完成数量与实际验收完成数量，观察测试验收是否按期收敛。
+                        </div>
+                      </div>
+                      <ElTag
+                        class="summary-section-card__tag"
+                        type="success"
+                        effect="light"
+                      >
+                        due_date vs accepted_time
+                      </ElTag>
+                    </div>
+                  </template>
+                  <div class="h-[320px] w-full">
+                    <EchartsUI ref="acceptanceTrendChartRef" />
+                  </div>
+                </ElCard>
+              </div>
+
+              <div class="grid gap-4 xl:grid-cols-2">
+                <ElCard shadow="never" class="summary-section-card">
+                  <template #header>
+                    <div class="summary-section-card__header">
+                      <div>
+                        <div class="summary-section-card__title">
+                          开发责任人排行图
+                        </div>
+                        <div class="summary-section-card__desc">
+                          按任务数排序展示开发责任人负载。多人责任需求会对每位责任人全量计入。
+                        </div>
+                      </div>
+                      <ElTag
+                        class="summary-section-card__tag"
+                        type="primary"
+                        effect="plain"
+                      >
+                        Top 10
+                      </ElTag>
+                    </div>
+                  </template>
+                  <div class="h-[320px] w-full">
+                    <EchartsUI ref="developOwnerChartRef" />
+                  </div>
+                </ElCard>
+
+                <ElCard shadow="never" class="summary-section-card">
+                  <template #header>
+                    <div class="summary-section-card__header">
+                      <div>
+                        <div class="summary-section-card__title">
+                          测试责任人排行图
+                        </div>
+                        <div class="summary-section-card__desc">
+                          按任务数排序展示测试责任人负载，便于快速定位验收压力集中区域。
+                        </div>
+                      </div>
+                      <ElTag
+                        class="summary-section-card__tag"
+                        type="success"
+                        effect="plain"
+                      >
+                        Top 10
+                      </ElTag>
+                    </div>
+                  </template>
+                  <div class="h-[320px] w-full">
+                    <EchartsUI ref="testOwnerChartRef" />
+                  </div>
+                </ElCard>
+              </div>
+
+              <div class="grid gap-4 xl:grid-cols-2">
+                <ElCard shadow="never" class="summary-section-card">
+                  <template #header>
+                    <div class="summary-section-card__header">
+                      <div>
+                        <div class="summary-section-card__title">
+                          开发延期风险
+                        </div>
+                        <div class="summary-section-card__desc">
+                          判定口径：开发完成时间晚于计划转测时间，或当前未到 C/A
+                          且已超过计划转测时间。
+                        </div>
+                      </div>
+                      <ElTag
+                        class="summary-section-card__tag"
+                        type="danger"
+                        effect="light"
+                      >
+                        {{ summary.delay_summary.development.count }} /
+                        {{
+                          formatPercent(summary.delay_summary.development.rate)
+                        }}
+                      </ElTag>
+                    </div>
+                  </template>
+                  <div class="delay-overview-strip delay-overview-strip--dev">
+                    <div>
+                      <div class="delay-overview-strip__label">
+                        开发延期数量
+                      </div>
+                      <div class="delay-overview-strip__value">
+                        {{ summary.delay_summary.development.count }}
+                      </div>
+                    </div>
+                    <div>
+                      <div class="delay-overview-strip__label">延期占比</div>
+                      <div class="delay-overview-strip__value">
+                        {{
+                          formatPercent(summary.delay_summary.development.rate)
+                        }}
+                      </div>
+                    </div>
+                  </div>
+                  <ElTable
+                    :data="summary.delay_summary.development.preview_items"
+                    size="small"
+                    class="summary-simple-table"
+                  >
+                    <ElTableColumn label="项目 / 团队" min-width="180">
+                      <template #default="{ row }">
+                        <div class="delay-preview-main">
+                          {{ row.project_name }}
+                        </div>
+                        <ElTag
+                          :type="getTeamTagType(row.team_name)"
+                          effect="light"
+                          class="requirement-team-badge mt-1"
+                        >
+                          {{ row.team_name || '未识别团队' }}
+                        </ElTag>
+                      </template>
+                    </ElTableColumn>
+                    <ElTableColumn label="需求" min-width="220">
+                      <template #default="{ row }">
+                        <div class="delay-preview-main">
+                          {{ row.requirement_id }}
+                        </div>
+                        <div class="delay-preview-sub">{{ row.title }}</div>
+                      </template>
+                    </ElTableColumn>
+                    <ElTableColumn label="状态" min-width="150">
+                      <template #default="{ row }">
+                        <ElTag
+                          :class="getStatusBadgeClass(row.status_code)"
+                          effect="plain"
+                        >
+                          {{ row.status_code }} · {{ row.status_label }}
+                        </ElTag>
+                      </template>
+                    </ElTableColumn>
+                    <ElTableColumn label="计划转测" min-width="160">
+                      <template #default="{ row }">
+                        {{ formatDateTime(row.planned_test_time) }}
+                      </template>
+                    </ElTableColumn>
+                    <ElTableColumn label="开发完成" min-width="160">
+                      <template #default="{ row }">
+                        {{ formatDateTime(row.completed_time) }}
+                      </template>
+                    </ElTableColumn>
+                  </ElTable>
+                </ElCard>
+
+                <ElCard shadow="never" class="summary-section-card">
+                  <template #header>
+                    <div class="summary-section-card__header">
+                      <div>
+                        <div class="summary-section-card__title">
+                          测试延期风险
+                        </div>
+                        <div class="summary-section-card__desc">
+                          判定口径：测试完成时间晚于计划完成时间，或当前未到 A
+                          且已超过计划完成时间。
+                        </div>
+                      </div>
+                      <ElTag
+                        class="summary-section-card__tag"
+                        type="danger"
+                        effect="light"
+                      >
+                        {{ summary.delay_summary.acceptance.count }} /
+                        {{
+                          formatPercent(summary.delay_summary.acceptance.rate)
+                        }}
+                      </ElTag>
+                    </div>
+                  </template>
+                  <div
+                    class="delay-overview-strip delay-overview-strip--acceptance"
+                  >
+                    <div>
+                      <div class="delay-overview-strip__label">
+                        测试延期数量
+                      </div>
+                      <div class="delay-overview-strip__value">
+                        {{ summary.delay_summary.acceptance.count }}
+                      </div>
+                    </div>
+                    <div>
+                      <div class="delay-overview-strip__label">延期占比</div>
+                      <div class="delay-overview-strip__value">
+                        {{
+                          formatPercent(summary.delay_summary.acceptance.rate)
+                        }}
+                      </div>
+                    </div>
+                  </div>
+                  <ElTable
+                    :data="summary.delay_summary.acceptance.preview_items"
+                    size="small"
+                    class="summary-simple-table"
+                  >
+                    <ElTableColumn label="项目 / 团队" min-width="180">
+                      <template #default="{ row }">
+                        <div class="delay-preview-main">
+                          {{ row.project_name }}
+                        </div>
+                        <ElTag
+                          :type="getTeamTagType(row.team_name)"
+                          effect="light"
+                          class="requirement-team-badge mt-1"
+                        >
+                          {{ row.team_name || '未识别团队' }}
+                        </ElTag>
+                      </template>
+                    </ElTableColumn>
+                    <ElTableColumn label="需求" min-width="220">
+                      <template #default="{ row }">
+                        <div class="delay-preview-main">
+                          {{ row.requirement_id }}
+                        </div>
+                        <div class="delay-preview-sub">{{ row.title }}</div>
+                      </template>
+                    </ElTableColumn>
+                    <ElTableColumn label="状态" min-width="150">
+                      <template #default="{ row }">
+                        <ElTag
+                          :class="getStatusBadgeClass(row.status_code)"
+                          effect="plain"
+                        >
+                          {{ row.status_code }} · {{ row.status_label }}
+                        </ElTag>
+                      </template>
+                    </ElTableColumn>
+                    <ElTableColumn label="计划完成" min-width="160">
+                      <template #default="{ row }">
+                        {{ formatDateTime(row.due_date) }}
+                      </template>
+                    </ElTableColumn>
+                    <ElTableColumn label="测试完成" min-width="160">
+                      <template #default="{ row }">
+                        {{ formatDateTime(row.accepted_time) }}
+                      </template>
+                    </ElTableColumn>
+                  </ElTable>
+                </ElCard>
+              </div>
+
               <ElCard shadow="never" class="summary-section-card">
                 <template #header>
                   <div class="summary-section-card__header">
@@ -737,8 +1834,9 @@ onMounted(async () => {
                         团队完成统计
                       </div>
                       <div class="summary-section-card__desc">
-                        统一展示每个团队的总需求数、状态分布，以及开发完成和验收完成两套口径的数量、人天和
-                        KLOC 进度。
+                        同时给出总量、I/D/P/C/A
+                        状态分布，以及开发完成（C+A）和验收完成（A）的数量、人天、KLOC
+                        完成情况。
                       </div>
                     </div>
                     <ElTag
@@ -755,7 +1853,7 @@ onMounted(async () => {
                   size="small"
                   class="summary-team-table"
                 >
-                  <ElTableColumn label="团队" min-width="170" fixed="left">
+                  <ElTableColumn label="团队" min-width="180" fixed="left">
                     <template #default="{ row }">
                       <ElTag
                         :type="getTeamTagType(row.team_name)"
@@ -791,58 +1889,19 @@ onMounted(async () => {
                       </span>
                     </template>
                   </ElTableColumn>
-                  <ElTableColumn label="I" min-width="84">
+                  <ElTableColumn
+                    v-for="item in STATUS_META"
+                    :key="item.status_code"
+                    :label="item.status_code"
+                    min-width="84"
+                  >
                     <template #default="{ row }">
                       <ElTag
                         class="summary-status-pill"
-                        :class="[getStatusBadgeClass('I')]"
+                        :class="[getStatusBadgeClass(item.status_code)]"
                         effect="plain"
                       >
-                        {{ row.i_count }}
-                      </ElTag>
-                    </template>
-                  </ElTableColumn>
-                  <ElTableColumn label="D" min-width="84">
-                    <template #default="{ row }">
-                      <ElTag
-                        class="summary-status-pill"
-                        :class="[getStatusBadgeClass('D')]"
-                        effect="plain"
-                      >
-                        {{ row.d_count }}
-                      </ElTag>
-                    </template>
-                  </ElTableColumn>
-                  <ElTableColumn label="P" min-width="84">
-                    <template #default="{ row }">
-                      <ElTag
-                        class="summary-status-pill"
-                        :class="[getStatusBadgeClass('P')]"
-                        effect="plain"
-                      >
-                        {{ row.p_count }}
-                      </ElTag>
-                    </template>
-                  </ElTableColumn>
-                  <ElTableColumn label="C" min-width="84">
-                    <template #default="{ row }">
-                      <ElTag
-                        class="summary-status-pill"
-                        :class="[getStatusBadgeClass('C')]"
-                        effect="plain"
-                      >
-                        {{ row.c_count }}
-                      </ElTag>
-                    </template>
-                  </ElTableColumn>
-                  <ElTableColumn label="A" min-width="84">
-                    <template #default="{ row }">
-                      <ElTag
-                        class="summary-status-pill"
-                        :class="[getStatusBadgeClass('A')]"
-                        effect="plain"
-                      >
-                        {{ row.a_count }}
+                        {{ getStatusValue(row, item.status_code) }}
                       </ElTag>
                     </template>
                   </ElTableColumn>
@@ -945,59 +2004,121 @@ onMounted(async () => {
                 </ElTable>
               </ElCard>
 
-              <ElCard shadow="never" class="summary-section-card">
-                <template #header>
-                  <div class="summary-section-card__header">
-                    <div>
-                      <div class="summary-section-card__title">项目分布</div>
-                      <div class="summary-section-card__desc">
-                        查看各项目在当前筛选条件下的需求来源、工作量与代码量分布，辅助判断整体负载集中度。
+              <div class="grid gap-4 xl:grid-cols-2">
+                <ElCard shadow="never" class="summary-section-card">
+                  <template #header>
+                    <div class="summary-section-card__header">
+                      <div>
+                        <div class="summary-section-card__title">项目分布</div>
+                        <div class="summary-section-card__desc">
+                          查看各项目在当前筛选条件下的需求来源、工作量与代码量分布，判断整体负载来源。
+                        </div>
+                      </div>
+                      <ElTag
+                        class="summary-section-card__tag"
+                        type="info"
+                        effect="plain"
+                      >
+                        {{ summaryProjectCount }} 个项目
+                      </ElTag>
+                    </div>
+                  </template>
+                  <ElTable
+                    :data="summary.project_summary"
+                    size="small"
+                    class="summary-simple-table"
+                  >
+                    <ElTableColumn label="项目" min-width="190">
+                      <template #default="{ row }">
+                        <span class="summary-project-name">{{
+                          row.project_name
+                        }}</span>
+                      </template>
+                    </ElTableColumn>
+                    <ElTableColumn label="需求数" min-width="100">
+                      <template #default="{ row }">
+                        <span class="summary-count-pill">{{
+                          row.total_count
+                        }}</span>
+                      </template>
+                    </ElTableColumn>
+                    <ElTableColumn label="工作量(人天)" min-width="120">
+                      <template #default="{ row }">
+                        <span class="summary-metric-text">
+                          {{ formatMetric(row.total_workload_man_day) }}
+                        </span>
+                      </template>
+                    </ElTableColumn>
+                    <ElTableColumn label="代码量(KLOC)" min-width="120">
+                      <template #default="{ row }">
+                        <span class="summary-metric-text">
+                          {{ formatMetric(row.total_workload_kloc) }}
+                        </span>
+                      </template>
+                    </ElTableColumn>
+                  </ElTable>
+                </ElCard>
+
+                <ElCard shadow="never" class="summary-section-card">
+                  <template #header>
+                    <div class="summary-section-card__header">
+                      <div>
+                        <div class="summary-section-card__title">
+                          类型负载概览
+                        </div>
+                        <div class="summary-section-card__desc">
+                          从类型维度对比数量、人天和
+                          KLOC，快速识别当前筛选范围内的需求结构。
+                        </div>
+                      </div>
+                      <ElTag
+                        class="summary-section-card__tag"
+                        type="warning"
+                        effect="plain"
+                      >
+                        {{ summaryTypeCount }} 类类型
+                      </ElTag>
+                    </div>
+                  </template>
+                  <div class="type-overview-stack">
+                    <div
+                      v-for="item in summary.type_summary"
+                      :key="item.category"
+                      class="type-overview-row"
+                    >
+                      <div class="type-overview-row__left">
+                        <ElTag
+                          :type="getCategoryTagType(item.category)"
+                          effect="plain"
+                          class="requirement-category-badge"
+                        >
+                          {{ item.category }}
+                        </ElTag>
+                      </div>
+                      <div class="type-overview-row__metrics">
+                        <div>
+                          <span class="type-overview-row__label">数量</span>
+                          <span class="type-overview-row__value">{{
+                            item.total_count
+                          }}</span>
+                        </div>
+                        <div>
+                          <span class="type-overview-row__label">人天</span>
+                          <span class="type-overview-row__value">
+                            {{ formatMetric(item.total_workload_man_day) }}
+                          </span>
+                        </div>
+                        <div>
+                          <span class="type-overview-row__label">KLOC</span>
+                          <span class="type-overview-row__value">
+                            {{ formatMetric(item.total_workload_kloc) }}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                    <ElTag
-                      class="summary-section-card__tag"
-                      type="info"
-                      effect="plain"
-                    >
-                      {{ summaryProjectCount }} 个项目
-                    </ElTag>
                   </div>
-                </template>
-                <ElTable
-                  :data="summary.project_summary"
-                  size="small"
-                  class="summary-simple-table"
-                >
-                  <ElTableColumn label="项目" min-width="190">
-                    <template #default="{ row }">
-                      <span class="summary-project-name">{{
-                        row.project_name
-                      }}</span>
-                    </template>
-                  </ElTableColumn>
-                  <ElTableColumn label="需求数量" min-width="110">
-                    <template #default="{ row }">
-                      <span class="summary-count-pill">{{
-                        row.total_count
-                      }}</span>
-                    </template>
-                  </ElTableColumn>
-                  <ElTableColumn label="工作量(人天)" min-width="120">
-                    <template #default="{ row }">
-                      <span class="summary-metric-text">
-                        {{ formatMetric(row.total_workload_man_day) }}
-                      </span>
-                    </template>
-                  </ElTableColumn>
-                  <ElTableColumn label="代码量(KLOC)" min-width="120">
-                    <template #default="{ row }">
-                      <span class="summary-metric-text">
-                        {{ formatMetric(row.total_workload_kloc) }}
-                      </span>
-                    </template>
-                  </ElTableColumn>
-                </ElTable>
-              </ElCard>
+                </ElCard>
+              </div>
             </template>
           </div>
         </ElTabPane>
@@ -1007,38 +2128,415 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.requirement-filter-card {
+  border-radius: 20px;
+}
+
+.requirement-filter-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.requirement-filter-card__title {
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.requirement-filter-card__desc {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.7;
+  margin-top: 6px;
+  max-width: 760px;
+}
+
+.requirement-filter-card__footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.7;
+  margin-top: 14px;
+}
+
 .requirement-filter-form {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 12px;
 }
 
-.summary-grid {
-  display: grid;
+.requirement-data-card {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  border-radius: 20px;
+}
+
+.requirement-data-card :deep(.el-card__header) {
+  padding: 18px 20px 16px;
+  border-bottom-color: #e2e8f0;
+}
+
+.requirement-data-card :deep(.el-card__body) {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  padding: 0 0 16px;
+}
+
+.requirement-data-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
-.summary-card {
-  border-radius: 16px;
+.requirement-data-card__title {
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 700;
 }
 
-.summary-card--primary {
-  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
-}
-
-.summary-card__label {
+.requirement-data-card__desc {
   color: #64748b;
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.6;
+  margin-top: 4px;
+  max-width: 720px;
 }
 
-.summary-card__value {
+.requirement-data-card__status {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.requirement-data-card__body {
+  flex: 1;
+  min-height: 0;
+}
+
+.requirement-data-grid {
+  min-height: 560px;
+}
+
+.owner-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.owner-tag {
+  margin: 0;
+}
+
+.delay-indicator {
+  min-width: 58px;
+  justify-content: center;
+}
+
+.requirement-data-guide {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.requirement-data-guide__panel {
+  width: min(100%, 860px);
+  border: 1px dashed #cbd5e1;
+  border-radius: 24px;
+  background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+  padding: 32px;
+}
+
+.requirement-data-guide__eyebrow {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.requirement-data-guide__title {
   color: #0f172a;
   font-size: 28px;
   font-weight: 700;
   line-height: 1.2;
   margin-top: 10px;
+}
+
+.requirement-data-guide__desc {
+  color: #475569;
+  font-size: 14px;
+  line-height: 1.7;
+  margin-top: 10px;
+  max-width: 680px;
+}
+
+.requirement-guide-steps {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-top: 24px;
+}
+
+.requirement-guide-step {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  padding: 18px;
+  min-height: 160px;
+}
+
+.requirement-guide-step__index {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: #0f172a;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.requirement-guide-step__title {
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 700;
+  margin-top: 14px;
+}
+
+.requirement-guide-step__desc {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.7;
+  margin-top: 8px;
+}
+
+.requirement-summary-panel {
+  padding-right: 4px;
+}
+
+.summary-overview-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.dense-overview-card {
+  border-radius: 20px;
+  min-height: 216px;
+}
+
+.dense-overview-card--hero {
+  background:
+    radial-gradient(
+      circle at top right,
+      rgba(37, 99, 235, 0.14),
+      transparent 42%
+    ),
+    linear-gradient(135deg, #eff6ff 0%, #ffffff 100%);
+}
+
+.dense-overview-card__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dense-overview-card__title {
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.dense-overview-card__hero-value {
+  color: #0f172a;
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1;
+  margin-top: 18px;
+}
+
+.dense-overview-card__hero-label {
+  color: #475569;
+  font-size: 13px;
+  margin-top: 6px;
+}
+
+.dense-overview-card__metric-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 18px;
+}
+
+.dense-overview-card__metric-grid--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dense-metric-block {
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.dense-metric-block--warning {
+  background: linear-gradient(180deg, #fff7ed 0%, #ffffff 100%);
+  border-color: #fdba74;
+}
+
+.dense-metric-block--danger {
+  background: linear-gradient(180deg, #fef2f2 0%, #ffffff 100%);
+  border-color: #fca5a5;
+}
+
+.dense-metric-block__label {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.dense-metric-block__value {
+  color: #0f172a;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.1;
+  margin-top: 10px;
+}
+
+.dense-metric-block__subtext {
+  color: #475569;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.dense-completion-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.dense-completion-panel {
+  border-radius: 18px;
+  padding: 16px;
+}
+
+.dense-completion-panel--dev {
+  background: linear-gradient(180deg, #fff7ed 0%, #ffffff 100%);
+  border: 1px solid #fdba74;
+}
+
+.dense-completion-panel--acceptance {
+  background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 100%);
+  border: 1px solid #86efac;
+}
+
+.dense-completion-panel__title {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dense-completion-panel__headline {
+  color: #0f172a;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.2;
+  margin: 10px 0 12px;
+}
+
+.dense-completion-panel__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.6;
+  margin-top: 10px;
+}
+
+.status-density-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.status-density-card {
+  border-radius: 18px;
+  position: relative;
+  overflow: hidden;
+}
+
+.status-density-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--status-accent);
+}
+
+.status-density-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.status-density-card__code {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.status-density-card__code-text {
+  color: var(--status-accent);
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.status-density-card__hint {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status-density-card__desc {
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.7;
+  margin-top: 12px;
+  min-height: 40px;
+}
+
+.status-density-card__metrics {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 16px;
+}
+
+.status-density-card__metric-label {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.status-density-card__metric-value {
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 700;
+  margin-top: 6px;
 }
 
 .summary-section-card {
@@ -1146,136 +2644,86 @@ onMounted(async () => {
   border-color: #86efac;
 }
 
-.requirement-data-card {
-  display: flex;
-  min-height: 0;
-  flex-direction: column;
-  border-radius: 18px;
-}
-
-.requirement-data-card :deep(.el-card__header) {
-  padding: 18px 20px 16px;
-  border-bottom-color: #e2e8f0;
-}
-
-.requirement-data-card :deep(.el-card__body) {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  flex-direction: column;
-  padding: 0 0 16px;
-}
-
-.requirement-data-card__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+.delay-overview-strip {
+  display: grid;
   gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-radius: 18px;
+  padding: 16px;
+  margin-bottom: 14px;
 }
 
-.requirement-data-card__title {
+.delay-overview-strip--dev {
+  background: linear-gradient(135deg, #fff7ed 0%, #ffffff 100%);
+  border: 1px solid #fdba74;
+}
+
+.delay-overview-strip--acceptance {
+  background: linear-gradient(135deg, #fef2f2 0%, #ffffff 100%);
+  border: 1px solid #fca5a5;
+}
+
+.delay-overview-strip__label {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.delay-overview-strip__value {
   color: #0f172a;
-  font-size: 16px;
-  font-weight: 700;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.1;
+  margin-top: 8px;
 }
 
-.requirement-data-card__desc {
+.delay-preview-main {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.delay-preview-sub {
   color: #64748b;
   font-size: 12px;
   line-height: 1.6;
   margin-top: 4px;
-  max-width: 720px;
 }
 
-.requirement-data-card__status {
-  flex-shrink: 0;
-  margin-top: 2px;
+.type-overview-stack {
+  display: grid;
+  gap: 10px;
 }
 
-.requirement-data-card__body {
-  flex: 1;
-  min-height: 0;
-}
-
-.requirement-data-guide {
+.type-overview-row {
   display: flex;
-  flex: 1;
   align-items: center;
-  justify-content: center;
-  padding: 24px;
-}
-
-.requirement-data-guide__panel {
-  width: min(100%, 820px);
-  border: 1px dashed #cbd5e1;
-  border-radius: 24px;
-  background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
-  padding: 32px;
-}
-
-.requirement-data-guide__eyebrow {
-  color: #2563eb;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.requirement-data-guide__title {
-  color: #0f172a;
-  font-size: 28px;
-  font-weight: 700;
-  line-height: 1.2;
-  margin-top: 10px;
-}
-
-.requirement-data-guide__desc {
-  color: #475569;
-  font-size: 14px;
-  line-height: 1.7;
-  margin-top: 10px;
-  max-width: 680px;
-}
-
-.requirement-guide-steps {
-  display: grid;
   gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  margin-top: 24px;
-}
-
-.requirement-guide-step {
-  background: #ffffff;
   border: 1px solid #e2e8f0;
-  border-radius: 18px;
-  padding: 18px;
-  min-height: 156px;
+  border-radius: 16px;
+  padding: 14px;
 }
 
-.requirement-guide-step__index {
+.type-overview-row__left {
+  flex-shrink: 0;
+}
+
+.type-overview-row__metrics {
   display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 999px;
-  background: #0f172a;
-  color: #ffffff;
-  font-size: 14px;
-  font-weight: 700;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
 }
 
-.requirement-guide-step__title {
-  color: #0f172a;
-  font-size: 15px;
-  font-weight: 700;
-  margin-top: 14px;
-}
-
-.requirement-guide-step__desc {
+.type-overview-row__label {
   color: #64748b;
-  font-size: 13px;
-  line-height: 1.7;
-  margin-top: 8px;
+  font-size: 12px;
+}
+
+.type-overview-row__value {
+  display: block;
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: 6px;
 }
 
 .requirement-team-badge {
@@ -1363,19 +2811,21 @@ onMounted(async () => {
   min-height: 0;
 }
 
-.requirement-summary-panel {
-  padding-right: 4px;
+@media (max-width: 1024px) {
+  .dense-overview-card__metric-grid--three,
+  .type-overview-row__metrics {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 768px) {
+  .requirement-filter-card__header,
   .requirement-data-card__header,
-  .summary-section-card__header {
+  .summary-section-card__header,
+  .dense-overview-card__title-row,
+  .status-density-card__top {
     flex-direction: column;
-  }
-
-  .requirement-data-card__status,
-  .summary-section-card__tag {
-    margin-top: 0;
+    align-items: flex-start;
   }
 
   .requirement-data-guide {
@@ -1388,6 +2838,18 @@ onMounted(async () => {
 
   .requirement-data-guide__title {
     font-size: 24px;
+  }
+
+  .summary-overview-grid,
+  .status-density-grid,
+  .dense-overview-card__metric-grid,
+  .delay-overview-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .type-overview-row {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 </style>
