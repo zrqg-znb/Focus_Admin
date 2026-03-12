@@ -942,6 +942,17 @@ const TableColumnRenderer = defineComponent({
           childColumns.map((child, childIndex) =>
             renderColumn(child, childIndex),
           );
+      } else if (
+        column.type === 'expand' &&
+        column.slotName &&
+        slots[column.slotName]
+      ) {
+        columnSlots.default = (scope: any) =>
+          slots[column.slotName]?.({
+            row: scope.row,
+            $index: scope.$index,
+            column,
+          });
       } else if (!column.type) {
         columnSlots.default = (scope: any) => {
           if (column.slotName && slots[column.slotName]) {

@@ -1,1 +1,0 @@
-[{"file_path": "src/ui/vg_a.cpp", "line_number": 120, "defect_type": "invalid_read", "severity": "High", "description": "Invalid read in ui u2"}, {"file_path": "src/ui/vg_b.cpp", "line_number": 121, "defect_type": "possibly_lost", "severity": "Medium", "description": "Possible leak in ui u2"}]

@@ -1,15 +1,51 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
-import { Page } from '@vben/common-ui';
-import { useVbenVxeGrid } from '#/adapter/vxe-table';
-import { listProjectOverviewApi, listLatestResultsApi, applyShieldApi, listResultShieldRecordsApi } from '#/api/code_scan';
-import { useSummaryColumns, useDetailColumns } from './data';
-import { ElButton, ElTag, ElMessage, ElDialog, ElInput, ElForm, ElFormItem, ElDescriptions, ElDescriptionsItem, ElTabs, ElTabPane, ElTable, ElTableColumn } from 'element-plus';
+import type { ProjectOverviewTableRow } from './data';
+
+import type {
+  LatestScanResultItem,
+  ProjectOverviewItem,
+  ShieldApplyPayload,
+  ShieldRecordItem,
+} from '#/api/code_scan';
+
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+
+import { Page } from '@vben/common-ui';
+
+import {
+  ElButton,
+  ElDescriptions,
+  ElDescriptionsItem,
+  ElDialog,
+  ElEmpty,
+  ElForm,
+  ElFormItem,
+  ElInput,
+  ElMessage,
+  ElTable,
+  ElTableColumn,
+  ElTabPane,
+  ElTabs,
+  ElTag,
+} from 'element-plus';
+
+import {
+  applyShieldApi,
+  listLatestResultsApi,
+  listProjectOverviewApi,
+  listResultShieldRecordsApi,
+} from '#/api/code_scan';
 import { UserSelector } from '#/components/zq-form/user-selector';
+import { useZqTable } from '#/components/zq-table';
+
+import { ALL_SCAN_TOOLS, useDetailColumns, useSummaryColumns } from './data';
+
+defineOptions({ name: 'CodeScanResult' });
 
 const route = useRoute();
 const router = useRouter();
+
 const projectId = computed(() => route.query.projectId as string | undefined);
 const isDetail = computed(() => Boolean(projectId.value));
 const preferredTool = computed(() => {
@@ -31,163 +67,182 @@ const routeSubModules = computed(() => {
 });
 
 const shieldVisible = ref(false);
-const shieldForm = ref({
-  result_ids: [] as string[],
+const shieldForm = ref<ShieldApplyPayload>({
   approver_id: '',
   reason: '',
+  result_ids: [],
 });
 
-const ALL_SCAN_TOOLS = [
-  'tscan',
-  'tsan',
-  'cppcheck',
-  'weggli',
-  'cooddy',
-  'binexplorer',
-  'clang-tidy',
-  'valgrind',
-];
-
+const projectMissing = ref(false);
+const selectedResults = ref<LatestScanResultItem[]>([]);
 const tools = ref<string[]>([]);
 const toolCountMap = ref<Record<string, null | number>>({});
 const activeTool = ref('');
 
-const summaryGridOptions: any = {
-  columns: useSummaryColumns([]),
-  height: '100%',
-  pagerConfig: {
-      enabled: true,
-      pageSize: 20,
-      pageSizes: [10, 20, 50, 100],
-  },
-  proxyConfig: {
-    ajax: {
-      query: async ({ page }) => {
-        const res = (await listProjectOverviewApi({
+const expandTabMap = ref<Record<string, string>>({});
+const shieldRecordsMap = ref<Record<string, ShieldRecordItem[]>>({});
+const shieldRecordsLoadingMap = ref<Record<string, boolean>>({});
+
+const [SummaryGrid, summaryGridApi] = useZqTable({
+  gridOptions: {
+    border: true,
+    stripe: true,
+    columns: useSummaryColumns([]),
+    proxyConfig: {
+      autoLoad: true,
+      ajax: {
+        query: async ({ page }) => {
+          const res = await listProjectOverviewApi({
             page: page.currentPage,
-            pageSize: page.pageSize
-        })) || { items: [], total: 0 };
-        
-        // Handle paginated response
-        const itemsData = res.items || [];
-        const total = res.total || 0;
+            pageSize: page.pageSize,
+          });
+          const itemsData = res.items || [];
+          const total = res.total || 0;
 
-        const toolSet = new Set<string>(ALL_SCAN_TOOLS);
-        for (const row of itemsData) {
-          const keys = Object.keys(row.tool_counts || {});
-          for (const k of keys) toolSet.add(k);
-        }
-        const extraTools = Array.from(toolSet).filter(
-          (tool) => !ALL_SCAN_TOOLS.includes(tool),
-        );
-        const toolNames = [...ALL_SCAN_TOOLS, ...extraTools];
-        
-        // Reload columns explicitly
-        summaryGridApi.setGridOptions({
-            columns: useSummaryColumns(toolNames)
-        });
-
-        const items = itemsData.map((row: any) => {
-          const normalizedCounts: Record<string, null | number> = {};
-          for (const tool of toolNames) {
-            const toolCounts = row.tool_counts || {};
-            const hasValue = Object.prototype.hasOwnProperty.call(toolCounts, tool);
-            normalizedCounts[tool] = hasValue
-              ? Number(toolCounts[tool] || 0)
-              : null;
+          const toolSet = new Set<string>(ALL_SCAN_TOOLS);
+          for (const row of itemsData) {
+            const keys = Object.keys(row.tool_counts || {});
+            for (const key of keys) toolSet.add(key);
           }
-          return { ...row, ...normalizedCounts };
-        });
-        return { items, total };
+          const extraTools = [...toolSet].filter(
+            (tool) => !ALL_SCAN_TOOLS.includes(tool),
+          );
+          const toolNames = [...ALL_SCAN_TOOLS, ...extraTools];
+          summaryGridApi.setGridOptions({
+            columns: useSummaryColumns(toolNames),
+          });
+
+          const items: ProjectOverviewTableRow[] = itemsData.map(
+            (row: ProjectOverviewItem) => {
+              const normalizedCounts: Record<string, null | number> = {};
+              for (const tool of toolNames) {
+                const toolCounts = row.tool_counts || {};
+                const hasValue = Object.prototype.hasOwnProperty.call(
+                  toolCounts,
+                  tool,
+                );
+                normalizedCounts[tool] = hasValue
+                  ? Number(toolCounts[tool] || 0)
+                  : null;
+              }
+              return { ...row, ...normalizedCounts };
+            },
+          );
+          return { items, total };
+        },
       },
     },
-  },
-};
-
-const detailGridOptions: any = {
-  columns: useDetailColumns(),
-  height: '100%',
-  pagerConfig: {
+    pagerConfig: {
       enabled: true,
       pageSize: 20,
       pageSizes: [10, 20, 50, 100],
-  },
-  proxyConfig: {
-    autoLoad: false, // 手动触发加载，确保 activeTool 已设置
-    ajax: {
-      query: async ({ page }: any) => {
-        if (!projectId.value || !activeTool.value) return { items: [], total: 0 };
-        try {
-            const params: Record<string, any> = {
-                tool_name: activeTool.value,
-                page: page.currentPage,
-                pageSize: page.pageSize
-            };
-            if (routeSubModules.value) {
-              params.sub_modules = routeSubModules.value;
-            }
-            const res = await listLatestResultsApi(projectId.value, params);
-            // Debug info
-            // console.log('Scan Results:', res);
-            
-            // 兼容可能被拦截器处理过的数据结构
-            const items = res.items || res.data?.items || [];
-            const total = res.total || res.data?.total || 0;
-            
-            return { items, total };
-        } catch (e) {
-            console.error(e);
-            return { items: [], total: 0 };
-        }
-      },
+    },
+    toolbarConfig: {
+      custom: true,
+      refresh: true,
+      zoom: true,
     },
   },
-};
+});
 
-const [SummaryGrid, summaryGridApi] = useVbenVxeGrid({ gridOptions: summaryGridOptions });
-const [DetailGrid, detailGridApi] = useVbenVxeGrid({ gridOptions: detailGridOptions });
+const [DetailGrid, detailGridApi] = useZqTable({
+  gridOptions: {
+    border: true,
+    stripe: true,
+    columns: useDetailColumns(),
+    proxyConfig: {
+      autoLoad: false,
+      ajax: {
+        query: async ({ page }) => {
+          if (!projectId.value || !activeTool.value || projectMissing.value) {
+            return { items: [], total: 0 };
+          }
+          const params: Record<string, any> = {
+            tool_name: activeTool.value,
+            page: page.currentPage,
+            pageSize: page.pageSize,
+          };
+          if (routeSubModules.value) {
+            params.sub_modules = routeSubModules.value;
+          }
+          const res = await listLatestResultsApi(projectId.value, params);
+          return {
+            items: res.items || [],
+            total: res.total || 0,
+          };
+        },
+      },
+    },
+    pagerConfig: {
+      enabled: true,
+      pageSize: 20,
+      pageSizes: [10, 20, 50, 100],
+    },
+    toolbarConfig: {
+      custom: true,
+      refresh: true,
+      zoom: true,
+    },
+  },
+});
+
+function displayCount(value: null | number | undefined) {
+  if (value === null || value === undefined) return '未扫描';
+  return String(value);
+}
+
+function resetDetailState() {
+  selectedResults.value = [];
+  expandTabMap.value = {};
+  shieldRecordsMap.value = {};
+  shieldRecordsLoadingMap.value = {};
+}
 
 async function loadTools() {
   if (!projectId.value) return;
 
+  projectMissing.value = false;
   tools.value = [...ALL_SCAN_TOOLS];
   toolCountMap.value = Object.fromEntries(
     ALL_SCAN_TOOLS.map((tool) => [tool, null]),
   );
 
-  try {
-    const params: Record<string, any> = {
-      page: 1,
-      pageSize: 1,
-      project_id: projectId.value,
-    };
-    if (routeSubModules.value) {
-      params.sub_modules = routeSubModules.value;
-    }
-    const res: any = await listProjectOverviewApi(params);
-    const items = res.items || res;
-    const project = Array.isArray(items)
-      ? items.find((p: any) => p.project_id === projectId.value)
-      : null;
+  const params: Record<string, any> = {
+    page: 1,
+    pageSize: 1,
+    project_id: projectId.value,
+  };
+  if (routeSubModules.value) {
+    params.sub_modules = routeSubModules.value;
+  }
 
-    if (project?.tool_counts) {
-      for (const tool of Object.keys(project.tool_counts)) {
-        if (!tools.value.includes(tool)) {
-          tools.value.push(tool);
-        }
+  const res = await listProjectOverviewApi(params);
+  const project = (res.items || []).find(
+    (item) => item.project_id === projectId.value,
+  );
+
+  if (!project) {
+    projectMissing.value = true;
+    tools.value = [];
+    toolCountMap.value = {};
+    activeTool.value = '';
+    resetDetailState();
+    return;
+  }
+
+  if (project.tool_counts) {
+    for (const tool of Object.keys(project.tool_counts)) {
+      if (!tools.value.includes(tool)) {
+        tools.value.push(tool);
       }
-      const merged: Record<string, null | number> = {};
-      for (const tool of tools.value) {
-        const toolCounts = project.tool_counts || {};
-        const hasValue = Object.prototype.hasOwnProperty.call(toolCounts, tool);
-        merged[tool] = hasValue
-          ? Number(toolCounts[tool] || 0)
-          : null;
-      }
-      toolCountMap.value = merged;
     }
-  } catch (e) {
-    console.error(e);
+    const merged: Record<string, null | number> = {};
+    for (const tool of tools.value) {
+      const toolCounts = project.tool_counts || {};
+      const hasValue = Object.prototype.hasOwnProperty.call(toolCounts, tool);
+      merged[tool] = hasValue ? Number(toolCounts[tool] || 0) : null;
+    }
+    toolCountMap.value = merged;
   }
 
   if (preferredTool.value && !tools.value.includes(preferredTool.value)) {
@@ -205,42 +260,23 @@ async function loadTools() {
   }
 }
 
-function handleTabChange() {
-    detailGridApi.reload();
-}
-
-function displayCount(value: null | number | undefined) {
-  if (value === null || value === undefined) return '未扫描';
-  return String(value);
-}
-
-onMounted(async () => {
+async function refreshCurrentView() {
   if (isDetail.value) {
     await loadTools();
-    detailGridApi.reload();
-  } else {
-    summaryGridApi.reload();
-  }
-});
-
-watch(
-  () => [
-    route.query.projectId,
-    route.query.tool,
-    route.query.tool_name,
-    route.query.sub_modules,
-  ],
-  async () => {
-    if (isDetail.value) {
-      await loadTools();
+    if (!projectMissing.value && activeTool.value) {
       detailGridApi.reload();
-    } else {
-      summaryGridApi.reload();
     }
-  },
-);
+    return;
+  }
+  summaryGridApi.reload();
+}
 
-function openProject(row: any) {
+function handleTabChange() {
+  selectedResults.value = [];
+  detailGridApi.reload();
+}
+
+function openProject(row: ProjectOverviewTableRow) {
   router.push({ path: route.path, query: { projectId: row.project_id } });
 }
 
@@ -248,50 +284,67 @@ function backToSummary() {
   router.push({ path: route.path, query: {} });
 }
 
+function handleResultSelectionChange(rows: LatestScanResultItem[]) {
+  selectedResults.value = rows;
+}
+
 function handleApplyShield() {
-  const selected = detailGridApi.grid?.getCheckboxRecords();
-  if (!selected || selected.length === 0) {
+  if (selectedResults.value.length === 0) {
     ElMessage.warning('请选择要屏蔽的缺陷');
     return;
   }
-  shieldForm.value.result_ids = selected.map((item: any) => item.id);
+  shieldForm.value = {
+    approver_id: '',
+    reason: '',
+    result_ids: selectedResults.value.map((item) => item.id),
+  };
   shieldVisible.value = true;
 }
 
 async function submitShield() {
   try {
+    if (!shieldForm.value.approver_id) {
+      ElMessage.warning('请选择审批人');
+      return;
+    }
+    if (!shieldForm.value.reason.trim()) {
+      ElMessage.warning('请输入屏蔽理由');
+      return;
+    }
     await applyShieldApi(shieldForm.value);
     ElMessage.success('申请已提交');
     shieldVisible.value = false;
+    selectedResults.value = [];
+    shieldForm.value = {
+      approver_id: '',
+      reason: '',
+      result_ids: [],
+    };
     detailGridApi.reload();
-  } catch (error) {
+  } catch {
     ElMessage.error('提交失败');
   }
 }
 
-const getSeverityType = (severity: string) => {
+function getSeverityType(severity: string) {
   if (severity === 'High') return 'danger';
   if (severity === 'Medium') return 'warning';
   return 'info';
-};
+}
 
-const getStatusType = (status: string) => {
+function getStatusType(status: string) {
   if (status === 'Shielded') return 'success';
   if (status === 'Pending') return 'warning';
   if (status === 'Rejected') return 'danger';
   return 'info';
-};
+}
 
-const getShieldRecordStatusType = (status: string) => {
+function getShieldRecordStatusType(status: string) {
   if (status === 'Approved') return 'success';
   if (status === 'Pending') return 'warning';
   if (status === 'Rejected') return 'danger';
   return 'info';
-};
-
-const expandTabMap = ref<Record<string, string>>({});
-const shieldRecordsMap = ref<Record<string, any[]>>({});
-const shieldRecordsLoadingMap = ref<Record<string, boolean>>({});
+}
 
 function getExpandTab(resultId: string) {
   return expandTabMap.value[resultId] || 'detail';
@@ -305,23 +358,38 @@ async function ensureShieldRecordsLoaded(resultId: string) {
   if (shieldRecordsMap.value[resultId]) return;
   shieldRecordsLoadingMap.value[resultId] = true;
   try {
-    const res: any = await listResultShieldRecordsApi(resultId);
-    const items = res?.data ?? res ?? [];
-    shieldRecordsMap.value[resultId] = Array.isArray(items) ? items : [];
-  } catch (e) {
+    const res = await listResultShieldRecordsApi(resultId);
+    shieldRecordsMap.value[resultId] = Array.isArray(res) ? res : [];
+  } catch {
     shieldRecordsMap.value[resultId] = [];
   } finally {
     shieldRecordsLoadingMap.value[resultId] = false;
   }
 }
 
-async function handleExpandTabChange(resultId: string, name: any) {
+async function handleExpandTabChange(resultId: string, name: number | string) {
   const tabName = String(name);
   expandTabMap.value[resultId] = tabName;
   if (tabName === 'shield') {
     await ensureShieldRecordsLoaded(resultId);
   }
 }
+
+onMounted(async () => {
+  await refreshCurrentView();
+});
+
+watch(
+  () => [
+    route.query.projectId,
+    route.query.tool,
+    route.query.tool_name,
+    route.query.sub_modules,
+  ],
+  async () => {
+    await refreshCurrentView();
+  },
+);
 </script>
 
 <template>
@@ -329,91 +397,175 @@ async function handleExpandTabChange(resultId: string, name: any) {
     <template #extra>
       <div v-if="isDetail" class="flex items-center gap-3">
         <ElButton @click="backToSummary">返回</ElButton>
-        <ElButton type="warning" @click="handleApplyShield">申请屏蔽</ElButton>
+        <ElButton
+          type="warning"
+          :disabled="projectMissing"
+          @click="handleApplyShield"
+        >
+          申请屏蔽
+        </ElButton>
       </div>
     </template>
 
-    <div class="h-full flex flex-col">
-      <SummaryGrid v-if="!isDetail">
-        <template #project_name="{ row }">
-          <ElButton link type="primary" @click="openProject(row)">{{ row.project_name }}</ElButton>
+    <div class="flex h-full min-h-0 flex-col">
+      <SummaryGrid v-if="!isDetail" class="h-full">
+        <template #cell-project_name="{ row }">
+          <ElButton link type="primary" @click="openProject(row)">
+            {{ row.project_name }}
+          </ElButton>
         </template>
       </SummaryGrid>
 
-      <div v-else class="h-full flex flex-col">
-          <ElTabs v-model="activeTool" @tab-change="handleTabChange" class="mb-2">
-              <ElTabPane
-                v-for="tool in tools"
-                :key="tool"
-                :label="`${tool} (${displayCount(toolCountMap[tool])})`"
-                :name="tool"
-              />
-          </ElTabs>
-          <div class="flex-1 min-h-0 overflow-hidden">
-              <DetailGrid>
-                <template #expand_content="{ row }">
-                  <div class="p-4 bg-gray-50">
-                    <ElTabs
-                      :model-value="getExpandTab(row.id)"
-                      @tab-change="(name) => handleExpandTabChange(row.id, name)"
-                    >
-                      <ElTabPane label="缺陷详情" name="detail">
-                        <ElDescriptions title="详细信息" :column="1" border>
-                          <ElDescriptionsItem label="缺陷描述">{{ row.description }}</ElDescriptionsItem>
-                          <ElDescriptionsItem label="文件路径">{{ row.file_path }} : {{ row.line_number }}</ElDescriptionsItem>
-                          <ElDescriptionsItem label="修复建议" v-if="row.help_info">{{ row.help_info }}</ElDescriptionsItem>
-                          <ElDescriptionsItem label="代码片段" v-if="row.code_snippet">
-                            <pre class="bg-gray-800 text-white p-2 rounded text-xs overflow-x-auto">{{ row.code_snippet }}</pre>
-                          </ElDescriptionsItem>
-                        </ElDescriptions>
-                      </ElTabPane>
-                      <ElTabPane label="屏蔽记录" name="shield">
-                        <ElTable
-                          v-loading="isShieldRecordsLoading(row.id)"
-                          :data="shieldRecordsMap[row.id] || []"
-                          size="small"
-                          border
-                          style="width: 100%"
-                        >
-                          <ElTableColumn prop="sys_create_datetime" label="时间" width="180" />
-                          <ElTableColumn label="状态" width="120">
-                            <template #default="{ row: srow }">
-                              <ElTag :type="getShieldRecordStatusType(srow.status)">{{ srow.status }}</ElTag>
-                            </template>
-                          </ElTableColumn>
-                          <ElTableColumn prop="applicant_name" label="申请人" width="120" />
-                          <ElTableColumn prop="approver_name" label="审批人" width="120" />
-                          <ElTableColumn prop="reason" label="理由" min-width="220" />
-                          <ElTableColumn prop="audit_comment" label="审批意见" min-width="220" />
-                        </ElTable>
-                        <div
-                          v-if="!isShieldRecordsLoading(row.id) && (shieldRecordsMap[row.id]?.length || 0) === 0"
-                          class="py-3 text-center text-gray-400"
-                        >
-                          暂无屏蔽记录
-                        </div>
-                      </ElTabPane>
-                    </ElTabs>
-                  </div>
-                </template>
-                <template #severity="{ row }">
-                  <ElTag :type="getSeverityType(row.severity)">{{ row.severity }}</ElTag>
-                </template>
-                <template #shield_status="{ row }">
-                  <ElTag :type="getStatusType(row.shield_status)">{{ row.shield_status }}</ElTag>
-                </template>
-              </DetailGrid>
+      <div v-else class="flex h-full min-h-0 flex-col">
+        <template v-if="projectMissing">
+          <div class="flex flex-1 items-center justify-center">
+            <ElEmpty description="项目不存在或已删除">
+              <ElButton type="primary" @click="backToSummary">
+                返回汇总
+              </ElButton>
+            </ElEmpty>
           </div>
+        </template>
+        <template v-else>
+          <ElTabs
+            v-model="activeTool"
+            class="mb-2"
+            @tab-change="handleTabChange"
+          >
+            <ElTabPane
+              v-for="tool in tools"
+              :key="tool"
+              :label="`${tool} (${displayCount(toolCountMap[tool])})`"
+              :name="tool"
+            />
+          </ElTabs>
+          <div class="min-h-0 flex-1 overflow-hidden">
+            <DetailGrid
+              class="h-full"
+              @selection-change="handleResultSelectionChange"
+            >
+              <template #expand_content="{ row }">
+                <div class="bg-gray-50 p-4">
+                  <ElTabs
+                    :model-value="getExpandTab(row.id)"
+                    @tab-change="(name) => handleExpandTabChange(row.id, name)"
+                  >
+                    <ElTabPane label="缺陷详情" name="detail">
+                      <ElDescriptions title="详细信息" :column="1" border>
+                        <ElDescriptionsItem label="缺陷描述">
+                          {{ row.description }}
+                        </ElDescriptionsItem>
+                        <ElDescriptionsItem label="文件路径">
+                          {{ row.file_path }} : {{ row.line_number }}
+                        </ElDescriptionsItem>
+                        <ElDescriptionsItem
+                          v-if="row.help_info"
+                          label="修复建议"
+                        >
+                          {{ row.help_info }}
+                        </ElDescriptionsItem>
+                        <ElDescriptionsItem
+                          v-if="row.code_snippet"
+                          label="代码片段"
+                        >
+                          <pre
+                            class="overflow-x-auto rounded bg-gray-800 p-2 text-xs text-white"
+                          >
+                            {{ row.code_snippet }}
+                          </pre>
+                        </ElDescriptionsItem>
+                      </ElDescriptions>
+                    </ElTabPane>
+                    <ElTabPane label="屏蔽记录" name="shield">
+                      <ElTable
+                        v-loading="isShieldRecordsLoading(row.id)"
+                        :data="shieldRecordsMap[row.id] || []"
+                        border
+                        size="small"
+                        style="width: 100%"
+                      >
+                        <ElTableColumn
+                          prop="sys_create_datetime"
+                          label="时间"
+                          width="180"
+                        />
+                        <ElTableColumn label="状态" width="120">
+                          <template #default="{ row: shieldRow }">
+                            <ElTag
+                              :type="
+                                getShieldRecordStatusType(shieldRow.status)
+                              "
+                            >
+                              {{ shieldRow.status }}
+                            </ElTag>
+                          </template>
+                        </ElTableColumn>
+                        <ElTableColumn
+                          prop="applicant_name"
+                          label="申请人"
+                          width="120"
+                        />
+                        <ElTableColumn
+                          prop="approver_name"
+                          label="审批人"
+                          width="120"
+                        />
+                        <ElTableColumn
+                          prop="reason"
+                          label="理由"
+                          min-width="220"
+                        />
+                        <ElTableColumn
+                          prop="audit_comment"
+                          label="审批意见"
+                          min-width="220"
+                        />
+                      </ElTable>
+                      <div
+                        v-if="
+                          !isShieldRecordsLoading(row.id) &&
+                          (shieldRecordsMap[row.id]?.length || 0) === 0
+                        "
+                        class="py-3 text-center text-gray-400"
+                      >
+                        暂无屏蔽记录
+                      </div>
+                    </ElTabPane>
+                  </ElTabs>
+                </div>
+              </template>
+
+              <template #cell-severity="{ row }">
+                <ElTag :type="getSeverityType(row.severity)">
+                  {{ row.severity }}
+                </ElTag>
+              </template>
+
+              <template #cell-shield_status="{ row }">
+                <ElTag :type="getStatusType(row.shield_status)">
+                  {{ row.shield_status }}
+                </ElTag>
+              </template>
+            </DetailGrid>
+          </div>
+        </template>
       </div>
     </div>
 
     <ElDialog v-model="shieldVisible" title="申请屏蔽" width="500px">
       <ElForm :model="shieldForm" label-width="100px">
         <ElFormItem label="审批人" required>
-          <UserSelector v-model="shieldForm.approver_id" placeholder="请选择审批人" />
+          <UserSelector
+            v-model="shieldForm.approver_id"
+            placeholder="请选择审批人"
+          />
         </ElFormItem>
         <ElFormItem label="屏蔽理由" required>
-          <ElInput v-model="shieldForm.reason" type="textarea" placeholder="请输入理由" />
+          <ElInput
+            v-model="shieldForm.reason"
+            placeholder="请输入理由"
+            type="textarea"
+          />
         </ElFormItem>
       </ElForm>
       <template #footer>

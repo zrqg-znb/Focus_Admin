@@ -1,5 +1,9 @@
+import type { Column } from 'element-plus';
+
 import type { VbenFormSchema } from '#/adapter/form';
-import type { VxeTableGridOptions } from '#/adapter/vxe-table';
+import type { ScanProjectItem } from '#/api/code_scan';
+import type { ZqTableGridOptions } from '#/components/zq-table';
+
 import { z } from '#/adapter/form';
 
 export function getFormSchema(): VbenFormSchema[] {
@@ -64,20 +68,58 @@ export function useSearchFormSchema(): VbenFormSchema[] {
   ];
 }
 
-export function useColumns(): VxeTableGridOptions<any>['columns'] {
-  return [
-    { type: 'seq', width: 60 },
-    { field: 'name', title: '项目名称', minWidth: 150 },
-    { field: 'project_key', title: 'Project Key', minWidth: 300, showOverflow: true },
-    { field: 'repo_url', title: '代码仓', minWidth: 250 },
-    { field: 'branch', title: '分支', width: 100 },
-    { field: 'caretaker_name', title: '数据看护人', width: 120 },
+export function useZqColumns(): ZqTableGridOptions<ScanProjectItem>['columns'] {
+  const columns: Column<ScanProjectItem>[] = [
     {
-        field: 'action',
-        title: '操作',
-        fixed: 'right',
-        width: 220,
-        slots: { default: 'action' }
-    }
+      key: 'name',
+      dataKey: 'name',
+      title: '项目名称',
+      width: 180,
+      fixed: true,
+    },
+    {
+      key: 'project_key',
+      dataKey: 'project_key',
+      title: 'Project Key',
+      width: 360,
+    },
+    {
+      key: 'repo_url',
+      dataKey: 'repo_url',
+      title: '代码仓',
+      width: 320,
+    },
+    {
+      key: 'branch',
+      dataKey: 'branch',
+      title: '分支',
+      width: 120,
+    },
+    {
+      key: 'caretaker_name',
+      dataKey: 'caretaker_name',
+      title: '数据看护人',
+      width: 140,
+    },
+    {
+      key: 'sys_create_datetime',
+      dataKey: 'sys_create_datetime',
+      title: '创建时间',
+      width: 180,
+    },
+    {
+      key: 'actions',
+      dataKey: 'actions',
+      title: '操作',
+      width: 220,
+      fixed: 'right',
+      showOverflowTooltip: false,
+    },
   ];
+
+  return columns.map((column) => ({
+    align: 'center',
+    headerAlign: 'center',
+    ...column,
+  }));
 }

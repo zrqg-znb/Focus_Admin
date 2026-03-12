@@ -10,6 +10,7 @@ from django.conf import settings
 from django.db import transaction
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
+from django.utils import timezone
 from apps.code_scan.models import ScanProject, ScanTask, ScanResult, ShieldApplication
 from apps.code_scan.parsers.factory import ParserFactory
 from core.user.user_model import User
@@ -17,6 +18,16 @@ from core.user.user_model import User
 logger = logging.getLogger(__name__)
 
 class ScanService:
+    @staticmethod
+    def _soft_delete_queryset(queryset, modifier_id: str | None = None) -> int:
+        update_kwargs = {
+            "is_deleted": True,
+            "sys_update_datetime": timezone.now(),
+        }
+        if modifier_id:
+            update_kwargs["sys_modifier_id"] = modifier_id
+        return queryset.filter(is_deleted=False).update(**update_kwargs)
+
     @staticmethod
     def _normalize_path(value: str | None) -> str:
         return (value or "").strip().replace("\\", "/")
@@ -74,6 +85,7 @@ class ScanService:
     def create_project(data: dict, user: User) -> ScanProject:
         """创建扫描项目"""
         payload = dict(data)
+        payload["caretaker_id"] = payload.get("caretaker_id") or None
         payload["path_shield_prefixes"] = ScanService._normalize_path_prefixes(
             payload.get("path_shield_prefixes"),
         )
@@ -82,16 +94,44 @@ class ScanService:
     @staticmethod
     def update_project(project_id: str, data: dict, user: User) -> ScanProject:
         """更新扫描项目"""
-        project = get_object_or_404(ScanProject, id=project_id)
+        project = get_object_or_404(ScanProject.objects.filter(is_deleted=False), id=project_id)
         payload = dict(data)
+        payload["caretaker_id"] = payload.get("caretaker_id") or None
         if "path_shield_prefixes" in payload:
             payload["path_shield_prefixes"] = ScanService._normalize_path_prefixes(
                 payload.get("path_shield_prefixes"),
             )
         for key, value in payload.items():
             setattr(project, key, value)
+        project.sys_modifier = user
         project.save()
         return project
+
+    @staticmethod
+    @transaction.atomic
+    def delete_project(project_id: str, user: User) -> bool:
+        """删除扫描项目，并同步软删除关联任务/结果/屏蔽申请。"""
+        project = get_object_or_404(
+            ScanProject.objects.filter(is_deleted=False),
+            id=project_id,
+        )
+        modifier_id = getattr(user, "id", None)
+        ScanService._soft_delete_queryset(
+            ShieldApplication.objects.filter(result__task__project=project),
+            modifier_id,
+        )
+        ScanService._soft_delete_queryset(
+            ScanResult.objects.filter(task__project=project),
+            modifier_id,
+        )
+        ScanService._soft_delete_queryset(
+            ScanTask.objects.filter(project=project),
+            modifier_id,
+        )
+        project.is_deleted = True
+        project.sys_modifier = user
+        project.save(update_fields=["is_deleted", "sys_modifier", "sys_update_datetime"])
+        return True
 
     @staticmethod
     def handle_upload(
@@ -104,7 +144,7 @@ class ScanService:
         normalized_tool = ScanService._normalize_tool_name(tool_name)
         normalized_sub_module = ScanService._normalize_sub_module(sub_module)
         try:
-            project = ScanProject.objects.get(project_key=project_key)
+            project = ScanProject.objects.get(project_key=project_key, is_deleted=False)
         except ScanProject.DoesNotExist:
             raise ValueError("无效的项目标识 (project_key)")
 
@@ -151,7 +191,7 @@ class ScanService:
         normalized_tool = ScanService._normalize_tool_name(tool_name)
         normalized_sub_module = ScanService._normalize_sub_module(sub_module)
         try:
-            project = ScanProject.objects.get(project_key=project_key)
+            project = ScanProject.objects.get(project_key=project_key, is_deleted=False)
         except ScanProject.DoesNotExist:
             raise ValueError("无效的项目标识 (project_key)")
 

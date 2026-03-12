@@ -1,59 +1,87 @@
 <script setup lang="ts">
+import type {
+  ScanProjectItem,
+  ScanProjectListParams,
+  ScanProjectPayload,
+} from '#/api/code_scan';
+
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
 import { useClipboard } from '@vueuse/core';
-import { ElButton, ElDialog, ElInput, ElMessage } from 'element-plus';
+import {
+  ElButton,
+  ElDialog,
+  ElInput,
+  ElMessage,
+  ElMessageBox,
+} from 'element-plus';
 
 import { useVbenForm } from '#/adapter/form';
-import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import {
   createProjectApi,
+  deleteProjectApi,
   listProjectsApi,
   updateProjectApi,
 } from '#/api/code_scan';
+import { useZqTable } from '#/components/zq-table';
 
-import { getFormSchema, useColumns, useSearchFormSchema } from './data';
+import { getFormSchema, useSearchFormSchema, useZqColumns } from './data';
+
+defineOptions({ name: 'CodeScanProject' });
+
+interface ProjectQueryParams {
+  form?: ScanProjectListParams;
+  page: {
+    currentPage: number;
+    pageSize: number;
+  };
+}
+
+interface ScanProjectFormValues extends ScanProjectPayload {
+  path_shield_prefixes_text?: string;
+}
 
 const router = useRouter();
 const { copy } = useClipboard();
 
-const gridOptions: any = {
-  columns: useColumns(),
-  height: '100%', // 强制撑满父容器
-  pagerConfig: {
-    enabled: true,
-    pageSize: 20,
-    pageSizes: [10, 20, 50, 100],
-  },
-  proxyConfig: {
-    ajax: {
-      query: async ({ page }, formValues) => {
-        const res = await listProjectsApi({
-          ...formValues,
-          page: page.currentPage,
-          pageSize: page.pageSize,
-        });
-        return { items: res.items, total: res.total };
-      },
-    },
-  },
-  toolbarConfig: {
-    search: true,
-    refresh: true,
-  },
-};
-
-const [Grid, gridApi] = useVbenVxeGrid({
-  gridOptions,
+const [Grid, gridApi] = useZqTable({
   formOptions: {
     schema: useSearchFormSchema(),
+    showCollapseButton: false,
+  },
+  gridOptions: {
+    border: true,
+    stripe: true,
+    columns: useZqColumns(),
+    proxyConfig: {
+      autoLoad: true,
+      ajax: {
+        query: async ({ page, form }: ProjectQueryParams) => {
+          return await listProjectsApi({
+            page: page.currentPage,
+            pageSize: page.pageSize,
+            ...form,
+          });
+        },
+      },
+    },
+    pagerConfig: {
+      enabled: true,
+      pageSize: 20,
+      pageSizes: [10, 20, 50, 100],
+    },
+    toolbarConfig: {
+      custom: true,
+      refresh: true,
+      search: true,
+      zoom: true,
+    },
   },
 });
 
-// 创建/编辑项目弹窗逻辑
 const dialogVisible = ref(false);
 const dialogTitle = ref('新建项目');
 const isEditMode = ref(false);
@@ -79,37 +107,39 @@ function parsePathPrefixes(rawText: string) {
   return [...new Set(values)];
 }
 
-function handleCreate() {
-  isEditMode.value = false;
-  dialogTitle.value = '新建项目';
+function resetPreviewState() {
   previewPath.value = '';
   previewMatchedPrefix.value = '';
   previewChecked.value = false;
+}
+
+function handleCreate() {
+  isEditMode.value = false;
+  dialogTitle.value = '新建项目';
+  currentId.value = '';
+  resetPreviewState();
   formApi.setValues({
     name: '',
     repo_url: '',
     branch: 'master',
     description: '',
-    caretaker_id: '',
+    caretaker_id: undefined,
     path_shield_prefixes_text: '',
   });
   dialogVisible.value = true;
 }
 
-function handleEdit(row: any) {
+function handleEdit(row: ScanProjectItem) {
   isEditMode.value = true;
   dialogTitle.value = '编辑项目';
   currentId.value = row.id;
-  previewPath.value = '';
-  previewMatchedPrefix.value = '';
-  previewChecked.value = false;
-  // 回显数据
+  resetPreviewState();
   formApi.setValues({
     name: row.name,
     repo_url: row.repo_url,
     branch: row.branch,
-    description: row.description,
-    caretaker_id: row.caretaker,
+    description: row.description || '',
+    caretaker_id: row.caretaker || undefined,
     path_shield_prefixes_text: Array.isArray(row.path_shield_prefixes)
       ? row.path_shield_prefixes.join('\n')
       : '',
@@ -121,15 +151,18 @@ async function submitForm() {
   const { valid } = await formApi.validate();
   if (!valid) return;
 
-  const values = await formApi.getValues<any>();
-  const path_shield_prefixes = parsePathPrefixes(
-    values.path_shield_prefixes_text || '',
-  );
-  const payload = {
-    ...values,
-    path_shield_prefixes,
+  const values = await formApi.getValues<ScanProjectFormValues>();
+  const payload: ScanProjectPayload = {
+    branch: values.branch || 'master',
+    caretaker_id: values.caretaker_id || null,
+    description: values.description?.trim() || null,
+    name: values.name,
+    path_shield_prefixes: parsePathPrefixes(
+      values.path_shield_prefixes_text || '',
+    ),
+    repo_url: values.repo_url,
   };
-  delete payload.path_shield_prefixes_text;
+
   try {
     if (isEditMode.value) {
       await updateProjectApi(currentId.value, payload);
@@ -139,14 +172,33 @@ async function submitForm() {
       ElMessage.success('创建成功');
     }
     dialogVisible.value = false;
-    gridApi.reload();
     formApi.resetForm();
+    gridApi.reload();
   } catch {
     // error handled by request interceptor
   }
 }
 
-function handleViewResults(row: any) {
+async function handleDelete(row: ScanProjectItem) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除项目「${row.name}」吗？删除后该项目及其扫描任务、结果、屏蔽申请都会隐藏。`,
+      '删除项目',
+      {
+        confirmButtonText: '确认',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    );
+    await deleteProjectApi(row.id);
+    ElMessage.success('删除成功');
+    gridApi.reload();
+  } catch {
+    // 用户取消或请求失败时，由弹窗/拦截器处理
+  }
+}
+
+function handleViewResults(row: ScanProjectItem) {
   router.push({
     path: '/code_scan/result',
     query: { projectId: row.id },
@@ -155,7 +207,7 @@ function handleViewResults(row: any) {
 
 function handleViewTaskLogs() {
   router.push({
-    path: '/code_scan/report_log',
+    path: '/code_scan/task-log',
   });
 }
 
@@ -173,7 +225,7 @@ async function handlePreviewPathRule() {
     return;
   }
 
-  const values = await formApi.getValues<any>();
+  const values = await formApi.getValues<ScanProjectFormValues>();
   const prefixes = parsePathPrefixes(values.path_shield_prefixes_text || '');
   const matched = [...prefixes]
     .sort((left, right) => right.length - left.length)
@@ -190,29 +242,43 @@ async function handlePreviewPathRule() {
 
 <template>
   <Page title="Code Scan 项目管理" auto-content-height>
-    <template #extra>
-      <ElButton type="primary" @click="handleCreate">新建项目</ElButton>
-    </template>
+    <div class="flex h-full min-h-0 flex-col">
+      <div class="min-h-0 flex-1">
+        <Grid class="h-full">
+          <template #toolbar-actions>
+            <ElButton type="primary" @click="handleCreate">新建项目</ElButton>
+            <ElButton @click="handleViewTaskLogs">解析日志</ElButton>
+          </template>
 
-    <Grid>
-      <template #project_key="{ row }">
-        <div class="flex items-center gap-2">
-          <span>{{ row.project_key }}</span>
-          <ElButton size="small" link @click="copyProjectKey(row.project_key)">
-            复制
-          </ElButton>
-        </div>
-      </template>
-      <template #action="{ row }">
-        <ElButton type="primary" link @click="handleViewResults(row)">
-          查看结果
-        </ElButton>
-        <ElButton type="primary" link @click="handleViewTaskLogs">
-          解析日志
-        </ElButton>
-        <ElButton type="primary" link @click="handleEdit(row)">编辑</ElButton>
-      </template>
-    </Grid>
+          <template #cell-project_key="{ row }">
+            <div class="flex items-center gap-2">
+              <span class="truncate">{{ row.project_key }}</span>
+              <ElButton
+                size="small"
+                link
+                @click="copyProjectKey(row.project_key)"
+              >
+                复制
+              </ElButton>
+            </div>
+          </template>
+
+          <template #cell-actions="{ row }">
+            <div class="flex items-center justify-center gap-2">
+              <ElButton type="primary" link @click="handleViewResults(row)">
+                查看结果
+              </ElButton>
+              <ElButton type="primary" link @click="handleEdit(row)">
+                编辑
+              </ElButton>
+              <ElButton type="danger" link @click="handleDelete(row)">
+                删除
+              </ElButton>
+            </div>
+          </template>
+        </Grid>
+      </div>
+    </div>
 
     <ElDialog v-model="dialogVisible" :title="dialogTitle" width="500px">
       <Form />

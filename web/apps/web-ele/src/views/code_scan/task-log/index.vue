@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import type { CodeScanTaskLogRow } from './data';
+
+import type { ScanProjectItem } from '#/api/code_scan';
+
 import { onMounted, ref, watch } from 'vue';
 
 import { Page } from '@vben/common-ui';
@@ -13,30 +17,12 @@ import {
   ElTag,
 } from 'element-plus';
 
-import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import { listProjectsApi, listTasksApi } from '#/api/code_scan';
+import { useZqTable } from '#/components/zq-table';
 
-import { useColumns } from './data';
+import { STATUS_OPTIONS, TOOL_OPTIONS, useColumns } from './data';
 
 defineOptions({ name: 'CodeScanTaskLog' });
-
-const TOOL_OPTIONS = [
-  'tscan',
-  'tsan',
-  'cppcheck',
-  'weggli',
-  'cooddy',
-  'binexplorer',
-  'clang-tidy',
-  'valgrind',
-];
-
-const STATUS_OPTIONS = [
-  { label: '等待中', value: 'pending' },
-  { label: '解析中', value: 'processing' },
-  { label: '成功', value: 'success' },
-  { label: '失败', value: 'failed' },
-];
 
 const projectId = ref('');
 const toolName = ref('');
@@ -44,43 +30,45 @@ const taskStatus = ref('');
 const projectOptions = ref<Array<{ id: string; name: string }>>([]);
 const projectNameMap = ref<Record<string, string>>({});
 const detailVisible = ref(false);
-const currentRow = ref<any>(null);
+const currentRow = ref<CodeScanTaskLogRow | null>(null);
 
-const gridOptions: any = {
-  columns: useColumns(),
-  height: '100%',
-  pagerConfig: {
-    enabled: true,
-    pageSize: 20,
-    pageSizes: [10, 20, 50, 100],
-  },
-  proxyConfig: {
-    ajax: {
-      query: async ({ page }) => {
-        const res: any = await listTasksApi(projectId.value || undefined, {
-          page: page.currentPage,
-          pageSize: page.pageSize,
-          tool_name: toolName.value || undefined,
-          status: taskStatus.value || undefined,
-        });
-        const items = (res.items || []).map((item: any) => ({
-          ...item,
-          project_name: projectNameMap.value[item.project] || item.project,
-        }));
-        return {
-          items,
-          total: res.total || 0,
-        };
+const [Grid, gridApi] = useZqTable({
+  gridOptions: {
+    border: true,
+    stripe: true,
+    columns: useColumns(),
+    proxyConfig: {
+      autoLoad: false,
+      ajax: {
+        query: async ({ page }) => {
+          const res = await listTasksApi(projectId.value || undefined, {
+            page: page.currentPage,
+            pageSize: page.pageSize,
+            tool_name: toolName.value || undefined,
+            status: taskStatus.value || undefined,
+          });
+          const items: CodeScanTaskLogRow[] = (res.items || []).map((item) => ({
+            ...item,
+            project_name: projectNameMap.value[item.project] || item.project,
+          }));
+          return {
+            items,
+            total: res.total || 0,
+          };
+        },
       },
     },
+    pagerConfig: {
+      enabled: true,
+      pageSize: 20,
+      pageSizes: [10, 20, 50, 100],
+    },
+    toolbarConfig: {
+      custom: true,
+      refresh: true,
+      zoom: true,
+    },
   },
-  toolbarConfig: {
-    refresh: true,
-  },
-};
-
-const [Grid, gridApi] = useVbenVxeGrid({
-  gridOptions,
 });
 
 function getStatusType(status?: string) {
@@ -91,34 +79,26 @@ function getStatusType(status?: string) {
 }
 
 async function loadProjects() {
-  const res: any = await listProjectsApi({
+  const res = await listProjectsApi({
     page: 1,
     pageSize: 500,
   });
   const rows = res.items || [];
-  projectOptions.value = rows.map((item: any) => ({
+  projectOptions.value = rows.map((item: ScanProjectItem) => ({
     id: item.id,
     name: item.name,
   }));
   projectNameMap.value = Object.fromEntries(
-    rows.map((item: any) => [item.id, item.name]),
+    rows.map((item: ScanProjectItem) => [item.id, item.name]),
   );
 }
 
-function openDetail(row: any) {
+function openDetail(row: CodeScanTaskLogRow) {
   currentRow.value = row;
   detailVisible.value = true;
 }
 
-watch(projectId, () => {
-  gridApi.reload();
-});
-
-watch(toolName, () => {
-  gridApi.reload();
-});
-
-watch(taskStatus, () => {
+watch([projectId, toolName, taskStatus], () => {
   gridApi.reload();
 });
 
@@ -130,66 +110,71 @@ onMounted(async () => {
 
 <template>
   <Page title="任务解析历史日志" auto-content-height>
-    <Grid>
-      <template #table-title>
-        <div class="flex items-center gap-3">
-          <ElSelect
-            v-model="projectId"
-            clearable
-            filterable
-            placeholder="项目（默认全部）"
-            style="width: 260px"
-          >
-            <ElOption
-              v-for="item in projectOptions"
-              :key="item.id"
-              :label="item.name"
-              :value="item.id"
-            />
-          </ElSelect>
-          <ElSelect
-            v-model="toolName"
-            clearable
-            filterable
-            placeholder="工具（默认全部）"
-            style="width: 200px"
-          >
-            <ElOption
-              v-for="item in TOOL_OPTIONS"
-              :key="item"
-              :label="item"
-              :value="item"
-            />
-          </ElSelect>
-          <ElSelect
-            v-model="taskStatus"
-            clearable
-            placeholder="状态（默认全部）"
-            style="width: 180px"
-          >
-            <ElOption
-              v-for="item in STATUS_OPTIONS"
-              :key="item.value"
-              :label="item.label"
-              :value="item.value"
-            />
-          </ElSelect>
-          <ElButton @click="gridApi.reload()">刷新</ElButton>
-        </div>
-      </template>
+    <div class="flex h-full min-h-0 flex-col">
+      <div class="min-h-0 flex-1">
+        <Grid class="h-full">
+          <template #toolbar-actions>
+            <div class="flex flex-wrap items-center gap-3">
+              <ElSelect
+                v-model="projectId"
+                clearable
+                filterable
+                placeholder="项目（默认全部）"
+                style="width: 260px"
+              >
+                <ElOption
+                  v-for="item in projectOptions"
+                  :key="item.id"
+                  :label="item.name"
+                  :value="item.id"
+                />
+              </ElSelect>
+              <ElSelect
+                v-model="toolName"
+                clearable
+                filterable
+                placeholder="工具（默认全部）"
+                style="width: 200px"
+              >
+                <ElOption
+                  v-for="item in TOOL_OPTIONS"
+                  :key="item"
+                  :label="item"
+                  :value="item"
+                />
+              </ElSelect>
+              <ElSelect
+                v-model="taskStatus"
+                clearable
+                placeholder="状态（默认全部）"
+                style="width: 180px"
+              >
+                <ElOption
+                  v-for="item in STATUS_OPTIONS"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </ElSelect>
+            </div>
+          </template>
 
-      <template #status="{ row }">
-        <ElTag :type="getStatusType(row.status)">{{ row.status }}</ElTag>
-      </template>
+          <template #cell-status="{ row }">
+            <ElTag :type="getStatusType(row.status)">{{ row.status }}</ElTag>
+          </template>
 
-      <template #log="{ row }">
-        <span class="line-clamp-2">{{ row.log || '-' }}</span>
-      </template>
+          <template #cell-log="{ row }">
+            <span class="line-clamp-2">{{ row.log || '-' }}</span>
+          </template>
 
-      <template #action="{ row }">
-        <ElButton link type="primary" @click="openDetail(row)">详情</ElButton>
-      </template>
-    </Grid>
+          <template #cell-actions="{ row }">
+            <ElButton link type="primary" @click="openDetail(row)">
+              详情
+            </ElButton>
+          </template>
+        </Grid>
+      </div>
+    </div>
 
     <ElDialog v-model="detailVisible" title="任务解析详情" width="760px">
       <template v-if="currentRow">

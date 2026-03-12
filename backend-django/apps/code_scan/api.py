@@ -255,6 +255,10 @@ def update_project(request, project_id: str, data: ScanProjectCreateSchema):
     project = ScanService.update_project(project_id, data.dict(), request.auth)
     return project
 
+@router.delete("/projects/{project_id}", response=bool, auth=BearerAuth(), summary="删除项目")
+def delete_project(request, project_id: str):
+    return ScanService.delete_project(project_id, request.auth)
+
 # --- 任务上传 (流水线调用) ---
 
 @router.post("/upload", response=ScanTaskSchema, auth=None, summary="上传扫描报告")
@@ -299,7 +303,10 @@ def list_tasks(
     page: int = 1,
     pageSize: int = 20,
 ):
-    qs = ScanTask.objects.filter(is_deleted=False)
+    qs = ScanTask.objects.filter(
+        is_deleted=False,
+        project__is_deleted=False,
+    )
     if project_id:
         qs = qs.filter(project_id=project_id)
     if tool_name:
@@ -316,15 +323,30 @@ def list_tasks(
 
 @router.get("/results", response=List[ScanResultSchema], auth=BearerAuth(), summary="获取任务结果列表")
 def list_results(request, task_id: str):
-    return ScanResult.objects.filter(task_id=task_id, is_deleted=False)
+    return ScanResult.objects.filter(
+        task_id=task_id,
+        is_deleted=False,
+        task__is_deleted=False,
+        task__project__is_deleted=False,
+    )
 
 @router.get("/results/{result_id}/shield-records", response=List[ShieldRecordSchema], auth=BearerAuth(), summary="获取屏蔽记录")
 def list_result_shield_records(request, result_id: str):
-    r = get_object_or_404(ScanResult.objects.select_related("task"), id=result_id, is_deleted=False)
+    r = get_object_or_404(
+        ScanResult.objects.select_related("task").filter(
+            is_deleted=False,
+            task__is_deleted=False,
+            task__project__is_deleted=False,
+        ),
+        id=result_id,
+    )
     apps = (
         ShieldApplication.objects.select_related("applicant", "approver")
         .filter(
             is_deleted=False,
+            result__is_deleted=False,
+            result__task__is_deleted=False,
+            result__task__project__is_deleted=False,
             result__task__project_id=r.task.project_id,
             result__fingerprint=r.fingerprint,
         )
@@ -360,7 +382,12 @@ def list_latest_results(
     page: int = 1,
     pageSize: int = 20,
 ):
-    tasks_qs = ScanTask.objects.filter(project_id=project_id, is_deleted=False, status="success")
+    tasks_qs = ScanTask.objects.filter(
+        project_id=project_id,
+        is_deleted=False,
+        project__is_deleted=False,
+        status="success",
+    )
     
     if tool_name:
         # If tool_name is specified, get latest task for that tool
@@ -379,7 +406,12 @@ def list_latest_results(
         return {"items": [], "total": 0}
 
     results_qs = (
-        ScanResult.objects.filter(task_id__in=task_ids, is_deleted=False)
+        ScanResult.objects.filter(
+            task_id__in=task_ids,
+            is_deleted=False,
+            task__is_deleted=False,
+            task__project__is_deleted=False,
+        )
         .exclude(shield_status__in=EXCLUDED_SHIELD_STATUSES)
         .select_related("task")
         .order_by("-severity", "file_path", "line_number")
@@ -424,10 +456,16 @@ def apply_shield(request, data: ShieldApplySchema):
 @router.get("/shield/applications", response=PaginatedShieldApplicationSchema, auth=BearerAuth(), summary="获取屏蔽申请列表")
 def list_applications(request, mode: str = "my_apply", page: int = 1, pageSize: int = 20):
     user = request.auth  # BearerAuth returns user in request.auth
+    base_qs = ShieldApplication.objects.filter(
+        is_deleted=False,
+        result__is_deleted=False,
+        result__task__is_deleted=False,
+        result__task__project__is_deleted=False,
+    )
     if mode == "my_apply":
-        qs = ShieldApplication.objects.filter(applicant=user)
+        qs = base_qs.filter(applicant=user)
     else:
-        qs = ShieldApplication.objects.filter(approver=user)
+        qs = base_qs.filter(approver=user)
     
     total = qs.count()
     start = (page - 1) * pageSize
