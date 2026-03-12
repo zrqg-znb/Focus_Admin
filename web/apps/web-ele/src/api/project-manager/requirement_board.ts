@@ -130,6 +130,21 @@ export interface RequirementUserSummary {
   test_users: RequirementUserSummaryItem[];
 }
 
+export interface RequirementDispatchRate {
+  p_total: number;
+  develop_owner_count: number;
+  develop_owner_rate: number;
+  test_owner_count: number;
+  test_owner_rate: number;
+}
+
+export interface RequirementPlanRefreshRate {
+  planned_test_time_count: number;
+  planned_test_time_rate: number;
+  due_date_count: number;
+  due_date_rate: number;
+}
+
 export interface RequirementDelayBucketSummary {
   count: number;
   rate: number;
@@ -156,6 +171,8 @@ export interface RequirementBoardSummary {
   project_summary: RequirementProjectSummary[];
   team_summary: RequirementTeamSummary[];
   user_summary: RequirementUserSummary;
+  dispatch_rate: RequirementDispatchRate;
+  plan_refresh_rate: RequirementPlanRefreshRate;
   delay_summary: RequirementDelaySummary;
   development_delivery_trend: RequirementDeliveryTrendItem[];
   acceptance_delivery_trend: RequirementDeliveryTrendItem[];

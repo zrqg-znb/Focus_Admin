@@ -203,6 +203,7 @@ z60094428,z60094429
 - 若真实上游字段名不是 `domainid`，可通过配置替换
 - `page_no` / `page_size` 在 JSON 的 `page` 对象中发送
 - 即使传入的 `page_size > 500`，上游最多返回 `500` 条；本模块也会在后端侧主动限制上游单次请求页大小为 `500`
+- 上游响应 `page` 字段口径：`page_sum=总条数`、`page_size=总页数`，真实每页条数以请求 `page.page_size` 为准
 
 ### 6.2 基础筛选与本地筛选分工
 
@@ -904,8 +905,8 @@ TypeError: can't compare offset-naive and offset-aware datetimes
 3. 在后端日志里核对：
    - `domainid[]` 是否正确
    - `sub_teams[]` / `categories[]` 是否正确
-   - `page.page_no / page.page_size` 是否正确
-   - 上游返回的 `page_sum / total / page_size` 是否符合预期
+- `page.page_no / page.page_size` 是否正确
+- 上游返回的 `page_sum(总条数) / page_size(总页数)` 是否符合预期
 4. 联调完成后关闭该开关，避免日志过多
 
 ---

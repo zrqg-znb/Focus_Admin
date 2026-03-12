@@ -5,6 +5,7 @@ import json
 import math
 import os
 import random
+import re
 import time
 from typing import Any
 
@@ -82,6 +83,8 @@ _STATUS_ALIASES = {
     "测试完成（已置A）": "A",
     "测试验收完成": "A",
 }
+_OWNER_SPLIT_RE = re.compile(r"[,，]")
+_OWNER_PAREN_RE = re.compile(r"[（(](.*?)[)）]")
 
 
 def _get_setting(name: str, default: Any = None):
@@ -144,6 +147,28 @@ def _normalize_text_list(values: Any) -> list[str]:
     return result
 
 
+def _strip_owner_suffix(value: str) -> str:
+    if not value:
+        return ""
+    return re.sub(r"[（(].*?[)）]$", "", value).strip()
+
+
+def _extract_owner_username(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+    if any(char.isspace() for char in text):
+        parts = [item for item in re.split(r"\s+", text) if item]
+        return _strip_owner_suffix(parts[-1]) if parts else ""
+    if "(" in text or "（" in text:
+        match = _OWNER_PAREN_RE.search(text)
+        if match:
+            candidate = match.group(1).strip()
+            if candidate:
+                return candidate
+    return _strip_owner_suffix(text)
+
+
 def _normalize_owner_list(values: Any) -> list[str]:
     if values is None:
         return []
@@ -151,8 +176,11 @@ def _normalize_owner_list(values: Any) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
     for item in raw_values:
-        for part in str(item or "").split(","):
-            username = part.strip()
+        text = _clean_text(item)
+        if not text:
+            continue
+        for part in _OWNER_SPLIT_RE.split(text):
+            username = _extract_owner_username(part)
             if not username or username in seen:
                 continue
             seen.add(username)
@@ -294,10 +322,17 @@ def _parse_range_boundary(value: Any, *, is_end: bool) -> datetime.datetime | No
 def _format_datetime_text(value: Any) -> str | None:
     parsed = _parse_datetime(value)
     if parsed is not None:
-        localized = timezone.localtime(parsed)
+        localized = timezone.localtime(_ensure_aware(parsed))
         return localized.strftime("%Y-%m-%d %H:%M:%S")
     text = _clean_text(value)
     return text or None
+
+
+def _to_local_date(value: Any) -> datetime.date | None:
+    parsed = _parse_datetime(value)
+    if parsed is None:
+        return None
+    return timezone.localtime(_ensure_aware(parsed)).date()
 
 
 def _normalize_status(raw_status: Any) -> tuple[str, str]:
@@ -319,15 +354,14 @@ def _is_development_delayed(
     completed_time: Any,
     now: datetime.datetime,
 ) -> bool:
-    planned_dt = _parse_datetime(planned_test_time)
-    if planned_dt is None:
+    planned_date = _to_local_date(planned_test_time)
+    if planned_date is None:
         return False
-    completed_dt = _parse_datetime(completed_time)
-    completed_dt, planned_dt = _normalize_datetime_pair(completed_dt, planned_dt)
-    if completed_dt is not None and status_code in {"C", "A"}:
-        return completed_dt > planned_dt
-    now, planned_dt = _normalize_datetime_pair(now, planned_dt)
-    return status_code not in {"C", "A"} and now > planned_dt
+    completed_date = _to_local_date(completed_time)
+    if completed_date is not None and status_code in {"C", "A"}:
+        return completed_date > planned_date
+    today = timezone.localtime(_ensure_aware(now)).date()
+    return status_code not in {"C", "A"} and today > planned_date
 
 
 def _is_acceptance_delayed(
@@ -336,15 +370,14 @@ def _is_acceptance_delayed(
     accepted_time: Any,
     now: datetime.datetime,
 ) -> bool:
-    due_dt = _parse_datetime(due_date)
-    if due_dt is None:
+    due_day = _to_local_date(due_date)
+    if due_day is None:
         return False
-    accepted_dt = _parse_datetime(accepted_time)
-    accepted_dt, due_dt = _normalize_datetime_pair(accepted_dt, due_dt)
-    if accepted_dt is not None and status_code == "A":
-        return accepted_dt > due_dt
-    now, due_dt = _normalize_datetime_pair(now, due_dt)
-    return status_code != "A" and now > due_dt
+    accepted_day = _to_local_date(accepted_time)
+    if accepted_day is not None and status_code == "A":
+        return accepted_day > due_day
+    today = timezone.localtime(_ensure_aware(now)).date()
+    return status_code != "A" and today > due_day
 
 
 def _cache_key(prefix: str, payload: dict[str, Any]) -> str:
@@ -622,16 +655,10 @@ def _resolve_total(
     page_size: int,
     item_count: int,
 ) -> int:
-    for key in ("total", "total_count", "count", "row_sum", "record_sum"):
+    for key in ("total", "total_count", "count", "row_sum", "record_sum", "page_sum"):
         parsed = _parse_positive_int(page.get(key), 0)
         if parsed > 0:
             return parsed
-
-    page_sum = _parse_positive_int(page.get("page_sum"), 0)
-    if page_sum > 0:
-        if page_no >= page_sum:
-            return max((page_sum - 1) * page_size + item_count, item_count)
-        return page_sum * page_size
 
     return max((page_no - 1) * page_size + item_count, item_count)
 
@@ -642,7 +669,7 @@ def _resolve_page_sum(
     page_size: int,
     item_count: int,
 ) -> int:
-    raw_page_sum = _parse_positive_int(page.get("page_sum"), 0)
+    raw_page_sum = _parse_positive_int(page.get("page_size"), 0)
     if raw_page_sum > 0:
         return raw_page_sum
     total = _resolve_total(page, page_no, page_size, item_count)
@@ -934,7 +961,7 @@ def _load_remote_page(context: dict[str, Any], page_no: int, page_size: int) -> 
     )
     raw_items, raw_page = _extract_raw_page(raw_payload)
     current_page_no = _parse_positive_int(raw_page.get("page_no"), page_no)
-    current_page_size = _parse_positive_int(raw_page.get("page_size"), normalized_page_size)
+    current_page_size = normalized_page_size
     items = _standardize_requirement_items(raw_items, context["design_project_map"])
     result = {
         "items": items,
@@ -955,6 +982,8 @@ def _load_remote_page(context: dict[str, Any], page_no: int, page_size: int) -> 
         page_sum=result["page_sum"],
         total=result["total"],
         item_count=len(items),
+        upstream_page_sum=_parse_positive_int(raw_page.get("page_sum"), 0),
+        upstream_page_size=_parse_positive_int(raw_page.get("page_size"), 0),
     )
     cache.set(cache_key, result, _DATA_CACHE_TTL_SECONDS)
     return result
@@ -1194,6 +1223,15 @@ def _create_summary_accumulator() -> dict[str, Any]:
         "project_summary": {},
         "team_summary": {},
         "user_summary": {"develop_users": {}, "test_users": {}},
+        "dispatch_rate": {
+            "p_total": 0,
+            "develop_owner_count": 0,
+            "test_owner_count": 0,
+        },
+        "plan_refresh_rate": {
+            "planned_test_time_count": 0,
+            "due_date_count": 0,
+        },
         "delay_summary": {
             "development": {"count": 0, "preview_items": []},
             "acceptance": {"count": 0, "preview_items": []},
@@ -1227,7 +1265,7 @@ def _month_bucket(value: Any) -> str | None:
     parsed = _parse_datetime(value)
     if parsed is None:
         return None
-    localized = timezone.localtime(parsed)
+    localized = timezone.localtime(_ensure_aware(parsed))
     return localized.strftime("%Y-%m")
 
 
@@ -1256,6 +1294,8 @@ def _aggregate_item(summary: dict[str, Any], item: dict[str, Any]) -> None:
     team_name = item.get("team_name") or UNKNOWN_TEAM_NAME
     workload_man_day = _to_float(item.get("workload_man_day"))
     workload_kloc = _to_float(item.get("workload_kloc"))
+    develop_users = item.get("develop_users") or []
+    test_users = item.get("test_users") or []
 
     summary["total_count"] += 1
     summary["total_workload_man_day"] += workload_man_day
@@ -1322,14 +1362,28 @@ def _aggregate_item(summary: dict[str, Any], item: dict[str, Any]) -> None:
 
     _update_user_summary(
         summary["user_summary"]["develop_users"],
-        item.get("develop_users") or [],
+        develop_users,
         item,
     )
     _update_user_summary(
         summary["user_summary"]["test_users"],
-        item.get("test_users") or [],
+        test_users,
         item,
     )
+
+    if status_code == "P":
+        dispatch = summary["dispatch_rate"]
+        dispatch["p_total"] += 1
+        if develop_users:
+            dispatch["develop_owner_count"] += 1
+        if test_users:
+            dispatch["test_owner_count"] += 1
+
+    plan_refresh = summary["plan_refresh_rate"]
+    if item.get("planned_test_time"):
+        plan_refresh["planned_test_time_count"] += 1
+    if item.get("due_date"):
+        plan_refresh["due_date_count"] += 1
 
     if item.get("is_dev_delayed"):
         summary["delay_summary"]["development"]["count"] += 1
@@ -1553,6 +1607,15 @@ def _finalize_summary_payload(summary: dict[str, Any]) -> dict[str, Any]:
         },
     }
 
+    dispatch = summary["dispatch_rate"]
+    p_total = int(dispatch["p_total"])
+    develop_owner_count = int(dispatch["develop_owner_count"])
+    test_owner_count = int(dispatch["test_owner_count"])
+
+    plan_refresh = summary["plan_refresh_rate"]
+    planned_test_time_count = int(plan_refresh["planned_test_time_count"])
+    due_date_count = int(plan_refresh["due_date_count"])
+
     return {
         "total_count": total_count,
         "total_workload_man_day": _round_metric(total_workload_man_day),
@@ -1567,6 +1630,31 @@ def _finalize_summary_payload(summary: dict[str, Any]) -> dict[str, Any]:
             ),
             "test_users": _finalize_user_summary(
                 summary["user_summary"]["test_users"],
+            ),
+        },
+        "dispatch_rate": {
+            "p_total": p_total,
+            "develop_owner_count": develop_owner_count,
+            "develop_owner_rate": round(
+                (develop_owner_count / p_total) if p_total else 0.0,
+                4,
+            ),
+            "test_owner_count": test_owner_count,
+            "test_owner_rate": round(
+                (test_owner_count / p_total) if p_total else 0.0,
+                4,
+            ),
+        },
+        "plan_refresh_rate": {
+            "planned_test_time_count": planned_test_time_count,
+            "planned_test_time_rate": round(
+                (planned_test_time_count / total_count) if total_count else 0.0,
+                4,
+            ),
+            "due_date_count": due_date_count,
+            "due_date_rate": round(
+                (due_date_count / total_count) if total_count else 0.0,
+                4,
             ),
         },
         "delay_summary": delay_summary,

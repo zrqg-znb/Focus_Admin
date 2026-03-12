@@ -149,6 +149,21 @@ class RequirementUserSummarySchema(Schema):
     test_users: List[RequirementUserSummaryItemSchema] = Field(default_factory=list)
 
 
+class RequirementDispatchRateSchema(Schema):
+    p_total: int = 0
+    develop_owner_count: int = 0
+    develop_owner_rate: float = 0.0
+    test_owner_count: int = 0
+    test_owner_rate: float = 0.0
+
+
+class RequirementPlanRefreshRateSchema(Schema):
+    planned_test_time_count: int = 0
+    planned_test_time_rate: float = 0.0
+    due_date_count: int = 0
+    due_date_rate: float = 0.0
+
+
 class RequirementDelayBucketSummarySchema(Schema):
     count: int = 0
     rate: float = 0.0
@@ -180,6 +195,12 @@ class RequirementBoardSummarySchema(Schema):
     team_summary: List[RequirementTeamSummarySchema] = Field(default_factory=list)
     user_summary: RequirementUserSummarySchema = Field(
         default_factory=lambda: RequirementUserSummarySchema()
+    )
+    dispatch_rate: RequirementDispatchRateSchema = Field(
+        default_factory=lambda: RequirementDispatchRateSchema()
+    )
+    plan_refresh_rate: RequirementPlanRefreshRateSchema = Field(
+        default_factory=lambda: RequirementPlanRefreshRateSchema()
     )
     delay_summary: RequirementDelaySummarySchema = Field(
         default_factory=lambda: RequirementDelaySummarySchema()

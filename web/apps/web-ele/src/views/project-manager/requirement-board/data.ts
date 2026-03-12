@@ -243,6 +243,19 @@ export function createEmptyRequirementSummary(): RequirementBoardSummary {
     project_summary: [],
     team_summary: [],
     user_summary: { develop_users: [], test_users: [] },
+    dispatch_rate: {
+      p_total: 0,
+      develop_owner_count: 0,
+      develop_owner_rate: 0,
+      test_owner_count: 0,
+      test_owner_rate: 0,
+    },
+    plan_refresh_rate: {
+      planned_test_time_count: 0,
+      planned_test_time_rate: 0,
+      due_date_count: 0,
+      due_date_rate: 0,
+    },
     delay_summary: {
       development: { count: 0, rate: 0, preview_items: [] },
       acceptance: { count: 0, rate: 0, preview_items: [] },
