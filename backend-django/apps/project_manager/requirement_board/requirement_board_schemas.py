@@ -19,6 +19,10 @@ class RequirementBoardDataQuerySchema(Schema):
     project_ids: List[str] = Field(..., description="项目 ID 列表")
     sub_teams: Optional[List[str]] = Field(None, description="责任团队列表")
     categories: Optional[List[str]] = Field(None, description="需求类型列表")
+    verification_policies: Optional[List[str]] = Field(
+        None,
+        description="验证策略列表",
+    )
     develop_users: Optional[List[str]] = Field(None, description="开发责任人列表")
     test_users: Optional[List[str]] = Field(None, description="测试责任人列表")
     time_field: Optional[str] = Field(None, description="时间维度字段")
@@ -40,6 +44,10 @@ class RequirementBoardSummaryQuerySchema(Schema):
     project_ids: List[str] = Field(..., description="项目 ID 列表")
     sub_teams: Optional[List[str]] = Field(None, description="责任团队列表")
     categories: Optional[List[str]] = Field(None, description="需求类型列表")
+    verification_policies: Optional[List[str]] = Field(
+        None,
+        description="验证策略列表",
+    )
     develop_users: Optional[List[str]] = Field(None, description="开发责任人列表")
     test_users: Optional[List[str]] = Field(None, description="测试责任人列表")
     time_field: Optional[str] = Field(None, description="时间维度字段")
@@ -59,6 +67,8 @@ class RequirementBoardItemSchema(Schema):
     requirement_id: str
     title: str
     category: str
+    verification_policy: str = ""
+    verification_policy_label: str = ""
     status_code: str
     status_label: str
     raw_status: str = ""

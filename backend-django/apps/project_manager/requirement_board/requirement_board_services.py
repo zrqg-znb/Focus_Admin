@@ -23,6 +23,8 @@ from .requirement_board_model import (
     STATUS_ORDER,
     TIME_FIELD_OPTIONS,
     UNKNOWN_TEAM_NAME,
+    VERIFICATION_POLICY_LABELS,
+    VERIFICATION_POLICY_ORDER,
 )
 from .requirement_board_schemas import (
     RequirementBoardDataQuerySchema,
@@ -200,6 +202,21 @@ def _normalize_categories(values: Any) -> list[str]:
             raise HttpError(422, f"非法需求类型: {item}")
         if category not in result:
             result.append(category)
+    return result
+
+
+def _normalize_verification_policies(values: Any) -> list[str]:
+    normalized = _normalize_text_list(values)
+    if not normalized:
+        return []
+
+    result: list[str] = []
+    for item in normalized:
+        policy = str(item).strip()
+        if policy not in VERIFICATION_POLICY_LABELS:
+            raise HttpError(422, f"非法验证策略: {item}")
+        if policy not in result:
+            result.append(policy)
     return result
 
 
@@ -391,6 +408,7 @@ def _build_request_payload(
     design_ids: list[str],
     sub_teams: list[str],
     categories: list[str],
+    verification_policies: list[str],
     page_no: int,
     page_size: int,
 ) -> dict[str, Any]:
@@ -404,6 +422,8 @@ def _build_request_payload(
             "page_size": min(page_size, _UPSTREAM_PAGE_SIZE),
         },
     }
+    if verification_policies:
+        payload["verification_policy"] = verification_policies
     alias_field = _clean_text(
         _get_setting("REQUIREMENT_BOARD_DESIGN_ALIAS_FIELD", ""),
     )
@@ -439,6 +459,7 @@ def _mock_fetch_page(
     design_ids: list[str],
     sub_teams: list[str],
     categories: list[str],
+    verification_policies: list[str],
     page_no: int,
     page_size: int,
 ) -> dict[str, Any]:
@@ -447,6 +468,7 @@ def _mock_fetch_page(
             "design_ids": design_ids,
             "sub_teams": sub_teams,
             "categories": categories,
+            "verification_policies": verification_policies,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -456,6 +478,7 @@ def _mock_fetch_page(
     owner_pool = [f"z6009{index:04d}" for index in range(1, 80)]
     status_pool = ["Initial", "Defined", "In-Progress", "Completed", "Accepted"]
     status_weights = (0.08, 0.18, 0.36, 0.2, 0.18)
+    policy_pool = verification_policies or list(VERIFICATION_POLICY_ORDER)
     all_items: list[dict[str, Any]] = []
 
     for design_id in design_ids:
@@ -464,6 +487,7 @@ def _mock_fetch_page(
             category = rng.choice(categories or list(CATEGORY_ORDER))
             team_name = rng.choice(team_pool)
             schedule_state = rng.choices(status_pool, weights=status_weights, k=1)[0]
+            verification_policy = rng.choice(policy_pool)
             month = (index % 12) + 1
             day = min((index % 25) + 1, 28)
             planned_dt = datetime.datetime(2026, month, day, 18, 0, 0)
@@ -489,6 +513,7 @@ def _mock_fetch_page(
                     "id": f"{design_id}-{category}-{index + 1:04d}",
                     "title": f"{category} 需求 {index + 1:04d}",
                     "schedule_state": schedule_state,
+                    "verification_policy": verification_policy,
                     "requirement2domain": design_id,
                     "planned_test_time": planned_dt.strftime("%Y-%m-%d %H:%M:%S"),
                     "due_date": due_dt.strftime("%Y-%m-%d %H:%M:%S"),
@@ -530,6 +555,7 @@ def _fetch_raw_page(
     design_ids: list[str],
     sub_teams: list[str],
     categories: list[str],
+    verification_policies: list[str],
     page_no: int,
     page_size: int,
 ) -> dict[str, Any]:
@@ -538,6 +564,7 @@ def _fetch_raw_page(
         design_ids,
         sub_teams,
         categories,
+        verification_policies,
         page_no,
         page_size,
     )
@@ -553,6 +580,7 @@ def _fetch_raw_page(
             design_ids,
             sub_teams,
             categories,
+            verification_policies,
             page_no,
             page_size,
         )
@@ -707,6 +735,11 @@ def _standardize_requirement_items(
         category = _clean_text(item.get("category")).upper()
         if category not in CATEGORY_ORDER:
             category = category or CATEGORY_ORDER[0]
+        verification_policy = _clean_text(item.get("verification_policy"))
+        verification_policy_label = VERIFICATION_POLICY_LABELS.get(
+            verification_policy,
+            verification_policy or "--",
+        )
 
         team_name = _clean_text(item.get("service_name") or item.get("servioce_name"))
         if not team_name:
@@ -734,6 +767,8 @@ def _standardize_requirement_items(
                 "requirement_id": requirement_id,
                 "title": _clean_text(item.get("title")) or requirement_id,
                 "category": category,
+                "verification_policy": verification_policy,
+                "verification_policy_label": verification_policy_label,
                 "status_code": status_code,
                 "status_label": status_label,
                 "raw_status": _clean_text(item.get("schedule_state")),
@@ -809,6 +844,7 @@ def _resolve_query_context(
     project_ids: list[str],
     sub_teams: list[str] | None = None,
     categories: list[str] | None = None,
+    verification_policies: list[str] | None = None,
     develop_users: list[str] | None = None,
     test_users: list[str] | None = None,
     time_field: str | None = None,
@@ -871,6 +907,9 @@ def _resolve_query_context(
         selected_teams = allowed_teams[:]
 
     selected_categories = _normalize_categories(categories)
+    selected_verification_policies = _normalize_verification_policies(
+        verification_policies,
+    )
     normalized_develop_users = _normalize_owner_list(develop_users)
     normalized_test_users = _normalize_owner_list(test_users)
     normalized_time = _normalize_time_filters(
@@ -892,6 +931,7 @@ def _resolve_query_context(
         "design_ids": design_ids,
         "sub_teams": selected_teams,
         "categories": selected_categories,
+        "verification_policies": selected_verification_policies,
     }
     cache_payload = {
         **remote_cache_payload,
@@ -908,6 +948,7 @@ def _resolve_query_context(
         "design_ids": design_ids,
         "sub_teams": selected_teams,
         "categories": selected_categories,
+        "verification_policies": selected_verification_policies,
         "develop_users": normalized_develop_users,
         "test_users": normalized_test_users,
         **normalized_time,
@@ -956,6 +997,7 @@ def _load_remote_page(context: dict[str, Any], page_no: int, page_size: int) -> 
         design_ids=context["design_ids"],
         sub_teams=context["sub_teams"],
         categories=context["categories"],
+        verification_policies=context["verification_policies"],
         page_no=page_no,
         page_size=normalized_page_size,
     )
@@ -1144,6 +1186,7 @@ def get_requirement_board_page(data: RequirementBoardDataQuerySchema) -> dict[st
         data.project_ids,
         data.sub_teams,
         data.categories,
+        data.verification_policies,
         data.develop_users,
         data.test_users,
         data.time_field,
@@ -1747,6 +1790,7 @@ def get_requirement_board_summary(
         data.project_ids,
         data.sub_teams,
         data.categories,
+        data.verification_policies,
         data.develop_users,
         data.test_users,
         data.time_field,

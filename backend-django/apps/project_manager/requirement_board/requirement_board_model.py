@@ -14,6 +14,15 @@ STATUS_DESCRIPTIONS = {
     "A": "需求已测试完成并置 A，可视为验收完成。",
 }
 CATEGORY_ORDER = ("AR", "DR", "SR")
+VERIFICATION_POLICY_LABELS = {
+    "10000001": "测试验证",
+    "10000002": "设计评审",
+    "10000006": "由下级分解需求验证",
+    "10000009": "开发自验证",
+    "10000010": "协同第三方验证",
+    "10000011": "免验证",
+}
+VERIFICATION_POLICY_ORDER = tuple(VERIFICATION_POLICY_LABELS.keys())
 TIME_FIELD_OPTIONS = (
     "planned_test_time",
     "due_date",

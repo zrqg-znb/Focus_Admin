@@ -10,6 +10,7 @@ export interface RequirementBoardFilterPayload {
   project_ids: string[];
   sub_teams?: string[];
   categories?: string[];
+  verification_policies?: string[];
   develop_users?: string[];
   test_users?: string[];
   time_field?: RequirementTimeField;
@@ -40,6 +41,8 @@ export interface RequirementBoardItem {
   requirement_id: string;
   title: string;
   category: string;
+  verification_policy: string;
+  verification_policy_label: string;
   status_code: string;
   status_label: string;
   raw_status?: string;

@@ -21,6 +21,15 @@ export const CATEGORY_OPTIONS = [
   { label: 'SR', value: 'SR' },
 ];
 
+export const VERIFICATION_POLICY_OPTIONS = [
+  { label: '测试验证', value: '10000001' },
+  { label: '设计评审', value: '10000002' },
+  { label: '由下级分解需求验证', value: '10000006' },
+  { label: '开发自验证', value: '10000009' },
+  { label: '协同第三方验证', value: '10000010' },
+  { label: '免验证', value: '10000011' },
+];
+
 export const DEFAULT_CATEGORIES = CATEGORY_OPTIONS.map((item) => item.value);
 
 export const TIME_FIELD_OPTIONS: Array<{
@@ -130,6 +139,12 @@ export function useRequirementColumns(): ZqTableGridOptions<RequirementBoardItem
       dataKey: 'category',
       title: '需求类型',
       width: 108,
+    },
+    {
+      key: 'verification_policy_label',
+      dataKey: 'verification_policy_label',
+      title: '验证策略',
+      width: 180,
     },
     {
       key: 'requirement_id',

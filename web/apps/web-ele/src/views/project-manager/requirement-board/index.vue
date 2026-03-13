@@ -53,6 +53,7 @@ import {
   STATUS_META_MAP,
   TIME_FIELD_OPTIONS,
   useRequirementColumns,
+  VERIFICATION_POLICY_OPTIONS,
 } from './data';
 
 defineOptions({ name: 'RequirementBoard' });
@@ -77,6 +78,7 @@ const filters = ref<RequirementBoardFilterPayload>({
   project_ids: [],
   sub_teams: [],
   categories: [...DEFAULT_CATEGORIES],
+  verification_policies: [],
   develop_users: [],
   test_users: [],
   time_field: DEFAULT_TIME_FIELD,
@@ -134,6 +136,15 @@ function normalizeStringArray(values?: string[]) {
   return result;
 }
 
+function sortProjectOptions(options: RequirementBoardProjectOption[]) {
+  return [...options].sort((left, right) => {
+    if (left.config_complete !== right.config_complete) {
+      return left.config_complete ? -1 : 1;
+    }
+    return left.name.localeCompare(right.name, 'zh-CN');
+  });
+}
+
 function formatDateBoundary(date: Date) {
   const pad = (value: number) => String(value).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
@@ -157,6 +168,7 @@ function cloneFilterPayload(
     project_ids: normalizeStringArray(source.project_ids),
     sub_teams: normalizeStringArray(source.sub_teams),
     categories: categories.length > 0 ? categories : [...DEFAULT_CATEGORIES],
+    verification_policies: normalizeStringArray(source.verification_policies),
     develop_users: normalizeStringArray(source.develop_users),
     test_users: normalizeStringArray(source.test_users),
     time_field: (source.time_field ||
@@ -174,6 +186,7 @@ function buildFingerprint(payload: null | RequirementBoardFilterPayload) {
     project_ids: [...(payload.project_ids || [])].sort(),
     sub_teams: [...(payload.sub_teams || [])].sort(),
     categories: [...(payload.categories || [])].sort(),
+    verification_policies: [...(payload.verification_policies || [])].sort(),
     develop_users: [...(payload.develop_users || [])].sort(),
     test_users: [...(payload.test_users || [])].sort(),
     time_field: payload.time_field || '',
@@ -216,6 +229,9 @@ const selectedCategoryCount = computed(() => {
   const categories = normalizeStringArray(filters.value.categories);
   return categories.length > 0 ? categories.length : DEFAULT_CATEGORIES.length;
 });
+const selectedVerificationPolicyCount = computed(
+  () => normalizeStringArray(filters.value.verification_policies).length,
+);
 const filterToggleLabel = computed(() =>
   filterCollapsed.value ? '展开筛选' : '收起筛选',
 );
@@ -281,6 +297,7 @@ const filterSummaryText = computed(() => {
     `项目 ${filters.value.project_ids.length} 个`,
     `团队 ${filters.value.sub_teams.length} 个`,
     `类型 ${selectedCategoryCount.value} 种`,
+    `验证策略 ${selectedVerificationPolicyCount.value} 个`,
     `开发责任人 ${filters.value.develop_users.length} 个`,
     `测试责任人 ${filters.value.test_users.length} 个`,
     `时间区间 ${timeRange}`,
@@ -540,7 +557,7 @@ async function loadFilterOptions() {
   optionsLoading.value = true;
   try {
     const result = await getRequirementBoardFilterOptionsApi();
-    projectOptions.value = result.projects || [];
+    projectOptions.value = sortProjectOptions(result.projects || []);
   } catch (error) {
     console.error(error);
     ElMessage.error('加载需求看板筛选项失败');
@@ -656,6 +673,7 @@ async function handleReset() {
     project_ids: [],
     sub_teams: [],
     categories: [...DEFAULT_CATEGORIES],
+    verification_policies: [],
     develop_users: [],
     test_users: [],
     time_field: DEFAULT_TIME_FIELD,
@@ -981,7 +999,7 @@ onUnmounted(() => {
           <div>
             <div class="requirement-filter-card__title">需求看板筛选</div>
             <div class="requirement-filter-card__desc">
-              项目/团队/类型为基础筛选，责任人和时间区间支持组合查询；责任人命中任一
+              项目/团队/类型/验证策略为基础筛选，责任人和时间区间支持组合查询；责任人命中任一
               username 即计入结果。
             </div>
           </div>
@@ -1062,6 +1080,26 @@ onUnmounted(() => {
               >
                 <ElOption
                   v-for="item in CATEGORY_OPTIONS"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </ElSelect>
+            </ElFormItem>
+
+            <ElFormItem label="验证策略">
+              <ElSelect
+                v-model="filters.verification_policies"
+                class="!w-[260px]"
+                collapse-tags
+                collapse-tags-tooltip
+                filterable
+                multiple
+                clearable
+                placeholder="默认不过滤"
+              >
+                <ElOption
+                  v-for="item in VERIFICATION_POLICY_OPTIONS"
                   :key="item.value"
                   :label="item.label"
                   :value="item.value"
@@ -1186,7 +1224,7 @@ onUnmounted(() => {
                   <div>
                     <div class="requirement-data-card__title">需求明细表</div>
                     <div class="requirement-data-card__desc">
-                      查询后在下方表格展示明细。
+                      查询后在下方表格展示明细，可按验证策略进一步收敛范围。
                     </div>
                   </div>
                   <ElTag
@@ -1234,6 +1272,12 @@ onUnmounted(() => {
                         class="requirement-category-badge"
                       >
                         {{ row.category }}
+                      </ElTag>
+                    </template>
+
+                    <template #cell-verification_policy_label="{ row }">
+                      <ElTag effect="light" type="info">
+                        {{ row.verification_policy_label || '--' }}
                       </ElTag>
                     </template>
 
@@ -1365,7 +1409,8 @@ onUnmounted(() => {
                         当前已选 {{ filters.sub_teams?.length || 0 }} 个团队、{{
                           selectedCategoryCount
                         }}
-                        种需求类型。
+                        种需求类型，验证策略
+                        {{ selectedVerificationPolicyCount }} 个。
                       </div>
                     </div>
                     <div class="requirement-guide-step">
