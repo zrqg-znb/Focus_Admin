@@ -212,6 +212,7 @@ export type ComponentType =
   | 'Select'
   | 'Space'
   | 'Switch'
+  | 'Textarea'
   | 'TimePicker'
   | 'TreeSelect'
   | 'Upload'
@@ -293,6 +294,9 @@ async function initComponentAdapter() {
     JsonEditor,
     CronSelector,
     InputNumber: withDefaultPlaceholder(ElInputNumber, 'input'),
+    Textarea: withDefaultPlaceholder(ElInput, 'input', {
+      type: 'textarea',
+    }),
     RadioGroup: (props, { attrs, slots }) => {
       let defaultSlot;
       if (Reflect.has(slots, 'default')) {

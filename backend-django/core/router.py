@@ -12,6 +12,7 @@ from core.role.role_api import router as role_router
 from core.permission.permission_api import router as permission_router
 from core.dept.dept_api import router as dept_router
 from core.post.post_api import router as post_router
+from core.pl.pl_api import router as pl_router
 from core.menu.menu_api import router as menu_router
 from core.dict.dict_api import router as dict_router
 from core.dict_item.dict_item_api import router as dict_item_router
@@ -37,6 +38,7 @@ core_router.add_router("", role_router, tags=["Core-Role"])
 core_router.add_router("", permission_router, tags=["Core-Permission"])
 core_router.add_router("", dept_router, tags=["Core-Dept"])
 core_router.add_router("", post_router, tags=["Core-Post"])
+core_router.add_router("", pl_router, tags=["Core-PL"])
 core_router.add_router("", menu_router, tags=["Core-Menu"])
 core_router.add_router("", dict_router, tags=["Core-Dict"])
 core_router.add_router("", dict_item_router, tags=["Core-DictItem"])

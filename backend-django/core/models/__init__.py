@@ -9,9 +9,9 @@ from core.user.user_model import User
 from core.role.role_model import Role
 from core.dept.dept_model import Dept
 from core.post.post_model import Post
+from core.pl.pl_model import PlGroup
 from core.menu.menu_model import Menu
 from core.dict.dict_model import Dict
 from core.dict_item.dict_item_model import DictItem
 from core.operation_log.operation_log_model import OperationLog
 from core.message.message_model import Announcement, UserMessage
-

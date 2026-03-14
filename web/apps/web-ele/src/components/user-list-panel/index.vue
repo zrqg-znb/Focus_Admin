@@ -27,6 +27,7 @@ import {
   ElTooltip,
 } from 'element-plus';
 
+import { getPlUsersApi } from '#/api/core/pl';
 import { getPostUsersApi } from '#/api/core/post';
 import { getUserListApi } from '#/api/core/user';
 
@@ -55,10 +56,10 @@ const UserCard = defineAsyncComponent(() => import('./user-card.vue'));
 // @ts-ignore
 const UserListItem = defineAsyncComponent(() => import('./user-list-item.vue'));
 
-type DataSource = 'all' | 'dept' | 'post';
+type DataSource = 'all' | 'dept' | 'pl' | 'post';
 
 interface Props {
-  dataSource?: DataSource; // 数据源类型：all-所有用户, dept-部门用户, post-岗位用户
+  dataSource?: DataSource; // 数据源类型：all-所有用户, dept-部门用户, post-岗位用户, pl-PL资源组用户
   sourceId?: string; // 数据源ID（部门ID或岗位ID）
   tempSelectedUsers?: Set<string>;
   filterable?: boolean;
@@ -114,6 +115,8 @@ async function loadUsers(isLoadMore = false) {
       params.search = params.name;
       delete params.name;
       result = await getPostUsersApi(props.sourceId, params);
+    } else if (props.dataSource === 'pl' && props.sourceId) {
+      result = await getPlUsersApi(props.sourceId, params);
     } else {
       // 默认加载所有用户
       result = await getUserListApi(params);
@@ -416,9 +419,9 @@ defineExpose({
                 <div
                   class="h-4 w-4 animate-spin rounded-full border-2 border-[var(--el-color-primary)] border-t-transparent"
                 ></div>
-                <span class="text-sm text-[var(--el-text-color-secondary)]"
-                  >正在加载，请稍后...</span
-                >
+                <span class="text-sm text-[var(--el-text-color-secondary)]">
+                  正在加载，请稍后...
+                </span>
               </div>
 
               <!-- 无更多数据提示 - 只在已经加载过更多数据时显示 -->
