@@ -35,12 +35,14 @@ import {
 
 import { searchUserApi } from '#/api/core/user';
 import {
+  exportRequirementBoardApi,
   getRequirementBoardDataApi,
   getRequirementBoardFilterOptionsApi,
   getRequirementBoardSummaryApi,
 } from '#/api/project-manager/requirement_board';
 import { useZqTable } from '#/components/zq-table';
 
+import ProjectSelectorDialog from './components/project-selector-dialog.vue';
 import {
   CATEGORY_OPTIONS,
   createEmptyRequirementSummary,
@@ -66,12 +68,14 @@ interface UserOption {
 const activeTab = ref('data');
 const optionsLoading = ref(false);
 const summaryLoading = ref(false);
+const exportLoading = ref(false);
 const developUserLoading = ref(false);
 const testUserLoading = ref(false);
 const projectOptions = ref<RequirementBoardProjectOption[]>([]);
 const developUserOptions = ref<UserOption[]>([]);
 const testUserOptions = ref<UserOption[]>([]);
 const filterCollapsed = ref(false);
+const projectSelectorVisible = ref(false);
 const dataGridWrapRef = ref<HTMLDivElement>();
 const dataGridHeight = ref<null | number>(null);
 const filters = ref<RequirementBoardFilterPayload>({
@@ -223,6 +227,15 @@ const teamOptions = computed(() => {
   });
   return result;
 });
+
+const projectSelectorButtonLabel = computed(() =>
+  filters.value.project_ids.length > 0
+    ? `查看已选项目（${filters.value.project_ids.length}）`
+    : '选择项目',
+);
+const projectSelectorButtonType = computed(() =>
+  filters.value.project_ids.length > 0 ? 'success' : 'primary',
+);
 
 const hasAppliedFilters = computed(() => Boolean(appliedFilters.value));
 const selectedCategoryCount = computed(() => {
@@ -606,6 +619,12 @@ const [Grid, gridApi] = useZqTable({
 });
 
 const dataResultCount = computed(() => Number(gridApi.total.value || 0));
+const canExport = computed(
+  () =>
+    hasAppliedFilters.value &&
+    dataResultCount.value > 0 &&
+    !exportLoading.value,
+);
 
 watch(
   () => gridApi.tableData.value.length,
@@ -641,6 +660,31 @@ async function fetchSummary(force = false) {
 
 function toggleFilterCollapsed() {
   filterCollapsed.value = !filterCollapsed.value;
+}
+
+function handleProjectSelectorConfirm(projectIds: string[]) {
+  filters.value.project_ids = normalizeStringArray(projectIds);
+}
+
+function clearSelectedProjects() {
+  filters.value.project_ids = [];
+}
+
+function buildExportFilename() {
+  const current = new Date();
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `需求数据看板-${current.getFullYear()}${pad(current.getMonth() + 1)}${pad(current.getDate())}-${pad(current.getHours())}${pad(current.getMinutes())}${pad(current.getSeconds())}.xlsx`;
+}
+
+function triggerBlobDownload(blob: Blob, filename: string) {
+  const url = window.URL.createObjectURL(new Blob([blob]));
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', filename);
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
 }
 
 async function handleSearch() {
@@ -683,11 +727,35 @@ async function handleReset() {
   dateRange.value = null;
   developUserOptions.value = [];
   testUserOptions.value = [];
+  projectSelectorVisible.value = false;
   appliedFilters.value = null;
   summary.value = createEmptyRequirementSummary();
   summaryFingerprint.value = '';
   gridApi.pagination.currentPage = 1;
   clearGridData();
+}
+
+async function handleExport() {
+  if (!appliedFilters.value) {
+    ElMessage.warning('请先查询需求数据');
+    return;
+  }
+  if (dataResultCount.value <= 0) {
+    ElMessage.warning('当前没有可导出的需求数据');
+    return;
+  }
+
+  exportLoading.value = true;
+  try {
+    const blob = await exportRequirementBoardApi(appliedFilters.value);
+    triggerBlobDownload(blob as Blob, buildExportFilename());
+    ElMessage.success('导出成功');
+  } catch (error) {
+    console.error(error);
+    ElMessage.error('导出失败，请检查筛选条件后重试');
+  } finally {
+    exportLoading.value = false;
+  }
 }
 
 watch(
@@ -1019,37 +1087,46 @@ onUnmounted(() => {
         </div>
 
         <div v-show="!filterCollapsed">
-          <ElForm inline :model="filters" class="requirement-filter-form">
-            <ElFormItem label="项目">
-              <ElSelect
-                v-model="filters.project_ids"
-                class="!w-[320px]"
-                collapse-tags
-                collapse-tags-tooltip
-                filterable
-                multiple
-                clearable
-                :loading="optionsLoading"
-                placeholder="请选择项目"
-              >
-                <ElOption
-                  v-for="item in projectOptions"
-                  :key="item.id"
-                  :label="
-                    item.config_complete
-                      ? item.name
-                      : `${item.name}（未完成配置）`
-                  "
-                  :value="item.id"
-                  :disabled="!item.config_complete"
-                />
-              </ElSelect>
+          <ElForm
+            :model="filters"
+            label-width="92px"
+            class="requirement-filter-form"
+          >
+            <ElFormItem
+              label="项目"
+              class="requirement-filter-form__item requirement-filter-form__item--project"
+            >
+              <div class="project-selector-trigger">
+                <div class="project-selector-trigger__actions">
+                  <ElButton
+                    :loading="optionsLoading"
+                    :type="projectSelectorButtonType"
+                    plain
+                    @click="projectSelectorVisible = true"
+                  >
+                    {{ projectSelectorButtonLabel }}
+                  </ElButton>
+                  <ElButton
+                    text
+                    :disabled="filters.project_ids.length === 0"
+                    @click="clearSelectedProjects"
+                  >
+                    清空
+                  </ElButton>
+                  <span
+                    v-if="filters.project_ids.length > 0"
+                    class="project-selector-trigger__summary-text"
+                  >
+                    已选 {{ filters.project_ids.length }} 个项目
+                  </span>
+                </div>
+              </div>
             </ElFormItem>
 
-            <ElFormItem label="责任团队">
+            <ElFormItem label="责任团队" class="requirement-filter-form__item">
               <ElSelect
                 v-model="filters.sub_teams"
-                class="!w-[260px]"
+                class="requirement-filter-control"
                 collapse-tags
                 collapse-tags-tooltip
                 filterable
@@ -1067,10 +1144,10 @@ onUnmounted(() => {
               </ElSelect>
             </ElFormItem>
 
-            <ElFormItem label="需求类型">
+            <ElFormItem label="需求类型" class="requirement-filter-form__item">
               <ElSelect
                 v-model="filters.categories"
-                class="!w-[220px]"
+                class="requirement-filter-control"
                 collapse-tags
                 collapse-tags-tooltip
                 filterable
@@ -1087,10 +1164,10 @@ onUnmounted(() => {
               </ElSelect>
             </ElFormItem>
 
-            <ElFormItem label="验证策略">
+            <ElFormItem label="验证策略" class="requirement-filter-form__item">
               <ElSelect
                 v-model="filters.verification_policies"
-                class="!w-[260px]"
+                class="requirement-filter-control"
                 collapse-tags
                 collapse-tags-tooltip
                 filterable
@@ -1107,10 +1184,13 @@ onUnmounted(() => {
               </ElSelect>
             </ElFormItem>
 
-            <ElFormItem label="开发责任人">
+            <ElFormItem
+              label="开发责任人"
+              class="requirement-filter-form__item"
+            >
               <ElSelect
                 v-model="filters.develop_users"
-                class="!w-[250px]"
+                class="requirement-filter-control"
                 multiple
                 collapse-tags
                 collapse-tags-tooltip
@@ -1133,10 +1213,13 @@ onUnmounted(() => {
               </ElSelect>
             </ElFormItem>
 
-            <ElFormItem label="测试责任人">
+            <ElFormItem
+              label="测试责任人"
+              class="requirement-filter-form__item"
+            >
               <ElSelect
                 v-model="filters.test_users"
-                class="!w-[250px]"
+                class="requirement-filter-control"
                 multiple
                 collapse-tags
                 collapse-tags-tooltip
@@ -1157,10 +1240,10 @@ onUnmounted(() => {
               </ElSelect>
             </ElFormItem>
 
-            <ElFormItem label="时间维度">
+            <ElFormItem label="时间维度" class="requirement-filter-form__item">
               <ElSelect
                 v-model="filters.time_field"
-                class="!w-[180px]"
+                class="requirement-filter-control"
                 clearable
                 placeholder="默认测试完成时间"
               >
@@ -1173,18 +1256,20 @@ onUnmounted(() => {
               </ElSelect>
             </ElFormItem>
 
-            <ElFormItem label="时间区间">
+            <ElFormItem label="时间区间" class="requirement-filter-form__item">
               <ElDatePicker
                 v-model="dateRange"
+                class="requirement-filter-control"
                 type="daterange"
                 range-separator="-"
                 start-placeholder="开始日期"
                 end-placeholder="结束日期"
-                style="width: 280px"
               />
             </ElFormItem>
 
-            <ElFormItem>
+            <ElFormItem
+              class="requirement-filter-form__item requirement-filter-form__item--actions"
+            >
               <ElButton type="primary" @click="handleSearch">查询</ElButton>
               <ElButton @click="handleReset">重置</ElButton>
             </ElFormItem>
@@ -1227,17 +1312,28 @@ onUnmounted(() => {
                       查询后在下方表格展示明细，可按验证策略进一步收敛范围。
                     </div>
                   </div>
-                  <ElTag
-                    class="requirement-data-card__status"
-                    :effect="hasAppliedFilters ? 'light' : 'plain'"
-                    :type="hasAppliedFilters ? 'success' : 'info'"
-                  >
-                    {{
-                      hasAppliedFilters
-                        ? `已加载 ${dataResultCount} 条结果`
-                        : '等待查询'
-                    }}
-                  </ElTag>
+                  <div class="requirement-data-card__actions">
+                    <ElButton
+                      type="primary"
+                      plain
+                      :disabled="!canExport"
+                      :loading="exportLoading"
+                      @click="handleExport"
+                    >
+                      导出当前查询结果
+                    </ElButton>
+                    <ElTag
+                      class="requirement-data-card__status"
+                      :effect="hasAppliedFilters ? 'light' : 'plain'"
+                      :type="hasAppliedFilters ? 'success' : 'info'"
+                    >
+                      {{
+                        hasAppliedFilters
+                          ? `已加载 ${dataResultCount} 条结果`
+                          : '等待查询'
+                      }}
+                    </ElTag>
+                  </div>
                 </div>
               </template>
 
@@ -2486,6 +2582,14 @@ onUnmounted(() => {
           </div>
         </ElTabPane>
       </ElTabs>
+
+      <ProjectSelectorDialog
+        v-model="projectSelectorVisible"
+        :loading="optionsLoading"
+        :projects="projectOptions"
+        :selected-project-ids="filters.project_ids"
+        @confirm="handleProjectSelectorConfirm"
+      />
     </div>
   </Page>
 </template>
@@ -2554,9 +2658,64 @@ onUnmounted(() => {
 }
 
 .requirement-filter-form {
+  display: grid;
+  gap: 16px 20px;
+  grid-template-columns: repeat(3, minmax(360px, 1fr));
+}
+
+.requirement-filter-form :deep(.el-form-item) {
+  align-items: flex-start;
+  margin-bottom: 0;
+}
+
+.requirement-filter-form :deep(.el-form-item__label) {
+  align-items: center;
+  color: #334155;
+  font-weight: 600;
+  justify-content: flex-end;
+  line-height: 40px;
+  padding-right: 14px;
+}
+
+.requirement-filter-form :deep(.el-form-item__content) {
+  min-width: 0;
+}
+
+.requirement-filter-form__item--actions {
+  grid-column: 1 / -1;
+}
+
+.requirement-filter-form__item--actions :deep(.el-form-item__content) {
   display: flex;
+  gap: 12px;
+  justify-content: flex-start;
+  margin-left: 92px;
+}
+
+.requirement-filter-control {
+  width: 100%;
+}
+
+.project-selector-trigger {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.project-selector-trigger__actions,
+.requirement-data-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
-  gap: 8px 12px;
+}
+
+.project-selector-trigger__summary-text {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .requirement-data-card {
@@ -3226,6 +3385,10 @@ onUnmounted(() => {
     grid-template-columns: repeat(1, minmax(0, 1fr));
   }
 
+  .requirement-filter-form {
+    grid-template-columns: repeat(2, minmax(320px, 1fr));
+  }
+
   .requirement-data-grid-wrap,
   .requirement-data-grid {
     min-height: 360px;
@@ -3257,6 +3420,30 @@ onUnmounted(() => {
   .requirement-filter-card__actions {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .requirement-filter-form {
+    grid-template-columns: 1fr;
+  }
+
+  .requirement-filter-form__item--actions :deep(.el-form-item__content) {
+    margin-left: 0;
+  }
+
+  .requirement-filter-form :deep(.el-form-item__label) {
+    justify-content: flex-start;
+    line-height: 1.6;
+    padding-bottom: 8px;
+    padding-right: 0;
+  }
+
+  .requirement-filter-form :deep(.el-form-item) {
+    flex-direction: column;
+  }
+
+  .project-selector-trigger {
+    min-width: 100%;
+    max-width: 100%;
   }
 
   .requirement-data-guide {

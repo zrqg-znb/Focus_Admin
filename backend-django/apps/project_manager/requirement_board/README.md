@@ -6,6 +6,7 @@
 
 - 需求数据看板：分页明细查询
 - 需求总结看板：基于同一筛选条件的全量聚合统计
+- 需求数据导出：基于同一筛选条件的全量明细导出
 
 该模块的设计目标是：
 
@@ -203,7 +204,8 @@ z60094428,z60094429
 - 若真实上游字段名不是 `domainid`，可通过配置替换
 - `page_no` / `page_size` 在 JSON 的 `page` 对象中发送
 - 即使传入的 `page_size > 500`，上游最多返回 `500` 条；本模块也会在后端侧主动限制上游单次请求页大小为 `500`
-- 上游响应 `page` 字段口径：`page_sum=总条数`、`page_size=总页数`，真实每页条数以请求 `page.page_size` 为准
+- 上游响应 `page` 字段口径：`page_sum=总条数`、`page_size=每页条数`、`page_no=当前页`
+- 本模块对外返回时，会把 `page_sum` 转换为“本地总页数”，供前端分页组件使用
 
 ### 6.2 基础筛选与本地筛选分工
 
@@ -237,6 +239,9 @@ z60094428,z60094429
 
 - `id`
 - `name`
+- `code`
+- `domain`
+- `type`
 - `design_id`
 - `sub_teams`
 - `config_complete`
@@ -289,6 +294,19 @@ z60094428,z60094429
 - 开发延期/测试延期摘要与预览
 - 开发交付趋势
 - 测试交付趋势
+
+### 7.4 导出需求明细
+
+`POST /api/project-manager/requirement-board/export`
+
+请求体与总结接口一致，不接受分页参数。
+
+导出规则：
+
+- 始终导出当前筛选条件命中的全量明细
+- 仍然复用项目 / 团队 / 类型 / 验证策略下推
+- 责任人 / 时间区间仍在本地过滤
+- 返回 `.xlsx` 文件流，不在 Redis 中缓存二进制文件
 
 ---
 
@@ -702,6 +720,11 @@ flowchart TD
    - 前缀：`pm:requirement-board:summary:v4`
    - 包含：与过滤结果相同的完整筛选条件
 
+导出接口的设计补充：
+
+- 导出不会缓存 `.xlsx` 二进制文件
+- 导出会复用单页缓存、过滤结果缓存和对应锁，避免同一筛选重复扫全分页
+
 使用版本号 `v4` 的意义：
 
 - 当缓存结构或聚合口径发生变化时，可以直接升版本
@@ -746,6 +769,12 @@ TypeError: can't compare offset-naive and offset-aware datetimes
 
 - 复杂度约为：`O(N)`
 - 但采用边扫边聚合，不需要保留全量中间明细副本
+
+#### 全量导出模式
+
+- 远端分页导出复杂度约为：`O(N)`
+- 本地过滤导出复杂度约为：`O(N)`
+- 导出采用 `openpyxl` 的 write-only 工作簿逐行写入，避免额外保留一份导出副本
 
 #### 空间复杂度
 
@@ -905,8 +934,8 @@ TypeError: can't compare offset-naive and offset-aware datetimes
 3. 在后端日志里核对：
    - `domainid[]` 是否正确
    - `sub_teams[]` / `categories[]` 是否正确
-- `page.page_no / page.page_size` 是否正确
-- 上游返回的 `page_sum(总条数) / page_size(总页数)` 是否符合预期
+   - `page.page_no / page.page_size` 是否正确
+   - 上游返回的 `page_sum(总条数) / page_size(每页条数)` 是否符合预期
 4. 联调完成后关闭该开关，避免日志过多
 
 ---
@@ -926,6 +955,8 @@ TypeError: can't compare offset-naive and offset-aware datetimes
 | `REQUIREMENT_BOARD_SCAN_PAGE_SIZE` | 本地过滤扫描时单页大小，默认 500 |
 | `REQUIREMENT_BOARD_SUMMARY_PAGE_SIZE` | 总结扫描单页大小，默认 500 |
 | `REQUIREMENT_BOARD_SUMMARY_MAX_PAGES` | 最多扫描页数保护，默认 200 |
+| `REQUIREMENT_BOARD_EXPORT_PAGE_SIZE` | 导出扫描单页大小，默认 500 |
+| `REQUIREMENT_BOARD_EXPORT_MAX_PAGES` | 导出最多扫描页数保护，默认 200 |
 
 ---
 

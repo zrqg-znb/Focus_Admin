@@ -5,6 +5,7 @@ from common.fu_auth import BearerAuth as GlobalAuth
 from . import requirement_board_services
 from .requirement_board_schemas import (
     RequirementBoardDataQuerySchema,
+    RequirementBoardExportQuerySchema,
     RequirementBoardFilterOptionsSchema,
     RequirementBoardPageSchema,
     RequirementBoardSummaryQuerySchema,
@@ -39,3 +40,11 @@ def get_requirement_board_data(request, data: RequirementBoardDataQuerySchema):
 )
 def get_requirement_board_summary(request, data: RequirementBoardSummaryQuerySchema):
     return requirement_board_services.get_requirement_board_summary(data)
+
+
+@router.post(
+    "/export",
+    summary="导出需求数据看板明细",
+)
+def export_requirement_board_data(request, data: RequirementBoardExportQuerySchema):
+    return requirement_board_services.export_requirement_board_data(data)

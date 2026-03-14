@@ -28,6 +28,9 @@ export interface RequirementBoardQuery extends RequirementBoardFilterPayload {
 export interface RequirementBoardProjectOption {
   id: string;
   name: string;
+  code: string;
+  domain: string;
+  type: string;
   design_id?: null | string;
   sub_teams: string[];
   config_complete: boolean;
@@ -197,4 +200,12 @@ export async function getRequirementBoardSummaryApi(
   data: RequirementBoardFilterPayload,
 ) {
   return requestClient.post<RequirementBoardSummary>(`${base}/summary`, data);
+}
+
+export async function exportRequirementBoardApi(
+  data: RequirementBoardFilterPayload,
+) {
+  return requestClient.post<Blob>(`${base}/export`, data, {
+    responseType: 'blob',
+  });
 }

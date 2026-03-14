@@ -9,9 +9,11 @@ import re
 import time
 from typing import Any
 
+import openpyxl
 import requests
 from django.conf import settings
 from django.core.cache import cache
+from django.http import HttpResponse
 from django.utils import timezone
 from ninja.errors import HttpError
 
@@ -28,6 +30,7 @@ from .requirement_board_model import (
 )
 from .requirement_board_schemas import (
     RequirementBoardDataQuerySchema,
+    RequirementBoardExportQuerySchema,
     RequirementBoardSummaryQuerySchema,
 )
 
@@ -40,6 +43,27 @@ _LOCK_TTL_SECONDS = 30
 _UPSTREAM_PAGE_SIZE = 500
 _MAX_SCAN_PAGES = 200
 _DELAY_PREVIEW_LIMIT = 8
+_EXPORT_SHEET_TITLE = "需求数据"
+_EXPORT_HEADERS = (
+    "项目名",
+    "团队",
+    "需求类型",
+    "验证策略",
+    "需求 ID",
+    "标题",
+    "状态代码",
+    "状态名称",
+    "计划转测时间",
+    "计划完成时间",
+    "开发完成时间",
+    "测试完成时间",
+    "开发延期",
+    "测试延期",
+    "工作量(人天)",
+    "代码量(KLOC)",
+    "开发责任人",
+    "测试责任人",
+)
 _STATUS_FIELD_MAP = {
     "I": "i_count",
     "D": "d_count",
@@ -535,16 +559,16 @@ def _mock_fetch_page(
 
     start = max(page_no - 1, 0) * page_size
     end = start + page_size
-    page_sum = math.ceil(len(all_items) / page_size) if page_size else 0
+    total = len(all_items)
     return {
         "code": 200,
         "data": {
             "result": all_items[start:end],
             "page": {
-                "page_sum": page_sum,
+                "page_sum": total,
                 "page_no": page_no,
                 "page_size": page_size,
-                "total": len(all_items),
+                "total": total,
             },
         },
         "message": "success",
@@ -683,7 +707,7 @@ def _resolve_total(
     page_size: int,
     item_count: int,
 ) -> int:
-    for key in ("total", "total_count", "count", "row_sum", "record_sum", "page_sum"):
+    for key in ("page_sum", "total", "total_count", "count", "row_sum", "record_sum"):
         parsed = _parse_positive_int(page.get(key), 0)
         if parsed > 0:
             return parsed
@@ -697,13 +721,66 @@ def _resolve_page_sum(
     page_size: int,
     item_count: int,
 ) -> int:
-    raw_page_sum = _parse_positive_int(page.get("page_size"), 0)
-    if raw_page_sum > 0:
-        return raw_page_sum
     total = _resolve_total(page, page_no, page_size, item_count)
     if total <= 0:
         return 0
     return math.ceil(total / page_size) if page_size else 0
+
+
+def _resolve_scan_page_size(setting_name: str, default: int = _UPSTREAM_PAGE_SIZE) -> int:
+    return min(
+        _parse_positive_int(_get_setting(setting_name, default), default),
+        _UPSTREAM_PAGE_SIZE,
+    )
+
+
+def _resolve_max_scan_pages(setting_name: str) -> int:
+    return max(
+        _parse_positive_int(
+            _get_setting(setting_name, _MAX_SCAN_PAGES),
+            _MAX_SCAN_PAGES,
+        ),
+        1,
+    )
+
+
+def _should_stop_scan(
+    page_payload: dict[str, Any],
+    page_no: int,
+    fetched_count: int,
+) -> bool:
+    items = page_payload.get("items") or []
+    item_count = len(items)
+    total = _parse_positive_int(page_payload.get("total"), 0)
+    page_size = _parse_positive_int(page_payload.get("page_size"), 0)
+    page_sum = _parse_positive_int(page_payload.get("page_sum"), 0)
+    if total > 0 and fetched_count >= total:
+        return True
+    if item_count <= 0:
+        return True
+    if page_size > 0 and item_count < page_size:
+        return True
+    return page_sum > 0 and page_no >= page_sum
+
+
+def _iterate_remote_pages(
+    context: dict[str, Any],
+    *,
+    page_size: int,
+    max_pages: int,
+    limit_error_message: str,
+):
+    fetched_count = 0
+    page_no = 1
+    while True:
+        if page_no > max_pages:
+            raise HttpError(502, limit_error_message)
+        page_payload = _load_remote_page(context, page_no=page_no, page_size=page_size)
+        fetched_count += len(page_payload.get("items") or [])
+        yield page_no, page_payload, fetched_count
+        if _should_stop_scan(page_payload, page_no, fetched_count):
+            break
+        page_no += 1
 
 
 def _project_payload(project: Project | None, design_id: str) -> tuple[str, str]:
@@ -1053,7 +1130,13 @@ def _item_matches_local_filters(item: dict[str, Any], context: dict[str, Any]) -
     return True
 
 
-def _scan_all_filtered_items(context: dict[str, Any]) -> list[dict[str, Any]]:
+def _scan_all_filtered_items(
+    context: dict[str, Any],
+    *,
+    page_size_setting_name: str = "REQUIREMENT_BOARD_SCAN_PAGE_SIZE",
+    max_pages_setting_name: str = "REQUIREMENT_BOARD_SUMMARY_MAX_PAGES",
+    limit_error_message: str = "需求扫描页数过多，请缩小筛选范围",
+) -> list[dict[str, Any]]:
     cache_key = _cache_key("pm:requirement-board:filtered:v4", context["cache_payload"])
     cached = cache.get(cache_key)
     if isinstance(cached, dict) and isinstance(cached.get("items"), list):
@@ -1076,22 +1159,10 @@ def _scan_all_filtered_items(context: dict[str, Any]) -> list[dict[str, Any]]:
             )
             return waiting["items"]
 
-    page_size = min(
-        _parse_positive_int(
-            _get_setting("REQUIREMENT_BOARD_SCAN_PAGE_SIZE", _UPSTREAM_PAGE_SIZE),
-            _UPSTREAM_PAGE_SIZE,
-        ),
-        _UPSTREAM_PAGE_SIZE,
-    )
-    max_pages = max(
-        _parse_positive_int(
-            _get_setting("REQUIREMENT_BOARD_SUMMARY_MAX_PAGES", _MAX_SCAN_PAGES),
-            _MAX_SCAN_PAGES,
-        ),
-        1,
-    )
+    page_size = _resolve_scan_page_size(page_size_setting_name)
+    max_pages = _resolve_max_scan_pages(max_pages_setting_name)
     matched_items: list[dict[str, Any]] = []
-    page_no = 1
+    scanned_pages = 0
     _debug_log(
         "local_filter_scan_start",
         filters=context["cache_payload"],
@@ -1100,31 +1171,29 @@ def _scan_all_filtered_items(context: dict[str, Any]) -> list[dict[str, Any]]:
     )
 
     try:
-        while True:
-            if page_no > max_pages:
-                raise HttpError(502, "需求扫描页数过多，请缩小筛选范围")
-            page_payload = _load_remote_page(context, page_no=page_no, page_size=page_size)
+        for page_no, page_payload, fetched_count in _iterate_remote_pages(
+            context,
+            page_size=page_size,
+            max_pages=max_pages,
+            limit_error_message=limit_error_message,
+        ):
+            scanned_pages = page_no
             items = page_payload["items"]
             matched_before = len(matched_items)
             for item in items:
                 if _item_matches_local_filters(item, context):
                     matched_items.append(item)
 
-            page_sum = _parse_positive_int(page_payload.get("page_sum"), 0)
             _debug_log(
                 "local_filter_scan_page",
                 page_no=page_no,
                 fetched_count=len(items),
+                fetched_total=fetched_count,
                 matched_count=len(matched_items) - matched_before,
                 matched_total=len(matched_items),
-                page_sum=page_sum,
+                page_sum=page_payload.get("page_sum"),
                 upstream_total=page_payload.get("total"),
             )
-            if page_sum > 0 and page_no >= page_sum:
-                break
-            if not items or len(items) < page_payload["page_size"]:
-                break
-            page_no += 1
 
         cache.set(
             cache_key,
@@ -1134,7 +1203,7 @@ def _scan_all_filtered_items(context: dict[str, Any]) -> list[dict[str, Any]]:
         _debug_log(
             "local_filter_scan_done",
             matched_total=len(matched_items),
-            scanned_pages=page_no,
+            scanned_pages=scanned_pages,
         )
         return matched_items
     finally:
@@ -1159,25 +1228,30 @@ def _paginate_items(items: list[dict[str, Any]], page_no: int, page_size: int) -
 
 
 def get_filter_options() -> dict[str, Any]:
-    projects = (
+    projects = list(
         Project.objects.filter(is_deleted=False)
         .order_by("is_closed", "name")
-        .only("id", "name", "design_id", "sub_teams", "is_closed")
+        .only("id", "name", "code", "domain", "type", "design_id", "sub_teams", "is_closed")
     )
+    project_items = [
+        {
+            "id": str(project.id),
+            "name": project.name,
+            "code": _clean_text(project.code),
+            "domain": _clean_text(project.domain),
+            "type": _clean_text(project.type),
+            "design_id": _clean_text(project.design_id) or None,
+            "sub_teams": _normalize_text_list(project.sub_teams),
+            "config_complete": bool(
+                _clean_text(project.design_id)
+                and _normalize_text_list(project.sub_teams)
+            ),
+        }
+        for project in projects
+    ]
+    project_items.sort(key=lambda item: (not item["config_complete"], item["name"]))
     return {
-        "projects": [
-            {
-                "id": str(project.id),
-                "name": project.name,
-                "design_id": _clean_text(project.design_id) or None,
-                "sub_teams": _normalize_text_list(project.sub_teams),
-                "config_complete": bool(
-                    _clean_text(project.design_id)
-                    and _normalize_text_list(project.sub_teams)
-                ),
-            }
-            for project in projects
-        ]
+        "projects": project_items,
     }
 
 
@@ -1733,27 +1807,18 @@ def _compute_summary(context: dict[str, Any]) -> dict[str, Any]:
         )
         return result
 
-    page_size = min(
-        _parse_positive_int(
-            _get_setting("REQUIREMENT_BOARD_SUMMARY_PAGE_SIZE", _UPSTREAM_PAGE_SIZE),
-            _UPSTREAM_PAGE_SIZE,
-        ),
-        _UPSTREAM_PAGE_SIZE,
-    )
-    max_pages = max(
-        _parse_positive_int(
-            _get_setting("REQUIREMENT_BOARD_SUMMARY_MAX_PAGES", _MAX_SCAN_PAGES),
-            _MAX_SCAN_PAGES,
-        ),
-        1,
-    )
+    page_size = _resolve_scan_page_size("REQUIREMENT_BOARD_SUMMARY_PAGE_SIZE")
+    max_pages = _resolve_max_scan_pages("REQUIREMENT_BOARD_SUMMARY_MAX_PAGES")
     summary = _create_summary_accumulator()
-    page_no = 1
+    scanned_pages = 0
 
-    while True:
-        if page_no > max_pages:
-            raise HttpError(502, "需求总结扫描页数过多，请缩小筛选范围")
-        page_payload = _load_remote_page(context, page_no=page_no, page_size=page_size)
+    for page_no, page_payload, fetched_count in _iterate_remote_pages(
+        context,
+        page_size=page_size,
+        max_pages=max_pages,
+        limit_error_message="需求总结扫描页数过多，请缩小筛选范围",
+    ):
+        scanned_pages = page_no
         items = page_payload["items"]
         for item in items:
             _aggregate_item(summary, item)
@@ -1762,16 +1827,11 @@ def _compute_summary(context: dict[str, Any]) -> dict[str, Any]:
             "summary_scan_page",
             page_no=page_no,
             item_count=len(items),
+            fetched_total=fetched_count,
             accumulated_total=summary["total_count"],
             page_sum=page_payload.get("page_sum"),
             upstream_total=page_payload.get("total"),
         )
-        page_sum = _parse_positive_int(page_payload.get("page_sum"), 0)
-        if page_sum > 0 and page_no >= page_sum:
-            break
-        if not items or len(items) < page_payload["page_size"]:
-            break
-        page_no += 1
 
     result = _finalize_summary_payload(summary)
     _debug_log(
@@ -1779,8 +1839,55 @@ def _compute_summary(context: dict[str, Any]) -> dict[str, Any]:
         mode="remote_scan",
         total_count=result.get("total_count"),
         team_count=len(result.get("team_summary") or []),
+        scanned_pages=scanned_pages,
     )
     return result
+
+
+def _build_export_row(item: dict[str, Any]) -> list[Any]:
+    return [
+        _clean_text(item.get("project_name")),
+        _clean_text(item.get("team_name")) or UNKNOWN_TEAM_NAME,
+        _clean_text(item.get("category")),
+        _clean_text(item.get("verification_policy_label")),
+        _clean_text(item.get("requirement_id")),
+        _clean_text(item.get("title")),
+        _clean_text(item.get("status_code")),
+        _clean_text(item.get("status_label")),
+        _clean_text(item.get("planned_test_time")),
+        _clean_text(item.get("due_date")),
+        _clean_text(item.get("completed_time")),
+        _clean_text(item.get("accepted_time")),
+        "是" if _to_bool(item.get("is_dev_delayed"), False) else "否",
+        "是" if _to_bool(item.get("is_test_delayed"), False) else "否",
+        _round_metric(_to_float(item.get("workload_man_day"))),
+        _round_metric(_to_float(item.get("workload_kloc"))),
+        _clean_text(item.get("develop_user_display")),
+        _clean_text(item.get("test_user_display")),
+    ]
+
+
+def _build_export_response(workbook: openpyxl.Workbook) -> HttpResponse:
+    timestamp = timezone.localtime(_ensure_aware(timezone.now())).strftime(
+        "%Y%m%d-%H%M%S"
+    )
+    response = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response["Content-Disposition"] = (
+        f'attachment; filename="requirement-board-{timestamp}.xlsx"'
+    )
+    workbook.save(response)
+    return response
+
+
+def _export_items_to_workbook(items: list[dict[str, Any]]) -> HttpResponse:
+    workbook = openpyxl.Workbook(write_only=True)
+    worksheet = workbook.create_sheet(title=_EXPORT_SHEET_TITLE)
+    worksheet.append(list(_EXPORT_HEADERS))
+    for item in items:
+        worksheet.append(_build_export_row(item))
+    return _build_export_response(workbook)
 
 
 def get_requirement_board_summary(
@@ -1826,3 +1933,78 @@ def get_requirement_board_summary(
     finally:
         if lock_acquired:
             cache.delete(lock_key)
+
+
+def export_requirement_board_data(
+    data: RequirementBoardExportQuerySchema,
+) -> HttpResponse:
+    context = _resolve_query_context(
+        data.project_ids,
+        data.sub_teams,
+        data.categories,
+        data.verification_policies,
+        data.develop_users,
+        data.test_users,
+        data.time_field,
+        data.time_start,
+        data.time_end,
+        data.accepted_time_start,
+        data.accepted_time_end,
+    )
+
+    if context["requires_local_filter"]:
+        items = _scan_all_filtered_items(
+            context,
+            page_size_setting_name="REQUIREMENT_BOARD_EXPORT_PAGE_SIZE",
+            max_pages_setting_name="REQUIREMENT_BOARD_EXPORT_MAX_PAGES",
+            limit_error_message="需求导出扫描页数过多，请缩小筛选范围",
+        )
+        _debug_log(
+            "export_local_filter",
+            total_count=len(items),
+            filters=context["cache_payload"],
+        )
+        return _export_items_to_workbook(items)
+
+    page_size = _resolve_scan_page_size("REQUIREMENT_BOARD_EXPORT_PAGE_SIZE")
+    max_pages = _resolve_max_scan_pages("REQUIREMENT_BOARD_EXPORT_MAX_PAGES")
+    workbook = openpyxl.Workbook(write_only=True)
+    worksheet = workbook.create_sheet(title=_EXPORT_SHEET_TITLE)
+    worksheet.append(list(_EXPORT_HEADERS))
+    exported_count = 0
+    scanned_pages = 0
+    _debug_log(
+        "export_remote_scan_start",
+        filters=context["cache_payload"],
+        page_size=page_size,
+        max_pages=max_pages,
+    )
+
+    for page_no, page_payload, fetched_count in _iterate_remote_pages(
+        context,
+        page_size=page_size,
+        max_pages=max_pages,
+        limit_error_message="需求导出扫描页数过多，请缩小筛选范围",
+    ):
+        scanned_pages = page_no
+        items = page_payload["items"]
+        for item in items:
+            worksheet.append(_build_export_row(item))
+            exported_count += 1
+        _debug_log(
+            "export_remote_scan_page",
+            page_no=page_no,
+            fetched_count=len(items),
+            fetched_total=fetched_count,
+            exported_total=exported_count,
+            page_sum=page_payload.get("page_sum"),
+            upstream_total=page_payload.get("total"),
+        )
+
+    _debug_log(
+        "export_remote_scan_done",
+        exported_total=exported_count,
+        scanned_pages=scanned_pages,
+        filters=context["cache_payload"],
+    )
+    return _build_export_response(workbook)

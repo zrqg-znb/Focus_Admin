@@ -6,6 +6,9 @@ from ninja import Field, Schema
 class RequirementBoardProjectOptionSchema(Schema):
     id: str
     name: str
+    code: str = ""
+    domain: str = ""
+    type: str = ""
     design_id: Optional[str] = None
     sub_teams: List[str] = Field(default_factory=list)
     config_complete: bool = False
@@ -61,6 +64,10 @@ class RequirementBoardSummaryQuerySchema(Schema):
         None,
         description="验收时间结束（兼容旧参数）",
     )
+
+
+class RequirementBoardExportQuerySchema(RequirementBoardSummaryQuerySchema):
+    pass
 
 
 class RequirementBoardItemSchema(Schema):
