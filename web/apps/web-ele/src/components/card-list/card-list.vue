@@ -151,8 +151,8 @@ function getItemTitle(item: T): string {
 <template>
   <ElCard
     shadow="never"
-    style="border: none"
-    class="mr-[10px] flex h-full flex-col"
+    :body-style="{ padding: '20px', display: 'flex', flexDirection: 'column', height: '100%' }" style="border: none"
+    class="mr-[10px] h-full flex flex-col min-h-0 overflow-hidden"
   >
     <!-- 搜索和添加区域 -->
     <div class="mb-4 flex gap-2">

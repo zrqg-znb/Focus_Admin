@@ -101,7 +101,7 @@ async function handleRemoveUsers() {
 <template>
   <Page auto-content-height>
     <div class="flex h-full">
-      <div class="w-1/6">
+      <div class="w-1/6 flex flex-col">
         <PlList ref="plListRef" @select="onPlSelect" />
       </div>
 
