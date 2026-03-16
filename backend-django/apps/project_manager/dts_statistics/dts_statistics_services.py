@@ -12,10 +12,12 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+import openpyxl
 import requests
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
+from django.http import HttpResponse
 from django.utils import timezone
 from ninja.errors import HttpError
 
@@ -24,7 +26,11 @@ from common.fu_cache import CacheManager
 from apps.project_manager.project.project_model import Project
 
 from .dts_statistics_model import DtsDefectProjectLink, DtsExtension
-from .dts_statistics_schemas import DtsExtensionSaveSchema, DtsStatisticsQuerySchema
+from .dts_statistics_schemas import (
+    DtsExtensionSaveSchema,
+    DtsStatisticsExportSchema,
+    DtsStatisticsQuerySchema,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +47,48 @@ _DEFAULT_LOCK_TTL_SECONDS = 30
 
 _DEFAULT_SCAN_PAGE_SIZE = 500
 _DEFAULT_MAX_SCAN_PAGES = 200
+
+_UTC = datetime.timezone.utc
+
+_EXPORT_SHEET_TITLE = "DTS统计"
+_EXPORT_HEADERS = (
+    "DTS单号",
+    "项目",
+    "团队",
+    "级别",
+    "状态",
+    "处理人",
+    "提交时间",
+    "处理天数",
+    "描述",
+    "阶段",
+    "关闭类型",
+    "QA大类",
+    "责任PL组",
+    "是否下游",
+    "过程质量分类",
+    "需开发分析",
+    "需测试分析",
+    "开发责任人",
+    "测试责任人",
+    "开发分析完成",
+    "测试分析完成",
+    "QA备注",
+    "问题小类(开发)",
+    "问题原因(开发)",
+    "引入原因(开发)",
+    "改进措施(开发)",
+    "非底软说明(开发)",
+    "落地资产链接(开发)",
+    "改进状态(开发)",
+    "特效/功能(测试)",
+    "漏测原因(测试)",
+    "规范问题描述(测试)",
+    "改进措施(测试)",
+    "非测试说明(测试)",
+    "落地资产链接(测试)",
+    "改进状态(测试)",
+)
 
 
 def _get_setting(name: str, default: Any = None) -> Any:
@@ -84,9 +132,22 @@ def _parse_datetime(value: Any) -> datetime.datetime | None:
     if not text:
         return None
 
+    def normalize(dt: datetime.datetime) -> datetime.datetime:
+        # Normalize to timezone-aware UTC datetime so comparisons/sorting won't
+        # crash when mixing naive/aware timestamps from upstream.
+        if dt.tzinfo is None:
+            try:
+                dt = timezone.make_aware(dt, timezone.get_current_timezone())
+            except Exception:
+                dt = dt.replace(tzinfo=_UTC)
+        try:
+            return dt.astimezone(_UTC)
+        except Exception:
+            return dt.replace(tzinfo=_UTC)
+
     candidate = text.replace("Z", "+00:00")
     try:
-        return datetime.datetime.fromisoformat(candidate)
+        return normalize(datetime.datetime.fromisoformat(candidate))
     except Exception:
         pass
 
@@ -97,7 +158,7 @@ def _parse_datetime(value: Any) -> datetime.datetime | None:
         "%Y/%m/%d",
     ):
         try:
-            return datetime.datetime.strptime(text, fmt)
+            return normalize(datetime.datetime.strptime(text, fmt))
         except Exception:
             continue
 
@@ -154,9 +215,17 @@ class _VersionGroup:
 
 
 def _group_projects(project_ids: list[str]) -> list[_VersionGroup]:
+    # In normal mode, we strictly require enable_dts + version_c + di_teams.
+    # In local UI debugging, users may want mock data without touching project
+    # configs; allow relaxing the filter explicitly.
+    relax_filter = _to_bool(
+        _get_setting("DTS_STATISTICS_MOCK_RELAX_PROJECT_FILTER", False),
+        False,
+    )
+
     projects = (
         Project.objects.filter(id__in=project_ids, enable_dts=True)
-        .only("id", "name", "version_c", "di_teams", "enable_dts")
+        .only("id", "name", "code", "version_c", "di_teams", "enable_dts")
         .all()
     )
     version_to_group: dict[str, dict[str, Any]] = {}
@@ -164,7 +233,15 @@ def _group_projects(project_ids: list[str]) -> list[_VersionGroup]:
     for project in projects:
         version = _clean_text(project.version_c)
         teams = _normalize_text_list(project.di_teams)
+        if (not version or not teams) and relax_filter:
+            if not version:
+                version = _clean_text(_get_setting("DTS_STATISTICS_MOCK_VERSION", "MOCK")) or "MOCK"
+            if not teams:
+                suffix = _clean_text(getattr(project, "code", "")) or _clean_text(project.id)[-6:] or "X"
+                teams = [f"MockTeam-{suffix}"]
+
         if not version or not teams:
+            # Strict mode: project must have both version and teams configured.
             continue
 
         group = version_to_group.setdefault(
@@ -184,7 +261,16 @@ def _group_projects(project_ids: list[str]) -> list[_VersionGroup]:
     for version, group in version_to_group.items():
         teams_sorted = sorted(group["team_set"])
         team_name_list = ",".join(teams_sorted)
-        team_to_project_ids = {k: list(dict.fromkeys(v)) for k, v in group["team_to_project_ids"].items()}
+        team_to_project_ids: dict[str, list[str]] = {}
+        for team, project_ids in group["team_to_project_ids"].items():
+            unique_ids = list(dict.fromkeys(project_ids))
+            unique_ids.sort(
+                key=lambda pid: (
+                    group["project_id_to_name"].get(pid, "") or "",
+                    pid,
+                )
+            )
+            team_to_project_ids[team] = unique_ids
         result.append(
             _VersionGroup(
                 version=version,
@@ -255,7 +341,12 @@ def _mock_fetch_page(payload: dict[str, Any]) -> dict[str, Any]:
     if not team_names:
         team_names = ["MockTeam"]
 
-    total = 1234
+    raw_total = _get_setting("DTS_STATISTICS_MOCK_TOTAL", 1234)
+    try:
+        total = int(raw_total)
+    except Exception:
+        total = 1234
+    total = max(min(total, 50_000), 0)
     page_info = payload.get("pageInfo") or {}
     page_no = int(page_info.get("pageNo") or 1)
     page_size = int(page_info.get("pageSize") or 20)
@@ -263,7 +354,9 @@ def _mock_fetch_page(payload: dict[str, Any]) -> dict[str, Any]:
     start = max(page_no - 1, 0) * page_size
     end = min(start + page_size, total)
 
-    base_time = datetime.datetime(2026, 3, 15, 12, 0, 0)
+    base_time = _parse_datetime(payload.get("endTime")) or datetime.datetime(
+        2026, 3, 15, 12, 0, 0, tzinfo=_UTC
+    )
     severities = ["关键", "严重", "一般", "提示"]
     statuses = ["开发修复", "测试审核", "待定位", "已关闭"]
 
@@ -297,6 +390,10 @@ def _mock_fetch_page(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _fetch_upstream_page(payload: dict[str, Any]) -> dict[str, Any]:
+    if _to_bool(_get_setting("DTS_STATISTICS_FORCE_MOCK", False), False):
+        logger.info("DtsStatistics upstream mock forced payload=%s", payload)
+        return _mock_fetch_page(payload)
+
     url = _clean_text(_get_setting("DTS_STATISTICS_API_URL", ""))
     if not url:
         logger.info("DtsStatistics upstream mock request payload=%s", payload)
@@ -632,7 +729,7 @@ def _merge_duplicate_defects(items: Iterable[dict[str, Any]]) -> list[dict[str, 
 def _sort_defects(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     def sort_key(item: dict[str, Any]):
         dt = _parse_datetime(item.get("submitTime"))
-        safe_dt = dt or datetime.datetime.min
+        safe_dt = dt or datetime.datetime.min.replace(tzinfo=_UTC)
         defect_no = _clean_text(item.get("defectNo"))
         return safe_dt, defect_no
 
@@ -700,8 +797,14 @@ def _merge_defect_with_extension(
 
     link_bucket = link_info or {}
     merged["project_ids"] = list(link_bucket.get("project_ids") or [])
-    merged["project_names"] = list(link_bucket.get("project_names") or [])
-    merged["team_names"] = list(link_bucket.get("team_names") or [])
+    project_names = [str(item) for item in (link_bucket.get("project_names") or []) if _clean_text(item)]
+    team_names = [str(item) for item in (link_bucket.get("team_names") or []) if _clean_text(item)]
+    project_names.sort()
+    team_names.sort()
+    merged["project_names"] = project_names
+    merged["team_names"] = team_names
+    merged["project_name"] = project_names[0] if project_names else None
+    merged["team_name"] = _extract_team_name(defect) or (team_names[0] if team_names else None)
 
     if extension is None:
         merged.update(
@@ -877,6 +980,128 @@ def _iter_chunks(values: list[str], chunk_size: int = 2000) -> Iterable[list[str
         yield values[idx : idx + chunk_size]
 
 
+def _join_lines(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return "\n".join([_clean_text(item) for item in value if _clean_text(item)])
+    return _clean_text(value)
+
+
+def _build_export_row(item: dict[str, Any]) -> list[Any]:
+    return [
+        _clean_text(item.get("defectNo")),
+        _clean_text(item.get("project_name")),
+        _clean_text(item.get("team_name")),
+        _clean_text(item.get("severity")),
+        _clean_text(item.get("currentStatus")),
+        _clean_text(item.get("currentHandler")),
+        _clean_text(item.get("submitTime")),
+        _clean_text(item.get("process_days")),
+        _clean_text(item.get("brief")),
+        _clean_text(item.get("currentStage")),
+        _clean_text(item.get("closeType")),
+        _clean_text(item.get("qa_category")),
+        _clean_text(item.get("pl_group_name")),
+        _clean_text(item.get("is_downstream")),
+        _clean_text(item.get("process_quality_type")),
+        _clean_text(item.get("need_dev_analyze")),
+        _clean_text(item.get("need_test_analyze")),
+        _clean_text(item.get("dev_owner_name")),
+        _clean_text(item.get("test_owner_name")),
+        _clean_text(item.get("is_dev_analyzed")),
+        _clean_text(item.get("is_test_analyzed")),
+        _clean_text(item.get("qa_remark")),
+        _join_lines(item.get("dev_sub_category")),
+        _clean_text(item.get("dev_reason")),
+        _clean_text(item.get("dev_intro_reason")),
+        _join_lines(item.get("dev_improvements")),
+        _clean_text(item.get("dev_non_base_desc")),
+        _clean_text(item.get("dev_asset_link")),
+        _clean_text(item.get("dev_status")),
+        _clean_text(item.get("test_feature")),
+        _join_lines(item.get("test_miss_reason")),
+        _clean_text(item.get("test_standard_desc")),
+        _join_lines(item.get("test_improvements")),
+        _clean_text(item.get("test_non_test_desc")),
+        _clean_text(item.get("test_asset_link")),
+        _clean_text(item.get("test_status")),
+    ]
+
+
+def _build_export_response(workbook: openpyxl.Workbook) -> HttpResponse:
+    timestamp = timezone.now().strftime("%Y%m%d-%H%M%S")
+    response = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response["Content-Disposition"] = (
+        f'attachment; filename="dts-statistics-{timestamp}.xlsx"'
+    )
+    workbook.save(response)
+    return response
+
+
+def export_dts_statistics(query: DtsStatisticsExportSchema) -> HttpResponse:
+    groups = _group_projects(query.project_ids)
+    if not groups:
+        raise HttpError(422, "无可查询项目，请检查项目 DTS 配置(enable_dts/version_c/di_teams)")
+
+    scanned: list[dict[str, Any]] = []
+    for group in groups:
+        scanned.extend(
+            _scan_all_cached(
+                group=group,
+                column_type=query.column_type,
+                start_time=query.start_time,
+                end_time=query.end_time,
+            )
+        )
+
+    defects = _sort_defects(_merge_duplicate_defects(scanned))
+    defect_nos = [
+        _clean_text(item.get("defectNo"))
+        for item in defects
+        if _clean_text(item.get("defectNo"))
+    ]
+
+    selected_project_ids: set[str] = set()
+    for group in groups:
+        selected_project_ids.update(group.project_ids)
+
+    extensions_map: dict[str, DtsExtension] = {}
+    if defect_nos:
+        for chunk in _iter_chunks(defect_nos):
+            items = (
+                DtsExtension.objects.filter(defect_no__in=chunk)
+                .select_related("pl_group", "dev_owner", "test_owner")
+                .all()
+            )
+            for item in items:
+                extensions_map[item.defect_no] = item
+
+    link_map: dict[str, dict[str, Any]] = {}
+    if defect_nos and selected_project_ids:
+        for chunk in _iter_chunks(defect_nos):
+            link_map.update(
+                _load_link_map(defect_nos=chunk, project_ids=selected_project_ids)
+            )
+
+    workbook = openpyxl.Workbook(write_only=True)
+    worksheet = workbook.create_sheet(title=_EXPORT_SHEET_TITLE)
+    worksheet.append(list(_EXPORT_HEADERS))
+
+    for defect in defects:
+        defect_no = _clean_text(defect.get("defectNo"))
+        merged = _merge_defect_with_extension(
+            defect,
+            extension=extensions_map.get(defect_no),
+            link_info=link_map.get(defect_no),
+        )
+        worksheet.append(_build_export_row(merged))
+
+    return _build_export_response(workbook)
+
+
 def get_dts_statistics_summary(query: DtsStatisticsQuerySchema) -> dict[str, Any]:
     groups = _group_projects(query.project_ids)
     if not groups:
@@ -893,6 +1118,10 @@ def get_dts_statistics_summary(query: DtsStatisticsQuerySchema) -> dict[str, Any
             "test_analysis_completion_rate": 0.0,
             "severity_dist": [],
             "status_dist": [],
+            "team_dist": [],
+            "stage_dist": [],
+            "close_type_dist": [],
+            "handler_dist": [],
             "qa_category_dist": [],
             "dev_sub_category_dist": [],
             "test_miss_reason_dist": [],
@@ -905,9 +1134,11 @@ def get_dts_statistics_summary(query: DtsStatisticsQuerySchema) -> dict[str, Any
     start_time = query.start_time
     end_time = query.end_time
 
+    group_map = {group.version: group for group in groups}
+    defect_sources: dict[str, set[str]] = defaultdict(set)
     scanned: list[dict[str, Any]] = []
     for group in groups:
-        scanned.extend(
+        group_defects = (
             _scan_all_cached(
                 group=group,
                 column_type=column_type,
@@ -915,11 +1146,20 @@ def get_dts_statistics_summary(query: DtsStatisticsQuerySchema) -> dict[str, Any
                 end_time=end_time,
             )
         )
+        scanned.extend(group_defects)
+        for defect in group_defects:
+            defect_no = _clean_text(defect.get("defectNo"))
+            if defect_no:
+                defect_sources[defect_no].add(group.version)
     defects = _merge_duplicate_defects(scanned)
     total_count = len(defects)
 
     severity_counter: Counter[str] = Counter()
     status_counter: Counter[str] = Counter()
+    team_counter: Counter[str] = Counter()
+    stage_counter: Counter[str] = Counter()
+    close_type_counter: Counter[str] = Counter()
+    handler_counter: Counter[str] = Counter()
     open_count = 0
     closed_count = 0
     process_days_sum = 0.0
@@ -937,6 +1177,10 @@ def get_dts_statistics_summary(query: DtsStatisticsQuerySchema) -> dict[str, Any
     for defect in defects:
         severity_counter[_clean_text(defect.get("severity"))] += 1
         status_counter[_clean_text(defect.get("currentStatus"))] += 1
+        team_counter[_extract_team_name(defect)] += 1
+        stage_counter[_clean_text(defect.get("currentStage"))] += 1
+        close_type_counter[_clean_text(defect.get("closeType"))] += 1
+        handler_counter[_clean_text(defect.get("currentHandler"))] += 1
         if is_closed(defect):
             closed_count += 1
         else:
@@ -1016,25 +1260,32 @@ def get_dts_statistics_summary(query: DtsStatisticsQuerySchema) -> dict[str, Any
         round(test_analyzed_count / total_count, 4) if total_count else 0.0
     )
 
-    selected_project_ids: set[str] = set()
-    for group in groups:
-        selected_project_ids.update(group.project_ids)
-
     project_counter: Counter[str] = Counter()
-    if defect_nos and selected_project_ids:
-        for chunk in _iter_chunks(defect_nos):
-            links = (
-                DtsDefectProjectLink.objects.filter(
-                    defect_no__in=chunk, project_id__in=selected_project_ids
-                )
-                .select_related("project")
-                .only("defect_no", "project", "project__name")
-                .all()
-            )
-            for link in links:
-                name = link.project.name if link.project else ""
+    if defect_nos and group_map:
+        for defect in defects:
+            defect_no = _clean_text(defect.get("defectNo"))
+            if not defect_no:
+                continue
+            team_name = _extract_team_name(defect)
+            if not team_name:
+                continue
+            versions = defect_sources.get(defect_no) or set()
+            if not versions:
+                continue
+
+            # One defect belongs to one project; pick the first deterministically.
+            for version in sorted(versions):
+                group = group_map.get(version)
+                if not group:
+                    continue
+                project_ids = group.team_to_project_ids.get(team_name) or []
+                if not project_ids:
+                    continue
+                project_id = project_ids[0]
+                name = group.project_id_to_name.get(project_id) or ""
                 if name:
                     project_counter[name] += 1
+                    break
 
     return {
         "total_count": total_count,
@@ -1049,6 +1300,10 @@ def get_dts_statistics_summary(query: DtsStatisticsQuerySchema) -> dict[str, Any
         "test_analysis_completion_rate": test_analysis_completion_rate,
         "severity_dist": _distribution(severity_counter),
         "status_dist": _distribution(status_counter),
+        "team_dist": _distribution(team_counter, top_n=30),
+        "stage_dist": _distribution(stage_counter),
+        "close_type_dist": _distribution(close_type_counter),
+        "handler_dist": _distribution(handler_counter, top_n=20),
         "qa_category_dist": _distribution(qa_category_counter),
         "dev_sub_category_dist": _distribution(dev_sub_category_counter, top_n=20),
         "test_miss_reason_dist": _distribution(test_miss_reason_counter, top_n=20),
@@ -1064,7 +1319,10 @@ def save_dts_extension(defect_no: str, data: DtsExtensionSaveSchema) -> dict[str
     if not safe_defect_no:
         raise HttpError(422, "defect_no 不能为空")
 
-    payload = data.dict()
+    # Partial update: only update fields provided by the client, so saving QA
+    # won't accidentally wipe Dev/Test fields (and vice-versa).
+    payload = data.dict(exclude_unset=True)
     payload.pop("project_ids", None)
-    DtsExtension.objects.update_or_create(defect_no=safe_defect_no, defaults=payload)
+    if payload:
+        DtsExtension.objects.update_or_create(defect_no=safe_defect_no, defaults=payload)
     return {"success": True}

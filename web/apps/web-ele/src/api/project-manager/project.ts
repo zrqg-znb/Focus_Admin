@@ -26,6 +26,7 @@ export interface ProjectOut {
   idvp_platform_name?: string;
   phase_configs?: ProjectPhaseConfig[];
   ws_id?: string;
+  version_c?: null | string;
   di_teams?: string[];
   sys_create_datetime?: string;
   is_favorited: boolean;
@@ -75,6 +76,7 @@ export interface ProjectCreatePayload {
   idvp_platform_id?: string;
   phase_configs?: ProjectPhaseConfig[];
   ws_id?: string;
+  version_c?: null | string;
   di_teams?: string[];
 }
 
@@ -100,6 +102,7 @@ export interface ProjectUpdatePayload {
   idvp_platform_id?: string;
   phase_configs?: ProjectPhaseConfig[];
   ws_id?: string;
+  version_c?: null | string;
   di_teams?: string[];
 }
 

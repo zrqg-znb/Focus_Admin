@@ -6,6 +6,7 @@ from .dts_statistics_schemas import (
     DtsExtensionSaveSchema,
     DtsListResponseSchema,
     DtsSaveResponseSchema,
+    DtsStatisticsExportSchema,
     DtsStatisticsQuerySchema,
     DtsSummarySchema,
 )
@@ -23,3 +24,8 @@ def save_extension(request, defect_no: str, data: DtsExtensionSaveSchema):
 @router.post("/summary", response=DtsSummarySchema)
 def get_summary(request, query: DtsStatisticsQuerySchema):
     return dts_statistics_services.get_dts_statistics_summary(query)
+
+
+@router.post("/export", summary="导出 DTS 统计明细")
+def export_dts_statistics(request, query: DtsStatisticsExportSchema):
+    return dts_statistics_services.export_dts_statistics(query)

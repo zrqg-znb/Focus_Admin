@@ -106,6 +106,7 @@ const moduleRows = ref<ModuleRow[]>([]);
 const enableDts = ref(false);
 const dtsConfig = ref({
   ws_id: '',
+  version_c: '',
   di_teams: [] as string[],
 });
 const newDiTeam = ref('');
@@ -562,6 +563,7 @@ function resetAll() {
   };
   dtsConfig.value = {
     ws_id: '',
+    version_c: '',
     di_teams: [],
   };
   newSubTeam.value = '';
@@ -633,6 +635,7 @@ async function handleSave() {
           ? iterationQualityConfig.value.module.trim()
           : null,
       ws_id: enableDts.value ? dtsConfig.value.ws_id : undefined,
+      version_c: enableDts.value ? dtsConfig.value.version_c : undefined,
       di_teams: enableDts.value ? dtsConfig.value.di_teams : undefined,
     };
     const project = await createProjectApi(payload);
@@ -1031,6 +1034,12 @@ function handleClose() {
                   <ElInput
                     v-model="dtsConfig.ws_id"
                     placeholder="请输入数据中台配置 ID"
+                  />
+                </ElFormItem>
+                <ElFormItem label="DTS版本号">
+                  <ElInput
+                    v-model="dtsConfig.version_c"
+                    placeholder="请输入 DTS version_c（用于 DTS统计看板查询）"
                   />
                 </ElFormItem>
                 <ElFormItem label="问题单责任团队">

@@ -5,7 +5,6 @@ import type { ProjectOut } from '#/api/project-manager/project';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
 import { getAllPlApi } from '#/api/core/pl';
-import { listProjectsApi } from '#/api/project-manager/project';
 
 type Columns = ZqTableGridOptions<DtsMergedDefect>['columns'];
 
@@ -13,6 +12,12 @@ const YES_NO_OPTIONS = [
   { label: '是', value: '是' },
   { label: '否', value: '否' },
 ];
+
+export interface SeverityMeta {
+  label: string;
+  type: 'danger' | 'info' | 'success' | 'warning';
+  tip: string;
+}
 
 function withCenterAlign(columns: Record<string, any>[]) {
   return columns.map((column) => {
@@ -32,7 +37,7 @@ function pad2(value: number) {
   return String(value).padStart(2, '0');
 }
 
-function formatDateTime(date: Date) {
+export function formatDateTime(date: Date) {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(
     date.getDate(),
   )} ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(
@@ -40,80 +45,13 @@ function formatDateTime(date: Date) {
   )}`;
 }
 
-function getTodayStartEnd() {
+export function getTodayDateRange(): [Date, Date] {
   const now = new Date();
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);
   const end = new Date(now);
   end.setHours(23, 59, 59, 0);
-  return {
-    start_time: formatDateTime(start),
-    end_time: formatDateTime(end),
-  };
-}
-
-export function useSearchFormSchema(): VbenFormSchema[] {
-  const today = getTodayStartEnd();
-  return [
-    {
-      component: 'ApiSelect',
-      fieldName: 'project_ids',
-      label: '项目',
-      componentProps: {
-        api: async () => {
-          const res = await listProjectsApi({
-            enable_dts: true,
-            pageSize: 1000,
-          });
-          return res.items || [];
-        },
-        labelField: 'name',
-        valueField: 'id',
-        multiple: true,
-        showSearch: true,
-        optionFilterProp: 'label',
-        placeholder: '请选择项目（可多选）',
-      },
-    },
-    {
-      component: 'Select',
-      fieldName: 'column_type',
-      label: '单据类型',
-      defaultValue: 'openDefects',
-      componentProps: {
-        clearable: false,
-        options: [
-          { label: '未关闭', value: 'openDefects' },
-          { label: '已关闭', value: 'closeDefects' },
-          { label: '全部', value: 'totalDefects' },
-        ],
-      },
-    },
-    {
-      component: 'DatePicker',
-      fieldName: 'start_time',
-      label: '开始时间',
-      defaultValue: today.start_time,
-      componentProps: {
-        type: 'datetime',
-        valueFormat: 'YYYY-MM-DD HH:mm:ss',
-        format: 'YYYY-MM-DD HH:mm:ss',
-        placeholder: '选择开始时间',
-      },
-    },
-    {
-      component: 'DatePicker',
-      fieldName: 'end_time',
-      label: '结束时间',
-      defaultValue: today.end_time,
-      componentProps: {
-        type: 'datetime',
-        valueFormat: 'YYYY-MM-DD HH:mm:ss',
-        format: 'YYYY-MM-DD HH:mm:ss',
-        placeholder: '选择结束时间',
-      },
-    },
-  ];
+  return [start, end];
 }
 
 export function useColumns(): Columns {
@@ -123,17 +61,28 @@ export function useColumns(): Columns {
       dataKey: 'defectNo',
       title: 'DTS单号',
       width: 170,
-      fixed: true,
+      fixed: 'left',
     },
     {
-      key: 'brief',
-      dataKey: 'brief',
-      title: '描述',
-      minWidth: 280,
-      fixed: true,
-      showOverflowTooltip: true,
+      key: 'project_name',
+      dataKey: 'project_name',
+      title: '项目',
+      width: 220,
+      fixed: 'left',
     },
-    { key: 'severity', dataKey: 'severity', title: '级别', width: 90 },
+    {
+      key: 'team_name',
+      dataKey: 'team_name',
+      title: '团队',
+      width: 200,
+      fixed: 'left',
+    },
+    {
+      key: 'severity',
+      dataKey: 'severity',
+      title: '级别',
+      width: 90,
+    },
     {
       key: 'currentStatus',
       dataKey: 'currentStatus',
@@ -153,49 +102,263 @@ export function useColumns(): Columns {
       width: 170,
     },
     {
-      key: 'project_names',
-      dataKey: 'project_names',
-      title: '命中项目',
-      minWidth: 220,
+      key: 'process_days',
+      dataKey: 'process_days',
+      title: '处理天数',
+      width: 110,
     },
     {
-      key: 'team_names',
-      dataKey: 'team_names',
-      title: '命中团队',
-      minWidth: 220,
+      key: 'brief',
+      dataKey: 'brief',
+      title: '描述',
+      minWidth: 260,
+      showOverflowTooltip: true,
     },
     {
-      key: 'qa_category',
-      dataKey: 'qa_category',
-      title: 'QA大类',
+      key: 'currentStage',
+      dataKey: 'currentStage',
+      title: '阶段',
       width: 140,
     },
     {
-      key: 'pl_group_name',
-      dataKey: 'pl_group_name',
-      title: '责任PL组',
-      width: 160,
-    },
-    {
-      key: 'dev_owner_name',
-      dataKey: 'dev_owner_name',
-      title: '开发责任人',
+      key: 'closeType',
+      dataKey: 'closeType',
+      title: '关闭类型',
       width: 140,
     },
     {
-      key: 'test_owner_name',
-      dataKey: 'test_owner_name',
-      title: '测试责任人',
-      width: 140,
+      key: 'qa_group',
+      title: 'QA填报',
+      children: [
+        {
+          key: 'qa_category',
+          dataKey: 'qa_category',
+          title: 'QA大类',
+          width: 140,
+        },
+        {
+          key: 'pl_group_name',
+          dataKey: 'pl_group_name',
+          title: '责任PL组',
+          width: 160,
+        },
+        {
+          key: 'is_downstream',
+          dataKey: 'is_downstream',
+          title: '是否下游',
+          width: 110,
+        },
+        {
+          key: 'process_quality_type',
+          dataKey: 'process_quality_type',
+          title: '过程质量分类',
+          minWidth: 160,
+        },
+        {
+          key: 'need_dev_analyze',
+          dataKey: 'need_dev_analyze',
+          title: '需开发分析',
+          width: 120,
+        },
+        {
+          key: 'need_test_analyze',
+          dataKey: 'need_test_analyze',
+          title: '需测试分析',
+          width: 120,
+        },
+        {
+          key: 'dev_owner_name',
+          dataKey: 'dev_owner_name',
+          title: '开发责任人',
+          width: 140,
+        },
+        {
+          key: 'test_owner_name',
+          dataKey: 'test_owner_name',
+          title: '测试责任人',
+          width: 140,
+        },
+        {
+          key: 'is_dev_analyzed',
+          dataKey: 'is_dev_analyzed',
+          title: '开发分析完成',
+          width: 140,
+        },
+        {
+          key: 'is_test_analyzed',
+          dataKey: 'is_test_analyzed',
+          title: '测试分析完成',
+          width: 140,
+        },
+        {
+          key: 'qa_remark',
+          dataKey: 'qa_remark',
+          title: 'QA备注',
+          minWidth: 200,
+        },
+      ],
+    },
+    {
+      key: 'dev_group',
+      title: '开发填报',
+      children: [
+        {
+          key: 'dev_sub_category',
+          dataKey: 'dev_sub_category',
+          title: '问题小类',
+          minWidth: 180,
+        },
+        {
+          key: 'dev_reason',
+          dataKey: 'dev_reason',
+          title: '问题原因',
+          minWidth: 180,
+        },
+        {
+          key: 'dev_intro_reason',
+          dataKey: 'dev_intro_reason',
+          title: '引入原因',
+          minWidth: 180,
+        },
+        {
+          key: 'dev_improvements',
+          dataKey: 'dev_improvements',
+          title: '改进措施',
+          minWidth: 200,
+        },
+        {
+          key: 'dev_non_base_desc',
+          dataKey: 'dev_non_base_desc',
+          title: '非底软说明',
+          width: 160,
+        },
+        {
+          key: 'dev_asset_link',
+          dataKey: 'dev_asset_link',
+          title: '落地资产链接',
+          minWidth: 200,
+        },
+        {
+          key: 'dev_status',
+          dataKey: 'dev_status',
+          title: '改进状态',
+          width: 140,
+        },
+      ],
+    },
+    {
+      key: 'test_group',
+      title: '测试填报',
+      children: [
+        {
+          key: 'test_feature',
+          dataKey: 'test_feature',
+          title: '特效/功能',
+          width: 160,
+        },
+        {
+          key: 'test_miss_reason',
+          dataKey: 'test_miss_reason',
+          title: '漏测原因',
+          minWidth: 180,
+        },
+        {
+          key: 'test_standard_desc',
+          dataKey: 'test_standard_desc',
+          title: '规范问题描述',
+          minWidth: 200,
+        },
+        {
+          key: 'test_improvements',
+          dataKey: 'test_improvements',
+          title: '改进措施',
+          minWidth: 200,
+        },
+        {
+          key: 'test_non_test_desc',
+          dataKey: 'test_non_test_desc',
+          title: '非测试说明',
+          minWidth: 180,
+        },
+        {
+          key: 'test_asset_link',
+          dataKey: 'test_asset_link',
+          title: '落地资产链接',
+          minWidth: 200,
+        },
+        {
+          key: 'test_status',
+          dataKey: 'test_status',
+          title: '改进状态',
+          width: 140,
+        },
+      ],
     },
     {
       key: 'actions',
       dataKey: 'actions',
       title: '操作',
-      width: 190,
+      width: 130,
       fixed: 'right',
     },
   ]) as Columns;
+}
+
+export function resolveSeverityMeta(raw?: null | string): SeverityMeta {
+  const text = String(raw || '').trim();
+  const normalized = text.toLowerCase().replaceAll(/\s+/g, '');
+
+  const has = (pattern: string) => normalized.includes(pattern);
+  const equals = (pattern: string) => normalized === pattern;
+
+  if (
+    has('关键') ||
+    has('致命') ||
+    has('fatal') ||
+    has('critical') ||
+    equals('s0') ||
+    equals('p0') ||
+    has('blocker')
+  ) {
+    return {
+      label: text || '关键',
+      type: 'danger',
+      tip: '最高优先级/影响范围最大',
+    };
+  }
+  if (
+    has('严重') ||
+    has('high') ||
+    has('major') ||
+    equals('s1') ||
+    equals('p1')
+  ) {
+    return { label: text || '严重', type: 'warning', tip: '高优先级/影响较大' };
+  }
+  if (
+    has('一般') ||
+    has('medium') ||
+    has('normal') ||
+    equals('s2') ||
+    equals('p2')
+  ) {
+    return { label: text || '一般', type: 'info', tip: '中等优先级' };
+  }
+  if (
+    has('提示') ||
+    has('low') ||
+    has('minor') ||
+    equals('s3') ||
+    equals('p3')
+  ) {
+    return { label: text || '提示', type: 'success', tip: '低优先级/提示类' };
+  }
+
+  return {
+    label: text || '-',
+    type: 'info',
+    tip: '未识别的级别，按默认样式展示',
+  };
 }
 
 async function fetchPlGroups(): Promise<PlGroup[]> {

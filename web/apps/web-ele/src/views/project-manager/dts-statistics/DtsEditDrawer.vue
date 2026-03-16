@@ -6,7 +6,7 @@ import type {
 
 import { computed, ref, watch } from 'vue';
 
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElTabPane, ElTabs } from 'element-plus';
 
 import { useVbenForm } from '#/adapter/form';
 import { saveDtsExtension } from '#/api/project-manager/dts-statistics';
@@ -14,18 +14,18 @@ import { ZqDrawer } from '#/components/zq-drawer';
 
 import { useDevFormSchema, useQaFormSchema, useTestFormSchema } from './data';
 
-type EditType = 'dev' | 'qa' | 'test';
+type EditTab = 'dev' | 'qa' | 'test';
 
 const props = withDefaults(
   defineProps<{
-    editType?: EditType;
+    initialTab?: EditTab;
     modelValue?: boolean;
     row?: DtsMergedDefect | null;
   }>(),
   {
-    editType: 'qa',
     modelValue: false,
     row: null,
+    initialTab: 'qa',
   },
 );
 
@@ -39,6 +39,7 @@ const visible = computed({
   set: (value) => emit('update:modelValue', value),
 });
 
+const activeTab = ref<EditTab>('qa');
 const confirmLoading = ref(false);
 
 const [QaForm, qaFormApi] = useVbenForm({
@@ -71,26 +72,9 @@ const [TestForm, testFormApi] = useVbenForm({
   wrapperClass: 'grid-cols-1 gap-x-4',
 });
 
-const activeFormApi = computed(() => {
-  if (props.editType === 'dev') return devFormApi;
-  if (props.editType === 'test') return testFormApi;
-  return qaFormApi;
-});
-
-const activeFormComponent = computed(() => {
-  if (props.editType === 'dev') return DevForm;
-  if (props.editType === 'test') return TestForm;
-  return QaForm;
-});
-
 const drawerTitle = computed(() => {
   const defectNo = props.row?.defectNo || '';
-  const prefixMap: Record<EditType, string> = {
-    dev: '开发填报',
-    qa: 'QA填报',
-    test: '测试填报',
-  };
-  const prefix = prefixMap[props.editType];
+  const prefix = '问题单填报';
   return defectNo ? `${prefix} - ${defectNo}` : prefix;
 });
 
@@ -163,6 +147,7 @@ watch(
   () => props.modelValue,
   (open) => {
     if (open) {
+      activeTab.value = props.initialTab || 'qa';
       syncFormValues();
     } else {
       confirmLoading.value = false;
@@ -180,6 +165,25 @@ watch(
   { deep: true },
 );
 
+async function validateAllForms() {
+  const qaResult = await qaFormApi.validate();
+  if (!qaResult.valid) {
+    activeTab.value = 'qa';
+    return false;
+  }
+  const devResult = await devFormApi.validate();
+  if (!devResult.valid) {
+    activeTab.value = 'dev';
+    return false;
+  }
+  const testResult = await testFormApi.validate();
+  if (!testResult.valid) {
+    activeTab.value = 'test';
+    return false;
+  }
+  return true;
+}
+
 async function handleConfirm() {
   const defectNo = props.row?.defectNo;
   if (!defectNo) {
@@ -187,31 +191,26 @@ async function handleConfirm() {
     return;
   }
 
-  const { valid } = await activeFormApi.value.validate();
-  if (!valid) {
+  const ok = await validateAllForms();
+  if (!ok) {
     return;
   }
 
   confirmLoading.value = true;
   try {
-    const rawValues =
-      await activeFormApi.value.getValues<Record<string, any>>();
-    const payload: DtsExtensionSavePayload = { ...rawValues };
-    if (props.editType === 'dev') {
-      payload.dev_sub_category = normalizeStringList(
-        rawValues.dev_sub_category,
-      );
-      payload.dev_improvements = normalizeStringList(
-        rawValues.dev_improvements,
-      );
-    } else if (props.editType === 'test') {
-      payload.test_miss_reason = normalizeStringList(
-        rawValues.test_miss_reason,
-      );
-      payload.test_improvements = normalizeStringList(
-        rawValues.test_improvements,
-      );
-    }
+    const qaValues = await qaFormApi.getValues<Record<string, any>>();
+    const devValues = await devFormApi.getValues<Record<string, any>>();
+    const testValues = await testFormApi.getValues<Record<string, any>>();
+
+    const payload: DtsExtensionSavePayload = {
+      ...qaValues,
+      ...devValues,
+      ...testValues,
+      dev_sub_category: normalizeStringList(devValues.dev_sub_category),
+      dev_improvements: normalizeStringList(devValues.dev_improvements),
+      test_miss_reason: normalizeStringList(testValues.test_miss_reason),
+      test_improvements: normalizeStringList(testValues.test_improvements),
+    };
 
     await saveDtsExtension(defectNo, payload);
     ElMessage.success('保存成功');
@@ -232,6 +231,18 @@ async function handleConfirm() {
     :title="drawerTitle"
     @confirm="handleConfirm"
   >
-    <component :is="activeFormComponent" class="mx-4" />
+    <div class="mx-4 pb-2">
+      <ElTabs v-model="activeTab" class="dts-edit-tabs">
+        <ElTabPane label="QA填报" name="qa">
+          <QaForm />
+        </ElTabPane>
+        <ElTabPane label="开发填报" name="dev">
+          <DevForm />
+        </ElTabPane>
+        <ElTabPane label="测试填报" name="test">
+          <TestForm />
+        </ElTabPane>
+      </ElTabs>
+    </div>
   </ZqDrawer>
 </template>

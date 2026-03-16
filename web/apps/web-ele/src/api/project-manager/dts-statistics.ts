@@ -5,11 +5,14 @@ export type DtsStatisticsColumnType =
   | 'openDefects'
   | 'totalDefects';
 
-export interface DtsStatisticsQuery {
+export interface DtsStatisticsFilters {
   project_ids: string[];
   column_type: DtsStatisticsColumnType;
   start_time: string;
   end_time: string;
+}
+
+export interface DtsStatisticsQuery extends DtsStatisticsFilters {
   page_no: number;
   page_size: number;
 }
@@ -32,6 +35,8 @@ export interface DtsMergedDefect {
   project_ids: string[];
   project_names: string[];
   team_names: string[];
+  project_name?: null | string;
+  team_name?: null | string;
 
   qa_category?: null | string;
   pl_group_id?: null | string;
@@ -125,6 +130,10 @@ export interface DtsSummary {
 
   severity_dist: DtsDistributionItem[];
   status_dist: DtsDistributionItem[];
+  team_dist: DtsDistributionItem[];
+  stage_dist: DtsDistributionItem[];
+  close_type_dist: DtsDistributionItem[];
+  handler_dist: DtsDistributionItem[];
   qa_category_dist: DtsDistributionItem[];
   dev_sub_category_dist: DtsDistributionItem[];
   test_miss_reason_dist: DtsDistributionItem[];
@@ -149,6 +158,12 @@ export async function saveDtsExtension(
   );
 }
 
-export async function getDtsSummary(data: DtsStatisticsQuery) {
+export async function getDtsSummary(data: DtsStatisticsFilters) {
   return requestClient.post<DtsSummary>(`${base}/summary`, data);
+}
+
+export async function exportDtsStatistics(data: DtsStatisticsFilters) {
+  return requestClient.post<Blob>(`${base}/export`, data, {
+    responseType: 'blob',
+  });
 }

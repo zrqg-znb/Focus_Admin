@@ -101,6 +101,7 @@ const detailLoading = ref(false);
 const activeTab = ref('basic');
 const dtsConfig = ref({
   ws_id: '',
+  version_c: '',
   di_teams: [] as string[],
 });
 const newDiTeam = ref('');
@@ -174,6 +175,7 @@ const [Drawer, drawerApi] = useVbenDrawer({
         iterationQualityConfig.value.module =
           data.iteration_quality_module || '';
         dtsConfig.value.ws_id = data.ws_id || '';
+        dtsConfig.value.version_c = data.version_c || '';
         dtsConfig.value.di_teams = Array.isArray(data.di_teams)
           ? data.di_teams
           : [];
@@ -246,7 +248,7 @@ const [Drawer, drawerApi] = useVbenDrawer({
         oem_name: '',
         module: '',
       };
-      dtsConfig.value = { ws_id: '', di_teams: [] };
+      dtsConfig.value = { ws_id: '', version_c: '', di_teams: [] };
       moduleRows.value = [];
       originalModuleIds.value = [];
       milestoneForm.value = {
@@ -776,6 +778,7 @@ async function onSubmit() {
             ? iterationQualityConfig.value.module.trim()
             : null,
         ws_id: enableDts.value ? dtsConfig.value.ws_id : undefined,
+        version_c: enableDts.value ? dtsConfig.value.version_c : undefined,
         di_teams: enableDts.value ? dtsConfig.value.di_teams : undefined,
       };
 
@@ -1105,6 +1108,12 @@ async function onSubmit() {
                 <ElInput
                   v-model="dtsConfig.ws_id"
                   placeholder="请输入数据中台配置 ID"
+                />
+              </ElFormItem>
+              <ElFormItem label="DTS版本号">
+                <ElInput
+                  v-model="dtsConfig.version_c"
+                  placeholder="请输入 DTS version_c（用于 DTS统计看板查询）"
                 />
               </ElFormItem>
               <ElFormItem label="问题单责任团队">

@@ -154,6 +154,8 @@ class DtsMergedDefectSchema(DataLakeDefectSchema):
     project_ids: list[str] = Field(default_factory=list)
     project_names: list[str] = Field(default_factory=list)
     team_names: list[str] = Field(default_factory=list)
+    project_name: Optional[str] = None
+    team_name: Optional[str] = None
 
     qa_category: Optional[str] = None
     pl_group_id: Optional[str] = None
@@ -216,9 +218,50 @@ class DtsSummarySchema(Schema):
 
     severity_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     status_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
+    team_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
+    stage_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
+    close_type_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
+    handler_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     qa_category_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     dev_sub_category_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     test_miss_reason_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     pl_group_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     project_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     action_status_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
+
+
+class DtsStatisticsExportSchema(Schema):
+    """
+    Export does not require paging fields. Keep it separated from list query schema
+    to avoid accidental coupling on page_no/page_size on the frontend.
+    """
+
+    project_ids: list[str] = Field(default_factory=list)
+    column_type: str = Field("openDefects", description="openDefects/closeDefects/totalDefects")
+    start_time: str
+    end_time: str
+
+    @field_validator("project_ids", mode="before")
+    @classmethod
+    def normalize_project_ids(cls, value: Any):
+        if value is None:
+            return []
+        values = value if isinstance(value, list) else [value]
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in values:
+            text = str(item or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        return normalized
+
+    @field_validator("column_type")
+    @classmethod
+    def validate_column_type(cls, value: str):
+        value = (value or "").strip() or "openDefects"
+        allowed = {"openDefects", "closeDefects", "totalDefects"}
+        if value not in allowed:
+            raise ValueError("column_type 不合法")
+        return value
