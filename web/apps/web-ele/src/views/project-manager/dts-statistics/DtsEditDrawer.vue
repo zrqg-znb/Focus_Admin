@@ -94,6 +94,50 @@ const drawerTitle = computed(() => {
   return defectNo ? `${prefix} - ${defectNo}` : prefix;
 });
 
+function normalizeStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    const result: string[] = [];
+    const seen = new Set<string>();
+    value.forEach((item) => {
+      const text = String(item || '').trim();
+      if (!text || seen.has(text)) {
+        return;
+      }
+      seen.add(text);
+      result.push(text);
+    });
+    return result;
+  }
+
+  const text = String(value || '').trim();
+  if (!text) {
+    return [];
+  }
+
+  const parts = text.split(/\r?\n|,|，/g);
+  const result: string[] = [];
+  const seen = new Set<string>();
+  parts.forEach((part) => {
+    const item = String(part || '').trim();
+    if (!item || seen.has(item)) {
+      return;
+    }
+    seen.add(item);
+    result.push(item);
+  });
+  return result;
+}
+
+function joinLines(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return String(value || '').trim();
+  }
+  return value
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
 function syncFormValues() {
   const row = props.row;
   if (!row) {
@@ -103,8 +147,16 @@ function syncFormValues() {
     return;
   }
   qaFormApi.setValues(row);
-  devFormApi.setValues(row);
-  testFormApi.setValues(row);
+  devFormApi.setValues({
+    ...row,
+    dev_sub_category: joinLines(row.dev_sub_category),
+    dev_improvements: joinLines(row.dev_improvements),
+  });
+  testFormApi.setValues({
+    ...row,
+    test_miss_reason: joinLines(row.test_miss_reason),
+    test_improvements: joinLines(row.test_improvements),
+  });
 }
 
 watch(
@@ -142,9 +194,26 @@ async function handleConfirm() {
 
   confirmLoading.value = true;
   try {
-    const values =
-      await activeFormApi.value.getValues<DtsExtensionSavePayload>();
-    await saveDtsExtension(defectNo, values);
+    const rawValues =
+      await activeFormApi.value.getValues<Record<string, any>>();
+    const payload: DtsExtensionSavePayload = { ...rawValues };
+    if (props.editType === 'dev') {
+      payload.dev_sub_category = normalizeStringList(
+        rawValues.dev_sub_category,
+      );
+      payload.dev_improvements = normalizeStringList(
+        rawValues.dev_improvements,
+      );
+    } else if (props.editType === 'test') {
+      payload.test_miss_reason = normalizeStringList(
+        rawValues.test_miss_reason,
+      );
+      payload.test_improvements = normalizeStringList(
+        rawValues.test_improvements,
+      );
+    }
+
+    await saveDtsExtension(defectNo, payload);
     ElMessage.success('保存成功');
     visible.value = false;
     emit('success');

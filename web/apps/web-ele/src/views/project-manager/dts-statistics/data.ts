@@ -313,21 +313,14 @@ export function useQaFormSchema(): VbenFormSchema[] {
 }
 
 export function useDevFormSchema(): VbenFormSchema[] {
-  const multiSelectProps = {
-    multiple: true,
-    filterable: true,
-    allowCreate: true,
-    defaultFirstOption: true,
-    placeholder: '可输入并回车新增',
-  };
   return [
     {
-      component: 'Select',
+      component: 'Textarea',
       fieldName: 'dev_sub_category',
       label: '问题小类',
       componentProps: {
-        ...multiSelectProps,
-        options: [],
+        placeholder: '一行一条（保存时自动拆分）',
+        rows: 3,
       },
     },
     {
@@ -349,12 +342,12 @@ export function useDevFormSchema(): VbenFormSchema[] {
       },
     },
     {
-      component: 'Select',
+      component: 'Textarea',
       fieldName: 'dev_improvements',
       label: '改进措施(开发)',
       componentProps: {
-        ...multiSelectProps,
-        options: [],
+        placeholder: '一行一条（保存时自动拆分）',
+        rows: 3,
       },
     },
     {
@@ -385,13 +378,6 @@ export function useDevFormSchema(): VbenFormSchema[] {
 }
 
 export function useTestFormSchema(): VbenFormSchema[] {
-  const multiSelectProps = {
-    multiple: true,
-    filterable: true,
-    allowCreate: true,
-    defaultFirstOption: true,
-    placeholder: '可输入并回车新增',
-  };
   return [
     {
       component: 'Input',
@@ -402,12 +388,12 @@ export function useTestFormSchema(): VbenFormSchema[] {
       },
     },
     {
-      component: 'Select',
+      component: 'Textarea',
       fieldName: 'test_miss_reason',
       label: '漏测原因',
       componentProps: {
-        ...multiSelectProps,
-        options: [],
+        placeholder: '一行一条（保存时自动拆分）',
+        rows: 3,
       },
     },
     {
@@ -420,12 +406,12 @@ export function useTestFormSchema(): VbenFormSchema[] {
       },
     },
     {
-      component: 'Select',
+      component: 'Textarea',
       fieldName: 'test_improvements',
       label: '改进措施(测试)',
       componentProps: {
-        ...multiSelectProps,
-        options: [],
+        placeholder: '一行一条（保存时自动拆分）',
+        rows: 3,
       },
     },
     {
