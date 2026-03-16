@@ -6,10 +6,13 @@ export type RequirementTimeField =
   | 'due_date'
   | 'planned_test_time';
 
+export type RequirementScheduleState = 'A' | 'C' | 'D' | 'I' | 'P';
+
 export interface RequirementBoardFilterPayload {
   project_ids: string[];
   sub_teams?: string[];
   categories?: string[];
+  schedule_state?: RequirementScheduleState[];
   verification_policies?: string[];
   develop_users?: string[];
   test_users?: string[];

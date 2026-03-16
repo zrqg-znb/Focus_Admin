@@ -22,6 +22,10 @@ class RequirementBoardDataQuerySchema(Schema):
     project_ids: List[str] = Field(..., description="项目 ID 列表")
     sub_teams: Optional[List[str]] = Field(None, description="责任团队列表")
     categories: Optional[List[str]] = Field(None, description="需求类型列表")
+    schedule_state: Optional[List[str]] = Field(
+        None,
+        description="排期状态列表（I/D/P/C/A）",
+    )
     verification_policies: Optional[List[str]] = Field(
         None,
         description="验证策略列表",
@@ -47,6 +51,10 @@ class RequirementBoardSummaryQuerySchema(Schema):
     project_ids: List[str] = Field(..., description="项目 ID 列表")
     sub_teams: Optional[List[str]] = Field(None, description="责任团队列表")
     categories: Optional[List[str]] = Field(None, description="需求类型列表")
+    schedule_state: Optional[List[str]] = Field(
+        None,
+        description="排期状态列表（I/D/P/C/A）",
+    )
     verification_policies: Optional[List[str]] = Field(
         None,
         description="验证策略列表",

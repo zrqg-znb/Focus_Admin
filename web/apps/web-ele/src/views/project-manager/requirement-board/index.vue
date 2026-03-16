@@ -6,6 +6,7 @@ import type {
   RequirementBoardProjectOption,
   RequirementBoardSummary,
   RequirementDeliveryTrendItem,
+  RequirementScheduleState,
   RequirementTimeField,
   RequirementUserSummaryItem,
 } from '#/api/project-manager/requirement_board';
@@ -51,6 +52,7 @@ import {
   formatDateTime,
   formatMetric,
   formatPercent,
+  SCHEDULE_STATE_OPTIONS,
   STATUS_META,
   STATUS_META_MAP,
   TIME_FIELD_OPTIONS,
@@ -82,6 +84,7 @@ const filters = ref<RequirementBoardFilterPayload>({
   project_ids: [],
   sub_teams: [],
   categories: [...DEFAULT_CATEGORIES],
+  schedule_state: [],
   verification_policies: [],
   develop_users: [],
   test_users: [],
@@ -140,6 +143,20 @@ function normalizeStringArray(values?: string[]) {
   return result;
 }
 
+const SCHEDULE_STATE_SET = new Set<RequirementScheduleState>([
+  'A',
+  'C',
+  'D',
+  'I',
+  'P',
+]);
+
+function normalizeScheduleStates(values?: RequirementScheduleState[]) {
+  return normalizeStringArray(values).filter((item) =>
+    SCHEDULE_STATE_SET.has(item as RequirementScheduleState),
+  ) as RequirementScheduleState[];
+}
+
 function sortProjectOptions(options: RequirementBoardProjectOption[]) {
   return [...options].sort((left, right) => {
     if (left.config_complete !== right.config_complete) {
@@ -172,6 +189,7 @@ function cloneFilterPayload(
     project_ids: normalizeStringArray(source.project_ids),
     sub_teams: normalizeStringArray(source.sub_teams),
     categories: categories.length > 0 ? categories : [...DEFAULT_CATEGORIES],
+    schedule_state: normalizeScheduleStates(source.schedule_state),
     verification_policies: normalizeStringArray(source.verification_policies),
     develop_users: normalizeStringArray(source.develop_users),
     test_users: normalizeStringArray(source.test_users),
@@ -190,6 +208,7 @@ function buildFingerprint(payload: null | RequirementBoardFilterPayload) {
     project_ids: [...(payload.project_ids || [])].sort(),
     sub_teams: [...(payload.sub_teams || [])].sort(),
     categories: [...(payload.categories || [])].sort(),
+    schedule_state: [...(payload.schedule_state || [])].sort(),
     verification_policies: [...(payload.verification_policies || [])].sort(),
     develop_users: [...(payload.develop_users || [])].sort(),
     test_users: [...(payload.test_users || [])].sort(),
@@ -244,6 +263,9 @@ const selectedCategoryCount = computed(() => {
 });
 const selectedVerificationPolicyCount = computed(
   () => normalizeStringArray(filters.value.verification_policies).length,
+);
+const selectedScheduleStateCount = computed(
+  () => normalizeStringArray(filters.value.schedule_state).length,
 );
 const filterToggleLabel = computed(() =>
   filterCollapsed.value ? '展开筛选' : '收起筛选',
@@ -310,6 +332,7 @@ const filterSummaryText = computed(() => {
     `项目 ${filters.value.project_ids.length} 个`,
     `团队 ${filters.value.sub_teams.length} 个`,
     `类型 ${selectedCategoryCount.value} 种`,
+    `排期状态 ${selectedScheduleStateCount.value} 个`,
     `验证策略 ${selectedVerificationPolicyCount.value} 个`,
     `开发责任人 ${filters.value.develop_users.length} 个`,
     `测试责任人 ${filters.value.test_users.length} 个`,
@@ -717,6 +740,7 @@ async function handleReset() {
     project_ids: [],
     sub_teams: [],
     categories: [...DEFAULT_CATEGORIES],
+    schedule_state: [],
     verification_policies: [],
     develop_users: [],
     test_users: [],
@@ -1067,7 +1091,7 @@ onUnmounted(() => {
           <div>
             <div class="requirement-filter-card__title">需求看板筛选</div>
             <div class="requirement-filter-card__desc">
-              项目/团队/类型/验证策略为基础筛选，责任人和时间区间支持组合查询；责任人命中任一
+              项目/团队/类型/状态/验证策略为基础筛选，责任人和时间区间支持组合查询；责任人命中任一
               username 即计入结果。
             </div>
           </div>
@@ -1177,6 +1201,26 @@ onUnmounted(() => {
               >
                 <ElOption
                   v-for="item in VERIFICATION_POLICY_OPTIONS"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </ElSelect>
+            </ElFormItem>
+
+            <ElFormItem label="排期状态" class="requirement-filter-form__item">
+              <ElSelect
+                v-model="filters.schedule_state"
+                class="requirement-filter-control"
+                collapse-tags
+                collapse-tags-tooltip
+                filterable
+                multiple
+                clearable
+                placeholder="默认不过滤"
+              >
+                <ElOption
+                  v-for="item in SCHEDULE_STATE_OPTIONS"
                   :key="item.value"
                   :label="item.label"
                   :value="item.value"

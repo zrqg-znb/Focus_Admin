@@ -71,6 +71,13 @@ _STATUS_FIELD_MAP = {
     "C": "c_count",
     "A": "a_count",
 }
+_UPSTREAM_SCHEDULE_STATE_MAP = {
+    "I": "Initial",
+    "D": "Defined",
+    "P": "In-Progress",
+    "C": "Completed",
+    "A": "Accepted",
+}
 _STATUS_ALIASES = {
     "I": "I",
     "INIT": "I",
@@ -226,6 +233,30 @@ def _normalize_categories(values: Any) -> list[str]:
             raise HttpError(422, f"非法需求类型: {item}")
         if category not in result:
             result.append(category)
+    return result
+
+
+def _normalize_schedule_states(values: Any) -> list[str]:
+    normalized = _normalize_text_list(values)
+    if not normalized:
+        return []
+
+    result: list[str] = []
+    for item in normalized:
+        text = _clean_text(item)
+        if not text:
+            continue
+
+        compact = text.upper().replace("-", "").replace("_", "").replace(" ", "")
+        status_code = (
+            _STATUS_ALIASES.get(text.upper())
+            or _STATUS_ALIASES.get(compact)
+            or _STATUS_ALIASES.get(text)
+        )
+        if not status_code or status_code not in STATUS_ORDER:
+            raise HttpError(422, f"非法排期状态: {item}")
+        if status_code not in result:
+            result.append(status_code)
     return result
 
 
@@ -428,10 +459,22 @@ def _cache_key(prefix: str, payload: dict[str, Any]) -> str:
     return f"{prefix}:{digest}"
 
 
+def _to_upstream_schedule_states(values: list[str]) -> list[str]:
+    result: list[str] = []
+    for item in values:
+        mapped = _UPSTREAM_SCHEDULE_STATE_MAP.get(item)
+        if not mapped:
+            continue
+        if mapped not in result:
+            result.append(mapped)
+    return result
+
+
 def _build_request_payload(
     design_ids: list[str],
     sub_teams: list[str],
     categories: list[str],
+    schedule_state: list[str],
     verification_policies: list[str],
     page_no: int,
     page_size: int,
@@ -446,6 +489,10 @@ def _build_request_payload(
             "page_size": min(page_size, _UPSTREAM_PAGE_SIZE),
         },
     }
+    if schedule_state:
+        upstream_schedule_state = _to_upstream_schedule_states(schedule_state)
+        if upstream_schedule_state:
+            payload["schedule_state"] = upstream_schedule_state
     if verification_policies:
         payload["verification_policy"] = verification_policies
     alias_field = _clean_text(
@@ -483,6 +530,7 @@ def _mock_fetch_page(
     design_ids: list[str],
     sub_teams: list[str],
     categories: list[str],
+    schedule_state: list[str],
     verification_policies: list[str],
     page_no: int,
     page_size: int,
@@ -492,6 +540,7 @@ def _mock_fetch_page(
             "design_ids": design_ids,
             "sub_teams": sub_teams,
             "categories": categories,
+            "schedule_state": schedule_state,
             "verification_policies": verification_policies,
         },
         ensure_ascii=False,
@@ -501,7 +550,17 @@ def _mock_fetch_page(
     team_pool = sub_teams or [UNKNOWN_TEAM_NAME]
     owner_pool = [f"z6009{index:04d}" for index in range(1, 80)]
     status_pool = ["Initial", "Defined", "In-Progress", "Completed", "Accepted"]
-    status_weights = (0.08, 0.18, 0.36, 0.2, 0.18)
+    status_weight_map = {
+        "Initial": 0.08,
+        "Defined": 0.18,
+        "In-Progress": 0.36,
+        "Completed": 0.2,
+        "Accepted": 0.18,
+    }
+    if schedule_state:
+        allowed = set(_to_upstream_schedule_states(schedule_state))
+        status_pool = [item for item in status_pool if item in allowed]
+    status_weights = [status_weight_map[item] for item in status_pool]
     policy_pool = verification_policies or list(VERIFICATION_POLICY_ORDER)
     all_items: list[dict[str, Any]] = []
 
@@ -579,6 +638,7 @@ def _fetch_raw_page(
     design_ids: list[str],
     sub_teams: list[str],
     categories: list[str],
+    schedule_state: list[str],
     verification_policies: list[str],
     page_no: int,
     page_size: int,
@@ -588,6 +648,7 @@ def _fetch_raw_page(
         design_ids,
         sub_teams,
         categories,
+        schedule_state,
         verification_policies,
         page_no,
         page_size,
@@ -604,6 +665,7 @@ def _fetch_raw_page(
             design_ids,
             sub_teams,
             categories,
+            schedule_state,
             verification_policies,
             page_no,
             page_size,
@@ -921,6 +983,7 @@ def _resolve_query_context(
     project_ids: list[str],
     sub_teams: list[str] | None = None,
     categories: list[str] | None = None,
+    schedule_state: list[str] | None = None,
     verification_policies: list[str] | None = None,
     develop_users: list[str] | None = None,
     test_users: list[str] | None = None,
@@ -984,6 +1047,7 @@ def _resolve_query_context(
         selected_teams = allowed_teams[:]
 
     selected_categories = _normalize_categories(categories)
+    selected_schedule_state = _normalize_schedule_states(schedule_state)
     selected_verification_policies = _normalize_verification_policies(
         verification_policies,
     )
@@ -1008,6 +1072,7 @@ def _resolve_query_context(
         "design_ids": design_ids,
         "sub_teams": selected_teams,
         "categories": selected_categories,
+        "schedule_state": selected_schedule_state,
         "verification_policies": selected_verification_policies,
     }
     cache_payload = {
@@ -1025,6 +1090,7 @@ def _resolve_query_context(
         "design_ids": design_ids,
         "sub_teams": selected_teams,
         "categories": selected_categories,
+        "schedule_state": selected_schedule_state,
         "verification_policies": selected_verification_policies,
         "develop_users": normalized_develop_users,
         "test_users": normalized_test_users,
@@ -1074,6 +1140,7 @@ def _load_remote_page(context: dict[str, Any], page_no: int, page_size: int) -> 
         design_ids=context["design_ids"],
         sub_teams=context["sub_teams"],
         categories=context["categories"],
+        schedule_state=context["schedule_state"],
         verification_policies=context["verification_policies"],
         page_no=page_no,
         page_size=normalized_page_size,
@@ -1260,6 +1327,7 @@ def get_requirement_board_page(data: RequirementBoardDataQuerySchema) -> dict[st
         data.project_ids,
         data.sub_teams,
         data.categories,
+        data.schedule_state,
         data.verification_policies,
         data.develop_users,
         data.test_users,
@@ -1897,6 +1965,7 @@ def get_requirement_board_summary(
         data.project_ids,
         data.sub_teams,
         data.categories,
+        data.schedule_state,
         data.verification_policies,
         data.develop_users,
         data.test_users,
@@ -1942,6 +2011,7 @@ def export_requirement_board_data(
         data.project_ids,
         data.sub_teams,
         data.categories,
+        data.schedule_state,
         data.verification_policies,
         data.develop_users,
         data.test_users,

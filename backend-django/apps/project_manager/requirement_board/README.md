@@ -214,6 +214,8 @@ z60094428,z60094429
 - 项目（转换为 `design_id -> domainid[]`）
 - 责任团队（`sub_teams[]`）
 - 需求类型（`categories[]`）
+- 排期状态（`schedule_state[]`，I/D/P/C/A -> Initial/Defined/In-Progress/Completed/Accepted）
+- 验证策略（`verification_policy[]`）
 
 #### 不会下推、在本地完成的筛选
 
@@ -259,6 +261,7 @@ z60094428,z60094429
   "project_ids": ["..."],
   "sub_teams": ["底软"],
   "categories": ["AR", "DR", "SR"],
+  "schedule_state": ["I", "D", "P", "C", "A"],
   "develop_users": ["z60094428"],
   "test_users": ["z60094429"],
   "time_field": "accepted_time",

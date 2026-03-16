@@ -44,6 +44,14 @@ export const TIME_FIELD_OPTIONS: Array<{
 
 export const DEFAULT_TIME_FIELD: RequirementTimeField = 'accepted_time';
 
+export const SCHEDULE_STATE_OPTIONS = [
+  { label: 'I · Initial', value: 'I' },
+  { label: 'D · Defined', value: 'D' },
+  { label: 'P · In-Progress', value: 'P' },
+  { label: 'C · Completed', value: 'C' },
+  { label: 'A · Accepted', value: 'A' },
+];
+
 export const STATUS_META: RequirementStatusMeta[] = [
   {
     status_code: 'I',
