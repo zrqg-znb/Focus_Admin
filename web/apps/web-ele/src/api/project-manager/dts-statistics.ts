@@ -1,0 +1,154 @@
+import { requestClient } from '#/api/request';
+
+export type DtsStatisticsColumnType =
+  | 'closeDefects'
+  | 'openDefects'
+  | 'totalDefects';
+
+export interface DtsStatisticsQuery {
+  project_ids: string[];
+  column_type: DtsStatisticsColumnType;
+  start_time: string;
+  end_time: string;
+  page_no: number;
+  page_size: number;
+}
+
+export interface DtsMergedDefect {
+  defectNo: string;
+  brief?: string;
+  severity?: string;
+  weight?: null | string;
+  submitTime?: null | string;
+  submitterId?: null | string;
+  submitTeam?: null | string;
+  currentHandler?: null | string;
+  currentTeam?: null | string;
+  currentStatus?: null | string;
+  currentStage?: null | string;
+  closeType?: null | string;
+  process_days?: null | string;
+
+  project_ids: string[];
+  project_names: string[];
+  team_names: string[];
+
+  qa_category?: null | string;
+  pl_group_id?: null | string;
+  pl_group_name?: null | string;
+  is_downstream?: null | string;
+  process_quality_type?: null | string;
+  need_dev_analyze?: null | string;
+  need_test_analyze?: null | string;
+  dev_owner_id?: null | string;
+  dev_owner_name?: null | string;
+  test_owner_id?: null | string;
+  test_owner_name?: null | string;
+  is_dev_analyzed?: null | string;
+  is_test_analyzed?: null | string;
+  qa_remark?: null | string;
+
+  dev_sub_category: string[];
+  dev_reason?: null | string;
+  dev_intro_reason?: null | string;
+  dev_improvements: string[];
+  dev_non_base_desc?: null | string;
+  dev_asset_link?: null | string;
+  dev_status?: null | string;
+
+  test_feature?: null | string;
+  test_miss_reason: string[];
+  test_standard_desc?: null | string;
+  test_improvements: string[];
+  test_non_test_desc?: null | string;
+  test_asset_link?: null | string;
+  test_status?: null | string;
+}
+
+export interface DtsListResponse {
+  total: number;
+  items: DtsMergedDefect[];
+}
+
+export interface DtsExtensionSavePayload {
+  project_ids?: string[];
+  qa_category?: null | string;
+  pl_group_id?: null | string;
+  is_downstream?: null | string;
+  process_quality_type?: null | string;
+  need_dev_analyze?: null | string;
+  need_test_analyze?: null | string;
+  dev_owner_id?: null | string;
+  test_owner_id?: null | string;
+  is_dev_analyzed?: null | string;
+  is_test_analyzed?: null | string;
+  qa_remark?: null | string;
+
+  dev_sub_category?: string[];
+  dev_reason?: null | string;
+  dev_intro_reason?: null | string;
+  dev_improvements?: string[];
+  dev_non_base_desc?: null | string;
+  dev_asset_link?: null | string;
+  dev_status?: null | string;
+
+  test_feature?: null | string;
+  test_miss_reason?: string[];
+  test_standard_desc?: null | string;
+  test_improvements?: string[];
+  test_non_test_desc?: null | string;
+  test_asset_link?: null | string;
+  test_status?: null | string;
+}
+
+export interface DtsSaveResponse {
+  success: boolean;
+}
+
+export interface DtsDistributionItem {
+  label: string;
+  value: number;
+}
+
+export interface DtsSummary {
+  total_count: number;
+  open_count: number;
+  closed_count: number;
+  avg_process_days: number;
+
+  qa_filled_count: number;
+  qa_completion_rate: number;
+  dev_analyzed_count: number;
+  dev_analysis_completion_rate: number;
+  test_analyzed_count: number;
+  test_analysis_completion_rate: number;
+
+  severity_dist: DtsDistributionItem[];
+  status_dist: DtsDistributionItem[];
+  qa_category_dist: DtsDistributionItem[];
+  dev_sub_category_dist: DtsDistributionItem[];
+  test_miss_reason_dist: DtsDistributionItem[];
+  pl_group_dist: DtsDistributionItem[];
+  project_dist: DtsDistributionItem[];
+  action_status_dist: DtsDistributionItem[];
+}
+
+const base = '/api/project-manager/dts-statistics';
+
+export async function getDtsList(data: DtsStatisticsQuery) {
+  return requestClient.post<DtsListResponse>(`${base}/list`, data);
+}
+
+export async function saveDtsExtension(
+  defectNo: string,
+  data: DtsExtensionSavePayload,
+) {
+  return requestClient.post<DtsSaveResponse>(
+    `${base}/save-extension/${defectNo}`,
+    data,
+  );
+}
+
+export async function getDtsSummary(data: DtsStatisticsQuery) {
+  return requestClient.post<DtsSummary>(`${base}/summary`, data);
+}

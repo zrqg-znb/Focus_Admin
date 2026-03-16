@@ -321,6 +321,7 @@ def create_project(request, data: ProjectCreateSchema):
             data_dict.get("design_id"),
             data_dict.get("sub_teams"),
         )
+        data_dict["version_c"] = _normalize_optional_text(data_dict.get("version_c"))
         data_dict["enable_iteration_quality_metrics"] = normalized_quality_switch
         data_dict["iteration_quality_oem_name"] = normalized_quality_oem_name
         data_dict["iteration_quality_module"] = normalized_quality_module
@@ -387,6 +388,8 @@ def update_project(request, id: str, data: ProjectUpdateSchema):
         data_dict.get("design_id", project.design_id),
         data_dict.get("sub_teams", project.sub_teams),
     )
+    if "version_c" in data_dict:
+        data_dict["version_c"] = _normalize_optional_text(data_dict.get("version_c"))
     normalized_quality_switch, normalized_quality_oem_name, normalized_quality_module = (
         _normalize_iteration_quality_config(
             enable_iteration=enable_iteration,

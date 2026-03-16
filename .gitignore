@@ -58,6 +58,10 @@ coverage
 ./backend-django/static/
 ./backend-django/.venv/
 ./backend-django/logs/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
 */migrations/
 
 ./windsurf/rules

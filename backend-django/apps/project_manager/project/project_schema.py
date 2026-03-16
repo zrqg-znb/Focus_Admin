@@ -56,6 +56,7 @@ class ProjectCreateSchema(Schema):
     design_id: Optional[str] = Field(None, description="迭代中台配置 id")
     sub_teams: Optional[List[str]] = Field(None, description="迭代责任团队")
     ws_id: Optional[str] = Field(None, description="数据中台配置ID")
+    version_c: Optional[str] = Field(None, description="DTS版本号")
     di_teams: Optional[List[str]] = Field(None, description="问题单责任团队")
     enable_hardware_config: bool = Field(False, description="是否开启典配")
     idvp_platform_id: Optional[str] = Field(None, description="IDVP平台ID")
@@ -83,6 +84,7 @@ class ProjectUpdateSchema(Schema):
     design_id: Optional[str] = None
     sub_teams: Optional[List[str]] = None
     ws_id: Optional[str] = None
+    version_c: Optional[str] = None
     di_teams: Optional[List[str]] = None
     enable_hardware_config: Optional[bool] = None
     idvp_platform_id: Optional[str] = None

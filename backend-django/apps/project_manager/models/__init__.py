@@ -14,4 +14,8 @@ from apps.project_manager.code_quality.code_quality_model import (
     CodeModule,
     CodeNodeOwnerConfig,
 )
+from apps.project_manager.dts_statistics.dts_statistics_model import (
+    DtsDefectProjectLink,
+    DtsExtension,
+)
 from apps.project_manager.models.sync_log_model import SyncLog

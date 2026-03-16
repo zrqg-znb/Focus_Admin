@@ -47,6 +47,7 @@ class Project(RootModel):
     # DTS (Issue Tracking)
     enable_dts = models.BooleanField(default=False, verbose_name="是否统计问题单")
     ws_id = models.CharField(max_length=255, null=True, blank=True, verbose_name="数据中台配置ID")
+    version_c = models.CharField(max_length=255, null=True, blank=True, verbose_name="DTS版本号")
     di_teams = models.JSONField(null=True, blank=True, verbose_name="问题单责任团队")
 
     # Config Details
