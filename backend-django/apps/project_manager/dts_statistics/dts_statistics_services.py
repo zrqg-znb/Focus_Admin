@@ -24,6 +24,7 @@ from ninja.errors import HttpError
 from common.fu_cache import CacheManager
 
 from apps.project_manager.project.project_model import Project
+from core.dict_item.dict_item_model import DictItem
 
 from .dts_statistics_model import DtsDefectProjectLink, DtsExtension
 from .dts_statistics_schemas import (
@@ -1326,3 +1327,67 @@ def save_dts_extension(defect_no: str, data: DtsExtensionSaveSchema) -> dict[str
     if payload:
         DtsExtension.objects.update_or_create(defect_no=safe_defect_no, defaults=payload)
     return {"success": True}
+
+
+def get_dts_statistics_dict_options() -> dict[str, Any]:
+    """
+    聚合返回 DTS 模块所需字典选项，减少前端多次请求。
+
+    说明：
+    - 返回值采用 {label,value} 的 SelectOption 结构
+    - value 默认与 label 相同（便于扩展字段直接落库/导出时可读）
+    """
+
+    code_map = {
+        "yes_no": "yes_no",
+        "qa_category": "dts_qa_category",
+        "process_quality_type": "dts_process_quality_type",
+        "dev_sub_category": "dts_dev_sub_category",
+        "test_miss_reason": "dts_test_miss_reason",
+        "action_status": "dts_action_status",
+    }
+
+    # One SQL to pull all dict items then group by dict.code.
+    rows = (
+        DictItem.objects.select_related("dict")
+        .filter(
+            dict__code__in=set(code_map.values()),
+            dict__status=True,
+            dict__is_deleted=False,
+            status=True,
+            is_deleted=False,
+        )
+        .order_by("dict__code", "-sort", "sys_create_datetime")
+    )
+
+    grouped: dict[str, list[dict[str, str]]] = defaultdict(list)
+    seen: dict[str, set[str]] = defaultdict(set)
+
+    for item in rows:
+        dict_obj = getattr(item, "dict", None)
+        dict_code = _clean_text(getattr(dict_obj, "code", ""))
+        if not dict_code:
+            continue
+
+        label = _clean_text(getattr(item, "label", "") or getattr(item, "value", ""))
+        if not label:
+            continue
+
+        # Store label into DB so list/export/summary remain human-readable.
+        value = label
+        if value in seen[dict_code]:
+            continue
+        seen[dict_code].add(value)
+        grouped[dict_code].append({"label": label, "value": value})
+
+    result: dict[str, Any] = {}
+    for field, dict_code in code_map.items():
+        options = grouped.get(dict_code, [])
+        if field == "yes_no" and not options:
+            options = [
+                {"label": "是", "value": "是"},
+                {"label": "否", "value": "否"},
+            ]
+        result[field] = options
+
+    return result

@@ -133,12 +133,10 @@ function syncFormValues() {
   qaFormApi.setValues(row);
   devFormApi.setValues({
     ...row,
-    dev_sub_category: joinLines(row.dev_sub_category),
     dev_improvements: joinLines(row.dev_improvements),
   });
   testFormApi.setValues({
     ...row,
-    test_miss_reason: joinLines(row.test_miss_reason),
     test_improvements: joinLines(row.test_improvements),
   });
 }

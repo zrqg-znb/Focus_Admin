@@ -265,3 +265,23 @@ class DtsStatisticsExportSchema(Schema):
         if value not in allowed:
             raise ValueError("column_type 不合法")
         return value
+
+
+class DtsDictOptionSchema(Schema):
+    label: str
+    value: str
+
+
+class DtsDictOptionsSchema(Schema):
+    """
+    DTS 模块字典选项聚合接口返回结构。
+
+    说明：为减少前端多次请求，将 DTS 统计页/填报 Drawer 所需字典一次性打包返回。
+    """
+
+    yes_no: list[DtsDictOptionSchema] = Field(default_factory=list)
+    qa_category: list[DtsDictOptionSchema] = Field(default_factory=list)
+    process_quality_type: list[DtsDictOptionSchema] = Field(default_factory=list)
+    dev_sub_category: list[DtsDictOptionSchema] = Field(default_factory=list)
+    test_miss_reason: list[DtsDictOptionSchema] = Field(default_factory=list)
+    action_status: list[DtsDictOptionSchema] = Field(default_factory=list)

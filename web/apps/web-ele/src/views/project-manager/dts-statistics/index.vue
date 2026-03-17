@@ -2,6 +2,7 @@
 import type { EchartsUIType } from '@vben/plugins/echarts';
 
 import type {
+  DtsDictOptions,
   DtsMergedDefect,
   DtsStatisticsFilters,
   DtsSummary,
@@ -40,9 +41,11 @@ import { useZqTable } from '#/components/zq-table';
 
 import ProjectSelectorDialog from './components/project-selector-dialog.vue';
 import {
+  fetchDtsDictOptionsCached,
   formatDateTime,
   getTodayDateRange,
   normalizeProjectOptions,
+  resolveDtsGovernanceTagMeta,
   resolveSeverityMeta,
   useColumns,
 } from './data';
@@ -110,6 +113,11 @@ const summary = ref<DtsSummary>({
 });
 const summaryLoading = ref(false);
 const exportLoading = ref(false);
+const dictOptions = ref<DtsDictOptions | null>(null);
+
+function resolveGovTag(field: any, raw: unknown) {
+  return resolveDtsGovernanceTagMeta(dictOptions.value, field, raw);
+}
 
 function openEdit(row: DtsMergedDefect) {
   editingRow.value = row;
@@ -186,6 +194,15 @@ function buildDtsProjectOption(
     config_complete,
     reason: reasons.join(' / '),
   };
+}
+
+async function loadDictOptions() {
+  try {
+    dictOptions.value = await fetchDtsDictOptionsCached();
+  } catch (error) {
+    console.error(error);
+    dictOptions.value = null;
+  }
 }
 
 async function loadProjects() {
@@ -761,6 +778,7 @@ watch(
 );
 
 onMounted(() => {
+  void loadDictOptions();
   void loadProjects();
   updateDataGridHeight();
   window.addEventListener('resize', handleResize);
@@ -963,6 +981,195 @@ onUnmounted(() => {
                     </ElTooltip>
                   </template>
 
+                  <template #cell-qa_category="{ row }">
+                    <span v-if="!row.qa_category" class="text-slate-400">
+                      -
+                    </span>
+                    <ElTag
+                      v-else
+                      :type="
+                        resolveGovTag('qa_category', row.qa_category)?.type ||
+                        'info'
+                      "
+                      effect="light"
+                      size="small"
+                    >
+                      {{
+                        resolveGovTag('qa_category', row.qa_category)?.label ||
+                        row.qa_category
+                      }}
+                    </ElTag>
+                  </template>
+
+                  <template #cell-is_downstream="{ row }">
+                    <span v-if="!row.is_downstream" class="text-slate-400">
+                      -
+                    </span>
+                    <ElTag
+                      v-else
+                      :type="
+                        resolveGovTag('is_downstream', row.is_downstream)
+                          ?.type || 'info'
+                      "
+                      effect="light"
+                      size="small"
+                    >
+                      {{
+                        resolveGovTag('is_downstream', row.is_downstream)
+                          ?.label || row.is_downstream
+                      }}
+                    </ElTag>
+                  </template>
+
+                  <template #cell-process_quality_type="{ row }">
+                    <span
+                      v-if="!row.process_quality_type"
+                      class="text-slate-400"
+                    >
+                      -
+                    </span>
+                    <ElTag
+                      v-else
+                      :type="
+                        resolveGovTag(
+                          'process_quality_type',
+                          row.process_quality_type,
+                        )?.type || 'info'
+                      "
+                      effect="light"
+                      size="small"
+                    >
+                      {{
+                        resolveGovTag(
+                          'process_quality_type',
+                          row.process_quality_type,
+                        )?.label || row.process_quality_type
+                      }}
+                    </ElTag>
+                  </template>
+
+                  <template #cell-need_dev_analyze="{ row }">
+                    <span v-if="!row.need_dev_analyze" class="text-slate-400">
+                      -
+                    </span>
+                    <ElTag
+                      v-else
+                      :type="
+                        resolveGovTag('need_dev_analyze', row.need_dev_analyze)
+                          ?.type || 'info'
+                      "
+                      effect="light"
+                      size="small"
+                    >
+                      {{
+                        resolveGovTag('need_dev_analyze', row.need_dev_analyze)
+                          ?.label || row.need_dev_analyze
+                      }}
+                    </ElTag>
+                  </template>
+
+                  <template #cell-need_test_analyze="{ row }">
+                    <span v-if="!row.need_test_analyze" class="text-slate-400">
+                      -
+                    </span>
+                    <ElTag
+                      v-else
+                      :type="
+                        resolveGovTag(
+                          'need_test_analyze',
+                          row.need_test_analyze,
+                        )?.type || 'info'
+                      "
+                      effect="light"
+                      size="small"
+                    >
+                      {{
+                        resolveGovTag(
+                          'need_test_analyze',
+                          row.need_test_analyze,
+                        )?.label || row.need_test_analyze
+                      }}
+                    </ElTag>
+                  </template>
+
+                  <template #cell-is_dev_analyzed="{ row }">
+                    <span v-if="!row.is_dev_analyzed" class="text-slate-400">
+                      -
+                    </span>
+                    <ElTag
+                      v-else
+                      :type="
+                        resolveGovTag('is_dev_analyzed', row.is_dev_analyzed)
+                          ?.type || 'info'
+                      "
+                      effect="light"
+                      size="small"
+                    >
+                      {{
+                        resolveGovTag('is_dev_analyzed', row.is_dev_analyzed)
+                          ?.label || row.is_dev_analyzed
+                      }}
+                    </ElTag>
+                  </template>
+
+                  <template #cell-is_test_analyzed="{ row }">
+                    <span v-if="!row.is_test_analyzed" class="text-slate-400">
+                      -
+                    </span>
+                    <ElTag
+                      v-else
+                      :type="
+                        resolveGovTag('is_test_analyzed', row.is_test_analyzed)
+                          ?.type || 'info'
+                      "
+                      effect="light"
+                      size="small"
+                    >
+                      {{
+                        resolveGovTag('is_test_analyzed', row.is_test_analyzed)
+                          ?.label || row.is_test_analyzed
+                      }}
+                    </ElTag>
+                  </template>
+
+                  <template #cell-dev_status="{ row }">
+                    <span v-if="!row.dev_status" class="text-slate-400">-</span>
+                    <ElTag
+                      v-else
+                      :type="
+                        resolveGovTag('dev_status', row.dev_status)?.type ||
+                        'info'
+                      "
+                      effect="light"
+                      size="small"
+                    >
+                      {{
+                        resolveGovTag('dev_status', row.dev_status)?.label ||
+                        row.dev_status
+                      }}
+                    </ElTag>
+                  </template>
+
+                  <template #cell-test_status="{ row }">
+                    <span v-if="!row.test_status" class="text-slate-400">
+                      -
+                    </span>
+                    <ElTag
+                      v-else
+                      :type="
+                        resolveGovTag('test_status', row.test_status)?.type ||
+                        'info'
+                      "
+                      effect="light"
+                      size="small"
+                    >
+                      {{
+                        resolveGovTag('test_status', row.test_status)?.label ||
+                        row.test_status
+                      }}
+                    </ElTag>
+                  </template>
+
                   <template #cell-dev_sub_category="{ row }">
                     <span
                       v-if="(row.dev_sub_category || []).length === 0"
@@ -970,15 +1177,36 @@ onUnmounted(() => {
                     >
                       -
                     </span>
-                    <ElTooltip
-                      v-else
-                      :content="formatArrayCell(row.dev_sub_category).tooltip"
-                      placement="top-start"
-                    >
-                      <span class="cursor-help">
-                        {{ formatArrayCell(row.dev_sub_category).text }}
-                      </span>
-                    </ElTooltip>
+                    <div v-else class="dts-cell-tags">
+                      <template
+                        v-for="item in (row.dev_sub_category || []).slice(0, 2)"
+                        :key="item"
+                      >
+                        <ElTag
+                          :type="
+                            resolveGovTag('dev_sub_category', item)?.type ||
+                            'info'
+                          "
+                          effect="light"
+                          size="small"
+                        >
+                          {{
+                            resolveGovTag('dev_sub_category', item)?.label ||
+                            item
+                          }}
+                        </ElTag>
+                      </template>
+
+                      <ElTooltip
+                        v-if="(row.dev_sub_category || []).length > 2"
+                        :content="formatArrayCell(row.dev_sub_category).tooltip"
+                        placement="top-start"
+                      >
+                        <ElTag type="info" effect="plain" size="small">
+                          +{{ (row.dev_sub_category || []).length - 2 }}
+                        </ElTag>
+                      </ElTooltip>
+                    </div>
                   </template>
 
                   <template #cell-dev_improvements="{ row }">
@@ -1006,15 +1234,36 @@ onUnmounted(() => {
                     >
                       -
                     </span>
-                    <ElTooltip
-                      v-else
-                      :content="formatArrayCell(row.test_miss_reason).tooltip"
-                      placement="top-start"
-                    >
-                      <span class="cursor-help">
-                        {{ formatArrayCell(row.test_miss_reason).text }}
-                      </span>
-                    </ElTooltip>
+                    <div v-else class="dts-cell-tags">
+                      <template
+                        v-for="item in (row.test_miss_reason || []).slice(0, 2)"
+                        :key="item"
+                      >
+                        <ElTag
+                          :type="
+                            resolveGovTag('test_miss_reason', item)?.type ||
+                            'info'
+                          "
+                          effect="light"
+                          size="small"
+                        >
+                          {{
+                            resolveGovTag('test_miss_reason', item)?.label ||
+                            item
+                          }}
+                        </ElTag>
+                      </template>
+
+                      <ElTooltip
+                        v-if="(row.test_miss_reason || []).length > 2"
+                        :content="formatArrayCell(row.test_miss_reason).tooltip"
+                        placement="top-start"
+                      >
+                        <ElTag type="info" effect="plain" size="small">
+                          +{{ (row.test_miss_reason || []).length - 2 }}
+                        </ElTag>
+                      </ElTooltip>
+                    </div>
                   </template>
 
                   <template #cell-test_improvements="{ row }">
@@ -1700,6 +1949,14 @@ onUnmounted(() => {
   font-size: 12px;
   line-height: 1.6;
   padding: 6px 0 10px;
+}
+
+.dts-cell-tags {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .dts-data-guide {

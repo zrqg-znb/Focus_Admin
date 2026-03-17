@@ -3,6 +3,7 @@ from common.fu_auth import BearerAuth as GlobalAuth
 
 from . import dts_statistics_services
 from .dts_statistics_schemas import (
+    DtsDictOptionsSchema,
     DtsExtensionSaveSchema,
     DtsListResponseSchema,
     DtsSaveResponseSchema,
@@ -24,6 +25,11 @@ def save_extension(request, defect_no: str, data: DtsExtensionSaveSchema):
 @router.post("/summary", response=DtsSummarySchema)
 def get_summary(request, query: DtsStatisticsQuerySchema):
     return dts_statistics_services.get_dts_statistics_summary(query)
+
+
+@router.get("/dict-options", response=DtsDictOptionsSchema, summary="获取 DTS 模块字典选项")
+def get_dict_options(request):
+    return dts_statistics_services.get_dts_statistics_dict_options()
 
 
 @router.post("/export", summary="导出 DTS 统计明细")

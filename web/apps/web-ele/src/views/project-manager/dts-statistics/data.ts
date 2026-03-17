@@ -1,10 +1,14 @@
 import type { VbenFormSchema } from '#/adapter/form';
 import type { PlGroup } from '#/api/core/pl';
-import type { DtsMergedDefect } from '#/api/project-manager/dts-statistics';
+import type {
+  DtsDictOptions,
+  DtsMergedDefect,
+} from '#/api/project-manager/dts-statistics';
 import type { ProjectOut } from '#/api/project-manager/project';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
 import { getAllPlApi } from '#/api/core/pl';
+import { getDtsDictOptions } from '#/api/project-manager/dts-statistics';
 
 type Columns = ZqTableGridOptions<DtsMergedDefect>['columns'];
 
@@ -12,6 +16,277 @@ const YES_NO_OPTIONS = [
   { label: '是', value: '是' },
   { label: '否', value: '否' },
 ];
+
+type SelectOption = { label: string; value: string };
+
+function normalizeSelectOptions(
+  items: Array<Partial<SelectOption>> | null | undefined,
+): SelectOption[] {
+  const seen = new Set<string>();
+  const options: SelectOption[] = [];
+  (items || []).forEach((item) => {
+    const label = String(item.label ?? item.value ?? '').trim();
+    const value = String(item.value ?? item.label ?? '').trim();
+    const resolvedLabel = label || value;
+    // Store label into DB so list/export/summary remain human-readable.
+    const resolvedValue = resolvedLabel;
+    if (!resolvedLabel || !resolvedValue || seen.has(resolvedValue)) {
+      return;
+    }
+    seen.add(resolvedValue);
+    options.push({ label: resolvedLabel, value: resolvedValue });
+  });
+  return options;
+}
+
+function normalizeDtsDictOptions(
+  bundle: null | Partial<DtsDictOptions> | undefined,
+): DtsDictOptions {
+  const safeBundle = bundle || {};
+  const normalized: DtsDictOptions = {
+    yes_no: normalizeSelectOptions(safeBundle.yes_no),
+    qa_category: normalizeSelectOptions(safeBundle.qa_category),
+    process_quality_type: normalizeSelectOptions(
+      safeBundle.process_quality_type,
+    ),
+    dev_sub_category: normalizeSelectOptions(safeBundle.dev_sub_category),
+    test_miss_reason: normalizeSelectOptions(safeBundle.test_miss_reason),
+    action_status: normalizeSelectOptions(safeBundle.action_status),
+  };
+  if (normalized.yes_no.length === 0) {
+    normalized.yes_no = [...YES_NO_OPTIONS];
+  }
+  return normalized;
+}
+
+let dtsDictOptionsPromise: null | Promise<DtsDictOptions> = null;
+
+export async function fetchDtsDictOptionsCached(
+  force = false,
+): Promise<DtsDictOptions> {
+  if (force || !dtsDictOptionsPromise) {
+    dtsDictOptionsPromise = getDtsDictOptions()
+      .then((bundle) => normalizeDtsDictOptions(bundle))
+      .catch(() => normalizeDtsDictOptions(null));
+  }
+  return dtsDictOptionsPromise;
+}
+
+function createDtsDictApiSelectProps(
+  key: keyof DtsDictOptions,
+  fallbackOptions: SelectOption[] = [],
+) {
+  return {
+    api: async () => {
+      const bundle = await fetchDtsDictOptionsCached();
+      return (bundle as any)[key] || [];
+    },
+    afterFetch: (items: SelectOption[]) => {
+      const options = normalizeSelectOptions(items);
+      return options.length > 0 ? options : fallbackOptions;
+    },
+    filterable: true,
+    clearable: true,
+  };
+}
+
+export type DtsTagType = 'danger' | 'info' | 'primary' | 'success' | 'warning';
+
+export interface DtsDictTagMeta {
+  label: string;
+  type: DtsTagType;
+}
+
+export type DtsGovernanceField =
+  | 'dev_status'
+  | 'dev_sub_category'
+  | 'is_dev_analyzed'
+  | 'is_downstream'
+  | 'is_test_analyzed'
+  | 'need_dev_analyze'
+  | 'need_test_analyze'
+  | 'process_quality_type'
+  | 'qa_category'
+  | 'test_miss_reason'
+  | 'test_status';
+
+const TAG_PALETTE: DtsTagType[] = [
+  'primary',
+  'success',
+  'warning',
+  'danger',
+  'info',
+];
+
+function resolveOptionsForField(
+  dictOptions: DtsDictOptions | null | undefined,
+  field: DtsGovernanceField,
+): SelectOption[] {
+  const safeOptions = dictOptions || normalizeDtsDictOptions(null);
+  switch (field) {
+    case 'dev_status': {
+      return safeOptions.action_status;
+    }
+    case 'dev_sub_category': {
+      return safeOptions.dev_sub_category;
+    }
+    case 'is_dev_analyzed':
+    case 'is_downstream':
+    case 'is_test_analyzed':
+    case 'need_dev_analyze':
+    case 'need_test_analyze': {
+      return safeOptions.yes_no.length > 0
+        ? safeOptions.yes_no
+        : YES_NO_OPTIONS;
+    }
+    case 'process_quality_type': {
+      return safeOptions.process_quality_type;
+    }
+    case 'qa_category': {
+      return safeOptions.qa_category;
+    }
+    case 'test_miss_reason': {
+      return safeOptions.test_miss_reason;
+    }
+    case 'test_status': {
+      return safeOptions.action_status;
+    }
+    default: {
+      return [];
+    }
+  }
+}
+
+function resolveOptionLabel(raw: unknown, options: SelectOption[]): string {
+  const text = String(raw || '').trim();
+  if (!text) {
+    return '';
+  }
+  const matched = options.find((item) => {
+    const value = String(item.value || '').trim();
+    const label = String(item.label || '').trim();
+    return value === text || label === text;
+  });
+  return String(matched?.label || matched?.value || text).trim() || text;
+}
+
+function resolvePaletteTagType(
+  raw: unknown,
+  options: SelectOption[],
+): DtsTagType {
+  const text = String(raw || '').trim();
+  if (!text || options.length === 0) {
+    return 'info';
+  }
+  const index = options.findIndex((item) => {
+    const value = String(item.value || '').trim();
+    const label = String(item.label || '').trim();
+    return value === text || label === text;
+  });
+  if (index === -1) {
+    return 'info';
+  }
+  return TAG_PALETTE[index % TAG_PALETTE.length] || 'info';
+}
+
+function resolveYesNoTagType(label: string): DtsTagType {
+  const text = String(label || '').trim();
+  if (text === '是' || text.toLowerCase() === 'yes') {
+    return 'success';
+  }
+  if (text === '否' || text.toLowerCase() === 'no') {
+    return 'info';
+  }
+  return 'info';
+}
+
+function resolveActionStatusTagType(label: string): DtsTagType {
+  const text = String(label || '').trim();
+  if (!text) {
+    return 'info';
+  }
+  if (text.includes('已完成')) {
+    return 'success';
+  }
+  if (text.includes('长期')) {
+    return 'danger';
+  }
+  if (text.includes('不适用')) {
+    return 'info';
+  }
+  if (text.includes('中')) {
+    return 'primary';
+  }
+  if (text.includes('待')) {
+    return 'warning';
+  }
+  return 'info';
+}
+
+export function resolveDtsGovernanceTagMeta(
+  dictOptions: DtsDictOptions | null | undefined,
+  field: DtsGovernanceField,
+  raw: unknown,
+): DtsDictTagMeta | null {
+  const text = String(raw || '').trim();
+  if (!text) {
+    return null;
+  }
+  const options = resolveOptionsForField(dictOptions, field);
+  const label = resolveOptionLabel(text, options) || text;
+  if (!label) {
+    return null;
+  }
+
+  if (
+    field === 'is_downstream' ||
+    field === 'need_dev_analyze' ||
+    field === 'need_test_analyze' ||
+    field === 'is_dev_analyzed' ||
+    field === 'is_test_analyzed'
+  ) {
+    return { label, type: resolveYesNoTagType(label) };
+  }
+
+  if (field === 'dev_status' || field === 'test_status') {
+    const semanticType = resolveActionStatusTagType(label);
+    if (semanticType !== 'info') {
+      return { label, type: semanticType };
+    }
+    return { label, type: resolvePaletteTagType(label, options) };
+  }
+
+  return { label, type: resolvePaletteTagType(label, options) };
+}
+
+export function resolveDtsGovernanceTagList(
+  dictOptions: DtsDictOptions | null | undefined,
+  field: 'dev_sub_category' | 'test_miss_reason',
+  raw: unknown,
+): DtsDictTagMeta[] {
+  const values = Array.isArray(raw) ? raw : [];
+  const options = resolveOptionsForField(dictOptions, field);
+  const seen = new Set<string>();
+  const result: DtsDictTagMeta[] = [];
+
+  values.forEach((value) => {
+    const text = String(value || '').trim();
+    if (!text) {
+      return;
+    }
+    const label = resolveOptionLabel(text, options) || text;
+    if (!label || seen.has(label)) {
+      return;
+    }
+    seen.add(label);
+    result.push({
+      label,
+      type: resolvePaletteTagType(label, options),
+    });
+  });
+
+  return result;
+}
 
 export interface SeverityMeta {
   label: string;
@@ -369,11 +644,12 @@ async function fetchPlGroups(): Promise<PlGroup[]> {
 export function useQaFormSchema(): VbenFormSchema[] {
   return [
     {
-      component: 'Input',
+      component: 'ApiSelect',
       fieldName: 'qa_category',
       label: '问题大类',
       componentProps: {
-        placeholder: '请输入问题大类（后续可接字典）',
+        ...createDtsDictApiSelectProps('qa_category'),
+        placeholder: '请选择问题大类',
       },
     },
     {
@@ -390,40 +666,38 @@ export function useQaFormSchema(): VbenFormSchema[] {
       },
     },
     {
-      component: 'Select',
+      component: 'ApiSelect',
       fieldName: 'is_downstream',
       label: '是否下游问题',
       componentProps: {
-        clearable: true,
-        options: YES_NO_OPTIONS,
+        ...createDtsDictApiSelectProps('yes_no', YES_NO_OPTIONS),
         placeholder: '请选择',
       },
     },
     {
-      component: 'Input',
+      component: 'ApiSelect',
       fieldName: 'process_quality_type',
       label: '过程质量分类',
       componentProps: {
-        placeholder: '请输入过程质量分类',
+        ...createDtsDictApiSelectProps('process_quality_type'),
+        placeholder: '请选择过程质量分类',
       },
     },
     {
-      component: 'Select',
+      component: 'ApiSelect',
       fieldName: 'need_dev_analyze',
       label: '需开发分析',
       componentProps: {
-        clearable: true,
-        options: YES_NO_OPTIONS,
+        ...createDtsDictApiSelectProps('yes_no', YES_NO_OPTIONS),
         placeholder: '请选择',
       },
     },
     {
-      component: 'Select',
+      component: 'ApiSelect',
       fieldName: 'need_test_analyze',
       label: '需测试分析',
       componentProps: {
-        clearable: true,
-        options: YES_NO_OPTIONS,
+        ...createDtsDictApiSelectProps('yes_no', YES_NO_OPTIONS),
         placeholder: '请选择',
       },
     },
@@ -444,22 +718,20 @@ export function useQaFormSchema(): VbenFormSchema[] {
       },
     },
     {
-      component: 'Select',
+      component: 'ApiSelect',
       fieldName: 'is_dev_analyzed',
       label: '开发分析完成',
       componentProps: {
-        clearable: true,
-        options: YES_NO_OPTIONS,
+        ...createDtsDictApiSelectProps('yes_no', YES_NO_OPTIONS),
         placeholder: '请选择',
       },
     },
     {
-      component: 'Select',
+      component: 'ApiSelect',
       fieldName: 'is_test_analyzed',
       label: '测试分析完成',
       componentProps: {
-        clearable: true,
-        options: YES_NO_OPTIONS,
+        ...createDtsDictApiSelectProps('yes_no', YES_NO_OPTIONS),
         placeholder: '请选择',
       },
     },
@@ -478,12 +750,15 @@ export function useQaFormSchema(): VbenFormSchema[] {
 export function useDevFormSchema(): VbenFormSchema[] {
   return [
     {
-      component: 'Textarea',
+      component: 'ApiSelect',
       fieldName: 'dev_sub_category',
       label: '问题小类',
       componentProps: {
-        placeholder: '一行一条（保存时自动拆分）',
-        rows: 3,
+        ...createDtsDictApiSelectProps('dev_sub_category'),
+        multiple: true,
+        collapseTags: true,
+        collapseTagsTooltip: true,
+        placeholder: '请选择问题小类（可多选）',
       },
     },
     {
@@ -530,11 +805,12 @@ export function useDevFormSchema(): VbenFormSchema[] {
       },
     },
     {
-      component: 'Input',
+      component: 'ApiSelect',
       fieldName: 'dev_status',
       label: '改进状态(开发)',
       componentProps: {
-        placeholder: '请输入状态（后续可接字典）',
+        ...createDtsDictApiSelectProps('action_status'),
+        placeholder: '请选择改进状态',
       },
     },
   ];
@@ -551,12 +827,15 @@ export function useTestFormSchema(): VbenFormSchema[] {
       },
     },
     {
-      component: 'Textarea',
+      component: 'ApiSelect',
       fieldName: 'test_miss_reason',
       label: '漏测原因',
       componentProps: {
-        placeholder: '一行一条（保存时自动拆分）',
-        rows: 3,
+        ...createDtsDictApiSelectProps('test_miss_reason'),
+        multiple: true,
+        collapseTags: true,
+        collapseTagsTooltip: true,
+        placeholder: '请选择漏测原因（可多选）',
       },
     },
     {
@@ -595,11 +874,12 @@ export function useTestFormSchema(): VbenFormSchema[] {
       },
     },
     {
-      component: 'Input',
+      component: 'ApiSelect',
       fieldName: 'test_status',
       label: '改进状态(测试)',
       componentProps: {
-        placeholder: '请输入状态（后续可接字典）',
+        ...createDtsDictApiSelectProps('action_status'),
+        placeholder: '请选择改进状态',
       },
     },
   ];

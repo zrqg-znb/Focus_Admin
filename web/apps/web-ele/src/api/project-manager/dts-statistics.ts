@@ -142,6 +142,20 @@ export interface DtsSummary {
   action_status_dist: DtsDistributionItem[];
 }
 
+export interface DtsDictOption {
+  label: string;
+  value: string;
+}
+
+export interface DtsDictOptions {
+  yes_no: DtsDictOption[];
+  qa_category: DtsDictOption[];
+  process_quality_type: DtsDictOption[];
+  dev_sub_category: DtsDictOption[];
+  test_miss_reason: DtsDictOption[];
+  action_status: DtsDictOption[];
+}
+
 const base = '/api/project-manager/dts-statistics';
 
 export async function getDtsList(data: DtsStatisticsQuery) {
@@ -166,4 +180,8 @@ export async function exportDtsStatistics(data: DtsStatisticsFilters) {
   return requestClient.post<Blob>(`${base}/export`, data, {
     responseType: 'blob',
   });
+}
+
+export async function getDtsDictOptions() {
+  return requestClient.get<DtsDictOptions>(`${base}/dict-options`);
 }

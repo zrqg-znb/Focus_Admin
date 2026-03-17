@@ -391,7 +391,98 @@ Schema：`DtsStatisticsExportSchema`（不包含分页字段）
 
 ---
 
-## 9. 错误处理与状态码
+## 9. 数据字典绑定（填报字段）
+
+为保证治理字段的统计口径一致，前端在「问题单填报」Drawer 中将部分字段绑定到系统数据字典（`core_dict/core_dict_item`）。
+
+为减少前端多次请求，后端提供聚合接口：
+
+- `GET /api/project-manager/dts-statistics/dict-options`
+  - 一次性返回 DTS 模块所需字典选项（`yes_no/dts_qa_category/...` 的下拉选项）
+  - 前端会在页面初始化时预加载，并在 Drawer 表单中复用
+
+字典编码约定（前端默认按这些 code 拉取）：
+
+| 字典编码(code) | 绑定字段 | 说明 |
+|---|---|---|
+| `yes_no` | `is_downstream/need_dev_analyze/need_test_analyze/is_dev_analyzed/is_test_analyzed` | 是/否通用选项；若字典不存在，前端会回退到固定的「是/否」 |
+| `dts_qa_category` | `qa_category` | QA 问题大类 |
+| `dts_process_quality_type` | `process_quality_type` | 过程质量分类 |
+| `dts_dev_sub_category` | `dev_sub_category` | 开发问题小类（多选） |
+| `dts_test_miss_reason` | `test_miss_reason` | 漏测原因（多选） |
+| `dts_action_status` | `dev_status/test_status` | 改进状态（开发/测试共用） |
+
+> 注意：当前 DTS 统计模块的扩展字段落库采用“可读口径”：前端在保存时会将字典项的 **label** 作为 value 一并提交（即 DB 中存储的是中文可读值），以保证列表/导出/统计看板天然可读，避免二次映射。
+
+### 9.1 字典初始化建议（可直接作为首次初始化）
+
+本仓库已提供 migration 用于初始化 DTS 相关字典（可按实际情况调整选项）：
+
+- `backend-django/apps/project_manager/migrations/0024_seed_dts_dicts.py`
+
+初始化选项清单（建议）：
+
+- `yes_no`（是否）
+  - 是
+  - 否
+- `dts_qa_category`（DTS-QA问题大类）
+  - 需求理解偏差
+  - 技术方案问题
+  - 设计实现问题
+  - 代码质量问题
+  - 联调集成问题
+  - 测试遗漏
+  - 配置环境问题
+  - 数据问题
+  - 三方依赖问题
+  - 其他
+- `dts_process_quality_type`（DTS-过程质量分类）
+  - 需求评审不足
+  - 技术方案缺失
+  - 设计评审不足
+  - 开发自测不足
+  - 测试用例覆盖不足
+  - 回归验证不足
+  - 变更影响分析不足
+  - 发布流程问题
+  - 配置管理问题
+  - 其他
+- `dts_dev_sub_category`（DTS-开发问题小类）
+  - 空指针/异常处理
+  - 边界条件遗漏
+  - 状态机/时序问题
+  - 并发/竞态问题
+  - 配置错误
+  - 接口兼容性问题
+  - 数据处理错误
+  - 资源释放/泄漏
+  - 容错性不足
+  - 日志/监控缺失
+  - 其他
+- `dts_test_miss_reason`（DTS-漏测原因）
+  - 用例未覆盖
+  - 场景遗漏
+  - 边界值遗漏
+  - 组合场景遗漏
+  - 回归范围不足
+  - 环境限制未覆盖
+  - 数据构造不足
+  - 自动化缺失
+  - 执行遗漏
+  - 其他
+- `dts_action_status`（DTS-改进状态）
+  - 待分析
+  - 分析中
+  - 待实施
+  - 实施中
+  - 待验证
+  - 已完成
+  - 长期跟踪
+  - 不适用
+
+---
+
+## 10. 错误处理与状态码
 
 典型错误：
 
@@ -405,7 +496,7 @@ Schema：`DtsStatisticsExportSchema`（不包含分页字段）
 
 ---
 
-## 10. 性能与保护策略
+## 11. 性能与保护策略
 
 - 扫描默认 `500 * 200 = 100,000` 条上限保护（scanPageSize * maxScanPages）
 - list 的 `page_size` 被限制到最大 500（schema validator）
@@ -415,7 +506,7 @@ Schema：`DtsStatisticsExportSchema`（不包含分页字段）
 
 ---
 
-## 11. 自测与验收清单（后端）
+## 12. 自测与验收清单（后端）
 
 1) 缓存命中
 - 同一筛选重复查询/翻页：上游请求次数显著下降（日志可见 page/scan cache 命中）
@@ -431,7 +522,7 @@ Schema：`DtsStatisticsExportSchema`（不包含分页字段）
 
 ---
 
-## 12. 代码位置索引
+## 13. 代码位置索引
 
 后端核心：
 
@@ -441,4 +532,3 @@ Schema：`DtsStatisticsExportSchema`（不包含分页字段）
 - Models：`backend-django/apps/project_manager/dts_statistics/dts_statistics_model.py`
 - 路由注册：`backend-django/apps/project_manager/router.py`
 - 缓存封装：`backend-django/common/fu_cache.py`
-
