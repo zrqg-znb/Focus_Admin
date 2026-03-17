@@ -21,8 +21,6 @@ import {
   ElCard,
   ElDatePicker,
   ElEmpty,
-  ElForm,
-  ElFormItem,
   ElMessage,
   ElOption,
   ElProgress,
@@ -44,6 +42,7 @@ import {
 import { useZqTable } from '#/components/zq-table';
 
 import ProjectSelectorDialog from './components/project-selector-dialog.vue';
+import TeamSelectorDialog from './components/team-selector-dialog.vue';
 import {
   CATEGORY_OPTIONS,
   createEmptyRequirementSummary,
@@ -67,6 +66,21 @@ interface UserOption {
   value: string;
 }
 
+function createDefaultFilters(): RequirementBoardFilterPayload {
+  return {
+    project_ids: [],
+    sub_teams: [],
+    categories: [...DEFAULT_CATEGORIES],
+    schedule_state: [],
+    verification_policies: [],
+    develop_users: [],
+    test_users: [],
+    time_field: DEFAULT_TIME_FIELD,
+    time_start: '',
+    time_end: '',
+  };
+}
+
 const activeTab = ref('data');
 const optionsLoading = ref(false);
 const summaryLoading = ref(false);
@@ -76,22 +90,11 @@ const testUserLoading = ref(false);
 const projectOptions = ref<RequirementBoardProjectOption[]>([]);
 const developUserOptions = ref<UserOption[]>([]);
 const testUserOptions = ref<UserOption[]>([]);
-const filterCollapsed = ref(false);
 const projectSelectorVisible = ref(false);
+const teamSelectorVisible = ref(false);
 const dataGridWrapRef = ref<HTMLDivElement>();
 const dataGridHeight = ref<null | number>(null);
-const filters = ref<RequirementBoardFilterPayload>({
-  project_ids: [],
-  sub_teams: [],
-  categories: [...DEFAULT_CATEGORIES],
-  schedule_state: [],
-  verification_policies: [],
-  develop_users: [],
-  test_users: [],
-  time_field: DEFAULT_TIME_FIELD,
-  time_start: '',
-  time_end: '',
-});
+const filters = ref<RequirementBoardFilterPayload>(createDefaultFilters());
 const dateRange = ref<[Date, Date] | null>(null);
 const appliedFilters = ref<null | RequirementBoardFilterPayload>(null);
 const summary = ref<RequirementBoardSummary>(createEmptyRequirementSummary());
@@ -249,38 +252,30 @@ const teamOptions = computed(() => {
 
 const projectSelectorButtonLabel = computed(() =>
   filters.value.project_ids.length > 0
-    ? `查看已选项目（${filters.value.project_ids.length}）`
+    ? `已选项目（${filters.value.project_ids.length}）`
     : '选择项目',
 );
 const projectSelectorButtonType = computed(() =>
   filters.value.project_ids.length > 0 ? 'success' : 'primary',
 );
+const teamSelectorButtonLabel = computed(() =>
+  filters.value.sub_teams?.length
+    ? `已选团队（${filters.value.sub_teams.length}）`
+    : '选择团队',
+);
+const teamSelectorButtonType = computed(() =>
+  filters.value.sub_teams?.length ? 'success' : 'primary',
+);
+const isTeamSelectorDisabled = computed(
+  () => selectedProjects.value.length === 0,
+);
 
 const hasAppliedFilters = computed(() => Boolean(appliedFilters.value));
-const selectedCategoryCount = computed(() => {
-  const categories = normalizeStringArray(filters.value.categories);
-  return categories.length > 0 ? categories.length : DEFAULT_CATEGORIES.length;
-});
-const selectedVerificationPolicyCount = computed(
-  () => normalizeStringArray(filters.value.verification_policies).length,
-);
-const selectedScheduleStateCount = computed(
-  () => normalizeStringArray(filters.value.schedule_state).length,
-);
-const filterToggleLabel = computed(() =>
-  filterCollapsed.value ? '展开筛选' : '收起筛选',
-);
 const summaryTeamCount = computed(() => summary.value.team_summary.length);
 const summaryProjectCount = computed(
   () => summary.value.project_summary.length,
 );
 const summaryTypeCount = computed(() => summary.value.type_summary.length);
-const activeTimeFieldLabel = computed(() => {
-  return (
-    TIME_FIELD_OPTIONS.find((item) => item.value === filters.value.time_field)
-      ?.label || '测试完成时间'
-  );
-});
 const dispatchRate = computed(() => {
   return (
     summary.value.dispatch_rate || {
@@ -323,25 +318,20 @@ const teamChartZoomEnd = computed(() => {
   return Math.min(100, Math.round((visible / count) * 100));
 });
 
-const filterSummaryText = computed(() => {
-  const timeRange =
-    filters.value.time_start && filters.value.time_end
-      ? `${filters.value.time_start} ~ ${filters.value.time_end}`
-      : '未设置';
-  return [
-    `项目 ${filters.value.project_ids.length} 个`,
-    `团队 ${filters.value.sub_teams.length} 个`,
-    `类型 ${selectedCategoryCount.value} 种`,
-    `排期状态 ${selectedScheduleStateCount.value} 个`,
-    `验证策略 ${selectedVerificationPolicyCount.value} 个`,
-    `开发责任人 ${filters.value.develop_users.length} 个`,
-    `测试责任人 ${filters.value.test_users.length} 个`,
-    `时间区间 ${timeRange}`,
-  ].join(' / ');
+const defaultFilterFingerprint = buildFingerprint(createDefaultFilters());
+const editingFilterFingerprint = computed(() =>
+  buildFingerprint(cloneFilterPayload(filters.value)),
+);
+const hasPendingFilterChanges = computed(() => {
+  if (appliedFilters.value) {
+    return (
+      editingFilterFingerprint.value !== buildFingerprint(appliedFilters.value)
+    );
+  }
+  return editingFilterFingerprint.value !== defaultFilterFingerprint;
 });
 
-const filterAutoCollapseBreakpoint = 1280;
-let filterResizeTimer: null | number = null;
+let resizeTimer: null | number = null;
 
 const dataGridWrapStyle = computed(() => {
   if (!dataGridHeight.value) {
@@ -350,18 +340,8 @@ const dataGridWrapStyle = computed(() => {
   return { height: `${dataGridHeight.value}px` };
 });
 
-function updateFilterCollapseByWidth() {
-  if (window.innerWidth < filterAutoCollapseBreakpoint) {
-    filterCollapsed.value = true;
-  }
-}
-
 function updateDataGridHeight() {
-  if (
-    !dataGridWrapRef.value ||
-    !hasAppliedFilters.value ||
-    activeTab.value !== 'data'
-  ) {
+  if (!dataGridWrapRef.value || activeTab.value !== 'data') {
     dataGridHeight.value = null;
     return;
   }
@@ -372,12 +352,11 @@ function updateDataGridHeight() {
   dataGridHeight.value = nextHeight;
 }
 
-function handleFilterResize() {
-  if (filterResizeTimer) {
-    window.clearTimeout(filterResizeTimer);
+function handleResize() {
+  if (resizeTimer) {
+    window.clearTimeout(resizeTimer);
   }
-  filterResizeTimer = window.setTimeout(() => {
-    updateFilterCollapseByWidth();
+  resizeTimer = window.setTimeout(() => {
     updateDataGridHeight();
   }, 120);
 }
@@ -681,16 +660,20 @@ async function fetchSummary(force = false) {
   }
 }
 
-function toggleFilterCollapsed() {
-  filterCollapsed.value = !filterCollapsed.value;
-}
-
 function handleProjectSelectorConfirm(projectIds: string[]) {
   filters.value.project_ids = normalizeStringArray(projectIds);
 }
 
 function clearSelectedProjects() {
   filters.value.project_ids = [];
+}
+
+function handleTeamSelectorConfirm(teamValues: string[]) {
+  filters.value.sub_teams = normalizeStringArray(teamValues);
+}
+
+function clearSelectedTeams() {
+  filters.value.sub_teams = [];
 }
 
 function buildExportFilename() {
@@ -736,27 +719,19 @@ function clearGridData() {
 }
 
 async function handleReset() {
-  filters.value = {
-    project_ids: [],
-    sub_teams: [],
-    categories: [...DEFAULT_CATEGORIES],
-    schedule_state: [],
-    verification_policies: [],
-    develop_users: [],
-    test_users: [],
-    time_field: DEFAULT_TIME_FIELD,
-    time_start: '',
-    time_end: '',
-  };
+  filters.value = createDefaultFilters();
   dateRange.value = null;
   developUserOptions.value = [];
   testUserOptions.value = [];
   projectSelectorVisible.value = false;
+  teamSelectorVisible.value = false;
   appliedFilters.value = null;
   summary.value = createEmptyRequirementSummary();
   summaryFingerprint.value = '';
   gridApi.pagination.currentPage = 1;
   clearGridData();
+  await nextTick();
+  updateDataGridHeight();
 }
 
 async function handleExport() {
@@ -911,7 +886,7 @@ watch(
 );
 
 watch(
-  [activeTab, hasAppliedFilters, filterCollapsed],
+  activeTab,
   async () => {
     await nextTick();
     updateDataGridHeight();
@@ -1069,281 +1044,22 @@ watch(
 );
 
 onMounted(async () => {
-  updateFilterCollapseByWidth();
   updateDataGridHeight();
-  window.addEventListener('resize', handleFilterResize);
+  window.addEventListener('resize', handleResize);
   await loadFilterOptions();
 });
 
 onUnmounted(() => {
-  window.removeEventListener('resize', handleFilterResize);
-  if (filterResizeTimer) {
-    window.clearTimeout(filterResizeTimer);
+  window.removeEventListener('resize', handleResize);
+  if (resizeTimer) {
+    window.clearTimeout(resizeTimer);
   }
 });
 </script>
 
 <template>
   <Page auto-content-height>
-    <div class="flex flex-col gap-4">
-      <ElCard shadow="never" class="requirement-filter-card">
-        <div class="requirement-filter-card__header">
-          <div>
-            <div class="requirement-filter-card__title">需求看板筛选</div>
-            <div class="requirement-filter-card__desc">
-              项目/团队/类型/状态/验证策略为基础筛选，责任人和时间区间支持组合查询；责任人命中任一
-              username 即计入结果。
-            </div>
-          </div>
-          <div class="requirement-filter-card__actions">
-            <ElTag type="primary" effect="light">
-              {{ configuredProjectOptions.length }} 个项目可查询
-            </ElTag>
-            <ElButton
-              text
-              size="small"
-              class="requirement-filter-card__toggle"
-              @click="toggleFilterCollapsed"
-            >
-              {{ filterToggleLabel }}
-            </ElButton>
-          </div>
-        </div>
-
-        <div v-show="!filterCollapsed">
-          <ElForm
-            :model="filters"
-            label-width="92px"
-            class="requirement-filter-form"
-          >
-            <ElFormItem
-              label="项目"
-              class="requirement-filter-form__item requirement-filter-form__item--project"
-            >
-              <div class="project-selector-trigger">
-                <div class="project-selector-trigger__actions">
-                  <ElButton
-                    :loading="optionsLoading"
-                    :type="projectSelectorButtonType"
-                    plain
-                    @click="projectSelectorVisible = true"
-                  >
-                    {{ projectSelectorButtonLabel }}
-                  </ElButton>
-                  <ElButton
-                    text
-                    :disabled="filters.project_ids.length === 0"
-                    @click="clearSelectedProjects"
-                  >
-                    清空
-                  </ElButton>
-                  <span
-                    v-if="filters.project_ids.length > 0"
-                    class="project-selector-trigger__summary-text"
-                  >
-                    已选 {{ filters.project_ids.length }} 个项目
-                  </span>
-                </div>
-              </div>
-            </ElFormItem>
-
-            <ElFormItem label="责任团队" class="requirement-filter-form__item">
-              <ElSelect
-                v-model="filters.sub_teams"
-                class="requirement-filter-control"
-                collapse-tags
-                collapse-tags-tooltip
-                filterable
-                multiple
-                clearable
-                :disabled="selectedProjects.length === 0"
-                placeholder="按所选项目动态生成"
-              >
-                <ElOption
-                  v-for="item in teamOptions"
-                  :key="item.value"
-                  :label="item.label"
-                  :value="item.value"
-                />
-              </ElSelect>
-            </ElFormItem>
-
-            <ElFormItem label="需求类型" class="requirement-filter-form__item">
-              <ElSelect
-                v-model="filters.categories"
-                class="requirement-filter-control"
-                collapse-tags
-                collapse-tags-tooltip
-                filterable
-                multiple
-                clearable
-                placeholder="默认全选"
-              >
-                <ElOption
-                  v-for="item in CATEGORY_OPTIONS"
-                  :key="item.value"
-                  :label="item.label"
-                  :value="item.value"
-                />
-              </ElSelect>
-            </ElFormItem>
-
-            <ElFormItem label="验证策略" class="requirement-filter-form__item">
-              <ElSelect
-                v-model="filters.verification_policies"
-                class="requirement-filter-control"
-                collapse-tags
-                collapse-tags-tooltip
-                filterable
-                multiple
-                clearable
-                placeholder="默认不过滤"
-              >
-                <ElOption
-                  v-for="item in VERIFICATION_POLICY_OPTIONS"
-                  :key="item.value"
-                  :label="item.label"
-                  :value="item.value"
-                />
-              </ElSelect>
-            </ElFormItem>
-
-            <ElFormItem label="排期状态" class="requirement-filter-form__item">
-              <ElSelect
-                v-model="filters.schedule_state"
-                class="requirement-filter-control"
-                collapse-tags
-                collapse-tags-tooltip
-                filterable
-                multiple
-                clearable
-                placeholder="默认不过滤"
-              >
-                <ElOption
-                  v-for="item in SCHEDULE_STATE_OPTIONS"
-                  :key="item.value"
-                  :label="item.label"
-                  :value="item.value"
-                />
-              </ElSelect>
-            </ElFormItem>
-
-            <ElFormItem
-              label="开发责任人"
-              class="requirement-filter-form__item"
-            >
-              <ElSelect
-                v-model="filters.develop_users"
-                class="requirement-filter-control"
-                multiple
-                collapse-tags
-                collapse-tags-tooltip
-                filterable
-                remote
-                reserve-keyword
-                clearable
-                :loading="developUserLoading"
-                placeholder="按 username 搜索"
-                :remote-method="
-                  (value: string) => searchUsers(value, 'develop')
-                "
-              >
-                <ElOption
-                  v-for="item in developUserOptions"
-                  :key="item.value"
-                  :label="item.label"
-                  :value="item.value"
-                />
-              </ElSelect>
-            </ElFormItem>
-
-            <ElFormItem
-              label="测试责任人"
-              class="requirement-filter-form__item"
-            >
-              <ElSelect
-                v-model="filters.test_users"
-                class="requirement-filter-control"
-                multiple
-                collapse-tags
-                collapse-tags-tooltip
-                filterable
-                remote
-                reserve-keyword
-                clearable
-                :loading="testUserLoading"
-                placeholder="按 username 搜索"
-                :remote-method="(value: string) => searchUsers(value, 'test')"
-              >
-                <ElOption
-                  v-for="item in testUserOptions"
-                  :key="item.value"
-                  :label="item.label"
-                  :value="item.value"
-                />
-              </ElSelect>
-            </ElFormItem>
-
-            <ElFormItem label="时间维度" class="requirement-filter-form__item">
-              <ElSelect
-                v-model="filters.time_field"
-                class="requirement-filter-control"
-                clearable
-                placeholder="默认测试完成时间"
-              >
-                <ElOption
-                  v-for="item in TIME_FIELD_OPTIONS"
-                  :key="item.value"
-                  :label="item.label"
-                  :value="item.value"
-                />
-              </ElSelect>
-            </ElFormItem>
-
-            <ElFormItem label="时间区间" class="requirement-filter-form__item">
-              <ElDatePicker
-                v-model="dateRange"
-                class="requirement-filter-control"
-                type="daterange"
-                range-separator="-"
-                start-placeholder="开始日期"
-                end-placeholder="结束日期"
-              />
-            </ElFormItem>
-
-            <ElFormItem
-              class="requirement-filter-form__item requirement-filter-form__item--actions"
-            >
-              <ElButton type="primary" @click="handleSearch">查询</ElButton>
-              <ElButton @click="handleReset">重置</ElButton>
-            </ElFormItem>
-          </ElForm>
-
-          <div class="requirement-filter-card__footer">
-            <span>
-              当前可查询项目
-              {{ configuredProjectOptions.length }}
-              个；团队随项目自动去重，未完成配置的项目已禁用。
-            </span>
-            <span>
-              当前时间维度：{{
-                activeTimeFieldLabel
-              }}；只有选择时间区间后才参与筛选。
-            </span>
-            <span>
-              多责任人统计按“每位责任人全量计入”口径汇总，因此责任人排行总量可能大于全局总量。
-            </span>
-          </div>
-        </div>
-
-        <div v-show="filterCollapsed" class="requirement-filter-card__summary">
-          <span>{{ filterSummaryText }}</span>
-          <span class="requirement-filter-card__summary-hint">
-            展开筛选可调整条件或重新查询
-          </span>
-        </div>
-      </ElCard>
-
+    <div class="requirement-board-shell flex flex-col gap-4">
       <ElTabs v-model="activeTab" class="requirement-board-tabs flex flex-col">
         <ElTabPane label="需求数据看板" name="data">
           <div class="flex flex-col">
@@ -1353,7 +1069,7 @@ onUnmounted(() => {
                   <div>
                     <div class="requirement-data-card__title">需求明细表</div>
                     <div class="requirement-data-card__desc">
-                      查询后在下方表格展示明细，可按验证策略进一步收敛范围。
+                      筛选入口已集成到表头与标题栏；查询后明细表和总结看板复用同一组条件。
                     </div>
                   </div>
                   <div class="requirement-data-card__actions">
@@ -1374,14 +1090,14 @@ onUnmounted(() => {
                       {{
                         hasAppliedFilters
                           ? `已加载 ${dataResultCount} 条结果`
-                          : '等待查询'
+                          : '待查询'
                       }}
                     </ElTag>
                   </div>
                 </div>
               </template>
 
-              <div v-if="hasAppliedFilters" class="requirement-data-card__body">
+              <div class="requirement-data-card__body">
                 <div
                   ref="dataGridWrapRef"
                   class="requirement-data-grid-wrap"
@@ -1390,9 +1106,265 @@ onUnmounted(() => {
                   <Grid class="requirement-data-grid h-full min-h-0">
                     <template #table-title>
                       <div class="requirement-table-title">
-                        需求明细表、分页展示需求明细，可快速查看团队、状态、时间节点、延期标签与多责任人分布。
+                        <div class="requirement-table-title__filters">
+                          <div class="requirement-table-title__field">
+                            <span class="requirement-table-title__label">
+                              时间维度
+                            </span>
+                            <ElSelect
+                              v-model="filters.time_field"
+                              clearable
+                              size="small"
+                              class="requirement-table-title__select"
+                              placeholder="默认测试完成时间"
+                            >
+                              <ElOption
+                                v-for="item in TIME_FIELD_OPTIONS"
+                                :key="item.value"
+                                :label="item.label"
+                                :value="item.value"
+                              />
+                            </ElSelect>
+                          </div>
+                          <div class="requirement-table-title__field">
+                            <span class="requirement-table-title__label">
+                              时间区间
+                            </span>
+                            <ElDatePicker
+                              v-model="dateRange"
+                              type="daterange"
+                              size="small"
+                              class="requirement-table-title__date"
+                              range-separator="-"
+                              start-placeholder="开始日期"
+                              end-placeholder="结束日期"
+                            />
+                          </div>
+                          <div class="requirement-table-title__actions">
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="handleSearch"
+                            >
+                              查询
+                            </ElButton>
+                            <ElButton size="small" @click="handleReset">
+                              重置
+                            </ElButton>
+                          </div>
+                        </div>
+                        <ElTag
+                          v-if="hasPendingFilterChanges"
+                          type="warning"
+                          effect="light"
+                          class="requirement-table-title__pending-tag"
+                        >
+                          有未应用筛选
+                        </ElTag>
                       </div>
                     </template>
+
+                    <template #header-project_name>
+                      <div class="requirement-header-filter" @click.stop>
+                        <span class="requirement-header-filter__label">
+                          项目名
+                        </span>
+                        <div class="requirement-header-filter__actions">
+                          <ElButton
+                            :loading="optionsLoading"
+                            :type="projectSelectorButtonType"
+                            plain
+                            size="small"
+                            @click.stop="projectSelectorVisible = true"
+                          >
+                            {{ projectSelectorButtonLabel }}
+                          </ElButton>
+                          <ElButton
+                            link
+                            size="small"
+                            :disabled="filters.project_ids.length === 0"
+                            @click.stop="clearSelectedProjects"
+                          >
+                            清空
+                          </ElButton>
+                        </div>
+                      </div>
+                    </template>
+
+                    <template #header-team_name>
+                      <div class="requirement-header-filter" @click.stop>
+                        <span class="requirement-header-filter__label">
+                          团队
+                        </span>
+                        <div class="requirement-header-filter__actions">
+                          <ElButton
+                            :disabled="isTeamSelectorDisabled"
+                            :type="teamSelectorButtonType"
+                            plain
+                            size="small"
+                            @click.stop="teamSelectorVisible = true"
+                          >
+                            {{ teamSelectorButtonLabel }}
+                          </ElButton>
+                          <ElButton
+                            link
+                            size="small"
+                            :disabled="!filters.sub_teams?.length"
+                            @click.stop="clearSelectedTeams"
+                          >
+                            清空
+                          </ElButton>
+                        </div>
+                      </div>
+                    </template>
+
+                    <template #header-category>
+                      <div class="requirement-header-filter" @click.stop>
+                        <span class="requirement-header-filter__label">
+                          需求类型
+                        </span>
+                        <ElSelect
+                          v-model="filters.categories"
+                          class="requirement-header-filter__select"
+                          collapse-tags
+                          collapse-tags-tooltip
+                          filterable
+                          :max-collapse-tags="1"
+                          multiple
+                          clearable
+                          size="small"
+                          placeholder="默认全选"
+                        >
+                          <ElOption
+                            v-for="item in CATEGORY_OPTIONS"
+                            :key="item.value"
+                            :label="item.label"
+                            :value="item.value"
+                          />
+                        </ElSelect>
+                      </div>
+                    </template>
+
+                    <template #header-status_code>
+                      <div class="requirement-header-filter" @click.stop>
+                        <span class="requirement-header-filter__label">
+                          排期状态
+                        </span>
+                        <ElSelect
+                          v-model="filters.schedule_state"
+                          class="requirement-header-filter__select"
+                          collapse-tags
+                          collapse-tags-tooltip
+                          filterable
+                          :max-collapse-tags="1"
+                          multiple
+                          clearable
+                          size="small"
+                          placeholder="默认不过滤"
+                        >
+                          <ElOption
+                            v-for="item in SCHEDULE_STATE_OPTIONS"
+                            :key="item.value"
+                            :label="item.label"
+                            :value="item.value"
+                          />
+                        </ElSelect>
+                      </div>
+                    </template>
+
+                    <template #header-verification_policy_label>
+                      <div class="requirement-header-filter" @click.stop>
+                        <span class="requirement-header-filter__label">
+                          验证策略
+                        </span>
+                        <ElSelect
+                          v-model="filters.verification_policies"
+                          class="requirement-header-filter__select"
+                          collapse-tags
+                          collapse-tags-tooltip
+                          filterable
+                          :max-collapse-tags="1"
+                          multiple
+                          clearable
+                          size="small"
+                          placeholder="默认不过滤"
+                        >
+                          <ElOption
+                            v-for="item in VERIFICATION_POLICY_OPTIONS"
+                            :key="item.value"
+                            :label="item.label"
+                            :value="item.value"
+                          />
+                        </ElSelect>
+                      </div>
+                    </template>
+
+                    <template #header-develop_user_display>
+                      <div class="requirement-header-filter" @click.stop>
+                        <span class="requirement-header-filter__label">
+                          开发责任人
+                        </span>
+                        <ElSelect
+                          v-model="filters.develop_users"
+                          class="requirement-header-filter__select"
+                          multiple
+                          collapse-tags
+                          collapse-tags-tooltip
+                          filterable
+                          remote
+                          reserve-keyword
+                          clearable
+                          size="small"
+                          :max-collapse-tags="1"
+                          :loading="developUserLoading"
+                          placeholder="按 username 搜索"
+                          :remote-method="
+                            (value: string) => searchUsers(value, 'develop')
+                          "
+                        >
+                          <ElOption
+                            v-for="item in developUserOptions"
+                            :key="item.value"
+                            :label="item.label"
+                            :value="item.value"
+                          />
+                        </ElSelect>
+                      </div>
+                    </template>
+
+                    <template #header-test_user_display>
+                      <div class="requirement-header-filter" @click.stop>
+                        <span class="requirement-header-filter__label">
+                          测试责任人
+                        </span>
+                        <ElSelect
+                          v-model="filters.test_users"
+                          class="requirement-header-filter__select"
+                          multiple
+                          collapse-tags
+                          collapse-tags-tooltip
+                          filterable
+                          remote
+                          reserve-keyword
+                          clearable
+                          size="small"
+                          :max-collapse-tags="1"
+                          :loading="testUserLoading"
+                          placeholder="按 username 搜索"
+                          :remote-method="
+                            (value: string) => searchUsers(value, 'test')
+                          "
+                        >
+                          <ElOption
+                            v-for="item in testUserOptions"
+                            :key="item.value"
+                            :label="item.label"
+                            :value="item.value"
+                          />
+                        </ElSelect>
+                      </div>
+                    </template>
+
                     <template #cell-team_name="{ row }">
                       <ElTag
                         :type="getTeamTagType(row.team_name)"
@@ -1514,72 +1486,40 @@ onUnmounted(() => {
                         </span>
                       </div>
                     </template>
+
+                    <template #empty>
+                      <div
+                        v-if="!hasAppliedFilters"
+                        class="requirement-data-guide"
+                      >
+                        <div class="requirement-data-guide__panel">
+                          <div class="requirement-data-guide__title">
+                            先设置筛选条件
+                          </div>
+                          <div class="requirement-data-guide__desc">
+                            选择项目后点击查询，结果会同步到明细、导出和总结看板。
+                          </div>
+                          <div class="requirement-data-guide__meta">
+                            当前可查询项目
+                            {{ configuredProjectOptions.length }}
+                            个
+                          </div>
+                          <div class="requirement-data-guide__actions">
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="handleSearch"
+                            >
+                              开始查询明细
+                            </ElButton>
+                          </div>
+                        </div>
+                      </div>
+                      <div v-else class="requirement-data-empty">
+                        <ElEmpty description="当前筛选条件下暂无需求数据" />
+                      </div>
+                    </template>
                   </Grid>
-                </div>
-              </div>
-
-              <div v-else class="requirement-data-guide">
-                <div class="requirement-data-guide__panel">
-                  <div class="requirement-data-guide__eyebrow">
-                    需求数据看板
-                  </div>
-                  <div class="requirement-data-guide__title">
-                    先组合筛选条件，再拉取需求明细
-                  </div>
-                  <div class="requirement-data-guide__desc">
-                    数据看板不会预加载全量需求。请选择项目，可按团队、类型、责任人和自定义时间区间进行组合查询。
-                  </div>
-
-                  <div class="requirement-guide-steps">
-                    <div class="requirement-guide-step">
-                      <div class="requirement-guide-step__index">1</div>
-                      <div class="requirement-guide-step__title">选择项目</div>
-                      <div class="requirement-guide-step__desc">
-                        当前已选
-                        {{ filters.project_ids.length }}
-                        个项目；未完成配置的项目已自动禁用。
-                      </div>
-                    </div>
-                    <div class="requirement-guide-step">
-                      <div class="requirement-guide-step__index">2</div>
-                      <div class="requirement-guide-step__title">
-                        选择团队与类型
-                      </div>
-                      <div class="requirement-guide-step__desc">
-                        当前已选 {{ filters.sub_teams?.length || 0 }} 个团队、{{
-                          selectedCategoryCount
-                        }}
-                        种需求类型，验证策略
-                        {{ selectedVerificationPolicyCount }} 个。
-                      </div>
-                    </div>
-                    <div class="requirement-guide-step">
-                      <div class="requirement-guide-step__index">3</div>
-                      <div class="requirement-guide-step__title">
-                        补充责任人与时间
-                      </div>
-                      <div class="requirement-guide-step__desc">
-                        可按开发/测试责任人筛选；时间维度当前为
-                        {{ activeTimeFieldLabel }}。
-                      </div>
-                    </div>
-                    <div class="requirement-guide-step">
-                      <div class="requirement-guide-step__index">4</div>
-                      <div class="requirement-guide-step__title">点击查询</div>
-                      <div class="requirement-guide-step__desc">
-                        查询后切换到总结看板，可直接复用同一组筛选条件查看统计结果。
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="mt-6 flex flex-wrap items-center gap-3">
-                    <ElButton type="primary" @click="handleSearch">
-                      开始查询明细
-                    </ElButton>
-                    <span class="text-xs text-slate-500">
-                      查询后保留筛选条件，可直接切换到总结看板查看趋势、延期和责任人排行。
-                    </span>
-                  </div>
                 </div>
               </div>
             </ElCard>
@@ -1593,7 +1533,7 @@ onUnmounted(() => {
           >
             <ElEmpty
               v-if="!hasAppliedFilters"
-              description="请选择项目并点击查询后查看总结"
+              description="请先到需求数据看板设置表头筛选并点击查询"
             />
             <template v-else>
               <div class="summary-overview-grid">
@@ -2634,121 +2574,37 @@ onUnmounted(() => {
         :selected-project-ids="filters.project_ids"
         @confirm="handleProjectSelectorConfirm"
       />
+
+      <TeamSelectorDialog
+        v-model="teamSelectorVisible"
+        :teams="teamOptions"
+        :selected-team-values="filters.sub_teams || []"
+        @confirm="handleTeamSelectorConfirm"
+      />
     </div>
   </Page>
 </template>
 
 <style scoped>
-.requirement-filter-card {
-  border-radius: 20px;
+.requirement-board-shell {
+  min-height: 0;
 }
 
-.requirement-filter-card__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 18px;
+.requirement-board-tabs {
+  min-height: 0;
+  border: 1px solid #dbe5f1;
+  border-radius: 24px;
+  background: linear-gradient(
+    180deg,
+    rgb(255 255 255 / 0.96) 0%,
+    rgb(248 250 252 / 0.92) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.96),
+    0 12px 30px rgb(15 23 42 / 0.04);
+  padding: 14px;
 }
 
-.requirement-filter-card__actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.requirement-filter-card__toggle {
-  color: #475569;
-  font-weight: 600;
-}
-
-.requirement-filter-card__title {
-  color: #0f172a;
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.requirement-filter-card__desc {
-  color: #64748b;
-  font-size: 13px;
-  line-height: 1.7;
-  margin-top: 6px;
-  max-width: 760px;
-}
-
-.requirement-filter-card__footer {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  color: #64748b;
-  font-size: 12px;
-  line-height: 1.7;
-  margin-top: 14px;
-}
-
-.requirement-filter-card__summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 16px;
-  margin-top: 12px;
-  color: #475569;
-  font-size: 12px;
-}
-
-.requirement-filter-card__summary-hint {
-  color: #94a3b8;
-}
-
-.requirement-filter-form {
-  display: grid;
-  gap: 16px 20px;
-  grid-template-columns: repeat(3, minmax(360px, 1fr));
-}
-
-.requirement-filter-form :deep(.el-form-item) {
-  align-items: flex-start;
-  margin-bottom: 0;
-}
-
-.requirement-filter-form :deep(.el-form-item__label) {
-  align-items: center;
-  color: #334155;
-  font-weight: 600;
-  justify-content: flex-end;
-  line-height: 40px;
-  padding-right: 14px;
-}
-
-.requirement-filter-form :deep(.el-form-item__content) {
-  min-width: 0;
-}
-
-.requirement-filter-form__item--actions {
-  grid-column: 1 / -1;
-}
-
-.requirement-filter-form__item--actions :deep(.el-form-item__content) {
-  display: flex;
-  gap: 12px;
-  justify-content: flex-start;
-  margin-left: 92px;
-}
-
-.requirement-filter-control {
-  width: 100%;
-}
-
-.project-selector-trigger {
-  display: flex;
-  min-width: 0;
-  width: 100%;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.project-selector-trigger__actions,
 .requirement-data-card__actions {
   display: flex;
   align-items: center;
@@ -2756,17 +2612,14 @@ onUnmounted(() => {
   flex-wrap: wrap;
 }
 
-.project-selector-trigger__summary-text {
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 500;
-}
-
 .requirement-data-card {
   display: flex;
   min-height: 0;
   flex-direction: column;
+  border: 1px solid #e2e8f0;
   border-radius: 20px;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+  box-shadow: 0 14px 32px rgb(15 23 42 / 0.04);
 }
 
 .requirement-data-card :deep(.el-card__header) {
@@ -2823,10 +2676,106 @@ onUnmounted(() => {
 }
 
 .requirement-table-title {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px 16px;
+  padding: 6px 0 10px;
+}
+
+.requirement-table-title__filters {
+  display: flex;
+  flex: 1 1 720px;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+}
+
+.requirement-table-title__field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.requirement-table-title__label,
+.requirement-header-filter__label {
   color: #475569;
   font-size: 12px;
-  line-height: 1.6;
-  padding: 6px 0 10px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.requirement-table-title__select {
+  width: 180px;
+}
+
+.requirement-table-title__date {
+  width: 280px;
+}
+
+.requirement-table-title__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.requirement-table-title__pending-tag {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.requirement-header-filter {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.requirement-header-filter__actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.requirement-header-filter__select {
+  width: 100%;
+  min-width: 0;
+}
+
+.requirement-data-grid
+  :deep(.flex.items-center.justify-between.px-4.pb-4.pt-2) {
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.requirement-data-grid
+  :deep(.flex.items-center.justify-between.px-4.pb-4.pt-2 > div:first-child) {
+  display: flex;
+  flex: 1 1 760px;
+  min-width: 0;
+}
+
+.requirement-data-grid
+  :deep(.flex.items-center.justify-between.px-4.pb-4.pt-2 > div:last-child) {
+  flex-shrink: 0;
+}
+
+.requirement-data-grid :deep(.zq-table-header th.el-table__cell) {
+  vertical-align: top;
+}
+
+.requirement-data-grid :deep(.zq-table-header .cell) {
+  overflow: visible;
+  white-space: normal;
 }
 
 .team-status-chart {
@@ -2854,80 +2803,50 @@ onUnmounted(() => {
   flex: 1;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 16px 20px;
+}
+
+.requirement-data-empty {
+  display: flex;
+  height: 100%;
+  min-height: 280px;
+  align-items: center;
+  justify-content: center;
 }
 
 .requirement-data-guide__panel {
-  width: min(100%, 860px);
+  width: min(100%, 420px);
   border: 1px dashed #cbd5e1;
-  border-radius: 24px;
-  background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
-  padding: 32px;
-}
-
-.requirement-data-guide__eyebrow {
-  color: #2563eb;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 20px 22px;
+  text-align: center;
 }
 
 .requirement-data-guide__title {
   color: #0f172a;
-  font-size: 28px;
+  font-size: 18px;
   font-weight: 700;
-  line-height: 1.2;
-  margin-top: 10px;
+  line-height: 1.4;
 }
 
 .requirement-data-guide__desc {
   color: #475569;
-  font-size: 14px;
-  line-height: 1.7;
-  margin-top: 10px;
-  max-width: 680px;
-}
-
-.requirement-guide-steps {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  margin-top: 24px;
-}
-
-.requirement-guide-step {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 18px;
-  padding: 18px;
-  min-height: 160px;
-}
-
-.requirement-guide-step__index {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 999px;
-  background: #0f172a;
-  color: #ffffff;
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.requirement-guide-step__title {
-  color: #0f172a;
-  font-size: 15px;
-  font-weight: 700;
-  margin-top: 14px;
-}
-
-.requirement-guide-step__desc {
-  color: #64748b;
   font-size: 13px;
   line-height: 1.7;
   margin-top: 8px;
+}
+
+.requirement-data-guide__meta {
+  color: #94a3b8;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.requirement-data-guide__actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
 }
 
 .requirement-summary-panel {
@@ -2941,7 +2860,9 @@ onUnmounted(() => {
 }
 
 .dense-overview-card {
+  border: 1px solid #e2e8f0;
   border-radius: 20px;
+  box-shadow: 0 12px 28px rgb(15 23 42 / 0.04);
   min-height: 216px;
 }
 
@@ -3154,7 +3075,9 @@ onUnmounted(() => {
 }
 
 .summary-section-card {
+  border: 1px solid #e2e8f0;
   border-radius: 18px;
+  box-shadow: 0 12px 28px rgb(15 23 42 / 0.04);
 }
 
 .summary-section-card.summary-section-card--compact :deep(.el-card__header) {
@@ -3416,11 +3339,55 @@ onUnmounted(() => {
 }
 
 .requirement-board-tabs :deep(.el-tabs__header) {
-  margin-bottom: 12px;
+  margin-bottom: 18px;
+  border: 1px solid #dde6f2;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef4ff 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.92);
+  padding: 8px;
 }
 
 .requirement-board-tabs :deep(.el-tabs__nav-wrap::after) {
   display: none;
+}
+
+.requirement-board-tabs :deep(.el-tabs__nav-wrap) {
+  padding: 0;
+}
+
+.requirement-board-tabs :deep(.el-tabs__nav) {
+  gap: 8px;
+}
+
+.requirement-board-tabs :deep(.el-tabs__active-bar) {
+  display: none;
+}
+
+.requirement-board-tabs :deep(.el-tabs__item) {
+  height: 40px;
+  border-radius: 12px;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 0 18px !important;
+  transition:
+    background-color 0.2s ease,
+    box-shadow 0.2s ease,
+    color 0.2s ease,
+    transform 0.2s ease;
+}
+
+.requirement-board-tabs :deep(.el-tabs__item:hover) {
+  color: #1e293b;
+}
+
+.requirement-board-tabs :deep(.el-tabs__item.is-active) {
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  color: #0f172a;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.9),
+    0 8px 18px rgb(37 99 235 / 0.12);
+  transform: translateY(-1px);
 }
 
 @media (max-width: 1024px) {
@@ -3429,13 +3396,17 @@ onUnmounted(() => {
     grid-template-columns: repeat(1, minmax(0, 1fr));
   }
 
-  .requirement-filter-form {
-    grid-template-columns: repeat(2, minmax(320px, 1fr));
-  }
-
   .requirement-data-grid-wrap,
   .requirement-data-grid {
     min-height: 360px;
+  }
+
+  .requirement-table-title__filters {
+    flex-basis: 100%;
+  }
+
+  .requirement-table-title__date {
+    width: 240px;
   }
 
   .requirement-data-grid :deep(.p-4) {
@@ -3452,7 +3423,11 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
-  .requirement-filter-card__header,
+  .requirement-board-tabs {
+    border-radius: 18px;
+    padding: 10px;
+  }
+
   .requirement-data-card__header,
   .summary-section-card__header,
   .dense-overview-card__title-row,
@@ -3461,45 +3436,43 @@ onUnmounted(() => {
     align-items: flex-start;
   }
 
-  .requirement-filter-card__actions {
+  .requirement-table-title__field,
+  .requirement-table-title__actions {
     width: 100%;
-    justify-content: space-between;
   }
 
-  .requirement-filter-form {
-    grid-template-columns: 1fr;
+  .requirement-table-title__select,
+  .requirement-table-title__date {
+    width: 100%;
   }
 
-  .requirement-filter-form__item--actions :deep(.el-form-item__content) {
-    margin-left: 0;
-  }
-
-  .requirement-filter-form :deep(.el-form-item__label) {
-    justify-content: flex-start;
-    line-height: 1.6;
-    padding-bottom: 8px;
-    padding-right: 0;
-  }
-
-  .requirement-filter-form :deep(.el-form-item) {
-    flex-direction: column;
-  }
-
-  .project-selector-trigger {
-    min-width: 100%;
-    max-width: 100%;
+  .requirement-data-grid
+    :deep(.flex.items-center.justify-between.px-4.pb-4.pt-2 > div:first-child) {
+    flex-basis: 100%;
   }
 
   .requirement-data-guide {
-    padding: 16px;
+    padding: 12px;
   }
 
   .requirement-data-guide__panel {
-    padding: 24px;
+    width: 100%;
+    padding: 16px;
   }
 
   .requirement-data-guide__title {
-    font-size: 24px;
+    font-size: 16px;
+  }
+
+  .requirement-board-tabs :deep(.el-tabs__header) {
+    border-radius: 14px;
+    margin-bottom: 14px;
+    padding: 6px;
+  }
+
+  .requirement-board-tabs :deep(.el-tabs__item) {
+    height: 36px;
+    padding: 0 14px !important;
   }
 
   .summary-overview-grid,
