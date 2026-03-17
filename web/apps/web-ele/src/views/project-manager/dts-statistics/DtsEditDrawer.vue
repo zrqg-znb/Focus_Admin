@@ -205,6 +205,7 @@ async function handleConfirm() {
       ...devValues,
       ...testValues,
       dev_sub_category: normalizeStringList(devValues.dev_sub_category),
+      dev_non_base_desc: normalizeStringList(devValues.dev_non_base_desc),
       dev_improvements: normalizeStringList(devValues.dev_improvements),
       test_miss_reason: normalizeStringList(testValues.test_miss_reason),
       test_improvements: normalizeStringList(testValues.test_improvements),

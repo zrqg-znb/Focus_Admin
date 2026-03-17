@@ -409,6 +409,7 @@ Schema：`DtsStatisticsExportSchema`（不包含分页字段）
 | `dts_qa_category` | `qa_category` | QA 问题大类 |
 | `dts_process_quality_type` | `process_quality_type` | 过程质量分类 |
 | `dts_dev_sub_category` | `dev_sub_category` | 开发问题小类（多选） |
+| `dts_dev_non_base_desc` | `dev_non_base_desc` | 非底软问题说明（多选） |
 | `dts_test_miss_reason` | `test_miss_reason` | 漏测原因（多选） |
 | `dts_action_status` | `dev_status/test_status` | 改进状态（开发/测试共用） |
 
@@ -419,6 +420,7 @@ Schema：`DtsStatisticsExportSchema`（不包含分页字段）
 本仓库已提供 migration 用于初始化 DTS 相关字典（可按实际情况调整选项）：
 
 - `backend-django/apps/project_manager/migrations/0024_seed_dts_dicts.py`
+- `backend-django/apps/project_manager/migrations/0025_dts_extension_dev_non_base_desc_dicts.py`
 
 初始化选项清单（建议）：
 
@@ -470,15 +472,16 @@ Schema：`DtsStatisticsExportSchema`（不包含分页字段）
   - 自动化缺失
   - 执行遗漏
   - 其他
+- `dts_dev_non_base_desc`（DTS-非底软问题说明）
+  - 硬件/平台原因
+  - 三方依赖原因
+  - 配置/环境原因
+  - 需求/产品原因
+  - 数据原因
+  - 其他
 - `dts_action_status`（DTS-改进状态）
-  - 待分析
-  - 分析中
-  - 待实施
-  - 实施中
-  - 待验证
-  - 已完成
-  - 长期跟踪
-  - 不适用
+  - open
+  - close
 
 ---
 

@@ -50,6 +50,7 @@ function normalizeDtsDictOptions(
       safeBundle.process_quality_type,
     ),
     dev_sub_category: normalizeSelectOptions(safeBundle.dev_sub_category),
+    dev_non_base_desc: normalizeSelectOptions(safeBundle.dev_non_base_desc),
     test_miss_reason: normalizeSelectOptions(safeBundle.test_miss_reason),
     action_status: normalizeSelectOptions(safeBundle.action_status),
   };
@@ -98,6 +99,7 @@ export interface DtsDictTagMeta {
 }
 
 export type DtsGovernanceField =
+  | 'dev_non_base_desc'
   | 'dev_status'
   | 'dev_sub_category'
   | 'is_dev_analyzed'
@@ -124,6 +126,9 @@ function resolveOptionsForField(
 ): SelectOption[] {
   const safeOptions = dictOptions || normalizeDtsDictOptions(null);
   switch (field) {
+    case 'dev_non_base_desc': {
+      return safeOptions.dev_non_base_desc;
+    }
     case 'dev_status': {
       return safeOptions.action_status;
     }
@@ -205,20 +210,16 @@ function resolveActionStatusTagType(label: string): DtsTagType {
   if (!text) {
     return 'info';
   }
-  if (text.includes('已完成')) {
-    return 'success';
-  }
-  if (text.includes('长期')) {
-    return 'danger';
-  }
-  if (text.includes('不适用')) {
-    return 'info';
-  }
-  if (text.includes('中')) {
-    return 'primary';
-  }
-  if (text.includes('待')) {
+  const normalized = text.toLowerCase();
+  if (normalized === 'open' || text.includes('未关闭')) {
     return 'warning';
+  }
+  if (
+    normalized === 'close' ||
+    text.includes('已关闭') ||
+    text.includes('关闭')
+  ) {
+    return 'success';
   }
   return 'info';
 }
@@ -789,11 +790,15 @@ export function useDevFormSchema(): VbenFormSchema[] {
       },
     },
     {
-      component: 'Input',
+      component: 'ApiSelect',
       fieldName: 'dev_non_base_desc',
       label: '非底软说明',
       componentProps: {
-        placeholder: '请输入非底软问题说明',
+        ...createDtsDictApiSelectProps('dev_non_base_desc'),
+        multiple: true,
+        collapseTags: true,
+        collapseTagsTooltip: true,
+        placeholder: '请选择非底软问题说明（可多选）',
       },
     },
     {

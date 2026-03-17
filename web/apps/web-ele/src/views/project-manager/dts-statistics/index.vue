@@ -514,6 +514,17 @@ function formatArrayCell(value: unknown) {
   };
 }
 
+function formatArrayTooltip(value: unknown) {
+  return formatArrayCell(value).tooltip;
+}
+
+function takeFirstTwo(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.slice(0, 2).map((item) => String(item || '').trim());
+}
+
 const severityChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderSeverityChart } = useEcharts(severityChartRef);
 const statusChartRef = ref<EchartsUIType>();
@@ -1225,6 +1236,45 @@ onUnmounted(() => {
                         {{ formatArrayCell(row.dev_improvements).text }}
                       </span>
                     </ElTooltip>
+                  </template>
+
+                  <template #cell-dev_non_base_desc="{ row }">
+                    <span
+                      v-if="(row.dev_non_base_desc || []).length === 0"
+                      class="text-slate-400"
+                    >
+                      -
+                    </span>
+                    <div v-else class="dts-cell-tags">
+                      <template
+                        v-for="item in takeFirstTwo(row.dev_non_base_desc)"
+                        :key="item"
+                      >
+                        <ElTag
+                          :type="
+                            resolveGovTag('dev_non_base_desc', item)?.type ||
+                            'info'
+                          "
+                          effect="light"
+                          size="small"
+                        >
+                          {{
+                            resolveGovTag('dev_non_base_desc', item)?.label ||
+                            item
+                          }}
+                        </ElTag>
+                      </template>
+
+                      <ElTooltip
+                        v-if="(row.dev_non_base_desc || []).length > 2"
+                        :content="formatArrayTooltip(row.dev_non_base_desc)"
+                        placement="top-start"
+                      >
+                        <ElTag type="info" effect="plain" size="small">
+                          +{{ (row.dev_non_base_desc || []).length - 2 }}
+                        </ElTag>
+                      </ElTooltip>
+                    </div>
                   </template>
 
                   <template #cell-test_miss_reason="{ row }">

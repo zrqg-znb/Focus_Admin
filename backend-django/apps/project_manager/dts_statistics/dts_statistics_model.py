@@ -51,7 +51,7 @@ class DtsExtension(RootModel):
     dev_reason = models.TextField(null=True, blank=True, verbose_name="问题原因")
     dev_intro_reason = models.TextField(null=True, blank=True, verbose_name="引入原因")
     dev_improvements = models.JSONField(default=list, blank=True, verbose_name="开发改进措施")
-    dev_non_base_desc = models.CharField(max_length=128, null=True, blank=True, verbose_name="非底软问题说明")
+    dev_non_base_desc = models.JSONField(default=list, blank=True, verbose_name="非底软问题说明")
     dev_asset_link = models.CharField(max_length=512, null=True, blank=True, verbose_name="落地资产链接(开发)")
     dev_status = models.CharField(max_length=32, null=True, blank=True, verbose_name="开发改进措施状态")
 

@@ -828,7 +828,7 @@ def _merge_defect_with_extension(
                 "dev_reason": None,
                 "dev_intro_reason": None,
                 "dev_improvements": [],
-                "dev_non_base_desc": None,
+                "dev_non_base_desc": [],
                 "dev_asset_link": None,
                 "dev_status": None,
                 "test_feature": None,
@@ -869,7 +869,7 @@ def _merge_defect_with_extension(
     merged["dev_reason"] = extension.dev_reason
     merged["dev_intro_reason"] = extension.dev_intro_reason
     merged["dev_improvements"] = extension.dev_improvements or []
-    merged["dev_non_base_desc"] = extension.dev_non_base_desc
+    merged["dev_non_base_desc"] = extension.dev_non_base_desc or []
     merged["dev_asset_link"] = extension.dev_asset_link
     merged["dev_status"] = extension.dev_status
 
@@ -1017,7 +1017,7 @@ def _build_export_row(item: dict[str, Any]) -> list[Any]:
         _clean_text(item.get("dev_reason")),
         _clean_text(item.get("dev_intro_reason")),
         _join_lines(item.get("dev_improvements")),
-        _clean_text(item.get("dev_non_base_desc")),
+        _join_lines(item.get("dev_non_base_desc")),
         _clean_text(item.get("dev_asset_link")),
         _clean_text(item.get("dev_status")),
         _clean_text(item.get("test_feature")),
@@ -1343,6 +1343,7 @@ def get_dts_statistics_dict_options() -> dict[str, Any]:
         "qa_category": "dts_qa_category",
         "process_quality_type": "dts_process_quality_type",
         "dev_sub_category": "dts_dev_sub_category",
+        "dev_non_base_desc": "dts_dev_non_base_desc",
         "test_miss_reason": "dts_test_miss_reason",
         "action_status": "dts_action_status",
     }

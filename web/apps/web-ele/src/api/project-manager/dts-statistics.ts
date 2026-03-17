@@ -57,7 +57,7 @@ export interface DtsMergedDefect {
   dev_reason?: null | string;
   dev_intro_reason?: null | string;
   dev_improvements: string[];
-  dev_non_base_desc?: null | string;
+  dev_non_base_desc: string[];
   dev_asset_link?: null | string;
   dev_status?: null | string;
 
@@ -93,7 +93,7 @@ export interface DtsExtensionSavePayload {
   dev_reason?: null | string;
   dev_intro_reason?: null | string;
   dev_improvements?: string[];
-  dev_non_base_desc?: null | string;
+  dev_non_base_desc?: string[];
   dev_asset_link?: null | string;
   dev_status?: null | string;
 
@@ -152,6 +152,7 @@ export interface DtsDictOptions {
   qa_category: DtsDictOption[];
   process_quality_type: DtsDictOption[];
   dev_sub_category: DtsDictOption[];
+  dev_non_base_desc: DtsDictOption[];
   test_miss_reason: DtsDictOption[];
   action_status: DtsDictOption[];
 }

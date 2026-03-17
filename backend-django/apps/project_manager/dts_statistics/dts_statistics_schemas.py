@@ -67,7 +67,7 @@ class DtsExtensionSaveSchema(Schema):
     dev_reason: Optional[str] = None
     dev_intro_reason: Optional[str] = None
     dev_improvements: list[str] = Field(default_factory=list)
-    dev_non_base_desc: Optional[str] = None
+    dev_non_base_desc: list[str] = Field(default_factory=list)
     dev_asset_link: Optional[str] = None
     dev_status: Optional[str] = None
 
@@ -82,6 +82,7 @@ class DtsExtensionSaveSchema(Schema):
     @field_validator(
         "project_ids",
         "dev_sub_category",
+        "dev_non_base_desc",
         "dev_improvements",
         "test_miss_reason",
         "test_improvements",
@@ -116,7 +117,6 @@ class DtsExtensionSaveSchema(Schema):
         "qa_remark",
         "dev_reason",
         "dev_intro_reason",
-        "dev_non_base_desc",
         "dev_asset_link",
         "dev_status",
         "test_feature",
@@ -176,7 +176,7 @@ class DtsMergedDefectSchema(DataLakeDefectSchema):
     dev_reason: Optional[str] = None
     dev_intro_reason: Optional[str] = None
     dev_improvements: list[str] = Field(default_factory=list)
-    dev_non_base_desc: Optional[str] = None
+    dev_non_base_desc: list[str] = Field(default_factory=list)
     dev_asset_link: Optional[str] = None
     dev_status: Optional[str] = None
 
@@ -283,5 +283,6 @@ class DtsDictOptionsSchema(Schema):
     qa_category: list[DtsDictOptionSchema] = Field(default_factory=list)
     process_quality_type: list[DtsDictOptionSchema] = Field(default_factory=list)
     dev_sub_category: list[DtsDictOptionSchema] = Field(default_factory=list)
+    dev_non_base_desc: list[DtsDictOptionSchema] = Field(default_factory=list)
     test_miss_reason: list[DtsDictOptionSchema] = Field(default_factory=list)
     action_status: list[DtsDictOptionSchema] = Field(default_factory=list)
