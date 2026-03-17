@@ -287,6 +287,45 @@ def _extract_team_name(defect: dict[str, Any]) -> str:
     return _clean_text(defect.get("submitTeam") or defect.get("currentTeam") or "")
 
 
+def _resolve_effective_team_names(
+    group: _VersionGroup,
+    selected_team_names: list[str],
+) -> list[str]:
+    """
+    Resolve the effective team filter for a version group.
+
+    - No team filter: keep all teams for the group (already sorted).
+    - With team filter: intersect with group teams and keep deterministic sort.
+    """
+
+    if not selected_team_names:
+        # group.team_name_list is a sorted comma-separated string.
+        return [item for item in group.team_name_list.split(",") if item]
+
+    allowed = set(group.team_to_project_ids.keys())
+    matched = [item for item in selected_team_names if item in allowed]
+    matched.sort()
+    return matched
+
+
+def _resolve_effective_project_ids(
+    group: _VersionGroup,
+    *,
+    team_names: list[str],
+) -> set[str]:
+    """
+    Only keep projects that are reachable via the effective team filter.
+
+    This prevents leaking historical links from unrelated teams/projects when
+    loading link_map for response rendering.
+    """
+
+    project_ids: set[str] = set()
+    for team_name in team_names:
+        project_ids.update(group.team_to_project_ids.get(team_name) or [])
+    return project_ids
+
+
 def _build_upstream_payload(
     *,
     version: str,
@@ -297,16 +336,20 @@ def _build_upstream_payload(
     page_no: int,
     page_size: int,
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "version": version,
         "teamNameList": team_name_list,
         "dataType": _DATA_TYPE,
         "columnType": column_type,
         "excludeInvalid": _EXCLUDE_INVALID,
-        "startTime": start_time,
-        "endTime": end_time,
         "pageInfo": {"pageNo": page_no, "pageSize": page_size},
     }
+    safe_start_time = _clean_text(start_time)
+    safe_end_time = _clean_text(end_time)
+    if safe_start_time and safe_end_time:
+        payload["startTime"] = safe_start_time
+        payload["endTime"] = safe_end_time
+    return payload
 
 
 def _build_request_headers() -> dict[str, str]:
@@ -553,6 +596,7 @@ def _bulk_upsert_links_for_sources(
 def _load_page_cached(
     *,
     group: _VersionGroup,
+    team_name_list: str,
     column_type: str,
     start_time: str,
     end_time: str,
@@ -561,7 +605,7 @@ def _load_page_cached(
 ) -> tuple[int, list[dict[str, Any]]]:
     cache_payload = {
         "version": group.version,
-        "teamNameList": group.team_name_list,
+        "teamNameList": team_name_list,
         "columnType": column_type,
         "startTime": start_time,
         "endTime": end_time,
@@ -578,7 +622,7 @@ def _load_page_cached(
 
     payload = _build_upstream_payload(
         version=group.version,
-        team_name_list=group.team_name_list,
+        team_name_list=team_name_list,
         column_type=column_type,
         start_time=start_time,
         end_time=end_time,
@@ -602,6 +646,7 @@ def _load_page_cached(
 def _scan_all_cached(
     *,
     group: _VersionGroup,
+    team_name_list: str,
     column_type: str,
     start_time: str,
     end_time: str,
@@ -609,7 +654,7 @@ def _scan_all_cached(
     scan_page_size = _resolve_scan_page_size()
     cache_payload = {
         "version": group.version,
-        "teamNameList": group.team_name_list,
+        "teamNameList": team_name_list,
         "columnType": column_type,
         "startTime": start_time,
         "endTime": end_time,
@@ -646,7 +691,7 @@ def _scan_all_cached(
         for page_no in range(1, max_pages + 1):
             payload = _build_upstream_payload(
                 version=group.version,
-                team_name_list=group.team_name_list,
+                team_name_list=team_name_list,
                 column_type=column_type,
                 start_time=start_time,
                 end_time=end_time,
@@ -891,18 +936,34 @@ def get_dts_statistics_list(query: DtsStatisticsQuerySchema) -> dict[str, Any]:
     if not groups:
         return {"total": 0, "items": []}
 
+    selected_team_names = _normalize_text_list(query.team_names)
+    effective_groups: list[tuple[_VersionGroup, str, set[str]]] = []
+    for group in groups:
+        team_names = _resolve_effective_team_names(group, selected_team_names)
+        if not team_names:
+            continue
+        team_name_list = ",".join(team_names)
+        project_ids = _resolve_effective_project_ids(group, team_names=team_names)
+        if not team_name_list or not project_ids:
+            continue
+        effective_groups.append((group, team_name_list, project_ids))
+
+    if not effective_groups:
+        return {"total": 0, "items": []}
+
     column_type = query.column_type
     start_time = query.start_time
     end_time = query.end_time
     selected_project_ids: set[str] = set()
-    for group in groups:
-        selected_project_ids.update(group.project_ids)
+    for _, _, project_ids in effective_groups:
+        selected_project_ids.update(project_ids)
 
     # One group: use upstream paging + page cache for fast list response.
-    if len(groups) == 1:
-        group = groups[0]
+    if len(effective_groups) == 1:
+        group, team_name_list, _ = effective_groups[0]
         total, defects = _load_page_cached(
             group=group,
+            team_name_list=team_name_list,
             column_type=column_type,
             start_time=start_time,
             end_time=end_time,
@@ -924,13 +985,14 @@ def get_dts_statistics_list(query: DtsStatisticsQuerySchema) -> dict[str, Any]:
         return {"total": total, "items": items}
 
     # Multiple groups: scan caches -> merge + local paging.
-    group_map = {group.version: group for group in groups}
+    group_map = {group.version: group for group, _, _ in effective_groups}
     defect_sources: dict[str, set[str]] = defaultdict(set)
     scanned: list[dict[str, Any]] = []
-    for group in groups:
+    for group, team_name_list, _ in effective_groups:
         group_defects = (
             _scan_all_cached(
                 group=group,
+                team_name_list=team_name_list,
                 column_type=column_type,
                 start_time=start_time,
                 end_time=end_time,
@@ -1047,11 +1109,27 @@ def export_dts_statistics(query: DtsStatisticsExportSchema) -> HttpResponse:
     if not groups:
         raise HttpError(422, "无可查询项目，请检查项目 DTS 配置(enable_dts/version_c/di_teams)")
 
-    scanned: list[dict[str, Any]] = []
+    selected_team_names = _normalize_text_list(query.team_names)
+    effective_groups: list[tuple[_VersionGroup, str, set[str]]] = []
     for group in groups:
+        team_names = _resolve_effective_team_names(group, selected_team_names)
+        if not team_names:
+            continue
+        team_name_list = ",".join(team_names)
+        project_ids = _resolve_effective_project_ids(group, team_names=team_names)
+        if not team_name_list or not project_ids:
+            continue
+        effective_groups.append((group, team_name_list, project_ids))
+
+    if not effective_groups:
+        raise HttpError(422, "当前筛选团队无可查询数据，请检查团队选择")
+
+    scanned: list[dict[str, Any]] = []
+    for group, team_name_list, _ in effective_groups:
         scanned.extend(
             _scan_all_cached(
                 group=group,
+                team_name_list=team_name_list,
                 column_type=query.column_type,
                 start_time=query.start_time,
                 end_time=query.end_time,
@@ -1066,8 +1144,8 @@ def export_dts_statistics(query: DtsStatisticsExportSchema) -> HttpResponse:
     ]
 
     selected_project_ids: set[str] = set()
-    for group in groups:
-        selected_project_ids.update(group.project_ids)
+    for _, _, project_ids in effective_groups:
+        selected_project_ids.update(project_ids)
 
     extensions_map: dict[str, DtsExtension] = {}
     if defect_nos:
@@ -1131,17 +1209,54 @@ def get_dts_statistics_summary(query: DtsStatisticsQuerySchema) -> dict[str, Any
             "action_status_dist": [],
         }
 
+    selected_team_names = _normalize_text_list(query.team_names)
+    effective_groups: list[tuple[_VersionGroup, str]] = []
+    for group in groups:
+        team_names = _resolve_effective_team_names(group, selected_team_names)
+        if not team_names:
+            continue
+        team_name_list = ",".join(team_names)
+        if team_name_list:
+            effective_groups.append((group, team_name_list))
+
+    if not effective_groups:
+        return {
+            "total_count": 0,
+            "open_count": 0,
+            "closed_count": 0,
+            "avg_process_days": 0.0,
+            "qa_filled_count": 0,
+            "qa_completion_rate": 0.0,
+            "dev_analyzed_count": 0,
+            "dev_analysis_completion_rate": 0.0,
+            "test_analyzed_count": 0,
+            "test_analysis_completion_rate": 0.0,
+            "severity_dist": [],
+            "status_dist": [],
+            "team_dist": [],
+            "stage_dist": [],
+            "close_type_dist": [],
+            "handler_dist": [],
+            "qa_category_dist": [],
+            "dev_sub_category_dist": [],
+            "test_miss_reason_dist": [],
+            "pl_group_dist": [],
+            "project_dist": [],
+            "action_status_dist": [],
+        }
+
     column_type = query.column_type
     start_time = query.start_time
     end_time = query.end_time
 
-    group_map = {group.version: group for group in groups}
+    group_map = {group.version: group for group, _ in effective_groups}
     defect_sources: dict[str, set[str]] = defaultdict(set)
     scanned: list[dict[str, Any]] = []
-    for group in groups:
+    for group, team_name_list in effective_groups:
         group_defects = (
             _scan_all_cached(
                 group=group,
+                team_name_list=team_name_list,
                 column_type=column_type,
                 start_time=start_time,
                 end_time=end_time,

@@ -6,15 +6,32 @@ from pydantic import field_validator
 
 class DtsStatisticsQuerySchema(Schema):
     project_ids: list[str] = Field(default_factory=list)
+    team_names: list[str] = Field(default_factory=list)
     column_type: str = Field("openDefects", description="openDefects/closeDefects/totalDefects")
-    start_time: str
-    end_time: str
+    start_time: str = ""
+    end_time: str = ""
     page_no: int = 1
     page_size: int = 20
 
     @field_validator("project_ids", mode="before")
     @classmethod
     def normalize_project_ids(cls, value: Any):
+        if value is None:
+            return []
+        values = value if isinstance(value, list) else [value]
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in values:
+            text = str(item or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        return normalized
+
+    @field_validator("team_names", mode="before")
+    @classmethod
+    def normalize_team_names(cls, value: Any):
         if value is None:
             return []
         values = value if isinstance(value, list) else [value]
@@ -36,6 +53,13 @@ class DtsStatisticsQuerySchema(Schema):
         if value not in allowed:
             raise ValueError("column_type 不合法")
         return value
+
+    @field_validator("start_time", "end_time", mode="before")
+    @classmethod
+    def normalize_time_range(cls, value: Any):
+        if value is None:
+            return ""
+        return str(value).strip()
 
     @field_validator("page_no")
     @classmethod
@@ -237,13 +261,30 @@ class DtsStatisticsExportSchema(Schema):
     """
 
     project_ids: list[str] = Field(default_factory=list)
+    team_names: list[str] = Field(default_factory=list)
     column_type: str = Field("openDefects", description="openDefects/closeDefects/totalDefects")
-    start_time: str
-    end_time: str
+    start_time: str = ""
+    end_time: str = ""
 
     @field_validator("project_ids", mode="before")
     @classmethod
     def normalize_project_ids(cls, value: Any):
+        if value is None:
+            return []
+        values = value if isinstance(value, list) else [value]
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in values:
+            text = str(item or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        return normalized
+
+    @field_validator("team_names", mode="before")
+    @classmethod
+    def normalize_team_names(cls, value: Any):
         if value is None:
             return []
         values = value if isinstance(value, list) else [value]
@@ -265,6 +306,13 @@ class DtsStatisticsExportSchema(Schema):
         if value not in allowed:
             raise ValueError("column_type 不合法")
         return value
+
+    @field_validator("start_time", "end_time", mode="before")
+    @classmethod
+    def normalize_time_range(cls, value: Any):
+        if value is None:
+            return ""
+        return str(value).strip()
 
 
 class DtsDictOptionSchema(Schema):

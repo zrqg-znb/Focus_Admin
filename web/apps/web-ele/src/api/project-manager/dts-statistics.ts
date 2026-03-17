@@ -7,6 +7,7 @@ export type DtsStatisticsColumnType =
 
 export interface DtsStatisticsFilters {
   project_ids: string[];
+  team_names: string[];
   column_type: DtsStatisticsColumnType;
   start_time: string;
   end_time: string;

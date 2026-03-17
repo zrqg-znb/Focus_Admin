@@ -19,8 +19,6 @@ import {
   ElCard,
   ElDatePicker,
   ElEmpty,
-  ElForm,
-  ElFormItem,
   ElMessage,
   ElOption,
   ElProgress,
@@ -40,10 +38,10 @@ import { listProjectsApi } from '#/api/project-manager/project';
 import { useZqTable } from '#/components/zq-table';
 
 import ProjectSelectorDialog from './components/project-selector-dialog.vue';
+import TeamSelectorDialog from './components/team-selector-dialog.vue';
 import {
   fetchDtsDictOptionsCached,
   formatDateTime,
-  getTodayDateRange,
   normalizeProjectOptions,
   resolveDtsGovernanceTagMeta,
   resolveSeverityMeta,
@@ -68,22 +66,28 @@ interface DtsStatisticsProjectOption {
   reason?: string;
 }
 
+function createDefaultFilters(): DtsStatisticsFilters {
+  return {
+    project_ids: [],
+    team_names: [],
+    column_type: 'openDefects',
+    start_time: '',
+    end_time: '',
+  };
+}
+
 const activeTab = ref<TabKey>('list');
 
 const editVisible = ref(false);
 const editingRow = ref<DtsMergedDefect | null>(null);
 
 const projectSelectorVisible = ref(false);
+const teamSelectorVisible = ref(false);
 const optionsLoading = ref(false);
 const projectOptions = ref<DtsStatisticsProjectOption[]>([]);
 
-const dateRange = ref<[Date, Date] | null>(getTodayDateRange());
-const filters = ref<DtsStatisticsFilters>({
-  project_ids: [],
-  column_type: 'openDefects',
-  start_time: '',
-  end_time: '',
-});
+const dateRange = ref<[Date, Date] | null>(null);
+const filters = ref<DtsStatisticsFilters>(createDefaultFilters());
 
 const appliedFilters = ref<DtsStatisticsFilters | null>(null);
 const summaryFingerprint = ref('');
@@ -141,6 +145,7 @@ function normalizeStringArray(values?: string[]) {
 function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
   return {
     project_ids: normalizeStringArray(source.project_ids),
+    team_names: normalizeStringArray(source.team_names),
     column_type: source.column_type || 'openDefects',
     start_time: source.start_time || '',
     end_time: source.end_time || '',
@@ -153,6 +158,7 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
   }
   return JSON.stringify({
     project_ids: [...(payload.project_ids || [])].sort(),
+    team_names: [...(payload.team_names || [])].sort(),
     column_type: payload.column_type || '',
     start_time: payload.start_time || '',
     end_time: payload.end_time || '',
@@ -237,16 +243,68 @@ const selectableProjectCount = computed(
   () => projectOptions.value.filter((item) => item.config_complete).length,
 );
 
+const selectedProjects = computed(() => {
+  const projectMap = new Map(
+    projectOptions.value.map((item) => [item.id, item]),
+  );
+  return normalizeStringArray(filters.value.project_ids)
+    .map((item) => projectMap.get(item))
+    .filter(Boolean);
+});
+
+const teamOptions = computed(() => {
+  const seen = new Set<string>();
+  const result: Array<{ label: string; value: string }> = [];
+  selectedProjects.value.forEach((project) => {
+    (project?.di_teams || []).forEach((team) => {
+      const text = String(team || '').trim();
+      if (!text || seen.has(text)) {
+        return;
+      }
+      seen.add(text);
+      result.push({ label: text, value: text });
+    });
+  });
+  return result.sort((left, right) =>
+    left.label.localeCompare(right.label, 'zh-CN'),
+  );
+});
+
 const projectSelectorButtonLabel = computed(() =>
   filters.value.project_ids.length > 0
-    ? `查看已选项目（${filters.value.project_ids.length}）`
+    ? `已选项目（${filters.value.project_ids.length}）`
     : '选择项目',
 );
 const projectSelectorButtonType = computed(() =>
   filters.value.project_ids.length > 0 ? 'success' : 'primary',
 );
 
+const teamSelectorButtonLabel = computed(() =>
+  filters.value.team_names.length > 0
+    ? `已选团队（${filters.value.team_names.length}）`
+    : '选择团队',
+);
+const teamSelectorButtonType = computed(() =>
+  filters.value.team_names.length > 0 ? 'success' : 'primary',
+);
+const isTeamSelectorDisabled = computed(
+  () => selectedProjects.value.length === 0,
+);
+
 const hasAppliedFilters = computed(() => Boolean(appliedFilters.value));
+
+const defaultFilterFingerprint = buildFingerprint(createDefaultFilters());
+const editingFilterFingerprint = computed(() =>
+  buildFingerprint(cloneFilters(filters.value)),
+);
+const hasPendingFilterChanges = computed(() => {
+  if (appliedFilters.value) {
+    return (
+      editingFilterFingerprint.value !== buildFingerprint(appliedFilters.value)
+    );
+  }
+  return editingFilterFingerprint.value !== defaultFilterFingerprint;
+});
 
 async function fetchSummary(force = false) {
   if (!appliedFilters.value) {
@@ -343,6 +401,14 @@ const canExport = computed(
     !exportLoading.value,
 );
 
+watch(
+  () => gridApi.tableData.value.length,
+  async () => {
+    await nextTick();
+    updateDataGridHeight();
+  },
+);
+
 const dataGridWrapRef = ref<HTMLDivElement>();
 const dataGridHeight = ref<null | number>(null);
 
@@ -356,11 +422,7 @@ const dataGridWrapStyle = computed(() => {
 let resizeTimer: null | number = null;
 
 function updateDataGridHeight() {
-  if (
-    !dataGridWrapRef.value ||
-    !hasAppliedFilters.value ||
-    activeTab.value !== 'list'
-  ) {
+  if (!dataGridWrapRef.value || activeTab.value !== 'list') {
     dataGridHeight.value = null;
     return;
   }
@@ -378,6 +440,17 @@ function handleResize() {
     updateDataGridHeight();
   }, 120);
 }
+
+watch(
+  () => filters.value.project_ids,
+  () => {
+    const available = new Set(teamOptions.value.map((item) => item.value));
+    filters.value.team_names = normalizeStringArray(
+      filters.value.team_names,
+    ).filter((item) => available.has(item));
+  },
+  { deep: true },
+);
 
 watch(
   () => activeTab.value,
@@ -403,14 +476,18 @@ function clearSelectedProjects() {
   filters.value.project_ids = [];
 }
 
+function handleTeamSelectorConfirm(teamValues: string[]) {
+  filters.value.team_names = normalizeStringArray(teamValues);
+}
+
+function clearSelectedTeams() {
+  filters.value.team_names = [];
+}
+
 async function handleSearch() {
   const payload = cloneFilters(filters.value);
   if (payload.project_ids.length === 0) {
     ElMessage.warning('请至少选择一个项目');
-    return;
-  }
-  if (!payload.start_time || !payload.end_time) {
-    ElMessage.warning('请先选择起止时间范围');
     return;
   }
 
@@ -428,6 +505,17 @@ async function handleSearch() {
     return;
   }
 
+  if (payload.team_names.length > 0) {
+    const availableTeams = new Set(
+      projectOptions.value
+        .filter((item) => payload.project_ids.includes(item.id))
+        .flatMap((item) => item.di_teams || []),
+    );
+    payload.team_names = payload.team_names.filter((item) =>
+      availableTeams.has(item),
+    );
+  }
+
   appliedFilters.value = payload;
   summaryFingerprint.value = '';
   gridApi.pagination.currentPage = 1;
@@ -441,14 +529,10 @@ async function handleSearch() {
 }
 
 async function handleReset() {
-  filters.value = {
-    project_ids: [],
-    column_type: 'openDefects',
-    start_time: '',
-    end_time: '',
-  };
-  dateRange.value = getTodayDateRange();
+  filters.value = createDefaultFilters();
+  dateRange.value = null;
   projectSelectorVisible.value = false;
+  teamSelectorVisible.value = false;
   appliedFilters.value = null;
   summaryFingerprint.value = '';
   gridApi.pagination.currentPage = 1;
@@ -805,103 +889,7 @@ onUnmounted(() => {
 
 <template>
   <Page auto-content-height>
-    <div class="flex flex-col gap-4">
-      <ElCard shadow="never" class="dts-filter-card">
-        <div class="dts-filter-card__header">
-          <div>
-            <div class="dts-filter-card__title">DTS 统计筛选</div>
-            <div class="dts-filter-card__desc">
-              支持多项目查询；项目未配置 version_c 或责任团队将被禁选。
-            </div>
-          </div>
-          <div class="dts-filter-card__actions">
-            <ElTag type="primary" effect="light">
-              {{ selectableProjectCount }} 个项目可查询
-            </ElTag>
-          </div>
-        </div>
-
-        <ElForm :model="filters" label-width="84px" class="dts-filter-form">
-          <ElFormItem
-            label="项目"
-            class="dts-filter-form__item dts-filter-form__item--project"
-          >
-            <div class="project-selector-trigger">
-              <div class="project-selector-trigger__actions">
-                <ElButton
-                  :loading="optionsLoading"
-                  :type="projectSelectorButtonType"
-                  plain
-                  @click="projectSelectorVisible = true"
-                >
-                  {{ projectSelectorButtonLabel }}
-                </ElButton>
-                <ElButton
-                  text
-                  :disabled="filters.project_ids.length === 0"
-                  @click="clearSelectedProjects"
-                >
-                  清空
-                </ElButton>
-                <span
-                  v-if="filters.project_ids.length > 0"
-                  class="project-selector-trigger__summary-text"
-                >
-                  已选 {{ filters.project_ids.length }} 个项目
-                </span>
-              </div>
-            </div>
-          </ElFormItem>
-
-          <ElFormItem label="单据范围" class="dts-filter-form__item">
-            <ElSelect
-              v-model="filters.column_type"
-              class="dts-filter-control"
-              placeholder="默认未关闭"
-            >
-              <ElOption label="未关闭" value="openDefects" />
-              <ElOption label="已关闭" value="closeDefects" />
-              <ElOption label="全部" value="totalDefects" />
-            </ElSelect>
-          </ElFormItem>
-
-          <ElFormItem label="时间区间" class="dts-filter-form__item">
-            <ElDatePicker
-              v-model="dateRange"
-              class="dts-filter-control"
-              type="datetimerange"
-              unlink-panels
-              start-placeholder="开始时间"
-              end-placeholder="结束时间"
-              range-separator="-"
-              format="YYYY-MM-DD HH:mm:ss"
-            />
-          </ElFormItem>
-
-          <ElFormItem
-            label-width="0"
-            class="dts-filter-form__item dts-filter-form__item--actions"
-          >
-            <ElButton
-              type="primary"
-              :loading="listLoading"
-              @click="handleSearch"
-            >
-              查询
-            </ElButton>
-            <ElButton @click="handleReset">重置</ElButton>
-          </ElFormItem>
-        </ElForm>
-
-        <div class="dts-filter-card__footer">
-          <span>
-            当前可查询项目 {{ selectableProjectCount }}
-            个；未完成 DTS 配置的项目已禁用。
-          </span>
-          <span>查询后切换“统计看板”会复用相同筛选条件进行汇总。</span>
-        </div>
-      </ElCard>
-
+    <div class="dts-statistics-shell flex flex-col gap-4">
       <ElTabs v-model="activeTab" class="dts-statistics-tabs flex flex-col">
         <ElTabPane label="数据明细" name="list">
           <ElCard shadow="never" class="dts-data-card">
@@ -910,7 +898,7 @@ onUnmounted(() => {
                 <div>
                   <div class="dts-data-card__title">DTS 明细表</div>
                   <div class="dts-data-card__desc">
-                    查询后在下方表格展示问题单明细，可直接填报治理字段并导出全量结果。
+                    筛选入口已集成到表头与标题栏；查询后明细表与统计看板复用同一组条件。
                   </div>
                 </div>
                 <div class="dts-data-card__actions">
@@ -938,7 +926,7 @@ onUnmounted(() => {
               </div>
             </template>
 
-            <div v-if="hasAppliedFilters" class="dts-data-card__body">
+            <div class="dts-data-card__body">
               <div
                 ref="dataGridWrapRef"
                 class="dts-data-grid-wrap"
@@ -947,8 +935,107 @@ onUnmounted(() => {
                 <Grid class="dts-data-grid h-full min-h-0">
                   <template #table-title>
                     <div class="dts-table-title">
-                      查询结果按 DTS
-                      单号分页展示；支持列设置、刷新、缩放与填报治理字段。
+                      <div class="dts-table-title__filters">
+                        <div class="dts-table-title__field">
+                          <span class="dts-table-title__label">单据范围</span>
+                          <ElSelect
+                            v-model="filters.column_type"
+                            clearable
+                            size="small"
+                            class="dts-table-title__select"
+                            placeholder="默认未关闭"
+                          >
+                            <ElOption label="未关闭" value="openDefects" />
+                            <ElOption label="已关闭" value="closeDefects" />
+                            <ElOption label="全部" value="totalDefects" />
+                          </ElSelect>
+                        </div>
+                        <div class="dts-table-title__field">
+                          <span class="dts-table-title__label">时间区间</span>
+                          <ElDatePicker
+                            v-model="dateRange"
+                            type="datetimerange"
+                            unlink-panels
+                            size="small"
+                            class="dts-table-title__date"
+                            start-placeholder="开始时间"
+                            end-placeholder="结束时间"
+                            range-separator="-"
+                            format="YYYY-MM-DD HH:mm:ss"
+                          />
+                        </div>
+                        <div class="dts-table-title__actions">
+                          <ElButton
+                            type="primary"
+                            size="small"
+                            :loading="listLoading"
+                            @click="handleSearch"
+                          >
+                            查询
+                          </ElButton>
+                          <ElButton size="small" @click="handleReset">
+                            重置
+                          </ElButton>
+                        </div>
+                      </div>
+                      <ElTag
+                        v-if="hasPendingFilterChanges"
+                        type="warning"
+                        effect="light"
+                        class="dts-table-title__pending-tag"
+                      >
+                        有未应用筛选
+                      </ElTag>
+                    </div>
+                  </template>
+
+                  <template #header-project_name>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">项目</span>
+                      <div class="dts-header-filter__actions">
+                        <ElButton
+                          :loading="optionsLoading"
+                          :type="projectSelectorButtonType"
+                          plain
+                          size="small"
+                          @click.stop="projectSelectorVisible = true"
+                        >
+                          {{ projectSelectorButtonLabel }}
+                        </ElButton>
+                        <ElButton
+                          link
+                          size="small"
+                          :disabled="filters.project_ids.length === 0"
+                          @click.stop="clearSelectedProjects"
+                        >
+                          清空
+                        </ElButton>
+                      </div>
+                    </div>
+                  </template>
+
+                  <template #header-team_name>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">团队</span>
+                      <div class="dts-header-filter__actions">
+                        <ElButton
+                          :disabled="isTeamSelectorDisabled"
+                          :type="teamSelectorButtonType"
+                          plain
+                          size="small"
+                          @click.stop="teamSelectorVisible = true"
+                        >
+                          {{ teamSelectorButtonLabel }}
+                        </ElButton>
+                        <ElButton
+                          link
+                          size="small"
+                          :disabled="filters.team_names.length === 0"
+                          @click.stop="clearSelectedTeams"
+                        >
+                          清空
+                        </ElButton>
+                      </div>
                     </div>
                   </template>
 
@@ -1344,51 +1431,46 @@ onUnmounted(() => {
                       填报/编辑
                     </ElButton>
                   </template>
-                </Grid>
-              </div>
-            </div>
 
-            <div v-else class="dts-data-guide">
-              <div class="dts-data-guide__panel">
-                <div class="dts-data-guide__eyebrow">DTS Statistics</div>
-                <div class="dts-data-guide__title">先筛选，再查询</div>
-                <div class="dts-data-guide__desc">
-                  选择项目、单据范围和时间区间后点击“查询”，下方将展示问题单明细，并支持填报/导出。
-                </div>
-                <div class="dts-guide-steps">
-                  <div class="dts-guide-step">
-                    <div class="dts-guide-step__index">1</div>
-                    <div class="dts-guide-step__title">选择项目</div>
-                    <div class="dts-guide-step__desc">
-                      仅支持已开启 DTS 且配置了 version_c/责任团队的项目。
+                  <template #empty>
+                    <div v-if="!hasAppliedFilters" class="dts-data-guide">
+                      <div class="dts-data-guide__panel">
+                        <div class="dts-data-guide__title">先设置筛选条件</div>
+                        <div class="dts-data-guide__desc">
+                          选择项目后点击查询，结果会同步到明细、导出和统计看板。
+                        </div>
+                        <div class="dts-data-guide__meta">
+                          当前可查询项目 {{ selectableProjectCount }} 个
+                        </div>
+                        <div class="dts-data-guide__actions">
+                          <ElButton
+                            type="primary"
+                            size="small"
+                            @click="handleSearch"
+                          >
+                            开始查询明细
+                          </ElButton>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  <div class="dts-guide-step">
-                    <div class="dts-guide-step__index">2</div>
-                    <div class="dts-guide-step__title">设置范围</div>
-                    <div class="dts-guide-step__desc">
-                      可选择未关闭/已关闭/全部，并指定起止时间范围。
+                    <div v-else class="dts-data-empty">
+                      <ElEmpty description="当前筛选条件下暂无 DTS 数据" />
                     </div>
-                  </div>
-                  <div class="dts-guide-step">
-                    <div class="dts-guide-step__index">3</div>
-                    <div class="dts-guide-step__title">查看与填报</div>
-                    <div class="dts-guide-step__desc">
-                      点击“填报/编辑”进入 Drawer，分别填写
-                      QA/开发/测试信息并一次保存。
-                    </div>
-                  </div>
-                </div>
+                  </template>
+                </Grid>
               </div>
             </div>
           </ElCard>
         </ElTabPane>
 
         <ElTabPane label="统计看板" name="dashboard">
-          <div v-loading="summaryLoading" class="dts-summary-panel">
+          <div
+            v-loading="summaryLoading"
+            class="dts-summary-panel space-y-4 pb-4"
+          >
             <ElEmpty
               v-if="!hasAppliedFilters"
-              description="请先完成筛选并查询明细"
+              description="请先到数据明细表设置表头筛选并点击查询"
             />
             <ElEmpty
               v-else-if="summary.total_count === 0"
@@ -1798,6 +1880,13 @@ onUnmounted(() => {
         @confirm="handleProjectSelectorConfirm"
       />
 
+      <TeamSelectorDialog
+        v-model="teamSelectorVisible"
+        :teams="teamOptions"
+        :selected-team-values="filters.team_names"
+        @confirm="handleTeamSelectorConfirm"
+      />
+
       <DtsEditDrawer
         v-model="editVisible"
         :row="editingRow"
@@ -1808,111 +1897,77 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.dts-filter-card {
-  border-radius: 20px;
+.dts-statistics-shell {
+  min-height: 0;
 }
 
-.dts-filter-card__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+.dts-statistics-tabs {
+  min-height: 0;
+  border: 1px solid #dbe5f1;
+  border-radius: 24px;
+  background: linear-gradient(
+    180deg,
+    rgb(255 255 255 / 0.96) 0%,
+    rgb(248 250 252 / 0.92) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.96),
+    0 12px 30px rgb(15 23 42 / 0.04);
+  padding: 14px;
+}
+
+.dts-statistics-tabs :deep(.el-tabs__header) {
   margin-bottom: 18px;
+  border: 1px solid #dde6f2;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef4ff 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.92);
+  padding: 8px;
 }
 
-.dts-filter-card__actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
+.dts-statistics-tabs :deep(.el-tabs__nav-wrap::after) {
+  display: none;
 }
 
-.dts-filter-card__title {
-  color: #0f172a;
-  font-size: 18px;
-  font-weight: 700;
+.dts-statistics-tabs :deep(.el-tabs__nav-wrap) {
+  padding: 0;
 }
 
-.dts-filter-card__desc {
+.dts-statistics-tabs :deep(.el-tabs__nav) {
+  gap: 8px;
+}
+
+.dts-statistics-tabs :deep(.el-tabs__active-bar) {
+  display: none;
+}
+
+.dts-statistics-tabs :deep(.el-tabs__item) {
+  height: 40px;
+  border-radius: 12px;
   color: #64748b;
   font-size: 13px;
-  line-height: 1.7;
-  margin-top: 6px;
-  max-width: 760px;
+  font-weight: 700;
+  padding: 0 18px !important;
+  transition:
+    background-color 0.2s ease,
+    box-shadow 0.2s ease,
+    color 0.2s ease,
+    transform 0.2s ease;
 }
 
-.dts-filter-card__footer {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  color: #64748b;
-  font-size: 12px;
-  line-height: 1.7;
-  margin-top: 14px;
+.dts-statistics-tabs :deep(.el-tabs__item:hover) {
+  color: #1e293b;
 }
 
-.dts-filter-form {
-  display: grid;
-  gap: 16px 20px;
-  grid-template-columns:
-    minmax(320px, 1.8fr)
-    minmax(180px, 0.7fr)
-    minmax(340px, 1.3fr)
-    minmax(180px, 0.6fr);
-  overflow-x: auto;
-  padding-bottom: 2px;
+.dts-statistics-tabs :deep(.el-tabs__item.is-active) {
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  color: #0f172a;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.9),
+    0 8px 18px rgb(37 99 235 / 0.12);
+  transform: translateY(-1px);
 }
 
-.dts-filter-form::-webkit-scrollbar {
-  height: 6px;
-}
-
-.dts-filter-form::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.4);
-  border-radius: 999px;
-}
-
-.dts-filter-form::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.dts-filter-form :deep(.el-form-item) {
-  align-items: flex-start;
-  margin-bottom: 0;
-}
-
-.dts-filter-form :deep(.el-form-item__label) {
-  align-items: center;
-  color: #334155;
-  font-weight: 600;
-  justify-content: flex-end;
-  line-height: 40px;
-  padding-right: 14px;
-}
-
-.dts-filter-form :deep(.el-form-item__content) {
-  min-width: 0;
-}
-
-.dts-filter-form__item--actions :deep(.el-form-item__content) {
-  display: flex;
-  gap: 12px;
-  justify-content: flex-end;
-}
-
-.dts-filter-control {
-  width: 100%;
-}
-
-.project-selector-trigger {
-  display: flex;
-  min-width: 0;
-  width: 100%;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.project-selector-trigger__actions,
 .dts-data-card__actions {
   display: flex;
   align-items: center;
@@ -1920,25 +1975,14 @@ onUnmounted(() => {
   flex-wrap: wrap;
 }
 
-.project-selector-trigger__summary-text {
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.dts-statistics-tabs :deep(.el-tabs__header) {
-  margin-bottom: 12px;
-}
-
-.dts-statistics-tabs :deep(.el-tabs__nav-wrap::after) {
-  display: none;
-}
-
 .dts-data-card {
   display: flex;
   min-height: 0;
   flex-direction: column;
+  border: 1px solid #e2e8f0;
   border-radius: 20px;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+  box-shadow: 0 14px 32px rgb(15 23 42 / 0.04);
 }
 
 .dts-data-card :deep(.el-card__header) {
@@ -1995,10 +2039,100 @@ onUnmounted(() => {
 }
 
 .dts-table-title {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px 16px;
+  padding: 6px 0 10px;
+}
+
+.dts-table-title__filters {
+  display: flex;
+  flex: 1 1 720px;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+}
+
+.dts-table-title__field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dts-table-title__label,
+.dts-header-filter__label {
   color: #475569;
   font-size: 12px;
-  line-height: 1.6;
-  padding: 6px 0 10px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.dts-table-title__select {
+  width: 180px;
+}
+
+.dts-table-title__date {
+  width: 320px;
+}
+
+.dts-table-title__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dts-table-title__pending-tag {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.dts-header-filter {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dts-header-filter__actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.dts-data-grid :deep(.flex.items-center.justify-between.px-4.pb-4.pt-2) {
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.dts-data-grid
+  :deep(.flex.items-center.justify-between.px-4.pb-4.pt-2 > div:first-child) {
+  display: flex;
+  flex: 1 1 760px;
+  min-width: 0;
+}
+
+.dts-data-grid
+  :deep(.flex.items-center.justify-between.px-4.pb-4.pt-2 > div:last-child) {
+  flex-shrink: 0;
+}
+
+.dts-data-grid :deep(.zq-table-header th.el-table__cell) {
+  vertical-align: top;
+}
+
+.dts-data-grid :deep(.zq-table-header .cell) {
+  overflow: visible;
+  white-space: normal;
 }
 
 .dts-cell-tags {
@@ -2014,80 +2148,50 @@ onUnmounted(() => {
   flex: 1;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 16px 20px;
+}
+
+.dts-data-empty {
+  display: flex;
+  height: 100%;
+  min-height: 280px;
+  align-items: center;
+  justify-content: center;
 }
 
 .dts-data-guide__panel {
-  width: min(100%, 860px);
+  width: min(100%, 420px);
   border: 1px dashed #cbd5e1;
-  border-radius: 24px;
-  background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
-  padding: 32px;
-}
-
-.dts-data-guide__eyebrow {
-  color: #2563eb;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 20px 22px;
+  text-align: center;
 }
 
 .dts-data-guide__title {
   color: #0f172a;
-  font-size: 28px;
+  font-size: 18px;
   font-weight: 700;
-  line-height: 1.2;
-  margin-top: 10px;
+  line-height: 1.4;
 }
 
 .dts-data-guide__desc {
   color: #475569;
-  font-size: 14px;
-  line-height: 1.7;
-  margin-top: 10px;
-  max-width: 680px;
-}
-
-.dts-guide-steps {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  margin-top: 24px;
-}
-
-.dts-guide-step {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 18px;
-  padding: 18px;
-  min-height: 160px;
-}
-
-.dts-guide-step__index {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 999px;
-  background: #0f172a;
-  color: #ffffff;
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.dts-guide-step__title {
-  color: #0f172a;
-  font-size: 15px;
-  font-weight: 700;
-  margin-top: 14px;
-}
-
-.dts-guide-step__desc {
-  color: #64748b;
   font-size: 13px;
   line-height: 1.7;
   margin-top: 8px;
+}
+
+.dts-data-guide__meta {
+  color: #94a3b8;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.dts-data-guide__actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
 }
 
 .dts-summary-panel {
@@ -2101,7 +2205,9 @@ onUnmounted(() => {
 }
 
 .dense-overview-card {
+  border: 1px solid #e2e8f0;
   border-radius: 20px;
+  box-shadow: 0 12px 28px rgb(15 23 42 / 0.04);
   min-height: 216px;
 }
 
@@ -2319,9 +2425,21 @@ onUnmounted(() => {
 }
 
 @media (max-width: 1024px) {
+  .dense-overview-card__metric-grid--three {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+
   .dts-data-grid-wrap,
   .dts-data-grid {
     min-height: 360px;
+  }
+
+  .dts-table-title__filters {
+    flex-basis: 100%;
+  }
+
+  .dts-table-title__date {
+    width: 260px;
   }
 
   .dts-data-grid :deep(.p-4) {
@@ -2342,7 +2460,11 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
-  .dts-filter-card__header,
+  .dts-statistics-tabs {
+    border-radius: 18px;
+    padding: 10px;
+  }
+
   .dts-data-card__header,
   .summary-section-card__header,
   .dense-overview-card__title-row {
