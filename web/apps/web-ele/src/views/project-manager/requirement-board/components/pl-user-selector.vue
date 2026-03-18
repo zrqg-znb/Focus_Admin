@@ -120,9 +120,22 @@ function setTempSelected(next: Set<string>) {
   tempSelected.value = new Set(next);
 }
 
+// 存储选中用户的 username，用于展示
+const selectedUsernames = ref<Map<string, string>>(new Map());
+
 function openDialog() {
   if (props.disabled) return;
-  setTempSelected(new Set(confirmedUsernames.value));
+  
+  // 初始化时，假设外部传入的 modelValue 就是 username
+  // 此时我们没有对应的 userId，所以暂时将 userId 和 username 都设为一样
+  // 等后续加载用户列表时再进行匹配更新
+  const initialSet = new Set<string>();
+  confirmedUsernames.value.forEach(username => {
+    initialSet.add(username); // 先用 username 作为 ID 占位
+    selectedUsernames.value.set(username, username);
+  });
+  
+  setTempSelected(initialSet);
   plKeyword.value = '';
   dialogVisible.value = true;
   loadPlGroupsIfNeeded();
@@ -150,25 +163,44 @@ function selectPlGroup(plId: string) {
 }
 
 function handleConfirm() {
-  const value = normalizeUsernames(tempSelected.value);
+  // 提交时，我们需要返回的是 username 数组，而不是内部用于维护状态的 userId
+  const usernamesToSubmit = Array.from(tempSelected.value)
+    .map(id => selectedUsernames.value.get(id) || id);
+    
+  const value = normalizeUsernames(usernamesToSubmit);
   emitValue(value);
   closeDialog();
 }
 
-function removeSelectedUser(username: string) {
+function removeSelectedUser(id: string) {
   const next = new Set(tempSelected.value);
-  next.delete(username);
+  next.delete(id);
+  selectedUsernames.value.delete(id);
   setTempSelected(next);
 }
 
 function handleUserSelect(userId: string, user: any) {
+  // Use user.id instead of user.username to match UserListPanel's expected format
+  // UserListPanel internally uses user.id for selection state checking:
+  // :selected="selectable && tempSelectedUsers.has(user.id)"
   const next = new Set(tempSelected.value);
-  const username = user.username || userId;
+  const identifier = user.id || userId;
   
-  if (next.has(username)) {
-    next.delete(username);
+  if (next.has(identifier)) {
+    next.delete(identifier);
+    selectedUsernames.value.delete(identifier);
   } else {
-    next.add(username);
+    next.add(identifier);
+    // 保存 userId 到 username 的映射
+    if (user.username) {
+      selectedUsernames.value.set(identifier, user.username);
+    }
+    
+    // 清理可能存在的以 username 为 key 的旧记录（当外部传入的初始化数据被匹配上时）
+    if (user.username && next.has(user.username)) {
+      next.delete(user.username);
+      selectedUsernames.value.delete(user.username);
+    }
   }
   
   setTempSelected(next);
@@ -221,15 +253,15 @@ function handleUserSelect(userId: string, user: any) {
               <ElScrollbar>
                 <div class="selector-header__tags-inner">
                   <ElTag
-                    v-for="username in tempSelected"
-                    :key="username"
+                    v-for="id in tempSelected"
+                    :key="id"
                     closable
                     effect="light"
                     type="primary"
-                    @close="removeSelectedUser(username)"
+                    @close="removeSelectedUser(id)"
                     class="user-tag"
                   >
-                    {{ username }}
+                    {{ selectedUsernames.get(id) || id }}
                   </ElTag>
                 </div>
               </ElScrollbar>
