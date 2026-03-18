@@ -2127,7 +2127,7 @@ onUnmounted(() => {
 }
 
 .dts-data-grid :deep(.zq-table-header th.el-table__cell) {
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 .dts-data-grid :deep(.zq-table-header .cell) {
