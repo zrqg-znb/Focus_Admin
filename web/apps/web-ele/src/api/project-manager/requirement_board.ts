@@ -14,7 +14,15 @@ export interface RequirementBoardFilterPayload {
   categories?: string[];
   schedule_state?: RequirementScheduleState[];
   verification_policies?: string[];
+  develop_user?: string[];
+  test_user?: string[];
+  /**
+   * @deprecated use `develop_user` (username list)
+   */
   develop_users?: string[];
+  /**
+   * @deprecated use `test_user` (username list)
+   */
   test_users?: string[];
   time_field?: RequirementTimeField;
   time_start?: string;

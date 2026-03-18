@@ -32,7 +32,6 @@ import {
   ElTag,
 } from 'element-plus';
 
-import { searchUserApi } from '#/api/core/user';
 import {
   exportRequirementBoardApi,
   getRequirementBoardDataApi,
@@ -41,6 +40,7 @@ import {
 } from '#/api/project-manager/requirement_board';
 import { useZqTable } from '#/components/zq-table';
 
+import PlUserSelector from './components/pl-user-selector.vue';
 import ProjectSelectorDialog from './components/project-selector-dialog.vue';
 import TeamSelectorDialog from './components/team-selector-dialog.vue';
 import {
@@ -61,11 +61,6 @@ import {
 
 defineOptions({ name: 'RequirementBoard' });
 
-interface UserOption {
-  label: string;
-  value: string;
-}
-
 function createDefaultFilters(): RequirementBoardFilterPayload {
   return {
     project_ids: [],
@@ -73,8 +68,8 @@ function createDefaultFilters(): RequirementBoardFilterPayload {
     categories: [...DEFAULT_CATEGORIES],
     schedule_state: [],
     verification_policies: [],
-    develop_users: [],
-    test_users: [],
+    develop_user: [],
+    test_user: [],
     time_field: DEFAULT_TIME_FIELD,
     time_start: '',
     time_end: '',
@@ -85,11 +80,7 @@ const activeTab = ref('data');
 const optionsLoading = ref(false);
 const summaryLoading = ref(false);
 const exportLoading = ref(false);
-const developUserLoading = ref(false);
-const testUserLoading = ref(false);
 const projectOptions = ref<RequirementBoardProjectOption[]>([]);
-const developUserOptions = ref<UserOption[]>([]);
-const testUserOptions = ref<UserOption[]>([]);
 const projectSelectorVisible = ref(false);
 const teamSelectorVisible = ref(false);
 const dataGridWrapRef = ref<HTMLDivElement>();
@@ -194,8 +185,8 @@ function cloneFilterPayload(
     categories: categories.length > 0 ? categories : [...DEFAULT_CATEGORIES],
     schedule_state: normalizeScheduleStates(source.schedule_state),
     verification_policies: normalizeStringArray(source.verification_policies),
-    develop_users: normalizeStringArray(source.develop_users),
-    test_users: normalizeStringArray(source.test_users),
+    develop_user: normalizeStringArray(source.develop_user),
+    test_user: normalizeStringArray(source.test_user),
     time_field: (source.time_field ||
       DEFAULT_TIME_FIELD) as RequirementTimeField,
     time_start: source.time_start || '',
@@ -213,8 +204,8 @@ function buildFingerprint(payload: null | RequirementBoardFilterPayload) {
     categories: [...(payload.categories || [])].sort(),
     schedule_state: [...(payload.schedule_state || [])].sort(),
     verification_policies: [...(payload.verification_policies || [])].sort(),
-    develop_users: [...(payload.develop_users || [])].sort(),
-    test_users: [...(payload.test_users || [])].sort(),
+    develop_user: [...(payload.develop_user || [])].sort(),
+    test_user: [...(payload.test_user || [])].sort(),
     time_field: payload.time_field || '',
     time_start: payload.time_start || '',
     time_end: payload.time_end || '',
@@ -495,79 +486,6 @@ function getTeamTagType(teamName: string) {
   return getStableTagType(teamName);
 }
 
-function buildUserOption(item: { name?: string; username?: string }) {
-  const username = String(item.username || '').trim();
-  const name = String(item.name || '').trim();
-  return {
-    label: name ? `${username} · ${name}` : username,
-    value: username,
-  };
-}
-
-function mergeUserOptions(
-  target: typeof developUserOptions,
-  selectedValues?: string[],
-  incoming?: UserOption[],
-) {
-  const next = new Map<string, UserOption>();
-  [...(target.value || []), ...(incoming || [])].forEach((item) => {
-    if (!item?.value) {
-      return;
-    }
-    next.set(item.value, item);
-  });
-  (selectedValues || []).forEach((item) => {
-    if (!next.has(item)) {
-      next.set(item, { label: item, value: item });
-    }
-  });
-  target.value = [...next.values()].sort((a, b) =>
-    a.value.localeCompare(b.value),
-  );
-}
-
-async function searchUsers(keyword: string, type: 'develop' | 'test') {
-  const target = type === 'develop' ? developUserOptions : testUserOptions;
-  const loading = type === 'develop' ? developUserLoading : testUserLoading;
-  const selectedValues =
-    type === 'develop' ? filters.value.develop_users : filters.value.test_users;
-  const normalizedKeyword = String(keyword || '').trim();
-  if (!normalizedKeyword) {
-    mergeUserOptions(target, selectedValues);
-    return;
-  }
-
-  loading.value = true;
-  try {
-    const response = await searchUserApi(normalizedKeyword);
-    const incoming = (response.items || [])
-      .map((item) => buildUserOption(item))
-      .filter((item) => item.value);
-    mergeUserOptions(target, selectedValues, incoming);
-  } catch (error) {
-    console.error(error);
-    ElMessage.error('检索责任人失败');
-  } finally {
-    loading.value = false;
-  }
-}
-
-watch(
-  () => filters.value.develop_users,
-  (value) => {
-    mergeUserOptions(developUserOptions, value);
-  },
-  { deep: true, immediate: true },
-);
-
-watch(
-  () => filters.value.test_users,
-  (value) => {
-    mergeUserOptions(testUserOptions, value);
-  },
-  { deep: true, immediate: true },
-);
-
 async function loadFilterOptions() {
   optionsLoading.value = true;
   try {
@@ -721,8 +639,6 @@ function clearGridData() {
 async function handleReset() {
   filters.value = createDefaultFilters();
   dateRange.value = null;
-  developUserOptions.value = [];
-  testUserOptions.value = [];
   projectSelectorVisible.value = false;
   teamSelectorVisible.value = false;
   appliedFilters.value = null;
@@ -1304,31 +1220,12 @@ onUnmounted(() => {
                         <span class="requirement-header-filter__label">
                           开发责任人
                         </span>
-                        <ElSelect
-                          v-model="filters.develop_users"
+                        <PlUserSelector
+                          v-model="filters.develop_user"
                           class="requirement-header-filter__select"
-                          multiple
-                          collapse-tags
-                          collapse-tags-tooltip
-                          filterable
-                          remote
-                          reserve-keyword
-                          clearable
-                          size="small"
-                          :max-collapse-tags="1"
-                          :loading="developUserLoading"
-                          placeholder="按 username 搜索"
-                          :remote-method="
-                            (value: string) => searchUsers(value, 'develop')
-                          "
-                        >
-                          <ElOption
-                            v-for="item in developUserOptions"
-                            :key="item.value"
-                            :label="item.label"
-                            :value="item.value"
-                          />
-                        </ElSelect>
+                          title="选择开发责任人"
+                          placeholder="选择开发责任人"
+                        />
                       </div>
                     </template>
 
@@ -1337,31 +1234,12 @@ onUnmounted(() => {
                         <span class="requirement-header-filter__label">
                           测试责任人
                         </span>
-                        <ElSelect
-                          v-model="filters.test_users"
+                        <PlUserSelector
+                          v-model="filters.test_user"
                           class="requirement-header-filter__select"
-                          multiple
-                          collapse-tags
-                          collapse-tags-tooltip
-                          filterable
-                          remote
-                          reserve-keyword
-                          clearable
-                          size="small"
-                          :max-collapse-tags="1"
-                          :loading="testUserLoading"
-                          placeholder="按 username 搜索"
-                          :remote-method="
-                            (value: string) => searchUsers(value, 'test')
-                          "
-                        >
-                          <ElOption
-                            v-for="item in testUserOptions"
-                            :key="item.value"
-                            :label="item.label"
-                            :value="item.value"
-                          />
-                        </ElSelect>
+                          title="选择测试责任人"
+                          placeholder="选择测试责任人"
+                        />
                       </div>
                     </template>
 

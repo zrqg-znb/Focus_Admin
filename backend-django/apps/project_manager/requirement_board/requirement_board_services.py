@@ -1323,14 +1323,16 @@ def get_filter_options() -> dict[str, Any]:
 
 
 def get_requirement_board_page(data: RequirementBoardDataQuerySchema) -> dict[str, Any]:
+    develop_users = (data.develop_user or []) + (data.develop_users or [])
+    test_users = (data.test_user or []) + (data.test_users or [])
     context = _resolve_query_context(
         data.project_ids,
         data.sub_teams,
         data.categories,
         data.schedule_state,
         data.verification_policies,
-        data.develop_users,
-        data.test_users,
+        develop_users,
+        test_users,
         data.time_field,
         data.time_start,
         data.time_end,
@@ -1961,14 +1963,16 @@ def _export_items_to_workbook(items: list[dict[str, Any]]) -> HttpResponse:
 def get_requirement_board_summary(
     data: RequirementBoardSummaryQuerySchema,
 ) -> dict[str, Any]:
+    develop_users = (data.develop_user or []) + (data.develop_users or [])
+    test_users = (data.test_user or []) + (data.test_users or [])
     context = _resolve_query_context(
         data.project_ids,
         data.sub_teams,
         data.categories,
         data.schedule_state,
         data.verification_policies,
-        data.develop_users,
-        data.test_users,
+        develop_users,
+        test_users,
         data.time_field,
         data.time_start,
         data.time_end,
@@ -2007,14 +2011,16 @@ def get_requirement_board_summary(
 def export_requirement_board_data(
     data: RequirementBoardExportQuerySchema,
 ) -> HttpResponse:
+    develop_users = (data.develop_user or []) + (data.develop_users or [])
+    test_users = (data.test_user or []) + (data.test_users or [])
     context = _resolve_query_context(
         data.project_ids,
         data.sub_teams,
         data.categories,
         data.schedule_state,
         data.verification_policies,
-        data.develop_users,
-        data.test_users,
+        develop_users,
+        test_users,
         data.time_field,
         data.time_start,
         data.time_end,

@@ -30,6 +30,8 @@ class RequirementBoardDataQuerySchema(Schema):
         None,
         description="验证策略列表",
     )
+    develop_user: Optional[List[str]] = Field(None, description="开发责任人列表（username）")
+    test_user: Optional[List[str]] = Field(None, description="测试责任人列表（username）")
     develop_users: Optional[List[str]] = Field(None, description="开发责任人列表")
     test_users: Optional[List[str]] = Field(None, description="测试责任人列表")
     time_field: Optional[str] = Field(None, description="时间维度字段")
@@ -59,6 +61,8 @@ class RequirementBoardSummaryQuerySchema(Schema):
         None,
         description="验证策略列表",
     )
+    develop_user: Optional[List[str]] = Field(None, description="开发责任人列表（username）")
+    test_user: Optional[List[str]] = Field(None, description="测试责任人列表（username）")
     develop_users: Optional[List[str]] = Field(None, description="开发责任人列表")
     test_users: Optional[List[str]] = Field(None, description="测试责任人列表")
     time_field: Optional[str] = Field(None, description="时间维度字段")
