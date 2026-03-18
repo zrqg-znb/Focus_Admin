@@ -127,8 +127,21 @@ function normalizeStringArray(values?: string[]) {
   const seen = new Set<string>();
   const result: string[] = [];
   for (const item of values || []) {
-    const text = String(item || '').trim();
-    if (!text || seen.has(text)) {
+    // 允许空字符串通过，只过滤 undefined 和 null
+    if (item === undefined || item === null) continue;
+    
+    const text = typeof item === 'string' ? item.trim() : String(item).trim();
+    
+    // 如果是空字符串，允许通过但要确保去重
+    if (text === '') {
+      if (!seen.has('__EMPTY_STRING__')) {
+        seen.add('__EMPTY_STRING__');
+        result.push('');
+      }
+      continue;
+    }
+    
+    if (seen.has(text)) {
       continue;
     }
     seen.add(text);
@@ -679,7 +692,7 @@ watch(
     const available = new Set(teamOptions.value.map((item) => item.value));
     filters.value.sub_teams = normalizeStringArray(
       filters.value.sub_teams,
-    ).filter((item) => available.has(item));
+    ).filter((item) => item === '' || available.has(item));
   },
   { deep: true },
 );

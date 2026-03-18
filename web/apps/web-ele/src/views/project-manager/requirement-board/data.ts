@@ -1,5 +1,3 @@
-import type { Column } from 'element-plus';
-
 import type {
   RequirementBoardItem,
   RequirementBoardSummary,
@@ -120,27 +118,27 @@ export const STATUS_META_MAP = Object.fromEntries(
 );
 
 export function useRequirementColumns(): ZqTableGridOptions<RequirementBoardItem>['columns'] {
-  const columns: Column<RequirementBoardItem>[] = [
+  const columns = [
     {
       key: 'project_name',
       dataKey: 'project_name',
       title: '项目名',
       width: 220,
-      fixed: 'left',
+      fixed: 'left' as const,
     },
     {
       key: 'team_name',
       dataKey: 'team_name',
       title: '团队',
       width: 190,
-      fixed: 'left',
+      fixed: 'left' as const,
     },
     {
       key: 'status_code',
       dataKey: 'status_code',
       title: '状态',
       width: 200,
-      fixed: 'left',
+      fixed: 'left' as const,
     },
     {
       key: 'category',
@@ -228,11 +226,13 @@ export function useRequirementColumns(): ZqTableGridOptions<RequirementBoardItem
     },
   ];
 
-  return columns.map((column) => ({
-    align: 'center',
-    headerAlign: 'center',
-    ...column,
-  }));
+  return columns.map((column) => {
+    return {
+      align: 'center' as const,
+      headerAlign: 'center' as const,
+      ...column,
+    };
+  });
 }
 
 export function formatMetric(value?: null | number, digits = 2) {

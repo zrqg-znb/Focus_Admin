@@ -45,8 +45,16 @@ function normalizeStringArray(values?: string[]) {
   const seen = new Set<string>();
   const result: string[] = [];
   for (const item of values || []) {
-    const text = String(item || '').trim();
-    if (!text || seen.has(text)) {
+    if (item === undefined || item === null) continue;
+    const text = typeof item === 'string' ? item.trim() : String(item).trim();
+    if (text === '') {
+      if (!seen.has('__EMPTY_STRING__')) {
+        seen.add('__EMPTY_STRING__');
+        result.push('');
+      }
+      continue;
+    }
+    if (seen.has(text)) {
       continue;
     }
     seen.add(text);
@@ -55,10 +63,17 @@ function normalizeStringArray(values?: string[]) {
   return result;
 }
 
+const EMPTY_TEAM_OPTION: TeamOption = {
+  label: '未识别团队 (空团队)',
+  value: '__EMPTY_TEAM__',
+};
+
 const filteredTeams = computed(() => {
   const keywordText = keyword.value.trim().toLowerCase();
   const selectedSet = new Set(tempSelectedValues.value);
-  return [...props.teams]
+  
+  // 过滤常规团队选项
+  const regularTeams = [...props.teams]
     .filter((item) => {
       if (!keywordText) {
         return true;
@@ -73,15 +88,28 @@ const filteredTeams = computed(() => {
       }
       return left.label.localeCompare(right.label, 'zh-CN');
     });
+    
+  // 判断空选项是否应该显示 (如果不被关键字过滤掉)
+  const showEmpty = !keywordText || EMPTY_TEAM_OPTION.label.toLowerCase().includes(keywordText);
+  
+  if (showEmpty) {
+    return [EMPTY_TEAM_OPTION, ...regularTeams];
+  }
+  
+  return regularTeams;
 });
 
 const selectedSet = computed(() => new Set(tempSelectedValues.value));
 const selectableTeamValues = computed(() =>
-  filteredTeams.value.map((item) => item.value),
+  filteredTeams.value
+    .map((item) => item.value)
+    .filter((value) => value !== EMPTY_TEAM_OPTION.value)
 );
 
 function syncFromProps() {
-  tempSelectedValues.value = normalizeStringArray(props.selectedTeamValues);
+  tempSelectedValues.value = normalizeStringArray(props.selectedTeamValues).map(val => 
+    val === '' ? EMPTY_TEAM_OPTION.value : val
+  );
   keyword.value = '';
 }
 
@@ -121,7 +149,12 @@ function handleClearAll() {
 }
 
 function handleConfirm() {
-  emit('confirm', normalizeStringArray(tempSelectedValues.value));
+  const result = tempSelectedValues.value.map(val => 
+    val === EMPTY_TEAM_OPTION.value ? '' : val
+  );
+  // 对于空字符串我们不能通过 normalizeStringArray 去掉（它会去除空字符串），所以手动处理去重
+  const finalResult = [...new Set(result)].filter(val => val === '' || val.trim());
+  emit('confirm', finalResult);
   dialogVisible.value = false;
 }
 </script>
