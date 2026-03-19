@@ -6,9 +6,10 @@ import type {
   RequirementWorkspaceLatest,
   RequirementWorkspaceProjectFieldStat,
   RequirementWorkspaceProjectRow,
+  RequirementWorkspaceScope,
 } from '#/api/project-manager/requirement_workspace';
 
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
@@ -29,6 +30,15 @@ import {
   getRequirementWorkspaceLatestApi,
   refreshRequirementWorkspaceApi,
 } from '#/api/project-manager/requirement_workspace';
+
+const props = withDefaults(
+  defineProps<{
+    scope?: RequirementWorkspaceScope;
+  }>(),
+  {
+    scope: 'all',
+  },
+);
 
 type RequirementWorkspaceSortValue =
   | 'acceptance_delay'
@@ -55,32 +65,32 @@ const FIELD_OPTIONS: FieldOption[] = [
   {
     value: 'planned_test_time',
     label: '计划转测时间',
-    accent: '#f59e0b',
+    accent: '#2563eb',
   },
   {
     value: 'due_date',
     label: '计划完成时间',
-    accent: '#f97316',
+    accent: '#0f766e',
   },
   {
     value: 'develop_users',
     label: '开发责任人',
-    accent: '#2563eb',
+    accent: '#7c3aed',
   },
   {
     value: 'test_users',
     label: '测试责任人',
-    accent: '#16a34a',
+    accent: '#0369a1',
   },
   {
     value: 'workload_man_day',
     label: '工作量(人天)',
-    accent: '#7c3aed',
+    accent: '#ea580c',
   },
   {
     value: 'workload_kloc',
     label: '代码量(KLOC)',
-    accent: '#0f766e',
+    accent: '#dc2626',
   },
 ];
 
@@ -153,6 +163,28 @@ function createErrorMessage(error: unknown) {
   return '请求失败，请稍后重试';
 }
 
+function createEmptyChartOption(message: string) {
+  return {
+    graphic: {
+      type: 'text',
+      left: 'center',
+      top: 'middle',
+      style: {
+        fill: '#94a3b8',
+        fontSize: 14,
+        text: message,
+      },
+    },
+    xAxis: {
+      show: false,
+    },
+    yAxis: {
+      show: false,
+    },
+    series: [],
+  };
+}
+
 function formatPercent(value?: null | number) {
   const numeric = Number(value || 0);
   return `${(numeric * 100).toFixed(1)}%`;
@@ -184,6 +216,26 @@ function getFieldStat(
 ): RequirementWorkspaceProjectFieldStat {
   return row.fields[fieldKey];
 }
+
+const panelTitle = computed(() =>
+  props.scope === 'favorites' ? '收藏项目交付合规看板' : '需求交付合规看板',
+);
+const panelDescription = computed(() =>
+  props.scope === 'favorites'
+    ? '聚焦当前收藏项目的计划字段、责任人、工作量填写率与延期情况。'
+    : '基于每日快照展示项目计划字段、责任人、工作量填写率与延期情况。',
+);
+const projectTagLabel = computed(() =>
+  props.scope === 'favorites' ? '收藏项目' : '配置项目',
+);
+const emptyProjectDescription = computed(() =>
+  props.scope === 'favorites' ? '暂无已配置收藏项目' : '暂无已配置项目',
+);
+const emptySnapshotDescription = computed(() =>
+  props.scope === 'favorites'
+    ? '尚未生成收藏项目交付合规快照'
+    : '尚未生成需求交付合规快照',
+);
 
 const hasConfiguredProjects = computed(
   () => Number(snapshot.value.project_count || 0) > 0,
@@ -339,7 +391,7 @@ const sortedTableRows = computed(() => {
 async function loadSnapshot() {
   loading.value = true;
   try {
-    snapshot.value = await getRequirementWorkspaceLatestApi();
+    snapshot.value = await getRequirementWorkspaceLatestApi(props.scope);
   } catch (error) {
     console.error('Failed to load requirement workspace snapshot', error);
     ElMessage.error(`加载需求交付合规看板失败：${createErrorMessage(error)}`);
@@ -352,7 +404,7 @@ async function loadSnapshot() {
 async function refreshSnapshot() {
   refreshing.value = true;
   try {
-    snapshot.value = await refreshRequirementWorkspaceApi();
+    snapshot.value = await refreshRequirementWorkspaceApi(props.scope);
     ElMessage.success('需求交付合规快照已刷新');
   } catch (error) {
     console.error('Failed to refresh requirement workspace snapshot', error);
@@ -362,191 +414,262 @@ async function refreshSnapshot() {
   }
 }
 
+async function renderFieldOverviewChartView() {
+  await nextTick();
+  const rows = visibleFieldOverview.value;
+  if (rows.length === 0) {
+    await renderFieldOverviewChart(createEmptyChartOption('暂无字段统计数据'));
+    return;
+  }
+
+  await renderFieldOverviewChart({
+    color: rows.map((item) => getFieldMeta(item.field_key).accent),
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: unknown) => {
+        const current = rows[resolveDataIndex(params)];
+        if (!current) {
+          return '';
+        }
+        return [
+          current.field_label,
+          `填写率：${formatPercent(current.filled_rate)}`,
+          `已填：${current.filled_count}`,
+          `缺失：${current.missing_count}`,
+          `适用：${current.applicable_count}`,
+        ].join('<br/>');
+      },
+    },
+    grid: {
+      left: '4%',
+      right: '4%',
+      bottom: '8%',
+      top: '12%',
+      containLabel: true,
+    },
+    xAxis: {
+      type: 'category',
+      data: rows.map((item) => item.field_label),
+      axisLabel: {
+        interval: 0,
+        rotate: rows.length > 4 ? 18 : 0,
+      },
+    },
+    yAxis: {
+      type: 'value',
+      max: 100,
+      axisLabel: {
+        formatter: '{value}%',
+      },
+    },
+    series: [
+      {
+        type: 'bar',
+        barWidth: 26,
+        label: {
+          show: true,
+          position: 'top',
+          formatter: ({ value }: { value: number }) =>
+            `${Number(value || 0).toFixed(1)}%`,
+        },
+        itemStyle: {
+          borderRadius: [8, 8, 0, 0],
+        },
+        data: rows.map((item) => Number((item.filled_rate * 100).toFixed(1))),
+      },
+    ],
+  });
+}
+
+async function renderMissingProjectChartView() {
+  await nextTick();
+  const rows = missingTopProjects.value;
+  if (rows.length === 0) {
+    await renderMissingProjectChart(
+      createEmptyChartOption('当前筛选字段没有缺失项目'),
+    );
+    return;
+  }
+
+  await renderMissingProjectChart({
+    color: ['#ef4444'],
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: {
+        type: 'shadow',
+      },
+      formatter: (params: unknown) => {
+        const current = rows[resolveDataIndex(params)];
+        if (!current) {
+          return '';
+        }
+        const details = effectiveSelectedFields.value.map((fieldKey) => {
+          const fieldStat = getFieldStat(current, fieldKey);
+          return `${getFieldMeta(fieldKey).label}：${fieldStat.missing_count}`;
+        });
+        return [
+          current.project_name,
+          `缺失数：${current.selectedMissingCount}`,
+          `缺失率：${formatPercent(current.selectedMissingRate)}`,
+          ...details,
+        ].join('<br/>');
+      },
+    },
+    grid: {
+      left: '4%',
+      right: '5%',
+      bottom: '4%',
+      top: '10%',
+      containLabel: true,
+    },
+    xAxis: {
+      type: 'value',
+    },
+    yAxis: {
+      type: 'category',
+      inverse: true,
+      data: rows.map((item) => item.project_name),
+    },
+    series: [
+      {
+        type: 'bar',
+        barWidth: 18,
+        data: rows.map((item) => item.selectedMissingCount),
+        label: {
+          show: true,
+          position: 'right',
+        },
+        itemStyle: {
+          borderRadius: [0, 8, 8, 0],
+        },
+      },
+    ],
+  });
+}
+
+async function renderDelayProjectChartView() {
+  await nextTick();
+  const rows = delayTopProjects.value;
+  if (rows.length === 0) {
+    await renderDelayProjectChart(
+      createEmptyChartOption('当前项目暂无延期需求'),
+    );
+    return;
+  }
+
+  await renderDelayProjectChart({
+    color: ['#ea580c', '#dc2626'],
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: {
+        type: 'shadow',
+      },
+    },
+    legend: {
+      top: 0,
+    },
+    grid: {
+      left: '4%',
+      right: '4%',
+      bottom: '8%',
+      top: '12%',
+      containLabel: true,
+    },
+    xAxis: {
+      type: 'category',
+      data: rows.map((item) => item.project_name),
+      axisLabel: {
+        interval: 0,
+        rotate: rows.length > 4 ? 18 : 0,
+      },
+    },
+    yAxis: {
+      type: 'value',
+    },
+    series: [
+      {
+        name: '开发延期',
+        type: 'bar',
+        barWidth: 16,
+        data: rows.map((item) => item.delay.development_count),
+        itemStyle: {
+          borderRadius: [6, 6, 0, 0],
+        },
+      },
+      {
+        name: '测试延期',
+        type: 'bar',
+        barWidth: 16,
+        data: rows.map((item) => item.delay.acceptance_count),
+        itemStyle: {
+          borderRadius: [6, 6, 0, 0],
+        },
+      },
+    ],
+  });
+}
+
+async function renderAllCharts() {
+  if (!hasSnapshot.value || !hasConfiguredProjects.value) {
+    return;
+  }
+  await Promise.all([
+    renderFieldOverviewChartView(),
+    renderMissingProjectChartView(),
+    renderDelayProjectChartView(),
+  ]);
+}
+
 watch(
   visibleFieldOverview,
-  (rows) => {
-    renderFieldOverviewChart({
-      color: rows.map((item) => getFieldMeta(item.field_key).accent),
-      tooltip: {
-        trigger: 'axis',
-        formatter: (params: unknown) => {
-          const current = rows[resolveDataIndex(params)];
-          if (!current) {
-            return '';
-          }
-          return [
-            current.field_label,
-            `填写率：${formatPercent(current.filled_rate)}`,
-            `已填：${current.filled_count}`,
-            `缺失：${current.missing_count}`,
-            `适用：${current.applicable_count}`,
-          ].join('<br/>');
-        },
-      },
-      grid: {
-        left: '4%',
-        right: '4%',
-        bottom: '8%',
-        top: '12%',
-        containLabel: true,
-      },
-      xAxis: {
-        type: 'category',
-        data: rows.map((item) => item.field_label),
-        axisLabel: {
-          interval: 0,
-          rotate: rows.length > 4 ? 18 : 0,
-        },
-      },
-      yAxis: {
-        type: 'value',
-        max: 100,
-        axisLabel: {
-          formatter: '{value}%',
-        },
-      },
-      series: [
-        {
-          type: 'bar',
-          barWidth: 26,
-          label: {
-            show: true,
-            position: 'top',
-            formatter: ({ value }: { value: number }) =>
-              `${Number(value || 0).toFixed(1)}%`,
-          },
-          itemStyle: {
-            borderRadius: [8, 8, 0, 0],
-          },
-          data: rows.map((item) => Number((item.filled_rate * 100).toFixed(1))),
-        },
-      ],
-    });
+  () => {
+    if (!loading.value && hasSnapshot.value) {
+      renderFieldOverviewChartView();
+    }
   },
-  { immediate: true, deep: true },
+  { deep: true, flush: 'post' },
 );
 
 watch(
   missingTopProjects,
-  (rows) => {
-    renderMissingProjectChart({
-      color: ['#ef4444'],
-      tooltip: {
-        trigger: 'axis',
-        axisPointer: {
-          type: 'shadow',
-        },
-        formatter: (params: unknown) => {
-          const current = rows[resolveDataIndex(params)];
-          if (!current) {
-            return '';
-          }
-          const details = effectiveSelectedFields.value.map((fieldKey) => {
-            const fieldStat = getFieldStat(current, fieldKey);
-            return `${getFieldMeta(fieldKey).label}：${fieldStat.missing_count}`;
-          });
-          return [
-            current.project_name,
-            `缺失数：${current.selectedMissingCount}`,
-            `缺失率：${formatPercent(current.selectedMissingRate)}`,
-            ...details,
-          ].join('<br/>');
-        },
-      },
-      grid: {
-        left: '4%',
-        right: '5%',
-        bottom: '4%',
-        top: '10%',
-        containLabel: true,
-      },
-      xAxis: {
-        type: 'value',
-      },
-      yAxis: {
-        type: 'category',
-        inverse: true,
-        data: rows.map((item) => item.project_name),
-      },
-      series: [
-        {
-          type: 'bar',
-          barWidth: 18,
-          data: rows.map((item) => item.selectedMissingCount),
-          label: {
-            show: true,
-            position: 'right',
-          },
-          itemStyle: {
-            borderRadius: [0, 8, 8, 0],
-          },
-        },
-      ],
-    });
+  () => {
+    if (!loading.value && hasSnapshot.value) {
+      renderMissingProjectChartView();
+    }
   },
-  { immediate: true, deep: true },
+  { deep: true, flush: 'post' },
 );
 
 watch(
   delayTopProjects,
-  (rows) => {
-    renderDelayProjectChart({
-      color: ['#f97316', '#16a34a'],
-      tooltip: {
-        trigger: 'axis',
-        axisPointer: {
-          type: 'shadow',
-        },
-      },
-      legend: {
-        top: 0,
-      },
-      grid: {
-        left: '4%',
-        right: '4%',
-        bottom: '8%',
-        top: '12%',
-        containLabel: true,
-      },
-      xAxis: {
-        type: 'category',
-        data: rows.map((item) => item.project_name),
-        axisLabel: {
-          interval: 0,
-          rotate: rows.length > 4 ? 18 : 0,
-        },
-      },
-      yAxis: {
-        type: 'value',
-      },
-      series: [
-        {
-          name: '开发延期',
-          type: 'bar',
-          barWidth: 16,
-          data: rows.map((item) => item.delay.development_count),
-          itemStyle: {
-            borderRadius: [6, 6, 0, 0],
-          },
-        },
-        {
-          name: '测试延期',
-          type: 'bar',
-          barWidth: 16,
-          data: rows.map((item) => item.delay.acceptance_count),
-          itemStyle: {
-            borderRadius: [6, 6, 0, 0],
-          },
-        },
-      ],
-    });
+  () => {
+    if (!loading.value && hasSnapshot.value) {
+      renderDelayProjectChartView();
+    }
   },
-  { immediate: true, deep: true },
+  { deep: true, flush: 'post' },
+);
+
+watch(
+  () => loading.value,
+  (isLoading) => {
+    if (!isLoading) {
+      renderAllCharts();
+    }
+  },
+  { flush: 'post' },
 );
 
 onMounted(() => {
   loadSnapshot();
 });
+
+watch(
+  () => props.scope,
+  () => {
+    loadSnapshot();
+  },
+);
 </script>
 
 <template>
@@ -556,15 +679,15 @@ onMounted(() => {
     >
       <div>
         <div class="text-lg font-bold text-slate-900 dark:text-slate-100">
-          需求交付合规看板
+          {{ panelTitle }}
         </div>
         <div class="mt-1 text-sm text-slate-500">
-          基于每日快照展示项目计划字段、责任人、工作量填写率与延期情况。
+          {{ panelDescription }}
         </div>
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <ElTag type="info" effect="light">
-          配置项目 {{ snapshot.project_count }}
+          {{ projectTagLabel }} {{ snapshot.project_count }}
         </ElTag>
         <ElTag type="primary" effect="light">
           需求 {{ snapshot.requirement_count }}
@@ -589,7 +712,7 @@ onMounted(() => {
       shadow="never"
       class="rounded-xl border border-dashed border-slate-200 dark:border-slate-700"
     >
-      <ElEmpty description="暂无已配置项目" />
+      <ElEmpty :description="emptyProjectDescription" />
     </ElCard>
 
     <ElCard
@@ -597,7 +720,7 @@ onMounted(() => {
       shadow="never"
       class="rounded-xl border border-dashed border-slate-200 dark:border-slate-700"
     >
-      <ElEmpty description="尚未生成需求交付合规快照">
+      <ElEmpty :description="emptySnapshotDescription">
         <template #default>
           <ElButton
             type="primary"

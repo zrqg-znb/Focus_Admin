@@ -1,4 +1,4 @@
-from ninja import Router
+from ninja import Query, Router
 
 from common.fu_auth import BearerAuth as GlobalAuth
 
@@ -13,8 +13,11 @@ router = Router(tags=["RequirementWorkspace"], auth=GlobalAuth())
     response=RequirementWorkspaceLatestSchema,
     summary="获取工作台需求交付合规快照",
 )
-def get_requirement_workspace_latest(request):
-    return requirement_workspace_services.get_latest_requirement_workspace_snapshot()
+def get_requirement_workspace_latest(request, scope: str = Query("all")):
+    return requirement_workspace_services.get_latest_requirement_workspace_snapshot(
+        view_scope=scope,
+        user=request.auth,
+    )
 
 
 @router.post(
@@ -22,5 +25,8 @@ def get_requirement_workspace_latest(request):
     response=RequirementWorkspaceLatestSchema,
     summary="立即刷新工作台需求交付合规快照",
 )
-def refresh_requirement_workspace(request):
-    return requirement_workspace_services.refresh_requirement_workspace_snapshot()
+def refresh_requirement_workspace(request, scope: str = Query("all")):
+    return requirement_workspace_services.refresh_requirement_workspace_snapshot(
+        view_scope=scope,
+        user=request.auth,
+    )

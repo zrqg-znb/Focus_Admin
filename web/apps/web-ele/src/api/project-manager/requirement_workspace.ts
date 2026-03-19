@@ -91,11 +91,24 @@ export interface RequirementWorkspaceLatest {
 }
 
 const base = '/api/project-manager/requirement-workspace';
+export type RequirementWorkspaceScope = 'all' | 'favorites';
 
-export async function getRequirementWorkspaceLatestApi() {
-  return requestClient.get<RequirementWorkspaceLatest>(`${base}/latest`);
+export async function getRequirementWorkspaceLatestApi(
+  scope: RequirementWorkspaceScope = 'all',
+) {
+  return requestClient.get<RequirementWorkspaceLatest>(`${base}/latest`, {
+    params: { scope },
+  });
 }
 
-export async function refreshRequirementWorkspaceApi() {
-  return requestClient.post<RequirementWorkspaceLatest>(`${base}/refresh`);
+export async function refreshRequirementWorkspaceApi(
+  scope: RequirementWorkspaceScope = 'all',
+) {
+  return requestClient.post<RequirementWorkspaceLatest>(
+    `${base}/refresh`,
+    null,
+    {
+      params: { scope },
+    },
+  );
 }

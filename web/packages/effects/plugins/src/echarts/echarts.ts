@@ -6,6 +6,7 @@ import type {
 import type {
   DatasetComponentOption,
   DataZoomComponentOption,
+  GraphicComponentOption,
   GridComponentOption,
   MarkLineComponentOption,
   // 组件类型的定义后缀都为 ComponentOption
@@ -19,6 +20,7 @@ import {
   // 数据集组件
   DatasetComponent,
   DataZoomComponent,
+  GraphicComponent,
   GridComponent,
   LegendComponent,
   MarkLineComponent,
@@ -37,6 +39,7 @@ export type ECOption = ComposeOption<
   | BarSeriesOption
   | DatasetComponentOption
   | DataZoomComponentOption
+  | GraphicComponentOption
   | GridComponentOption
   | LineSeriesOption
   | MarkLineComponentOption
@@ -52,6 +55,7 @@ echarts.use([
   TooltipComponent,
   GridComponent,
   DataZoomComponent,
+  GraphicComponent,
   DatasetComponent,
   TransformComponent,
   BarChart,

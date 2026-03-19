@@ -125,8 +125,11 @@ class RequirementWorkspaceServiceTests(TestCase):
         )
         self.assertEqual(len(payload["delay_previews"]["development"]), 1)
 
-    def test_get_latest_returns_empty_payload_before_first_snapshot(self):
-        Project.objects.create(
+    @mock.patch(
+        "apps.project_manager.requirement_workspace.requirement_workspace_services.requirement_board_services.scan_standardized_requirement_items"
+    )
+    def test_get_latest_bootstraps_first_snapshot_when_missing(self, mocked_scan):
+        project = Project.objects.create(
             name="Alpha",
             domain="车控",
             type="量产",
@@ -134,11 +137,20 @@ class RequirementWorkspaceServiceTests(TestCase):
             design_id="design-alpha",
             sub_teams=["Team-A"],
         )
+        mocked_scan.return_value = [
+            self._make_item(
+                project_id=str(project.id),
+                project_name=project.name,
+                requirement_id="REQ-1",
+            )
+        ]
 
         payload = requirement_workspace_services.get_latest_requirement_workspace_snapshot()
-        self.assertIsNone(payload["generated_at"])
+        self.assertIsNotNone(payload["generated_at"])
         self.assertEqual(payload["project_count"], 1)
-        self.assertEqual(payload["project_rows"], [])
+        self.assertEqual(payload["requirement_count"], 1)
+        self.assertEqual(payload["project_rows"][0]["project_name"], "Alpha")
+        self.assertEqual(RequirementWorkspaceSnapshot.objects.count(), 1)
 
     @mock.patch(
         "apps.project_manager.requirement_workspace.requirement_workspace_services.requirement_board_services.scan_standardized_requirement_items"
@@ -195,3 +207,61 @@ class RequirementWorkspaceServiceTests(TestCase):
 
         with self.assertRaises(HttpError):
             requirement_workspace_services.refresh_requirement_workspace_snapshot()
+
+    @mock.patch(
+        "apps.project_manager.requirement_workspace.requirement_workspace_services._get_favorite_project_id_set"
+    )
+    def test_get_latest_filters_to_favorite_projects(self, mocked_favorite_ids):
+        mocked_favorite_ids.return_value = {"project-beta"}
+
+        payload = requirement_workspace_services.build_requirement_workspace_snapshot_payload(
+            [
+                SimpleNamespace(id="project-alpha", name="Alpha"),
+                SimpleNamespace(id="project-beta", name="Beta"),
+            ],
+            [
+                self._make_item(
+                    project_id="project-alpha",
+                    project_name="Alpha",
+                    requirement_id="REQ-1",
+                    has_due_date=False,
+                ),
+                self._make_item(
+                    project_id="project-beta",
+                    project_name="Beta",
+                    requirement_id="REQ-2",
+                    has_due_date=True,
+                    has_planned_test_time=True,
+                    planned_test_time="2026-03-20 00:00:00",
+                    has_develop_users=True,
+                    has_test_users=True,
+                    status_code="A",
+                    status_label="测试完成（已置A）",
+                    has_workload_man_day=True,
+                    has_workload_kloc=True,
+                ),
+            ],
+            scope=requirement_workspace_services.DEFAULT_SCOPE,
+            generated_at=timezone.now(),
+        )
+        RequirementWorkspaceSnapshot.objects.create(
+            snapshot_date=timezone.now().date(),
+            scope=requirement_workspace_services.DEFAULT_SCOPE,
+            generated_at=timezone.now(),
+            project_count=2,
+            requirement_count=2,
+            payload=payload,
+        )
+
+        filtered = requirement_workspace_services.get_latest_requirement_workspace_snapshot(
+            view_scope="favorites",
+            user=SimpleNamespace(id="user-1"),
+        )
+
+        self.assertEqual(filtered["scope"], "favorites")
+        self.assertEqual(filtered["project_count"], 1)
+        self.assertEqual(filtered["requirement_count"], 1)
+        self.assertEqual(filtered["project_rows"][0]["project_name"], "Beta")
+        field_map = {item["field_key"]: item for item in filtered["field_overview"]}
+        self.assertEqual(field_map["planned_test_time"]["filled_count"], 1)
+        self.assertEqual(field_map["due_date"]["missing_count"], 0)

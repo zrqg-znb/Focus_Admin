@@ -15,6 +15,8 @@ from .requirement_workspace_model import RequirementWorkspaceSnapshot
 logger = logging.getLogger(__name__)
 
 DEFAULT_SCOPE = "active_configured"
+DEFAULT_VIEW_SCOPE = "all"
+FAVORITES_VIEW_SCOPE = "favorites"
 LOCK_TTL_SECONDS = 15 * 60
 PREVIEW_LIMIT = 8
 FIELD_DEFINITIONS = (
@@ -52,6 +54,13 @@ def _validate_scope(scope: str) -> str:
     return normalized
 
 
+def _validate_view_scope(scope: str) -> str:
+    normalized = str(scope or DEFAULT_VIEW_SCOPE).strip() or DEFAULT_VIEW_SCOPE
+    if normalized not in {DEFAULT_VIEW_SCOPE, FAVORITES_VIEW_SCOPE}:
+        raise HttpError(422, f"不支持的视图范围: {normalized}")
+    return normalized
+
+
 def list_workspace_projects(scope: str = DEFAULT_SCOPE) -> list[Project]:
     normalized_scope = _validate_scope(scope)
     if normalized_scope != DEFAULT_SCOPE:
@@ -67,6 +76,87 @@ def list_workspace_projects(scope: str = DEFAULT_SCOPE) -> list[Project]:
         for project in projects
         if str(project.design_id or "").strip() and _normalize_text_list(project.sub_teams)
     ]
+
+
+def _get_favorite_project_id_set(user: Any) -> set[str]:
+    if not user or not getattr(user, "id", None):
+        return set()
+    return {
+        str(project_id)
+        for project_id in Project.objects.filter(
+            favorited_by=user,
+            is_deleted=False,
+            is_closed=False,
+        ).values_list("id", flat=True)
+    }
+
+
+def _filter_preview_map(
+    preview_map: dict[str, list[dict[str, Any]]],
+    allowed_project_ids: set[str],
+) -> dict[str, list[dict[str, Any]]]:
+    filtered: dict[str, list[dict[str, Any]]] = {}
+    for key, rows in (preview_map or {}).items():
+        filtered[key] = [
+            row
+            for row in rows or []
+            if str(row.get("project_id") or "") in allowed_project_ids
+        ][:PREVIEW_LIMIT]
+    return filtered
+
+
+def _rebuild_field_overview_from_project_rows(
+    project_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    field_overview_map = {
+        field_key: _create_field_stat(field_key)
+        for field_key, _ in FIELD_DEFINITIONS
+    }
+
+    for row in project_rows:
+        fields = row.get("fields") or {}
+        for field_key, _ in FIELD_DEFINITIONS:
+            source = fields.get(field_key) or {}
+            target = field_overview_map[field_key]
+            target["applicable_count"] += int(source.get("applicable_count") or 0)
+            target["filled_count"] += int(source.get("filled_count") or 0)
+            target["missing_count"] += int(source.get("missing_count") or 0)
+
+    return [
+        _finalize_field_stat(field_overview_map[field_key])
+        for field_key, _ in FIELD_DEFINITIONS
+    ]
+
+
+def _filter_snapshot_response_by_project_ids(
+    snapshot_payload: dict[str, Any],
+    *,
+    view_scope: str,
+    allowed_project_ids: set[str],
+) -> dict[str, Any]:
+    project_rows = [
+        row
+        for row in snapshot_payload.get("project_rows") or []
+        if str(row.get("project_id") or "") in allowed_project_ids
+    ]
+    requirement_count = sum(int(row.get("total_count") or 0) for row in project_rows)
+
+    return {
+        "generated_at": snapshot_payload.get("generated_at"),
+        "scope": view_scope,
+        "project_count": len(project_rows),
+        "requirement_count": requirement_count,
+        "field_overview": _rebuild_field_overview_from_project_rows(project_rows),
+        "project_rows": project_rows,
+        "missing_previews": _filter_preview_map(
+            snapshot_payload.get("missing_previews") or {},
+            allowed_project_ids,
+        ),
+        "delay_previews": _filter_preview_map(
+            snapshot_payload.get("delay_previews") or {},
+            allowed_project_ids,
+        ),
+    }
 
 
 def _create_field_stat(field_key: str) -> dict[str, Any]:
@@ -343,14 +433,26 @@ def build_requirement_workspace_snapshot_payload(
     }
 
 
-def _serialize_snapshot(snapshot: RequirementWorkspaceSnapshot | None, *, scope: str) -> dict[str, Any]:
+def _serialize_snapshot(
+    snapshot: RequirementWorkspaceSnapshot | None,
+    *,
+    scope: str,
+    project_count: int | None = None,
+) -> dict[str, Any]:
     if snapshot is None:
-        project_count = len(list_workspace_projects(scope))
-        payload = _empty_snapshot_payload(scope=scope, project_count=project_count)
+        resolved_project_count = (
+            int(project_count)
+            if project_count is not None
+            else len(list_workspace_projects(DEFAULT_SCOPE))
+        )
+        payload = _empty_snapshot_payload(
+            scope=scope,
+            project_count=resolved_project_count,
+        )
         return {
             "generated_at": None,
             "scope": scope,
-            "project_count": project_count,
+            "project_count": resolved_project_count,
             "requirement_count": 0,
             "field_overview": payload["field_overview"],
             "project_rows": payload["project_rows"],
@@ -367,7 +469,7 @@ def _serialize_snapshot(snapshot: RequirementWorkspaceSnapshot | None, *, scope:
     )
     return {
         "generated_at": snapshot.generated_at.isoformat() if snapshot.generated_at else None,
-        "scope": snapshot.scope,
+        "scope": scope,
         "project_count": int(snapshot.project_count or 0),
         "requirement_count": int(snapshot.requirement_count or 0),
         "field_overview": payload.get("field_overview") or empty_payload["field_overview"],
@@ -385,21 +487,75 @@ def _get_latest_snapshot(scope: str) -> RequirementWorkspaceSnapshot | None:
     )
 
 
-def get_latest_requirement_workspace_snapshot(scope: str = DEFAULT_SCOPE) -> dict[str, Any]:
-    normalized_scope = _validate_scope(scope)
-    snapshot = _get_latest_snapshot(normalized_scope)
-    return _serialize_snapshot(snapshot, scope=normalized_scope)
+def _get_latest_or_bootstrap_snapshot() -> RequirementWorkspaceSnapshot | None:
+    snapshot = _get_latest_snapshot(DEFAULT_SCOPE)
+    if snapshot is not None:
+        return snapshot
+
+    logger.info("No requirement workspace snapshot found, bootstrapping latest snapshot")
+    try:
+        return _refresh_base_requirement_workspace_snapshot()
+    except HttpError as exc:
+        if exc.status_code == 409:
+            return _get_latest_snapshot(DEFAULT_SCOPE)
+        raise
 
 
-def refresh_requirement_workspace_snapshot(scope: str = DEFAULT_SCOPE) -> dict[str, Any]:
-    normalized_scope = _validate_scope(scope)
+def _get_scoped_snapshot_response(
+    *,
+    view_scope: str,
+    user: Any = None,
+    snapshot: RequirementWorkspaceSnapshot | None,
+) -> dict[str, Any]:
+    normalized_view_scope = _validate_view_scope(view_scope)
+    if normalized_view_scope == DEFAULT_VIEW_SCOPE:
+        return _serialize_snapshot(snapshot, scope=normalized_view_scope)
+
+    favorite_project_ids = _get_favorite_project_id_set(user)
+    if snapshot is None:
+        configured_favorite_count = len(
+            [
+                project
+                for project in list_workspace_projects(DEFAULT_SCOPE)
+                if str(project.id) in favorite_project_ids
+            ]
+        )
+        return _serialize_snapshot(
+            None,
+            scope=normalized_view_scope,
+            project_count=configured_favorite_count,
+        )
+
+    base_payload = _serialize_snapshot(snapshot, scope=DEFAULT_VIEW_SCOPE)
+    return _filter_snapshot_response_by_project_ids(
+        base_payload,
+        view_scope=normalized_view_scope,
+        allowed_project_ids=favorite_project_ids,
+    )
+
+
+def get_latest_requirement_workspace_snapshot(
+    view_scope: str = DEFAULT_VIEW_SCOPE,
+    *,
+    user: Any = None,
+) -> dict[str, Any]:
+    snapshot = _get_latest_or_bootstrap_snapshot()
+    return _get_scoped_snapshot_response(
+        view_scope=view_scope,
+        user=user,
+        snapshot=snapshot,
+    )
+
+
+def _refresh_base_requirement_workspace_snapshot() -> RequirementWorkspaceSnapshot:
+    normalized_scope = _validate_scope(DEFAULT_SCOPE)
     today = timezone.now().date()
     lock_key = f"pm:requirement-workspace:snapshot:{normalized_scope}:{today.isoformat()}:lock"
     lock_acquired = cache.add(lock_key, "1", LOCK_TTL_SECONDS)
     if not lock_acquired:
         latest_snapshot = _get_latest_snapshot(normalized_scope)
         if latest_snapshot and latest_snapshot.snapshot_date == today:
-            return _serialize_snapshot(latest_snapshot, scope=normalized_scope)
+            return latest_snapshot
         raise HttpError(409, "需求交付合规快照正在生成，请稍后重试")
 
     try:
@@ -436,10 +592,23 @@ def refresh_requirement_workspace_snapshot(scope: str = DEFAULT_SCOPE) -> dict[s
             len(projects),
             len(items),
         )
-        return _serialize_snapshot(snapshot, scope=normalized_scope)
+        return snapshot
     finally:
         if lock_acquired:
             cache.delete(lock_key)
+
+
+def refresh_requirement_workspace_snapshot(
+    view_scope: str = DEFAULT_VIEW_SCOPE,
+    *,
+    user: Any = None,
+) -> dict[str, Any]:
+    snapshot = _refresh_base_requirement_workspace_snapshot()
+    return _get_scoped_snapshot_response(
+        view_scope=view_scope,
+        user=user,
+        snapshot=snapshot,
+    )
 
 
 @scheduler_task
@@ -448,7 +617,10 @@ def run_requirement_workspace_snapshot_job(
     **kwargs,
 ):
     actual_scope = str(kwargs.get("scope") or scope or DEFAULT_SCOPE).strip() or DEFAULT_SCOPE
-    snapshot = refresh_requirement_workspace_snapshot(scope=actual_scope)
+    if actual_scope != DEFAULT_SCOPE:
+        raise HttpError(422, f"调度任务仅支持基础快照范围: {DEFAULT_SCOPE}")
+    snapshot_obj = _refresh_base_requirement_workspace_snapshot()
+    snapshot = _serialize_snapshot(snapshot_obj, scope=DEFAULT_SCOPE)
     return (
         f"scope={snapshot['scope']}, generated_at={snapshot['generated_at']}, "
         f"projects={snapshot['project_count']}, requirements={snapshot['requirement_count']}"
