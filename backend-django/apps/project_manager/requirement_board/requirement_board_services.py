@@ -898,6 +898,8 @@ def _standardize_requirement_items(
         test_users = _normalize_owner_list(
             item.get("test_owner") or item.get("test_user"),
         )
+        has_workload_kloc = item.get("workload_kloc") not in (None, "")
+        has_workload_man_day = item.get("workload_man_day") not in (None, "")
         develop_user_display = ", ".join(develop_users)
         test_user_display = ", ".join(test_users)
 
@@ -919,6 +921,10 @@ def _standardize_requirement_items(
                 "due_date": due_date,
                 "completed_time": completed_time,
                 "accepted_time": accepted_time,
+                "has_planned_test_time": bool(planned_test_time),
+                "has_due_date": bool(due_date),
+                "has_completed_time": bool(completed_time),
+                "has_accepted_time": bool(accepted_time),
                 "is_dev_delayed": _is_development_delayed(
                     status_code,
                     planned_test_time,
@@ -937,6 +943,10 @@ def _standardize_requirement_items(
                 ),
                 "develop_users": develop_users,
                 "test_users": test_users,
+                "has_develop_users": bool(develop_users),
+                "has_test_users": bool(test_users),
+                "has_workload_kloc": has_workload_kloc,
+                "has_workload_man_day": has_workload_man_day,
                 "develop_user_display": develop_user_display,
                 "test_user_display": test_user_display,
                 "develop_user": develop_user_display,
@@ -1320,6 +1330,44 @@ def get_filter_options() -> dict[str, Any]:
     return {
         "projects": project_items,
     }
+
+
+def scan_standardized_requirement_items(
+    project_ids: list[str],
+    *,
+    sub_teams: list[str] | None = None,
+    categories: list[str] | None = None,
+    schedule_state: list[str] | None = None,
+    verification_policies: list[str] | None = None,
+    develop_users: list[str] | None = None,
+    test_users: list[str] | None = None,
+    time_field: str | None = None,
+    time_start: str | None = None,
+    time_end: str | None = None,
+    accepted_time_start: str | None = None,
+    accepted_time_end: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    对外暴露需求看板标准化明细扫描入口，供其他模块复用。
+
+    返回项沿用需求看板内部标准化结构，并附带字段填写布尔标记，
+    便于调用方继续做缺失率/延期等聚合。
+    """
+    context = _resolve_query_context(
+        project_ids,
+        sub_teams,
+        categories,
+        schedule_state,
+        verification_policies,
+        develop_users,
+        test_users,
+        time_field,
+        time_start,
+        time_end,
+        accepted_time_start,
+        accepted_time_end,
+    )
+    return _scan_all_filtered_items(context)
 
 
 def get_requirement_board_page(data: RequirementBoardDataQuerySchema) -> dict[str, Any]:

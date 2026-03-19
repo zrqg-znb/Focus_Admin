@@ -18,4 +18,7 @@ from apps.project_manager.dts_statistics.dts_statistics_model import (
     DtsDefectProjectLink,
     DtsExtension,
 )
+from apps.project_manager.requirement_workspace.requirement_workspace_model import (
+    RequirementWorkspaceSnapshot,
+)
 from apps.project_manager.models.sync_log_model import SyncLog
