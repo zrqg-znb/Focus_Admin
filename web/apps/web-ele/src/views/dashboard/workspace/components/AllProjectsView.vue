@@ -25,6 +25,7 @@ import MilestoneTable from './MilestoneTable.vue';
 import ProjectBar from './ProjectBar.vue';
 import ProjectPie from './ProjectPie.vue';
 import QGRiskCard from './QGRiskCard.vue';
+import RequirementWorkspacePanel from './RequirementWorkspacePanel.vue';
 
 defineProps<{
   coreMetrics: null | {
@@ -254,6 +255,8 @@ function go(path: string) {
 
     <!-- QG Risk Card -->
     <QGRiskCard scope="all" />
+
+    <RequirementWorkspacePanel />
 
     <!-- 2. 图表区域 -->
     <div class="space-y-6">
