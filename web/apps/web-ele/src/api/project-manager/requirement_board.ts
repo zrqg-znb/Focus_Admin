@@ -45,10 +45,12 @@ export interface RequirementBoardProjectOption {
   design_id?: null | string;
   sub_teams: string[];
   config_complete: boolean;
+  is_favorited: boolean;
 }
 
 export interface RequirementBoardFilterOptions {
   projects: RequirementBoardProjectOption[];
+  saved_filter: null | RequirementBoardFilterPayload;
 }
 
 export interface RequirementBoardItem {
@@ -201,6 +203,16 @@ export async function getRequirementBoardFilterOptionsApi() {
   return requestClient.get<RequirementBoardFilterOptions>(
     `${base}/filter-options`,
   );
+}
+
+export async function putRequirementBoardFilterPreferenceApi(
+  data: RequirementBoardFilterPayload,
+) {
+  return requestClient.put<boolean>(`${base}/filter-preference`, data);
+}
+
+export async function deleteRequirementBoardFilterPreferenceApi() {
+  return requestClient.delete<boolean>(`${base}/filter-preference`);
 }
 
 export async function getRequirementBoardDataApi(data: RequirementBoardQuery) {

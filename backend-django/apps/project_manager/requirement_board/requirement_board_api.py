@@ -6,6 +6,7 @@ from . import requirement_board_services
 from .requirement_board_schemas import (
     RequirementBoardDataQuerySchema,
     RequirementBoardExportQuerySchema,
+    RequirementBoardFilterPayloadSchema,
     RequirementBoardFilterOptionsSchema,
     RequirementBoardPageSchema,
     RequirementBoardSummaryQuerySchema,
@@ -21,7 +22,28 @@ router = Router(tags=["RequirementBoard"], auth=GlobalAuth())
     summary="获取需求看板筛选项",
 )
 def get_requirement_board_filter_options(request):
-    return requirement_board_services.get_filter_options()
+    return requirement_board_services.get_filter_options(request.auth)
+
+
+@router.put(
+    "/filter-preference",
+    response=bool,
+    summary="保存需求看板筛选偏好",
+)
+def save_requirement_board_filter_preference(
+    request,
+    data: RequirementBoardFilterPayloadSchema,
+):
+    return requirement_board_services.save_filter_preference(request.auth, data)
+
+
+@router.delete(
+    "/filter-preference",
+    response=bool,
+    summary="清空需求看板筛选偏好",
+)
+def delete_requirement_board_filter_preference(request):
+    return requirement_board_services.delete_filter_preference(request.auth)
 
 
 @router.post(

@@ -141,6 +141,9 @@ const filteredProjects = computed(() => {
       if (left.config_complete !== right.config_complete) {
         return left.config_complete ? -1 : 1;
       }
+      if (left.is_favorited !== right.is_favorited) {
+        return left.is_favorited ? -1 : 1;
+      }
       return left.name.localeCompare(right.name, 'zh-CN');
     });
 });
@@ -151,6 +154,15 @@ const selectableProjectIds = computed(() =>
     .filter((item) => item.config_complete)
     .map((item) => item.id),
 );
+const favoriteSelectableProjectIds = computed(() =>
+  props.projects
+    .filter((item) => item.config_complete && item.is_favorited)
+    .map((item) => item.id),
+);
+const favoriteSelectButtonLabel = computed(() => {
+  const count = favoriteSelectableProjectIds.value.length;
+  return count > 0 ? `选择关注项目（${count}）` : '选择关注项目';
+});
 
 function syncFromProps() {
   tempSelectedIds.value = normalizeStringArray(props.selectedProjectIds);
@@ -182,6 +194,10 @@ function handleSelectAllCurrent() {
   const next = new Set(tempSelectedIds.value);
   selectableProjectIds.value.forEach((item) => next.add(item));
   tempSelectedIds.value = [...next];
+}
+
+function handleSelectFavoriteProjects() {
+  tempSelectedIds.value = [...favoriteSelectableProjectIds.value];
 }
 
 function handleClearCurrent() {
@@ -259,8 +275,17 @@ function handleConfirm() {
           <ElTag type="info" effect="plain">
             可查询 {{ selectableProjectIds.length }} 个
           </ElTag>
+          <ElTag type="warning" effect="plain">
+            已关注 {{ favoriteSelectableProjectIds.length }} 个
+          </ElTag>
         </div>
         <div class="project-selector__actions">
+          <ElButton
+            :disabled="favoriteSelectableProjectIds.length === 0"
+            @click="handleSelectFavoriteProjects"
+          >
+            {{ favoriteSelectButtonLabel }}
+          </ElButton>
           <ElButton @click="handleSelectAllCurrent">全选当前结果</ElButton>
           <ElButton @click="handleClearCurrent">清空当前结果</ElButton>
           <ElButton @click="handleClearAll">清空全部</ElButton>
@@ -293,7 +318,21 @@ function handleConfirm() {
             </ElTag>
           </template>
         </ElTableColumn>
-        <ElTableColumn prop="name" label="项目名" min-width="220" />
+        <ElTableColumn label="项目名" min-width="260">
+          <template #default="{ row }">
+            <div class="project-selector__project-name">
+              <span>{{ row.name }}</span>
+              <ElTag
+                v-if="row.is_favorited"
+                type="warning"
+                effect="light"
+                size="small"
+              >
+                已关注
+              </ElTag>
+            </div>
+          </template>
+        </ElTableColumn>
         <ElTableColumn prop="code" label="项目编码" min-width="160" />
         <ElTableColumn label="领域" min-width="140">
           <template #default="{ row }">
@@ -359,6 +398,12 @@ function handleConfirm() {
 
 .project-selector__table :deep(.el-table__cell) {
   vertical-align: middle;
+}
+
+.project-selector__project-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .project-selector__footer {

@@ -12,70 +12,51 @@ class RequirementBoardProjectOptionSchema(Schema):
     design_id: Optional[str] = None
     sub_teams: List[str] = Field(default_factory=list)
     config_complete: bool = False
+    is_favorited: bool = False
+
+
+class RequirementBoardFilterPayloadSchema(Schema):
+    project_ids: List[str] = Field(default_factory=list, description="项目 ID 列表")
+    sub_teams: Optional[List[str]] = Field(None, description="责任团队列表")
+    categories: Optional[List[str]] = Field(None, description="需求类型列表")
+    schedule_state: Optional[List[str]] = Field(
+        None,
+        description="排期状态列表（I/D/P/C/A）",
+    )
+    verification_policies: Optional[List[str]] = Field(
+        None,
+        description="验证策略列表",
+    )
+    develop_user: Optional[List[str]] = Field(None, description="开发责任人列表（username）")
+    test_user: Optional[List[str]] = Field(None, description="测试责任人列表（username）")
+    develop_users: Optional[List[str]] = Field(None, description="开发责任人列表")
+    test_users: Optional[List[str]] = Field(None, description="测试责任人列表")
+    time_field: Optional[str] = Field(None, description="时间维度字段")
+    time_start: Optional[str] = Field(None, description="时间区间开始")
+    time_end: Optional[str] = Field(None, description="时间区间结束")
+    accepted_time_start: Optional[str] = Field(
+        None,
+        description="验收时间开始（兼容旧参数）",
+    )
+    accepted_time_end: Optional[str] = Field(
+        None,
+        description="验收时间结束（兼容旧参数）",
+    )
 
 
 class RequirementBoardFilterOptionsSchema(Schema):
     projects: List[RequirementBoardProjectOptionSchema] = Field(default_factory=list)
+    saved_filter: Optional[RequirementBoardFilterPayloadSchema] = None
 
 
-class RequirementBoardDataQuerySchema(Schema):
+class RequirementBoardDataQuerySchema(RequirementBoardFilterPayloadSchema):
     project_ids: List[str] = Field(..., description="项目 ID 列表")
-    sub_teams: Optional[List[str]] = Field(None, description="责任团队列表")
-    categories: Optional[List[str]] = Field(None, description="需求类型列表")
-    schedule_state: Optional[List[str]] = Field(
-        None,
-        description="排期状态列表（I/D/P/C/A）",
-    )
-    verification_policies: Optional[List[str]] = Field(
-        None,
-        description="验证策略列表",
-    )
-    develop_user: Optional[List[str]] = Field(None, description="开发责任人列表（username）")
-    test_user: Optional[List[str]] = Field(None, description="测试责任人列表（username）")
-    develop_users: Optional[List[str]] = Field(None, description="开发责任人列表")
-    test_users: Optional[List[str]] = Field(None, description="测试责任人列表")
-    time_field: Optional[str] = Field(None, description="时间维度字段")
-    time_start: Optional[str] = Field(None, description="时间区间开始")
-    time_end: Optional[str] = Field(None, description="时间区间结束")
-    accepted_time_start: Optional[str] = Field(
-        None,
-        description="验收时间开始（兼容旧参数）",
-    )
-    accepted_time_end: Optional[str] = Field(
-        None,
-        description="验收时间结束（兼容旧参数）",
-    )
     page_no: int = Field(1, ge=1, description="页码")
     page_size: int = Field(20, ge=1, le=500, description="每页条数")
 
 
-class RequirementBoardSummaryQuerySchema(Schema):
+class RequirementBoardSummaryQuerySchema(RequirementBoardFilterPayloadSchema):
     project_ids: List[str] = Field(..., description="项目 ID 列表")
-    sub_teams: Optional[List[str]] = Field(None, description="责任团队列表")
-    categories: Optional[List[str]] = Field(None, description="需求类型列表")
-    schedule_state: Optional[List[str]] = Field(
-        None,
-        description="排期状态列表（I/D/P/C/A）",
-    )
-    verification_policies: Optional[List[str]] = Field(
-        None,
-        description="验证策略列表",
-    )
-    develop_user: Optional[List[str]] = Field(None, description="开发责任人列表（username）")
-    test_user: Optional[List[str]] = Field(None, description="测试责任人列表（username）")
-    develop_users: Optional[List[str]] = Field(None, description="开发责任人列表")
-    test_users: Optional[List[str]] = Field(None, description="测试责任人列表")
-    time_field: Optional[str] = Field(None, description="时间维度字段")
-    time_start: Optional[str] = Field(None, description="时间区间开始")
-    time_end: Optional[str] = Field(None, description="时间区间结束")
-    accepted_time_start: Optional[str] = Field(
-        None,
-        description="验收时间开始（兼容旧参数）",
-    )
-    accepted_time_end: Optional[str] = Field(
-        None,
-        description="验收时间结束（兼容旧参数）",
-    )
 
 
 class RequirementBoardExportQuerySchema(RequirementBoardSummaryQuerySchema):

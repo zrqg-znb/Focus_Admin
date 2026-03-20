@@ -1,3 +1,7 @@
+from django.db import models
+
+from common.fu_model import RootModel
+
 STATUS_ORDER = ("I", "D", "P", "C", "A")
 STATUS_LABELS = {
     "I": "初始化",
@@ -29,6 +33,7 @@ TIME_FIELD_OPTIONS = (
     "completed_time",
     "accepted_time",
 )
+DEFAULT_TIME_FIELD = "accepted_time"
 TIME_FIELD_LABELS = {
     "planned_test_time": "计划转测时间",
     "due_date": "计划完成时间",
@@ -36,3 +41,28 @@ TIME_FIELD_LABELS = {
     "accepted_time": "测试完成时间",
 }
 UNKNOWN_TEAM_NAME = "未识别团队"
+
+
+class RequirementBoardFilterPreference(RootModel):
+    user = models.ForeignKey(
+        "core.User",
+        on_delete=models.CASCADE,
+        related_name="requirement_board_filter_preferences",
+        verbose_name="用户",
+    )
+    payload = models.JSONField(default=dict, blank=True, verbose_name="筛选条件")
+    last_applied_at = models.DateTimeField(db_index=True, verbose_name="最后应用时间")
+
+    class Meta:
+        db_table = "pm_requirement_board_filter_preference"
+        verbose_name = "需求看板筛选偏好"
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user"],
+                name="uniq_pm_requirement_board_filter_preference_user",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.user_id}:{self.last_applied_at}"

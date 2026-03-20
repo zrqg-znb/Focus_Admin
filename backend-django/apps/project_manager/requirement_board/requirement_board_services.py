@@ -21,6 +21,8 @@ from apps.project_manager.project.project_model import Project
 
 from .requirement_board_model import (
     CATEGORY_ORDER,
+    DEFAULT_TIME_FIELD,
+    RequirementBoardFilterPreference,
     STATUS_LABELS,
     STATUS_ORDER,
     TIME_FIELD_OPTIONS,
@@ -31,6 +33,7 @@ from .requirement_board_model import (
 from .requirement_board_schemas import (
     RequirementBoardDataQuerySchema,
     RequirementBoardExportQuerySchema,
+    RequirementBoardFilterPayloadSchema,
     RequirementBoardSummaryQuerySchema,
 )
 
@@ -989,6 +992,159 @@ def _normalize_time_filters(
     }
 
 
+def _create_default_filter_payload() -> dict[str, Any]:
+    return {
+        "project_ids": [],
+        "sub_teams": [],
+        "categories": list(CATEGORY_ORDER),
+        "schedule_state": [],
+        "verification_policies": [],
+        "develop_user": [],
+        "test_user": [],
+        "time_field": DEFAULT_TIME_FIELD,
+        "time_start": "",
+        "time_end": "",
+    }
+
+
+def _get_favorite_project_id_set(user: Any) -> set[str]:
+    if not user or not getattr(user, "id", None):
+        return set()
+    return {
+        str(project_id)
+        for project_id in Project.objects.filter(
+            favorited_by=user,
+            is_deleted=False,
+        ).values_list("id", flat=True)
+    }
+
+
+def _normalize_filter_payload_for_storage(
+    data: RequirementBoardFilterPayloadSchema | dict[str, Any],
+) -> dict[str, Any]:
+    payload = data.dict() if hasattr(data, "dict") else dict(data or {})
+    develop_users = (payload.get("develop_user") or []) + (payload.get("develop_users") or [])
+    test_users = (payload.get("test_user") or []) + (payload.get("test_users") or [])
+    context = _resolve_query_context(
+        payload.get("project_ids") or [],
+        payload.get("sub_teams"),
+        payload.get("categories"),
+        payload.get("schedule_state"),
+        payload.get("verification_policies"),
+        develop_users,
+        test_users,
+        payload.get("time_field"),
+        payload.get("time_start"),
+        payload.get("time_end"),
+        payload.get("accepted_time_start"),
+        payload.get("accepted_time_end"),
+    )
+    return {
+        "project_ids": context["remote_cache_payload"]["project_ids"],
+        "sub_teams": _normalize_text_list(payload.get("sub_teams")),
+        "categories": context["categories"],
+        "schedule_state": context["schedule_state"],
+        "verification_policies": context["verification_policies"],
+        "develop_user": context["develop_users"],
+        "test_user": context["test_users"],
+        "time_field": context["time_field"] or DEFAULT_TIME_FIELD,
+        "time_start": context["time_start"] or "",
+        "time_end": context["time_end"] or "",
+    }
+
+
+def _sanitize_saved_filter_payload(
+    payload: Any,
+    *,
+    available_projects: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+
+    available_project_map = {
+        str(item["id"]): item
+        for item in available_projects
+        if item.get("config_complete")
+    }
+    project_ids = [
+        item
+        for item in _normalize_text_list(payload.get("project_ids"))
+        if item in available_project_map
+    ]
+    if not project_ids:
+        return None
+
+    allowed_teams: set[str] = set()
+    for project_id in project_ids:
+        project_item = available_project_map[project_id]
+        for team in _normalize_text_list(project_item.get("sub_teams")):
+            allowed_teams.add(team)
+
+    categories: list[str] = []
+    for item in _normalize_text_list(payload.get("categories")):
+        category = item.upper()
+        if category in CATEGORY_ORDER and category not in categories:
+            categories.append(category)
+    if not categories:
+        categories = list(CATEGORY_ORDER)
+
+    schedule_state: list[str] = []
+    for item in _normalize_text_list(payload.get("schedule_state")):
+        try:
+            normalized_items = _normalize_schedule_states([item])
+        except HttpError:
+            continue
+        for normalized_item in normalized_items:
+            if normalized_item not in schedule_state:
+                schedule_state.append(normalized_item)
+
+    verification_policies: list[str] = []
+    for item in _normalize_text_list(payload.get("verification_policies")):
+        if item in VERIFICATION_POLICY_LABELS and item not in verification_policies:
+            verification_policies.append(item)
+
+    time_field = _clean_text(payload.get("time_field"))
+    if time_field not in TIME_FIELD_OPTIONS:
+        time_field = DEFAULT_TIME_FIELD
+
+    time_start = _clean_text(payload.get("time_start"))
+    time_end = _clean_text(payload.get("time_end"))
+    try:
+        start_dt = _parse_range_boundary(time_start, is_end=False) if time_start else None
+    except HttpError:
+        time_start = ""
+        start_dt = None
+    try:
+        end_dt = _parse_range_boundary(time_end, is_end=True) if time_end else None
+    except HttpError:
+        time_end = ""
+        end_dt = None
+    if start_dt and end_dt and start_dt > end_dt:
+        time_start = ""
+        time_end = ""
+
+    return {
+        "project_ids": project_ids,
+        "sub_teams": [
+            item
+            for item in _normalize_text_list(payload.get("sub_teams"))
+            if item in allowed_teams
+        ],
+        "categories": categories,
+        "schedule_state": schedule_state,
+        "verification_policies": verification_policies,
+        "develop_user": _normalize_owner_list(
+            (payload.get("develop_user") or []) + (payload.get("develop_users") or [])
+        ),
+        "test_user": _normalize_owner_list(
+            (payload.get("test_user") or []) + (payload.get("test_users") or [])
+        ),
+        "time_field": time_field,
+        "time_start": time_start,
+        "time_end": time_end,
+    }
+
+
 def _resolve_query_context(
     project_ids: list[str],
     sub_teams: list[str] | None = None,
@@ -1304,7 +1460,8 @@ def _paginate_items(items: list[dict[str, Any]], page_no: int, page_size: int) -
     }
 
 
-def get_filter_options() -> dict[str, Any]:
+def get_filter_options(user: Any = None) -> dict[str, Any]:
+    favorite_project_ids = _get_favorite_project_id_set(user)
     projects = list(
         Project.objects.filter(is_deleted=False)
         .order_by("is_closed", "name")
@@ -1323,13 +1480,71 @@ def get_filter_options() -> dict[str, Any]:
                 _clean_text(project.design_id)
                 and _normalize_text_list(project.sub_teams)
             ),
+            "is_favorited": str(project.id) in favorite_project_ids,
         }
         for project in projects
     ]
-    project_items.sort(key=lambda item: (not item["config_complete"], item["name"]))
+    project_items.sort(
+        key=lambda item: (
+            not item["config_complete"],
+            not item["is_favorited"],
+            item["name"],
+        )
+    )
+
+    saved_filter = None
+    if user and getattr(user, "id", None):
+        preference = (
+            RequirementBoardFilterPreference.objects.filter(
+                user=user,
+                is_deleted=False,
+            )
+            .order_by("-last_applied_at", "-sys_update_datetime")
+            .first()
+        )
+        if preference:
+            saved_filter = _sanitize_saved_filter_payload(
+                preference.payload,
+                available_projects=project_items,
+            )
+
     return {
         "projects": project_items,
+        "saved_filter": saved_filter,
     }
+
+
+def save_filter_preference(
+    user: Any,
+    data: RequirementBoardFilterPayloadSchema,
+) -> bool:
+    if not user or not getattr(user, "id", None):
+        raise HttpError(401, "用户未登录")
+
+    payload = _normalize_filter_payload_for_storage(data)
+    RequirementBoardFilterPreference.objects.update_or_create(
+        user=user,
+        defaults={
+            "payload": payload,
+            "last_applied_at": timezone.now(),
+            "is_deleted": False,
+        },
+    )
+    return True
+
+
+def delete_filter_preference(user: Any) -> bool:
+    if not user or not getattr(user, "id", None):
+        raise HttpError(401, "用户未登录")
+
+    preference = RequirementBoardFilterPreference.objects.filter(
+        user=user,
+        is_deleted=False,
+    ).first()
+    if preference:
+        preference.is_deleted = True
+        preference.save(update_fields=["is_deleted", "sys_update_datetime"])
+    return True
 
 
 def scan_standardized_requirement_items(

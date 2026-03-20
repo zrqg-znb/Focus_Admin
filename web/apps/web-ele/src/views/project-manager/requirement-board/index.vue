@@ -33,10 +33,12 @@ import {
 } from 'element-plus';
 
 import {
+  deleteRequirementBoardFilterPreferenceApi,
   exportRequirementBoardApi,
   getRequirementBoardDataApi,
   getRequirementBoardFilterOptionsApi,
   getRequirementBoardSummaryApi,
+  putRequirementBoardFilterPreferenceApi,
 } from '#/api/project-manager/requirement_board';
 import { useZqTable } from '#/components/zq-table';
 
@@ -129,9 +131,9 @@ function normalizeStringArray(values?: string[]) {
   for (const item of values || []) {
     // 允许空字符串通过，只过滤 undefined 和 null
     if (item === undefined || item === null) continue;
-    
+
     const text = typeof item === 'string' ? item.trim() : String(item).trim();
-    
+
     // 如果是空字符串，允许通过但要确保去重
     if (text === '') {
       if (!seen.has('__EMPTY_STRING__')) {
@@ -140,7 +142,7 @@ function normalizeStringArray(values?: string[]) {
       }
       continue;
     }
-    
+
     if (seen.has(text)) {
       continue;
     }
@@ -169,6 +171,9 @@ function sortProjectOptions(options: RequirementBoardProjectOption[]) {
     if (left.config_complete !== right.config_complete) {
       return left.config_complete ? -1 : 1;
     }
+    if (left.is_favorited !== right.is_favorited) {
+      return left.is_favorited ? -1 : 1;
+    }
     return left.name.localeCompare(right.name, 'zh-CN');
   });
 }
@@ -176,6 +181,18 @@ function sortProjectOptions(options: RequirementBoardProjectOption[]) {
 function formatDateBoundary(date: Date) {
   const pad = (value: number) => String(value).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function parseDateBoundary(value?: null | string) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return null;
+  }
+  const parsed = new Date(text.length === 10 ? `${text}T00:00:00` : text);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed;
 }
 
 watch(dateRange, (value) => {
@@ -228,7 +245,6 @@ function buildFingerprint(payload: null | RequirementBoardFilterPayload) {
 const configuredProjectOptions = computed(() =>
   projectOptions.value.filter((item) => item.config_complete),
 );
-
 const selectedProjects = computed(() => {
   const projectMap = new Map(
     projectOptions.value.map((item) => [item.id, item]),
@@ -504,9 +520,11 @@ async function loadFilterOptions() {
   try {
     const result = await getRequirementBoardFilterOptionsApi();
     projectOptions.value = sortProjectOptions(result.projects || []);
+    return result;
   } catch (error) {
     console.error(error);
     ElMessage.error('加载需求看板筛选项失败');
+    return null;
   } finally {
     optionsLoading.value = false;
   }
@@ -595,6 +613,19 @@ function handleProjectSelectorConfirm(projectIds: string[]) {
   filters.value.project_ids = normalizeStringArray(projectIds);
 }
 
+function applyFiltersToForm(payload: RequirementBoardFilterPayload) {
+  const nextFilters = cloneFilterPayload(payload);
+  filters.value = nextFilters;
+
+  const start = parseDateBoundary(nextFilters.time_start);
+  const end = parseDateBoundary(nextFilters.time_end);
+  if (start && end) {
+    dateRange.value = [start, end];
+    return;
+  }
+  dateRange.value = null;
+}
+
 function clearSelectedProjects() {
   filters.value.project_ids = [];
 }
@@ -624,23 +655,53 @@ function triggerBlobDownload(blob: Blob, filename: string) {
   window.URL.revokeObjectURL(url);
 }
 
-async function handleSearch() {
-  const payload = cloneFilterPayload(filters.value);
+async function saveAppliedFilterPreference(
+  payload: RequirementBoardFilterPayload,
+) {
+  try {
+    await putRequirementBoardFilterPreferenceApi(payload);
+  } catch (error) {
+    console.error(error);
+    ElMessage.warning('查询已完成，但默认筛选保存失败');
+  }
+}
+
+async function applySearchPayload(
+  payload: RequirementBoardFilterPayload,
+  { persistPreference = true }: { persistPreference?: boolean } = {},
+) {
   if (payload.project_ids.length === 0) {
     ElMessage.warning('请至少选择一个项目');
     return;
   }
 
-  appliedFilters.value = payload;
+  appliedFilters.value = cloneFilterPayload(payload);
   summaryFingerprint.value = '';
   gridApi.pagination.currentPage = 1;
   await nextTick();
   await gridApi.reload();
+  if (persistPreference && appliedFilters.value) {
+    await saveAppliedFilterPreference(appliedFilters.value);
+  }
   await nextTick();
   updateDataGridHeight();
   if (activeTab.value === 'summary') {
     await fetchSummary(true);
   }
+}
+
+async function restoreSavedFilters(
+  savedFilter: null | RequirementBoardFilterPayload,
+) {
+  if (!savedFilter || savedFilter.project_ids.length === 0) {
+    return;
+  }
+  applyFiltersToForm(savedFilter);
+  await applySearchPayload(savedFilter, { persistPreference: false });
+}
+
+async function handleSearch() {
+  await applySearchPayload(cloneFilterPayload(filters.value));
 }
 
 function clearGridData() {
@@ -659,6 +720,12 @@ async function handleReset() {
   summaryFingerprint.value = '';
   gridApi.pagination.currentPage = 1;
   clearGridData();
+  try {
+    await deleteRequirementBoardFilterPreferenceApi();
+  } catch (error) {
+    console.error(error);
+    ElMessage.warning('筛选条件已重置，但清空默认筛选失败');
+  }
   await nextTick();
   updateDataGridHeight();
 }
@@ -975,7 +1042,8 @@ watch(
 onMounted(async () => {
   updateDataGridHeight();
   window.addEventListener('resize', handleResize);
-  await loadFilterOptions();
+  const filterOptions = await loadFilterOptions();
+  await restoreSavedFilters(filterOptions?.saved_filter ?? null);
 });
 
 onUnmounted(() => {
