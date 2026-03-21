@@ -17,11 +17,11 @@ export interface RequirementBoardFilterPayload {
   develop_user?: string[];
   test_user?: string[];
   /**
-   * @deprecated use `develop_user` (username list)
+   * @deprecated use develop_user (username list)
    */
   develop_users?: string[];
   /**
-   * @deprecated use `test_user` (username list)
+   * @deprecated use test_user (username list)
    */
   test_users?: string[];
   time_field?: RequirementTimeField;
@@ -51,6 +51,25 @@ export interface RequirementBoardProjectOption {
 export interface RequirementBoardFilterOptions {
   projects: RequirementBoardProjectOption[];
   saved_filter: null | RequirementBoardFilterPayload;
+}
+
+export interface RequirementBoardQueryTask {
+  id: string;
+  fingerprint: string;
+  status: 'failed' | 'pending' | 'running' | 'success';
+  message: string;
+  error_message: string;
+  progress: number;
+  scanned_pages: number;
+  total_pages: number;
+  matched_count: number;
+  started_at?: null | string;
+  finished_at?: null | string;
+}
+
+export interface RequirementBoardQueryPrepareResponse {
+  mode: 'async' | 'ready';
+  task: null | RequirementBoardQueryTask;
 }
 
 export interface RequirementBoardItem {
@@ -215,14 +234,33 @@ export async function deleteRequirementBoardFilterPreferenceApi() {
   return requestClient.delete<boolean>(`${base}/filter-preference`);
 }
 
+export async function prepareRequirementBoardQueryApi(
+  data: RequirementBoardFilterPayload,
+) {
+  return requestClient.post<RequirementBoardQueryPrepareResponse>(
+    `${base}/query-prepare`,
+    data,
+  );
+}
+
+export async function getRequirementBoardQueryTaskApi(taskId: string) {
+  return requestClient.get<RequirementBoardQueryTask>(
+    `${base}/query-task/${taskId}`,
+  );
+}
+
 export async function getRequirementBoardDataApi(data: RequirementBoardQuery) {
-  return requestClient.post<RequirementBoardPage>(`${base}/data`, data);
+  return requestClient.post<RequirementBoardPage>(`${base}/data`, data, {
+    timeout: 60 * 1000,
+  });
 }
 
 export async function getRequirementBoardSummaryApi(
   data: RequirementBoardFilterPayload,
 ) {
-  return requestClient.post<RequirementBoardSummary>(`${base}/summary`, data);
+  return requestClient.post<RequirementBoardSummary>(`${base}/summary`, data, {
+    timeout: 60 * 1000,
+  });
 }
 
 export async function exportRequirementBoardApi(

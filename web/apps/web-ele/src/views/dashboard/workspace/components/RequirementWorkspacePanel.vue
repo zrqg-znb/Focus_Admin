@@ -6,10 +6,11 @@ import type {
   RequirementWorkspaceLatest,
   RequirementWorkspaceProjectFieldStat,
   RequirementWorkspaceProjectRow,
+  RequirementWorkspaceRefreshTask,
   RequirementWorkspaceScope,
 } from '#/api/project-manager/requirement_workspace';
 
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
@@ -28,6 +29,7 @@ import {
 
 import {
   getRequirementWorkspaceLatestApi,
+  getRequirementWorkspaceRefreshTaskApi,
   refreshRequirementWorkspaceApi,
 } from '#/api/project-manager/requirement_workspace';
 
@@ -113,6 +115,7 @@ const EMPTY_SNAPSHOT: RequirementWorkspaceLatest = {
     development: [],
     acceptance: [],
   },
+  refresh_task: null,
 };
 
 const SORT_OPTIONS: Array<{
@@ -132,7 +135,9 @@ const SORT_OPTIONS: Array<{
 
 const snapshot = ref<RequirementWorkspaceLatest>({ ...EMPTY_SNAPSHOT });
 const loading = ref(true);
-const refreshing = ref(false);
+const refreshSubmitting = ref(false);
+const refreshTask = ref<null | RequirementWorkspaceRefreshTask>(null);
+let refreshTaskTimer: null | number = null;
 const selectedFields = ref<RequirementWorkspaceFieldKey[]>(
   FIELD_OPTIONS.map((item) => item.value),
 );
@@ -231,16 +236,28 @@ const projectTagLabel = computed(() =>
 const emptyProjectDescription = computed(() =>
   props.scope === 'favorites' ? '暂无已配置收藏项目' : '暂无已配置项目',
 );
-const emptySnapshotDescription = computed(() =>
-  props.scope === 'favorites'
+const emptySnapshotDescription = computed(() => {
+  if (isRefreshing.value) {
+    return '需求交付合规快照生成中，请稍后自动刷新';
+  }
+  return props.scope === 'favorites'
     ? '尚未生成收藏项目交付合规快照'
-    : '尚未生成需求交付合规快照',
-);
+    : '尚未生成需求交付合规快照';
+});
 
 const hasConfiguredProjects = computed(
   () => Number(snapshot.value.project_count || 0) > 0,
 );
 const hasSnapshot = computed(() => Boolean(snapshot.value.generated_at));
+const activeRefreshTask = computed<null | RequirementWorkspaceRefreshTask>(
+  () => refreshTask.value || snapshot.value.refresh_task || null,
+);
+const isRefreshing = computed(() =>
+  ['pending', 'running'].includes(activeRefreshTask.value?.status || ''),
+);
+const refreshing = computed(
+  () => refreshSubmitting.value || isRefreshing.value,
+);
 const effectiveSelectedFields = computed<RequirementWorkspaceFieldKey[]>(() =>
   selectedFields.value.length > 0
     ? [...selectedFields.value]
@@ -392,25 +409,70 @@ async function loadSnapshot() {
   loading.value = true;
   try {
     snapshot.value = await getRequirementWorkspaceLatestApi(props.scope);
+    refreshTask.value = snapshot.value.refresh_task || null;
+    if (isRefreshing.value && activeRefreshTask.value?.id) {
+      startRefreshTaskPolling(activeRefreshTask.value.id);
+    } else {
+      stopRefreshTaskPolling();
+    }
   } catch (error) {
     console.error('Failed to load requirement workspace snapshot', error);
     ElMessage.error(`加载需求交付合规看板失败：${createErrorMessage(error)}`);
     snapshot.value = { ...EMPTY_SNAPSHOT };
+    refreshTask.value = null;
   } finally {
     loading.value = false;
   }
 }
 
+function stopRefreshTaskPolling() {
+  if (refreshTaskTimer) {
+    window.clearInterval(refreshTaskTimer);
+    refreshTaskTimer = null;
+  }
+}
+
+function startRefreshTaskPolling(taskId: string) {
+  stopRefreshTaskPolling();
+  refreshTaskTimer = window.setInterval(async () => {
+    try {
+      const task = await getRequirementWorkspaceRefreshTaskApi(taskId);
+      refreshTask.value = task;
+      snapshot.value.refresh_task = task;
+      if (task.status === 'success') {
+        stopRefreshTaskPolling();
+        await loadSnapshot();
+        ElMessage.success('需求交付合规快照已刷新');
+        return;
+      }
+      if (task.status === 'failed') {
+        stopRefreshTaskPolling();
+        await loadSnapshot();
+        ElMessage.error(task.error_message || task.message || '刷新失败');
+      }
+    } catch (error) {
+      console.error('Failed to poll requirement workspace refresh task', error);
+      stopRefreshTaskPolling();
+    }
+  }, 1000);
+}
+
 async function refreshSnapshot() {
-  refreshing.value = true;
+  if (isRefreshing.value) {
+    return;
+  }
+  refreshSubmitting.value = true;
   try {
-    snapshot.value = await refreshRequirementWorkspaceApi(props.scope);
-    ElMessage.success('需求交付合规快照已刷新');
+    const task = await refreshRequirementWorkspaceApi(props.scope);
+    refreshTask.value = task;
+    snapshot.value.refresh_task = task;
+    startRefreshTaskPolling(task.id);
+    ElMessage.success('刷新任务已提交');
   } catch (error) {
     console.error('Failed to refresh requirement workspace snapshot', error);
     ElMessage.error(`刷新失败：${createErrorMessage(error)}`);
   } finally {
-    refreshing.value = false;
+    refreshSubmitting.value = false;
   }
 }
 
@@ -670,6 +732,10 @@ watch(
     loadSnapshot();
   },
 );
+
+onUnmounted(() => {
+  stopRefreshTaskPolling();
+});
 </script>
 
 <template>
@@ -696,10 +762,18 @@ watch(
           平均填写率 {{ formatPercent(averageFilledRate) }}
         </ElTag>
         <ElTag type="danger" effect="light"> 延期 {{ delayIssueCount }} </ElTag>
+        <ElTag v-if="isRefreshing" type="warning" effect="dark">
+          {{ activeRefreshTask?.message || '刷新中' }}
+        </ElTag>
         <span class="text-xs text-slate-500">
           最后更新：{{ formatGeneratedAt(snapshot.generated_at) }}
         </span>
-        <ElButton type="primary" :loading="refreshing" @click="refreshSnapshot">
+        <ElButton
+          type="primary"
+          :disabled="isRefreshing"
+          :loading="refreshing"
+          @click="refreshSnapshot"
+        >
           {{ hasSnapshot ? '手动刷新' : '立即生成' }}
         </ElButton>
       </div>
@@ -724,10 +798,11 @@ watch(
         <template #default>
           <ElButton
             type="primary"
+            :disabled="isRefreshing"
             :loading="refreshing"
             @click="refreshSnapshot"
           >
-            立即生成
+            {{ isRefreshing ? '生成中' : '立即生成' }}
           </ElButton>
         </template>
       </ElEmpty>

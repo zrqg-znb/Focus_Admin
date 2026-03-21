@@ -79,6 +79,18 @@ export interface RequirementWorkspaceProjectRow {
   completion_score: number;
 }
 
+export interface RequirementWorkspaceRefreshTask {
+  id: string;
+  scope: string;
+  status: 'failed' | 'pending' | 'running' | 'success';
+  message: string;
+  error_message: string;
+  started_at?: null | string;
+  finished_at?: null | string;
+  snapshot_date?: null | string;
+  snapshot_id?: null | string;
+}
+
 export interface RequirementWorkspaceLatest {
   generated_at?: null | string;
   scope: string;
@@ -88,6 +100,7 @@ export interface RequirementWorkspaceLatest {
   project_rows: RequirementWorkspaceProjectRow[];
   missing_previews: RequirementWorkspaceMissingPreview;
   delay_previews: RequirementWorkspaceDelayPreview;
+  refresh_task?: null | RequirementWorkspaceRefreshTask;
 }
 
 const base = '/api/project-manager/requirement-workspace';
@@ -104,11 +117,17 @@ export async function getRequirementWorkspaceLatestApi(
 export async function refreshRequirementWorkspaceApi(
   scope: RequirementWorkspaceScope = 'all',
 ) {
-  return requestClient.post<RequirementWorkspaceLatest>(
+  return requestClient.post<RequirementWorkspaceRefreshTask>(
     `${base}/refresh`,
     null,
     {
       params: { scope },
     },
+  );
+}
+
+export async function getRequirementWorkspaceRefreshTaskApi(taskId: string) {
+  return requestClient.get<RequirementWorkspaceRefreshTask>(
+    `${base}/refresh-task/${taskId}`,
   );
 }

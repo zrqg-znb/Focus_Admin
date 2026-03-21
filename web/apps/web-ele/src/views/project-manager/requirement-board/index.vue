@@ -4,6 +4,7 @@ import type { EchartsUIType } from '@vben/plugins/echarts';
 import type {
   RequirementBoardFilterPayload,
   RequirementBoardProjectOption,
+  RequirementBoardQueryTask,
   RequirementBoardSummary,
   RequirementDeliveryTrendItem,
   RequirementScheduleState,
@@ -37,7 +38,9 @@ import {
   exportRequirementBoardApi,
   getRequirementBoardDataApi,
   getRequirementBoardFilterOptionsApi,
+  getRequirementBoardQueryTaskApi,
   getRequirementBoardSummaryApi,
+  prepareRequirementBoardQueryApi,
   putRequirementBoardFilterPreferenceApi,
 } from '#/api/project-manager/requirement_board';
 import { useZqTable } from '#/components/zq-table';
@@ -92,6 +95,9 @@ const dateRange = ref<[Date, Date] | null>(null);
 const appliedFilters = ref<null | RequirementBoardFilterPayload>(null);
 const summary = ref<RequirementBoardSummary>(createEmptyRequirementSummary());
 const summaryFingerprint = ref('');
+const queryPrepareTask = ref<null | RequirementBoardQueryTask>(null);
+const queryPreparing = ref(false);
+let queryPrepareTimer: null | number = null;
 
 const teamStatusChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderTeamStatusChart } = useEcharts(teamStatusChartRef);
@@ -574,8 +580,18 @@ const canExport = computed(
   () =>
     hasAppliedFilters.value &&
     dataResultCount.value > 0 &&
-    !exportLoading.value,
+    !exportLoading.value &&
+    !queryPreparing.value,
 );
+const queryPrepareStatusText = computed(() => {
+  if (!queryPreparing.value && !queryPrepareTask.value) {
+    return '';
+  }
+  const task = queryPrepareTask.value;
+  const progress = Number(task?.progress || 0);
+  const baseMessage = task?.message || '正在准备需求数据';
+  return progress > 0 ? `${baseMessage}（${progress}%）` : baseMessage;
+});
 
 watch(
   () => gridApi.tableData.value.length,
@@ -666,15 +682,17 @@ async function saveAppliedFilterPreference(
   }
 }
 
-async function applySearchPayload(
+function stopQueryPreparePolling() {
+  if (queryPrepareTimer) {
+    window.clearInterval(queryPrepareTimer);
+    queryPrepareTimer = null;
+  }
+}
+
+async function finalizePreparedQuery(
   payload: RequirementBoardFilterPayload,
   { persistPreference = true }: { persistPreference?: boolean } = {},
 ) {
-  if (payload.project_ids.length === 0) {
-    ElMessage.warning('请至少选择一个项目');
-    return;
-  }
-
   appliedFilters.value = cloneFilterPayload(payload);
   summaryFingerprint.value = '';
   gridApi.pagination.currentPage = 1;
@@ -688,6 +706,78 @@ async function applySearchPayload(
   if (activeTab.value === 'summary') {
     await fetchSummary(true);
   }
+}
+
+function startQueryPreparePolling(
+  taskId: string,
+  payload: RequirementBoardFilterPayload,
+  { persistPreference = true }: { persistPreference?: boolean } = {},
+) {
+  stopQueryPreparePolling();
+  queryPreparing.value = true;
+  queryPrepareTimer = window.setInterval(async () => {
+    try {
+      const task = await getRequirementBoardQueryTaskApi(taskId);
+      queryPrepareTask.value = task;
+      if (task.status === 'success') {
+        stopQueryPreparePolling();
+        queryPreparing.value = false;
+        queryPrepareTask.value = null;
+        await finalizePreparedQuery(payload, { persistPreference });
+        if (persistPreference) {
+          ElMessage.success('需求数据准备完成');
+        }
+        return;
+      }
+      if (task.status === 'failed') {
+        stopQueryPreparePolling();
+        queryPreparing.value = false;
+        queryPrepareTask.value = null;
+        ElMessage.error(
+          task.error_message || task.message || '需求数据准备失败',
+        );
+      }
+    } catch (error) {
+      console.error(error);
+      stopQueryPreparePolling();
+      queryPreparing.value = false;
+      queryPrepareTask.value = null;
+      ElMessage.error('查询任务状态获取失败');
+    }
+  }, 1000);
+}
+
+async function applySearchPayload(
+  payload: RequirementBoardFilterPayload,
+  { persistPreference = true }: { persistPreference?: boolean } = {},
+) {
+  if (payload.project_ids.length === 0) {
+    ElMessage.warning('请至少选择一个项目');
+    return;
+  }
+
+  const normalizedPayload = cloneFilterPayload(payload);
+  const prepareResponse =
+    await prepareRequirementBoardQueryApi(normalizedPayload);
+  if (prepareResponse.mode === 'ready') {
+    queryPreparing.value = false;
+    queryPrepareTask.value = null;
+    stopQueryPreparePolling();
+    await finalizePreparedQuery(normalizedPayload, { persistPreference });
+    return;
+  }
+
+  queryPreparing.value = true;
+  queryPrepareTask.value = prepareResponse.task;
+  if (!prepareResponse.task?.id) {
+    queryPreparing.value = false;
+    queryPrepareTask.value = null;
+    ElMessage.error('查询任务创建失败');
+    return;
+  }
+  startQueryPreparePolling(prepareResponse.task.id, normalizedPayload, {
+    persistPreference,
+  });
 }
 
 async function restoreSavedFilters(
@@ -711,6 +801,9 @@ function clearGridData() {
 }
 
 async function handleReset() {
+  stopQueryPreparePolling();
+  queryPreparing.value = false;
+  queryPrepareTask.value = null;
   filters.value = createDefaultFilters();
   dateRange.value = null;
   projectSelectorVisible.value = false;
@@ -1048,6 +1141,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize);
+  stopQueryPreparePolling();
   if (resizeTimer) {
     window.clearTimeout(resizeTimer);
   }
@@ -1081,13 +1175,23 @@ onUnmounted(() => {
                     </ElButton>
                     <ElTag
                       class="requirement-data-card__status"
-                      :effect="hasAppliedFilters ? 'light' : 'plain'"
-                      :type="hasAppliedFilters ? 'success' : 'info'"
+                      :effect="
+                        queryPreparing || hasAppliedFilters ? 'light' : 'plain'
+                      "
+                      :type="
+                        queryPreparing
+                          ? 'warning'
+                          : hasAppliedFilters
+                            ? 'success'
+                            : 'info'
+                      "
                     >
                       {{
-                        hasAppliedFilters
-                          ? `已加载 ${dataResultCount} 条结果`
-                          : '待查询'
+                        queryPreparing
+                          ? queryPrepareStatusText
+                          : hasAppliedFilters
+                            ? `已加载 ${dataResultCount} 条结果`
+                            : '待查询'
                       }}
                     </ElTag>
                   </div>
@@ -1141,17 +1245,30 @@ onUnmounted(() => {
                             <ElButton
                               type="primary"
                               size="small"
+                              :loading="queryPreparing"
                               @click="handleSearch"
                             >
-                              查询
+                              {{ queryPreparing ? '准备中' : '查询' }}
                             </ElButton>
-                            <ElButton size="small" @click="handleReset">
+                            <ElButton
+                              size="small"
+                              :disabled="queryPreparing"
+                              @click="handleReset"
+                            >
                               重置
                             </ElButton>
                           </div>
                         </div>
                         <ElTag
-                          v-if="hasPendingFilterChanges"
+                          v-if="queryPreparing"
+                          type="warning"
+                          effect="dark"
+                          class="requirement-table-title__pending-tag"
+                        >
+                          {{ queryPrepareStatusText }}
+                        </ElTag>
+                        <ElTag
+                          v-else-if="hasPendingFilterChanges"
                           type="warning"
                           effect="light"
                           class="requirement-table-title__pending-tag"
@@ -1448,7 +1565,23 @@ onUnmounted(() => {
 
                     <template #empty>
                       <div
-                        v-if="!hasAppliedFilters"
+                        v-if="queryPreparing && !hasAppliedFilters"
+                        class="requirement-data-guide"
+                      >
+                        <div class="requirement-data-guide__panel">
+                          <div class="requirement-data-guide__title">
+                            正在准备需求数据
+                          </div>
+                          <div class="requirement-data-guide__desc">
+                            项目较多或命中了全量扫描口径，系统正在后台整理结果。
+                          </div>
+                          <div class="requirement-data-guide__meta">
+                            {{ queryPrepareStatusText }}
+                          </div>
+                        </div>
+                      </div>
+                      <div
+                        v-else-if="!hasAppliedFilters"
                         class="requirement-data-guide"
                       >
                         <div class="requirement-data-guide__panel">
@@ -1467,9 +1600,10 @@ onUnmounted(() => {
                             <ElButton
                               type="primary"
                               size="small"
+                              :loading="queryPreparing"
                               @click="handleSearch"
                             >
-                              开始查询明细
+                              {{ queryPreparing ? '准备中' : '开始查询明细' }}
                             </ElButton>
                           </div>
                         </div>
@@ -1492,7 +1626,11 @@ onUnmounted(() => {
           >
             <ElEmpty
               v-if="!hasAppliedFilters"
-              description="请先到需求数据看板设置表头筛选并点击查询"
+              :description="
+                queryPreparing
+                  ? '需求数据正在后台准备，完成后会自动展示总结结果'
+                  : '请先到需求数据看板设置表头筛选并点击查询'
+              "
             />
             <template v-else>
               <div class="summary-overview-grid">
