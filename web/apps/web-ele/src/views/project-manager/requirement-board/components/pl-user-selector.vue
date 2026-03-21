@@ -6,6 +6,7 @@ import { computed, ref, watch } from 'vue';
 import { CaretRight, Search } from '@element-plus/icons-vue';
 import {
   ElButton,
+  ElCheckbox,
   ElDialog,
   ElEmpty,
   ElIcon,
@@ -15,7 +16,7 @@ import {
   ElTag,
 } from 'element-plus';
 
-import { getAllPlApi } from '#/api/core/pl';
+import { getAllPlApi, getPlUsersApi } from '#/api/core/pl';
 import UserListPanel from '#/components/user-list-panel/index.vue';
 
 interface Props {
@@ -64,6 +65,7 @@ const activePlId = ref<string | null>(null);
 
 const plGroupsLoading = ref(false);
 const plGroups = ref<PlGroup[]>([]);
+const plGroupMembersCache = ref<Record<string, any[]>>({});
 
 // Dialog-local selection (only committed on confirm).
 const tempSelected = ref<Set<string>>(new Set());
@@ -94,6 +96,9 @@ async function loadPlGroupsIfNeeded() {
   if (plGroupsLoading.value || plGroups.value.length > 0) {
     if (plGroups.value.length > 0 && !activePlId.value) {
       activePlId.value = plGroups.value[0]?.id || null;
+      if (activePlId.value) {
+        fetchPlGroupMembers(activePlId.value);
+      }
     }
     return;
   }
@@ -107,6 +112,9 @@ async function loadPlGroupsIfNeeded() {
       );
     if (plGroups.value.length > 0 && !activePlId.value) {
       activePlId.value = plGroups.value[0]?.id || null;
+      if (activePlId.value) {
+        fetchPlGroupMembers(activePlId.value);
+      }
     }
   } catch (error) {
     console.error('[PlUserSelector] load PL groups failed', error);
@@ -122,6 +130,78 @@ function setTempSelected(next: Set<string>) {
 
 // 存储选中用户的 username，用于展示
 const selectedUsernames = ref<Map<string, string>>(new Map());
+
+async function fetchPlGroupMembers(plId: string) {
+  if (plGroupMembersCache.value[plId]) {
+    return plGroupMembersCache.value[plId];
+  }
+  try {
+    const res = await getPlUsersApi(plId, { page: 1, pageSize: 9999 });
+    plGroupMembersCache.value[plId] = res?.items || [];
+    return plGroupMembersCache.value[plId];
+  } catch (error) {
+    console.error('Failed to fetch PL group members:', error);
+    ElMessage.error('加载 PL 组成员失败');
+    return [];
+  }
+}
+
+const checkingPlGroups = ref<Set<string>>(new Set());
+
+async function handlePlGroupCheck(plId: string, checked: boolean) {
+  checkingPlGroups.value.add(plId);
+  const members = await fetchPlGroupMembers(plId);
+  const next = new Set(tempSelected.value);
+  
+  if (checked) {
+    members.forEach((user) => {
+      const identifier = user.id || user.username;
+      next.add(identifier);
+      if (user.username) {
+        selectedUsernames.value.set(identifier, user.username);
+      }
+      if (identifier === user.id && user.username && next.has(user.username)) {
+        next.delete(user.username);
+        selectedUsernames.value.delete(user.username);
+      }
+    });
+  } else {
+    members.forEach((user) => {
+      const identifier = user.id || user.username;
+      next.delete(identifier);
+      selectedUsernames.value.delete(identifier);
+      if (user.username && next.has(user.username)) {
+        next.delete(user.username);
+        selectedUsernames.value.delete(user.username);
+      }
+    });
+  }
+  
+  setTempSelected(next);
+  checkingPlGroups.value.delete(plId);
+}
+
+function isPlGroupFullySelected(plId: string) {
+  const members = plGroupMembersCache.value[plId];
+  if (!members || members.length === 0) return false;
+  return members.every((user) => {
+    const identifier = user.id || user.username;
+    return tempSelected.value.has(identifier) || (user.username && tempSelected.value.has(user.username));
+  });
+}
+
+function isPlGroupIndeterminate(plId: string) {
+  const members = plGroupMembersCache.value[plId];
+  if (!members || members.length === 0) return false;
+  let selectedCount = 0;
+  members.forEach((user) => {
+    const identifier = user.id || user.username;
+    if (tempSelected.value.has(identifier) || (user.username && tempSelected.value.has(user.username))) {
+      selectedCount++;
+    }
+  });
+  return selectedCount > 0 && selectedCount < members.length;
+}
 
 function openDialog() {
   if (props.disabled) return;
@@ -160,6 +240,7 @@ function clearAllTemp() {
 
 function selectPlGroup(plId: string) {
   activePlId.value = plId;
+  fetchPlGroupMembers(plId);
 }
 
 function handleConfirm() {
@@ -306,7 +387,16 @@ function handleUserSelect(userId: string, user: any) {
                   @click="selectPlGroup(pl.id)"
                 >
                   <div class="pl-list-item__main">
-                    <div class="pl-list-item__name">{{ pl.name }}</div>
+                    <div class="pl-list-item__name-wrap">
+                      <ElCheckbox
+                        :model-value="isPlGroupFullySelected(pl.id)"
+                        :indeterminate="isPlGroupIndeterminate(pl.id)"
+                        :disabled="checkingPlGroups.has(pl.id)"
+                        @click.stop
+                        @change="(checked) => handlePlGroupCheck(pl.id, !!checked)"
+                      />
+                      <div class="pl-list-item__name">{{ pl.name }}</div>
+                    </div>
                     <div class="pl-list-item__code" v-if="pl.code">{{ pl.code }}</div>
                   </div>
                   <div class="pl-list-item__meta">
@@ -332,7 +422,18 @@ function handleUserSelect(userId: string, user: any) {
                 :show-selected-tags="false"
                 @user-select="handleUserSelect"
                 @remove-user="removeSelectedUser"
-              />
+              >
+                <template #title>
+                  <ElButton
+                    type="primary"
+                    link
+                    :loading="checkingPlGroups.has(activePlId || '')"
+                    @click="handlePlGroupCheck(activePlId || '', !isPlGroupFullySelected(activePlId || ''))"
+                  >
+                    {{ isPlGroupFullySelected(activePlId || '') ? '取消全选本组' : '全选本组' }}
+                  </ElButton>
+                </template>
+              </UserListPanel>
             </template>
             <div v-else class="selector-content__empty">
               <ElEmpty description="请在左侧选择一个 PL 组" />
@@ -535,6 +636,12 @@ function handleUserSelect(userId: string, user: any) {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.pl-list-item__name-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .pl-list-item__name {
