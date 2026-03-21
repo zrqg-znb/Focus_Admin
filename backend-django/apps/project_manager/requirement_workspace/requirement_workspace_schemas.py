@@ -102,6 +102,18 @@ class RequirementWorkspaceProjectRowSchema(Schema):
     completion_score: float = 0.0
 
 
+class RequirementWorkspaceRefreshTaskSchema(Schema):
+    id: str
+    scope: str = ""
+    status: str = ""
+    message: str = ""
+    error_message: str = ""
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    snapshot_date: Optional[str] = None
+    snapshot_id: Optional[str] = None
+
+
 class RequirementWorkspaceLatestSchema(Schema):
     generated_at: Optional[str] = None
     scope: str = ""
@@ -119,3 +131,4 @@ class RequirementWorkspaceLatestSchema(Schema):
     delay_previews: RequirementWorkspaceDelayPreviewSchema = Field(
         default_factory=lambda: RequirementWorkspaceDelayPreviewSchema(),
     )
+    refresh_task: Optional[RequirementWorkspaceRefreshTaskSchema] = None

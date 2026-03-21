@@ -1,21 +1,24 @@
 from types import SimpleNamespace
 from unittest import mock
 
+from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import TransactionTestCase
 from django.utils import timezone
 from ninja.errors import HttpError
 
 from apps.project_manager.project.project_model import Project
 from apps.project_manager.requirement_workspace.requirement_workspace_model import (
+    RequirementWorkspaceRefreshTask,
     RequirementWorkspaceSnapshot,
 )
 from apps.project_manager.requirement_workspace import requirement_workspace_services
 
 
-class RequirementWorkspaceServiceTests(TestCase):
+class RequirementWorkspaceServiceTests(TransactionTestCase):
     def setUp(self):
         cache.clear()
+        self.user = get_user_model().objects.create(username="workspace-user")
 
     def _make_item(self, **overrides):
         data = {
@@ -125,32 +128,13 @@ class RequirementWorkspaceServiceTests(TestCase):
         )
         self.assertEqual(len(payload["delay_previews"]["development"]), 1)
 
-    @mock.patch(
-        "apps.project_manager.requirement_workspace.requirement_workspace_services.requirement_board_services.scan_standardized_requirement_items"
-    )
-    def test_get_latest_bootstraps_first_snapshot_when_missing(self, mocked_scan):
-        project = Project.objects.create(
-            name="Alpha",
-            domain="车控",
-            type="量产",
-            code="alpha-empty",
-            design_id="design-alpha",
-            sub_teams=["Team-A"],
-        )
-        mocked_scan.return_value = [
-            self._make_item(
-                project_id=str(project.id),
-                project_name=project.name,
-                requirement_id="REQ-1",
-            )
-        ]
-
+    def test_get_latest_returns_empty_payload_when_snapshot_missing(self):
         payload = requirement_workspace_services.get_latest_requirement_workspace_snapshot()
-        self.assertIsNotNone(payload["generated_at"])
-        self.assertEqual(payload["project_count"], 1)
-        self.assertEqual(payload["requirement_count"], 1)
-        self.assertEqual(payload["project_rows"][0]["project_name"], "Alpha")
-        self.assertEqual(RequirementWorkspaceSnapshot.objects.count(), 1)
+        self.assertIsNone(payload["generated_at"])
+        self.assertEqual(payload["project_count"], 0)
+        self.assertEqual(payload["requirement_count"], 0)
+        self.assertEqual(payload["project_rows"], [])
+        self.assertIsNone(payload["refresh_task"])
 
     @mock.patch(
         "apps.project_manager.requirement_workspace.requirement_workspace_services.requirement_board_services.scan_standardized_requirement_items"
@@ -207,6 +191,56 @@ class RequirementWorkspaceServiceTests(TestCase):
 
         with self.assertRaises(HttpError):
             requirement_workspace_services.refresh_requirement_workspace_snapshot()
+
+    @mock.patch(
+        "apps.project_manager.requirement_workspace.requirement_workspace_services._start_requirement_workspace_refresh_task_thread"
+    )
+    def test_submit_refresh_task_reuses_active_task(self, mocked_start):
+        first = requirement_workspace_services.submit_requirement_workspace_refresh_task(
+            user=self.user,
+        )
+        second = requirement_workspace_services.submit_requirement_workspace_refresh_task(
+            user=self.user,
+        )
+
+        self.assertEqual(RequirementWorkspaceRefreshTask.objects.count(), 1)
+        self.assertEqual(first["id"], second["id"])
+        mocked_start.assert_called_once()
+
+    @mock.patch(
+        "apps.project_manager.requirement_workspace.requirement_workspace_services.requirement_board_services.scan_standardized_requirement_items"
+    )
+    def test_refresh_task_runner_updates_snapshot_and_task(self, mocked_scan):
+        project = Project.objects.create(
+            name="Alpha",
+            domain="车控",
+            type="量产",
+            code="alpha-task",
+            design_id="design-alpha",
+            sub_teams=["Team-A"],
+        )
+        mocked_scan.return_value = [
+            self._make_item(
+                project_id=str(project.id),
+                project_name=project.name,
+                requirement_id="REQ-1",
+            )
+        ]
+        task = RequirementWorkspaceRefreshTask.objects.create(
+            scope=requirement_workspace_services.DEFAULT_SCOPE,
+            requested_by=self.user,
+            sys_creator=self.user,
+            status=RequirementWorkspaceRefreshTask.STATUS_PENDING,
+            message="submitted",
+        )
+
+        requirement_workspace_services._run_requirement_workspace_refresh_task(task.id)
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, RequirementWorkspaceRefreshTask.STATUS_SUCCESS)
+        self.assertEqual(task.snapshot_date, timezone.now().date())
+        self.assertTrue(task.snapshot_id)
+        self.assertEqual(RequirementWorkspaceSnapshot.objects.count(), 1)
 
     @mock.patch(
         "apps.project_manager.requirement_workspace.requirement_workspace_services._get_favorite_project_id_set"

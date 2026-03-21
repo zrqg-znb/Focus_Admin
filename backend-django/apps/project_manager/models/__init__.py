@@ -20,8 +20,10 @@ from apps.project_manager.dts_statistics.dts_statistics_model import (
 )
 from apps.project_manager.requirement_workspace.requirement_workspace_model import (
     RequirementWorkspaceSnapshot,
+    RequirementWorkspaceRefreshTask,
 )
 from apps.project_manager.requirement_board.requirement_board_model import (
     RequirementBoardFilterPreference,
+    RequirementBoardQueryTask,
 )
 from apps.project_manager.models.sync_log_model import SyncLog

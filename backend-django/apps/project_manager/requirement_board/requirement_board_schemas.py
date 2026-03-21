@@ -49,6 +49,29 @@ class RequirementBoardFilterOptionsSchema(Schema):
     saved_filter: Optional[RequirementBoardFilterPayloadSchema] = None
 
 
+class RequirementBoardQueryPreparePayloadSchema(RequirementBoardFilterPayloadSchema):
+    project_ids: List[str] = Field(..., description="项目 ID 列表")
+
+
+class RequirementBoardQueryTaskSchema(Schema):
+    id: str
+    fingerprint: str = ""
+    status: str = ""
+    message: str = ""
+    error_message: str = ""
+    progress: int = 0
+    scanned_pages: int = 0
+    total_pages: int = 0
+    matched_count: int = 0
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+
+
+class RequirementBoardQueryPrepareResponseSchema(Schema):
+    mode: str
+    task: Optional[RequirementBoardQueryTaskSchema] = None
+
+
 class RequirementBoardDataQuerySchema(RequirementBoardFilterPayloadSchema):
     project_ids: List[str] = Field(..., description="项目 ID 列表")
     page_no: int = Field(1, ge=1, description="页码")

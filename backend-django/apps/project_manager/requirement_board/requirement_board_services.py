@@ -6,6 +6,7 @@ import math
 import os
 import random
 import re
+import threading
 import time
 from typing import Any
 
@@ -13,6 +14,7 @@ import openpyxl
 import requests
 from django.conf import settings
 from django.core.cache import cache
+from django.db import close_old_connections, connection
 from django.http import HttpResponse
 from django.utils import timezone
 from ninja.errors import HttpError
@@ -23,6 +25,7 @@ from .requirement_board_model import (
     CATEGORY_ORDER,
     DEFAULT_TIME_FIELD,
     RequirementBoardFilterPreference,
+    RequirementBoardQueryTask,
     STATUS_LABELS,
     STATUS_ORDER,
     TIME_FIELD_OPTIONS,
@@ -46,6 +49,7 @@ _LOCK_TTL_SECONDS = 30
 _UPSTREAM_PAGE_SIZE = 500
 _MAX_SCAN_PAGES = 200
 _DELAY_PREVIEW_LIMIT = 8
+_PREPARED_RESULT_TTL_SECONDS = 30 * 60
 _EXPORT_SHEET_TITLE = "需求数据"
 _EXPORT_HEADERS = (
     "项目名",
@@ -121,6 +125,10 @@ _STATUS_ALIASES = {
 }
 _OWNER_SPLIT_RE = re.compile(r"[,，]")
 _OWNER_PAREN_RE = re.compile(r"[（(](.*?)[)）]")
+_QUERY_TASK_ACTIVE_STATUSES = {
+    RequirementBoardQueryTask.STATUS_PENDING,
+    RequirementBoardQueryTask.STATUS_RUNNING,
+}
 
 
 def _get_setting(name: str, default: Any = None):
@@ -462,6 +470,66 @@ def _cache_key(prefix: str, payload: dict[str, Any]) -> str:
     return f"{prefix}:{digest}"
 
 
+def _fingerprint_payload(payload: dict[str, Any]) -> str:
+    return hashlib.md5(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def _get_prepared_result_ttl_seconds() -> int:
+    return max(
+        _parse_positive_int(
+            _get_setting(
+                "REQUIREMENT_BOARD_PREPARED_RESULT_TTL_SECONDS",
+                _PREPARED_RESULT_TTL_SECONDS,
+            ),
+            _PREPARED_RESULT_TTL_SECONDS,
+        ),
+        60,
+    )
+
+
+def _get_async_project_threshold() -> int:
+    return max(
+        _parse_positive_int(
+            _get_setting("REQUIREMENT_BOARD_ASYNC_PROJECT_THRESHOLD", 20),
+            20,
+        ),
+        1,
+    )
+
+
+def _get_user_cache_scope(user: Any) -> str:
+    user_id = getattr(user, "id", None)
+    return str(user_id) if user_id else "anonymous"
+
+
+def _get_prepared_result_cache_key(
+    fingerprint: str,
+    *,
+    user: Any = None,
+) -> str:
+    return f"pm:requirement-board:prepared:v1:{_get_user_cache_scope(user)}:{fingerprint}"
+
+
+def _serialize_query_task(task: RequirementBoardQueryTask | None) -> dict[str, Any] | None:
+    if task is None:
+        return None
+    return {
+        "id": str(task.id),
+        "fingerprint": str(task.fingerprint or ""),
+        "status": str(task.status or ""),
+        "message": str(task.message or ""),
+        "error_message": str(task.error_message or ""),
+        "progress": int(task.progress or 0),
+        "scanned_pages": int(task.scanned_pages or 0),
+        "total_pages": int(task.total_pages or 0),
+        "matched_count": int(task.matched_count or 0),
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "finished_at": task.finished_at.isoformat() if task.finished_at else None,
+    }
+
+
 def _to_upstream_schedule_states(values: list[str]) -> list[str]:
     result: list[str] = []
     for item in values:
@@ -685,7 +753,7 @@ def _fetch_raw_page(
         return raw_payload
 
     headers = _build_request_headers()
-    timeout = float(_get_setting("REQUIREMENT_BOARD_API_TIMEOUT", 15))
+    timeout = float(_get_setting("REQUIREMENT_BOARD_API_TIMEOUT", 30))
     verify = _to_bool(_get_setting("REQUIREMENT_BOARD_API_VERIFY_SSL", True), True)
     _debug_log(
         "upstream_request",
@@ -1267,6 +1335,59 @@ def _resolve_query_context(
     }
 
 
+def _resolve_query_context_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    develop_users = (payload.get("develop_user") or []) + (payload.get("develop_users") or [])
+    test_users = (payload.get("test_user") or []) + (payload.get("test_users") or [])
+    return _resolve_query_context(
+        payload.get("project_ids") or [],
+        payload.get("sub_teams"),
+        payload.get("categories"),
+        payload.get("schedule_state"),
+        payload.get("verification_policies"),
+        develop_users,
+        test_users,
+        payload.get("time_field"),
+        payload.get("time_start"),
+        payload.get("time_end"),
+        payload.get("accepted_time_start"),
+        payload.get("accepted_time_end"),
+    )
+
+
+def _should_prepare_query_async(context: dict[str, Any]) -> bool:
+    if context["requires_local_filter"]:
+        return True
+    return len(context["remote_cache_payload"]["project_ids"]) > _get_async_project_threshold()
+
+
+def _get_active_query_task(user: Any, fingerprint: str) -> RequirementBoardQueryTask | None:
+    if not user or not getattr(user, "id", None):
+        return None
+    return (
+        RequirementBoardQueryTask.objects.filter(
+            user=user,
+            fingerprint=fingerprint,
+            status__in=_QUERY_TASK_ACTIVE_STATUSES,
+            is_deleted=False,
+        )
+        .order_by("-sys_create_datetime")
+        .first()
+    )
+
+
+def _get_prepared_items(
+    context: dict[str, Any],
+    *,
+    user: Any = None,
+) -> list[dict[str, Any]] | None:
+    fingerprint = _fingerprint_payload(context["cache_payload"])
+    cache_key = _get_prepared_result_cache_key(fingerprint, user=user)
+    cached = cache.get(cache_key)
+    if isinstance(cached, dict) and isinstance(cached.get("items"), list):
+        return cached["items"]
+    return None
+
+
 def _wait_for_cached_payload(cache_key: str, *, minimum_items_key: str | None = None) -> Any:
     for _ in range(10):
         time.sleep(0.3)
@@ -1585,23 +1706,194 @@ def scan_standardized_requirement_items(
     return _scan_all_filtered_items(context)
 
 
-def get_requirement_board_page(data: RequirementBoardDataQuerySchema) -> dict[str, Any]:
-    develop_users = (data.develop_user or []) + (data.develop_users or [])
-    test_users = (data.test_user or []) + (data.test_users or [])
-    context = _resolve_query_context(
-        data.project_ids,
-        data.sub_teams,
-        data.categories,
-        data.schedule_state,
-        data.verification_policies,
-        develop_users,
-        test_users,
-        data.time_field,
-        data.time_start,
-        data.time_end,
-        data.accepted_time_start,
-        data.accepted_time_end,
+def _update_query_task_progress(
+    task_id: str,
+    *,
+    message: str,
+    progress: int,
+    scanned_pages: int,
+    total_pages: int,
+    matched_count: int,
+) -> None:
+    RequirementBoardQueryTask.objects.filter(id=task_id).update(
+        message=message,
+        progress=max(0, min(progress, 99)),
+        scanned_pages=max(0, scanned_pages),
+        total_pages=max(0, total_pages),
+        matched_count=max(0, matched_count),
     )
+
+
+def _collect_prepared_items_for_task(
+    context: dict[str, Any],
+    *,
+    task_id: str,
+) -> list[dict[str, Any]]:
+    if context["requires_local_filter"]:
+        page_size = _resolve_scan_page_size("REQUIREMENT_BOARD_SCAN_PAGE_SIZE")
+        max_pages = _resolve_max_scan_pages("REQUIREMENT_BOARD_SUMMARY_MAX_PAGES")
+        limit_error_message = "需求扫描页数过多，请缩小筛选范围"
+    else:
+        page_size = _resolve_scan_page_size("REQUIREMENT_BOARD_SUMMARY_PAGE_SIZE")
+        max_pages = _resolve_max_scan_pages("REQUIREMENT_BOARD_SUMMARY_MAX_PAGES")
+        limit_error_message = "需求扫描页数过多，请缩小筛选范围"
+
+    matched_items: list[dict[str, Any]] = []
+    total_pages = 0
+    scanned_pages = 0
+    for page_no, page_payload, _ in _iterate_remote_pages(
+        context,
+        page_size=page_size,
+        max_pages=max_pages,
+        limit_error_message=limit_error_message,
+    ):
+        scanned_pages = page_no
+        total_pages = max(total_pages, _parse_positive_int(page_payload.get("page_sum"), 0))
+        items = page_payload["items"]
+        if context["requires_local_filter"]:
+            for item in items:
+                if _item_matches_local_filters(item, context):
+                    matched_items.append(item)
+        else:
+            matched_items.extend(items)
+
+        progress = (
+            int((scanned_pages / total_pages) * 100)
+            if total_pages > 0
+            else min(95, 10 + scanned_pages * 10)
+        )
+        _update_query_task_progress(
+            task_id,
+            message="正在准备需求数据",
+            progress=progress,
+            scanned_pages=scanned_pages,
+            total_pages=total_pages,
+            matched_count=len(matched_items),
+        )
+    return matched_items
+
+
+def _run_requirement_board_query_task(task_id: str) -> None:
+    close_old_connections()
+    try:
+        task = RequirementBoardQueryTask.objects.filter(id=task_id, is_deleted=False).first()
+        if task is None:
+            return
+
+        RequirementBoardQueryTask.objects.filter(id=task_id).update(
+            status=RequirementBoardQueryTask.STATUS_RUNNING,
+            message="正在准备需求数据",
+            error_message="",
+            progress=5,
+            started_at=timezone.now(),
+            finished_at=None,
+        )
+
+        context = _resolve_query_context_from_payload(task.payload or {})
+        items = _collect_prepared_items_for_task(context, task_id=task_id)
+        cache_key = _get_prepared_result_cache_key(task.fingerprint, user=task.user)
+        cache.set(
+            cache_key,
+            {
+                "items": items,
+                "cache_payload": context["cache_payload"],
+            },
+            _get_prepared_result_ttl_seconds(),
+        )
+        RequirementBoardQueryTask.objects.filter(id=task_id).update(
+            status=RequirementBoardQueryTask.STATUS_SUCCESS,
+            message="需求数据准备完成",
+            error_message="",
+            progress=100,
+            scanned_pages=max(0, int(RequirementBoardQueryTask.objects.filter(id=task_id).values_list("scanned_pages", flat=True).first() or 0)),
+            total_pages=max(0, int(RequirementBoardQueryTask.objects.filter(id=task_id).values_list("total_pages", flat=True).first() or 0)),
+            matched_count=len(items),
+            result_cache_key=cache_key,
+            finished_at=timezone.now(),
+        )
+    except Exception as exc:
+        logger.exception("Requirement board query task failed: task_id=%s", task_id)
+        RequirementBoardQueryTask.objects.filter(id=task_id).update(
+            status=RequirementBoardQueryTask.STATUS_FAILED,
+            message="需求数据准备失败",
+            error_message=str(exc),
+            finished_at=timezone.now(),
+        )
+    finally:
+        connection.close()
+
+
+def _start_requirement_board_query_task_thread(task_id: str) -> None:
+    thread = threading.Thread(
+        target=_run_requirement_board_query_task,
+        args=(task_id,),
+        daemon=True,
+    )
+    thread.start()
+
+
+def prepare_requirement_board_query(
+    user: Any,
+    data: RequirementBoardFilterPayloadSchema | dict[str, Any],
+) -> dict[str, Any]:
+    if not user or not getattr(user, "id", None):
+        raise HttpError(401, "用户未登录")
+
+    payload = data.dict() if hasattr(data, "dict") else dict(data or {})
+    context = _resolve_query_context_from_payload(payload)
+    normalized_payload = _normalize_filter_payload_for_storage(payload)
+    fingerprint = _fingerprint_payload(context["cache_payload"])
+
+    prepared_cache_key = _get_prepared_result_cache_key(fingerprint, user=user)
+    cached = cache.get(prepared_cache_key)
+    if isinstance(cached, dict) and isinstance(cached.get("items"), list):
+        return {"mode": "ready", "task": None}
+
+    if not _should_prepare_query_async(context):
+        return {"mode": "ready", "task": None}
+
+    active_task = _get_active_query_task(user, fingerprint)
+    if active_task is not None:
+        return {
+            "mode": "async",
+            "task": _serialize_query_task(active_task),
+        }
+
+    task = RequirementBoardQueryTask.objects.create(
+        user=user,
+        sys_creator=user,
+        fingerprint=fingerprint,
+        payload=normalized_payload,
+        status=RequirementBoardQueryTask.STATUS_PENDING,
+        message="查询任务已提交，正在排队执行",
+        result_cache_key=prepared_cache_key,
+    )
+    _start_requirement_board_query_task_thread(str(task.id))
+    return {
+        "mode": "async",
+        "task": _serialize_query_task(task),
+    }
+
+
+def get_requirement_board_query_task(user: Any, task_id: str) -> dict[str, Any]:
+    if not user or not getattr(user, "id", None):
+        raise HttpError(401, "用户未登录")
+    task = RequirementBoardQueryTask.objects.filter(
+        id=task_id,
+        user=user,
+        is_deleted=False,
+    ).first()
+    if task is None:
+        raise HttpError(404, "查询任务不存在")
+    return _serialize_query_task(task) or {}
+
+
+def get_requirement_board_page(
+    data: RequirementBoardDataQuerySchema,
+    *,
+    user: Any = None,
+) -> dict[str, Any]:
+    context = _resolve_query_context_from_payload(data.dict())
     page_no = _parse_positive_int(data.page_no, 1)
     page_size = min(_parse_positive_int(data.page_size, 20), _UPSTREAM_PAGE_SIZE)
     _debug_log(
@@ -1611,6 +1903,19 @@ def get_requirement_board_page(data: RequirementBoardDataQuerySchema) -> dict[st
         page_no=page_no,
         page_size=page_size,
     )
+    prepared_items = _get_prepared_items(context, user=user)
+    if prepared_items is not None:
+        result = _paginate_items(prepared_items, page_no=page_no, page_size=page_size)
+        _debug_log(
+            "data_query_result",
+            mode="prepared_cache",
+            page_no=result["page_no"],
+            page_size=result["page_size"],
+            page_sum=result["page_sum"],
+            total=result["total"],
+            item_count=len(result["items"]),
+        )
+        return result
     if context["requires_local_filter"]:
         items = _scan_all_filtered_items(context)
         result = _paginate_items(items, page_no=page_no, page_size=page_size)
@@ -2225,23 +2530,10 @@ def _export_items_to_workbook(items: list[dict[str, Any]]) -> HttpResponse:
 
 def get_requirement_board_summary(
     data: RequirementBoardSummaryQuerySchema,
+    *,
+    user: Any = None,
 ) -> dict[str, Any]:
-    develop_users = (data.develop_user or []) + (data.develop_users or [])
-    test_users = (data.test_user or []) + (data.test_users or [])
-    context = _resolve_query_context(
-        data.project_ids,
-        data.sub_teams,
-        data.categories,
-        data.schedule_state,
-        data.verification_policies,
-        develop_users,
-        test_users,
-        data.time_field,
-        data.time_start,
-        data.time_end,
-        data.accepted_time_start,
-        data.accepted_time_end,
-    )
+    context = _resolve_query_context_from_payload(data.dict())
     summary_key = _cache_key("pm:requirement-board:summary:v4", context["cache_payload"])
     cached = cache.get(summary_key)
     if isinstance(cached, dict) and isinstance(cached.get("team_summary"), list):
@@ -2257,7 +2549,11 @@ def get_requirement_board_summary(
             return waiting
 
     try:
-        summary = _compute_summary(context)
+        prepared_items = _get_prepared_items(context, user=user)
+        if prepared_items is not None:
+            summary = _compute_summary_from_items(prepared_items)
+        else:
+            summary = _compute_summary(context)
         cache.set(summary_key, summary, _SUMMARY_CACHE_TTL_SECONDS)
         _debug_log(
             "summary_cached",
@@ -2273,23 +2569,18 @@ def get_requirement_board_summary(
 
 def export_requirement_board_data(
     data: RequirementBoardExportQuerySchema,
+    *,
+    user: Any = None,
 ) -> HttpResponse:
-    develop_users = (data.develop_user or []) + (data.develop_users or [])
-    test_users = (data.test_user or []) + (data.test_users or [])
-    context = _resolve_query_context(
-        data.project_ids,
-        data.sub_teams,
-        data.categories,
-        data.schedule_state,
-        data.verification_policies,
-        develop_users,
-        test_users,
-        data.time_field,
-        data.time_start,
-        data.time_end,
-        data.accepted_time_start,
-        data.accepted_time_end,
-    )
+    context = _resolve_query_context_from_payload(data.dict())
+    prepared_items = _get_prepared_items(context, user=user)
+    if prepared_items is not None:
+        _debug_log(
+            "export_prepared_cache",
+            total_count=len(prepared_items),
+            filters=context["cache_payload"],
+        )
+        return _export_items_to_workbook(prepared_items)
 
     if context["requires_local_filter"]:
         items = _scan_all_filtered_items(

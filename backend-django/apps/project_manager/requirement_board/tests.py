@@ -1,5 +1,7 @@
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.core.cache import cache
+from django.test import TransactionTestCase
+from unittest import mock
 
 from apps.project_manager.project.project_model import Project
 from apps.project_manager.requirement_board import requirement_board_services
@@ -7,14 +9,16 @@ from apps.project_manager.requirement_board.requirement_board_model import (
     CATEGORY_ORDER,
     DEFAULT_TIME_FIELD,
     RequirementBoardFilterPreference,
+    RequirementBoardQueryTask,
 )
 from apps.project_manager.requirement_board.requirement_board_schemas import (
     RequirementBoardFilterPayloadSchema,
 )
 
 
-class RequirementBoardPreferenceTests(TestCase):
+class RequirementBoardPreferenceTests(TransactionTestCase):
     def setUp(self):
+        cache.clear()
         self.user = get_user_model().objects.create(
             username="tester",
             password="secret",
@@ -25,7 +29,7 @@ class RequirementBoardPreferenceTests(TestCase):
         *,
         name: str,
         code: str,
-        design_id: str | None = "design-1",
+        design_id: str | None = None,
         sub_teams: list[str] | None = None,
     ) -> Project:
         return Project.objects.create(
@@ -33,7 +37,7 @@ class RequirementBoardPreferenceTests(TestCase):
             domain="车控",
             type="量产",
             code=code,
-            design_id=design_id,
+            design_id=design_id if design_id is not None else f"design-{code}",
             sub_teams=sub_teams if sub_teams is not None else ["Team-A"],
         )
 
@@ -157,3 +161,147 @@ class RequirementBoardPreferenceTests(TestCase):
         self.assertTrue(preference.is_deleted)
         result = requirement_board_services.get_filter_options(self.user)
         self.assertIsNone(result["saved_filter"])
+
+    @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._start_requirement_board_query_task_thread"
+    )
+    def test_prepare_query_returns_ready_for_small_remote_query(self, mocked_start):
+        project = self._create_project(name="Alpha", code="alpha")
+
+        result = requirement_board_services.prepare_requirement_board_query(
+            self.user,
+            RequirementBoardFilterPayloadSchema(
+                project_ids=[str(project.id)],
+                sub_teams=["Team-A"],
+                categories=["AR"],
+                schedule_state=[],
+                verification_policies=[],
+                develop_user=[],
+                test_user=[],
+                time_field="accepted_time",
+                time_start="",
+                time_end="",
+            ),
+        )
+
+        self.assertEqual(result["mode"], "ready")
+        self.assertIsNone(result["task"])
+        mocked_start.assert_not_called()
+
+    @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._get_setting"
+    )
+    @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._start_requirement_board_query_task_thread"
+    )
+    def test_prepare_query_creates_async_task_for_large_or_local_filter(
+        self,
+        mocked_start,
+        mocked_get_setting,
+    ):
+        projects = [
+            self._create_project(name=f"Project-{index}", code=f"code-{index}")
+            for index in range(1, 4)
+        ]
+
+        def _fake_get_setting(name, default=None):
+            if name == "REQUIREMENT_BOARD_ASYNC_PROJECT_THRESHOLD":
+                return 2
+            return getattr(requirement_board_services.settings, name, default)
+
+        mocked_get_setting.side_effect = _fake_get_setting
+        result = requirement_board_services.prepare_requirement_board_query(
+            self.user,
+            RequirementBoardFilterPayloadSchema(
+                project_ids=[str(project.id) for project in projects],
+                sub_teams=["Team-A"],
+                categories=["AR"],
+                schedule_state=[],
+                verification_policies=[],
+                develop_user=[],
+                test_user=[],
+                time_field="accepted_time",
+                time_start="",
+                time_end="",
+            ),
+        )
+
+        self.assertEqual(result["mode"], "async")
+        self.assertEqual(RequirementBoardQueryTask.objects.count(), 1)
+        task = RequirementBoardQueryTask.objects.get(user=self.user)
+        self.assertEqual(task.status, RequirementBoardQueryTask.STATUS_PENDING)
+        mocked_start.assert_called_once()
+
+    @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._get_setting"
+    )
+    @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._collect_prepared_items_for_task"
+    )
+    def test_query_task_runner_caches_prepared_items(self, mocked_collect, mocked_get_setting):
+        project = self._create_project(name="Alpha", code="alpha")
+        payload = RequirementBoardFilterPayloadSchema(
+            project_ids=[str(project.id)],
+            sub_teams=["Team-A"],
+            categories=["AR"],
+            schedule_state=[],
+            verification_policies=[],
+            develop_user=["dev-a"],
+            test_user=[],
+            time_field="accepted_time",
+            time_start="",
+            time_end="",
+        )
+
+        def _fake_get_setting(name, default=None):
+            if name == "REQUIREMENT_BOARD_ASYNC_PROJECT_THRESHOLD":
+                return 20
+            return getattr(requirement_board_services.settings, name, default)
+
+        mocked_get_setting.side_effect = _fake_get_setting
+        normalized_payload = requirement_board_services._normalize_filter_payload_for_storage(payload)
+        task = RequirementBoardQueryTask.objects.create(
+            user=self.user,
+            sys_creator=self.user,
+            fingerprint="fingerprint-1",
+            payload=normalized_payload,
+            status=RequirementBoardQueryTask.STATUS_PENDING,
+            message="submitted",
+        )
+        mocked_collect.return_value = [
+            {
+                "requirement_id": "REQ-1",
+                "project_id": str(project.id),
+                "project_name": project.name,
+                "team_name": "Team-A",
+                "title": "Requirement 1",
+                "category": "AR",
+                "verification_policy": "",
+                "verification_policy_label": "",
+                "status_code": "P",
+                "status_label": "开发中",
+                "raw_status": "",
+                "planned_test_time": None,
+                "due_date": None,
+                "completed_time": None,
+                "accepted_time": None,
+                "is_dev_delayed": False,
+                "is_test_delayed": False,
+                "workload_kloc": 0.0,
+                "workload_man_day": 0.0,
+                "develop_users": ["dev-a"],
+                "test_users": [],
+                "develop_user_display": "dev-a",
+                "test_user_display": "",
+                "develop_user": "dev-a",
+                "test_user": "",
+            }
+        ]
+
+        requirement_board_services._run_requirement_board_query_task(task.id)
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, RequirementBoardQueryTask.STATUS_SUCCESS)
+        self.assertTrue(task.result_cache_key)
+        cached = requirement_board_services.cache.get(task.result_cache_key)
+        self.assertEqual(len(cached["items"]), 1)

@@ -1,8 +1,9 @@
 import logging
+import threading
 from typing import Any
 
 from django.core.cache import cache
-from django.db import transaction
+from django.db import close_old_connections, connection, transaction
 from django.utils import timezone
 from ninja.errors import HttpError
 
@@ -10,7 +11,10 @@ from apps.project_manager.project.project_model import Project
 from apps.project_manager.requirement_board import requirement_board_services
 from scheduler.module.executor import scheduler_task
 
-from .requirement_workspace_model import RequirementWorkspaceSnapshot
+from .requirement_workspace_model import (
+    RequirementWorkspaceRefreshTask,
+    RequirementWorkspaceSnapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +34,10 @@ FIELD_DEFINITIONS = (
 FIELD_LABEL_MAP = dict(FIELD_DEFINITIONS)
 OWNER_REQUIRED_STATUS_CODES = {"P", "C", "A"}
 WORKLOAD_REQUIRED_STATUS_CODES = {"C", "A"}
+TASK_ACTIVE_STATUSES = {
+    RequirementWorkspaceRefreshTask.STATUS_PENDING,
+    RequirementWorkspaceRefreshTask.STATUS_RUNNING,
+}
 
 
 def _normalize_text_list(values: Any) -> list[str]:
@@ -156,6 +164,7 @@ def _filter_snapshot_response_by_project_ids(
             snapshot_payload.get("delay_previews") or {},
             allowed_project_ids,
         ),
+        "refresh_task": snapshot_payload.get("refresh_task"),
     }
 
 
@@ -315,6 +324,24 @@ def _empty_snapshot_payload(
     }
 
 
+def _serialize_refresh_task(
+    task: RequirementWorkspaceRefreshTask | None,
+) -> dict[str, Any] | None:
+    if task is None:
+        return None
+    return {
+        "id": str(task.id),
+        "scope": str(task.scope or ""),
+        "status": str(task.status or ""),
+        "message": str(task.message or ""),
+        "error_message": str(task.error_message or ""),
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "finished_at": task.finished_at.isoformat() if task.finished_at else None,
+        "snapshot_date": task.snapshot_date.isoformat() if task.snapshot_date else None,
+        "snapshot_id": str(task.snapshot_id) if task.snapshot_id else None,
+    }
+
+
 def build_requirement_workspace_snapshot_payload(
     projects: list[Project],
     items: list[dict[str, Any]],
@@ -458,6 +485,7 @@ def _serialize_snapshot(
             "project_rows": payload["project_rows"],
             "missing_previews": payload["missing_previews"],
             "delay_previews": payload["delay_previews"],
+            "refresh_task": None,
         }
 
     payload = snapshot.payload or {}
@@ -476,6 +504,7 @@ def _serialize_snapshot(
         "project_rows": payload.get("project_rows") or empty_payload["project_rows"],
         "missing_previews": payload.get("missing_previews") or empty_payload["missing_previews"],
         "delay_previews": payload.get("delay_previews") or empty_payload["delay_previews"],
+        "refresh_task": None,
     }
 
 
@@ -487,18 +516,26 @@ def _get_latest_snapshot(scope: str) -> RequirementWorkspaceSnapshot | None:
     )
 
 
-def _get_latest_or_bootstrap_snapshot() -> RequirementWorkspaceSnapshot | None:
-    snapshot = _get_latest_snapshot(DEFAULT_SCOPE)
-    if snapshot is not None:
-        return snapshot
+def _get_active_refresh_task(scope: str = DEFAULT_SCOPE) -> RequirementWorkspaceRefreshTask | None:
+    return (
+        RequirementWorkspaceRefreshTask.objects.filter(
+            scope=scope,
+            status__in=TASK_ACTIVE_STATUSES,
+            is_deleted=False,
+        )
+        .order_by("-sys_create_datetime")
+        .first()
+    )
 
-    logger.info("No requirement workspace snapshot found, bootstrapping latest snapshot")
-    try:
-        return _refresh_base_requirement_workspace_snapshot()
-    except HttpError as exc:
-        if exc.status_code == 409:
-            return _get_latest_snapshot(DEFAULT_SCOPE)
-        raise
+
+def _attach_refresh_task(
+    payload: dict[str, Any],
+    task: RequirementWorkspaceRefreshTask | None,
+) -> dict[str, Any]:
+    return {
+        **payload,
+        "refresh_task": _serialize_refresh_task(task),
+    }
 
 
 def _get_scoped_snapshot_response(
@@ -508,8 +545,12 @@ def _get_scoped_snapshot_response(
     snapshot: RequirementWorkspaceSnapshot | None,
 ) -> dict[str, Any]:
     normalized_view_scope = _validate_view_scope(view_scope)
+    active_task = _get_active_refresh_task(DEFAULT_SCOPE)
     if normalized_view_scope == DEFAULT_VIEW_SCOPE:
-        return _serialize_snapshot(snapshot, scope=normalized_view_scope)
+        return _attach_refresh_task(
+            _serialize_snapshot(snapshot, scope=normalized_view_scope),
+            active_task,
+        )
 
     favorite_project_ids = _get_favorite_project_id_set(user)
     if snapshot is None:
@@ -520,18 +561,22 @@ def _get_scoped_snapshot_response(
                 if str(project.id) in favorite_project_ids
             ]
         )
-        return _serialize_snapshot(
-            None,
-            scope=normalized_view_scope,
-            project_count=configured_favorite_count,
+        return _attach_refresh_task(
+            _serialize_snapshot(
+                None,
+                scope=normalized_view_scope,
+                project_count=configured_favorite_count,
+            ),
+            active_task,
         )
 
     base_payload = _serialize_snapshot(snapshot, scope=DEFAULT_VIEW_SCOPE)
-    return _filter_snapshot_response_by_project_ids(
+    scoped_payload = _filter_snapshot_response_by_project_ids(
         base_payload,
         view_scope=normalized_view_scope,
         allowed_project_ids=favorite_project_ids,
     )
+    return _attach_refresh_task(scoped_payload, active_task)
 
 
 def get_latest_requirement_workspace_snapshot(
@@ -539,7 +584,7 @@ def get_latest_requirement_workspace_snapshot(
     *,
     user: Any = None,
 ) -> dict[str, Any]:
-    snapshot = _get_latest_or_bootstrap_snapshot()
+    snapshot = _get_latest_snapshot(DEFAULT_SCOPE)
     return _get_scoped_snapshot_response(
         view_scope=view_scope,
         user=user,
@@ -609,6 +654,85 @@ def refresh_requirement_workspace_snapshot(
         user=user,
         snapshot=snapshot,
     )
+
+
+def _run_requirement_workspace_refresh_task(task_id: str) -> None:
+    close_old_connections()
+    try:
+        task = RequirementWorkspaceRefreshTask.objects.filter(
+            id=task_id,
+            is_deleted=False,
+        ).first()
+        if task is None:
+            return
+
+        RequirementWorkspaceRefreshTask.objects.filter(id=task_id).update(
+            status=RequirementWorkspaceRefreshTask.STATUS_RUNNING,
+            message="正在生成需求交付合规快照",
+            error_message="",
+            started_at=timezone.now(),
+            finished_at=None,
+        )
+
+        snapshot = _refresh_base_requirement_workspace_snapshot()
+        RequirementWorkspaceRefreshTask.objects.filter(id=task_id).update(
+            status=RequirementWorkspaceRefreshTask.STATUS_SUCCESS,
+            message="需求交付合规快照已生成",
+            error_message="",
+            finished_at=timezone.now(),
+            snapshot_date=snapshot.snapshot_date,
+            snapshot_id=snapshot.id,
+        )
+    except Exception as exc:
+        logger.exception("Requirement workspace refresh task failed: task_id=%s", task_id)
+        RequirementWorkspaceRefreshTask.objects.filter(id=task_id).update(
+            status=RequirementWorkspaceRefreshTask.STATUS_FAILED,
+            message="需求交付合规快照生成失败",
+            error_message=str(exc),
+            finished_at=timezone.now(),
+        )
+    finally:
+        connection.close()
+
+
+def _start_requirement_workspace_refresh_task_thread(task_id: str) -> None:
+    thread = threading.Thread(
+        target=_run_requirement_workspace_refresh_task,
+        args=(task_id,),
+        daemon=True,
+    )
+    thread.start()
+
+
+def submit_requirement_workspace_refresh_task(
+    view_scope: str = DEFAULT_VIEW_SCOPE,
+    *,
+    user: Any = None,
+) -> dict[str, Any]:
+    _validate_view_scope(view_scope)
+    active_task = _get_active_refresh_task(DEFAULT_SCOPE)
+    if active_task is not None:
+        return _serialize_refresh_task(active_task) or {}
+
+    task = RequirementWorkspaceRefreshTask.objects.create(
+        scope=DEFAULT_SCOPE,
+        requested_by=user if getattr(user, "id", None) else None,
+        sys_creator=user if getattr(user, "id", None) else None,
+        status=RequirementWorkspaceRefreshTask.STATUS_PENDING,
+        message="刷新任务已提交，正在排队执行",
+    )
+    _start_requirement_workspace_refresh_task_thread(str(task.id))
+    return _serialize_refresh_task(task) or {}
+
+
+def get_requirement_workspace_refresh_task(task_id: str) -> dict[str, Any]:
+    task = RequirementWorkspaceRefreshTask.objects.filter(
+        id=task_id,
+        is_deleted=False,
+    ).first()
+    if task is None:
+        raise HttpError(404, "刷新任务不存在")
+    return _serialize_refresh_task(task) or {}
 
 
 @scheduler_task

@@ -9,6 +9,9 @@ from .requirement_board_schemas import (
     RequirementBoardFilterPayloadSchema,
     RequirementBoardFilterOptionsSchema,
     RequirementBoardPageSchema,
+    RequirementBoardQueryPreparePayloadSchema,
+    RequirementBoardQueryPrepareResponseSchema,
+    RequirementBoardQueryTaskSchema,
     RequirementBoardSummaryQuerySchema,
     RequirementBoardSummarySchema,
 )
@@ -47,12 +50,39 @@ def delete_requirement_board_filter_preference(request):
 
 
 @router.post(
+    "/query-prepare",
+    response=RequirementBoardQueryPrepareResponseSchema,
+    summary="准备需求看板查询",
+)
+def prepare_requirement_board_query(
+    request,
+    data: RequirementBoardQueryPreparePayloadSchema,
+):
+    return requirement_board_services.prepare_requirement_board_query(
+        request.auth,
+        data,
+    )
+
+
+@router.get(
+    "/query-task/{task_id}",
+    response=RequirementBoardQueryTaskSchema,
+    summary="获取需求看板查询准备任务状态",
+)
+def get_requirement_board_query_task(request, task_id: str):
+    return requirement_board_services.get_requirement_board_query_task(
+        request.auth,
+        task_id,
+    )
+
+
+@router.post(
     "/data",
     response=RequirementBoardPageSchema,
     summary="获取需求数据看板明细",
 )
 def get_requirement_board_data(request, data: RequirementBoardDataQuerySchema):
-    return requirement_board_services.get_requirement_board_page(data)
+    return requirement_board_services.get_requirement_board_page(data, user=request.auth)
 
 
 @router.post(
@@ -61,7 +91,7 @@ def get_requirement_board_data(request, data: RequirementBoardDataQuerySchema):
     summary="获取需求总结看板数据",
 )
 def get_requirement_board_summary(request, data: RequirementBoardSummaryQuerySchema):
-    return requirement_board_services.get_requirement_board_summary(data)
+    return requirement_board_services.get_requirement_board_summary(data, user=request.auth)
 
 
 @router.post(
@@ -69,4 +99,4 @@ def get_requirement_board_summary(request, data: RequirementBoardSummaryQuerySch
     summary="导出需求数据看板明细",
 )
 def export_requirement_board_data(request, data: RequirementBoardExportQuerySchema):
-    return requirement_board_services.export_requirement_board_data(data)
+    return requirement_board_services.export_requirement_board_data(data, user=request.auth)
