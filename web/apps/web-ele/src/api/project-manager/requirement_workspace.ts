@@ -110,7 +110,7 @@ export async function getRequirementWorkspaceLatestApi(
   scope: RequirementWorkspaceScope = 'all',
 ) {
   return requestClient.get<RequirementWorkspaceLatest>(`${base}/latest`, {
-    params: { scope },
+    params: { _ts: Date.now(), scope },
   });
 }
 
@@ -129,5 +129,8 @@ export async function refreshRequirementWorkspaceApi(
 export async function getRequirementWorkspaceRefreshTaskApi(taskId: string) {
   return requestClient.get<RequirementWorkspaceRefreshTask>(
     `${base}/refresh-task/${taskId}`,
+    {
+      params: { _ts: Date.now() },
+    },
   );
 }

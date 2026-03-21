@@ -61,6 +61,7 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
                 "categories": [],
                 "schedule_state": ["P", "INVALID"],
                 "verification_policies": ["10000001", "unknown"],
+                "title_keyword": " 登录 ",
                 "develop_user": ["dev-a"],
                 "test_user": ["test-a"],
                 "time_field": "invalid_field",
@@ -83,6 +84,7 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
         self.assertEqual(saved_filter["categories"], list(CATEGORY_ORDER))
         self.assertEqual(saved_filter["schedule_state"], ["P"])
         self.assertEqual(saved_filter["verification_policies"], ["10000001"])
+        self.assertEqual(saved_filter["title_keyword"], "登录")
         self.assertEqual(saved_filter["time_field"], DEFAULT_TIME_FIELD)
         self.assertEqual(saved_filter["time_start"], "")
         self.assertEqual(saved_filter["time_end"], "2026-03-20")
@@ -98,6 +100,7 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
                 categories=[],
                 schedule_state=["P"],
                 verification_policies=["10000001"],
+                title_keyword=" 首帧 ",
                 develop_user=[" dev-a ", "dev-a"],
                 test_user=["tester"],
                 time_field="",
@@ -111,6 +114,7 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
         preference = RequirementBoardFilterPreference.objects.get(user=self.user)
         self.assertEqual(preference.payload["project_ids"], [str(project.id)])
         self.assertEqual(preference.payload["categories"], list(CATEGORY_ORDER))
+        self.assertEqual(preference.payload["title_keyword"], "首帧")
         self.assertEqual(preference.payload["develop_user"], ["dev-a"])
         self.assertEqual(preference.payload["time_field"], DEFAULT_TIME_FIELD)
 

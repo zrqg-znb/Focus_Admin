@@ -10,7 +10,15 @@ import type {
   RequirementWorkspaceScope,
 } from '#/api/project-manager/requirement_workspace';
 
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import {
+  computed,
+  nextTick,
+  onActivated,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch,
+} from 'vue';
 
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
@@ -144,15 +152,15 @@ const selectedFields = ref<RequirementWorkspaceFieldKey[]>(
 const selectedSort = ref<RequirementWorkspaceSortValue>('completion_score');
 
 const fieldOverviewChartRef = ref<EchartsUIType>();
-const { renderEcharts: renderFieldOverviewChart } = useEcharts(
-  fieldOverviewChartRef,
-);
+const { renderEcharts: renderFieldOverviewChart, resize: resizeFieldOverview } =
+  useEcharts(fieldOverviewChartRef);
 const missingProjectChartRef = ref<EchartsUIType>();
-const { renderEcharts: renderMissingProjectChart } = useEcharts(
-  missingProjectChartRef,
-);
+const {
+  renderEcharts: renderMissingProjectChart,
+  resize: resizeMissingProject,
+} = useEcharts(missingProjectChartRef);
 const delayProjectChartRef = ref<EchartsUIType>();
-const { renderEcharts: renderDelayProjectChart } =
+const { renderEcharts: renderDelayProjectChart, resize: resizeDelayProject } =
   useEcharts(delayProjectChartRef);
 
 function getFieldMeta(fieldKey: RequirementWorkspaceFieldKey): FieldOption {
@@ -325,8 +333,7 @@ const missingTopProjects = computed(() =>
         right.selectedMissingCount - left.selectedMissingCount ||
         right.total_count - left.total_count ||
         left.project_name.localeCompare(right.project_name, 'zh-CN'),
-    )
-    .slice(0, 10),
+    ),
 );
 
 const delayTopProjects = computed(() =>
@@ -337,8 +344,7 @@ const delayTopProjects = computed(() =>
         right.delayTotal - left.delayTotal ||
         right.total_count - left.total_count ||
         left.project_name.localeCompare(right.project_name, 'zh-CN'),
-    )
-    .slice(0, 10),
+    ),
 );
 
 const selectedMissingLabel = computed(() => {
@@ -405,10 +411,55 @@ const sortedTableRows = computed(() => {
   return rows;
 });
 
+const tableRenderKey = computed(() =>
+  [
+    props.scope,
+    snapshot.value.generated_at || 'empty',
+    snapshot.value.requirement_count,
+    snapshot.value.project_rows.length,
+    selectedSort.value,
+    effectiveSelectedFields.value.join(','),
+  ].join(':'),
+);
+
+function normalizeSnapshotPayload(
+  payload?: null | RequirementWorkspaceLatest,
+): RequirementWorkspaceLatest {
+  if (!payload) {
+    return { ...EMPTY_SNAPSHOT };
+  }
+  const missingPreviews = payload.missing_previews;
+  const delayPreviews = payload.delay_previews;
+  return {
+    ...EMPTY_SNAPSHOT,
+    ...payload,
+    field_overview: [...(payload.field_overview || [])],
+    project_rows: [...(payload.project_rows || [])],
+    missing_previews: {
+      ...EMPTY_SNAPSHOT.missing_previews,
+      planned_test_time: [...(missingPreviews?.planned_test_time || [])],
+      due_date: [...(missingPreviews?.due_date || [])],
+      develop_users: [...(missingPreviews?.develop_users || [])],
+      test_users: [...(missingPreviews?.test_users || [])],
+      workload_man_day: [...(missingPreviews?.workload_man_day || [])],
+      workload_kloc: [...(missingPreviews?.workload_kloc || [])],
+    },
+    delay_previews: {
+      ...EMPTY_SNAPSHOT.delay_previews,
+      development: [...(delayPreviews?.development || [])],
+      acceptance: [...(delayPreviews?.acceptance || [])],
+    },
+    refresh_task: payload.refresh_task || null,
+  };
+}
+
 async function loadSnapshot() {
-  loading.value = true;
+  if (!snapshot.value.generated_at) {
+    loading.value = true;
+  }
   try {
-    snapshot.value = await getRequirementWorkspaceLatestApi(props.scope);
+    const data = await getRequirementWorkspaceLatestApi(props.scope);
+    snapshot.value = normalizeSnapshotPayload(data);
     refreshTask.value = snapshot.value.refresh_task || null;
     if (isRefreshing.value && activeRefreshTask.value?.id) {
       startRefreshTaskPolling(activeRefreshTask.value.id);
@@ -577,9 +628,30 @@ async function renderMissingProjectChartView() {
         ].join('<br/>');
       },
     },
+    dataZoom: [
+      {
+        type: 'slider',
+        yAxisIndex: 0,
+        orient: 'vertical',
+        right: 0,
+        top: 20,
+        bottom: 20,
+        start: 0,
+        end: rows.length > 8 ? Math.floor((8 / rows.length) * 100) : 100,
+        width: 10,
+        show: rows.length > 8,
+      },
+      {
+        type: 'inside',
+        yAxisIndex: 0,
+        orient: 'vertical',
+        start: 0,
+        end: rows.length > 8 ? Math.floor((8 / rows.length) * 100) : 100,
+      },
+    ],
     grid: {
       left: '4%',
-      right: '5%',
+      right: rows.length > 8 ? '8%' : '5%',
       bottom: '4%',
       top: '10%',
       containLabel: true,
@@ -630,10 +702,27 @@ async function renderDelayProjectChartView() {
     legend: {
       top: 0,
     },
+    dataZoom: [
+      {
+        type: 'slider',
+        xAxisIndex: 0,
+        bottom: 0,
+        height: 10,
+        start: 0,
+        end: rows.length > 8 ? Math.floor((8 / rows.length) * 100) : 100,
+        show: rows.length > 8,
+      },
+      {
+        type: 'inside',
+        xAxisIndex: 0,
+        start: 0,
+        end: rows.length > 8 ? Math.floor((8 / rows.length) * 100) : 100,
+      },
+    ],
     grid: {
       left: '4%',
       right: '4%',
-      bottom: '8%',
+      bottom: rows.length > 8 ? '16%' : '8%',
       top: '12%',
       containLabel: true,
     },
@@ -682,6 +771,36 @@ async function renderAllCharts() {
   ]);
 }
 
+function scheduleChartResize() {
+  window.setTimeout(() => {
+    resizeFieldOverview();
+    resizeMissingProject();
+    resizeDelayProject();
+  }, 80);
+}
+
+async function renderAllChartsWhenReady(attempt = 0): Promise<void> {
+  if (!hasSnapshot.value || !hasConfiguredProjects.value) {
+    return;
+  }
+  await nextTick();
+  const refsReady =
+    Boolean(fieldOverviewChartRef.value) &&
+    Boolean(missingProjectChartRef.value) &&
+    Boolean(delayProjectChartRef.value);
+  if (!refsReady) {
+    if (attempt >= 24) {
+      return;
+    }
+    window.setTimeout(() => {
+      void renderAllChartsWhenReady(attempt + 1);
+    }, 60);
+    return;
+  }
+  await renderAllCharts();
+  scheduleChartResize();
+}
+
 watch(
   visibleFieldOverview,
   () => {
@@ -716,7 +835,17 @@ watch(
   () => loading.value,
   (isLoading) => {
     if (!isLoading) {
-      renderAllCharts();
+      void renderAllChartsWhenReady();
+    }
+  },
+  { flush: 'post' },
+);
+
+watch(
+  () => snapshot.value.generated_at,
+  (generatedAt) => {
+    if (generatedAt) {
+      void renderAllChartsWhenReady();
     }
   },
   { flush: 'post' },
@@ -724,6 +853,10 @@ watch(
 
 onMounted(() => {
   loadSnapshot();
+});
+
+onActivated(() => {
+  void renderAllChartsWhenReady();
 });
 
 watch(
@@ -779,10 +912,10 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <ElSkeleton v-if="loading" :rows="8" animated />
+    <ElSkeleton v-show="loading" :rows="8" animated />
 
     <ElCard
-      v-else-if="!hasConfiguredProjects"
+      v-show="!loading && !hasConfiguredProjects"
       shadow="never"
       class="rounded-xl border border-dashed border-slate-200 dark:border-slate-700"
     >
@@ -790,7 +923,7 @@ onUnmounted(() => {
     </ElCard>
 
     <ElCard
-      v-else-if="!hasSnapshot"
+      v-show="!loading && hasConfiguredProjects && !hasSnapshot"
       shadow="never"
       class="rounded-xl border border-dashed border-slate-200 dark:border-slate-700"
     >
@@ -808,7 +941,7 @@ onUnmounted(() => {
       </ElEmpty>
     </ElCard>
 
-    <template v-else>
+    <div v-show="!loading && hasConfiguredProjects && hasSnapshot">
       <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <ElCard
           shadow="never"
@@ -841,7 +974,7 @@ onUnmounted(() => {
               class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between"
             >
               <div>
-                <div class="text-base font-semibold">项目缺失 TopN</div>
+                <div class="text-base font-semibold">项目缺失排名</div>
                 <div class="mt-1 text-xs text-slate-500">
                   聚合当前选中字段的缺失数，优先暴露最需要补齐的项目。
                 </div>
@@ -886,7 +1019,7 @@ onUnmounted(() => {
               </div>
             </div>
             <ElTag type="danger" effect="plain">
-              Top {{ Math.min(delayTopProjects.length, 10) }}
+              共 {{ delayTopProjects.length }} 个延期项目
             </ElTag>
           </div>
         </template>
@@ -922,6 +1055,7 @@ onUnmounted(() => {
           </div>
         </template>
         <ElTable
+          :key="tableRenderKey"
           :data="sortedTableRows"
           size="small"
           max-height="460"
@@ -1013,6 +1147,6 @@ onUnmounted(() => {
           </ElTableColumn>
         </ElTable>
       </ElCard>
-    </template>
+    </div>
   </div>
 </template>

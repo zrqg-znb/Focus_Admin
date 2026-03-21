@@ -22,6 +22,7 @@ import {
   ElCard,
   ElDatePicker,
   ElEmpty,
+  ElInput,
   ElMessage,
   ElOption,
   ElProgress,
@@ -73,6 +74,7 @@ function createDefaultFilters(): RequirementBoardFilterPayload {
     categories: [...DEFAULT_CATEGORIES],
     schedule_state: [],
     verification_policies: [],
+    title_keyword: '',
     develop_user: [],
     test_user: [],
     time_field: DEFAULT_TIME_FIELD,
@@ -221,6 +223,7 @@ function cloneFilterPayload(
     categories: categories.length > 0 ? categories : [...DEFAULT_CATEGORIES],
     schedule_state: normalizeScheduleStates(source.schedule_state),
     verification_policies: normalizeStringArray(source.verification_policies),
+    title_keyword: String(source.title_keyword || '').trim(),
     develop_user: normalizeStringArray(source.develop_user),
     test_user: normalizeStringArray(source.test_user),
     time_field: (source.time_field ||
@@ -240,6 +243,7 @@ function buildFingerprint(payload: null | RequirementBoardFilterPayload) {
     categories: [...(payload.categories || [])].sort(),
     schedule_state: [...(payload.schedule_state || [])].sort(),
     verification_policies: [...(payload.verification_policies || [])].sort(),
+    title_keyword: String(payload.title_keyword || '').trim(),
     develop_user: [...(payload.develop_user || [])].sort(),
     test_user: [...(payload.test_user || [])].sort(),
     time_field: payload.time_field || '',
@@ -1208,6 +1212,19 @@ onUnmounted(() => {
                     <template #table-title>
                       <div class="requirement-table-title">
                         <div class="requirement-table-title__filters">
+                          <div class="requirement-table-title__field">
+                            <span class="requirement-table-title__label">
+                              标题关键词
+                            </span>
+                            <ElInput
+                              v-model="filters.title_keyword"
+                              clearable
+                              size="small"
+                              class="requirement-table-title__input"
+                              placeholder="搜索需求标题"
+                              @keyup.enter="handleSearch"
+                            />
+                          </div>
                           <div class="requirement-table-title__field">
                             <span class="requirement-table-title__label">
                               时间维度
@@ -2811,6 +2828,10 @@ onUnmounted(() => {
   width: 180px;
 }
 
+.requirement-table-title__input {
+  width: 220px;
+}
+
 .requirement-table-title__date {
   width: 280px;
 }
@@ -3506,6 +3527,10 @@ onUnmounted(() => {
     width: 240px;
   }
 
+  .requirement-table-title__input {
+    width: 220px;
+  }
+
   .requirement-data-grid :deep(.p-4) {
     position: sticky;
     bottom: 0;
@@ -3539,6 +3564,7 @@ onUnmounted(() => {
   }
 
   .requirement-table-title__select,
+  .requirement-table-title__input,
   .requirement-table-title__date {
     width: 100%;
   }

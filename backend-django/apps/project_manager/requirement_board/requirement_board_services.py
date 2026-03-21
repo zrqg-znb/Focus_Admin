@@ -547,6 +547,7 @@ def _build_request_payload(
     categories: list[str],
     schedule_state: list[str],
     verification_policies: list[str],
+    title_keyword: str,
     page_no: int,
     page_size: int,
 ) -> dict[str, Any]:
@@ -566,6 +567,11 @@ def _build_request_payload(
             payload["schedule_state"] = upstream_schedule_state
     if verification_policies:
         payload["verification_policy"] = verification_policies
+    if title_keyword:
+        title_keyword_field = _clean_text(
+            _get_setting("REQUIREMENT_BOARD_TITLE_KEYWORD_FIELD", "title"),
+        )
+        payload[title_keyword_field or "title"] = title_keyword
     alias_field = _clean_text(
         _get_setting("REQUIREMENT_BOARD_DESIGN_ALIAS_FIELD", ""),
     )
@@ -603,6 +609,7 @@ def _mock_fetch_page(
     categories: list[str],
     schedule_state: list[str],
     verification_policies: list[str],
+    title_keyword: str,
     page_no: int,
     page_size: int,
 ) -> dict[str, Any]:
@@ -613,6 +620,7 @@ def _mock_fetch_page(
             "categories": categories,
             "schedule_state": schedule_state,
             "verification_policies": verification_policies,
+            "title_keyword": title_keyword,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -687,6 +695,14 @@ def _mock_fetch_page(
                 }
             )
 
+    normalized_keyword = title_keyword.strip().lower()
+    if normalized_keyword:
+        all_items = [
+            item
+            for item in all_items
+            if normalized_keyword in _clean_text(item.get("title")).lower()
+        ]
+
     start = max(page_no - 1, 0) * page_size
     end = start + page_size
     total = len(all_items)
@@ -711,6 +727,7 @@ def _fetch_raw_page(
     categories: list[str],
     schedule_state: list[str],
     verification_policies: list[str],
+    title_keyword: str,
     page_no: int,
     page_size: int,
 ) -> dict[str, Any]:
@@ -721,6 +738,7 @@ def _fetch_raw_page(
         categories,
         schedule_state,
         verification_policies,
+        title_keyword,
         page_no,
         page_size,
     )
@@ -738,6 +756,7 @@ def _fetch_raw_page(
             categories,
             schedule_state,
             verification_policies,
+            title_keyword,
             page_no,
             page_size,
         )
@@ -1067,6 +1086,7 @@ def _create_default_filter_payload() -> dict[str, Any]:
         "categories": list(CATEGORY_ORDER),
         "schedule_state": [],
         "verification_policies": [],
+        "title_keyword": "",
         "develop_user": [],
         "test_user": [],
         "time_field": DEFAULT_TIME_FIELD,
@@ -1099,6 +1119,7 @@ def _normalize_filter_payload_for_storage(
         payload.get("categories"),
         payload.get("schedule_state"),
         payload.get("verification_policies"),
+        payload.get("title_keyword"),
         develop_users,
         test_users,
         payload.get("time_field"),
@@ -1113,6 +1134,7 @@ def _normalize_filter_payload_for_storage(
         "categories": context["categories"],
         "schedule_state": context["schedule_state"],
         "verification_policies": context["verification_policies"],
+        "title_keyword": context["title_keyword"],
         "develop_user": context["develop_users"],
         "test_user": context["test_users"],
         "time_field": context["time_field"] or DEFAULT_TIME_FIELD,
@@ -1201,6 +1223,7 @@ def _sanitize_saved_filter_payload(
         "categories": categories,
         "schedule_state": schedule_state,
         "verification_policies": verification_policies,
+        "title_keyword": _clean_text(payload.get("title_keyword")),
         "develop_user": _normalize_owner_list(
             (payload.get("develop_user") or []) + (payload.get("develop_users") or [])
         ),
@@ -1219,6 +1242,7 @@ def _resolve_query_context(
     categories: list[str] | None = None,
     schedule_state: list[str] | None = None,
     verification_policies: list[str] | None = None,
+    title_keyword: str | None = None,
     develop_users: list[str] | None = None,
     test_users: list[str] | None = None,
     time_field: str | None = None,
@@ -1285,6 +1309,7 @@ def _resolve_query_context(
     selected_verification_policies = _normalize_verification_policies(
         verification_policies,
     )
+    normalized_title_keyword = _clean_text(title_keyword)
     normalized_develop_users = _normalize_owner_list(develop_users)
     normalized_test_users = _normalize_owner_list(test_users)
     normalized_time = _normalize_time_filters(
@@ -1308,6 +1333,7 @@ def _resolve_query_context(
         "categories": selected_categories,
         "schedule_state": selected_schedule_state,
         "verification_policies": selected_verification_policies,
+        "title_keyword": normalized_title_keyword,
     }
     cache_payload = {
         **remote_cache_payload,
@@ -1326,6 +1352,7 @@ def _resolve_query_context(
         "categories": selected_categories,
         "schedule_state": selected_schedule_state,
         "verification_policies": selected_verification_policies,
+        "title_keyword": normalized_title_keyword,
         "develop_users": normalized_develop_users,
         "test_users": normalized_test_users,
         **normalized_time,
@@ -1344,6 +1371,7 @@ def _resolve_query_context_from_payload(payload: dict[str, Any]) -> dict[str, An
         payload.get("categories"),
         payload.get("schedule_state"),
         payload.get("verification_policies"),
+        payload.get("title_keyword"),
         develop_users,
         test_users,
         payload.get("time_field"),
@@ -1429,6 +1457,7 @@ def _load_remote_page(context: dict[str, Any], page_no: int, page_size: int) -> 
         categories=context["categories"],
         schedule_state=context["schedule_state"],
         verification_policies=context["verification_policies"],
+        title_keyword=context["title_keyword"],
         page_no=page_no,
         page_size=normalized_page_size,
     )
@@ -1675,6 +1704,7 @@ def scan_standardized_requirement_items(
     categories: list[str] | None = None,
     schedule_state: list[str] | None = None,
     verification_policies: list[str] | None = None,
+    title_keyword: str | None = None,
     develop_users: list[str] | None = None,
     test_users: list[str] | None = None,
     time_field: str | None = None,
@@ -1690,18 +1720,19 @@ def scan_standardized_requirement_items(
     便于调用方继续做缺失率/延期等聚合。
     """
     context = _resolve_query_context(
-        project_ids,
-        sub_teams,
-        categories,
-        schedule_state,
-        verification_policies,
-        develop_users,
-        test_users,
-        time_field,
-        time_start,
-        time_end,
-        accepted_time_start,
-        accepted_time_end,
+        project_ids=project_ids,
+        sub_teams=sub_teams,
+        categories=categories,
+        schedule_state=schedule_state,
+        verification_policies=verification_policies,
+        title_keyword=title_keyword,
+        develop_users=develop_users,
+        test_users=test_users,
+        time_field=time_field,
+        time_start=time_start,
+        time_end=time_end,
+        accepted_time_start=accepted_time_start,
+        accepted_time_end=accepted_time_end,
     )
     return _scan_all_filtered_items(context)
 

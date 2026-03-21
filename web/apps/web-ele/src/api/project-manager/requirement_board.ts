@@ -14,6 +14,7 @@ export interface RequirementBoardFilterPayload {
   categories?: string[];
   schedule_state?: RequirementScheduleState[];
   verification_policies?: string[];
+  title_keyword?: string;
   develop_user?: string[];
   test_user?: string[];
   /**

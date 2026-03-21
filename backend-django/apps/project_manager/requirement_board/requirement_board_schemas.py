@@ -27,6 +27,7 @@ class RequirementBoardFilterPayloadSchema(Schema):
         None,
         description="验证策略列表",
     )
+    title_keyword: Optional[str] = Field(None, description="需求标题关键词")
     develop_user: Optional[List[str]] = Field(None, description="开发责任人列表（username）")
     test_user: Optional[List[str]] = Field(None, description="测试责任人列表（username）")
     develop_users: Optional[List[str]] = Field(None, description="开发责任人列表")
