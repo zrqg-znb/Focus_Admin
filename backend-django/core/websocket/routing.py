@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from django.urls import re_path
 from . import consumers
+from apps.deepaudit.consumers import DeepAuditTaskConsumer
 
 # WebSocket URL patterns
 websocket_urlpatterns = [
@@ -18,4 +19,7 @@ websocket_urlpatterns = [
     
     # 数据库监控连接
     re_path(r'ws/database-monitor/$', consumers.DatabaseMonitorConsumer.as_asgi()),
+
+    # DeepAudit 任务流
+    re_path(r'ws/deepaudit/tasks/(?P<task_id>[^/]+)/$', DeepAuditTaskConsumer.as_asgi()),
 ] 

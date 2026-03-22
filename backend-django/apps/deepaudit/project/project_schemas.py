@@ -1,0 +1,118 @@
+from __future__ import annotations
+
+from typing import Any
+
+from ninja import Field, Schema
+
+
+class UserBriefSchema(Schema):
+    id: str = ''
+    username: str = ''
+    name: str = ''
+
+
+class AuditProjectBaseSchema(Schema):
+    name: str
+    description: str | None = None
+    source_type: str = 'repository'
+    repository_url: str | None = None
+    repository_type: str = 'other'
+    default_branch: str = 'main'
+    programming_languages: list[str] = Field(default_factory=list)
+    is_active: bool = True
+
+
+class AuditProjectCreateSchema(AuditProjectBaseSchema):
+    pass
+
+
+class AuditProjectUpdateSchema(Schema):
+    name: str | None = None
+    description: str | None = None
+    source_type: str | None = None
+    repository_url: str | None = None
+    repository_type: str | None = None
+    default_branch: str | None = None
+    programming_languages: list[str] | None = None
+    is_active: bool | None = None
+
+
+class ProjectMemberSaveSchema(Schema):
+    user_id: str
+    role: str = 'member'
+    permissions: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectOwnerTransferSchema(Schema):
+    user_id: str
+
+
+class ProjectZipMetaSchema(Schema):
+    has_file: bool = False
+    display_name: str | None = None
+    file_path: str | None = None
+    size: int | None = None
+    uploaded_at: str | None = None
+
+
+class ProjectFileItemSchema(Schema):
+    path: str
+    size: int = 0
+
+
+class ProjectMemberSchema(UserBriefSchema):
+    member_id: str
+    project_id: str
+    role: str
+    permissions: dict[str, Any] = Field(default_factory=dict)
+    sys_create_datetime: str | None = None
+    sys_update_datetime: str | None = None
+
+
+class ProjectTaskSummarySchema(Schema):
+    scan_task_count: int = 0
+    active_scan_task_count: int = 0
+    agent_task_count: int = 0
+    active_agent_task_count: int = 0
+    findings_count: int = 0
+    open_issue_count: int = 0
+
+
+class AuditProjectSummarySchema(Schema):
+    id: str
+    name: str
+    description: str | None = None
+    source_type: str
+    repository_url: str | None = None
+    repository_type: str
+    default_branch: str
+    programming_languages: list[str] = Field(default_factory=list)
+    owner: UserBriefSchema
+    current_role: str = 'viewer'
+    is_active: bool = True
+    is_deleted: bool = False
+    members_count: int = 0
+    latest_task_at: str | None = None
+    latest_agent_task_at: str | None = None
+    sys_create_datetime: str | None = None
+    sys_update_datetime: str | None = None
+
+
+class AuditProjectDetailSchema(AuditProjectSummarySchema):
+    task_summary: ProjectTaskSummarySchema = Field(default_factory=ProjectTaskSummarySchema)
+    members: list[ProjectMemberSchema] = Field(default_factory=list)
+    zip_meta: ProjectZipMetaSchema | None = None
+
+
+class PaginatedProjectSchema(Schema):
+    items: list[AuditProjectSummarySchema]
+    total: int
+
+
+class PaginatedProjectRecycleSchema(Schema):
+    items: list[AuditProjectSummarySchema]
+    total: int
+
+
+ProjectSummarySchema = AuditProjectSummarySchema
+ProjectDetailSchema = AuditProjectDetailSchema

@@ -7,6 +7,7 @@ from apps.integration_report.integration_api import router as integration_report
 from apps.code_compliance.api import router as compliance_router
 from apps.delivery_matrix.api import router as delivery_matrix_router
 from apps.code_scan.api import router as code_scan_router
+from apps.deepaudit.router import router as deepaudit_router
 
 router = Router()
 
@@ -18,3 +19,5 @@ router.add_router("/integration-report", integration_report_router, tags=["Apps-
 router.add_router("/code-compliance", compliance_router, tags=["Apps-CodeCompliance"])
 router.add_router("/delivery-matrix", delivery_matrix_router, tags=["Apps-DeliveryMatrix"])
 router.add_router("/code-scan", code_scan_router, tags=["Apps-CodeScan"])
+
+router.add_router("/deepaudit", deepaudit_router, tags=["Apps-DeepAudit"])

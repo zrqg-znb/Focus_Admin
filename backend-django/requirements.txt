@@ -19,9 +19,23 @@ psycopg2-binary==2.9.9
 python-alipay-sdk==3.3.0
 cryptography==42.0.5
 channels~=4.2.2
+channels-redis==4.3.0
 redis~=6.2.0
 # 数据库监控依赖
 pymysql>=1.1.0
 pyodbc>=4.0.39
 alibabacloud_dysmsapi20170525==4.1.2
 gunicorn==23.0.0
+
+# --- DeepAudit Multi-Agent Dependencies ---
+langchain>=0.1.0
+langchain-community>=0.0.20
+langchain-openai>=0.0.5
+langgraph>=0.0.40
+litellm>=1.0.0
+chromadb>=0.4.22
+tree-sitter>=0.21.0,<0.22.0
+tree-sitter-languages>=1.10.0
+docker>=7.0.0
+json-repair>=0.30.0
+tiktoken>=0.5.2

@@ -18,10 +18,13 @@ DATABASE_NAME = ""
 # ================================================= #
 # ******** redis配置  *********** #
 # ================================================= #
-REDIS_PASSWORD = ''
-REDIS_HOST = '127.0.0.1'
-REDIS_DB = '2'
-REDIS_URL = f'redis://:{REDIS_PASSWORD or ""}@{REDIS_HOST}:6379'
+REDIS_PASSWORD = os.environ.get('REDIS_PASSWORD', '')
+REDIS_HOST = os.environ.get('REDIS_HOST', '127.0.0.1')
+REDIS_PORT = int(os.environ.get('REDIS_PORT', 6379))
+REDIS_DB = os.environ.get('REDIS_DB', '2')
+REDIS_CELERY_DB = os.environ.get('REDIS_CELERY_DB', REDIS_DB)
+REDIS_CHANNEL_DB = os.environ.get('REDIS_CHANNEL_DB', REDIS_DB)
+REDIS_URL = f'redis://{f":{REDIS_PASSWORD}@" if REDIS_PASSWORD else ""}{REDIS_HOST}:{REDIS_PORT}'
 
 
 # # ================================================= #

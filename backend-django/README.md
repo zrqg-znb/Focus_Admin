@@ -44,6 +44,14 @@ python manage.py loaddata db_init.json
 python manage.py runserver 0.0.0.0:8000
 ```
 
+### DeepAudit 本地链路
+
+如果需要运行 DeepAudit 的 Celery 任务与 WebSocket 实时事件流，请参考：
+
+```bash
+docs/deepaudit-local-runtime.md
+```
+
 ### Scheduler(MySQL) 长时间运行连接断开
 如果以独立进程或常驻线程运行 scheduler（例如 `start_scheduler.py` / APScheduler），MySQL 连接在空闲一段时间后可能被服务端断开，从而在任务执行时出现 `MySQL server has gone away`。
 

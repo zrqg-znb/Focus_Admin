@@ -40,6 +40,8 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
+    'django_celery_beat',
+    'django_celery_results',
     'ninja',
     'channels',
     'core',
@@ -51,6 +53,7 @@ INSTALLED_APPS = [
     'apps.code_compliance',
     'apps.delivery_matrix',
     'apps.code_scan',
+    'apps.deepaudit',
 ]
 
 TEMPLATES = [
@@ -172,11 +175,28 @@ else:
 # 数据库路由器配置
 # DATABASE_ROUTERS = ['application.db_router.DatabaseRouter']
 
+# Redis 连接配置
+REDIS_PORT = int(globals().get('REDIS_PORT', os.environ.get('REDIS_PORT', 6379)))
+REDIS_DB = str(globals().get('REDIS_DB', os.environ.get('REDIS_DB', '2')))
+REDIS_CELERY_DB = str(globals().get('REDIS_CELERY_DB', os.environ.get('REDIS_CELERY_DB', REDIS_DB)))
+REDIS_CHANNEL_DB = str(globals().get('REDIS_CHANNEL_DB', os.environ.get('REDIS_CHANNEL_DB', REDIS_DB)))
+
+
+def build_redis_url(db: str | int | None = None) -> str:
+    auth = f':{REDIS_PASSWORD}@' if REDIS_PASSWORD else ''
+    base = f'redis://{auth}{REDIS_HOST}:{REDIS_PORT}'
+    if db is None:
+        return base
+    return f'{base}/{db}'
+
+
+REDIS_URL = build_redis_url()
+
 # 缓存配置
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": f'{REDIS_URL}/{REDIS_DB}',
+        "LOCATION": build_redis_url(REDIS_DB),
         "TIMEOUT": None,
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
@@ -289,7 +309,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # # ================================================= #
 # # ******************** Celery 配置 ***************** #
 # # ================================================= #
-CELERY_BROKER_URL = f'{REDIS_URL}/2'
+CELERY_BROKER_URL = build_redis_url(REDIS_CELERY_DB)
 DJANGO_CELERY_BEAT_TZ_AWARE = False
 CELERY_ENABLE_UTC = False
 CELERY_WORKER_CONCURRENCY = 2  # 并发数
@@ -423,13 +443,16 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:6379/{REDIS_DB}"],
+            "hosts": [build_redis_url(REDIS_CHANNEL_DB)],
             "symmetric_encryption_keys": [SECRET_KEY],
         },
     },
 }
 
 DEFAULT_PASSWORD = "123456"
+
+DEEPAUDIT_DOCKER_ENABLED = os.environ.get('DEEPAUDIT_DOCKER_ENABLED', 'true').lower() not in {'0', 'false', 'no'}
+DEEPAUDIT_QUEUE = os.environ.get('DEEPAUDIT_QUEUE', 'deepaudit')
 
 # ================================================= #
 # ********************* 阿里云短信服务配置 ******************* #
