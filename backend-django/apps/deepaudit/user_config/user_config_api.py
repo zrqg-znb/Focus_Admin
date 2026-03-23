@@ -8,6 +8,8 @@ from .user_config_schemas import (
     AuditSshCredentialSchema,
     AuditUserConfigSchema,
     AuditUserConfigUpdateSchema,
+    LLMTestResultSchema,
+    LLMTestSchema,
     EmbeddingConfigSchema,
     EmbeddingProviderSchema,
     EmbeddingTestResultSchema,
@@ -27,6 +29,11 @@ def get_my_config(request):
 @settings_router.put('/me', response=AuditUserConfigSchema, summary='保存我的审计设置')
 def update_my_config(request, data: AuditUserConfigUpdateSchema):
     return user_config_services.update_user_config(request.auth, data.dict())
+
+
+@settings_router.post('/test-llm', response=LLMTestResultSchema, summary='测试 LLM 连接')
+def test_llm_connection(request, data: LLMTestSchema):
+    return user_config_services.test_llm_connection(request.auth, data.dict())
 
 
 @embedding_router.get('/providers', response=list[EmbeddingProviderSchema], summary='获取 Embedding Provider 列表')

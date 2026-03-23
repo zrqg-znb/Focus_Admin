@@ -335,6 +335,11 @@ Action Input: {{"参数": "值"}}
                             await asyncio.sleep(5)  # 等待 5 秒后重试
                             continue
 
+                        else:
+                            logger.error(f"[{self.name}] API unexpected error: {error_message}")
+                            await self.emit_event("error", f"LLM 调用失败: {error_message}")
+                            break
+
                 # 重置 API 重试计数器（成功获取响应后）
                 self._api_retry_count = 0
 

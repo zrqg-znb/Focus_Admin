@@ -18,6 +18,21 @@ class AuditUserConfigUpdateSchema(Schema):
     other_config: dict[str, Any] = Field(default_factory=dict)
 
 
+class LLMTestSchema(Schema):
+    provider: str = 'openai'
+    api_key: str = ''
+    model: str = ''
+    base_url: str = ''
+
+
+class LLMTestResultSchema(Schema):
+    success: bool = True
+    message: str = ''
+    model: str | None = None
+    response: str | None = None
+    debug: dict[str, Any] | None = None
+
+
 class EmbeddingProviderSchema(Schema):
     id: str
     name: str

@@ -5,7 +5,53 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
-PYTHON_BIN="${PYTHON_BIN:-python}"
+resolve_python_bin() {
+  if [[ -n "${PYTHON_BIN:-}" ]]; then
+    echo "$PYTHON_BIN"
+    return 0
+  fi
+
+  if [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
+    echo "${VIRTUAL_ENV}/bin/python"
+    return 0
+  fi
+
+  if [[ -n "${CONDA_PREFIX:-}" && "${CONDA_DEFAULT_ENV:-}" != "base" && -x "${CONDA_PREFIX}/bin/python" ]]; then
+    echo "${CONDA_PREFIX}/bin/python"
+    return 0
+  fi
+
+  local conda_base=""
+  if command -v conda >/dev/null 2>&1; then
+    conda_base="$(conda info --base 2>/dev/null || true)"
+  fi
+
+  local candidates=()
+  if [[ -n "$conda_base" ]]; then
+    candidates+=("${conda_base}/envs/focus-platform/bin/python")
+  fi
+  candidates+=(
+    "${HOME}/miniconda3/envs/focus-platform/bin/python"
+    "${HOME}/anaconda3/envs/focus-platform/bin/python"
+  )
+
+  local candidate=""
+  for candidate in "${candidates[@]}"; do
+    if [[ -x "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+    return 0
+  fi
+
+  command -v python
+}
+
+PYTHON_BIN="$(resolve_python_bin)"
 RUNSERVER_ADDR="${RUNSERVER_ADDR:-0.0.0.0:8000}"
 DEEPAUDIT_QUEUE="${DEEPAUDIT_QUEUE:-deepaudit}"
 REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
@@ -40,9 +86,10 @@ EOF
 }
 
 check_python_deps() {
+  echo "Using PYTHON_BIN=$PYTHON_BIN"
   "$PYTHON_BIN" - <<'PY'
 import importlib.metadata as md
-required = ['channels', 'channels-redis', 'celery', 'redis']
+required = ['channels', 'channels-redis', 'celery', 'redis', 'pydantic-settings']
 for name in required:
     try:
         print(f'{name}: {md.version(name)}')
@@ -123,11 +170,15 @@ run_check() {
 
 run_worker() {
   ensure_redis
+  check_python_deps
+  check_django_settings
   exec "$PYTHON_BIN" -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -l info
 }
 
 run_server() {
   ensure_redis
+  check_python_deps
+  check_django_settings
   exec "$PYTHON_BIN" manage.py runserver "$RUNSERVER_ADDR"
 }
 

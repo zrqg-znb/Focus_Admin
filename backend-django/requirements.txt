@@ -39,3 +39,4 @@ tree-sitter-languages>=1.10.0
 docker>=7.0.0
 json-repair>=0.30.0
 tiktoken>=0.5.2
+pydantic-settings>=2.7.1

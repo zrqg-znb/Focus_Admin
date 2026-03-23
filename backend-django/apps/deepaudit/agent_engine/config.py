@@ -12,7 +12,30 @@ from enum import Enum
 from functools import lru_cache
 
 from pydantic import Field
-from pydantic_settings import BaseSettings
+try:
+    from pydantic_settings import BaseSettings
+except ModuleNotFoundError:
+    from pydantic import BaseModel
+
+    class BaseSettings(BaseModel):
+        """
+        Minimal fallback for environments that have pydantic but are missing
+        pydantic-settings. This keeps AgentConfig importable and still honors
+        simple AGENT_* environment overrides.
+        """
+
+        def __init__(self, **data):
+            merged = {}
+            config = getattr(self.__class__, "Config", None)
+            env_prefix = getattr(config, "env_prefix", "")
+            case_sensitive = getattr(config, "case_sensitive", False)
+            for field_name in self.__class__.model_fields:
+                env_key = f"{env_prefix}{field_name}"
+                env_key = env_key if case_sensitive else env_key.upper()
+                if env_key in os.environ and field_name not in data:
+                    merged[field_name] = os.environ[env_key]
+            merged.update(data)
+            super().__init__(**merged)
 
 
 class LogLevel(str, Enum):

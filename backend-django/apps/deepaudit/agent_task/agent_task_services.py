@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections import Counter
 
-from django.http import HttpResponse
+from asgiref.sync import sync_to_async
+from django.http import HttpResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from ninja.errors import HttpError
@@ -37,6 +39,29 @@ PHASE_LABELS = {
 
 VALID_FINDING_STATUSES = {value for value, _label in FINDING_STATUS_CHOICES}
 ACTIVE_STATUSES = {'pending', 'initializing', 'running', 'planning', 'indexing', 'analyzing', 'verifying', 'reporting'}
+TERMINAL_STATUSES = {'completed', 'failed', 'cancelled'}
+THINKING_EVENT_TYPES = {
+    'thinking',
+    'thinking_start',
+    'thinking_token',
+    'thinking_end',
+    'llm_start',
+    'llm_thought',
+    'llm_decision',
+    'llm_complete',
+    'llm_action',
+    'llm_observation',
+}
+TOOL_EVENT_TYPES = {
+    'tool_call',
+    'tool_result',
+    'tool_start',
+    'tool_end',
+    'tool_call_start',
+    'tool_call_input',
+    'tool_call_output',
+    'tool_call_end',
+}
 
 
 def serialize_finding(instance: AgentFinding) -> dict:
@@ -79,6 +104,70 @@ def serialize_event(instance: AgentEvent) -> dict:
         'event_metadata': instance.event_metadata or {},
         'sys_create_datetime': format_datetime_text(instance.sys_create_datetime),
     }
+
+
+def serialize_stream_event(instance: AgentEvent, *, include_tool_calls: bool = True) -> dict:
+    metadata = normalize_json_payload(instance.event_metadata or {})
+    payload = {
+        'id': str(instance.id),
+        'task_id': str(instance.task_id),
+        'type': instance.event_type,
+        'event_type': instance.event_type,
+        'phase': instance.phase,
+        'message': instance.message,
+        'sequence': instance.sequence,
+        'timestamp': instance.sys_create_datetime.isoformat() if instance.sys_create_datetime else None,
+    }
+
+    if instance.progress_percent is not None:
+        payload['progress_percent'] = instance.progress_percent
+    if instance.tokens_used is not None:
+        payload['tokens_used'] = instance.tokens_used
+    if instance.finding_id:
+        payload['finding_id'] = str(instance.finding_id)
+
+    if metadata:
+        payload['metadata'] = metadata
+        for key in (
+            'accumulated',
+            'agent_name',
+            'current',
+            'findings_count',
+            'node',
+            'security_score',
+            'status',
+            'summary',
+            'token',
+            'total',
+        ):
+            if key in metadata and key not in payload:
+                payload[key] = metadata[key]
+
+    if include_tool_calls and instance.tool_name:
+        tool_input = normalize_json_payload(instance.tool_input or {})
+        tool_output = normalize_json_payload(instance.tool_output or {})
+        payload.update(
+            {
+                'tool_name': instance.tool_name,
+                'tool_input': tool_input,
+                'tool_output': tool_output,
+                'tool_duration_ms': instance.tool_duration_ms,
+                'tool': {
+                    'name': instance.tool_name,
+                    'input': tool_input,
+                    'output': tool_output,
+                    'duration_ms': instance.tool_duration_ms,
+                },
+            }
+        )
+
+    return normalize_json_payload(payload)
+
+
+def _format_sse_event(payload: dict) -> str:
+    event_type = str(payload.get('type') or payload.get('event_type') or 'message')
+    data = normalize_json_payload({**payload, 'type': event_type})
+    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def serialize_task(instance: AgentTask) -> dict:
@@ -208,6 +297,97 @@ def list_events(user, task_id: str, *, after_sequence: int = 0, limit: int = 200
     if after_sequence > 0:
         queryset = queryset.filter(sequence__gt=after_sequence)
     return [serialize_event(item) for item in queryset.order_by('sequence')[: max(limit, 1)]]
+
+
+def stream_events_response(
+    user,
+    task_id: str,
+    *,
+    include_thinking: bool = True,
+    include_tool_calls: bool = True,
+    after_sequence: int = 0,
+) -> StreamingHttpResponse:
+    instance = get_task(user, task_id)
+
+    skip_types: set[str] = set()
+    if not include_thinking:
+        skip_types.update(THINKING_EVENT_TYPES)
+    if not include_tool_calls:
+        skip_types.update(TOOL_EVENT_TYPES)
+
+    @sync_to_async
+    def load_stream_state(last_sequence: int):
+        events = list(
+            AgentEvent.objects.filter(task=instance, is_deleted=False, sequence__gt=last_sequence)
+            .order_by('sequence')[:100]
+        )
+        current_task = AgentTask.objects.filter(id=instance.id, is_deleted=False).only(
+            'status',
+            'findings_count',
+            'security_score',
+        ).first()
+        return events, current_task
+
+    async def event_generator():
+        last_sequence = max(after_sequence, 0)
+        poll_interval = 1.0
+        heartbeat_interval = 15.0
+        max_idle = 60.0
+        heartbeat_elapsed = 0.0
+        idle_time = 0.0
+
+        while True:
+            events, current_task = await load_stream_state(last_sequence)
+
+            if events:
+                idle_time = 0.0
+                for event in events:
+                    last_sequence = event.sequence
+                    if event.event_type in skip_types:
+                        continue
+                    yield _format_sse_event(
+                        serialize_stream_event(event, include_tool_calls=include_tool_calls),
+                    )
+            else:
+                idle_time += poll_interval
+
+            heartbeat_elapsed += poll_interval
+            status = current_task.status if current_task else None
+
+            if status in TERMINAL_STATUSES:
+                yield _format_sse_event(
+                    {
+                        'type': 'task_end',
+                        'status': status,
+                        'message': f'任务已{status}',
+                        'findings_count': current_task.findings_count if current_task else 0,
+                        'security_score': current_task.security_score if current_task else 0,
+                    }
+                )
+                break
+
+            if heartbeat_elapsed >= heartbeat_interval:
+                heartbeat_elapsed = 0.0
+                yield _format_sse_event(
+                    {
+                        'type': 'heartbeat',
+                        'timestamp': timezone.now().isoformat(),
+                    }
+                )
+
+            if idle_time >= max_idle:
+                break
+
+            await asyncio.sleep(poll_interval)
+
+    response = StreamingHttpResponse(
+        event_generator(),
+        content_type='text/event-stream; charset=utf-8',
+    )
+    response['Cache-Control'] = 'no-cache'
+    response['Connection'] = 'keep-alive'
+    response['X-Accel-Buffering'] = 'no'
+    return response
 
 
 def list_findings(user, task_id: str, *, severity: str = '', vulnerability_type: str = '', status: str = '') -> list[dict]:
@@ -429,6 +609,8 @@ def execute_agent_task(task_id: str) -> None:
             "exclude_patterns": instance.exclude_patterns or [],
             "target_files": instance.target_files or [],
             "llm_config": user_payload.get("llm_config", {}),
+            "other_config": user_payload.get("other_config", {}),
+            "max_iterations": instance.max_iterations or 50,
         }
         
         # 桥接到真实的 LangGraph Agent 架构 (在 celery 线程中跑 async)

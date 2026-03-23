@@ -34,7 +34,7 @@ class SandboxConfig:
 
     def __post_init__(self):
         if self.image is None:
-            self.image = settings.SANDBOX_IMAGE
+            self.image = getattr(settings, 'SANDBOX_IMAGE', 'python:3.11-slim')
         if self.cap_drop is None:
             cap_drop_str = getattr(settings, 'SANDBOX_CAP_DROP', 'ALL')
             if cap_drop_str.upper() == 'NONE':

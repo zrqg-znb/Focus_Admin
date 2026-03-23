@@ -241,7 +241,7 @@ function mapConfigPath(pathname: string) {
     return pathname;
   }
   if (pathname === '/config/test-llm') {
-    return pathname;
+    return '/deepaudit/settings/test-llm';
   }
   return pathname;
 }

@@ -39,6 +39,23 @@ def get_agent_task(request, task_id: str):
     return agent_task_services.serialize_task(agent_task_services.get_task(request.auth, task_id))
 
 
+@router.get('/{task_id}/stream', summary='流式获取 Agent 任务事件')
+def stream_agent_task(
+    request,
+    task_id: str,
+    include_thinking: bool = True,
+    include_tool_calls: bool = True,
+    after_sequence: int = 0,
+):
+    return agent_task_services.stream_events_response(
+        request.auth,
+        task_id,
+        include_thinking=include_thinking,
+        include_tool_calls=include_tool_calls,
+        after_sequence=after_sequence,
+    )
+
+
 @router.post('/{task_id}/cancel', response=bool, summary='取消 Agent 任务')
 def cancel_agent_task(request, task_id: str):
     return agent_task_services.cancel_task(request.auth, task_id)

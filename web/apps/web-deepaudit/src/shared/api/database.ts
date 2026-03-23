@@ -479,6 +479,7 @@ export const api = {
     message: string;
     model?: string;
     response?: string;
+    debug?: Record<string, unknown>;
   }> {
     if (!params.apiKey && params.provider !== "ollama") {
       return {
@@ -486,10 +487,18 @@ export const api = {
         message: "请先填写 API Key",
       };
     }
+    const res = await apiClient.post("/config/test-llm", {
+      provider: params.provider,
+      api_key: params.apiKey,
+      model: params.model || "",
+      base_url: params.baseUrl || "",
+    });
     return {
-      success: false,
-      message: "当前 Focus 后端暂未暴露 LLM 在线测试接口，请保存配置后直接发起审计任务验证。",
-      model: params.model,
+      success: !!res.data?.success,
+      message: res.data?.message || "",
+      model: res.data?.model,
+      response: res.data?.response,
+      debug: res.data?.debug,
     };
   },
 

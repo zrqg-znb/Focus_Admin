@@ -40,18 +40,7 @@ import InstantExportDialog from "@/components/reports/InstantExportDialog";
 import { getPromptTemplates, type PromptTemplate } from "@/shared/api/prompts";
 import { useAuth } from "@/shared/context/AuthContext";
 import { DEEPAUDIT_ACTION_CODES } from "@/shared/focus/focusPermission";
-
-// AI explanation parser
-function parseAIExplanation(aiExplanation: string) {
-  try {
-    const parsed = JSON.parse(aiExplanation);
-    if (parsed.xai) return parsed.xai;
-    if (parsed.what || parsed.why || parsed.how) return parsed;
-    return null;
-  } catch (error) {
-    return null;
-  }
-}
+import { parseAIExplanation } from "@/shared/utils/aiExplanation";
 
 export default function InstantAnalysis() {
   const { hasAccess } = useAuth();
@@ -422,61 +411,74 @@ public class Example {
         {issue.ai_explanation && (() => {
           const parsedExplanation = parseAIExplanation(issue.ai_explanation);
 
-          if (parsedExplanation) {
-            return (
-              <div className="bg-violet-500/10 border border-violet-500/30 p-3 rounded">
-                <div className="flex items-center mb-2 border-b border-violet-500/20 pb-1">
-                  <div className="w-5 h-5 bg-violet-500/20 border border-violet-500/40 rounded flex items-center justify-center mr-2">
-                    <Zap className="w-3 h-3 text-violet-600 dark:text-violet-400" />
-                  </div>
-                  <span className="font-bold text-violet-700 dark:text-violet-300 text-sm uppercase">AI 解释</span>
+          if (!parsedExplanation) {
+            return null;
+          }
+
+          return (
+            <div className="bg-violet-500/10 border border-violet-500/30 p-3 rounded">
+              <div className="flex items-center mb-2 border-b border-violet-500/20 pb-1">
+                <div className="w-5 h-5 bg-violet-500/20 border border-violet-500/40 rounded flex items-center justify-center mr-2">
+                  <Zap className="w-3 h-3 text-violet-600 dark:text-violet-400" />
                 </div>
+                <span className="font-bold text-violet-700 dark:text-violet-300 text-sm uppercase">AI 解释</span>
+              </div>
+
+              {parsedExplanation.hasStructuredContent ? (
                 <div className="space-y-2 text-xs font-mono">
                   {parsedExplanation.what && (
                     <div className="border-l-2 border-rose-500 pl-2">
                       <span className="font-bold text-rose-600 dark:text-rose-400 uppercase">问题：</span>
-                      <span className="text-foreground ml-1">{parsedExplanation.what}</span>
+                      <span className="text-foreground ml-1 whitespace-pre-wrap break-all">{parsedExplanation.what}</span>
                     </div>
                   )}
+
                   {parsedExplanation.why && (
                     <div className="border-l-2 border-amber-500 pl-2">
                       <span className="font-bold text-amber-600 dark:text-amber-400 uppercase">原因：</span>
-                      <span className="text-foreground ml-1">{parsedExplanation.why}</span>
+                      <span className="text-foreground ml-1 whitespace-pre-wrap break-all">{parsedExplanation.why}</span>
                     </div>
                   )}
+
                   {parsedExplanation.how && (
                     <div className="border-l-2 border-emerald-500 pl-2">
                       <span className="font-bold text-emerald-600 dark:text-emerald-400 uppercase">方案：</span>
-                      <span className="text-foreground ml-1">{parsedExplanation.how}</span>
+                      <span className="text-foreground ml-1 whitespace-pre-wrap break-all">{parsedExplanation.how}</span>
                     </div>
                   )}
-                  {parsedExplanation.learn_more && (
+
+                  {parsedExplanation.learnMore && (
                     <div className="border-l-2 border-sky-500 pl-2">
                       <span className="font-bold text-sky-600 dark:text-sky-400 uppercase">链接：</span>
-                      <a
-                        href={parsedExplanation.learn_more}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sky-600 dark:text-sky-400 hover:text-sky-500 dark:hover:text-sky-300 hover:underline ml-1 font-bold"
-                      >
-                        {parsedExplanation.learn_more}
-                      </a>
+                      {parsedExplanation.learnMoreHref ? (
+                        <a
+                          href={parsedExplanation.learnMoreHref}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sky-600 dark:text-sky-400 hover:text-sky-500 dark:hover:text-sky-300 hover:underline ml-1 font-bold break-all"
+                        >
+                          {parsedExplanation.learnMore}
+                        </a>
+                      ) : (
+                        <span className="text-foreground ml-1 whitespace-pre-wrap break-all">{parsedExplanation.learnMore}</span>
+                      )}
                     </div>
                   )}
+
+                  {parsedExplanation.extraEntries.map((entry) => (
+                    <div key={entry.key} className="border-l-2 border-violet-500/60 pl-2">
+                      <span className="font-bold text-violet-600 dark:text-violet-400 uppercase">{entry.label}：</span>
+                      <span className="text-foreground ml-1 whitespace-pre-wrap break-all">{entry.value}</span>
+                    </div>
+                  ))}
                 </div>
-              </div>
-            );
-          } else {
-            return (
-              <div className="bg-violet-500/10 border border-violet-500/30 p-3 rounded">
-                <div className="flex items-center mb-2 border-b border-violet-500/20 pb-1">
-                  <Zap className="w-4 h-4 text-violet-600 dark:text-violet-400 mr-2" />
-                  <span className="font-bold text-violet-700 dark:text-violet-300 text-sm uppercase">AI 解释</span>
-                </div>
-                <p className="text-foreground text-xs leading-relaxed font-mono">{issue.ai_explanation}</p>
-              </div>
-            );
-          }
+              ) : parsedExplanation.rawText ? (
+                <p className="text-foreground text-xs leading-relaxed font-mono whitespace-pre-wrap break-all">
+                  {parsedExplanation.rawText}
+                </p>
+              ) : null}
+            </div>
+          );
         })()}
       </div>
     </div>

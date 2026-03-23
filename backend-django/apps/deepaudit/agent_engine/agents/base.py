@@ -297,6 +297,7 @@ class BaseAgent(ABC):
         self._total_tokens = 0
         self._tool_calls = 0
         self._cancelled = False
+        self._cancel_callback = None
 
         # 获取超时配置
         self._timeout_config = self._get_timeout_config()
@@ -511,9 +512,6 @@ class BaseAgent(ABC):
         """取消执行"""
         self._cancelled = True
         logger.info(f"[{self.name}] Cancel requested")
-    
-        # 🔥 外部取消检查回调
-        self._cancel_callback = None
 
     def set_cancel_callback(self, callback) -> None:
         """设置外部取消检查回调"""
@@ -938,7 +936,17 @@ class BaseAgent(ABC):
         Returns:
             压缩后的消息列表
         """
-        from ...llm.memory_compressor import MemoryCompressor
+        try:
+            from ...llm.memory_compressor import MemoryCompressor
+        except ModuleNotFoundError:
+            try:
+                from app.services.llm.memory_compressor import MemoryCompressor
+            except ModuleNotFoundError:
+                logger.warning(
+                    "[%s] MemoryCompressor unavailable, skipping history compression",
+                    self.name,
+                )
+                return messages
         
         compressor = MemoryCompressor(max_total_tokens=max_tokens)
         
@@ -1065,7 +1073,7 @@ class BaseAgent(ABC):
                         if error_type in ("rate_limit", "quota_exceeded", "authentication", "connection"):
                             accumulated = f"[API_ERROR:{error_type}] {user_message}"
                         elif not accumulated:
-                            accumulated = f"[系统错误: {error_msg}] 请重新思考并输出你的决策。"
+                            accumulated = f"[API_ERROR:{error_type}] {user_message}"
                         break
 
                 except StopAsyncIteration:
@@ -1086,7 +1094,7 @@ class BaseAgent(ABC):
             # 🔥 增强异常处理，避免吞掉错误
             logger.error(f"[{self.name}] Unexpected error in stream_llm_call: {e}", exc_info=True)
             await self.emit_event("error", f"LLM 调用错误: {str(e)}")
-            accumulated = f"[LLM调用错误: {str(e)}] 请重试。"
+            accumulated = f"[API_ERROR:unexpected] {str(e)}"
         finally:
             await self.emit_thinking_end(accumulated)
         

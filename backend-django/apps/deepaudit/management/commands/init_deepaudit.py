@@ -171,6 +171,7 @@ PERMISSION_SEEDS = {
         {'name': '保存个人设置', 'code': 'deepaudit:settings:save', 'permission_type': 0},
         {'name': '获取我的设置', 'code': 'deepaudit:api:settings:get', 'permission_type': 1, 'api_path': '/api/deepaudit/settings/me', 'http_method': 'GET'},
         {'name': '保存我的设置接口', 'code': 'deepaudit:api:settings:update', 'permission_type': 1, 'api_path': '/api/deepaudit/settings/me', 'http_method': 'PUT'},
+        {'name': '测试LLM连接', 'code': 'deepaudit:api:settings:test-llm', 'permission_type': 1, 'api_path': '/api/deepaudit/settings/test-llm', 'http_method': 'POST'},
         {'name': '获取Embedding配置', 'code': 'deepaudit:api:embedding:get', 'permission_type': 1, 'api_path': '/api/deepaudit/embedding/config', 'http_method': 'GET'},
         {'name': '更新Embedding配置', 'code': 'deepaudit:api:embedding:update', 'permission_type': 1, 'api_path': '/api/deepaudit/embedding/config', 'http_method': 'PUT'},
         {'name': '获取Embedding Provider', 'code': 'deepaudit:api:embedding:providers', 'permission_type': 1, 'api_path': '/api/deepaudit/embedding/providers', 'http_method': 'GET'},
