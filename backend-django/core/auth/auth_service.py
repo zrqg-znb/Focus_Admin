@@ -20,6 +20,8 @@ from common.fu_auth import (
 )
 from common.fu_crud import get_or_none
 from common.utils.device_util import extract_device_info
+from core.menu.menu_model import Menu
+from core.permission.permission_model import Permission
 from core.user.user_model import User
 from core.login_log.login_log_service import LoginLogService
 
@@ -336,29 +338,31 @@ class AuthService:
         Returns:
             List[str]: 权限代码列表
         """
-        # 尝试从缓存获取
-        # cache_key = f"user_perm_codes:{user.id}"
-        # cached_codes = cache.get(cache_key)
-        # if cached_codes is not None:
-        #     return cached_codes
-        #
-        # if user.is_superuser:
-        #     # 超级管理员获取所有按钮权限
-        #     buttons = Button.objects.filter(status=True).values_list('code', flat=True)
-        # else:
-        #     # 普通用户获取其角色关联的按钮权限
-        #     button_ids = user.role.values_list("button__id", flat=True)
-        #     buttons = Button.objects.filter(
-        #         id__in=button_ids,
-        #         status=True
-        #     ).values_list('code', flat=True)
-        #
-        # # 转为列表并去重
-        # code_list = list(set(buttons))
-        #
-        # # 缓存结果（10分钟）
-        # cache.set(cache_key, code_list, 600)
-        #
-        # return code_list
-        pass
+        cache_key = f"user_perm_codes:{user.id}"
+        cached_codes = cache.get(cache_key)
+        if cached_codes is not None:
+            return cached_codes
 
+        if user.is_superuser:
+            permission_codes = Permission.objects.filter(
+                is_active=True
+            ).values_list('code', flat=True)
+            menu_codes = Menu.objects.exclude(
+                authCode__isnull=True
+            ).exclude(
+                authCode=''
+            ).values_list('authCode', flat=True)
+        else:
+            roles = user.core_roles.filter(status=True)
+            permission_codes = roles.filter(
+                permission__is_active=True
+            ).values_list('permission__code', flat=True)
+            menu_codes = roles.exclude(
+                menu__authCode__isnull=True
+            ).exclude(
+                menu__authCode=''
+            ).values_list('menu__authCode', flat=True)
+
+        code_list = sorted({*permission_codes, *menu_codes})
+        cache.set(cache_key, code_list, 600)
+        return code_list

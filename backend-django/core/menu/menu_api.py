@@ -47,6 +47,66 @@ def remove_menu_cache():
     MenuCacheManager.invalidate_menu_cache()
 
 
+def _expand_menu_ids_with_ancestors(menu_ids):
+    """
+    补齐菜单祖先节点，避免角色只勾选叶子菜单时左侧缺少父级入口。
+    """
+    expanded_ids = set(menu_ids)
+    if not expanded_ids:
+        return expanded_ids
+
+    menus = Menu.objects.filter(id__in=expanded_ids).select_related('parent')
+    for menu in menus:
+        current = menu.parent
+        visited = set()
+        while current:
+            if current.id in visited:
+                logger.warning("菜单祖先链路存在循环，已中断扩展: %s", menu.path)
+                break
+            visited.add(current.id)
+            expanded_ids.add(current.id)
+            current = current.parent
+
+    return expanded_ids
+
+
+def _filter_descendants_of_external_menus(menus):
+    """
+    Focus 只需要保留外链根菜单本身，不应继续挂载其子路由。
+    否则会把子应用的占位路由注册进当前前端，导致误跳转和组件缺失告警。
+    """
+    menu_map = {menu['id']: menu for menu in menus}
+    filtered = []
+
+    for menu in menus:
+        parent_id = menu.get('parent_id')
+        should_exclude = False
+        visited = set()
+
+        while parent_id:
+            if parent_id in visited:
+                logger.warning(
+                    "菜单父子链路存在循环，已中断外链子菜单过滤: %s",
+                    menu.get('path'),
+                )
+                break
+            visited.add(parent_id)
+            parent = menu_map.get(parent_id)
+            if not parent:
+                break
+
+            if parent.get('link') or parent.get('openInNewWindow'):
+                should_exclude = True
+                break
+
+            parent_id = parent.get('parent_id')
+
+        if not should_exclude:
+            filtered.append(menu)
+
+    return filtered
+
+
 @router.post("/menu", response=MenuSchemaOut, summary="创建菜单")
 def create_menu(request, data: MenuSchemaIn):
     """
@@ -295,10 +355,17 @@ def route_menu_tree(request, use_cache: bool = Query(True)):
         queryset = Menu.objects.all().values()
     else:
         # 普通用户获取其角色关联的菜单
-        menu_ids = user.core_roles.filter(status=True).values_list("menu__id", flat=True)
-        queryset = Menu.objects.filter(id__in=menu_ids).values()
-    
-    menu_tree = list_to_route_v5(list(queryset))
+        menu_ids = set(
+            user.core_roles.filter(status=True).values_list("menu__id", flat=True)
+        )
+        menu_ids.discard(None)
+        queryset = Menu.objects.filter(
+            id__in=_expand_menu_ids_with_ancestors(menu_ids)
+        ).values()
+
+    menu_tree = list_to_route_v5(
+        _filter_descendants_of_external_menus(list(queryset))
+    )
     
     # 缓存用户的路由菜单（仅在开启缓存时）
     if use_cache:
@@ -585,5 +652,3 @@ def move_menu(request, menu_id: str, new_parent_id: str = None):
     remove_menu_cache()
     
     return response_success("移动成功")
-
-

@@ -62,7 +62,13 @@ function generateMenus(
     }
 
     // 确定最终路径
-    const resultPath = hideChildrenInMenu ? redirect || path : link || path;
+    // For external-link menus we must keep the route path as the menu key.
+    // The actual jump target is handled by route.meta.link/openInNewWindow.
+    const resultPath = link
+      ? path
+      : hideChildrenInMenu
+        ? redirect || path
+        : path;
 
     return {
       activeIcon,

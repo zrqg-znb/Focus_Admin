@@ -20,6 +20,11 @@ export default defineConfig(async () => {
             target: 'http://localhost:8001',
             ws: true,
           },
+          '/deepaudit-app': {
+            changeOrigin: true,
+            target: 'http://localhost:5174',
+            ws: true,
+          },
         },
       },
     },

@@ -47,6 +47,7 @@
     "cron-parser": "^4.9.0",
     "dayjs": "catalog:",
     "element-plus": "catalog:",
+    "lucide-vue-next": "catalog:",
     "pinia": "catalog:",
     "uuid": "^13.0.0",
     "vue": "catalog:",

@@ -173,6 +173,54 @@ describe('generateMenus', () => {
     ]);
   });
 
+  it('keeps the route path for external-link menus with hidden children', async () => {
+    const deepauditRoutes = [
+      {
+        name: 'deepaudit',
+        path: '/deepaudit',
+        redirect: '/deepaudit/dashboard',
+        meta: {
+          hideChildrenInMenu: true,
+          link: '/deepaudit-app/',
+          openInNewWindow: true,
+          title: 'DeepAudit 平台',
+        },
+        children: [
+          {
+            name: 'deepauditDashboard',
+            path: '/deepaudit/dashboard',
+            meta: { title: '仪表盘' },
+          },
+        ],
+      },
+    ] as RouteRecordRaw[];
+
+    const deepauditRouter = {
+      getRoutes: vi.fn(() => [
+        { name: 'deepaudit', path: '/deepaudit' },
+        { name: 'deepauditDashboard', path: '/deepaudit/dashboard' },
+      ]),
+    };
+
+    const menus = generateMenus(deepauditRoutes, deepauditRouter as any);
+    expect(menus).toEqual([
+      {
+        activeIcon: undefined,
+        badge: undefined,
+        badgeType: undefined,
+        badgeVariants: undefined,
+        icon: undefined,
+        name: 'DeepAudit 平台',
+        order: undefined,
+        parent: undefined,
+        parents: undefined,
+        path: '/deepaudit',
+        show: true,
+        children: [],
+      },
+    ]);
+  });
+
   const routes: any = [
     {
       meta: { order: 2, title: 'Home' },

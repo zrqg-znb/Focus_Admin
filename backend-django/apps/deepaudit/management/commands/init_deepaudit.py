@@ -36,21 +36,38 @@ class MenuSeed:
     icon: str | None = None
     active_path: str | None = None
     hide_in_menu: bool = False
+    hide_children_in_menu: bool = False
     keep_alive: bool = True
     auth_code: str | None = None
+    link: str | None = None
+    open_in_new_window: bool = False
 
 
 MENU_SEEDS = [
-    MenuSeed('root', None, 'DeepAudit', 'DeepAudit', '/deepaudit', 'BasicLayout', 'catalog', 90, '/deepaudit/dashboard', 'lucide:shield'),
-    MenuSeed('agent_audit', 'root', 'Agent审计', 'Agent审计', '/deepaudit/agent-audit', '/deepaudit/agent-audit/index', order=10, auth_code='deepaudit:agent-audit'),
-    MenuSeed('dashboard', 'root', '仪表盘', '仪表盘', '/deepaudit/dashboard', '/deepaudit/dashboard/index', order=20, auth_code='deepaudit:dashboard'),
-    MenuSeed('projects', 'root', '项目管理', '项目管理', '/deepaudit/projects', '/deepaudit/projects/index', order=30, auth_code='deepaudit:projects'),
-    MenuSeed('instant_analysis', 'root', '即时分析', '即时分析', '/deepaudit/instant-analysis', '/deepaudit/instant-analysis/index', order=40, auth_code='deepaudit:instant-analysis'),
-    MenuSeed('tasks', 'root', '任务中心', '任务中心', '/deepaudit/tasks', '/deepaudit/tasks/index', order=50, auth_code='deepaudit:tasks'),
-    MenuSeed('rules', 'root', '审计规则', '审计规则', '/deepaudit/rules', '/deepaudit/rules/index', order=60, auth_code='deepaudit:rules'),
-    MenuSeed('prompts', 'root', '提示词模板', '提示词模板', '/deepaudit/prompts', '/deepaudit/prompts/index', order=70, auth_code='deepaudit:prompts'),
-    MenuSeed('settings', 'root', '审计设置', '审计设置', '/deepaudit/settings', '/deepaudit/settings/index', order=80, auth_code='deepaudit:settings'),
-    MenuSeed('recycle_bin', 'root', '回收站', '回收站', '/deepaudit/recycle-bin', '/deepaudit/recycle-bin/index', order=90, auth_code='deepaudit:recycle-bin'),
+    MenuSeed(
+        'root',
+        None,
+        'DeepAudit 平台',
+        'DeepAudit 平台',
+        '/deepaudit',
+        'BasicLayout',
+        'catalog',
+        90,
+        None,
+        'lucide:shield',
+        hide_children_in_menu=True,
+        link='/deepaudit-app/',
+        open_in_new_window=True,
+    ),
+    MenuSeed('agent_audit', 'root', 'Agent审计', 'Agent审计', '/deepaudit/agent-audit', '/deepaudit/agent-audit/index', order=10, hide_in_menu=True, auth_code='deepaudit:agent-audit'),
+    MenuSeed('dashboard', 'root', '仪表盘', '仪表盘', '/deepaudit/dashboard', '/deepaudit/dashboard/index', order=20, hide_in_menu=True, auth_code='deepaudit:dashboard'),
+    MenuSeed('projects', 'root', '项目管理', '项目管理', '/deepaudit/projects', '/deepaudit/projects/index', order=30, hide_in_menu=True, auth_code='deepaudit:projects'),
+    MenuSeed('instant_analysis', 'root', '即时分析', '即时分析', '/deepaudit/instant-analysis', '/deepaudit/instant-analysis/index', order=40, hide_in_menu=True, auth_code='deepaudit:instant-analysis'),
+    MenuSeed('tasks', 'root', '任务中心', '任务中心', '/deepaudit/tasks', '/deepaudit/tasks/index', order=50, hide_in_menu=True, auth_code='deepaudit:tasks'),
+    MenuSeed('rules', 'root', '审计规则', '审计规则', '/deepaudit/rules', '/deepaudit/rules/index', order=60, hide_in_menu=True, auth_code='deepaudit:rules'),
+    MenuSeed('prompts', 'root', '提示词模板', '提示词模板', '/deepaudit/prompts', '/deepaudit/prompts/index', order=70, hide_in_menu=True, auth_code='deepaudit:prompts'),
+    MenuSeed('settings', 'root', '审计设置', '审计设置', '/deepaudit/settings', '/deepaudit/settings/index', order=80, hide_in_menu=True, auth_code='deepaudit:settings'),
+    MenuSeed('recycle_bin', 'root', '回收站', '回收站', '/deepaudit/recycle-bin', '/deepaudit/recycle-bin/index', order=90, hide_in_menu=True, auth_code='deepaudit:recycle-bin'),
     MenuSeed('project_detail', 'projects', '项目详情', '项目详情', '/deepaudit/projects/:id', '/deepaudit/projects/detail', order=1, active_path='/deepaudit/projects', hide_in_menu=True, keep_alive=False, auth_code='deepaudit:projects:detail'),
     MenuSeed('task_detail', 'tasks', '任务详情', '任务详情', '/deepaudit/tasks/:id', '/deepaudit/tasks/detail', order=1, active_path='/deepaudit/tasks', hide_in_menu=True, keep_alive=False, auth_code='deepaudit:tasks:detail'),
     MenuSeed('agent_detail', 'agent_audit', 'Agent任务详情', 'Agent任务详情', '/deepaudit/agent-audit/:id', '/deepaudit/agent-audit/detail', order=1, active_path='/deepaudit/agent-audit', hide_in_menu=True, keep_alive=False, auth_code='deepaudit:agent-audit:detail'),
@@ -203,7 +220,10 @@ class Command(BaseCommand):
                     'icon': seed.icon,
                     'order': seed.order,
                     'hideInMenu': seed.hide_in_menu,
+                    'hideChildrenInMenu': seed.hide_children_in_menu,
                     'keepAlive': seed.keep_alive,
+                    'link': seed.link,
+                    'openInNewWindow': seed.open_in_new_window,
                     'sys_creator': operator,
                     'sys_modifier': operator,
                 },
@@ -218,7 +238,10 @@ class Command(BaseCommand):
             menu.icon = seed.icon
             menu.order = seed.order
             menu.hideInMenu = seed.hide_in_menu
+            menu.hideChildrenInMenu = seed.hide_children_in_menu
             menu.keepAlive = seed.keep_alive
+            menu.link = seed.link
+            menu.openInNewWindow = seed.open_in_new_window
             menu.sys_modifier = operator
             menu.save()
             created[seed.key] = menu

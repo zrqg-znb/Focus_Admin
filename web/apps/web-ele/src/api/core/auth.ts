@@ -53,5 +53,5 @@ export async function logoutApi() {
  * 获取用户权限码
  */
 export async function getAccessCodesApi() {
-  return requestClient.get<string[]>('/api/core/userinfo');
+  return requestClient.get<string[]>('/api/core/permCode');
 }
