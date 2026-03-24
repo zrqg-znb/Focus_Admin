@@ -5,6 +5,19 @@ from apps.project_manager.hardware.hardware_model import (
     SmartScreenVersion,
     ViuPlatform,
 )
+from apps.project_manager.failure_mode.failure_mode_model import (
+    FailureMode,
+    FailureModeHandlingMeasureRel,
+    FailureModeHuatuoDiagnosisRel,
+    FailureModeInterceptionStrategyRel,
+    FailureModeObservationMethodRel,
+    HandlingMeasure,
+    HandlingMeasureTestCaseRel,
+    HuatuoDiagnosis,
+    InterceptionStrategy,
+    ObservationMethod,
+    TestCase,
+)
 from apps.project_manager.project.project_model import Project, ProjectPhaseConfig
 from apps.project_manager.milestone.milestone_model import Milestone
 from apps.project_manager.iteration.iteration_model import Iteration, IterationMetric

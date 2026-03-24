@@ -75,6 +75,11 @@ const UserSelector = defineAsyncComponent(() =>
     (res) => res.default,
   ),
 );
+const RichTextEditor = defineAsyncComponent(() =>
+  import('#/components/zq-form/rich-text-editor/rich-text-editor.vue').then(
+    (res) => res.default,
+  ),
+);
 const JsonEditor = defineAsyncComponent(() =>
   import('#/components/json-editor/json-editor.vue').then((res) => res.default),
 );
@@ -208,6 +213,7 @@ export type ComponentType =
   | 'JsonEditor'
   | 'PostSelector'
   | 'RadioGroup'
+  | 'RichTextEditor'
   | 'RoleSelector'
   | 'Select'
   | 'Space'
@@ -294,6 +300,7 @@ async function initComponentAdapter() {
     JsonEditor,
     CronSelector,
     InputNumber: withDefaultPlaceholder(ElInputNumber, 'input'),
+    RichTextEditor,
     Textarea: withDefaultPlaceholder(ElInput, 'input', {
       type: 'textarea',
     }),

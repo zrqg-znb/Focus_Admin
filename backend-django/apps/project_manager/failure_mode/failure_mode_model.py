@@ -1,0 +1,283 @@
+from django.db import models
+
+from common.fu_model import RootModel
+
+
+class FailureMode(RootModel):
+    brief = models.CharField(max_length=255, verbose_name='故障模式简述')
+    subsystem = models.CharField(max_length=128, blank=True, null=True, verbose_name='子系统')
+    module_name = models.CharField(max_length=128, blank=True, null=True, verbose_name='模块')
+    chips = models.JSONField(default=list, blank=True, verbose_name='芯片')
+    fault_categories = models.JSONField(default=list, blank=True, verbose_name='故障类别')
+    symptoms = models.JSONField(default=list, blank=True, verbose_name='故障现象')
+    effect_html = models.TextField(blank=True, default='', verbose_name='故障影响')
+    root_cause_html = models.TextField(blank=True, default='', verbose_name='故障根因')
+    functional_safety_level = models.CharField(
+        max_length=64,
+        blank=True,
+        null=True,
+        verbose_name='功能安全等级',
+    )
+    occurrence_frequency = models.CharField(
+        max_length=32,
+        blank=True,
+        null=True,
+        verbose_name='故障发生频度',
+    )
+    detectability = models.CharField(
+        max_length=32,
+        blank=True,
+        null=True,
+        verbose_name='故障可探测度',
+    )
+    severity = models.CharField(max_length=32, blank=True, null=True, verbose_name='严重程度')
+    related_dts_nos = models.JSONField(default=list, blank=True, verbose_name='关联问题单')
+    status = models.CharField(max_length=64, blank=True, null=True, verbose_name='状态')
+    authors = models.ManyToManyField(
+        'core.User',
+        blank=True,
+        related_name='failure_modes',
+        verbose_name='作者',
+    )
+
+    class Meta:
+        db_table = 'pm_failure_mode'
+        verbose_name = '故障模式'
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=['brief'], name='idx_pm_fm_brief'),
+            models.Index(fields=['subsystem', 'status'], name='idx_pm_fm_sub_status'),
+            models.Index(fields=['module_name'], name='idx_pm_fm_module'),
+        ]
+
+
+class InterceptionStrategy(RootModel):
+    interception_item = models.CharField(max_length=255, verbose_name='产线拦截项')
+    version_detection_html = models.TextField(blank=True, default='', verbose_name='产线版本检测方案')
+    station = models.CharField(max_length=255, blank=True, null=True, verbose_name='工位')
+    owners = models.ManyToManyField(
+        'core.User',
+        blank=True,
+        related_name='failure_interception_strategies',
+        verbose_name='设计责任人',
+    )
+
+    class Meta:
+        db_table = 'pm_failure_interception_strategy'
+        verbose_name = '产线拦截策略'
+        verbose_name_plural = verbose_name
+        indexes = [models.Index(fields=['interception_item'], name='idx_pm_fm_inter_item')]
+
+
+class HandlingMeasure(RootModel):
+    measure_category = models.CharField(max_length=128, blank=True, null=True, verbose_name='措施类别')
+    measure = models.CharField(max_length=255, verbose_name='处理措施')
+    measure_detail_html = models.TextField(blank=True, default='', verbose_name='处理措施详情')
+    measure_effect = models.TextField(blank=True, default='', verbose_name='措施影响')
+    owners = models.ManyToManyField(
+        'core.User',
+        blank=True,
+        related_name='failure_handling_measures',
+        verbose_name='设计责任人',
+    )
+
+    class Meta:
+        db_table = 'pm_failure_handling_measure'
+        verbose_name = '故障处理措施'
+        verbose_name_plural = verbose_name
+        indexes = [models.Index(fields=['measure'], name='idx_pm_fm_measure')]
+
+
+class ObservationMethod(RootModel):
+    monitor_type = models.CharField(max_length=128, blank=True, null=True, verbose_name='维测类型')
+    log_id = models.CharField(max_length=255, blank=True, null=True, verbose_name='日志ID')
+    log_keyword = models.CharField(max_length=255, blank=True, null=True, verbose_name='日志关键词')
+    log_path = models.CharField(max_length=512, blank=True, null=True, verbose_name='日志获取路径')
+    owners = models.ManyToManyField(
+        'core.User',
+        blank=True,
+        related_name='failure_observation_methods',
+        verbose_name='设计责任人',
+    )
+
+    class Meta:
+        db_table = 'pm_failure_observation_method'
+        verbose_name = '维测手段'
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=['monitor_type'], name='idx_pm_fm_monitor_type'),
+            models.Index(fields=['log_id'], name='idx_pm_fm_log_id'),
+        ]
+
+
+class HuatuoDiagnosis(RootModel):
+    description = models.TextField(verbose_name='诊断方案描述')
+    owners = models.ManyToManyField(
+        'core.User',
+        blank=True,
+        related_name='failure_huatuo_diagnoses',
+        verbose_name='设计责任人',
+    )
+
+    class Meta:
+        db_table = 'pm_failure_huatuo_diagnosis'
+        verbose_name = '华佗诊断方案'
+        verbose_name_plural = verbose_name
+
+
+class TestCase(RootModel):
+    brief = models.CharField(max_length=255, verbose_name='测试用例简述')
+    detail_html = models.TextField(blank=True, default='', verbose_name='测试用例详情')
+    cida_link = models.CharField(max_length=512, blank=True, null=True, verbose_name='CIDA链接')
+    owners = models.ManyToManyField(
+        'core.User',
+        blank=True,
+        related_name='failure_test_cases',
+        verbose_name='设计责任人',
+    )
+
+    class Meta:
+        db_table = 'pm_failure_test_case'
+        verbose_name = '测试用例'
+        verbose_name_plural = verbose_name
+        indexes = [models.Index(fields=['brief'], name='idx_pm_fm_test_case')]
+
+
+class FailureModeInterceptionStrategyRel(RootModel):
+    failure_mode = models.ForeignKey(
+        FailureMode,
+        on_delete=models.CASCADE,
+        related_name='interception_relations',
+        verbose_name='故障模式',
+    )
+    interception_strategy = models.ForeignKey(
+        InterceptionStrategy,
+        on_delete=models.CASCADE,
+        related_name='failure_mode_relations',
+        verbose_name='产线拦截策略',
+    )
+    order_index = models.IntegerField(default=0, verbose_name='排序')
+
+    class Meta:
+        db_table = 'pm_failure_mode_interception_rel'
+        verbose_name = '故障模式-产线拦截策略关联'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['failure_mode', 'interception_strategy'],
+                name='uniq_pm_fm_inter_rel',
+            )
+        ]
+        indexes = [models.Index(fields=['failure_mode', 'order_index'], name='idx_pm_fm_inter_rel')]
+
+
+class FailureModeHandlingMeasureRel(RootModel):
+    failure_mode = models.ForeignKey(
+        FailureMode,
+        on_delete=models.CASCADE,
+        related_name='handling_measure_relations',
+        verbose_name='故障模式',
+    )
+    handling_measure = models.ForeignKey(
+        HandlingMeasure,
+        on_delete=models.CASCADE,
+        related_name='failure_mode_relations',
+        verbose_name='故障处理措施',
+    )
+    order_index = models.IntegerField(default=0, verbose_name='排序')
+
+    class Meta:
+        db_table = 'pm_failure_mode_measure_rel'
+        verbose_name = '故障模式-故障处理措施关联'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['failure_mode', 'handling_measure'],
+                name='uniq_pm_fm_measure_rel',
+            )
+        ]
+        indexes = [models.Index(fields=['failure_mode', 'order_index'], name='idx_pm_fm_measure_rel')]
+
+
+class FailureModeObservationMethodRel(RootModel):
+    failure_mode = models.ForeignKey(
+        FailureMode,
+        on_delete=models.CASCADE,
+        related_name='observation_method_relations',
+        verbose_name='故障模式',
+    )
+    observation_method = models.ForeignKey(
+        ObservationMethod,
+        on_delete=models.CASCADE,
+        related_name='failure_mode_relations',
+        verbose_name='维测手段',
+    )
+    order_index = models.IntegerField(default=0, verbose_name='排序')
+
+    class Meta:
+        db_table = 'pm_failure_mode_observation_rel'
+        verbose_name = '故障模式-维测手段关联'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['failure_mode', 'observation_method'],
+                name='uniq_pm_fm_observation_rel',
+            )
+        ]
+        indexes = [models.Index(fields=['failure_mode', 'order_index'], name='idx_pm_fm_observe_rel')]
+
+
+class FailureModeHuatuoDiagnosisRel(RootModel):
+    failure_mode = models.ForeignKey(
+        FailureMode,
+        on_delete=models.CASCADE,
+        related_name='huatuo_diagnosis_relations',
+        verbose_name='故障模式',
+    )
+    huatuo_diagnosis = models.ForeignKey(
+        HuatuoDiagnosis,
+        on_delete=models.CASCADE,
+        related_name='failure_mode_relations',
+        verbose_name='华佗诊断方案',
+    )
+    order_index = models.IntegerField(default=0, verbose_name='排序')
+
+    class Meta:
+        db_table = 'pm_failure_mode_huatuo_rel'
+        verbose_name = '故障模式-华佗诊断方案关联'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['failure_mode', 'huatuo_diagnosis'],
+                name='uniq_pm_fm_huatuo_rel',
+            )
+        ]
+        indexes = [models.Index(fields=['failure_mode', 'order_index'], name='idx_pm_fm_huatuo_rel')]
+
+
+class HandlingMeasureTestCaseRel(RootModel):
+    handling_measure = models.ForeignKey(
+        HandlingMeasure,
+        on_delete=models.CASCADE,
+        related_name='test_case_relations',
+        verbose_name='故障处理措施',
+    )
+    test_case = models.ForeignKey(
+        TestCase,
+        on_delete=models.CASCADE,
+        related_name='handling_measure_relations',
+        verbose_name='测试用例',
+    )
+    order_index = models.IntegerField(default=0, verbose_name='排序')
+
+    class Meta:
+        db_table = 'pm_failure_measure_test_case_rel'
+        verbose_name = '故障处理措施-测试用例关联'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['handling_measure', 'test_case'],
+                name='uniq_pm_fm_test_case_rel',
+            )
+        ]
+        indexes = [models.Index(fields=['handling_measure', 'order_index'], name='idx_pm_fm_test_rel')]
