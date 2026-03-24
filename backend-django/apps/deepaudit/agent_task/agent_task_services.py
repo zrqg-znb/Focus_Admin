@@ -602,8 +602,11 @@ def execute_agent_task(task_id: str) -> None:
         # 准备交给 Agent 的上下文数据
         input_data = {
             "task_id": str(instance.id),
+            "project_id": str(instance.project_id),
             "project_name": instance.project.name,
             "project_path": str(workspace),
+            "audit_scope": instance.audit_scope or {},
+            "agent_config": instance.agent_config or {},
             "target_vulnerabilities": instance.target_vulnerabilities or [],
             "verification_level": effective_verification,
             "exclude_patterns": instance.exclude_patterns or [],

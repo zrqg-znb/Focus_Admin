@@ -939,14 +939,11 @@ class BaseAgent(ABC):
         try:
             from ...llm.memory_compressor import MemoryCompressor
         except ModuleNotFoundError:
-            try:
-                from app.services.llm.memory_compressor import MemoryCompressor
-            except ModuleNotFoundError:
-                logger.warning(
-                    "[%s] MemoryCompressor unavailable, skipping history compression",
-                    self.name,
-                )
-                return messages
+            logger.warning(
+                "[%s] MemoryCompressor unavailable, skipping history compression",
+                self.name,
+            )
+            return messages
         
         compressor = MemoryCompressor(max_total_tokens=max_tokens)
         

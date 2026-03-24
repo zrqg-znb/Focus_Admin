@@ -445,7 +445,7 @@ def configure_logging(
         level = level.value
 
     # Get root logger for agent module
-    logger = logging.getLogger("app.services.agent")
+    logger = logging.getLogger("apps.deepaudit.agent")
     logger.setLevel(level)
 
     # Remove existing handlers
@@ -480,7 +480,7 @@ def get_logger(name: str, agent_name: Optional[str] = None, agent_id: Optional[s
         AgentLogger instance
     """
     return AgentLogger(
-        f"app.services.agent.{name}",
+        f"apps.deepaudit.agent.{name}",
         agent_name=agent_name,
         agent_id=agent_id,
     )

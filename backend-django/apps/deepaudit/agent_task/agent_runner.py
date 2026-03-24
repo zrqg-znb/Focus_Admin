@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import sys
 from pathlib import Path
 from typing import Any, Dict
 
@@ -16,18 +15,13 @@ from apps.deepaudit.agent_engine.agents import (
 )
 from apps.deepaudit.agent_engine.event_manager import AgentEventEmitter, EventManager
 
-
-DEEPAUDIT_BACKEND_PATH = os.path.join(
-    os.path.dirname(__file__),
-    '../../../../DeepAudit/backend',
-)
-if DEEPAUDIT_BACKEND_PATH not in sys.path:
-    sys.path.append(DEEPAUDIT_BACKEND_PATH)
-
 logger = logging.getLogger(__name__)
 
 try:
-    from app.services.llm.service import LLMService, llm_service as default_llm_service
+    from apps.deepaudit.llm.service import (
+        LLMService,
+        llm_service as default_llm_service,
+    )
 except ImportError:
     LLMService = None
 
@@ -35,34 +29,7 @@ except ImportError:
         pass
 
     default_llm_service = MockLLMService()
-    logger.warning("Original LLMService not found, using mock for compilation check")
-
-
-PROVIDER_API_KEY_FIELDS = {
-    "openai": "openaiApiKey",
-    "gemini": "geminiApiKey",
-    "claude": "claudeApiKey",
-    "qwen": "qwenApiKey",
-    "deepseek": "deepseekApiKey",
-    "zhipu": "zhipuApiKey",
-    "moonshot": "moonshotApiKey",
-    "baidu": "baiduApiKey",
-    "minimax": "minimaxApiKey",
-    "doubao": "doubaoApiKey",
-}
-PROVIDER_DEFAULT_MODELS = {
-    "openai": "gpt-5",
-    "claude": "claude-sonnet-4.5",
-    "gemini": "gemini-2.0-flash",
-    "qwen": "qwen3-max-instruct",
-    "deepseek": "deepseek-chat",
-    "zhipu": "glm-4.6",
-    "moonshot": "kimi-k2",
-    "baidu": "ERNIE-4.0",
-    "minimax": "abab6.5-chat",
-    "doubao": "doubao-pro-32k",
-    "ollama": "llama3.3",
-}
+    logger.warning("Local LLMService not found, using mock for compilation check")
 LANGUAGE_BY_EXTENSION = {
     ".py": "python",
     ".js": "javascript",
@@ -103,63 +70,10 @@ SKIP_DIRECTORIES = {
 ALLOWED_SEVERITIES = {"critical", "high", "medium", "low"}
 
 
-def _to_original_user_config(input_data: Dict[str, Any]) -> Dict[str, Any]:
-    llm_config = dict(input_data.get("llm_config") or {})
-    other_config = dict(input_data.get("other_config") or {})
-    provider = str(llm_config.get("provider") or "openai").strip().lower() or "openai"
-    api_key = str(llm_config.get("api_key") or "").strip()
-    model = str(llm_config.get("model") or "").strip() or PROVIDER_DEFAULT_MODELS.get(provider, "")
-
-    timeout_seconds = int(llm_config.get("timeout") or 150)
-    llm_timeout_ms = timeout_seconds * 1000
-
-    llm_payload = {
-        "llmProvider": provider,
-        "llmApiKey": api_key,
-        "llmModel": model,
-        "llmBaseUrl": str(llm_config.get("base_url") or "").strip(),
-        "llmTimeout": llm_timeout_ms,
-        "llmTemperature": llm_config.get("temperature"),
-        "llmMaxTokens": llm_config.get("max_tokens"),
-        "llmFirstTokenTimeout": llm_config.get("first_token_timeout"),
-        "llmStreamTimeout": llm_config.get("stream_timeout"),
-        "toolTimeout": llm_config.get("tool_timeout"),
-        "subAgentTimeout": llm_config.get("sub_agent_timeout"),
-        "agentTimeout": llm_config.get("agent_timeout"),
-    }
-
-    provider_api_field = PROVIDER_API_KEY_FIELDS.get(provider)
-    if provider_api_field and api_key:
-        llm_payload[provider_api_field] = api_key
-
-    scan_config = dict(other_config.get("scan_config") or {})
-    other_payload = {
-        "outputLanguage": other_config.get("output_language"),
-        "scanConfig": {
-            "maxAnalyzeFiles": scan_config.get("max_analyze_files"),
-            "llmConcurrency": scan_config.get("llm_concurrency"),
-            "llmGapMs": scan_config.get("llm_gap_ms"),
-            "includeTests": scan_config.get("include_tests"),
-            "includeDocs": scan_config.get("include_docs"),
-            "maxFileSize": scan_config.get("max_file_size"),
-            "analysisDepth": scan_config.get("analysis_depth"),
-        },
-    }
-
-    return {
-        "llmConfig": {key: value for key, value in llm_payload.items() if value not in (None, "")},
-        "otherConfig": {
-            key: value
-            for key, value in other_payload.items()
-            if value not in (None, "", {})
-        },
-    }
-
-
 def _build_llm_service(input_data: Dict[str, Any]):
     if LLMService is None:
         return default_llm_service
-    return LLMService(user_config=_to_original_user_config(input_data))
+    return LLMService(user_config=input_data)
 
 
 def _collect_project_info(project_root: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -239,21 +153,32 @@ async def _initialize_tools(project_root: str, llm_service, input_data: Dict[str
         FileReadTool,
         FileSearchTool,
         GitleaksTool,
+        FunctionContextTool,
+        KunlunMTool,
         ListFilesTool,
         NpmAuditTool,
         OSVScannerTool,
         PathTraversalTestTool,
         PatternMatchTool,
+        QuickAuditTool,
+        RAGQueryTool,
         ReflectTool,
         SafetyTool,
         SandboxManager,
+        SecurityCodeSearchTool,
         SemgrepTool,
+        SmartScanTool,
         SqlInjectionTestTool,
         SstiTestTool,
         ThinkTool,
         VulnerabilityValidationTool,
         XssTestTool,
     )
+    from apps.deepaudit.agent_engine.knowledge import (
+        GetVulnerabilityKnowledgeTool,
+        SecurityKnowledgeQueryTool,
+    )
+    from apps.deepaudit.rag import ProjectCodeRetriever
 
     exclude_patterns = list(input_data.get("exclude_patterns") or [])
     target_files = list(input_data.get("target_files") or [])
@@ -261,27 +186,85 @@ async def _initialize_tools(project_root: str, llm_service, input_data: Dict[str
     sandbox_manager = SandboxManager()
     await sandbox_manager.initialize()
 
+    project_retriever = ProjectCodeRetriever(
+        project_root=project_root,
+        user_config={
+            "llm_config": dict(input_data.get("llm_config") or {}),
+            "other_config": dict(input_data.get("other_config") or {}),
+        },
+        project_id=str(input_data.get("project_id") or "").strip() or None,
+        project_name=str(input_data.get("project_name") or "").strip() or None,
+        exclude_patterns=exclude_patterns,
+        target_files=target_files,
+    )
+
+    read_file_tool = FileReadTool(
+        project_root,
+        exclude_patterns=exclude_patterns,
+        target_files=target_files,
+    )
+    search_tool = FileSearchTool(
+        project_root,
+        exclude_patterns=exclude_patterns,
+        target_files=target_files,
+    )
+    list_files_tool = ListFilesTool(
+        project_root,
+        exclude_patterns=exclude_patterns,
+        target_files=target_files,
+    )
+    pattern_match_tool = PatternMatchTool(project_root)
+    rag_query_tool = RAGQueryTool(project_retriever)
+    security_code_search_tool = SecurityCodeSearchTool(project_retriever)
+    function_context_tool = FunctionContextTool(project_retriever)
+    security_knowledge_tool = SecurityKnowledgeQueryTool()
+    vulnerability_knowledge_tool = GetVulnerabilityKnowledgeTool()
+
     common_file_tools = {
-        "read_file": FileReadTool(project_root, exclude_patterns=exclude_patterns, target_files=target_files),
-        "search_files": FileSearchTool(project_root, exclude_patterns=exclude_patterns, target_files=target_files),
-        "list_files": ListFilesTool(project_root, exclude_patterns=exclude_patterns, target_files=target_files),
-        "pattern_match": PatternMatchTool(project_root),
+        "read_file": read_file_tool,
+        "search_files": search_tool,
+        "search_code": search_tool,
+        "list_files": list_files_tool,
+        "pattern_match": pattern_match_tool,
+        "rag_query": rag_query_tool,
+        "security_search": security_code_search_tool,
+        "security_code_search": security_code_search_tool,
+        "function_context": function_context_tool,
+        "query_security_knowledge": security_knowledge_tool,
+        "get_vulnerability_knowledge": vulnerability_knowledge_tool,
         "think": ThinkTool(),
         "reflect": ReflectTool(),
     }
 
     report_tool = CreateVulnerabilityReportTool(project_root=project_root)
+    semgrep_tool = SemgrepTool(project_root, sandbox_manager=sandbox_manager)
+    bandit_tool = BanditTool(project_root, sandbox_manager=sandbox_manager)
+    gitleaks_tool = GitleaksTool(project_root, sandbox_manager=sandbox_manager)
+    npm_audit_tool = NpmAuditTool(project_root, sandbox_manager=sandbox_manager)
+    safety_tool = SafetyTool(project_root, sandbox_manager=sandbox_manager)
+    osv_scanner_tool = OSVScannerTool(project_root, sandbox_manager=sandbox_manager)
+    smart_scan_tool = SmartScanTool(project_root)
+    quick_audit_tool = QuickAuditTool(project_root)
+    kunlun_tool = KunlunMTool(project_root)
 
     analysis_tools = {
         **common_file_tools,
         "code_analysis": CodeAnalysisTool(llm_service),
         "dataflow_analysis": DataFlowAnalysisTool(llm_service),
-        "semgrep": SemgrepTool(project_root, sandbox_manager=sandbox_manager),
-        "bandit": BanditTool(project_root, sandbox_manager=sandbox_manager),
-        "gitleaks": GitleaksTool(project_root, sandbox_manager=sandbox_manager),
-        "npm_audit": NpmAuditTool(project_root, sandbox_manager=sandbox_manager),
-        "safety": SafetyTool(project_root, sandbox_manager=sandbox_manager),
-        "osv_scanner": OSVScannerTool(project_root, sandbox_manager=sandbox_manager),
+        "semgrep": semgrep_tool,
+        "semgrep_scan": semgrep_tool,
+        "bandit": bandit_tool,
+        "bandit_scan": bandit_tool,
+        "gitleaks": gitleaks_tool,
+        "gitleaks_scan": gitleaks_tool,
+        "npm_audit": npm_audit_tool,
+        "safety": safety_tool,
+        "safety_scan": safety_tool,
+        "osv_scanner": osv_scanner_tool,
+        "osv_scan": osv_scanner_tool,
+        "smart_scan": smart_scan_tool,
+        "quick_audit": quick_audit_tool,
+        "kunlun_scan": kunlun_tool,
         "create_vulnerability_report": report_tool,
     }
 
@@ -297,7 +280,12 @@ async def _initialize_tools(project_root: str, llm_service, input_data: Dict[str
         "create_vulnerability_report": report_tool,
     }
 
-    recon_tools = dict(common_file_tools)
+    recon_tools = {
+        **common_file_tools,
+        "semgrep_scan": semgrep_tool,
+        "gitleaks_scan": gitleaks_tool,
+        "smart_scan": smart_scan_tool,
+    }
     orchestrator_tools = {
         "think": ThinkTool(),
         "reflect": ReflectTool(),
@@ -375,7 +363,7 @@ async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any],
 
     llm_service = _build_llm_service(input_data)
     normalized_input = _normalize_agent_input(task_id, input_data, workspace)
-    tools = await _initialize_tools(workspace, llm_service, normalized_input["config"])
+    tools = await _initialize_tools(workspace, llm_service, input_data)
 
     recon_agent = ReconAgent(
         llm_service=llm_service,

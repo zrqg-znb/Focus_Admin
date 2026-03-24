@@ -3,11 +3,10 @@ RAG 检索工具
 支持语义检索代码
 """
 
-from typing import Optional, List
+from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 from .base import AgentTool, ToolResult
-from app.services.rag import CodeRetriever
 
 
 class RAGQueryInput(BaseModel):
@@ -24,7 +23,7 @@ class RAGQueryTool(AgentTool):
     使用语义搜索在代码库中查找相关代码
     """
     
-    def __init__(self, retriever: CodeRetriever):
+    def __init__(self, retriever: Any):
         super().__init__()
         self.retriever = retriever
     
@@ -64,6 +63,14 @@ class RAGQueryTool(AgentTool):
     ) -> ToolResult:
         """执行 RAG 检索"""
         try:
+            unavailable_reason = getattr(self.retriever, "get_unavailable_reason", lambda: None)()
+            if unavailable_reason:
+                return ToolResult(
+                    success=True,
+                    data=f"RAG 当前不可用: {unavailable_reason}",
+                    metadata={"query": query, "results_count": 0, "degraded": True},
+                )
+
             results = await self.retriever.retrieve(
                 query=query,
                 top_k=top_k,
@@ -122,7 +129,7 @@ class SecurityCodeSearchTool(AgentTool):
     专门用于查找可能存在安全漏洞的代码
     """
     
-    def __init__(self, retriever: CodeRetriever):
+    def __init__(self, retriever: Any):
         super().__init__()
         self.retriever = retriever
     
@@ -151,12 +158,25 @@ class SecurityCodeSearchTool(AgentTool):
     
     async def _execute(
         self,
-        vulnerability_type: str,
+        vulnerability_type: Optional[str] = None,
         top_k: int = 20,
         **kwargs
     ) -> ToolResult:
         """执行安全代码搜索"""
         try:
+            normalized_vulnerability_type = str(vulnerability_type or "").strip() or "security"
+            unavailable_reason = getattr(self.retriever, "get_unavailable_reason", lambda: None)()
+            if unavailable_reason:
+                return ToolResult(
+                    success=True,
+                    data=f"安全代码搜索已降级: {unavailable_reason}",
+                    metadata={
+                        "vulnerability_type": normalized_vulnerability_type,
+                        "results_count": 0,
+                        "degraded": True,
+                    },
+                )
+
             results = await self.retriever.retrieve_security_related(
                 vulnerability_type=vulnerability_type,
                 top_k=top_k,
@@ -165,12 +185,12 @@ class SecurityCodeSearchTool(AgentTool):
             if not results:
                 return ToolResult(
                     success=True,
-                    data=f"没有找到与 {vulnerability_type} 相关的代码",
-                    metadata={"vulnerability_type": vulnerability_type, "results_count": 0}
+                    data=f"没有找到与 {normalized_vulnerability_type} 相关的代码",
+                    metadata={"vulnerability_type": normalized_vulnerability_type, "results_count": 0}
                 )
             
             # 格式化输出
-            output_parts = [f"找到 {len(results)} 个可能与 {vulnerability_type} 相关的代码:\n"]
+            output_parts = [f"找到 {len(results)} 个可能与 {normalized_vulnerability_type} 相关的代码:\n"]
             
             for i, result in enumerate(results):
                 output_parts.append(f"\n--- 可疑代码 {i+1} ---")
@@ -183,7 +203,7 @@ class SecurityCodeSearchTool(AgentTool):
                 success=True,
                 data="\n".join(output_parts),
                 metadata={
-                    "vulnerability_type": vulnerability_type,
+                    "vulnerability_type": normalized_vulnerability_type,
                     "results_count": len(results),
                 }
             )
@@ -226,7 +246,7 @@ class FunctionContextTool(AgentTool):
     查找函数的定义、调用者和被调用者
     """
     
-    def __init__(self, retriever: CodeRetriever):
+    def __init__(self, retriever: Any):
         super().__init__()
         self.retriever = retriever
     
@@ -259,6 +279,14 @@ class FunctionContextTool(AgentTool):
     ) -> ToolResult:
         """执行函数上下文搜索"""
         try:
+            unavailable_reason = getattr(self.retriever, "get_unavailable_reason", lambda: None)()
+            if unavailable_reason:
+                return ToolResult(
+                    success=True,
+                    data=f"函数上下文检索已降级: {unavailable_reason}",
+                    metadata={"function_name": function_name, "degraded": True},
+                )
+
             context = await self.retriever.retrieve_function_context(
                 function_name=function_name,
                 file_path=file_path,
@@ -307,4 +335,3 @@ class FunctionContextTool(AgentTool):
                 success=False,
                 error=f"函数上下文搜索失败: {str(e)}",
             )
-

@@ -8,6 +8,7 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from .base import KnowledgeDocument, KnowledgeCategory
+from apps.deepaudit.storage import VECTOR_DB_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class SecurityKnowledgeRAG:
         self,
         persist_directory: Optional[str] = None,
     ):
-        self.persist_directory = persist_directory
+        self.persist_directory = persist_directory or str(VECTOR_DB_DIR)
         self._indexer = None
         self._retriever = None
         self._initialized = False

@@ -3,10 +3,11 @@ from __future__ import annotations
 import logging
 
 from celery import shared_task
+from django.conf import settings
 from kombu.exceptions import OperationalError
 
 
-DEEPAUDIT_QUEUE = 'deepaudit'
+DEEPAUDIT_QUEUE = getattr(settings, 'DEEPAUDIT_QUEUE', 'deepaudit')
 logger = logging.getLogger(__name__)
 
 
