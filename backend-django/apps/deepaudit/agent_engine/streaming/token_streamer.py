@@ -73,6 +73,7 @@ class TokenStreamer:
         Yields:
             TokenChunk: Token 块
         """
+        response = None
         try:
             import litellm
             
@@ -130,6 +131,16 @@ class TokenStreamer:
         except Exception as e:
             logger.error(f"Token streaming error: {e}")
             raise
+        finally:
+            async_close = getattr(response, "aclose", None) if response is not None else None
+            sync_close = getattr(response, "close", None) if response is not None else None
+            try:
+                if callable(async_close):
+                    await async_close()
+                elif callable(sync_close):
+                    sync_close()
+            except Exception:
+                logger.debug("Failed to close token streaming response cleanly", exc_info=True)
     
     async def stream_with_tools(
         self,
@@ -150,6 +161,7 @@ class TokenStreamer:
         Yields:
             包含 token 或 tool_call 的字典
         """
+        response = None
         try:
             import litellm
             
@@ -244,6 +256,16 @@ class TokenStreamer:
                 "type": "error",
                 "error": str(e),
             }
+        finally:
+            async_close = getattr(response, "aclose", None) if response is not None else None
+            sync_close = getattr(response, "close", None) if response is not None else None
+            try:
+                if callable(async_close):
+                    await async_close()
+                elif callable(sync_close):
+                    sync_close()
+            except Exception:
+                logger.debug("Failed to close tool streaming response cleanly", exc_info=True)
     
     def get_accumulated_content(self) -> str:
         """获取累积内容"""
@@ -258,4 +280,3 @@ class TokenStreamer:
         self._cancelled = False
         self._accumulated_content = ""
         self._total_tokens = 0
-

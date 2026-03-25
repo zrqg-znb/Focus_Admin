@@ -1,67 +1,124 @@
-# Focus + DeepAudit 生产部署手册
+# Focus + DeepAudit 同机双环境部署手册
 
-本文档用于把 Focus 平台与 DeepAudit 子应用一起部署到同一台 Linux 服务器，并满足以下目标：
+本文档面向“同一台 Linux 服务器同时运行测试环境与正式环境”的场景，统一整理 Focus 主平台与 DeepAudit 子应用的部署、发布与运维流程。
 
-- Focus 主平台通过 `/` 提供服务
-- DeepAudit React 子应用通过 `/deepaudit-app/` 提供服务
-- Django ASGI 后端统一承载 HTTP API、WebSocket、SSE
-- Celery + Redis 承载异步任务，DeepAudit 重任务与平台默认任务分离消费
+本文固定采用以下约束，不建议实施时再临时改名或改路径：
 
-本文档默认采用以下生产方案：
+| 项目 | 正式环境 | 测试环境 |
+|---|---|---|
+| 域名 | `focus.example.com` | `focus-test.example.com` |
+| Django ASGI | `127.0.0.1:8001` | `127.0.0.1:8002` |
+| Focus 前端 dist | `/var/www/focus` | `/var/www/focus_test` |
+| DeepAudit 前端 dist | `/var/www/deepaudit` | `/var/www/deepaudit_test` |
+| 代码目录 | `/srv/focus-prod/Focus_Admin` | `/srv/focus-test/Focus_Admin` |
+| Python venv | `/srv/focus-prod/venv` | `/srv/focus-test/venv` |
+| 日志目录 | `/srv/focus-prod/Focus_Admin/backend-django/logs` | `/srv/focus-test/Focus_Admin/backend-django/logs` |
+| PID 目录 | `/srv/focus-prod/Focus_Admin/backend-django/run` | `/srv/focus-test/Focus_Admin/backend-django/run` |
+| Redis cache DB | `2` | `5` |
+| Redis celery DB | `3` | `6` |
+| Redis channels DB | `4` | `7` |
 
-- 单机同域部署
-- `systemd` 管理后端与队列进程
-- `nginx` 托管两个前端 `dist` 并反向代理 Django
-- 不使用 Docker 作为主流程
+本文同时提供两套进程管理方案：
 
-## 1. 部署架构总览
+- `nohup`：适合你当前现状，先落地可用。
+- `systemd`：适合长期运维，推荐后续迁移。
 
-生产环境建议采用如下拓扑：
+如果你还需要处理内网 LLM 网关、用户级 API Key、`tiktoken` 离线缓存，请同时参考：
+
+- `docs/deepaudit-private-llm-checklist.md`
+
+## 1. 部署总览
+
+### 1.1 双环境拓扑
 
 ```text
 Browser
-  ├─ /                    -> Focus Vue dist
-  ├─ /deepaudit-app/      -> DeepAudit React dist
-  ├─ /basic-api/          -> Nginx -> Django ASGI (:8001) -> /api/
-  └─ /ws/                 -> Nginx -> Django ASGI (:8001)
+  ├─ https://focus.example.com/                  -> /var/www/focus
+  ├─ https://focus.example.com/deepaudit-app/    -> /var/www/deepaudit
+  ├─ https://focus-test.example.com/             -> /var/www/focus_test
+  ├─ https://focus-test.example.com/deepaudit-app/ -> /var/www/deepaudit_test
+  ├─ /basic-api/                                 -> nginx -> Django ASGI
+  └─ /ws/                                        -> nginx -> Django ASGI
 
-Django ASGI
-  ├─ HTTP API: /api/**
-  ├─ WebSocket: /ws/deepaudit/tasks/{task_id}/
-  └─ SSE: /api/deepaudit/agent-tasks/{task_id}/stream
+正式环境
+  ├─ 代码目录: /srv/focus-prod/Focus_Admin
+  ├─ Python venv: /srv/focus-prod/venv
+  ├─ Django ASGI: 127.0.0.1:8001
+  ├─ Celery default worker
+  ├─ Celery DeepAudit worker
+  └─ scheduler 独立进程
 
-Celery
-  ├─ 默认队列 celery
-  └─ DeepAudit 专用队列 deepaudit
-
-Redis
-  ├─ Django cache
-  ├─ Celery broker
-  └─ Channels layer
+测试环境
+  ├─ 代码目录: /srv/focus-test/Focus_Admin
+  ├─ Python venv: /srv/focus-test/venv
+  ├─ Django ASGI: 127.0.0.1:8002
+  ├─ Celery default worker
+  ├─ Celery DeepAudit worker
+  └─ scheduler 独立进程
 ```
 
-关键说明：
+### 1.2 运行入口与路径规则
 
-- DeepAudit 没有独立登录入口，登录态复用 Focus。
-- WebSocket 与 SSE 都复用同一个 Django ASGI 服务，不需要再单独启动 websocket 服务。
-- 前端对外统一走同域：
-  - Focus: `/`
-  - DeepAudit: `/deepaudit-app/`
-  - API 代理入口: `/basic-api/`
-  - WebSocket: `/ws/deepaudit/tasks/{task_id}/`
+本次部署不改接口协议，两个环境统一使用同一套访问路径规则，只允许以下差异：
 
-## 2. 服务器准备
+- 差异项：`server_name`、后端端口、前端静态目录、后端 `static_root` / `media` / 日志路径。
+- 保持一致：`/`、`/deepaudit-app/`、`/basic-api/`、`/ws/`、DeepAudit `/stream`。
+- 正式 API 入口：`https://focus.example.com/basic-api/`
+- 测试 API 入口：`https://focus-test.example.com/basic-api/`
+- 正式 DeepAudit：`https://focus.example.com/deepaudit-app/`
+- 测试 DeepAudit：`https://focus-test.example.com/deepaudit-app/`
 
-建议目录约定如下：
+### 1.3 推荐目录布局
 
 ```bash
-/srv/focus/Focus_Admin                 # 项目代码
-/srv/focus/venv                        # Python 虚拟环境
-/srv/www/focus-web                     # Focus 前端 dist
-/srv/www/deepaudit-app                 # DeepAudit 前端 dist
+/srv/focus-prod/Focus_Admin
+/srv/focus-prod/venv
+/srv/focus-prod/tiktoken-cache
+/srv/focus-prod/Focus_Admin/backend-django/logs
+/srv/focus-prod/Focus_Admin/backend-django/run
+/srv/focus-prod/Focus_Admin/backend-django/static_root
+/srv/focus-prod/Focus_Admin/backend-django/media
+
+/srv/focus-test/Focus_Admin
+/srv/focus-test/venv
+/srv/focus-test/tiktoken-cache
+/srv/focus-test/Focus_Admin/backend-django/logs
+/srv/focus-test/Focus_Admin/backend-django/run
+/srv/focus-test/Focus_Admin/backend-django/static_root
+/srv/focus-test/Focus_Admin/backend-django/media
+
+/var/www/focus
+/var/www/focus_test
+/var/www/deepaudit
+/var/www/deepaudit_test
 ```
 
-建议基础环境：
+约束说明：
+
+- 推荐两套独立代码目录，不采用“一套代码双配置”。
+- `logs`、`run`、`static_root`、`media`、`tiktoken-cache` 均应按环境隔离。
+- DeepAudit 默认运行目录在 `backend-django/media/deepaudit` 下；由于正式和测试本来就是两套代码目录，因此天然隔离。
+- nginx 只读取 `/var/www/*` 和各自环境的 `static_root` / `media`，不要把测试与正式放到同一个静态 root 下。
+
+### 1.4 为什么 Redis 必须分 DB
+
+当前项目里 scheduler 心跳 key 固定，Celery、缓存、Channels 也会共用 Redis 实例；如果测试和正式共用同一个 Redis DB，很容易出现以下问题：
+
+- scheduler 心跳互相覆盖
+- Celery 队列串环境
+- Channels / SSE / WebSocket 状态互相污染
+- DeepAudit 运行缓存互相干扰
+
+因此本文固定采用：
+
+- 正式：`REDIS_DB=2`、`REDIS_CELERY_DB=3`、`REDIS_CHANNEL_DB=4`
+- 测试：`REDIS_DB=5`、`REDIS_CELERY_DB=6`、`REDIS_CHANNEL_DB=7`
+
+## 2. 服务器准备与代码目录初始化
+
+### 2.1 基础软件
+
+建议目标机器至少具备：
 
 - Linux x86_64
 - Python 3.12
@@ -69,254 +126,588 @@ Redis
 - pnpm 10+
 - nginx
 - Redis
-- MySQL 或 PostgreSQL
+- PostgreSQL 或 MySQL
 
-示例安装准备：
+示例：
 
 ```bash
-sudo mkdir -p /srv/focus /srv/www/focus-web /srv/www/deepaudit-app
-sudo chown -R $USER:$USER /srv/focus /srv/www/focus-web /srv/www/deepaudit-app
-
-cd /srv/focus
-git clone <your-repo-url> Focus_Admin
-
-python3.12 -m venv /srv/focus/venv
-source /srv/focus/venv/bin/activate
-
-corepack enable
-corepack prepare pnpm@10.14.0 --activate
+sudo mkdir -p /srv/focus-prod /srv/focus-test
+sudo mkdir -p /var/www/focus /var/www/focus_test /var/www/deepaudit /var/www/deepaudit_test
+sudo chown -R $USER:$USER /srv/focus-prod /srv/focus-test /var/www/focus /var/www/focus_test /var/www/deepaudit /var/www/deepaudit_test
 ```
 
-## 3. 后端部署
-
-### 3.1 安装依赖
+如果后续由 `focus` 用户运行 `systemd` 服务，建议额外准备运行账号：
 
 ```bash
-cd /srv/focus/Focus_Admin/backend-django
-source /srv/focus/venv/bin/activate
+sudo useradd --system --create-home --shell /bin/bash focus
+sudo chown -R focus:focus /srv/focus-prod /srv/focus-test
+```
+
+如果你计划使用别的系统用户，把后续文档中的 `focus:focus` 统一替换成你的运行用户即可。
+
+### 2.2 初始化两套代码目录
+
+```bash
+cd /srv/focus-prod
+git clone <your-repo-url> Focus_Admin
+python3.12 -m venv /srv/focus-prod/venv
+
+cd /srv/focus-test
+git clone <your-repo-url> Focus_Admin
+python3.12 -m venv /srv/focus-test/venv
+```
+
+推荐分支策略：
+
+- 正式目录 checkout 稳定分支或 release tag。
+- 测试目录 checkout `develop` / `uat` 分支。
+- 两套目录独立拉代码、独立回滚、独立发布。
+
+### 2.3 安装 Python 与前端依赖
+
+正式环境：
+
+```bash
+cd /srv/focus-prod/Focus_Admin/backend-django
+source /srv/focus-prod/venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
+
+cd /srv/focus-prod/Focus_Admin/web
+corepack enable
+corepack prepare pnpm@10.14.0 --activate
+pnpm install --frozen-lockfile
 ```
 
-### 3.2 创建生产环境变量
-
-项目会自动读取 `backend-django/.env`。推荐创建如下文件：
+测试环境：
 
 ```bash
-cd /srv/focus/Focus_Admin/backend-django
-cp .env.example .env 2>/dev/null || touch .env
+cd /srv/focus-test/Focus_Admin/backend-django
+source /srv/focus-test/venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+
+cd /srv/focus-test/Focus_Admin/web
+corepack enable
+corepack prepare pnpm@10.14.0 --activate
+pnpm install --frozen-lockfile
 ```
 
-示例 `backend-django/.env`：
+### 2.4 日志、PID、静态目录预创建
+
+```bash
+mkdir -p /srv/focus-prod/tiktoken-cache
+mkdir -p /srv/focus-prod/Focus_Admin/backend-django/logs
+mkdir -p /srv/focus-prod/Focus_Admin/backend-django/run
+mkdir -p /srv/focus-prod/Focus_Admin/backend-django/static_root
+mkdir -p /srv/focus-prod/Focus_Admin/backend-django/media/file_manager
+mkdir -p /srv/focus-prod/Focus_Admin/backend-django/media/chunk_uploads
+
+mkdir -p /srv/focus-test/tiktoken-cache
+mkdir -p /srv/focus-test/Focus_Admin/backend-django/logs
+mkdir -p /srv/focus-test/Focus_Admin/backend-django/run
+mkdir -p /srv/focus-test/Focus_Admin/backend-django/static_root
+mkdir -p /srv/focus-test/Focus_Admin/backend-django/media/file_manager
+mkdir -p /srv/focus-test/Focus_Admin/backend-django/media/chunk_uploads
+```
+
+如使用 `focus` 运行账号：
+
+```bash
+sudo chown -R focus:focus /srv/focus-prod /srv/focus-test
+```
+
+## 3. 两套 `.env` 与后端公共准备
+
+项目会自动读取各自 `backend-django/.env`。由于正式和测试是两套独立代码目录，所以每个目录各自维护自己的 `.env`。
+
+### 3.1 正式环境 `.env` 示例
+
+文件：`/srv/focus-prod/Focus_Admin/backend-django/.env`
 
 ```env
 ZQ_ENV=prd
 
 # Django / JWT
-DJANGO_SECRET_KEY=replace-with-a-strong-secret
-JWT_ACCESS_SECRET_KEY=replace-with-a-strong-access-secret
-JWT_REFRESH_SECRET_KEY=replace-with-a-strong-refresh-secret
+DJANGO_SECRET_KEY=replace-with-prod-secret
+JWT_ACCESS_SECRET_KEY=replace-with-prod-access-secret
+JWT_REFRESH_SECRET_KEY=replace-with-prod-refresh-secret
 
-# Database
-# 如果你实际生产库不是 prd_env.py 中默认的 PostgreSQL，请先同步 env/prd_env.py 的数据库类型配置
+# 调度器护栏：Web / Celery 进程一律关闭自动启动
+ENABLE_SCHEDULER=false
+
+# 正式数据库账号
 PRD_DB_USER=focus_prod
-PRD_DB_PASSWORD=replace-with-db-password
+PRD_DB_PASSWORD=replace-with-prod-db-password
 
-# Redis
+# Redis 隔离
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 REDIS_PASSWORD=
 REDIS_DB=2
 REDIS_CELERY_DB=3
 REDIS_CHANNEL_DB=4
-
-# DeepAudit
 DEEPAUDIT_QUEUE=deepaudit
+
+# DeepAudit 默认 LLM / Embedding
+LLM_PROVIDER=openai
+LLM_BASE_URL=http://your-internal-llm-gateway/v1
+LLM_API_KEY=replace-with-prod-llm-key
+EMBEDDING_PROVIDER=openai
+EMBEDDING_BASE_URL=http://your-internal-embedding-gateway/v1
+EMBEDDING_API_KEY=replace-with-prod-embedding-key
+
+# 首 Token / 流式超时
+LLM_FIRST_TOKEN_TIMEOUT=120
+LLM_STREAM_TIMEOUT=180
+TOOL_TIMEOUT_SECONDS=120
+SUB_AGENT_TIMEOUT_SECONDS=900
+AGENT_TIMEOUT_SECONDS=2400
+
+# tiktoken 离线缓存
+DEEPAUDIT_TIKTOKEN_MODE=local
+TIKTOKEN_CACHE_DIR=/srv/focus-prod/tiktoken-cache
+DATA_GYM_CACHE_DIR=/srv/focus-prod/tiktoken-cache
 ```
 
-如需把缓存、Celery、Channels 隔离，推荐使用不同 Redis DB：
+### 3.2 测试环境 `.env` 示例
 
-- `REDIS_DB=2`
-- `REDIS_CELERY_DB=3`
-- `REDIS_CHANNEL_DB=4`
+文件：`/srv/focus-test/Focus_Admin/backend-django/.env`
 
-### 3.3 后端生产风险检查
+```env
+ZQ_ENV=uat
 
-当前代码中有几项上线前必须核对：
+# Django / JWT
+DJANGO_SECRET_KEY=replace-with-test-secret
+JWT_ACCESS_SECRET_KEY=replace-with-test-access-secret
+JWT_REFRESH_SECRET_KEY=replace-with-test-refresh-secret
 
-- `application/settings.py` 里当前写死了 `DEBUG = True`，上线前必须改为生产安全值。
-- `ALLOWED_HOSTS = ['*']` 目前过宽，生产建议改成明确域名或 IP 白名单。
-- `env/prd_env.py` 当前默认数据库类型是 `POSTGRESQL`，如果你的生产环境实际使用 MySQL，需要先同步配置。
-- `web/apps/web-ele/.env.production` 当前仍指向旧线上域名，生产构建前必须改为同域 `/basic-api/`。
+# 调度器护栏：Web / Celery 进程一律关闭自动启动
+ENABLE_SCHEDULER=false
 
-### 3.4 静态资源与目录准备
+# 测试数据库账号
+UAT_DB_USER=focus_test
+UAT_DB_PASSWORD=replace-with-test-db-password
 
-```bash
-cd /srv/focus/Focus_Admin/backend-django
-mkdir -p logs static_root media/file_manager media/chunk_uploads
-python manage.py collectstatic --noinput
+# Redis 隔离
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+REDIS_PASSWORD=
+REDIS_DB=5
+REDIS_CELERY_DB=6
+REDIS_CHANNEL_DB=7
+DEEPAUDIT_QUEUE=deepaudit
+
+# DeepAudit 默认 LLM / Embedding
+LLM_PROVIDER=openai
+LLM_BASE_URL=http://your-internal-llm-gateway/v1
+LLM_API_KEY=replace-with-test-llm-key
+EMBEDDING_PROVIDER=openai
+EMBEDDING_BASE_URL=http://your-internal-embedding-gateway/v1
+EMBEDDING_API_KEY=replace-with-test-embedding-key
+
+# 首 Token / 流式超时
+LLM_FIRST_TOKEN_TIMEOUT=120
+LLM_STREAM_TIMEOUT=180
+TOOL_TIMEOUT_SECONDS=120
+SUB_AGENT_TIMEOUT_SECONDS=900
+AGENT_TIMEOUT_SECONDS=2400
+
+# tiktoken 离线缓存
+DEEPAUDIT_TIKTOKEN_MODE=local
+TIKTOKEN_CACHE_DIR=/srv/focus-test/tiktoken-cache
+DATA_GYM_CACHE_DIR=/srv/focus-test/tiktoken-cache
 ```
 
-这些目录必须确保运行用户可写：
+### 3.3 两套环境都要执行的后端初始化
 
-- `backend-django/logs`
-- `backend-django/static_root`
-- `backend-django/media/file_manager`
-- 分片上传临时目录
-
-否则可能影响：
-
-- ZIP 上传
-- 报告导出
-- 文件管理
-- Django 日志轮转
-
-## 4. 数据库初始化
-
-### 4.1 迁移
+正式环境：
 
 ```bash
-cd /srv/focus/Focus_Admin/backend-django
-source /srv/focus/venv/bin/activate
+cd /srv/focus-prod/Focus_Admin/backend-django
+source /srv/focus-prod/venv/bin/activate
 python manage.py migrate
+python manage.py collectstatic --noinput
+python manage.py init_deepaudit
 ```
 
-### 4.2 是否加载基础种子数据
+测试环境：
 
-仅在“全新空库且需要 Focus 基础平台菜单、角色、权限”的情况下执行：
+```bash
+cd /srv/focus-test/Focus_Admin/backend-django
+source /srv/focus-test/venv/bin/activate
+python manage.py migrate
+python manage.py collectstatic --noinput
+python manage.py init_deepaudit
+```
+
+如果是全新空库，并且需要初始化 Focus 平台菜单、角色、权限，才执行：
 
 ```bash
 python manage.py loaddata db_init.json
 ```
 
-如果当前生产库已经是现有 Focus 主库，不要重复执行 `loaddata db_init.json`，避免覆盖或引入重复基础数据。
+注意：
 
-### 4.3 确保存在超管
+- 正式库和测试库分别执行，不要混用。
+- 已经有正式业务数据的库，不要重复执行 `loaddata db_init.json`。
+- 两个环境都要各自完成 `init_deepaudit`，这样 DeepAudit 菜单与配置才会落库。
 
-`init_deepaudit` 会使用首个超管用户作为初始化操作人。执行前请确认数据库里已有超管用户。
+### 3.4 两套代码目录的更新流程
 
-如果没有，可以先创建：
-
-```bash
-python manage.py createsuperuser
-```
-
-### 4.4 初始化 DeepAudit
+正式环境更新：
 
 ```bash
-python manage.py init_deepaudit
+cd /srv/focus-prod/Focus_Admin
+git fetch --all
+git checkout <prod-branch-or-tag>
+git pull --ff-only
+
+cd /srv/focus-prod/Focus_Admin/backend-django
+source /srv/focus-prod/venv/bin/activate
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py collectstatic --noinput
 ```
 
-该命令会增量初始化以下内容：
-
-- DeepAudit 平台菜单
-- DeepAudit 菜单权限与接口权限
-- 默认提示词模板
-- 默认规则集
-
-这是生产环境启用 DeepAudit 的关键命令，而且支持重复执行，用于补齐或修正菜单权限数据。
-
-### 4.5 初始化后的验收点
-
-- Focus 左侧菜单出现 `DeepAudit 平台`
-- 该菜单是一个新窗口入口，指向 `/deepaudit-app/`
-- DeepAudit 相关权限码已写入数据库
-
-如果菜单没出现，优先检查：
-
-- 是否执行了 `python manage.py init_deepaudit`
-- 当前登录角色是否已分配对应菜单权限
-- 菜单缓存/权限缓存是否已刷新
-
-## 5. 前端构建与发布
-
-### 5.1 安装依赖
+测试环境更新：
 
 ```bash
-cd /srv/focus/Focus_Admin/web
-pnpm install --frozen-lockfile
+cd /srv/focus-test/Focus_Admin
+git fetch --all
+git checkout <test-branch>
+git pull --ff-only
+
+cd /srv/focus-test/Focus_Admin/backend-django
+source /srv/focus-test/venv/bin/activate
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py collectstatic --noinput
 ```
 
-### 5.2 构建前确认生产 API 地址
+### 3.5 上线前必须额外确认的现状
 
-#### Focus
+当前仓库里仍有几项配置不是标准生产形态，部署前需要你自行确认或修正：
 
-`web-ele` 当前仓库内的 `web/apps/web-ele/.env.production` 仍然指向旧线上地址：
+- `backend-django/application/settings.py` 当前仍是 `DEBUG = True`。
+- `backend-django/application/settings.py` 当前仍是 `ALLOWED_HOSTS = ['*']`。
+- `web/apps/web-ele/.env.production` 当前仍指向旧的外部域名，不能直接拿去上线。
+- `backend-django/env/prd_env.py` 与 `backend-django/env/uat_env.py` 里，数据库 `HOST` / `PORT` / `NAME` 以及部分 OAuth 回调地址仍是代码内固定值，不是全部走 `.env`；正式上线前要按你的真实环境核对。
+- scheduler 存在 `AppConfig.ready()` 自动启动逻辑，因此本文档统一要求 Web 与 Celery 进程都显式携带 `ENABLE_SCHEDULER=false`，scheduler 只通过 `python start_scheduler.py` 独立运行。
+
+## 4. 前端双环境静态发布流程
+
+### 4.1 固定的前端 API 路径
+
+两套环境都统一用相对路径，避免同一份 dist 写死环境域名：
+
+- `web-ele` 生产 API 地址：`/basic-api/`
+- `web-deepaudit` 生产 API 地址：`/basic-api/api`
+- DeepAudit Vite `base` 固定：`/deepaudit-app/`
+
+### 4.2 检查 `web-ele/.env.production`
+
+当前仓库中：`web/apps/web-ele/.env.production`
 
 ```env
 VITE_GLOB_API_URL=https://django-ninja.zq-platform.cn/basic-api/
 ```
 
-生产部署前建议改为同域相对地址：
+发布前必须改成相对路径，推荐在各自代码目录下新增 `web/apps/web-ele/.env.production.local`：
 
 ```env
+VITE_BASE=/
 VITE_GLOB_API_URL=/basic-api/
 ```
 
-推荐做法有两种，二选一：
+这样做的好处：
 
-1. 直接修改 `web/apps/web-ele/.env.production`
-2. 新建 `web/apps/web-ele/.env.production.local` 覆盖该变量
+- 不必直接改仓库里的 `.env.production`
+- 正式和测试可以共用同一套路径规则
+- 两个域名下都能使用同一类构建产物
 
-#### DeepAudit
+### 4.3 检查 `web-deepaudit` 生产配置
 
-DeepAudit 当前生产 API 基址已经是同域相对路径：
+`web/apps/web-deepaudit/.env.production` 当前为：
 
 ```env
 VITE_API_BASE_URL=/basic-api/api
 ```
 
-同时其 Vite `base` 已固定为：
+`web/apps/web-deepaudit/vite.config.ts` 当前为：
 
-```env
-/deepaudit-app/
+```text
+base: /deepaudit-app/
 ```
 
-这部分保持不变即可。
+这两项保持现状即可，不要改成根路径。
 
-### 5.3 构建两个前端
+### 4.4 标准构建流程
+
+主推荐流程是测试、正式分别在自己的代码目录中构建。这样最安全，不会把测试代码误发到正式目录。
+
+正式环境：
 
 ```bash
-cd /srv/focus/Focus_Admin/web
+cd /srv/focus-prod/Focus_Admin/web
+pnpm install --frozen-lockfile
 pnpm build:ele
 pnpm build:deepaudit
 ```
 
-构建产物目录：
-
-- Focus: `web/apps/web-ele/dist`
-- DeepAudit: `web/apps/web-deepaudit/dist`
-
-### 5.4 发布 dist 到 nginx 目录
+测试环境：
 
 ```bash
-rsync -av --delete /srv/focus/Focus_Admin/web/apps/web-ele/dist/ /srv/www/focus-web/
-rsync -av --delete /srv/focus/Focus_Admin/web/apps/web-deepaudit/dist/ /srv/www/deepaudit-app/
+cd /srv/focus-test/Focus_Admin/web
+pnpm install --frozen-lockfile
+pnpm build:ele
+pnpm build:deepaudit
 ```
 
-## 6. 常驻进程与 systemd
+如果正式和测试恰好完全是同一个 commit，也可以共用一次构建产物；但发布时仍必须分别同步到四个静态目录，不能混放。
 
-推荐拆成 3 个常驻服务：
+### 4.5 发布到四个静态目录
 
-- `focus-backend.service`
-- `focus-celery-default.service`
-- `focus-celery-deepaudit.service`
-
-这样可以把 DeepAudit 重任务和 Focus 其他异步任务拆开，互不影响。
-
-### 6.1 focus-backend.service
-
-文件路径：
+正式环境：
 
 ```bash
-/etc/systemd/system/focus-backend.service
+rsync -av --delete /srv/focus-prod/Focus_Admin/web/apps/web-ele/dist/ /var/www/focus/
+rsync -av --delete /srv/focus-prod/Focus_Admin/web/apps/web-deepaudit/dist/ /var/www/deepaudit/
 ```
 
-示例内容：
+测试环境：
+
+```bash
+rsync -av --delete /srv/focus-test/Focus_Admin/web/apps/web-ele/dist/ /var/www/focus_test/
+rsync -av --delete /srv/focus-test/Focus_Admin/web/apps/web-deepaudit/dist/ /var/www/deepaudit_test/
+```
+
+说明：
+
+- 这四个目录必须事先存在且 nginx 可读。
+- DeepAudit 继续通过 `/deepaudit-app/` 访问，不修改 `base`。
+- 测试和正式的路径规则保持完全一致，只是各自指向不同域名和不同静态目录。
+
+## 5. `nohup` 方案
+
+`nohup` 方案适合你当前现状。每个环境各 4 个进程，共 8 个：
+
+- backend
+- celery-default
+- celery-deepaudit
+- scheduler
+
+### 5.1 正式环境 4 个进程
+
+#### 正式 backend
+
+```bash
+cd /srv/focus-prod/Focus_Admin/backend-django
+source /srv/focus-prod/venv/bin/activate
+nohup env ENABLE_SCHEDULER=false \
+  /srv/focus-prod/venv/bin/gunicorn application.asgi:application \
+  -k uvicorn.workers.UvicornWorker \
+  --bind 127.0.0.1:8001 \
+  --workers 4 \
+  --timeout 120 \
+  > logs/backend-prod.log 2>&1 &
+echo $! > run/backend-prod.pid
+```
+
+#### 正式 celery-default
+
+```bash
+cd /srv/focus-prod/Focus_Admin/backend-django
+source /srv/focus-prod/venv/bin/activate
+nohup env ENABLE_SCHEDULER=false \
+  /srv/focus-prod/venv/bin/python -m celery -A application worker \
+  -Q celery \
+  -n focus-prod-default@%h \
+  -l info \
+  --concurrency=2 \
+  --max-tasks-per-child=5 \
+  > logs/celery-default-prod.log 2>&1 &
+echo $! > run/celery-default-prod.pid
+```
+
+#### 正式 celery-deepaudit
+
+```bash
+cd /srv/focus-prod/Focus_Admin/backend-django
+source /srv/focus-prod/venv/bin/activate
+nohup env ENABLE_SCHEDULER=false \
+  /srv/focus-prod/venv/bin/python -m celery -A application worker \
+  -Q deepaudit \
+  -n focus-prod-deepaudit@%h \
+  -l info \
+  --concurrency=2 \
+  --prefetch-multiplier=1 \
+  --max-tasks-per-child=5 \
+  > logs/celery-deepaudit-prod.log 2>&1 &
+echo $! > run/celery-deepaudit-prod.pid
+```
+
+#### 正式 scheduler
+
+```bash
+cd /srv/focus-prod/Focus_Admin/backend-django
+source /srv/focus-prod/venv/bin/activate
+nohup env ENABLE_SCHEDULER=false \
+  /srv/focus-prod/venv/bin/python start_scheduler.py \
+  > logs/scheduler-prod.log 2>&1 &
+echo $! > run/scheduler-prod.pid
+```
+
+### 5.2 测试环境 4 个进程
+
+#### 测试 backend
+
+```bash
+cd /srv/focus-test/Focus_Admin/backend-django
+source /srv/focus-test/venv/bin/activate
+nohup env ENABLE_SCHEDULER=false \
+  /srv/focus-test/venv/bin/gunicorn application.asgi:application \
+  -k uvicorn.workers.UvicornWorker \
+  --bind 127.0.0.1:8002 \
+  --workers 4 \
+  --timeout 120 \
+  > logs/backend-test.log 2>&1 &
+echo $! > run/backend-test.pid
+```
+
+#### 测试 celery-default
+
+```bash
+cd /srv/focus-test/Focus_Admin/backend-django
+source /srv/focus-test/venv/bin/activate
+nohup env ENABLE_SCHEDULER=false \
+  /srv/focus-test/venv/bin/python -m celery -A application worker \
+  -Q celery \
+  -n focus-test-default@%h \
+  -l info \
+  --concurrency=2 \
+  --max-tasks-per-child=5 \
+  > logs/celery-default-test.log 2>&1 &
+echo $! > run/celery-default-test.pid
+```
+
+#### 测试 celery-deepaudit
+
+```bash
+cd /srv/focus-test/Focus_Admin/backend-django
+source /srv/focus-test/venv/bin/activate
+nohup env ENABLE_SCHEDULER=false \
+  /srv/focus-test/venv/bin/python -m celery -A application worker \
+  -Q deepaudit \
+  -n focus-test-deepaudit@%h \
+  -l info \
+  --concurrency=2 \
+  --prefetch-multiplier=1 \
+  --max-tasks-per-child=5 \
+  > logs/celery-deepaudit-test.log 2>&1 &
+echo $! > run/celery-deepaudit-test.pid
+```
+
+#### 测试 scheduler
+
+```bash
+cd /srv/focus-test/Focus_Admin/backend-django
+source /srv/focus-test/venv/bin/activate
+nohup env ENABLE_SCHEDULER=false \
+  /srv/focus-test/venv/bin/python start_scheduler.py \
+  > logs/scheduler-test.log 2>&1 &
+echo $! > run/scheduler-test.pid
+```
+
+### 5.3 `nohup` 停止命令
+
+```bash
+[ -f /srv/focus-prod/Focus_Admin/backend-django/run/backend-prod.pid ] && kill $(cat /srv/focus-prod/Focus_Admin/backend-django/run/backend-prod.pid)
+[ -f /srv/focus-prod/Focus_Admin/backend-django/run/celery-default-prod.pid ] && kill $(cat /srv/focus-prod/Focus_Admin/backend-django/run/celery-default-prod.pid)
+[ -f /srv/focus-prod/Focus_Admin/backend-django/run/celery-deepaudit-prod.pid ] && kill $(cat /srv/focus-prod/Focus_Admin/backend-django/run/celery-deepaudit-prod.pid)
+[ -f /srv/focus-prod/Focus_Admin/backend-django/run/scheduler-prod.pid ] && kill $(cat /srv/focus-prod/Focus_Admin/backend-django/run/scheduler-prod.pid)
+
+[ -f /srv/focus-test/Focus_Admin/backend-django/run/backend-test.pid ] && kill $(cat /srv/focus-test/Focus_Admin/backend-django/run/backend-test.pid)
+[ -f /srv/focus-test/Focus_Admin/backend-django/run/celery-default-test.pid ] && kill $(cat /srv/focus-test/Focus_Admin/backend-django/run/celery-default-test.pid)
+[ -f /srv/focus-test/Focus_Admin/backend-django/run/celery-deepaudit-test.pid ] && kill $(cat /srv/focus-test/Focus_Admin/backend-django/run/celery-deepaudit-test.pid)
+[ -f /srv/focus-test/Focus_Admin/backend-django/run/scheduler-test.pid ] && kill $(cat /srv/focus-test/Focus_Admin/backend-django/run/scheduler-test.pid)
+```
+
+### 5.4 `nohup` 重启流程
+
+标准流程：
+
+1. 先执行上一节的停止命令。
+2. 用 `lsof` 确认 `8001` 与 `8002` 已释放。
+3. 确认没有残留 `celery` / `start_scheduler.py` 进程。
+4. 删除旧 PID 文件。
+5. 重新执行 5.1 与 5.2 的 8 条启动命令。
+
+删除旧 PID 示例：
+
+```bash
+rm -f /srv/focus-prod/Focus_Admin/backend-django/run/*.pid
+rm -f /srv/focus-test/Focus_Admin/backend-django/run/*.pid
+```
+
+### 5.5 `nohup` 存活检查
+
+检查端口：
+
+```bash
+lsof -iTCP:8001 -sTCP:LISTEN -P -n
+lsof -iTCP:8002 -sTCP:LISTEN -P -n
+```
+
+检查进程：
+
+```bash
+ps -ef | grep gunicorn | grep application.asgi
+ps -ef | grep "celery -A application worker"
+ps -ef | grep start_scheduler.py
+```
+
+检查日志：
+
+```bash
+tail -f /srv/focus-prod/Focus_Admin/backend-django/logs/backend-prod.log
+tail -f /srv/focus-prod/Focus_Admin/backend-django/logs/celery-default-prod.log
+tail -f /srv/focus-prod/Focus_Admin/backend-django/logs/celery-deepaudit-prod.log
+tail -f /srv/focus-prod/Focus_Admin/backend-django/logs/scheduler-prod.log
+
+tail -f /srv/focus-test/Focus_Admin/backend-django/logs/backend-test.log
+tail -f /srv/focus-test/Focus_Admin/backend-django/logs/celery-default-test.log
+tail -f /srv/focus-test/Focus_Admin/backend-django/logs/celery-deepaudit-test.log
+tail -f /srv/focus-test/Focus_Admin/backend-django/logs/scheduler-test.log
+```
+
+## 6. `systemd` 方案
+
+`systemd` 方案与 `nohup` 的进程集合完全一致，只是改由 `systemd` 托管。长期建议迁移到本方案。
+
+### 6.1 服务命名规范
+
+正式环境：
+
+- `focus-prod-backend.service`
+- `focus-prod-celery-default.service`
+- `focus-prod-celery-deepaudit.service`
+- `focus-prod-scheduler.service`
+
+测试环境：
+
+- `focus-test-backend.service`
+- `focus-test-celery-default.service`
+- `focus-test-celery-deepaudit.service`
+- `focus-test-scheduler.service`
+
+### 6.2 正式环境 4 个 service 文件
+
+#### `/etc/systemd/system/focus-prod-backend.service`
 
 ```ini
 [Unit]
-Description=Focus Django ASGI Backend
+Description=Focus Prod Django ASGI Backend
 After=network.target redis.service
 Requires=redis.service
 
@@ -324,10 +715,11 @@ Requires=redis.service
 Type=simple
 User=focus
 Group=focus
-WorkingDirectory=/srv/focus/Focus_Admin/backend-django
-EnvironmentFile=/srv/focus/Focus_Admin/backend-django/.env
-Environment=PATH=/srv/focus/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
-ExecStart=/srv/focus/venv/bin/gunicorn application.asgi:application -k uvicorn.workers.UvicornWorker --bind 127.0.0.1:8001 --workers 4 --timeout 120
+WorkingDirectory=/srv/focus-prod/Focus_Admin/backend-django
+EnvironmentFile=/srv/focus-prod/Focus_Admin/backend-django/.env
+Environment=PATH=/srv/focus-prod/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=ENABLE_SCHEDULER=false
+ExecStart=/srv/focus-prod/venv/bin/gunicorn application.asgi:application -k uvicorn.workers.UvicornWorker --bind 127.0.0.1:8001 --workers 4 --timeout 120
 Restart=always
 RestartSec=5
 
@@ -335,35 +727,23 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-说明：
-
-- 该服务同时承载 HTTP API、WebSocket、SSE。
-- 不需要额外再启动一个独立 websocket 服务。
-
-### 6.2 focus-celery-default.service
-
-文件路径：
-
-```bash
-/etc/systemd/system/focus-celery-default.service
-```
-
-示例内容：
+#### `/etc/systemd/system/focus-prod-celery-default.service`
 
 ```ini
 [Unit]
-Description=Focus Celery Worker (default queue)
-After=network.target redis.service focus-backend.service
+Description=Focus Prod Celery Worker (default queue)
+After=network.target redis.service focus-prod-backend.service
 Requires=redis.service
 
 [Service]
 Type=simple
 User=focus
 Group=focus
-WorkingDirectory=/srv/focus/Focus_Admin/backend-django
-EnvironmentFile=/srv/focus/Focus_Admin/backend-django/.env
-Environment=PATH=/srv/focus/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
-ExecStart=/srv/focus/venv/bin/python -m celery -A application worker -Q celery -l info
+WorkingDirectory=/srv/focus-prod/Focus_Admin/backend-django
+EnvironmentFile=/srv/focus-prod/Focus_Admin/backend-django/.env
+Environment=PATH=/srv/focus-prod/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=ENABLE_SCHEDULER=false
+ExecStart=/srv/focus-prod/venv/bin/python -m celery -A application worker -Q celery -n focus-prod-default@%%h -l info --concurrency=2 --max-tasks-per-child=5
 Restart=always
 RestartSec=5
 
@@ -371,32 +751,23 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-该服务负责消费 Focus 平台默认异步任务，例如未显式指定 DeepAudit 队列的 Celery 任务。
-
-### 6.3 focus-celery-deepaudit.service
-
-文件路径：
-
-```bash
-/etc/systemd/system/focus-celery-deepaudit.service
-```
-
-示例内容：
+#### `/etc/systemd/system/focus-prod-celery-deepaudit.service`
 
 ```ini
 [Unit]
-Description=Focus Celery Worker (DeepAudit queue)
-After=network.target redis.service focus-backend.service
+Description=Focus Prod Celery Worker (DeepAudit queue)
+After=network.target redis.service focus-prod-backend.service
 Requires=redis.service
 
 [Service]
 Type=simple
 User=focus
 Group=focus
-WorkingDirectory=/srv/focus/Focus_Admin/backend-django
-EnvironmentFile=/srv/focus/Focus_Admin/backend-django/.env
-Environment=PATH=/srv/focus/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
-ExecStart=/srv/focus/venv/bin/python -m celery -A application worker -Q deepaudit -l info
+WorkingDirectory=/srv/focus-prod/Focus_Admin/backend-django
+EnvironmentFile=/srv/focus-prod/Focus_Admin/backend-django/.env
+Environment=PATH=/srv/focus-prod/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=ENABLE_SCHEDULER=false
+ExecStart=/srv/focus-prod/venv/bin/python -m celery -A application worker -Q deepaudit -n focus-prod-deepaudit@%%h -l info --concurrency=2 --prefetch-multiplier=1 --max-tasks-per-child=5
 Restart=always
 RestartSec=5
 
@@ -404,51 +775,192 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-该服务专门消费：
+#### `/etc/systemd/system/focus-prod-scheduler.service`
 
-- `deepaudit.run_scan_task`
-- `deepaudit.run_agent_task`
+```ini
+[Unit]
+Description=Focus Prod Scheduler
+After=network.target redis.service focus-prod-backend.service
+Requires=redis.service
 
-### 6.4 可选调度器
+[Service]
+Type=simple
+User=focus
+Group=focus
+WorkingDirectory=/srv/focus-prod/Focus_Admin/backend-django
+EnvironmentFile=/srv/focus-prod/Focus_Admin/backend-django/.env
+Environment=PATH=/srv/focus-prod/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=ENABLE_SCHEDULER=false
+ExecStart=/srv/focus-prod/venv/bin/python start_scheduler.py
+Restart=always
+RestartSec=5
 
-如果生产环境还需要启用 Focus 自身的调度中心，可再单独运行一个可选服务：
-
-```bash
-python start_scheduler.py
+[Install]
+WantedBy=multi-user.target
 ```
 
-注意：
+### 6.3 测试环境 4 个 service 文件
 
-- 这不是 DeepAudit 必需链路
-- 只有你确实在生产环境使用平台调度中心时，才需要额外常驻该进程
+#### `/etc/systemd/system/focus-test-backend.service`
 
-### 6.5 启动与开机自启
+```ini
+[Unit]
+Description=Focus Test Django ASGI Backend
+After=network.target redis.service
+Requires=redis.service
+
+[Service]
+Type=simple
+User=focus
+Group=focus
+WorkingDirectory=/srv/focus-test/Focus_Admin/backend-django
+EnvironmentFile=/srv/focus-test/Focus_Admin/backend-django/.env
+Environment=PATH=/srv/focus-test/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=ENABLE_SCHEDULER=false
+ExecStart=/srv/focus-test/venv/bin/gunicorn application.asgi:application -k uvicorn.workers.UvicornWorker --bind 127.0.0.1:8002 --workers 4 --timeout 120
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### `/etc/systemd/system/focus-test-celery-default.service`
+
+```ini
+[Unit]
+Description=Focus Test Celery Worker (default queue)
+After=network.target redis.service focus-test-backend.service
+Requires=redis.service
+
+[Service]
+Type=simple
+User=focus
+Group=focus
+WorkingDirectory=/srv/focus-test/Focus_Admin/backend-django
+EnvironmentFile=/srv/focus-test/Focus_Admin/backend-django/.env
+Environment=PATH=/srv/focus-test/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=ENABLE_SCHEDULER=false
+ExecStart=/srv/focus-test/venv/bin/python -m celery -A application worker -Q celery -n focus-test-default@%%h -l info --concurrency=2 --max-tasks-per-child=5
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### `/etc/systemd/system/focus-test-celery-deepaudit.service`
+
+```ini
+[Unit]
+Description=Focus Test Celery Worker (DeepAudit queue)
+After=network.target redis.service focus-test-backend.service
+Requires=redis.service
+
+[Service]
+Type=simple
+User=focus
+Group=focus
+WorkingDirectory=/srv/focus-test/Focus_Admin/backend-django
+EnvironmentFile=/srv/focus-test/Focus_Admin/backend-django/.env
+Environment=PATH=/srv/focus-test/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=ENABLE_SCHEDULER=false
+ExecStart=/srv/focus-test/venv/bin/python -m celery -A application worker -Q deepaudit -n focus-test-deepaudit@%%h -l info --concurrency=2 --prefetch-multiplier=1 --max-tasks-per-child=5
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### `/etc/systemd/system/focus-test-scheduler.service`
+
+```ini
+[Unit]
+Description=Focus Test Scheduler
+After=network.target redis.service focus-test-backend.service
+Requires=redis.service
+
+[Service]
+Type=simple
+User=focus
+Group=focus
+WorkingDirectory=/srv/focus-test/Focus_Admin/backend-django
+EnvironmentFile=/srv/focus-test/Focus_Admin/backend-django/.env
+Environment=PATH=/srv/focus-test/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=ENABLE_SCHEDULER=false
+ExecStart=/srv/focus-test/venv/bin/python start_scheduler.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 6.4 `systemd` 安装、启动、重启、状态查看
+
+安装或修改 service 文件后：
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable focus-backend focus-celery-default focus-celery-deepaudit
-sudo systemctl start focus-backend focus-celery-default focus-celery-deepaudit
+
+sudo systemctl enable focus-prod-backend focus-prod-celery-default focus-prod-celery-deepaudit focus-prod-scheduler
+sudo systemctl enable focus-test-backend focus-test-celery-default focus-test-celery-deepaudit focus-test-scheduler
+
+sudo systemctl start focus-prod-backend focus-prod-celery-default focus-prod-celery-deepaudit focus-prod-scheduler
+sudo systemctl start focus-test-backend focus-test-celery-default focus-test-celery-deepaudit focus-test-scheduler
 ```
 
-查看状态：
+常用运维命令：
 
 ```bash
-systemctl status focus-backend
-systemctl status focus-celery-default
-systemctl status focus-celery-deepaudit
+sudo systemctl restart focus-prod-backend
+sudo systemctl restart focus-prod-celery-default
+sudo systemctl restart focus-prod-celery-deepaudit
+sudo systemctl restart focus-prod-scheduler
+
+sudo systemctl restart focus-test-backend
+sudo systemctl restart focus-test-celery-default
+sudo systemctl restart focus-test-celery-deepaudit
+sudo systemctl restart focus-test-scheduler
+
+sudo systemctl status focus-prod-backend focus-prod-celery-default focus-prod-celery-deepaudit focus-prod-scheduler
+sudo systemctl status focus-test-backend focus-test-celery-default focus-test-celery-deepaudit focus-test-scheduler
 ```
 
-## 7. nginx 部署
-
-### 7.1 推荐站点配置
-
-文件路径：
+日志查看：
 
 ```bash
-/etc/nginx/conf.d/focus.conf
+journalctl -u focus-prod-backend -f
+journalctl -u focus-prod-celery-default -f
+journalctl -u focus-prod-celery-deepaudit -f
+journalctl -u focus-prod-scheduler -f
+
+journalctl -u focus-test-backend -f
+journalctl -u focus-test-celery-default -f
+journalctl -u focus-test-celery-deepaudit -f
+journalctl -u focus-test-scheduler -f
 ```
 
-示例配置：
+### 6.5 scheduler 的推荐方式
+
+主推荐方案是：
+
+- Web 进程不依赖 `AppConfig.ready()` 自动拉起 scheduler。
+- Celery 进程也不承担 scheduler 职责。
+- scheduler 固定作为独立进程运行，即 `python start_scheduler.py`。
+
+这样做的原因：
+
+- 双环境同机时最容易避免误起多个 scheduler 实例。
+- 更容易排查到底是谁在持有调度器心跳。
+- 更方便从 `nohup` 迁移到 `systemd`。
+
+## 7. nginx 双域名配置
+
+建议文件：`/etc/nginx/conf.d/focus-dual-env.conf`
+
+### 7.1 HTTP 可直接运行版本
 
 ```nginx
 map $http_upgrade $connection_upgrade {
@@ -456,39 +968,48 @@ map $http_upgrade $connection_upgrade {
     ''      close;
 }
 
+upstream focus_prod_backend {
+    server 127.0.0.1:8001;
+    keepalive 32;
+}
+
+upstream focus_test_backend {
+    server 127.0.0.1:8002;
+    keepalive 32;
+}
+
 server {
     listen 80;
-    server_name your.domain.com;
+    server_name focus.example.com;
 
     client_max_body_size 500M;
-
-    root /srv/www/focus-web;
+    root /var/www/focus;
     index index.html;
 
-    # Focus 主应用
     location / {
         try_files $uri $uri/ /index.html;
     }
 
-    # DeepAudit React 子应用
     location /deepaudit-app/ {
-        alias /srv/www/deepaudit-app/;
+        alias /var/www/deepaudit/;
         index index.html;
         try_files $uri $uri/ /deepaudit-app/index.html;
     }
 
-    # Django static
     location /static/ {
-        alias /srv/focus/Focus_Admin/backend-django/static_root/;
+        alias /srv/focus-prod/Focus_Admin/backend-django/static_root/;
         access_log off;
         expires 7d;
         add_header Cache-Control "public";
     }
 
-    # DeepAudit SSE 流接口
+    location /media/ {
+        alias /srv/focus-prod/Focus_Admin/backend-django/media/;
+    }
+
     location ~ ^/basic-api/api/deepaudit/agent-tasks/[^/]+/stream$ {
         rewrite ^/basic-api/(.*)$ /$1 break;
-        proxy_pass http://127.0.0.1:8001;
+        proxy_pass http://focus_prod_backend;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -505,9 +1026,8 @@ server {
         proxy_connect_timeout 30s;
     }
 
-    # Django API
     location /basic-api/ {
-        proxy_pass http://127.0.0.1:8001/;
+        proxy_pass http://focus_prod_backend/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -517,9 +1037,8 @@ server {
         proxy_send_timeout 300s;
     }
 
-    # WebSocket
     location /ws/ {
-        proxy_pass http://127.0.0.1:8001;
+        proxy_pass http://focus_prod_backend;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
@@ -530,203 +1049,208 @@ server {
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
     }
+}
 
-    # 前端静态资源缓存
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf)$ {
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-        access_log off;
+server {
+    listen 80;
+    server_name focus-test.example.com;
+
+    client_max_body_size 500M;
+    root /var/www/focus_test;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
     }
 
-    # HTTPS 证书配置占位
-    # listen 443 ssl http2;
-    # ssl_certificate     /path/to/fullchain.pem;
-    # ssl_certificate_key /path/to/privkey.pem;
+    location /deepaudit-app/ {
+        alias /var/www/deepaudit_test/;
+        index index.html;
+        try_files $uri $uri/ /deepaudit-app/index.html;
+    }
+
+    location /static/ {
+        alias /srv/focus-test/Focus_Admin/backend-django/static_root/;
+        access_log off;
+        expires 7d;
+        add_header Cache-Control "public";
+    }
+
+    location /media/ {
+        alias /srv/focus-test/Focus_Admin/backend-django/media/;
+    }
+
+    location ~ ^/basic-api/api/deepaudit/agent-tasks/[^/]+/stream$ {
+        rewrite ^/basic-api/(.*)$ /$1 break;
+        proxy_pass http://focus_test_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_set_header X-Accel-Buffering no;
+        chunked_transfer_encoding on;
+
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_connect_timeout 30s;
+    }
+
+    location /basic-api/ {
+        proxy_pass http://focus_test_backend/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
+    location /ws/ {
+        proxy_pass http://focus_test_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
 }
 ```
 
-### 7.2 为什么这样配置
+说明：
 
-- `/` 使用 Focus `dist`
-- `/deepaudit-app/` 使用独立 `alias`，避免和 Focus 主站资源混淆
-- `/basic-api/` 代理到 Django `127.0.0.1:8001`，并自动把 `/basic-api/` 前缀去掉，落到后端真实 `/api/`
-- `/ws/` 保留原始路径，直接转发给 ASGI
-- DeepAudit 的 `/stream` 接口单独关闭缓冲，避免 SSE 事件被 nginx 攒包导致前端长时间无输出
+- 两个 `server` 的路径规则必须完全一致，只允许 `server_name`、`upstream`、`root`、`alias`、`static/media` 目录不同。
+- DeepAudit `/stream` 单独关闭 `proxy_buffering`，否则前端会表现为请求成功但日志很久不刷新。
+- `/basic-api/` 与 `/ws/` 都继续走同一个 ASGI 服务，避免测试和正式路径不一致。
 
-### 7.3 检查并重载 nginx
+### 7.2 HTTPS 增强位
+
+如果要上 HTTPS，可以在上面的每个 `server` 块基础上增加：
+
+```nginx
+listen 443 ssl http2;
+ssl_certificate     /path/to/fullchain.pem;
+ssl_certificate_key /path/to/privkey.pem;
+```
+
+同时保留一个 80 端口 server 做 301 跳转即可。不要因为文档只写了 HTTPS 片段，就把可运行的 HTTP 基线配置删掉。
+
+### 7.3 nginx 检查与重载
 
 ```bash
 sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-## 8. 运维、验证与排障
+## 8. 验收清单
 
-### 8.1 建议启动顺序
+### 8.1 页面与路由
 
-1. 数据库
-2. Redis
-3. `focus-backend`
-4. `focus-celery-default`
-5. `focus-celery-deepaudit`
-6. nginx
+- `https://focus.example.com/` 能进入正式 `web-ele`。
+- `https://focus-test.example.com/` 能进入测试 `web-ele`。
+- 两个域名的 `/deepaudit-app/` 都能正常打开。
+- 刷新 `/deepaudit-app/` 的任意子路由都不会 404。
 
-### 8.2 常用运维命令
+### 8.2 API、WebSocket、SSE
 
-```bash
-sudo systemctl restart focus-backend
-sudo systemctl restart focus-celery-default
-sudo systemctl restart focus-celery-deepaudit
+- 正式 `/basic-api/` 请求命中 `127.0.0.1:8001`。
+- 测试 `/basic-api/` 请求命中 `127.0.0.1:8002`。
+- 正式 `/ws/` 能连到 `8001`。
+- 测试 `/ws/` 能连到 `8002`。
+- 正式与测试的 DeepAudit `/stream` 都能实时返回，不会长时间无日志刷新。
 
-sudo systemctl status focus-backend
-sudo systemctl status focus-celery-default
-sudo systemctl status focus-celery-deepaudit
+### 8.3 异步任务与调度器
 
-journalctl -u focus-backend -f
-journalctl -u focus-celery-default -f
-journalctl -u focus-celery-deepaudit -f
-```
+- 正式创建 DeepAudit 任务后，由正式 `celery-deepaudit` 消费。
+- 测试创建 DeepAudit 任务后，由测试 `celery-deepaudit` 消费。
+- 两个环境的 scheduler 都独立运行，互不影响。
+- 正式停止某个进程，不应影响测试环境对应进程。
+- 两个环境的数据库、Redis 队列、日志、静态目录都不会串用。
 
-### 8.3 业务日志路径
+### 8.4 `nohup` / `systemd` 验收
 
-应用内部日志默认会写入：
+`nohup` 场景：
 
-- `backend-django/logs/server.log`
-- `backend-django/logs/error.log`
+- 8 个进程都能通过 `ps`、端口、日志验证。
+- 8 个进程都拥有各自 PID 文件。
 
-nginx 默认日志：
+`systemd` 场景：
 
-- `/var/log/nginx/access.log`
-- `/var/log/nginx/error.log`
+- 8 个服务都能 `enable/start/status`。
+- `journalctl` 能看到每个服务的独立日志。
+- 任意单个服务异常退出后可自动拉起。
 
-### 8.4 Redis / Celery 验证
+## 9. 从 `nohup` 迁移到 `systemd`
 
-```bash
-redis-cli -h 127.0.0.1 -p 6379 ping
-```
+建议按以下顺序迁移：
 
-预期：
+1. 停止当前 `nohup` 管理的 8 个进程。
+2. 用 `lsof` 确认 `8001`、`8002` 已释放。
+3. 用 `ps -ef` 确认没有残留 `celery` 与 `start_scheduler.py` 进程。
+4. 安装 8 个 `systemd` service 文件。
+5. 执行 `sudo systemctl daemon-reload`。
+6. 执行 `enable` 与 `start`。
+7. 用 `status`、`journalctl`、浏览器访问、API 调用逐项验收。
+8. 清理旧的 `run/*.pid`。
 
-```text
-PONG
-```
+明确要求：
 
-验证 Celery：
+- 禁止 `nohup` 和 `systemd` 同时管理同一组 backend / Celery / scheduler 进程。
+- 迁移时一定先停旧再起新，避免端口冲突与重复消费。
 
-```bash
-cd /srv/focus/Focus_Admin/backend-django
-source /srv/focus/venv/bin/activate
-python -m celery -A application inspect ping
-```
+## 10. `nohup` 与 `systemd` 方案对比
 
-### 8.5 WebSocket / SSE 验证
+| 对比项 | `nohup` | `systemd` |
+|---|---|---|
+| 启动简单性 | 高，复制命令即可 | 中，需要维护 service 文件 |
+| 自动拉起 | 无 | 有 |
+| 崩溃恢复 | 需要人工介入 | 自动重启 |
+| 日志管理 | 文件日志为主 | `journalctl` + 标准输出 |
+| PID 管理 | 需要自己维护 | `systemd` 托管 |
+| 运维可观测性 | 一般 | 更强 |
+| 当前适用阶段 | 先快速落地 | 长期稳定运行 |
 
-#### WebSocket
+建议：
 
-真实路径：
+- 当前先按 `nohup` 方案跑通完全没有问题。
+- 一旦双环境稳定运行，优先切换到 `systemd`。
 
-```text
-/ws/deepaudit/tasks/{task_id}/
-```
+## 11. 常见问题
 
-如果需要手工测试，可使用浏览器开发者工具或 `wscat` / `websocat`。
+### 11.1 为什么文档要求 Web / Celery 都带 `ENABLE_SCHEDULER=false`
 
-#### SSE
+因为项目里 scheduler 仍有自动启动逻辑。如果 Web 进程或 Celery 进程在错误条件下带着 `ENABLE_SCHEDULER=true` 启动，同一环境内就可能出现多个 scheduler；双环境同机时问题会更难排查。
 
-真实访问路径：
+因此本手册固定要求：
 
-```text
-/basic-api/api/deepaudit/agent-tasks/{task_id}/stream
-```
+- Web 进程：`ENABLE_SCHEDULER=false`
+- Celery 进程：`ENABLE_SCHEDULER=false`
+- scheduler：独立运行 `python start_scheduler.py`
 
-可用 `curl` 简单验证是否持续输出：
+### 11.2 测试和正式能共用一套代码目录吗
 
-```bash
-curl -N \
-  -H "Authorization: Bearer <access-token>" \
-  "http://your.domain.com/basic-api/api/deepaudit/agent-tasks/<task-id>/stream?include_thinking=true&include_tool_calls=true&after_sequence=0"
-```
+不推荐。因为这样会让以下内容互相污染：
 
-### 8.6 构建与接入验收清单
+- `.env`
+- `logs`
+- `run`
+- `static_root`
+- `media`
+- git 分支与回滚节奏
 
-#### 构建验证
+### 11.3 测试和正式能共用一个 Redis DB 吗
 
-- `pnpm build:ele` 成功
-- `pnpm build:deepaudit` 成功
-- `web/apps/web-ele/dist` 已发布到 `/srv/www/focus-web`
-- `web/apps/web-deepaudit/dist` 已发布到 `/srv/www/deepaudit-app`
+不推荐。scheduler 心跳、Celery 队列、Channels 状态、缓存都可能互相影响。
 
-#### 后端验证
+### 11.4 现在应该先用哪种方案
 
-- `python manage.py migrate` 成功
-- `python manage.py init_deepaudit` 成功
-- `systemctl status focus-backend focus-celery-default focus-celery-deepaudit` 全部正常
-
-#### 接入验证
-
-- 访问 `/` 能正常进入 Focus
-- Focus 菜单点击 `DeepAudit 平台` 会新标签页打开 `/deepaudit-app/`
-- 直接刷新 `/deepaudit-app/` 任意子路由不返回 404
-
-#### 实时链路验证
-
-- `/ws/deepaudit/tasks/{task_id}/` 能建立连接
-- `/basic-api/api/deepaudit/agent-tasks/{task_id}/stream` 能持续收到事件
-- DeepAudit Worker 能实际消费 `deepaudit` 队列任务
-
-#### 初始化验证
-
-- 全新库：`migrate` + `loaddata db_init.json` + `init_deepaudit` 后能看到 DeepAudit 菜单
-- 现有 Focus 主库：只执行 `migrate` + `init_deepaudit`，不重复执行 `loaddata db_init.json`
-
-### 8.7 常见问题
-
-#### 1. Focus 菜单里没有 DeepAudit 入口
-
-优先检查：
-
-- 是否执行了 `python manage.py init_deepaudit`
-- 当前账号角色是否有对应菜单权限
-- 是否刷新了菜单缓存、权限缓存
-
-#### 2. DeepAudit 页面能打开，但任务一启动就失败
-
-优先检查：
-
-- Redis 是否在线
-- `focus-celery-deepaudit` 是否已启动
-- `DEEPAUDIT_QUEUE` 是否与 worker 消费队列一致
-
-#### 3. DeepAudit 的流式输出长时间没有内容
-
-优先检查：
-
-- nginx 是否对 `/stream` 关闭了 `proxy_buffering`
-- SSE location 是否命中了更具体的 `/stream` 配置
-- `focus-backend` 是否正常承载长连接
-
-#### 4. WebSocket 连接失败
-
-优先检查：
-
-- nginx 是否配置了 `Upgrade` / `Connection`
-- `/ws/` 是否正确代理到 ASGI 服务
-- JWT 是否有效
-
-## 附录：本项目与生产部署直接相关的现状
-
-以下是当前仓库中已经存在、可直接用于部署判断的事实：
-
-- Django ASGI 入口：`application.asgi:application`
-- 后端 API 实际前缀：`/api/`
-- WebSocket 路由：`/ws/deepaudit/tasks/{task_id}/`
-- DeepAudit 前端 Vite `base`：`/deepaudit-app/`
-- DeepAudit 生产 API 地址：`/basic-api/api`
-- DeepAudit 初始化命令：`python manage.py init_deepaudit`
-
-上线前请特别核对以下风险项：
-
-- `DEBUG = True`
-- `ALLOWED_HOSTS = ['*']`
-- `env/prd_env.py` 的数据库类型是否与你的生产库一致
-- `web-ele` 的生产 API 地址是否已改成同域 `/basic-api/`
+- 你当前已经在用 `nohup`，可以直接按第 5 节落地。
+- 等上线稳定后，再按第 9 节迁移到 `systemd`。

@@ -349,6 +349,7 @@ class LiteLLMAdapter(BaseLLMAdapter):
         accumulated_content = ""
         final_usage = None  # 🔥 存储最终的 usage 信息
         chunk_count = 0  # 🔥 跟踪 chunk 数量
+        response = None
 
         try:
             response = await litellm.acompletion(**kwargs)
@@ -459,7 +460,6 @@ class LiteLLMAdapter(BaseLLMAdapter):
                     "total_tokens": input_tokens_estimate + output_tokens_estimate,
                 } if accumulated_content else None,
             }
-
         except litellm.exceptions.AuthenticationError as e:
             # 认证错误 - API Key 无效
             logger.error(f"Stream authentication error: {e}")
@@ -526,6 +526,16 @@ class LiteLLMAdapter(BaseLLMAdapter):
                     "total_tokens": input_tokens_estimate + output_tokens_estimate,
                 } if accumulated_content else None,
             }
+        finally:
+            async_close = getattr(response, "aclose", None) if response is not None else None
+            sync_close = getattr(response, "close", None) if response is not None else None
+            try:
+                if callable(async_close):
+                    await async_close()
+                elif callable(sync_close):
+                    sync_close()
+            except Exception:
+                logger.debug("Failed to close LiteLLM streaming response cleanly", exc_info=True)
 
     async def validate_config(self) -> bool:
         """验证配置"""

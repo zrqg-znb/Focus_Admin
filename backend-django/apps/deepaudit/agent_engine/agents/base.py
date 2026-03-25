@@ -996,6 +996,8 @@ class BaseAgent(ABC):
 
         accumulated = ""
         total_tokens = 0
+        stream = None
+        iterator = None
 
         # 🔥 在开始 LLM 调用前检查取消
         if self.is_cancelled:
@@ -1105,6 +1107,17 @@ class BaseAgent(ABC):
             await self.emit_event("error", f"LLM 调用错误: {str(e)}")
             accumulated = f"[API_ERROR:unexpected] {str(e)}"
         finally:
+            closer = None
+            if iterator is not None and hasattr(iterator, "aclose"):
+                closer = iterator.aclose
+            elif stream is not None and hasattr(stream, "aclose"):
+                closer = stream.aclose
+
+            if closer is not None:
+                try:
+                    await closer()
+                except Exception:
+                    logger.debug("[%s] Failed to close LLM stream cleanly", self.name, exc_info=True)
             await self.emit_thinking_end(accumulated)
         
         # 🔥 记录空响应警告，帮助调试

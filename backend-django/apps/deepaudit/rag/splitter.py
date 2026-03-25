@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from apps.deepaudit.llm.tokenizer import TokenEstimator
+
 logger = logging.getLogger(__name__)
 
 
@@ -84,13 +86,7 @@ class CodeChunk:
         return hashlib.sha256(content.encode()).hexdigest()[:16]
     
     def _estimate_tokens(self) -> int:
-        # 使用 tiktoken 如果可用
-        try:
-            import tiktoken
-            enc = tiktoken.get_encoding("cl100k_base")
-            return len(enc.encode(self.content))
-        except ImportError:
-            return len(self.content) // 4
+        return TokenEstimator.count_tokens(self.content, model="text-embedding-3-small")
     
     def to_dict(self) -> Dict[str, Any]:
         result = {
@@ -847,4 +843,3 @@ class CodeSplitter:
             definitions.extend(matches)
         
         return list(set(definitions))[:20]
-

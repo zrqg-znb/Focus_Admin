@@ -451,8 +451,65 @@ CHANNEL_LAYERS = {
 
 DEFAULT_PASSWORD = "123456"
 
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(str(os.environ.get(name, default)).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(str(os.environ.get(name, default)).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_str(name: str, default: str = "") -> str:
+    value = os.environ.get(name, default)
+    return str(value or "").strip()
+
+
 DEEPAUDIT_DOCKER_ENABLED = os.environ.get('DEEPAUDIT_DOCKER_ENABLED', 'true').lower() not in {'0', 'false', 'no'}
 DEEPAUDIT_QUEUE = os.environ.get('DEEPAUDIT_QUEUE', 'deepaudit')
+DEEPAUDIT_TIKTOKEN_MODE = _env_str('DEEPAUDIT_TIKTOKEN_MODE', 'local') or 'local'
+TIKTOKEN_CACHE_DIR = _env_str('TIKTOKEN_CACHE_DIR', '')
+DATA_GYM_CACHE_DIR = _env_str('DATA_GYM_CACHE_DIR', '')
+
+# DeepAudit LLM / Embedding 默认配置（作为用户未单独配置时的系统回退）
+LLM_PROVIDER = _env_str('LLM_PROVIDER', '')
+LLM_MODEL = _env_str('LLM_MODEL', '')
+LLM_API_KEY = _env_str('LLM_API_KEY', '')
+LLM_BASE_URL = _env_str('LLM_BASE_URL', '')
+LLM_TIMEOUT = _env_int('LLM_TIMEOUT', 150)
+LLM_TEMPERATURE = _env_float('LLM_TEMPERATURE', 0.1)
+LLM_MAX_TOKENS = _env_int('LLM_MAX_TOKENS', 4096)
+LLM_FIRST_TOKEN_TIMEOUT = _env_int('LLM_FIRST_TOKEN_TIMEOUT', 30)
+LLM_STREAM_TIMEOUT = _env_int('LLM_STREAM_TIMEOUT', 60)
+TOOL_TIMEOUT_SECONDS = _env_int('TOOL_TIMEOUT_SECONDS', 60)
+SUB_AGENT_TIMEOUT_SECONDS = _env_int('SUB_AGENT_TIMEOUT_SECONDS', 600)
+AGENT_TIMEOUT_SECONDS = _env_int('AGENT_TIMEOUT_SECONDS', 1800)
+OUTPUT_LANGUAGE = _env_str('OUTPUT_LANGUAGE', 'zh-CN') or 'zh-CN'
+
+OPENAI_API_KEY = _env_str('OPENAI_API_KEY', '')
+OPENAI_BASE_URL = _env_str('OPENAI_BASE_URL', '')
+QWEN_API_KEY = _env_str('QWEN_API_KEY', '')
+GEMINI_API_KEY = _env_str('GEMINI_API_KEY', '')
+CLAUDE_API_KEY = _env_str('CLAUDE_API_KEY', '')
+DEEPSEEK_API_KEY = _env_str('DEEPSEEK_API_KEY', '')
+ZHIPU_API_KEY = _env_str('ZHIPU_API_KEY', '')
+MOONSHOT_API_KEY = _env_str('MOONSHOT_API_KEY', '')
+BAIDU_API_KEY = _env_str('BAIDU_API_KEY', '')
+MINIMAX_API_KEY = _env_str('MINIMAX_API_KEY', '')
+DOUBAO_API_KEY = _env_str('DOUBAO_API_KEY', '')
+OLLAMA_BASE_URL = _env_str('OLLAMA_BASE_URL', '')
+
+EMBEDDING_PROVIDER = _env_str('EMBEDDING_PROVIDER', '')
+EMBEDDING_MODEL = _env_str('EMBEDDING_MODEL', '')
+EMBEDDING_API_KEY = _env_str('EMBEDDING_API_KEY', '')
+EMBEDDING_BASE_URL = _env_str('EMBEDDING_BASE_URL', '')
+EMBEDDING_DIMENSIONS = _env_int('EMBEDDING_DIMENSIONS', 1536)
 
 # ================================================= #
 # ********************* 阿里云短信服务配置 ******************* #

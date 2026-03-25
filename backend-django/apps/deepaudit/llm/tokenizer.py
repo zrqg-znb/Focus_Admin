@@ -4,9 +4,11 @@ Token Estimator - Token 计数器
 使用 tiktoken 进行精确计数，不可用时回退到启发式估算。
 """
 
+import hashlib
 import logging
-from functools import lru_cache
-from typing import Optional
+import os
+import tempfile
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +16,80 @@ logger = logging.getLogger(__name__)
 _encoders: dict = {}
 _tiktoken_available: bool | None = None  # None=未检测, True=可用, False=不可用
 _logged_method: bool = False  # 是否已输出使用方案日志
+
+_TIKTOKEN_MODE_ENV = "DEEPAUDIT_TIKTOKEN_MODE"
+_TIKTOKEN_MODE_OFF = "off"
+_TIKTOKEN_MODE_LOCAL = "local"
+_TIKTOKEN_MODE_AUTO = "auto"
+_TIKTOKEN_ENCODER_URLS = {
+    "cl100k_base": "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken",
+    "o200k_base": "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken",
+    "p50k_base": "https://openaipublic.blob.core.windows.net/encodings/p50k_base.tiktoken",
+    "r50k_base": "https://openaipublic.blob.core.windows.net/encodings/r50k_base.tiktoken",
+}
+
+
+def _get_tiktoken_mode() -> str:
+    """
+    获取 tiktoken 模式。
+
+    - off: 完全禁用 tiktoken，始终使用启发式估算
+    - local: 仅在本地缓存已有编码器文件时使用 tiktoken（默认）
+    - auto: 允许 tiktoken 按默认行为下载编码器文件
+    """
+    raw_value = str(os.getenv(_TIKTOKEN_MODE_ENV, _TIKTOKEN_MODE_LOCAL) or "").strip().lower()
+
+    if raw_value in {"0", "false", "no", "off", "disable", "disabled"}:
+        return _TIKTOKEN_MODE_OFF
+    if raw_value in {"1", "true", "yes", "auto", "download", "remote"}:
+        return _TIKTOKEN_MODE_AUTO
+    return _TIKTOKEN_MODE_LOCAL
+
+
+def _iter_tiktoken_cache_dirs():
+    seen: set[str] = set()
+    for env_name in ("TIKTOKEN_CACHE_DIR", "DATA_GYM_CACHE_DIR"):
+        value = str(os.getenv(env_name, "") or "").strip()
+        if value and value not in seen:
+            seen.add(value)
+            yield Path(value)
+
+    default_dir = str(Path(tempfile.gettempdir()) / "data-gym-cache")
+    if default_dir not in seen:
+        yield Path(default_dir)
+
+
+def _has_local_encoder_cache(encoding_name: str) -> bool:
+    blob_url = _TIKTOKEN_ENCODER_URLS.get(encoding_name)
+    if not blob_url:
+        return False
+
+    cache_key = hashlib.sha1(blob_url.encode("utf-8")).hexdigest()
+    return any((cache_dir / cache_key).exists() for cache_dir in _iter_tiktoken_cache_dirs())
+
+
+def _preferred_encoding_for_model(model: str) -> str:
+    model_name = str(model or "").strip().lower()
+    if any(
+        token in model_name
+        for token in ("gpt-5", "gpt-4.1", "gpt-4o", "o1", "o3", "o4", "omni")
+    ):
+        return "o200k_base"
+    return "cl100k_base"
+
+
+def _resolve_local_cached_encoding(model: str) -> str | None:
+    candidates = [
+        _preferred_encoding_for_model(model),
+        "cl100k_base",
+        "o200k_base",
+        "p50k_base",
+        "r50k_base",
+    ]
+    for encoding_name in candidates:
+        if _has_local_encoder_cache(encoding_name):
+            return encoding_name
+    return None
 
 
 def _check_tiktoken_availability(log_result: bool = False) -> bool:
@@ -35,13 +111,40 @@ def _check_tiktoken_availability(log_result: bool = False) -> bool:
                 logger.warning("⚠️ Token 计数方案: 启发式估算")
         return _tiktoken_available
 
+    mode = _get_tiktoken_mode()
+    if mode == _TIKTOKEN_MODE_OFF:
+        _tiktoken_available = False
+        if log_result:
+            _logged_method = True
+            logger.info("⚠️ Token 计数方案: 启发式估算 (已通过环境变量禁用 tiktoken)")
+        return _tiktoken_available
+
     try:
         import tiktoken
-        tiktoken.get_encoding("cl100k_base")
+
+        if mode == _TIKTOKEN_MODE_LOCAL:
+            cached_encoding = _resolve_local_cached_encoding("gpt-4")
+            if not cached_encoding:
+                _tiktoken_available = False
+                if log_result:
+                    _logged_method = True
+                    logger.info(
+                        "⚠️ Token 计数方案: 启发式估算 "
+                        "(未找到本地 tiktoken 编码缓存，避免访问公网)"
+                    )
+                return _tiktoken_available
+
+            tiktoken.get_encoding(cached_encoding)
+        else:
+            tiktoken.get_encoding("cl100k_base")
+
         _tiktoken_available = True
         if log_result:
             _logged_method = True
-            logger.info("✅ Token 计数方案: tiktoken 精确计数")
+            if mode == _TIKTOKEN_MODE_LOCAL:
+                logger.info("✅ Token 计数方案: tiktoken 本地缓存计数")
+            else:
+                logger.info("✅ Token 计数方案: tiktoken 精确计数")
     except ImportError:
         _tiktoken_available = False
         if log_result:
@@ -54,10 +157,6 @@ def _check_tiktoken_availability(log_result: bool = False) -> bool:
             logger.warning(f"⚠️ Token 计数方案: 启发式估算 (tiktoken 初始化失败: {e})")
 
     return _tiktoken_available
-
-
-# 模块加载时静默检测（不输出日志）
-_check_tiktoken_availability(log_result=False)
 
 
 def _get_tiktoken_encoder(model: str):
@@ -75,6 +174,24 @@ def _get_tiktoken_encoder(model: str):
 
     try:
         import tiktoken
+
+        mode = _get_tiktoken_mode()
+        if mode == _TIKTOKEN_MODE_OFF:
+            _encoders[model] = None
+            return None
+
+        if mode == _TIKTOKEN_MODE_LOCAL:
+            cached_encoding = _resolve_local_cached_encoding(model)
+            if not cached_encoding:
+                logger.debug(
+                    "tiktoken local cache missing for model %s, using heuristic estimation",
+                    model,
+                )
+                _encoders[model] = None
+                return None
+            encoder = tiktoken.get_encoding(cached_encoding)
+            _encoders[model] = encoder
+            return encoder
 
         # 尝试按模型名获取编码器
         try:

@@ -7,6 +7,8 @@
 import logging
 from typing import List, Dict, Any, Optional
 
+from apps.deepaudit.config_resolver import resolve_embedding_config
+
 from .base import KnowledgeDocument, KnowledgeCategory
 from apps.deepaudit.storage import VECTOR_DB_DIR
 
@@ -41,8 +43,26 @@ class SecurityKnowledgeRAG:
         
         try:
             from ...rag import CodeIndexer, CodeRetriever, EmbeddingService
-            
-            embedding_service = EmbeddingService()
+
+            embedding_config = resolve_embedding_config(None)
+            provider = str(embedding_config.get("provider") or "openai").strip().lower()
+            api_key = str(embedding_config.get("api_key") or "").strip()
+            if provider != "ollama" and not api_key:
+                logger.info(
+                    "SecurityKnowledgeRAG fallback enabled: embedding provider=%s has no API key",
+                    provider,
+                )
+                self._initialized = True
+                return
+
+            embedding_service = EmbeddingService(
+                provider=embedding_config.get("provider"),
+                model=embedding_config.get("model"),
+                api_key=embedding_config.get("api_key"),
+                base_url=embedding_config.get("base_url"),
+                dimension=embedding_config.get("dimensions"),
+                user_config={},
+            )
             
             self._indexer = CodeIndexer(
                 collection_name=self.COLLECTION_NAME,
