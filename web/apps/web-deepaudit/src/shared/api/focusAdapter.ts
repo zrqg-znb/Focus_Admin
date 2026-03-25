@@ -219,7 +219,7 @@ function mapInstantPath(pathname: string) {
 function mapAgentTaskPath(pathname: string) {
   const reportMatch = pathname.match(/^\/agent-tasks\/([^/]+)\/report\/?$/);
   if (reportMatch) {
-    return `/deepaudit/reports/agent-tasks/${reportMatch[1]}/json`;
+    return `/deepaudit/agent-tasks/${reportMatch[1]}/report`;
   }
   if (/^\/agent-tasks\/[^/]+\/events\/list\/?$/.test(pathname)) {
     return pathname.replace(/^\/agent-tasks/, '/deepaudit/agent-tasks').replace(/\/events\/list\/?$/, '/events');

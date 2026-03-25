@@ -33,6 +33,7 @@ export interface LogItem {
     status?: ToolStatus;
   };
   severity?: string;
+  agentId?: string;
   agentName?: string;
   progressKey?: string; // 用于标识进度日志的唯一键，如 "index_progress"
 }

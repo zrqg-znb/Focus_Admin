@@ -431,32 +431,34 @@ export interface CheckpointDetail extends AgentCheckpoint {
 export async function getAgentTree(taskId: string): Promise<AgentTreeResponse> {
   const response = await apiClient.get(`/agent-tasks/${taskId}/tree`);
   const nodes = Array.isArray(response.data) ? response.data : [];
+  const normalizedNodes = nodes.map((item: any) => ({
+    id: String(item.id || item.agent_id || ""),
+    agent_id: String(item.agent_id || item.id || ""),
+    agent_name: item.agent_name || item.label || "Agent",
+    agent_type: item.agent_type || item.phase || "orchestrator",
+    parent_agent_id: item.parent_agent_id ? String(item.parent_agent_id) : null,
+    depth: Number(item.depth || 0),
+    task_description: item.task_description || null,
+    knowledge_modules: Array.isArray(item.knowledge_modules) ? item.knowledge_modules : [],
+    status: item.status || "running",
+    result_summary: item.result_summary || null,
+    findings_count: Number(item.findings_count || 0),
+    iterations: Number(item.iterations || 0),
+    tokens_used: Number(item.tokens_used || 0),
+    tool_calls: Number(item.tool_calls || 0),
+    duration_ms: item.duration_ms == null ? null : Number(item.duration_ms),
+    children: [],
+  }));
+  const rootNode = normalizedNodes.find((item) => !item.parent_agent_id) || normalizedNodes[0];
   return {
     task_id: taskId,
-    root_agent_id: nodes[0]?.id || null,
-    total_agents: nodes.length,
-    running_agents: nodes.filter((item: any) => item.status === "running").length,
-    completed_agents: nodes.filter((item: any) => item.status === "completed").length,
-    failed_agents: nodes.filter((item: any) => item.status === "failed").length,
-    total_findings: 0,
-    nodes: nodes.map((item: any) => ({
-      id: item.id,
-      agent_id: item.id,
-      agent_name: item.label,
-      agent_type: item.phase,
-      parent_agent_id: null,
-      depth: 0,
-      task_description: item.label,
-      knowledge_modules: [],
-      status: item.status,
-      result_summary: null,
-      findings_count: 0,
-      iterations: 0,
-      tokens_used: 0,
-      tool_calls: 0,
-      duration_ms: null,
-      children: [],
-    })),
+    root_agent_id: rootNode?.agent_id || null,
+    total_agents: normalizedNodes.length,
+    running_agents: normalizedNodes.filter((item) => item.status === "running").length,
+    completed_agents: normalizedNodes.filter((item) => item.status === "completed").length,
+    failed_agents: normalizedNodes.filter((item) => item.status === "failed").length,
+    total_findings: rootNode?.findings_count || Math.max(...normalizedNodes.map((item) => item.findings_count), 0),
+    nodes: normalizedNodes,
   };
 }
 
@@ -510,7 +512,7 @@ export async function getCheckpointDetail(
  */
 export async function downloadAgentReport(taskId: string, format: "markdown" | "json" = "markdown"): Promise<void> {
   const response = await apiClient.get(`/agent-tasks/${taskId}/report`, {
-    params: { format: "json" },
+    params: { format },
     responseType: 'blob',
   });
 
@@ -520,7 +522,7 @@ export async function downloadAgentReport(taskId: string, format: "markdown" | "
   link.href = url;
 
   // Calculate filename
-  let filename = `audit-report-${taskId.slice(0, 8)}.json`;
+  let filename = `audit-report-${taskId.slice(0, 8)}.${format === "markdown" ? "md" : "json"}`;
 
   // Try to get filename from header
   const contentDisposition = response.headers['content-disposition'];

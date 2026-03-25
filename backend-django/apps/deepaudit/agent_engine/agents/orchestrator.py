@@ -18,11 +18,26 @@ import re
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
+from apps.deepaudit.constants import (
+    AGENT_PHASE_ANALYSIS,
+    AGENT_PHASE_PLANNING,
+    AGENT_PHASE_RECONNAISSANCE,
+    AGENT_PHASE_REPORTING,
+    AGENT_PHASE_VERIFICATION,
+)
+
 from .base import BaseAgent, AgentConfig, AgentResult, AgentType, AgentPattern, TaskHandoff
 from ..json_parser import AgentJsonParser
 from ..prompts import MULTI_AGENT_RULES, CORE_SECURITY_PRINCIPLES
 
 logger = logging.getLogger(__name__)
+
+
+PHASE_BY_AGENT = {
+    "recon": AGENT_PHASE_RECONNAISSANCE,
+    "analysis": AGENT_PHASE_ANALYSIS,
+    "verification": AGENT_PHASE_VERIFICATION,
+}
 
 
 ORCHESTRATOR_SYSTEM_PROMPT = """你是 DeepAudit 的编排 Agent，负责**自主**协调整个安全审计流程。
@@ -185,6 +200,40 @@ class OrchestratorAgent(BaseAgent):
             if hasattr(agent, 'cancel'):
                 agent.cancel()
                 logger.info(f"[{self.name}] Cancelled sub-agent: {name}")
+
+    async def _transition_to_phase(self, phase: str, message: str) -> None:
+        if not self.event_emitter:
+            return
+
+        current_phase = getattr(self.event_emitter, "current_phase", None)
+        if current_phase == phase:
+            return
+
+        if current_phase:
+            await self.event_emitter.emit_phase_complete(
+                current_phase,
+                f"{current_phase} 阶段完成",
+            )
+
+        await self.event_emitter.emit_phase_start(phase, message)
+
+    def _validate_dispatch_guardrails(self, agent_name: str) -> Optional[str]:
+        dispatched_agents = set(self._dispatched_tasks.keys())
+
+        if not dispatched_agents and agent_name != "recon":
+            return "首次有效子 Agent 必须是 recon，请先收集项目结构、技术栈与高风险区域。"
+
+        if agent_name == "analysis" and "recon" not in dispatched_agents:
+            return "analysis 必须在 recon 之后执行，请先完成信息侦察。"
+
+        if agent_name == "verification":
+            if "analysis" not in dispatched_agents:
+                return "verification 必须在 analysis 之后执行，请先完成深度分析。"
+            candidate_findings = [item for item in self._all_findings if isinstance(item, dict)]
+            if not candidate_findings:
+                return "当前还没有候选发现，verification 只能在已有候选漏洞时执行。"
+
+        return None
     
     async def run(self, input_data: Dict[str, Any]) -> AgentResult:
         """
@@ -437,7 +486,8 @@ Action Input: {{"参数": "值"}}
             if self.is_cancelled:
                 await self.emit_event(
                     "info",
-                    f"🛑 Orchestrator 已取消: {len(self._all_findings)} 个发现, {self._iteration} 轮决策"
+                    f"🛑 Orchestrator 已取消: {len(self._all_findings)} 个发现, {self._iteration} 轮决策",
+                    metadata={"status": "stopped", "findings_count": len(self._all_findings)},
                 )
                 return AgentResult(
                     success=False,
@@ -464,7 +514,8 @@ Action Input: {{"参数": "值"}}
             if error_message:
                 await self.emit_event(
                     "error",
-                    f"❌ Orchestrator 失败: {error_message}"
+                    f"❌ Orchestrator 失败: {error_message}",
+                    metadata={"status": "failed", "findings_count": len(self._all_findings)},
                 )
                 return AgentResult(
                     success=False,
@@ -489,7 +540,8 @@ Action Input: {{"参数": "值"}}
             
             await self.emit_event(
                 "info",
-                f"🎯 Orchestrator 完成: {len(self._all_findings)} 个发现, {self._iteration} 轮决策"
+                f"🎯 Orchestrator 完成: {len(self._all_findings)} 个发现, {self._iteration} 轮决策",
+                metadata={"status": "completed", "findings_count": len(self._all_findings)},
             )
 
             # 🔥 CRITICAL: Log final findings count before returning
@@ -522,6 +574,11 @@ Action Input: {{"参数": "值"}}
             
         except Exception as e:
             logger.error(f"Orchestrator failed: {e}", exc_info=True)
+            await self.emit_event(
+                "error",
+                f"❌ Orchestrator 异常退出: {e}",
+                metadata={"status": "failed", "findings_count": len(self._all_findings)},
+            )
             return AgentResult(
                 success=False,
                 error=str(e),
@@ -654,7 +711,12 @@ Action Input: {{"参数": "值"}}
             available = list(self.sub_agents.keys())
             logger.warning(f"[Orchestrator] Agent '{agent_name}' 不存在，可用: {available}")
             return f"错误: Agent '{agent_name}' 不存在。可用的 Agent: {available}"
-        
+
+        guardrail_error = self._validate_dispatch_guardrails(agent_name)
+        if guardrail_error:
+            logger.warning("[Orchestrator] Dispatch guardrail blocked '%s': %s", agent_name, guardrail_error)
+            return f"## 调度被拒绝\n\n{guardrail_error}"
+
         # 🔥 检查是否重复调度同一个 Agent
         dispatch_count = self._dispatched_tasks.get(agent_name, 0)
         if dispatch_count >= 2:
@@ -671,6 +733,13 @@ Action Input: {{"参数": "值"}}
 """
         
         self._dispatched_tasks[agent_name] = dispatch_count + 1
+
+        phase = PHASE_BY_AGENT.get(agent_name)
+        if phase:
+            await self._transition_to_phase(
+                phase,
+                f"开始 {phase} 阶段：准备调度 {agent_name} Agent",
+            )
         
         # 🔥 设置父 Agent ID 并注册到注册表（动态 Agent 树）
         logger.debug(f"[Orchestrator] 准备调度 {agent_name} Agent, agent._registered={agent._registered}")

@@ -728,7 +728,8 @@ Final Answer:""",
             if self.is_cancelled:
                 await self.emit_event(
                     "info",
-                    f"🛑 Analysis Agent 已取消: {len(all_findings)} 个发现, {self._iteration} 轮迭代"
+                    f"🛑 Analysis Agent 已取消: {len(all_findings)} 个发现, {self._iteration} 轮迭代",
+                    metadata={"status": "stopped", "findings_count": len(all_findings)},
                 )
                 return AgentResult(
                     success=False,
@@ -744,7 +745,8 @@ Final Answer:""",
             if error_message:
                 await self.emit_event(
                     "error",
-                    f"❌ Analysis Agent 失败: {error_message}"
+                    f"❌ Analysis Agent 失败: {error_message}",
+                    metadata={"status": "failed", "findings_count": len(all_findings)},
                 )
                 return AgentResult(
                     success=False,
@@ -783,7 +785,11 @@ Final Answer:""",
             
             await self.emit_event(
                 "info",
-                f"Analysis Agent 完成: {len(standardized_findings)} 个发现, {self._iteration} 轮迭代, {self._tool_calls} 次工具调用"
+                f"Analysis Agent 完成: {len(standardized_findings)} 个发现, {self._iteration} 轮迭代, {self._tool_calls} 次工具调用",
+                metadata={
+                    "status": "completed",
+                    "findings_count": len(standardized_findings),
+                },
             )
 
             # 🔥 CRITICAL: Log final findings count before returning

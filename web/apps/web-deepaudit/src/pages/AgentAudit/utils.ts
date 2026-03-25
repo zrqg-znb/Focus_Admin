@@ -5,6 +5,17 @@
 
 import type { AgentTreeNode, LogItem } from "./types";
 
+export const ACTIVE_TASK_STATUSES = new Set([
+  'pending',
+  'initializing',
+  'running',
+  'planning',
+  'indexing',
+  'analyzing',
+  'verifying',
+  'reporting',
+]);
+
 /**
  * Build tree structure from flat node list
  */
@@ -149,7 +160,7 @@ export function calculateSeverityCounts(findings: { severity: string }[]): Recor
  * Check if task is in running state
  */
 export function isTaskRunning(status: string | undefined): boolean {
-  return status === 'running' || status === 'pending';
+  return ACTIVE_TASK_STATUSES.has(String(status || '').toLowerCase());
 }
 
 /**
@@ -179,12 +190,26 @@ export function filterLogsByAgent(
     return logs;
   }
 
-  const selectedAgentName = findAgentName(treeNodes, selectedAgentId);
-  if (!selectedAgentName) return logs;
+  const selectedAgent = findAgentInTree(treeNodes, selectedAgentId);
+  if (!selectedAgent) return logs;
+
+  const relevantNames = new Set<string>();
+  const visit = (node: AgentTreeNode) => {
+    if (node.agent_name) {
+      relevantNames.add(node.agent_name.toLowerCase());
+    }
+    node.children.forEach(visit);
+  };
+  visit(selectedAgent);
+
+  const selectedAgentName = selectedAgent.agent_name.toLowerCase();
 
   return logs.filter(log =>
-    log.agentName?.toLowerCase() === selectedAgentName.toLowerCase() ||
-    log.agentName?.toLowerCase().includes(selectedAgentName.toLowerCase().split('_')[0])
+    (log.agentName && (
+      relevantNames.has(log.agentName.toLowerCase()) ||
+      log.agentName.toLowerCase().includes(selectedAgentName.split('_')[0])
+    )) ||
+    log.agentId === selectedAgentId
   );
 }
 

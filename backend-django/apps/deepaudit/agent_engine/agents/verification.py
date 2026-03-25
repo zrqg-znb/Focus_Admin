@@ -828,7 +828,8 @@ class VerificationAgent(BaseAgent):
             if self.is_cancelled:
                 await self.emit_event(
                     "info",
-                    f"🛑 Verification Agent 已取消: {self._iteration} 轮迭代"
+                    f"🛑 Verification Agent 已取消: {self._iteration} 轮迭代",
+                    metadata={"status": "stopped", "findings_count": len(findings_to_verify)},
                 )
                 return AgentResult(
                     success=False,
@@ -904,7 +905,13 @@ class VerificationAgent(BaseAgent):
 
             await self.emit_event(
                 "info",
-                f"Verification Agent 完成: {confirmed_count} 确认, {likely_count} 可能, {false_positive_count} 误报"
+                f"Verification Agent 完成: {confirmed_count} 确认, {likely_count} 可能, {false_positive_count} 误报",
+                metadata={
+                    "status": "completed",
+                    "findings_count": len(verified_findings),
+                    "verified_count": confirmed_count,
+                    "false_positive_count": false_positive_count,
+                },
             )
 
             # 🔥 CRITICAL: Log final findings count before returning

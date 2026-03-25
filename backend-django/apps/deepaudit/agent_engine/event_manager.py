@@ -10,6 +10,28 @@ from apps.deepaudit.realtime import push_task_event
 logger = logging.getLogger(__name__)
 
 
+SNAPSHOT_EVENT_TYPES = {
+    "dispatch",
+    "dispatch_complete",
+    "error",
+    "finding_new",
+    "finding_verified",
+    "info",
+    "llm_complete",
+    "phase_complete",
+    "phase_start",
+    "progress",
+    "task_cancel",
+    "task_complete",
+    "task_error",
+    "tool_call",
+    "tool_result",
+    "tool_start",
+    "tool_end",
+    "warning",
+}
+
+
 def _sanitize_text(value: Optional[str]) -> Optional[str]:
     if value is None:
         return None
@@ -60,6 +82,10 @@ class AgentEventEmitter:
         self.task_id = task_id
         self.event_manager = event_manager
         self._current_phase: Optional[str] = None
+
+    @property
+    def current_phase(self) -> Optional[str]:
+        return self._current_phase
 
     async def emit(self, event_data: AgentEventData):
         phase = event_data.phase or self._current_phase
@@ -249,6 +275,14 @@ class EventManager:
             await save_event()
         except Exception as e:
             logger.error(f"Failed to save AgentEvent: {e}")
+        else:
+            if event_type in SNAPSHOT_EVENT_TYPES:
+                try:
+                    from apps.deepaudit.agent_task.agent_task_services import refresh_task_snapshot
+
+                    await sync_to_async(refresh_task_snapshot)(self.task_id)
+                except Exception as e:
+                    logger.error(f"Failed to refresh AgentTask snapshot: {e}")
 
         # Async WebSocket push via Focus_Admin's realtime.py
         payload = event_data.copy()

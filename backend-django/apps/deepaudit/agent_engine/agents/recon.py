@@ -606,7 +606,8 @@ Final Answer:""",
             if self.is_cancelled:
                 await self.emit_event(
                     "info",
-                    f"🛑 Recon Agent 已取消: {self._iteration} 轮迭代"
+                    f"🛑 Recon Agent 已取消: {self._iteration} 轮迭代",
+                    metadata={"status": "stopped"},
                 )
                 return AgentResult(
                     success=False,
@@ -622,7 +623,8 @@ Final Answer:""",
             if error_message:
                 await self.emit_event(
                     "error",
-                    f"❌ Recon Agent 失败: {error_message}"
+                    f"❌ Recon Agent 失败: {error_message}",
+                    metadata={"status": "failed"},
                 )
                 return AgentResult(
                     success=False,
@@ -649,7 +651,11 @@ Final Answer:""",
 
             await self.emit_event(
                 "info",
-                f"Recon Agent 完成: {self._iteration} 轮迭代, {self._tool_calls} 次工具调用"
+                f"Recon Agent 完成: {self._iteration} 轮迭代, {self._tool_calls} 次工具调用",
+                metadata={
+                    "status": "completed",
+                    "findings_count": len(final_result.get("initial_findings", [])),
+                },
             )
 
             # 🔥 创建 TaskHandoff - 传递给下游 Agent

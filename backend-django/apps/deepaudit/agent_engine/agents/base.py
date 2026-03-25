@@ -321,6 +321,9 @@ class BaseAgent(ABC):
         if self._registered:
             logger.debug(f"[AgentTree] {self.config.name} 已注册，跳过 (id={self._agent_id})")
             return
+
+        if task:
+            self._state.task = task
         
         logger.debug(f"[AgentTree] 正在注册 Agent: {self.config.name} (id={self._agent_id}, parent={self.parent_id})")
         
@@ -642,6 +645,15 @@ class BaseAgent(ABC):
             metadata = kwargs.get("metadata", {}) or {}
             if "agent_name" not in metadata:
                 metadata["agent_name"] = self.name
+            metadata.setdefault("agent_id", self._agent_id)
+            metadata.setdefault("agent_type", self.agent_type.value)
+            metadata.setdefault("parent_agent_id", self.parent_id)
+            metadata.setdefault("iteration", self._iteration)
+            metadata.setdefault("tool_calls", self._tool_calls)
+            metadata.setdefault("tokens_used", self._total_tokens)
+            metadata.setdefault("status", self._state.status)
+            if self._state.task:
+                metadata.setdefault("task", self._state.task)
             
             # 分离已知字段和未知字段
             known_fields = {

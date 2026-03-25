@@ -34,7 +34,7 @@ import {
 import ReportExportDialog from "./components/ReportExportDialog";
 import { useAgentAuditState } from "./hooks";
 import { ACTION_VERBS, POLLING_INTERVALS } from "./constants";
-import { cleanThinkingContent, truncateOutput, createLogItem } from "./utils";
+import { ACTIVE_TASK_STATUSES, cleanThinkingContent, truncateOutput, createLogItem } from "./utils";
 import type { LogItem } from "./types";
 import { useAuth } from "@/shared/context/AuthContext";
 import { DEEPAUDIT_ACTION_CODES } from "@/shared/focus/focusPermission";
@@ -164,57 +164,115 @@ function AgentAuditPageContent() {
 
     try {
       console.log(`[AgentAudit] Fetching historical events for task ${taskId}...`);
-      const events = await getAgentEvents(taskId, { limit: 500 });
-      console.log(`[AgentAudit] Received ${events.length} events from API`);
-
-      if (events.length === 0) {
-        console.log('[AgentAudit] No historical events found');
-        return 0;
-      }
-
-      // 按 sequence 排序确保顺序正确
-      events.sort((a, b) => a.sequence - b.sequence);
-
-      // 转换事件为日志项
+      const pageSize = 1000;
+      const historicalLogs: LogItem[] = [];
+      const progressIndexByKey = new Map<string, number>();
+      let cursor = 0;
+      let totalEvents = 0;
       let processedCount = 0;
-      events.forEach((event: AgentEvent) => {
-        // 更新最后的事件序列号
-        if (event.sequence > lastEventSequenceRef.current) {
-          lastEventSequenceRef.current = event.sequence;
+
+      const phaseLabelMap: Record<string, string> = {
+        planning: 'Planning',
+        indexing: 'Indexing',
+        reconnaissance: 'Reconnaissance',
+        analysis: 'Analysis',
+        verification: 'Verification',
+        reporting: 'Reporting',
+      };
+      const formatLogTime = (timestamp?: string) =>
+        timestamp
+          ? new Date(timestamp).toLocaleTimeString('en-US', {
+              hour12: false,
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+            })
+          : new Date().toLocaleTimeString('en-US', {
+              hour12: false,
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+            });
+      const resolveAgentIdentity = (event: AgentEvent) => {
+        const metadata = event.metadata || {};
+        const phase = String(event.phase || '').trim().toLowerCase();
+        const phaseLabel = phase ? (phaseLabelMap[phase] || phase) : undefined;
+        return {
+          agentId: String(metadata.agent_id || '').trim() || undefined,
+          agentName:
+            (metadata.agent_name as string) ||
+            (metadata.agent as string) ||
+            phaseLabel ||
+            undefined,
+        };
+      };
+      const appendLog = (payload: Omit<LogItem, 'id' | 'time'>, event: AgentEvent) => {
+        historicalLogs.push({
+          ...createLogItem(payload),
+          id: event.id ? `event-${event.id}` : `event-${event.sequence}`,
+          time: formatLogTime(event.timestamp),
+        });
+      };
+      const upsertProgressLog = (
+        progressKey: string,
+        title: string,
+        agentName: string | undefined,
+        agentId: string | undefined,
+        event: AgentEvent,
+      ) => {
+        const existingIndex = progressIndexByKey.get(progressKey);
+        if (existingIndex == null) {
+          const log: LogItem = {
+            ...createLogItem({
+              type: 'progress',
+              title,
+              progressKey,
+              agentName,
+              agentId,
+            }),
+            id: event.id ? `event-${event.id}` : `event-${event.sequence}`,
+            time: formatLogTime(event.timestamp),
+          };
+          progressIndexByKey.set(progressKey, historicalLogs.length);
+          historicalLogs.push(log);
+          return;
         }
+        historicalLogs[existingIndex] = {
+          ...historicalLogs[existingIndex],
+          title,
+          agentName,
+          agentId,
+          time: formatLogTime(event.timestamp),
+        };
+      };
+      const processBatch = (events: AgentEvent[]) => {
+        events.forEach((event: AgentEvent) => {
+          if (event.sequence > lastEventSequenceRef.current) {
+            lastEventSequenceRef.current = event.sequence;
+          }
 
-        // 提取 agent_name
-        const agentName = (event.metadata?.agent_name as string) ||
-          (event.metadata?.agent as string) ||
-          undefined;
+          const { agentId, agentName } = resolveAgentIdentity(event);
 
-        // 根据事件类型创建日志项
-        switch (event.event_type) {
-          // LLM 思考相关
-          case 'thinking':
-          case 'llm_thought':
-          case 'llm_decision':
-          case 'llm_start':
-          case 'llm_complete':
-          case 'llm_action':
-          case 'llm_observation':
-            dispatch({
-              type: 'ADD_LOG',
-              payload: {
+          switch (event.event_type) {
+            case 'thinking':
+            case 'llm_thought':
+            case 'llm_decision':
+            case 'llm_start':
+            case 'llm_complete':
+            case 'llm_action':
+            case 'llm_observation':
+              appendLog({
                 type: 'thinking',
                 title: event.message?.slice(0, 100) + (event.message && event.message.length > 100 ? '...' : '') || 'Thinking...',
                 content: event.message || (event.metadata?.thought as string) || '',
                 agentName,
-              }
-            });
-            processedCount++;
-            break;
+                agentId,
+              }, event);
+              processedCount++;
+              break;
 
-          // 工具调用相关
-          case 'tool_call':
-            dispatch({
-              type: 'ADD_LOG',
-              payload: {
+            case 'tool_call':
+              appendLog({
                 type: 'tool',
                 title: `Tool: ${event.tool_name || 'unknown'}`,
                 content: event.tool_input ? `Input:\n${JSON.stringify(event.tool_input, null, 2)}` : '',
@@ -223,15 +281,13 @@ function AgentAuditPageContent() {
                   status: 'running' as const,
                 },
                 agentName,
-              }
-            });
-            processedCount++;
-            break;
+                agentId,
+              }, event);
+              processedCount++;
+              break;
 
-          case 'tool_result':
-            dispatch({
-              type: 'ADD_LOG',
-              payload: {
+            case 'tool_result':
+              appendLog({
                 type: 'tool',
                 title: `Completed: ${event.tool_name || 'unknown'}`,
                 content: event.tool_output
@@ -243,88 +299,75 @@ function AgentAuditPageContent() {
                   status: 'completed' as const,
                 },
                 agentName,
-              }
-            });
-            processedCount++;
-            break;
+                agentId,
+              }, event);
+              processedCount++;
+              break;
 
-          // 发现漏洞 - 🔥 包含所有 finding 相关事件类型
-          case 'finding':
-          case 'finding_new':
-          case 'finding_verified':
-            dispatch({
-              type: 'ADD_LOG',
-              payload: {
+            case 'finding':
+            case 'finding_new':
+            case 'finding_verified':
+              appendLog({
                 type: 'finding',
                 title: event.message || (event.metadata?.title as string) || 'Vulnerability found',
                 severity: (event.metadata?.severity as string) || 'medium',
                 agentName,
-              }
-            });
-            processedCount++;
-            break;
+                agentId,
+              }, event);
+              processedCount++;
+              break;
 
-          // 调度和阶段相关
-          case 'dispatch':
-          case 'dispatch_complete':
-          case 'phase_start':
-          case 'phase_complete':
-          case 'node_start':
-          case 'node_complete':
-            dispatch({
-              type: 'ADD_LOG',
-              payload: {
+            case 'dispatch':
+            case 'dispatch_complete':
+            case 'phase_start':
+            case 'phase_complete':
+            case 'node_start':
+            case 'node_complete':
+              appendLog({
                 type: 'dispatch',
                 title: event.message || `Event: ${event.event_type}`,
                 agentName,
-              }
-            });
-            processedCount++;
-            break;
+                agentId,
+              }, event);
+              processedCount++;
+              break;
 
-          // 任务完成
-          case 'task_complete':
-            dispatch({
-              type: 'ADD_LOG',
-              payload: {
+            case 'task_complete':
+              appendLog({
                 type: 'info',
                 title: event.message || 'Task completed',
                 agentName,
-              }
-            });
-            processedCount++;
-            break;
+                agentId,
+              }, event);
+              processedCount++;
+              break;
 
-          // 任务错误
-          case 'task_error':
-            dispatch({
-              type: 'ADD_LOG',
-              payload: {
+            case 'task_error':
+              appendLog({
                 type: 'error',
                 title: event.message || 'Task error',
                 agentName,
-              }
-            });
-            processedCount++;
-            break;
+                agentId,
+              }, event);
+              processedCount++;
+              break;
 
-          // 任务取消
-          case 'task_cancel':
-            dispatch({
-              type: 'ADD_LOG',
-              payload: {
+            case 'task_cancel':
+              appendLog({
                 type: 'info',
                 title: event.message || 'Task cancelled',
                 agentName,
-              }
-            });
-            processedCount++;
-            break;
+                agentId,
+              }, event);
+              processedCount++;
+              break;
 
-          // 进度事件
-          case 'progress':
-            // 进度事件使用 UPDATE_OR_ADD_PROGRESS_LOG 来更新而不是添加
-            if (event.message) {
+            case 'progress':
+            case 'info':
+            case 'complete':
+            case 'error':
+            case 'warning': {
+              const message = event.message || `${event.event_type}`;
               const progressPatterns: { pattern: RegExp; key: string }[] = [
                 { pattern: /索引进度[:：]?\s*\d+\/\d+/, key: 'index_progress' },
                 { pattern: /嵌入进度[:：]?\s*\d+\/\d+/, key: 'embed_progress' },
@@ -334,97 +377,65 @@ function AgentAuditPageContent() {
                 { pattern: /扫描进度[:：]?\s*\d+/, key: 'scan_progress' },
                 { pattern: /分析进度[:：]?\s*\d+/, key: 'analyze_progress' },
               ];
-              const matchedProgress = progressPatterns.find(p => p.pattern.test(event.message || ''));
+              const matchedProgress = progressPatterns.find((p) => p.pattern.test(message));
               if (matchedProgress) {
-                dispatch({
-                  type: 'UPDATE_OR_ADD_PROGRESS_LOG',
-                  payload: {
-                    progressKey: matchedProgress.key,
-                    title: event.message,
-                    agentName,
-                  }
-                });
+                upsertProgressLog(matchedProgress.key, message, agentName, agentId, event);
               } else {
-                dispatch({
-                  type: 'ADD_LOG',
-                  payload: {
-                    type: 'info',
-                    title: event.message,
-                    agentName,
-                  }
-                });
-              }
-              processedCount++;
-            }
-            break;
-
-          // 信息和错误
-          case 'info':
-          case 'complete':
-          case 'error':
-          case 'warning': {
-            const message = event.message || `${event.event_type}`;
-            // 检测进度类型消息
-            const progressPatterns: { pattern: RegExp; key: string }[] = [
-              { pattern: /索引进度[:：]?\s*\d+\/\d+/, key: 'index_progress' },
-              { pattern: /嵌入进度[:：]?\s*\d+\/\d+/, key: 'embed_progress' },
-              { pattern: /克隆进度[:：]?\s*\d+%/, key: 'clone_progress' },
-              { pattern: /下载进度[:：]?\s*\d+%/, key: 'download_progress' },
-              { pattern: /上传进度[:：]?\s*\d+%/, key: 'upload_progress' },
-              { pattern: /扫描进度[:：]?\s*\d+/, key: 'scan_progress' },
-              { pattern: /分析进度[:：]?\s*\d+/, key: 'analyze_progress' },
-            ];
-            const matchedProgress = progressPatterns.find(p => p.pattern.test(message));
-            if (matchedProgress) {
-              dispatch({
-                type: 'UPDATE_OR_ADD_PROGRESS_LOG',
-                payload: {
-                  progressKey: matchedProgress.key,
-                  title: message,
-                  agentName,
-                }
-              });
-            } else {
-              dispatch({
-                type: 'ADD_LOG',
-                payload: {
+                appendLog({
                   type: event.event_type === 'error' ? 'error' : 'info',
                   title: message,
                   agentName,
-                }
-              });
+                  agentId,
+                }, event);
+              }
+              processedCount++;
+              break;
             }
-            processedCount++;
-            break;
-          }
 
-          // 跳过 thinking_token 等高频事件（它们不会被保存到数据库）
-          case 'thinking_token':
-          case 'thinking_start':
-          case 'thinking_end':
-            // 这些事件是流式传输用的，不保存到数据库
-            break;
+            case 'thinking_token':
+            case 'thinking_start':
+            case 'thinking_end':
+              break;
 
-          default:
-            // 其他事件类型也显示为 info（如果有消息）
-            if (event.message) {
-              dispatch({
-                type: 'ADD_LOG',
-                payload: {
+            default:
+              if (event.message) {
+                appendLog({
                   type: 'info',
                   title: event.message,
                   agentName,
-                }
-              });
-              processedCount++;
-            }
+                  agentId,
+                }, event);
+                processedCount++;
+              }
+          }
+        });
+      };
+
+      while (true) {
+        const batch = await getAgentEvents(taskId, { after_sequence: cursor, limit: pageSize });
+        if (batch.length === 0) {
+          break;
         }
-      });
+        totalEvents += batch.length;
+        processBatch(batch);
+        cursor = batch[batch.length - 1]?.sequence || cursor;
+        dispatch({ type: 'SET_LOGS', payload: [...historicalLogs] });
+        setAfterSequence(lastEventSequenceRef.current);
+        if (batch.length < pageSize) {
+          break;
+        }
+      }
+
+      console.log(`[AgentAudit] Received ${totalEvents} events from API`);
+
+      if (totalEvents === 0) {
+        console.log('[AgentAudit] No historical events found');
+        return 0;
+      }
 
       console.log(`[AgentAudit] Processed ${processedCount} events into logs, last sequence: ${lastEventSequenceRef.current}`);
-      // 🔥 更新 afterSequence state，触发 streamOptions 重新计算
-      setAfterSequence(lastEventSequenceRef.current);
-      return events.length;
+      dispatch({ type: 'SET_LOGS', payload: historicalLogs });
+      return totalEvents;
     } catch (err) {
       console.error('[AgentAudit] Failed to load historical events:', err);
       return 0;
@@ -438,9 +449,21 @@ function AgentAuditPageContent() {
     includeToolCalls: true,
     // 🔥 使用 state 变量，确保在历史事件加载后能获取最新值
     afterSequence: afterSequence,
-    onEvent: (event: { type: string; message?: string; metadata?: { agent_name?: string; agent?: string } }) => {
-      if (event.metadata?.agent_name) {
-        setCurrentAgentName(event.metadata.agent_name);
+    onEvent: (event: { type: string; message?: string; phase?: string; metadata?: { agent_name?: string; agent?: string } }) => {
+      const phaseFallback = event.phase
+        ? ({
+            planning: 'Planning',
+            indexing: 'Indexing',
+            reconnaissance: 'Reconnaissance',
+            analysis: 'Analysis',
+            verification: 'Verification',
+            reporting: 'Reporting',
+          } as Record<string, string>)[String(event.phase).toLowerCase()] || event.phase
+        : undefined;
+      const currentAgentName = event.metadata?.agent_name || phaseFallback || getCurrentAgentName() || undefined;
+
+      if (currentAgentName) {
+        setCurrentAgentName(currentAgentName);
       }
 
       const dispatchEvents = ['dispatch', 'dispatch_complete', 'node_start', 'phase_start', 'phase_complete'];
@@ -451,7 +474,7 @@ function AgentAuditPageContent() {
           payload: {
             type: 'dispatch',
             title: event.message || `Agent dispatch: ${event.metadata?.agent || 'unknown'}`,
-            agentName: getCurrentAgentName() || undefined,
+            agentName: currentAgentName,
           }
         });
         debouncedLoadAgentTree();
@@ -483,7 +506,7 @@ function AgentAuditPageContent() {
             payload: {
               progressKey: matchedProgress.key,
               title: message,
-              agentName: getCurrentAgentName() || undefined,
+              agentName: currentAgentName,
             }
           });
         } else {
@@ -493,7 +516,7 @@ function AgentAuditPageContent() {
             payload: {
               type: event.type === 'error' ? 'error' : 'info',
               title: message,
-              agentName: getCurrentAgentName() || undefined,
+              agentName: currentAgentName,
             }
           });
         }
@@ -675,7 +698,7 @@ function AgentAuditPageContent() {
   // Stream connection - 🔥 在历史事件加载完成后连接
   useEffect(() => {
     // 等待历史事件加载完成，且任务正在运行
-    if (!taskId || !task?.status || task.status !== 'running') return;
+    if (!taskId || !task?.status || !ACTIVE_TASK_STATUSES.has(String(task.status).toLowerCase())) return;
 
     // 🔥 使用 state 变量确保在历史事件加载完成后才连接
     if (!historicalEventsLoaded) return;

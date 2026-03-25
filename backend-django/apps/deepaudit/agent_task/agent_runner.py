@@ -7,6 +7,7 @@ from typing import Any, Dict
 from asgiref.sync import sync_to_async
 
 from apps.deepaudit.agent_task.agent_task_model import AgentFinding
+from apps.deepaudit.constants import AGENT_PHASE_PLANNING, AGENT_PHASE_REPORTING
 from apps.deepaudit.agent_engine.agents import (
     AnalysisAgent,
     OrchestratorAgent,
@@ -116,10 +117,13 @@ def _collect_project_info(project_root: str, input_data: Dict[str, Any]) -> Dict
         "directories": sorted(collected_dirs)[:80],
     }
 
+    effective_file_count = len(target_files) if scope_limited else file_count
+
     return {
         "name": input_data.get("project_name") or Path(project_root).name,
         "root": project_root,
-        "file_count": file_count,
+        "file_count": effective_file_count,
+        "project_file_count": file_count,
         "languages": sorted(languages),
         "structure": structure,
     }
@@ -314,6 +318,17 @@ def _normalize_finding_payload(item: Dict[str, Any]) -> Dict[str, Any] | None:
     line_start = item.get("line_start") or item.get("line") or item.get("line_number")
     line_end = item.get("line_end") or line_start
     recommendation = item.get("recommendation") or item.get("suggestion") or ""
+    verdict = str(item.get("verdict") or item.get("status") or "").strip().lower()
+    status = "open"
+    if verdict == "false_positive":
+        status = "false_positive"
+    elif verdict in {"fixed", "wont_fix"}:
+        status = verdict
+
+    try:
+        confidence = float(item.get("confidence") or item.get("ai_confidence") or 0.8)
+    except (TypeError, ValueError):
+        confidence = 0.8
 
     return {
         "vulnerability_type": vulnerability_type,
@@ -324,9 +339,9 @@ def _normalize_finding_payload(item: Dict[str, Any]) -> Dict[str, Any] | None:
         "line_start": int(line_start) if str(line_start or "").isdigit() else None,
         "line_end": int(line_end) if str(line_end or "").isdigit() else None,
         "code_snippet": str(item.get("code_snippet") or "").strip() or None,
-        "is_verified": bool(item.get("is_verified")),
-        "ai_confidence": float(item.get("confidence") or item.get("ai_confidence") or 0.8),
-        "status": "open",
+        "is_verified": bool(item.get("is_verified")) or verdict in {"confirmed", "fixed", "wont_fix"},
+        "ai_confidence": confidence,
+        "status": status,
         "suggestion": str(recommendation).strip() or None,
         "poc": {
             "poc": item.get("poc"),
@@ -335,6 +350,8 @@ def _normalize_finding_payload(item: Dict[str, Any]) -> Dict[str, Any] | None:
             "impact": item.get("impact"),
             "cwe_id": item.get("cwe_id"),
             "cvss_score": item.get("cvss_score"),
+            "verdict": verdict or None,
+            "verified_at": item.get("verified_at"),
         },
     }
 
@@ -353,6 +370,17 @@ def _persist_findings(task_id: str, findings: list[Dict[str, Any]]) -> int:
     return created
 
 
+@sync_to_async
+def _initialize_task_runtime_state(task_id: str, total_files: int) -> None:
+    from apps.deepaudit.agent_task.agent_task_model import AgentTask
+
+    AgentTask.objects.filter(id=task_id).update(
+        total_files=total_files,
+        current_phase=AGENT_PHASE_PLANNING,
+        current_step="开始 planning 阶段",
+    )
+
+
 async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any], workspace: str):
     """
     异步运行 OrchestratorAgent。
@@ -363,6 +391,10 @@ async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any],
 
     llm_service = _build_llm_service(input_data)
     normalized_input = _normalize_agent_input(task_id, input_data, workspace)
+    await _initialize_task_runtime_state(
+        task_id,
+        int(normalized_input.get("project_info", {}).get("file_count") or 0),
+    )
     tools = await _initialize_tools(workspace, llm_service, input_data)
 
     recon_agent = ReconAgent(
@@ -392,7 +424,7 @@ async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any],
     )
 
     try:
-        await event_emitter.emit_phase_start("planning", "Starting Orchestrator Agent planning phase")
+        await event_emitter.emit_phase_start(AGENT_PHASE_PLANNING, "Starting Orchestrator Agent planning phase")
         result = await orchestrator.run(normalized_input)
         if result is None:
             raise RuntimeError("Orchestrator returned no result")
@@ -413,14 +445,24 @@ async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any],
             findings = report_findings
             result_data["findings"] = findings
 
+        current_phase = event_emitter.current_phase
+        if current_phase and current_phase != AGENT_PHASE_REPORTING:
+            await event_emitter.emit_phase_complete(current_phase, f"{current_phase} 阶段完成")
+
+        await event_emitter.emit_phase_start(AGENT_PHASE_REPORTING, "开始整理审计结果并生成报告")
+
         if findings:
             persisted_count = await _persist_findings(task_id, findings)
             logger.info("Persisted %s findings for task %s", persisted_count, task_id)
 
+        from apps.deepaudit.agent_task.agent_task_services import refresh_task_snapshot
+
+        await sync_to_async(refresh_task_snapshot)(task_id)
+        await event_emitter.emit_phase_complete(AGENT_PHASE_REPORTING, "报告生成完成")
         await event_emitter.emit_task_complete(
             findings_count=len(findings),
             duration_ms=result.duration_ms or 0,
-            message="Orchestrator run completed.",
+            message="Orchestrator run completed. 报告生成完成。",
         )
     except Exception as e:
         logger.error(f"Agent Execution failed for task {task_id}: {e}", exc_info=True)

@@ -36,7 +36,9 @@ def create_agent_task(request, data: AgentTaskCreateSchema):
 
 @router.get('/{task_id}', response=AgentTaskSchema, summary='获取 Agent 任务详情')
 def get_agent_task(request, task_id: str):
-    return agent_task_services.serialize_task(agent_task_services.get_task(request.auth, task_id))
+    instance = agent_task_services.get_task(request.auth, task_id)
+    instance = agent_task_services.refresh_task_snapshot(instance) or instance
+    return agent_task_services.serialize_task(instance)
 
 
 @router.get('/{task_id}/stream', summary='流式获取 Agent 任务事件')
@@ -78,14 +80,25 @@ def update_agent_finding(request, task_id: str, finding_id: str, data: AgentFind
 
 @router.get('/{task_id}/summary', response=AgentSummarySchema, summary='获取 Agent 任务摘要')
 def get_agent_summary(request, task_id: str):
-    return agent_task_services.build_summary(agent_task_services.get_task(request.auth, task_id))
+    instance = agent_task_services.get_task(request.auth, task_id)
+    instance = agent_task_services.refresh_task_snapshot(instance) or instance
+    return agent_task_services.build_summary(instance)
 
 
 @router.get('/{task_id}/checkpoints', response=list[AgentCheckpointSchema], summary='获取 Agent 任务检查点')
 def list_agent_checkpoints(request, task_id: str):
-    return agent_task_services.build_checkpoints(agent_task_services.get_task(request.auth, task_id))
+    instance = agent_task_services.get_task(request.auth, task_id)
+    instance = agent_task_services.refresh_task_snapshot(instance) or instance
+    return agent_task_services.build_checkpoints(instance)
 
 
 @router.get('/{task_id}/tree', response=list[AgentTreeNodeSchema], summary='获取 Agent 树')
 def get_agent_tree(request, task_id: str):
-    return agent_task_services.build_tree(agent_task_services.get_task(request.auth, task_id))
+    instance = agent_task_services.get_task(request.auth, task_id)
+    instance = agent_task_services.refresh_task_snapshot(instance) or instance
+    return agent_task_services.build_tree(instance)
+
+
+@router.get('/{task_id}/report', summary='导出 Agent 报告')
+def export_agent_report(request, task_id: str, format: str = 'markdown'):
+    return agent_task_services.export_agent_report_response(request.auth, task_id, format=format)

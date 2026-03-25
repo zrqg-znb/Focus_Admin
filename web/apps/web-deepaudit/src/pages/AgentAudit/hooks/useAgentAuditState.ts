@@ -13,7 +13,7 @@ import type {
   AgentTreeResponse,
   ConnectionStatus,
 } from "../types";
-import { createLogItem, filterLogsByAgent, buildAgentTree } from "../utils";
+import { ACTIVE_TASK_STATUSES, createLogItem, filterLogsByAgent, buildAgentTree } from "../utils";
 import type { AgentTreeNode } from "@/shared/api/agentTasks";
 
 // ============ Initial State ============
@@ -304,7 +304,7 @@ export function useAgentAuditState() {
   }, [state.logs, state.selectedAgentId, treeNodes, state.showAllLogs]);
 
   const isRunning = useMemo(() => {
-    return state.task?.status === 'running' || state.task?.status === 'pending';
+    return ACTIVE_TASK_STATUSES.has(String(state.task?.status || '').toLowerCase());
   }, [state.task?.status]);
 
   const isComplete = useMemo(() => {

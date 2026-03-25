@@ -46,7 +46,6 @@ import {
   Clock,
 } from "lucide-react";
 import { apiClient } from "@/shared/api/serverClient";
-import { downloadAgentReport } from "@/shared/api/agentTasks";
 import type { AgentTask, AgentFinding } from "@/shared/api/agentTasks";
 
 // ============ Types ============

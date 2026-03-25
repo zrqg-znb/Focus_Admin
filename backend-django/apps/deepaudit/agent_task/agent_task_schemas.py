@@ -118,9 +118,11 @@ class AgentSummarySchema(Schema):
     progress_percentage: float = 0.0
     security_score: float = 0.0
     quality_score: float = 0.0
+    statistics: dict[str, int] = Field(default_factory=dict)
     severity_distribution: dict[str, int] = Field(default_factory=dict)
     vulnerability_types: dict[str, int] = Field(default_factory=dict)
     phases_completed: list[str] = Field(default_factory=list)
+    duration_seconds: float | None = None
 
 
 class AgentCheckpointSchema(Schema):
@@ -133,8 +135,18 @@ class AgentCheckpointSchema(Schema):
 
 class AgentTreeNodeSchema(Schema):
     id: str
-    label: str
-    phase: str
+    agent_id: str
+    agent_name: str
+    agent_type: str
+    parent_agent_id: str | None = None
+    depth: int = 0
+    task_description: str | None = None
+    knowledge_modules: list[str] = Field(default_factory=list)
     status: str
-    progress: float = 0.0
+    result_summary: str | None = None
+    findings_count: int = 0
+    iterations: int = 0
+    tokens_used: int = 0
+    tool_calls: int = 0
+    duration_ms: int | None = None
     children: list['AgentTreeNodeSchema'] = Field(default_factory=list)

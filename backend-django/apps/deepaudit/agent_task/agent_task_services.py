@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections import Counter
+from pathlib import Path
 
 from asgiref.sync import sync_to_async
 from django.http import HttpResponse, StreamingHttpResponse
@@ -10,21 +12,22 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from ninja.errors import HttpError
 
-from apps.deepaudit.analysis_payload import get_analysis_quality_score, get_analysis_security_score
 from apps.deepaudit.agent_task.agent_task_model import AgentEvent, AgentFinding, AgentTask
 from apps.deepaudit.constants import (
     AGENT_PHASE_ANALYSIS,
     AGENT_PHASE_CHOICES,
     AGENT_PHASE_INDEXING,
     AGENT_PHASE_PLANNING,
+    AGENT_PHASE_RECONNAISSANCE,
     AGENT_PHASE_REPORTING,
     AGENT_PHASE_VERIFICATION,
     FINDING_STATUS_CHOICES,
 )
+from apps.deepaudit.heuristics import normalize_severity_weight
 from apps.deepaudit.permissions import require_project_role, serialize_user_brief
 from apps.deepaudit.realtime import push_task_event
 from apps.deepaudit.reporting import ReportBuilder
-from apps.deepaudit.runtime import cleanup_runtime_workspace, docker_available, prepare_workspace, run_heuristic_scan
+from apps.deepaudit.runtime import cleanup_runtime_workspace, docker_available, prepare_workspace
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact
 from apps.deepaudit.serialization import format_datetime_text, normalize_json_payload
 from apps.deepaudit.storage import save_json_artifact, save_report_file
@@ -32,6 +35,7 @@ from apps.deepaudit.storage import save_json_artifact, save_report_file
 PHASE_LABELS = {
     AGENT_PHASE_PLANNING: 'Planning',
     AGENT_PHASE_INDEXING: 'Indexing',
+    AGENT_PHASE_RECONNAISSANCE: 'Reconnaissance',
     AGENT_PHASE_ANALYSIS: 'Analysis',
     AGENT_PHASE_VERIFICATION: 'Verification',
     AGENT_PHASE_REPORTING: 'Reporting',
@@ -62,6 +66,253 @@ TOOL_EVENT_TYPES = {
     'tool_call_output',
     'tool_call_end',
 }
+
+TASK_STATUS_BY_PHASE = {
+    AGENT_PHASE_PLANNING: 'planning',
+    AGENT_PHASE_INDEXING: 'indexing',
+    AGENT_PHASE_RECONNAISSANCE: 'running',
+    AGENT_PHASE_ANALYSIS: 'analyzing',
+    AGENT_PHASE_VERIFICATION: 'verifying',
+    AGENT_PHASE_REPORTING: 'reporting',
+}
+
+REPORT_LANGUAGE_BY_EXTENSION = {
+    '.c': 'c',
+    '.cpp': 'cpp',
+    '.cs': 'csharp',
+    '.go': 'go',
+    '.java': 'java',
+    '.js': 'javascript',
+    '.jsx': 'javascript',
+    '.kt': 'kotlin',
+    '.php': 'php',
+    '.py': 'python',
+    '.rb': 'ruby',
+    '.rs': 'rust',
+    '.sh': 'bash',
+    '.sql': 'sql',
+    '.ts': 'typescript',
+    '.tsx': 'typescript',
+    '.vue': 'vue',
+}
+
+TOOL_COUNT_EVENT_TYPES = {'tool_call', 'tool_start', 'tool_call_start'}
+UNSET = object()
+
+
+def _to_int(value, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _report_language_from_path(file_path: str | None) -> str:
+    suffix = Path(str(file_path or '')).suffix.lower()
+    return REPORT_LANGUAGE_BY_EXTENSION.get(suffix, '')
+
+
+def _severity_distribution_from_findings(findings: list[AgentFinding]) -> dict[str, int]:
+    distribution = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
+    for finding in findings:
+        severity = str(getattr(finding, 'severity', '') or '').strip().lower()
+        if severity in distribution:
+            distribution[severity] += 1
+    return distribution
+
+
+def _vulnerability_types_from_findings(findings: list[AgentFinding]) -> dict[str, int]:
+    counter: Counter[str] = Counter()
+    for finding in findings:
+        vuln_type = str(getattr(finding, 'vulnerability_type', '') or '').strip() or 'unknown'
+        counter[vuln_type] += 1
+    return dict(counter)
+
+
+def _calculate_task_scores(findings: list[AgentFinding]) -> tuple[float, float]:
+    penalty = sum(
+        normalize_severity_weight(str(getattr(finding, 'severity', '') or '').strip().lower())
+        for finding in findings
+    )
+    quality_score = max(0.0, 100.0 - penalty)
+    security_score = max(0.0, 100.0 - penalty * 1.2)
+    return round(quality_score, 2), round(security_score, 2)
+
+
+def _duration_seconds(instance: AgentTask) -> float | None:
+    if not instance.started_at or not instance.completed_at:
+        return None
+    return round(max((instance.completed_at - instance.started_at).total_seconds(), 0.0), 2)
+
+
+FILE_COUNT_PATTERNS = (
+    re.compile(r'包含\s*(\d+)\s*个指定文件'),
+    re.compile(r'审计范围(?:限定)?为\s*(\d+)\s*个指定文件'),
+    re.compile(r'搜索了\s*(\d+)\s*个文件'),
+    re.compile(r'扫描(?:了)?\s*(\d+)\s*个文件'),
+    re.compile(r'分析(?:了)?\s*(\d+)\s*个文件'),
+    re.compile(r'(\d+)\s*/\s*(\d+)\s*个文件'),
+)
+
+
+def _extract_file_count_hints(message: str | None) -> tuple[int, int]:
+    text = str(message or '').strip()
+    if not text:
+        return 0, 0
+
+    current = 0
+    total = 0
+    for pattern in FILE_COUNT_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        groups = match.groups()
+        if len(groups) == 1:
+            total = max(total, _to_int(groups[0]))
+            current = max(current, total)
+        elif len(groups) >= 2:
+            current = max(current, _to_int(groups[0]))
+            total = max(total, _to_int(groups[1]))
+    return current, total
+
+
+def _serialize_report_payload(instance: AgentTask) -> dict:
+    findings = list(instance.findings.filter(is_deleted=False).order_by('-sys_create_datetime'))
+    return normalize_json_payload(
+        {
+            'task': serialize_task(instance),
+            'summary': build_summary(instance, findings=findings),
+            'checkpoints': build_checkpoints(instance),
+            'findings': [serialize_finding(item) for item in findings],
+            'events': [serialize_event(item) for item in instance.events.filter(is_deleted=False).order_by('sequence')[:1000]],
+        }
+    )
+
+
+def _render_agent_markdown_report(instance: AgentTask, payload: dict) -> str:
+    task = payload.get('task') or {}
+    summary = payload.get('summary') or {}
+    findings = payload.get('findings') or []
+    severity_distribution = summary.get('severity_distribution') or {}
+    vulnerability_types = summary.get('vulnerability_types') or {}
+
+    lines = [
+        '# DeepAudit 代码审计报告',
+        '',
+        f"- 项目名称: {task.get('project_name') or instance.project.name}",
+        f"- 任务 ID: {task.get('id') or instance.id}",
+        f"- 任务名称: {task.get('name') or instance.name or 'Agent 审计任务'}",
+        f"- 任务状态: {task.get('status') or instance.status}",
+        f"- 当前阶段: {task.get('current_phase') or instance.current_phase or AGENT_PHASE_REPORTING}",
+        f"- 生成时间: {format_datetime_text(timezone.now())}",
+        '',
+        '## 审计概览',
+        '',
+        f"- 安全评分: {task.get('security_score', 0):.2f} / 100",
+        f"- 质量评分: {task.get('quality_score', 0):.2f} / 100",
+        f"- 漏洞总数: {task.get('findings_count', len(findings))}",
+        f"- 已验证漏洞: {task.get('verified_count', 0)}",
+        f"- 误报数量: {task.get('false_positive_count', 0)}",
+        f"- 工具调用: {task.get('tool_calls_count', 0)}",
+        f"- Token 消耗: {task.get('tokens_used', 0)}",
+        '',
+        '## 严重级别分布',
+        '',
+        f"- Critical: {severity_distribution.get('critical', 0)}",
+        f"- High: {severity_distribution.get('high', 0)}",
+        f"- Medium: {severity_distribution.get('medium', 0)}",
+        f"- Low: {severity_distribution.get('low', 0)}",
+        '',
+        '## 漏洞类型分布',
+        '',
+    ]
+
+    if vulnerability_types:
+        for vuln_type, count in sorted(vulnerability_types.items(), key=lambda item: (-item[1], item[0])):
+            lines.append(f"- {vuln_type}: {count}")
+    else:
+        lines.append('- 未发现漏洞类型统计')
+
+    lines.extend(['', '## 审计结论', ''])
+    if findings:
+        high_risk = severity_distribution.get('critical', 0) + severity_distribution.get('high', 0)
+        lines.append(
+            f"本次 Agent 审计共识别 {len(findings)} 个问题，其中高风险问题 {high_risk} 个。"
+            ' 请优先修复 Critical / High 级别问题，并结合验证结果安排复测。'
+        )
+    else:
+        lines.append('本次 Agent 审计未输出有效漏洞发现，请结合运行日志复核分析范围与提示词配置。')
+
+    lines.extend(['', f"## 审计发现明细 ({len(findings)})", ''])
+    if not findings:
+        lines.append('当前没有可导出的漏洞明细。')
+        return '\n'.join(lines).strip() + '\n'
+
+    for index, finding in enumerate(findings, start=1):
+        severity = str(finding.get('severity') or 'unknown').upper()
+        file_path = finding.get('file_path') or '未知文件'
+        line_start = finding.get('line_start')
+        line_end = finding.get('line_end')
+        suggestion = finding.get('suggestion') or '建议结合业务上下文补充修复方案。'
+        description = finding.get('description') or '暂无详细描述。'
+        code_snippet = finding.get('code_snippet') or ''
+        vuln_type = finding.get('vulnerability_type') or 'unknown'
+        verdict = (finding.get('poc') or {}).get('verdict')
+        verification_label = '已验证' if finding.get('is_verified') else '待验证'
+        if verdict == 'false_positive' or finding.get('status') == 'false_positive':
+            verification_label = '误报'
+
+        lines.extend(
+            [
+                f"### {index}. {finding.get('title') or '未命名问题'} [{severity}]",
+                '',
+                f"- 漏洞类型: {vuln_type}",
+                f"- 文件位置: {file_path}",
+                f"- 行号范围: {line_start or '-'}{' - ' + str(line_end) if line_end and line_end != line_start else ''}",
+                f"- 验证状态: {verification_label}",
+                f"- 置信度: {_to_float(finding.get('ai_confidence') or 0.0):.2f}",
+                '',
+                '#### 问题描述',
+                '',
+                description,
+                '',
+                '#### 修复建议',
+                '',
+                suggestion,
+                '',
+            ]
+        )
+
+        if code_snippet:
+            language = _report_language_from_path(file_path)
+            lines.extend(
+                [
+                    '#### 证据片段',
+                    '',
+                    f"```{language}".rstrip(),
+                    code_snippet,
+                    '```',
+                    '',
+                ]
+            )
+
+    lines.extend(
+        [
+            '## 后续建议',
+            '',
+            '1. 优先处理 Critical / High 级别问题，并补充回归验证。',
+            '2. 对已验证问题补齐单元测试或安全回归用例，避免再次引入。',
+            '3. 若存在误报，请在任务中标记并沉淀规则，减少后续噪音。',
+        ]
+    )
+    return '\n'.join(lines).strip() + '\n'
 
 
 def serialize_finding(instance: AgentFinding) -> dict:
@@ -129,16 +380,21 @@ def serialize_stream_event(instance: AgentEvent, *, include_tool_calls: bool = T
     if metadata:
         payload['metadata'] = metadata
         for key in (
+            'agent_id',
             'accumulated',
             'agent_name',
+            'agent_type',
             'current',
             'findings_count',
+            'iteration',
             'node',
+            'parent_agent_id',
             'security_score',
             'status',
             'summary',
             'token',
             'total',
+            'tool_calls',
         ):
             if key in metadata and key not in payload:
                 payload[key] = metadata[key]
@@ -416,15 +672,148 @@ def update_finding_status(user, task_id: str, finding_id: str, status: str) -> d
     return serialize_finding(finding)
 
 
-def build_summary(instance: AgentTask) -> dict:
-    findings = instance.findings.filter(is_deleted=False)
-    severity_distribution = {
-        'critical': findings.filter(severity='critical').count(),
-        'high': findings.filter(severity='high').count(),
-        'medium': findings.filter(severity='medium').count(),
-        'low': findings.filter(severity='low').count(),
+def refresh_task_snapshot(
+    task_or_id: AgentTask | str,
+    *,
+    status=UNSET,
+    current_phase=UNSET,
+    current_step=UNSET,
+    completed_at=UNSET,
+    error_message=UNSET,
+) -> AgentTask | None:
+    if isinstance(task_or_id, AgentTask):
+        instance = AgentTask.objects.filter(id=task_or_id.id, is_deleted=False).first()
+    else:
+        instance = AgentTask.objects.filter(id=task_or_id, is_deleted=False).first()
+
+    if not instance:
+        return None
+
+    events = list(instance.events.filter(is_deleted=False).order_by('sequence'))
+    findings = list(instance.findings.filter(is_deleted=False))
+
+    severity_distribution = _severity_distribution_from_findings(findings)
+    vulnerability_types = _vulnerability_types_from_findings(findings)
+    quality_score, security_score = _calculate_task_scores(findings)
+
+    tokens_by_agent: dict[str, int] = {}
+    tools_by_agent: dict[str, int] = {}
+    iterations_by_agent: dict[str, int] = {}
+    target_file_count = len(instance.target_files or [])
+    indexed_files = instance.indexed_files
+    analyzed_files = instance.analyzed_files
+    total_files = max(instance.total_files, target_file_count)
+    latest_phase = instance.current_phase
+    latest_step = instance.current_step
+
+    for event in events:
+        metadata = dict(event.event_metadata or {})
+        agent_id = str(metadata.get('agent_id') or metadata.get('agent_name') or '').strip()
+        if agent_id:
+            tokens_by_agent[agent_id] = max(
+                tokens_by_agent.get(agent_id, 0),
+                _to_int(metadata.get('tokens_used'), _to_int(event.tokens_used, 0)),
+            )
+            tools_by_agent[agent_id] = max(
+                tools_by_agent.get(agent_id, 0),
+                _to_int(metadata.get('tool_calls'), 0),
+            )
+            iterations_by_agent[agent_id] = max(
+                iterations_by_agent.get(agent_id, 0),
+                _to_int(metadata.get('iteration'), 0),
+            )
+
+        if event.phase:
+            latest_phase = event.phase
+        if event.message:
+            latest_step = event.message
+
+        current = _to_int(metadata.get('current'))
+        total = _to_int(metadata.get('total'))
+        hinted_current, hinted_total = _extract_file_count_hints(event.message)
+        current = max(current, hinted_current)
+        total = max(total, hinted_total)
+        if total > 0:
+            total_files = max(total_files, total)
+        if event.phase == AGENT_PHASE_INDEXING and current > 0:
+            indexed_files = max(indexed_files, current)
+        if event.phase == AGENT_PHASE_ANALYSIS and current > 0:
+            analyzed_files = max(analyzed_files, current)
+
+        if event.event_type in {'dispatch', 'dispatch_complete'} and total > 0:
+            total_files = max(total_files, total)
+        if current > 0 and event.event_type in {'llm_observation', 'progress', 'info'}:
+            analyzed_files = max(analyzed_files, current)
+
+    if total_files <= 0 and target_file_count > 0:
+        total_files = target_file_count
+
+    if instance.status in TERMINAL_STATUSES and total_files > 0:
+        analysis_reached = any([
+            analyzed_files > 0,
+            findings,
+            any(event.event_type in {'dispatch', 'dispatch_complete', 'tool_call', 'tool_result'} for event in events),
+        ])
+        if analysis_reached:
+            analyzed_files = max(analyzed_files, total_files)
+        if indexed_files <= 0 and any(event.event_type in {'dispatch', 'dispatch_complete'} for event in events):
+            indexed_files = max(indexed_files, min(analyzed_files or total_files, total_files))
+
+    findings_count = len(findings)
+    files_with_findings = len({str(item.file_path).strip() for item in findings if str(item.file_path or '').strip()})
+    verified_count = sum(1 for item in findings if item.is_verified)
+    false_positive_count = sum(
+        1
+        for item in findings
+        if item.status == 'false_positive' or str((item.poc or {}).get('verdict') or '').strip().lower() == 'false_positive'
+    )
+
+    if status is UNSET:
+        computed_status = instance.status
+        if computed_status not in TERMINAL_STATUSES and latest_phase:
+            computed_status = TASK_STATUS_BY_PHASE.get(latest_phase, computed_status or 'running')
+    else:
+        computed_status = status
+
+    new_values = {
+        'current_phase': latest_phase if current_phase is UNSET else current_phase,
+        'current_step': latest_step if current_step is UNSET else current_step,
+        'status': computed_status,
+        'total_files': total_files,
+        'indexed_files': indexed_files,
+        'analyzed_files': analyzed_files,
+        'files_with_findings': files_with_findings,
+        'total_iterations': sum(iterations_by_agent.values()),
+        'tool_calls_count': sum(tools_by_agent.values()) or sum(1 for item in events if item.event_type in TOOL_COUNT_EVENT_TYPES),
+        'tokens_used': sum(tokens_by_agent.values()),
+        'findings_count': findings_count,
+        'verified_count': verified_count,
+        'false_positive_count': false_positive_count,
+        'critical_count': severity_distribution['critical'],
+        'high_count': severity_distribution['high'],
+        'medium_count': severity_distribution['medium'],
+        'low_count': severity_distribution['low'],
+        'quality_score': quality_score,
+        'security_score': security_score,
+        'completed_at': instance.completed_at if completed_at is UNSET else completed_at,
+        'error_message': instance.error_message if error_message is UNSET else error_message,
     }
-    vulnerability_types = Counter(findings.values_list('vulnerability_type', flat=True))
+
+    update_fields: list[str] = []
+    for field, value in new_values.items():
+        if getattr(instance, field) != value:
+            setattr(instance, field, value)
+            update_fields.append(field)
+
+    if update_fields:
+        instance.save(update_fields=update_fields + ['sys_update_datetime'])
+    return instance
+
+
+def build_summary(instance: AgentTask, *, findings: list[AgentFinding] | None = None) -> dict:
+    findings = findings or list(instance.findings.filter(is_deleted=False))
+    severity_distribution = _severity_distribution_from_findings(findings)
+    vulnerability_types = _vulnerability_types_from_findings(findings)
     phases_completed = list(
         instance.events.filter(event_type='phase_complete', is_deleted=False)
         .order_by('sequence')
@@ -438,63 +827,301 @@ def build_summary(instance: AgentTask) -> dict:
         'security_score': instance.security_score,
         'quality_score': instance.quality_score,
         'severity_distribution': severity_distribution,
-        'vulnerability_types': dict(vulnerability_types),
+        'vulnerability_types': vulnerability_types,
         'phases_completed': phases_completed,
+        'statistics': {
+            'total_files': instance.total_files,
+            'indexed_files': instance.indexed_files,
+            'analyzed_files': instance.analyzed_files,
+            'files_with_findings': instance.files_with_findings,
+            'total_chunks': instance.total_chunks,
+            'findings_count': instance.findings_count,
+            'verified_count': instance.verified_count,
+            'false_positive_count': instance.false_positive_count,
+        },
+        'duration_seconds': _duration_seconds(instance),
     }
 
 
 def build_checkpoints(instance: AgentTask) -> list[dict]:
-    checkpoints = []
-    latest_by_phase = {}
+    phase_order = [choice[0] for choice in AGENT_PHASE_CHOICES]
+    checkpoint_map = {
+        phase: {
+            'phase': phase,
+            'status': 'pending',
+            'sequence': 0,
+            'message': None,
+            'timestamp': None,
+        }
+        for phase in phase_order
+    }
+
     for event in instance.events.filter(is_deleted=False).order_by('sequence'):
-        if not event.phase:
+        phase = event.phase
+        if not phase or phase not in checkpoint_map:
             continue
-        latest_by_phase[event.phase] = event
-    for phase in [choice[0] for choice in AGENT_PHASE_CHOICES]:
-        event = latest_by_phase.get(phase)
-        if not event:
-            checkpoints.append({'phase': phase, 'status': 'pending', 'sequence': 0, 'message': None, 'timestamp': None})
+
+        checkpoint = checkpoint_map[phase]
+        if event.event_type == 'phase_start':
+            checkpoint['status'] = 'running'
+        elif event.event_type == 'phase_complete':
+            checkpoint['status'] = 'completed'
+        elif checkpoint['status'] == 'pending':
+            checkpoint['status'] = 'running'
+
+        if checkpoint['status'] != 'completed' or event.event_type in {'phase_start', 'phase_complete'}:
+            checkpoint['sequence'] = event.sequence
+            checkpoint['message'] = event.message
+            checkpoint['timestamp'] = format_datetime_text(event.sys_create_datetime)
+
+    active_phase = str(instance.current_phase or '').strip()
+    if active_phase in checkpoint_map:
+        if instance.status in {'failed', 'cancelled'} and checkpoint_map[active_phase]['status'] not in {'pending', 'completed'}:
+            checkpoint_map[active_phase]['status'] = instance.status
+            checkpoint_map[active_phase]['message'] = instance.current_step or checkpoint_map[active_phase]['message']
+        elif instance.status == 'completed' and checkpoint_map[active_phase]['status'] != 'completed':
+            checkpoint_map[active_phase]['status'] = 'completed'
+            checkpoint_map[active_phase]['message'] = instance.current_step or checkpoint_map[active_phase]['message']
+
+    inferred_completed: set[str] = {AGENT_PHASE_PLANNING}
+    has_file_scope = any([
+        instance.total_files > 0,
+        instance.indexed_files > 0,
+        instance.analyzed_files > 0,
+        instance.findings_count > 0,
+        instance.tokens_used > 0,
+        instance.tool_calls_count > 0,
+    ])
+    if has_file_scope or instance.status in TERMINAL_STATUSES:
+        inferred_completed.add(AGENT_PHASE_RECONNAISSANCE)
+
+    analysis_reached = any([
+        instance.analyzed_files > 0,
+        instance.findings_count > 0,
+        active_phase in {AGENT_PHASE_ANALYSIS, AGENT_PHASE_VERIFICATION, AGENT_PHASE_REPORTING},
+        instance.status in {'analyzing', 'verifying', 'reporting', 'completed', 'failed', 'cancelled'},
+    ])
+    if analysis_reached:
+        inferred_completed.add(AGENT_PHASE_ANALYSIS)
+
+    verification_reached = any([
+        instance.verification_level != 'analysis_only' and instance.status == 'completed',
+        instance.verified_count > 0,
+        instance.false_positive_count > 0,
+        active_phase in {AGENT_PHASE_VERIFICATION, AGENT_PHASE_REPORTING},
+        instance.status == 'verifying',
+    ])
+    if verification_reached:
+        inferred_completed.add(AGENT_PHASE_VERIFICATION)
+
+    reporting_reached = any([
+        active_phase == AGENT_PHASE_REPORTING,
+        instance.status == 'completed',
+        bool(instance.completed_at),
+    ])
+    if reporting_reached:
+        inferred_completed.add(AGENT_PHASE_REPORTING)
+
+    legacy_timestamp = format_datetime_text(instance.completed_at or instance.started_at or instance.sys_update_datetime)
+    for phase in phase_order:
+        checkpoint = checkpoint_map[phase]
+        if checkpoint['status'] != 'pending' or phase not in inferred_completed:
             continue
-        status = 'completed' if event.event_type == 'phase_complete' else 'running'
-        checkpoints.append(
+
+        inferred_status = 'completed'
+        if active_phase == phase and instance.status not in TERMINAL_STATUSES:
+            inferred_status = 'running'
+        checkpoint_map[phase] = {
+            **checkpoint,
+            'status': inferred_status,
+            'message': checkpoint['message'] or f'{PHASE_LABELS.get(phase, phase.title())} (legacy inferred)',
+            'timestamp': checkpoint['timestamp'] or legacy_timestamp,
+        }
+
+    return [checkpoint_map[phase] for phase in phase_order]
+
+
+def _normalize_tree_status(value: str | None, *, default: str = 'running') -> str:
+    status = str(value or '').strip().lower()
+    if status in {'completed', 'running', 'failed', 'waiting', 'created'}:
+        return status
+    if status in {'cancelled', 'stopped', 'stopping'}:
+        return 'failed'
+    return default
+
+
+def _merge_tree_status(current: str, incoming: str) -> str:
+    priority = {
+        'created': 1,
+        'waiting': 2,
+        'running': 3,
+        'completed': 4,
+        'failed': 5,
+    }
+    if priority.get(incoming, 0) >= priority.get(current, 0):
+        return incoming
+    return current
+
+
+def _build_agent_tree_from_events(instance: AgentTask) -> list[dict] | None:
+    events = list(instance.events.filter(is_deleted=False).order_by('sequence'))
+    nodes: dict[str, dict] = {}
+    has_agent_metadata = False
+
+    for event in events:
+        metadata = dict(event.event_metadata or {})
+        agent_id = str(metadata.get('agent_id') or '').strip()
+        if not agent_id:
+            continue
+
+        has_agent_metadata = True
+        node = nodes.setdefault(
+            agent_id,
             {
-                'phase': phase,
-                'status': status,
-                'sequence': event.sequence,
-                'message': event.message,
-                'timestamp': format_datetime_text(event.sys_create_datetime),
-            }
+                'id': agent_id,
+                'agent_id': agent_id,
+                'agent_name': str(metadata.get('agent_name') or agent_id),
+                'agent_type': str(metadata.get('agent_type') or 'orchestrator'),
+                'parent_agent_id': str(metadata.get('parent_agent_id') or '').strip() or None,
+                'depth': 0,
+                'task_description': str(metadata.get('task') or '').strip() or None,
+                'knowledge_modules': [],
+                'status': 'running',
+                'result_summary': None,
+                'findings_count': 0,
+                'iterations': 0,
+                'tokens_used': 0,
+                'tool_calls': 0,
+                'duration_ms': None,
+                'children': [],
+                '_first_sequence': event.sequence,
+                '_first_timestamp': event.sys_create_datetime,
+                '_last_timestamp': event.sys_create_datetime,
+            },
         )
-    return checkpoints
+
+        node['agent_name'] = str(metadata.get('agent_name') or node['agent_name'])
+        node['agent_type'] = str(metadata.get('agent_type') or node['agent_type'])
+        node['parent_agent_id'] = str(metadata.get('parent_agent_id') or node['parent_agent_id'] or '').strip() or None
+        if metadata.get('task'):
+            node['task_description'] = str(metadata.get('task')).strip() or node['task_description']
+        if metadata.get('summary'):
+            node['result_summary'] = str(metadata.get('summary')).strip() or node['result_summary']
+
+        node['iterations'] = max(node['iterations'], _to_int(metadata.get('iteration')))
+        node['tokens_used'] = max(node['tokens_used'], _to_int(metadata.get('tokens_used'), _to_int(event.tokens_used)))
+        node['tool_calls'] = max(node['tool_calls'], _to_int(metadata.get('tool_calls')))
+        node['findings_count'] = max(node['findings_count'], _to_int(metadata.get('findings_count')))
+        if event.sys_create_datetime:
+            node['_last_timestamp'] = event.sys_create_datetime
+
+        status_hint = metadata.get('status')
+        if event.event_type in {'error', 'task_error'}:
+            status_hint = 'failed'
+        elif event.event_type in {'task_complete'}:
+            status_hint = 'completed'
+        node['status'] = _merge_tree_status(
+            node['status'],
+            _normalize_tree_status(status_hint, default=node['status']),
+        )
+
+    if not has_agent_metadata:
+        return None
+
+    def resolve_depth(agent_id: str, stack: set[str] | None = None) -> int:
+        node = nodes[agent_id]
+        parent_id = node.get('parent_agent_id')
+        if not parent_id or parent_id not in nodes:
+            return 0
+        active_stack = stack or set()
+        if agent_id in active_stack:
+            return 0
+        active_stack.add(agent_id)
+        depth = resolve_depth(parent_id, active_stack) + 1
+        active_stack.remove(agent_id)
+        return depth
+
+    for node in nodes.values():
+        node['depth'] = resolve_depth(node['agent_id'])
+        first_timestamp = node.pop('_first_timestamp', None)
+        last_timestamp = node.pop('_last_timestamp', None)
+        node.pop('_first_sequence', None)
+        if first_timestamp and last_timestamp:
+            node['duration_ms'] = max(int((last_timestamp - first_timestamp).total_seconds() * 1000), 0)
+
+    ordered_nodes = sorted(
+        nodes.values(),
+        key=lambda item: (item['depth'], item['parent_agent_id'] or '', item['agent_name']),
+    )
+    for node in ordered_nodes:
+        if not node.get('parent_agent_id'):
+            node['findings_count'] = max(node['findings_count'], instance.findings_count)
+    return ordered_nodes
 
 
-def build_tree(instance: AgentTask) -> list[dict]:
-    checkpoints = {item['phase']: item for item in build_checkpoints(instance)}
-    nodes = []
-    for phase in [choice[0] for choice in AGENT_PHASE_CHOICES]:
-        checkpoint = checkpoints[phase]
+def _build_phase_fallback_tree(instance: AgentTask) -> list[dict]:
+    root_id = f'{instance.id}:orchestrator'
+    nodes = [
+        {
+            'id': root_id,
+            'agent_id': root_id,
+            'agent_name': 'Orchestrator',
+            'agent_type': 'orchestrator',
+            'parent_agent_id': None,
+            'depth': 0,
+            'task_description': instance.current_step,
+            'knowledge_modules': [],
+            'status': _normalize_tree_status(instance.status, default='running'),
+            'result_summary': None,
+            'findings_count': instance.findings_count,
+            'iterations': instance.total_iterations,
+            'tokens_used': instance.tokens_used,
+            'tool_calls': instance.tool_calls_count,
+            'duration_ms': _to_int((_duration_seconds(instance) or 0) * 1000),
+            'children': [],
+        }
+    ]
+
+    for checkpoint in build_checkpoints(instance):
+        if checkpoint['status'] == 'pending':
+            continue
+        phase = checkpoint['phase']
+        phase_type = {
+            AGENT_PHASE_RECONNAISSANCE: 'recon',
+            AGENT_PHASE_ANALYSIS: 'analysis',
+            AGENT_PHASE_VERIFICATION: 'verification',
+        }.get(phase, 'orchestrator')
         nodes.append(
             {
                 'id': f'{instance.id}:{phase}',
-                'label': PHASE_LABELS.get(phase, phase.title()),
-                'phase': phase,
-                'status': checkpoint['status'],
-                'progress': float(checkpoint['sequence'] or 0),
+                'agent_id': f'{instance.id}:{phase}',
+                'agent_name': PHASE_LABELS.get(phase, phase.title()),
+                'agent_type': phase_type,
+                'parent_agent_id': root_id,
+                'depth': 1,
+                'task_description': checkpoint['message'],
+                'knowledge_modules': [],
+                'status': _normalize_tree_status(checkpoint['status'], default='running'),
+                'result_summary': checkpoint['message'],
+                'findings_count': 0,
+                'iterations': 0,
+                'tokens_used': 0,
+                'tool_calls': 0,
+                'duration_ms': None,
                 'children': [],
             }
         )
+
     return nodes
 
 
+def build_tree(instance: AgentTask) -> list[dict]:
+    return _build_agent_tree_from_events(instance) or _build_phase_fallback_tree(instance)
+
+
 def export_agent_json_response(user, task_id: str) -> HttpResponse:
-    instance = get_task(user, task_id)
-    payload = normalize_json_payload({
-        'task': serialize_task(instance),
-        'summary': build_summary(instance),
-        'checkpoints': build_checkpoints(instance),
-        'findings': list_findings(user, task_id),
-        'events': list_events(user, task_id, limit=1000),
-    })
+    instance = refresh_task_snapshot(get_task(user, task_id)) or get_task(user, task_id)
+    payload = _serialize_report_payload(instance)
     artifact_path = save_json_artifact(f'agent-task-{instance.id}.json', payload)
     AuditArtifact.objects.update_or_create(
         project=instance.project,
@@ -515,10 +1142,38 @@ def export_agent_json_response(user, task_id: str) -> HttpResponse:
     return response
 
 
+def export_agent_markdown_response(user, task_id: str) -> HttpResponse:
+    instance = refresh_task_snapshot(get_task(user, task_id)) or get_task(user, task_id)
+    payload = _serialize_report_payload(instance)
+    markdown = _render_agent_markdown_report(instance, payload)
+    report_path = save_report_file(f'agent-task-{instance.id}.md', markdown.encode('utf-8'))
+    AuditArtifact.objects.update_or_create(
+        project=instance.project,
+        kind='agent_markdown_report',
+        defaults={
+            'uploaded_by': user,
+            'display_name': f'agent-task-{instance.id}.md',
+            'file_path': str(report_path),
+            'mime_type': 'text/markdown',
+            'metadata': {'task_id': str(instance.id)},
+            'sys_creator': user,
+            'sys_modifier': user,
+            'is_deleted': False,
+        },
+    )
+    response = HttpResponse(markdown, content_type='text/markdown; charset=utf-8')
+    response['Content-Disposition'] = f'attachment; filename="agent-task-{instance.id}.md"'
+    return response
+
+
 def export_agent_pdf_response(user, task_id: str) -> HttpResponse:
-    instance = get_task(user, task_id)
-    findings = list_findings(user, task_id)
-    pdf_bytes = ReportBuilder.build_agent_report(serialize_task(instance), findings, instance.project.name)
+    instance = refresh_task_snapshot(get_task(user, task_id)) or get_task(user, task_id)
+    payload = _serialize_report_payload(instance)
+    pdf_bytes = ReportBuilder.build_agent_report(
+        payload.get('task') or serialize_task(instance),
+        payload.get('findings') or [],
+        instance.project.name,
+    )
     report_path = save_report_file(f'agent-task-{instance.id}.pdf', pdf_bytes)
     AuditArtifact.objects.update_or_create(
         project=instance.project,
@@ -539,6 +1194,17 @@ def export_agent_pdf_response(user, task_id: str) -> HttpResponse:
     return response
 
 
+def export_agent_report_response(user, task_id: str, *, format: str = 'markdown') -> HttpResponse:
+    normalized_format = str(format or 'markdown').strip().lower()
+    if normalized_format == 'json':
+        return export_agent_json_response(user, task_id)
+    if normalized_format == 'pdf':
+        return export_agent_pdf_response(user, task_id)
+    if normalized_format == 'markdown':
+        return export_agent_markdown_response(user, task_id)
+    raise HttpError(422, f'不支持的报告格式: {format}')
+
+
 def create_event(
     instance: AgentTask,
     event_type: str,
@@ -554,7 +1220,6 @@ def create_event(
     tokens_used: int | None = None,
     metadata: dict | None = None,
 ) -> AgentEvent:
-    next_sequence = (instance.events.filter(is_deleted=False).aggregate_max_sequence if False else None)
     current_sequence = instance.events.filter(is_deleted=False).order_by('-sequence').values_list('sequence', flat=True).first() or 0
     event = AgentEvent.objects.create(
         task=instance,
@@ -574,6 +1239,7 @@ def create_event(
         sys_modifier=instance.created_by,
     )
     push_task_event(str(instance.id), serialize_event(event))
+    refresh_task_snapshot(instance.id)
     return event
 
 
@@ -620,24 +1286,23 @@ def execute_agent_task(task_id: str) -> None:
         from apps.deepaudit.agent_task.agent_runner import run_orchestrator_agent_sync
         run_orchestrator_agent_sync(str(instance.id), input_data, str(workspace))
         
-        # Agent 完成后收集 DB 数据进行计分等操作
-        instance.refresh_from_db()
-        findings = instance.findings.filter(is_deleted=False)
-        instance.findings_count = findings.count()
-        instance.critical_count = findings.filter(severity='critical').count()
-        instance.high_count = findings.filter(severity='high').count()
-        instance.medium_count = findings.filter(severity='medium').count()
-        instance.low_count = findings.filter(severity='low').count()
-        instance.status = 'completed'
-        instance.completed_at = timezone.now()
-        instance.save()
+        refresh_task_snapshot(
+            str(instance.id),
+            status='completed',
+            current_phase=AGENT_PHASE_REPORTING,
+            current_step='报告生成完成',
+            completed_at=timezone.now(),
+            error_message='',
+        )
         
     except Exception as exc:
-        instance.refresh_from_db()
-        instance.status = 'failed'
-        instance.error_message = str(exc)
-        instance.completed_at = timezone.now()
-        instance.save(update_fields=['status', 'error_message', 'completed_at', 'sys_update_datetime'])
+        refresh_task_snapshot(
+            str(instance.id),
+            status='failed',
+            current_step=str(exc),
+            completed_at=timezone.now(),
+            error_message=str(exc),
+        )
         raise
     finally:
         cleanup_runtime_workspace(workspace)
