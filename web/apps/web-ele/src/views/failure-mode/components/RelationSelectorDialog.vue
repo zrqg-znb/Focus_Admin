@@ -257,12 +257,15 @@ defineExpose({
     v-model="visible"
     :title="dialogTitle"
     append-to-body
+    class="relation-selector-dialog"
     :destroy-on-close="false"
     top="6vh"
     width="1120px"
   >
-    <div class="grid gap-4 lg:grid-cols-[1fr_300px]">
-      <div class="space-y-4">
+    <div
+      class="relation-selector-dialog__content grid h-full min-h-0 gap-4 lg:grid-cols-[minmax(0,1fr)_300px]"
+    >
+      <div class="flex min-h-0 flex-col gap-4">
         <div
           class="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--el-border-color-light)] bg-[var(--el-fill-color-light)] p-4"
         >
@@ -288,13 +291,16 @@ defineExpose({
           </ElButton>
         </div>
 
-        <div class="rounded-xl border border-[var(--el-border-color-light)]">
+        <div
+          class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--el-border-color-light)]"
+        >
           <ElTable
             ref="tableRef"
             v-loading="loading"
+            class="min-h-0 flex-1"
             :data="rows"
             border
-            height="460"
+            height="100%"
             row-key="id"
             @selection-change="handleSelectionChange"
           >
@@ -366,7 +372,7 @@ defineExpose({
       </div>
 
       <div
-        class="rounded-xl border border-[var(--el-border-color-light)] bg-[var(--el-fill-color-blank)]"
+        class="flex min-h-0 flex-col overflow-hidden rounded-xl border border-[var(--el-border-color-light)] bg-[var(--el-fill-color-blank)]"
       >
         <div
           class="flex items-center justify-between border-b border-[var(--el-border-color-light)] px-4 py-3"
@@ -384,7 +390,7 @@ defineExpose({
           <ElButton link type="danger" @click="clearSelected">清空</ElButton>
         </div>
 
-        <ElScrollbar height="518px">
+        <ElScrollbar class="min-h-0 flex-1" height="100%">
           <div class="space-y-3 p-4">
             <template v-if="selectedItemsInOrder.length > 0">
               <div
@@ -431,3 +437,29 @@ defineExpose({
     </template>
   </ElDialog>
 </template>
+
+<style scoped>
+.relation-selector-dialog__content {
+  padding-top: 20px;
+}
+
+.relation-selector-dialog :deep(.el-dialog) {
+  display: flex;
+  max-height: calc(100vh - 12vh);
+  flex-direction: column;
+}
+
+.relation-selector-dialog :deep(.el-dialog__body) {
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.relation-selector-dialog :deep(.el-dialog__footer) {
+  position: relative;
+  z-index: 1;
+  background: var(--el-bg-color);
+}
+</style>
