@@ -381,6 +381,9 @@ onMounted(async () => {
                   <template #cell-fault_categories="{ row }">
                     {{ formatTextList(row.fault_categories) || '-' }}
                   </template>
+                  <template #cell-symptoms="{ row }">
+                    {{ formatTextList(row.symptoms) || '-' }}
+                  </template>
                   <template #cell-author_info="{ row }">
                     {{ formatUserNames(row.author_info) || '-' }}
                   </template>

@@ -48,7 +48,6 @@ const loading = ref(false);
 const confirmLoading = ref(false);
 const mode = ref<'create' | 'edit'>('create');
 const editingId = ref('');
-const symptoms = ref<string[]>([]);
 const relatedDtsNos = ref<string[]>([]);
 const interceptionStrategyIds = ref<string[]>([]);
 const interceptionStrategyItems = ref<RelationItem[]>([]);
@@ -156,7 +155,6 @@ function resetRelations() {
 async function openCreate() {
   mode.value = 'create';
   editingId.value = '';
-  symptoms.value = [];
   relatedDtsNos.value = [];
   resetRelations();
   applySchema();
@@ -164,13 +162,14 @@ async function openCreate() {
   await nextTick();
   await formApi.resetForm();
   formApi.setValues({
-    author_ids: [],
-    brief: '',
-    chips: [],
-    detectability: undefined,
-    effect_html: '',
-    fault_categories: [],
-    functional_safety_level: undefined,
+      author_ids: [],
+      brief: '',
+      chips: [],
+      detectability: undefined,
+      effect_html: '',
+      fault_categories: [],
+      symptoms: [],
+      functional_safety_level: undefined,
     module: undefined,
     occurrence_frequency: undefined,
     root_cause_html: '',
@@ -198,6 +197,7 @@ async function openEdit(record: string | { id: string }) {
       detectability: detail.detectability || undefined,
       effect_html: detail.effect_html || '',
       fault_categories: detail.fault_categories || [],
+      symptoms: detail.symptoms || [],
       functional_safety_level: detail.functional_safety_level || undefined,
       module: detail.module || undefined,
       occurrence_frequency: detail.occurrence_frequency || undefined,
@@ -206,7 +206,6 @@ async function openEdit(record: string | { id: string }) {
       status: detail.status || undefined,
       subsystem: detail.subsystem || undefined,
     });
-    symptoms.value = normalizeStringList(detail.symptoms || []);
     relatedDtsNos.value = normalizeStringList(detail.related_dts_nos || []);
     interceptionStrategyIds.value = normalizeStringList(
       detail.interception_strategy_ids || [],
@@ -318,7 +317,6 @@ async function handleConfirm() {
       interception_strategy_ids: [...interceptionStrategyIds.value],
       observation_method_ids: [...observationMethodIds.value],
       related_dts_nos: [...relatedDtsNos.value],
-      symptoms: [...symptoms.value],
     };
 
     const result =
@@ -357,13 +355,6 @@ defineExpose({
       </div>
 
       <div class="grid gap-4 xl:grid-cols-2">
-        <StringListEditor
-          v-model="symptoms"
-          add-text="新增故障现象"
-          item-label="故障现象"
-          label="故障现象"
-          placeholder="请输入一条故障现象描述"
-        />
         <StringListEditor
           v-model="relatedDtsNos"
           add-text="新增问题单号"

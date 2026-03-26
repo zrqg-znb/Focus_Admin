@@ -22,6 +22,7 @@ export interface FailureModeDictOptions {
   module: DictOption[];
   chip: DictOption[];
   fault_category: DictOption[];
+  symptom: DictOption[];
   functional_safety_level: DictOption[];
   occurrence_frequency: DictOption[];
   detectability: DictOption[];

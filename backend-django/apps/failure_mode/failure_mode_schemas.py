@@ -26,6 +26,7 @@ class FailureModeDictOptionsSchema(Schema):
     module: list[DictOptionSchema] = Field(default_factory=list)
     chip: list[DictOptionSchema] = Field(default_factory=list)
     fault_category: list[DictOptionSchema] = Field(default_factory=list)
+    symptom: list[DictOptionSchema] = Field(default_factory=list)
     functional_safety_level: list[DictOptionSchema] = Field(default_factory=list)
     occurrence_frequency: list[DictOptionSchema] = Field(default_factory=list)
     detectability: list[DictOptionSchema] = Field(default_factory=list)

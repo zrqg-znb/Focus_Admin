@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from django.core.management.base import BaseCommand
+from django.db.models import Q
 
 from core.menu.menu_model import Menu
 from core.permission.permission_model import Permission
@@ -35,10 +36,9 @@ class MenuSeed:
 
 
 LEGACY_MENU_PATHS = ['/project-manager/failure-mode']
-LEGACY_PERMISSION_PREFIXES = [
-    'project_manager:failure-mode',
-    'project_manager:api:failure-mode',
-]
+LEGACY_MENU_COMPONENTS = ['/failure-mode/index', '/project-manager/failure-mode/index']
+LEGACY_API_PREFIX = '/api/project-manager/failure-mode'
+TARGET_API_PREFIX = '/api/failure-mode'
 
 MENU_SEEDS = [
     MenuSeed(
@@ -91,9 +91,9 @@ class Command(BaseCommand):
             self.stdout.write(self.style.ERROR('未找到超级管理员，无法初始化菜单权限'))
             return
 
-        self._cleanup_legacy_entries()
         menus = self._seed_menus(operator)
         permission_count = self._seed_permissions(menus, operator)
+        self._cleanup_stale_legacy_permissions(menus)
         MenuCacheManager.invalidate_menu_cache()
         PermissionCacheManager.invalidate_permission_cache()
         PermissionCacheManager.invalidate_global_permissions()
@@ -103,37 +103,26 @@ class Command(BaseCommand):
             )
         )
 
-    def _cleanup_legacy_entries(self):
-        for prefix in LEGACY_PERMISSION_PREFIXES:
-            Permission.objects.filter(code__startswith=prefix).delete()
-        Menu.objects.filter(path__in=LEGACY_MENU_PATHS).delete()
-
     def _seed_menus(self, operator: User):
         created: dict[str, Menu] = {}
         for seed in MENU_SEEDS:
             parent = created.get(seed.parent_key) if seed.parent_key else None
-            menu, _ = Menu.objects.get_or_create(
-                path=seed.path,
-                defaults={
-                    'parent': parent,
-                    'name': seed.name,
-                    'title': seed.title,
-                    'authCode': seed.auth_code,
-                    'type': seed.menu_type,
-                    'component': seed.component,
-                    'icon': seed.icon,
-                    'order': seed.order,
-                    'hideInMenu': seed.hide_in_menu,
-                    'hideChildrenInMenu': seed.hide_children_in_menu,
-                    'keepAlive': seed.keep_alive,
-                    'sys_creator': operator,
-                    'sys_modifier': operator,
-                },
-            )
+            menu = Menu.objects.filter(path=seed.path).first()
+            legacy_menu = self._find_legacy_menu(seed)
+
+            if menu and legacy_menu and legacy_menu.id != menu.id:
+                self._merge_menu_relations(legacy_menu, menu)
+                legacy_menu.delete()
+            elif menu is None and legacy_menu is not None:
+                menu = legacy_menu
+            elif menu is None:
+                menu = Menu(path=seed.path, sys_creator=operator)
+
             menu.parent = parent
             menu.name = seed.name
             menu.title = seed.title
             menu.authCode = seed.auth_code
+            menu.path = seed.path
             menu.type = seed.menu_type
             menu.component = seed.component
             menu.icon = seed.icon
@@ -153,19 +142,96 @@ class Command(BaseCommand):
             if not menu:
                 continue
             for item in items:
-                Permission.objects.update_or_create(
-                    menu=menu,
-                    code=item['code'],
-                    defaults={
-                        'name': item['name'],
-                        'permission_type': item['permission_type'],
-                        'api_path': item.get('api_path') or None,
-                        'http_method': HTTP_METHOD_MAP.get(item.get('http_method') or 'GET', 0),
-                        'description': item.get('name'),
-                        'is_active': True,
-                        'sys_creator': operator,
-                        'sys_modifier': operator,
-                    },
-                )
+                permission = self._find_permission_candidate(menu, item)
+                if permission is None:
+                    permission = Permission(menu=menu, code=item['code'], sys_creator=operator)
+
+                permission.menu = menu
+                permission.code = item['code']
+                permission.name = item['name']
+                permission.permission_type = item['permission_type']
+                permission.api_path = item.get('api_path') or None
+                permission.http_method = HTTP_METHOD_MAP.get(item.get('http_method') or 'GET', 0)
+                permission.description = item.get('name')
+                permission.is_active = True
+                permission.sys_modifier = operator
+                permission.save()
                 total += 1
         return total
+
+    def _find_legacy_menu(self, seed: MenuSeed):
+        return (
+            Menu.objects.filter(
+                Q(path__in=LEGACY_MENU_PATHS)
+                | Q(authCode__startswith='project_manager:failure-mode')
+                | Q(parent__title='项目管理', path__icontains='failure-mode')
+                | Q(parent__title='项目管理', component__in=LEGACY_MENU_COMPONENTS)
+            )
+            .exclude(path=seed.path)
+            .order_by('order', 'sys_create_datetime')
+            .first()
+        )
+
+    def _merge_menu_relations(self, legacy_menu: Menu, target_menu: Menu):
+        for role in legacy_menu.core_roles.all():
+            role.menu.add(target_menu)
+        Menu.objects.filter(parent=legacy_menu).update(parent=target_menu)
+        Permission.objects.filter(menu=legacy_menu).update(menu=target_menu)
+
+    def _find_permission_candidate(self, menu: Menu, item: dict):
+        desired_code = item['code']
+        desired_api_path = item.get('api_path') or None
+        legacy_code = self._build_legacy_permission_code(desired_code)
+        legacy_api_path = self._build_legacy_api_path(desired_api_path)
+
+        existing = Permission.objects.filter(menu=menu, code=desired_code).first()
+        if existing is None and legacy_code:
+            existing = Permission.objects.filter(menu=menu, code=legacy_code).first()
+        if existing is None and desired_api_path:
+            existing = Permission.objects.filter(menu=menu, api_path=desired_api_path).first()
+        if existing is None and legacy_api_path:
+            existing = Permission.objects.filter(menu=menu, api_path=legacy_api_path).first()
+
+        if existing is None:
+            return None
+
+        if legacy_code:
+            for duplicate in Permission.objects.filter(menu=menu, code=legacy_code).exclude(id=existing.id):
+                self._merge_permission_relations(duplicate, existing)
+        if legacy_api_path:
+            for duplicate in Permission.objects.filter(menu=menu, api_path=legacy_api_path).exclude(id=existing.id):
+                self._merge_permission_relations(duplicate, existing)
+        for duplicate in Permission.objects.filter(menu=menu, code=desired_code).exclude(id=existing.id):
+            self._merge_permission_relations(duplicate, existing)
+
+        return existing
+
+    def _merge_permission_relations(self, legacy_permission: Permission, target_permission: Permission):
+        for role in legacy_permission.roles.all():
+            role.permission.add(target_permission)
+        legacy_permission.delete()
+
+    def _cleanup_stale_legacy_permissions(self, menus: dict[str, Menu]):
+        menu_ids = [menu.id for menu in menus.values()]
+        Permission.objects.filter(
+            menu_id__in=menu_ids,
+        ).filter(
+            Q(code__startswith='project_manager:')
+            | Q(api_path__startswith=LEGACY_API_PREFIX)
+        ).delete()
+
+    def _build_legacy_permission_code(self, code: str):
+        if code.startswith('failure-mode:api:'):
+            suffix = code.removeprefix('failure-mode:api:')
+            return f'project_manager:api:failure-mode:{suffix}'
+        if code.startswith('failure-mode:'):
+            suffix = code.removeprefix('failure-mode:')
+            return f'project_manager:failure-mode:{suffix}'
+        return None
+
+    def _build_legacy_api_path(self, api_path: str | None):
+        if not api_path:
+            return None
+        if api_path.startswith(TARGET_API_PREFIX):
+            return api_path.replace(TARGET_API_PREFIX, LEGACY_API_PREFIX, 1)
+        return None

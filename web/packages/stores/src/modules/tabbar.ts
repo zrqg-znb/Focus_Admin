@@ -18,6 +18,10 @@ import {
 
 import { acceptHMRUpdate, defineStore } from 'pinia';
 
+const LEGACY_TAB_PATH_MAP: Record<string, string> = {
+  '/project-manager/failure-mode': '/failure-mode',
+};
+
 interface TabbarState {
   /**
    * @zh_CN 当前打开的标签页列表缓存
@@ -107,7 +111,9 @@ export const useTabbarStore = defineStore('core-tabbar', {
      * @param routeTab
      */
     addTab(routeTab: TabDefinition): TabDefinition {
+      this.tabs = dedupeTabs(this.tabs.map((tab) => normalizeLegacyTab(tab)));
       let tab = cloneTab(routeTab);
+      tab = normalizeLegacyTab(tab);
       if (!tab.key) {
         tab.key = getTabKey(routeTab);
       }
@@ -653,6 +659,53 @@ function routeToTab(route: RouteRecordNormalized) {
     path: route.path,
     key: getTabKey(route),
   } as TabDefinition;
+}
+
+function normalizeLegacyTab(tab: TabDefinition): TabDefinition {
+  if (!tab) {
+    return tab;
+  }
+
+  const normalizedPath = LEGACY_TAB_PATH_MAP[tab.path ?? ''];
+  const normalizedFullPath =
+    typeof tab.fullPath === 'string'
+      ? LEGACY_TAB_PATH_MAP[tab.fullPath]
+      : undefined;
+  const normalizedKey =
+    typeof tab.key === 'string' ? LEGACY_TAB_PATH_MAP[tab.key] : undefined;
+
+  if (!normalizedPath && !normalizedFullPath && !normalizedKey) {
+    return tab;
+  }
+
+  const matched = tab.matched?.map((item) => ({
+    ...item,
+    path: LEGACY_TAB_PATH_MAP[item.path] ?? item.path,
+  })) as RouteRecordNormalized[] | undefined;
+
+  return {
+    ...tab,
+    fullPath: normalizedFullPath ?? tab.fullPath ?? normalizedPath,
+    key: normalizedKey ?? tab.key ?? normalizedPath,
+    matched,
+    path: normalizedPath ?? tab.path,
+  };
+}
+
+function dedupeTabs(tabs: TabDefinition[]) {
+  const seen = new Set<string>();
+  const result: TabDefinition[] = [];
+
+  for (const tab of tabs) {
+    const key = getTabKeyFromTab(tab);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(tab);
+  }
+
+  return result;
 }
 
 export { getTabKey };

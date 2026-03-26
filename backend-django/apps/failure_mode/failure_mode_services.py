@@ -29,6 +29,7 @@ DICT_CODE_MAP = {
     'module': 'failure_mode_module',
     'chip': 'failure_mode_chip',
     'fault_category': 'failure_mode_fault_category',
+    'symptom': 'failure_mode_symptom',
     'functional_safety_level': 'failure_mode_functional_safety_level',
     'occurrence_frequency': 'failure_mode_occurrence_frequency',
     'detectability': 'failure_mode_detectability',

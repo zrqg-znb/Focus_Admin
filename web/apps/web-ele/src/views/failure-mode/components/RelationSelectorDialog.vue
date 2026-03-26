@@ -36,6 +36,7 @@ import {
 import {
   buildRelationItem,
   ensureOrderedRelationItems,
+  formatUserNames,
   getMasterResourceLabel,
   getResourceDisplaySubtitle,
   getResourceDisplayTitle,
@@ -320,13 +321,9 @@ defineExpose({
                 </div>
               </template>
             </ElTableColumn>
-            <ElTableColumn label="责任人" min-width="180">
+              <ElTableColumn label="责任人" min-width="180">
               <template #default="{ row }">
-                {{
-                  (row.owner_info || [])
-                    .map((item: any) => item.name || item.username)
-                    .join('、') || '-'
-                }}
+                {{ formatUserNames(row.owner_info) || '-' }}
               </template>
             </ElTableColumn>
             <ElTableColumn label="操作" width="100">
@@ -441,6 +438,7 @@ defineExpose({
 <style scoped>
 .relation-selector-dialog__content {
   padding-top: 20px;
+  height: 60vh;
 }
 
 .relation-selector-dialog :deep(.el-dialog) {
