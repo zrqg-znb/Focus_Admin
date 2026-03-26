@@ -176,22 +176,32 @@ async function loadList() {
   }
 }
 
-function handleSelectionChange(selection: ResourceRow[]) {
-  if (syncingSelection.value) {
-    return;
-  }
-  const visibleIds = new Set(rows.value.map((item) => item.id));
-  const selectedOnPage = new Set(selection.map((item) => item.id));
-
-  visibleIds.forEach((id) => {
-    if (!selectedOnPage.has(id)) {
-      removeSelected(id);
-    }
-  });
-
-  selection.forEach((row) => {
+function handleSelect(selection: ResourceRow[], row: ResourceRow) {
+  if (syncingSelection.value) return;
+  const isSelected = selection.some((item) => item.id === row.id);
+  if (isSelected) {
     updateSelectedItem(buildRelationItem(currentKind.value, row), true);
-  });
+  } else {
+    selectedIds.value = selectedIds.value.filter((id) => id !== row.id);
+    selectedItems.value = selectedItems.value.filter((item) => item.id !== row.id);
+  }
+}
+
+function handleSelectAll(selection: ResourceRow[]) {
+  if (syncingSelection.value) return;
+  const isAllSelected = selection.length > 0;
+  
+  if (isAllSelected) {
+    // Add all current page rows
+    rows.value.forEach((row) => {
+      updateSelectedItem(buildRelationItem(currentKind.value, row), true);
+    });
+  } else {
+    // Remove all current page rows
+    const visibleIds = new Set(rows.value.map((item) => item.id));
+    selectedIds.value = selectedIds.value.filter((id) => !visibleIds.has(id));
+    selectedItems.value = selectedItems.value.filter((item) => !visibleIds.has(item.id));
+  }
 }
 
 function handleSearch() {
@@ -303,7 +313,8 @@ defineExpose({
             border
             height="100%"
             row-key="id"
-            @selection-change="handleSelectionChange"
+            @select="handleSelect"
+            @select-all="handleSelectAll"
           >
             <ElTableColumn type="selection" width="56" />
             <ElTableColumn label="主数据" min-width="320">
