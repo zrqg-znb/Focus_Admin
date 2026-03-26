@@ -12,6 +12,7 @@ from .failure_mode_schemas import (
     FailureModeOutSchema,
     FailureModeUpdateSchema,
     HandlingMeasureCreateSchema,
+    HandlingMeasureFilterSchema,
     HandlingMeasureOutSchema,
     HandlingMeasureUpdateSchema,
     HuatuoDiagnosisCreateSchema,
@@ -22,6 +23,7 @@ from .failure_mode_schemas import (
     InterceptionStrategyUpdateSchema,
     KeywordFilterSchema,
     ObservationMethodCreateSchema,
+    ObservationMethodFilterSchema,
     ObservationMethodOutSchema,
     ObservationMethodUpdateSchema,
     SaveSuccessSchema,
@@ -92,7 +94,7 @@ def delete_interception_strategy(request, item_id: str):
 
 @router.get('/handling-measures', response=list[HandlingMeasureOutSchema], summary='获取故障处理措施列表')
 @paginate(MyPagination, pass_parameter='page_params')
-def list_handling_measures(request, filters: KeywordFilterSchema = Query(...), page_params=None):
+def list_handling_measures(request, filters: HandlingMeasureFilterSchema = Query(...), page_params=None):
     return failure_mode_services.list_handling_measures(filters, page_params)
 
 
@@ -118,7 +120,7 @@ def delete_handling_measure(request, item_id: str):
 
 @router.get('/observation-methods', response=list[ObservationMethodOutSchema], summary='获取维测手段列表')
 @paginate(MyPagination, pass_parameter='page_params')
-def list_observation_methods(request, filters: KeywordFilterSchema = Query(...), page_params=None):
+def list_observation_methods(request, filters: ObservationMethodFilterSchema = Query(...), page_params=None):
     return failure_mode_services.list_observation_methods(filters, page_params)
 
 

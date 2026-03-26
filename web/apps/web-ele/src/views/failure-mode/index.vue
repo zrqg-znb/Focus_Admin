@@ -16,10 +16,14 @@ import { nextTick, onMounted, reactive, ref, watch } from 'vue';
 import { Page } from '@vben/common-ui';
 import { IconifyIcon } from '@vben/icons';
 
+import { useDebounceFn } from '@vueuse/core';
 import {
   ElButton,
+  ElInput,
   ElMessage,
   ElMessageBox,
+  ElOption,
+  ElSelect,
   ElTabPane,
   ElTabs,
   ElTag,
@@ -51,13 +55,12 @@ import {
   formatTextList,
   formatUserNames,
   getMasterResourceLabel,
+  normalizeStringList,
   replaceDictOptions,
   useFailureModeColumns,
-  useFailureModeSearchSchema,
   useHandlingMeasureColumns,
   useHuatuoColumns,
   useInterceptionColumns,
-  useKeywordSearchSchema,
   useObservationColumns,
   useTestCaseColumns,
 } from './data';
@@ -71,26 +74,51 @@ type MasterRow =
   | ObservationMethodItem
   | TestCaseItem;
 
-interface QueryContext {
-  form?: Record<string, any>;
+interface GridQueryContext {
   page: {
     currentPage: number;
     pageSize: number;
   };
 }
 
+interface ReloadableGridApi {
+  pagination: {
+    currentPage: number;
+    pageSize: number;
+  };
+  reload: (params?: Record<string, any>) => Promise<any>;
+  setState: (stateOrFn: any) => void;
+}
+
 const activeTab = ref<FailureModeTabKey>('failureMode');
 const dictOptions = reactive(createEmptyDictOptions());
 const failureModeDrawerRef = ref<any>();
 const masterDrawerRef = ref<any>();
+const failureModeFilters = reactive({
+  author_keyword: '',
+  keyword: '',
+  module: [] as string[],
+  status: [] as string[],
+  subsystem: [] as string[],
+});
+const interceptionFilters = reactive({ keyword: '', owner_keyword: '' });
+const handlingMeasureFilters = reactive({
+  owner_keyword: '',
+  keyword: '',
+  measure_category: [] as string[],
+});
+const observationFilters = reactive({
+  keyword: '',
+  monitor_type: [] as string[],
+  owner_keyword: '',
+});
+const huatuoFilters = reactive({ keyword: '', owner_keyword: '' });
+const testCaseFilters = reactive({ keyword: '', owner_keyword: '' });
 
 function createKeywordGrid<T extends Record<string, any>>(
   columns: ZqTableGridOptions<T>['columns'],
-  request: (params: {
-    keyword?: string;
-    page?: number;
-    pageSize?: number;
-  }) => Promise<{ items: T[]; total: number }>,
+  request: (params: any) => Promise<{ items: T[]; total: number }>,
+  getParams: () => Record<string, any>,
 ) {
   return useZqTable<T>({
     gridOptions: {
@@ -99,12 +127,8 @@ function createKeywordGrid<T extends Record<string, any>>(
       proxyConfig: {
         autoLoad: true,
         ajax: {
-          query: async ({ form, page }: QueryContext) => {
-            return request({
-              keyword: form?.keyword,
-              page: page.currentPage,
-              pageSize: page.pageSize,
-            });
+          query: async ({ page }: GridQueryContext) => {
+            return request(buildPageQuery(page, getParams()));
           },
         },
       },
@@ -113,7 +137,7 @@ function createKeywordGrid<T extends Record<string, any>>(
       toolbarConfig: {
         custom: true,
         refresh: true,
-        search: true,
+        search: false,
         zoom: true,
       },
       pagerConfig: {
@@ -121,11 +145,6 @@ function createKeywordGrid<T extends Record<string, any>>(
         pageSize: 10,
         pageSizes: [10, 20, 50],
       },
-    },
-    formOptions: {
-      schema: useKeywordSearchSchema(),
-      showCollapseButton: false,
-      submitOnChange: true,
     },
   });
 }
@@ -137,15 +156,18 @@ const [FailureModeGrid, failureModeGridApi] = useZqTable<FailureModeItem>({
     proxyConfig: {
       autoLoad: true,
       ajax: {
-        query: async ({ form, page }: QueryContext) => {
-          return listFailureModesApi({
-            keyword: form?.keyword,
-            module: form?.module,
-            page: page.currentPage,
-            pageSize: page.pageSize,
-            status: form?.status,
-            subsystem: form?.subsystem,
-          });
+        query: async ({ page }: GridQueryContext) => {
+          return listFailureModesApi(
+            buildPageQuery(page, {
+              author_keyword: normalizeQueryValue(
+                failureModeFilters.author_keyword,
+              ),
+              keyword: normalizeQueryValue(failureModeFilters.keyword),
+              module: normalizeStringList(failureModeFilters.module),
+              status: normalizeStringList(failureModeFilters.status),
+              subsystem: normalizeStringList(failureModeFilters.subsystem),
+            }),
+          );
         },
       },
     },
@@ -154,7 +176,7 @@ const [FailureModeGrid, failureModeGridApi] = useZqTable<FailureModeItem>({
     toolbarConfig: {
       custom: true,
       refresh: true,
-      search: true,
+      search: false,
       zoom: true,
     },
     pagerConfig: {
@@ -163,33 +185,158 @@ const [FailureModeGrid, failureModeGridApi] = useZqTable<FailureModeItem>({
       pageSizes: [10, 20, 50],
     },
   },
-  formOptions: {
-    schema: useFailureModeSearchSchema(dictOptions),
-    showCollapseButton: false,
-    submitOnChange: true,
-  },
 });
 
 const [InterceptionGrid, interceptionGridApi] = createKeywordGrid(
   useInterceptionColumns(),
   listInterceptionStrategiesApi,
+  () => ({
+    keyword: normalizeQueryValue(interceptionFilters.keyword),
+    owner_keyword: normalizeQueryValue(interceptionFilters.owner_keyword),
+  }),
 );
 const [HandlingMeasureGrid, handlingMeasureGridApi] = createKeywordGrid(
   useHandlingMeasureColumns(),
   listHandlingMeasuresApi,
+  () => ({
+    keyword: normalizeQueryValue(handlingMeasureFilters.keyword),
+    measure_category: normalizeStringList(
+      handlingMeasureFilters.measure_category,
+    ),
+    owner_keyword: normalizeQueryValue(handlingMeasureFilters.owner_keyword),
+  }),
 );
 const [ObservationGrid, observationGridApi] = createKeywordGrid(
   useObservationColumns(),
   listObservationMethodsApi,
+  () => ({
+    keyword: normalizeQueryValue(observationFilters.keyword),
+    monitor_type: normalizeStringList(observationFilters.monitor_type),
+    owner_keyword: normalizeQueryValue(observationFilters.owner_keyword),
+  }),
 );
 const [HuatuoGrid, huatuoGridApi] = createKeywordGrid(
   useHuatuoColumns(),
   listHuatuoDiagnosesApi,
+  () => ({
+    keyword: normalizeQueryValue(huatuoFilters.keyword),
+    owner_keyword: normalizeQueryValue(huatuoFilters.owner_keyword),
+  }),
 );
 const [TestCaseGrid, testCaseGridApi] = createKeywordGrid(
   useTestCaseColumns(),
   listTestCasesApi,
+  () => ({
+    keyword: normalizeQueryValue(testCaseFilters.keyword),
+    owner_keyword: normalizeQueryValue(testCaseFilters.owner_keyword),
+  }),
 );
+
+function normalizeQueryValue(value: unknown) {
+  const text = String(value ?? '').trim();
+  return text || undefined;
+}
+
+function buildPageQuery(
+  page: GridQueryContext['page'],
+  extraParams: Record<string, any> = {},
+) {
+  const merged = {
+    ...extraParams,
+    page: page.currentPage,
+    pageSize: page.pageSize,
+  };
+  return Object.fromEntries(
+    Object.entries(merged).filter(([, value]) => {
+      if (Array.isArray(value)) {
+        return value.length > 0;
+      }
+      return value !== undefined && value !== null && value !== '';
+    }),
+  );
+}
+
+async function reloadGridAtFirstPage(
+  api: ReloadableGridApi,
+  params: Record<string, any> = {},
+) {
+  api.pagination.currentPage = 1;
+  api.setState((prev: any) => {
+    const gridOptions = prev.gridOptions || {};
+    const pagerConfig = prev.gridOptions?.pagerConfig || {};
+    return {
+      gridOptions: {
+        ...gridOptions,
+        pagerConfig: {
+          ...pagerConfig,
+          currentPage: 1,
+        },
+      },
+    };
+  });
+  await api.reload(params);
+}
+
+const scheduleFailureModeReload = useDebounceFn(() => {
+  void reloadGridAtFirstPage(failureModeGridApi);
+}, 250);
+const scheduleInterceptionReload = useDebounceFn(() => {
+  void reloadGridAtFirstPage(interceptionGridApi);
+}, 250);
+const scheduleHandlingMeasureReload = useDebounceFn(() => {
+  void reloadGridAtFirstPage(handlingMeasureGridApi);
+}, 250);
+const scheduleObservationReload = useDebounceFn(() => {
+  void reloadGridAtFirstPage(observationGridApi);
+}, 250);
+const scheduleHuatuoReload = useDebounceFn(() => {
+  void reloadGridAtFirstPage(huatuoGridApi);
+}, 250);
+const scheduleTestCaseReload = useDebounceFn(() => {
+  void reloadGridAtFirstPage(testCaseGridApi);
+}, 250);
+
+function commitFailureModeFilters() {
+  scheduleFailureModeReload();
+}
+
+function commitInterceptionFilters() {
+  scheduleInterceptionReload();
+}
+
+function commitHandlingMeasureFilters() {
+  scheduleHandlingMeasureReload();
+}
+
+function commitObservationFilters() {
+  scheduleObservationReload();
+}
+
+function commitHuatuoFilters() {
+  scheduleHuatuoReload();
+}
+
+function commitTestCaseFilters() {
+  scheduleTestCaseReload();
+}
+
+function handleVisibleChange(visible: boolean, commit: () => void) {
+  if (!visible) {
+    commit();
+  }
+}
+
+function handleFailureModeDictVisibleChange(visible: boolean) {
+  handleVisibleChange(visible, commitFailureModeFilters);
+}
+
+function handleHandlingMeasureDictVisibleChange(visible: boolean) {
+  handleVisibleChange(visible, commitHandlingMeasureFilters);
+}
+
+function handleObservationDictVisibleChange(visible: boolean) {
+  handleVisibleChange(visible, commitObservationFilters);
+}
 
 async function loadDictOptions() {
   const response = await getFailureModeDictOptionsApi();
@@ -375,6 +522,126 @@ onMounted(async () => {
                     </ElButton>
                   </template>
 
+                  <template #header-brief>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        故障模式 brief
+                      </span>
+                      <ElInput
+                        v-model="failureModeFilters.keyword"
+                        class="failure-mode-header-filter__input"
+                        clearable
+                        @change="commitFailureModeFilters"
+                        @clear="commitFailureModeFilters"
+                        @keyup.enter="commitFailureModeFilters"
+                        placeholder="请输入关键词"
+                        size="small"
+                      />
+                    </div>
+                  </template>
+
+                  <template #header-author-info>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        作者
+                      </span>
+                      <ElInput
+                        v-model="failureModeFilters.author_keyword"
+                        class="failure-mode-header-filter__input"
+                        clearable
+                        @change="commitFailureModeFilters"
+                        @clear="commitFailureModeFilters"
+                        @keyup.enter="commitFailureModeFilters"
+                        placeholder="关键词搜索"
+                        size="small"
+                      />
+                    </div>
+                  </template>
+
+                  <template #header-subsystem>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        子系统
+                      </span>
+                      <ElSelect
+                        v-model="failureModeFilters.subsystem"
+                        class="failure-mode-header-filter__select"
+                        clearable
+                        collapse-tags
+                        collapse-tags-tooltip
+                        filterable
+                        multiple
+                        @clear="commitFailureModeFilters"
+                        @visible-change="handleFailureModeDictVisibleChange"
+                        placeholder="全部，可多选"
+                        size="small"
+                      >
+                        <ElOption
+                          v-for="item in dictOptions.subsystem"
+                          :key="item.value"
+                          :label="item.label"
+                          :value="item.value"
+                        />
+                      </ElSelect>
+                    </div>
+                  </template>
+
+                  <template #header-module>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        模块
+                      </span>
+                      <ElSelect
+                        v-model="failureModeFilters.module"
+                        class="failure-mode-header-filter__select"
+                        clearable
+                        collapse-tags
+                        collapse-tags-tooltip
+                        filterable
+                        multiple
+                        @clear="commitFailureModeFilters"
+                        @visible-change="handleFailureModeDictVisibleChange"
+                        placeholder="全部，可多选"
+                        size="small"
+                      >
+                        <ElOption
+                          v-for="item in dictOptions.module"
+                          :key="item.value"
+                          :label="item.label"
+                          :value="item.value"
+                        />
+                      </ElSelect>
+                    </div>
+                  </template>
+
+                  <template #header-status>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        状态
+                      </span>
+                      <ElSelect
+                        v-model="failureModeFilters.status"
+                        class="failure-mode-header-filter__select"
+                        clearable
+                        collapse-tags
+                        collapse-tags-tooltip
+                        filterable
+                        multiple
+                        @clear="commitFailureModeFilters"
+                        @visible-change="handleFailureModeDictVisibleChange"
+                        placeholder="全部，可多选"
+                        size="small"
+                      >
+                        <ElOption
+                          v-for="item in dictOptions.status"
+                          :key="item.value"
+                          :label="item.label"
+                          :value="item.value"
+                        />
+                      </ElSelect>
+                    </div>
+                  </template>
+
                   <template #cell-chips="{ row }">
                     {{ formatTextList(row.chips) || '-' }}
                   </template>
@@ -444,6 +711,43 @@ onMounted(async () => {
                       新增产线拦截策略
                     </ElButton>
                   </template>
+
+                  <template #header-interception_item>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        产线拦截项
+                      </span>
+                      <ElInput
+                        v-model="interceptionFilters.keyword"
+                        class="failure-mode-header-filter__input"
+                        clearable
+                        @change="commitInterceptionFilters"
+                        @clear="commitInterceptionFilters"
+                        @keyup.enter="commitInterceptionFilters"
+                        placeholder="输入关键词"
+                        size="small"
+                      />
+                    </div>
+                  </template>
+
+                  <template #header-owner-info>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        设计责任人
+                      </span>
+                      <ElInput
+                        v-model="interceptionFilters.owner_keyword"
+                        class="failure-mode-header-filter__input"
+                        clearable
+                        @change="commitInterceptionFilters"
+                        @clear="commitInterceptionFilters"
+                        @keyup.enter="commitInterceptionFilters"
+                        placeholder="关键词搜索"
+                        size="small"
+                      />
+                    </div>
+                  </template>
+
                   <template #cell-owner_info="{ row }">
                     {{ formatUserNames(row.owner_info) || '-' }}
                   </template>
@@ -494,6 +798,71 @@ onMounted(async () => {
                       新增故障处理措施
                     </ElButton>
                   </template>
+
+                  <template #header-measure>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        处理措施
+                      </span>
+                      <ElInput
+                        v-model="handlingMeasureFilters.keyword"
+                        class="failure-mode-header-filter__input"
+                        clearable
+                        @change="commitHandlingMeasureFilters"
+                        @clear="commitHandlingMeasureFilters"
+                        @keyup.enter="commitHandlingMeasureFilters"
+                        placeholder="输入关键词"
+                        size="small"
+                      />
+                    </div>
+                  </template>
+
+                  <template #header-measure_category>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        措施类别
+                      </span>
+                      <ElSelect
+                        v-model="handlingMeasureFilters.measure_category"
+                        class="failure-mode-header-filter__select"
+                        clearable
+                        collapse-tags
+                        collapse-tags-tooltip
+                        filterable
+                        multiple
+                        @clear="commitHandlingMeasureFilters"
+                        @visible-change="handleHandlingMeasureDictVisibleChange"
+                        placeholder="全部，可多选"
+                        size="small"
+                      >
+                        <ElOption
+                          v-for="item in dictOptions.measure_category"
+                          :key="item.value"
+                          :label="item.label"
+                          :value="item.value"
+                        />
+                      </ElSelect>
+                    </div>
+                  </template>
+
+                  <template #header-owner-info>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        设计责任人
+                      </span>
+                      <ElInput
+                        v-model="handlingMeasureFilters.owner_keyword"
+                        class="failure-mode-header-filter__input"
+                        clearable
+                        @change="commitHandlingMeasureFilters"
+                        @clear="commitHandlingMeasureFilters"
+                        @keyup.enter="commitHandlingMeasureFilters"
+                        placeholder="关键词搜索"
+                        size="small"
+                      />
+                    </div>
+                  </template>
+
                   <template #cell-test_case_items="{ row }">
                     {{ formatRelationLabels(row.test_case_items) || '-' }}
                   </template>
@@ -543,6 +912,71 @@ onMounted(async () => {
                       新增维测手段
                     </ElButton>
                   </template>
+
+                  <template #header-log_keyword>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        日志关键词
+                      </span>
+                      <ElInput
+                        v-model="observationFilters.keyword"
+                        class="failure-mode-header-filter__input"
+                        clearable
+                        @change="commitObservationFilters"
+                        @clear="commitObservationFilters"
+                        @keyup.enter="commitObservationFilters"
+                        placeholder="输入关键词"
+                        size="small"
+                      />
+                    </div>
+                  </template>
+
+                  <template #header-monitor_type>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        维测类型
+                      </span>
+                      <ElSelect
+                        v-model="observationFilters.monitor_type"
+                        class="failure-mode-header-filter__select"
+                        clearable
+                        collapse-tags
+                        collapse-tags-tooltip
+                        filterable
+                        multiple
+                        @clear="commitObservationFilters"
+                        @visible-change="handleObservationDictVisibleChange"
+                        placeholder="全部，可多选"
+                        size="small"
+                      >
+                        <ElOption
+                          v-for="item in dictOptions.monitor_type"
+                          :key="item.value"
+                          :label="item.label"
+                          :value="item.value"
+                        />
+                      </ElSelect>
+                    </div>
+                  </template>
+
+                  <template #header-owner-info>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        设计责任人
+                      </span>
+                      <ElInput
+                        v-model="observationFilters.owner_keyword"
+                        class="failure-mode-header-filter__input"
+                        clearable
+                        @change="commitObservationFilters"
+                        @clear="commitObservationFilters"
+                        @keyup.enter="commitObservationFilters"
+                        placeholder="关键词搜索"
+                        size="small"
+                      />
+                    </div>
+                  </template>
+
                   <template #cell-owner_info="{ row }">
                     {{ formatUserNames(row.owner_info) || '-' }}
                   </template>
@@ -593,6 +1027,43 @@ onMounted(async () => {
                       新增华佗诊断方案
                     </ElButton>
                   </template>
+
+                  <template #header-huatuo-description>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        诊断方案描述
+                      </span>
+                      <ElInput
+                        v-model="huatuoFilters.keyword"
+                        class="failure-mode-header-filter__input"
+                        clearable
+                        @change="commitHuatuoFilters"
+                        @clear="commitHuatuoFilters"
+                        @keyup.enter="commitHuatuoFilters"
+                        placeholder="输入关键词"
+                        size="small"
+                      />
+                    </div>
+                  </template>
+
+                  <template #header-owner-info>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        设计责任人
+                      </span>
+                      <ElInput
+                        v-model="huatuoFilters.owner_keyword"
+                        class="failure-mode-header-filter__input"
+                        clearable
+                        @change="commitHuatuoFilters"
+                        @clear="commitHuatuoFilters"
+                        @keyup.enter="commitHuatuoFilters"
+                        placeholder="关键词搜索"
+                        size="small"
+                      />
+                    </div>
+                  </template>
+
                   <template #cell-owner_info="{ row }">
                     {{ formatUserNames(row.owner_info) || '-' }}
                   </template>
@@ -639,6 +1110,43 @@ onMounted(async () => {
                       新增测试用例
                     </ElButton>
                   </template>
+
+                  <template #header-test-case-brief>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        测试用例 brief
+                      </span>
+                      <ElInput
+                        v-model="testCaseFilters.keyword"
+                        class="failure-mode-header-filter__input"
+                        clearable
+                        @change="commitTestCaseFilters"
+                        @clear="commitTestCaseFilters"
+                        @keyup.enter="commitTestCaseFilters"
+                        placeholder="输入关键词"
+                        size="small"
+                      />
+                    </div>
+                  </template>
+
+                  <template #header-owner-info>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        设计责任人
+                      </span>
+                      <ElInput
+                        v-model="testCaseFilters.owner_keyword"
+                        class="failure-mode-header-filter__input"
+                        clearable
+                        @change="commitTestCaseFilters"
+                        @clear="commitTestCaseFilters"
+                        @keyup.enter="commitTestCaseFilters"
+                        placeholder="关键词搜索"
+                        size="small"
+                      />
+                    </div>
+                  </template>
+
                   <template #cell-owner_info="{ row }">
                     {{ formatUserNames(row.owner_info) || '-' }}
                   </template>
@@ -687,5 +1195,30 @@ onMounted(async () => {
 .failure-mode-tabs :deep(.el-tab-pane) {
   height: 100%;
   min-height: 0;
+}
+
+.failure-mode-header-filter {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.failure-mode-header-filter__label {
+  width: 100%;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.failure-mode-header-filter__input,
+.failure-mode-header-filter__select {
+  width: 100%;
+  min-width: 0;
 }
 </style>

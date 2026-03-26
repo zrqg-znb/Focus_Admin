@@ -93,10 +93,11 @@ export interface FailureModePayload {
 
 export interface FailureModeQuery {
   keyword?: string;
-  subsystem?: string;
-  module?: string;
-  status?: string;
+  subsystem?: string[];
+  module?: string[];
+  status?: string[];
   author_id?: string;
+  author_keyword?: string;
   page?: number;
   pageSize?: number;
 }
@@ -201,8 +202,17 @@ export interface TestCasePayload {
 
 export interface KeywordQuery {
   keyword?: string;
+  owner_keyword?: string;
   page?: number;
   pageSize?: number;
+}
+
+export interface HandlingMeasureQuery extends KeywordQuery {
+  measure_category?: string[];
+}
+
+export interface ObservationMethodQuery extends KeywordQuery {
+  monitor_type?: string[];
 }
 
 const base = '/api/failure-mode';
@@ -280,7 +290,7 @@ export async function deleteInterceptionStrategyApi(id: string) {
   );
 }
 
-export async function listHandlingMeasuresApi(params?: KeywordQuery) {
+export async function listHandlingMeasuresApi(params?: HandlingMeasureQuery) {
   return requestClient.get<PaginatedResponse<HandlingMeasureItem>>(
     `${base}/handling-measures`,
     { params },
@@ -316,7 +326,9 @@ export async function deleteHandlingMeasureApi(id: string) {
   );
 }
 
-export async function listObservationMethodsApi(params?: KeywordQuery) {
+export async function listObservationMethodsApi(
+  params?: ObservationMethodQuery,
+) {
   return requestClient.get<PaginatedResponse<ObservationMethodItem>>(
     `${base}/observation-methods`,
     { params },

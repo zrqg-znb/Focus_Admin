@@ -214,57 +214,6 @@ export function getResourceDisplaySubtitle(
   return buildRelationItem(kind, item).subtitle || '';
 }
 
-export function useKeywordSearchSchema(): VbenFormSchema[] {
-  return [
-    {
-      component: 'Input',
-      fieldName: 'keyword',
-      label: '关键词',
-      componentProps: { placeholder: '请输入关键词' },
-    },
-  ];
-}
-
-export function useFailureModeSearchSchema(
-  dictOptions: FailureModeDictOptions,
-): VbenFormSchema[] {
-  return [
-    {
-      component: 'Input',
-      fieldName: 'keyword',
-      label: '关键词',
-      componentProps: { placeholder: 'brief / 关联问题单 / 子系统' },
-    },
-    {
-      component: 'Select',
-      fieldName: 'subsystem',
-      label: '子系统',
-      componentProps: {
-        clearable: true,
-        options: dictOptions.subsystem,
-      },
-    },
-    {
-      component: 'Select',
-      fieldName: 'module',
-      label: '模块',
-      componentProps: {
-        clearable: true,
-        options: dictOptions.module,
-      },
-    },
-    {
-      component: 'Select',
-      fieldName: 'status',
-      label: '状态',
-      componentProps: {
-        clearable: true,
-        options: dictOptions.status,
-      },
-    },
-  ];
-}
-
 function withCenter<T extends Record<string, any>>(
   columns: Column<T>[],
 ): ZqTableGridOptions<T>['columns'] {
@@ -277,7 +226,13 @@ function withCenter<T extends Record<string, any>>(
 
 export function useFailureModeColumns(): ZqTableGridOptions<FailureModeItem>['columns'] {
   return withCenter<FailureModeItem>([
-    { key: 'brief', dataKey: 'brief', title: '故障模式 brief', width: 220 },
+    {
+      key: 'brief',
+      dataKey: 'brief',
+      title: '故障模式 brief',
+      width: 300,
+      headerSlotName: 'header-brief',
+    },
     { key: 'subsystem', dataKey: 'subsystem', title: '子系统', width: 140 },
     { key: 'module', dataKey: 'module', title: '模块', width: 140 },
     { key: 'chips', dataKey: 'chips', title: '芯片', width: 180 },
@@ -298,7 +253,8 @@ export function useFailureModeColumns(): ZqTableGridOptions<FailureModeItem>['co
       key: 'author_info',
       dataKey: 'author_info',
       title: '作者',
-      width: 180,
+      width: 220,
+      headerSlotName: 'header-author-info',
     },
     {
       key: 'related_dts_nos',
@@ -341,7 +297,8 @@ export function useInterceptionColumns(): ZqTableGridOptions<InterceptionStrateg
       key: 'owner_info',
       dataKey: 'owner_info',
       title: '设计责任人',
-      width: 180,
+      width: 220,
+      headerSlotName: 'header-owner-info',
     },
     {
       key: 'sys_create_datetime',
@@ -361,12 +318,12 @@ export function useInterceptionColumns(): ZqTableGridOptions<InterceptionStrateg
 
 export function useHandlingMeasureColumns(): ZqTableGridOptions<HandlingMeasureItem>['columns'] {
   return withCenter<HandlingMeasureItem>([
-    { key: 'measure', dataKey: 'measure', title: '处理措施', width: 220 },
+    { key: 'measure', dataKey: 'measure', title: '处理措施', width: 240 },
     {
       key: 'measure_category',
       dataKey: 'measure_category',
       title: '措施类别',
-      width: 140,
+      width: 160,
     },
     {
       key: 'test_case_items',
@@ -378,7 +335,8 @@ export function useHandlingMeasureColumns(): ZqTableGridOptions<HandlingMeasureI
       key: 'owner_info',
       dataKey: 'owner_info',
       title: '设计责任人',
-      width: 180,
+      width: 220,
+      headerSlotName: 'header-owner-info',
     },
     {
       key: 'sys_create_datetime',
@@ -402,7 +360,7 @@ export function useObservationColumns(): ZqTableGridOptions<ObservationMethodIte
       key: 'monitor_type',
       dataKey: 'monitor_type',
       title: '维测类型',
-      width: 140,
+      width: 160,
     },
     { key: 'log_id', dataKey: 'log_id', title: '日志 ID', width: 140 },
     {
@@ -416,7 +374,8 @@ export function useObservationColumns(): ZqTableGridOptions<ObservationMethodIte
       key: 'owner_info',
       dataKey: 'owner_info',
       title: '设计责任人',
-      width: 180,
+      width: 220,
+      headerSlotName: 'header-owner-info',
     },
     {
       key: 'actions',
@@ -435,12 +394,14 @@ export function useHuatuoColumns(): ZqTableGridOptions<HuatuoDiagnosisItem>['col
       dataKey: 'description',
       title: '诊断方案描述',
       width: 420,
+      headerSlotName: 'header-huatuo-description',
     },
     {
       key: 'owner_info',
       dataKey: 'owner_info',
       title: '设计责任人',
-      width: 180,
+      width: 220,
+      headerSlotName: 'header-owner-info',
     },
     {
       key: 'sys_create_datetime',
@@ -460,13 +421,20 @@ export function useHuatuoColumns(): ZqTableGridOptions<HuatuoDiagnosisItem>['col
 
 export function useTestCaseColumns(): ZqTableGridOptions<TestCaseItem>['columns'] {
   return withCenter<TestCaseItem>([
-    { key: 'brief', dataKey: 'brief', title: '测试用例 brief', width: 220 },
+    {
+      key: 'brief',
+      dataKey: 'brief',
+      title: '测试用例 brief',
+      width: 240,
+      headerSlotName: 'header-test-case-brief',
+    },
     { key: 'cida_link', dataKey: 'cida_link', title: 'CIDA 链接', width: 260 },
     {
       key: 'owner_info',
       dataKey: 'owner_info',
       title: '设计责任人',
-      width: 180,
+      width: 220,
+      headerSlotName: 'header-owner-info',
     },
     {
       key: 'sys_create_datetime',

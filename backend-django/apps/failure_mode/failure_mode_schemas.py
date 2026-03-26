@@ -38,8 +38,9 @@ class FailureModeDictOptionsSchema(Schema):
 
 class KeywordFilterSchema(Schema):
     keyword: Optional[str] = Field(None, description='关键词')
+    owner_keyword: Optional[str] = None
 
-    @field_validator('keyword', mode='before')
+    @field_validator('keyword', 'owner_keyword', mode='before')
     @classmethod
     def normalize_keyword(cls, value: Any):
         if value is None:
@@ -48,19 +49,68 @@ class KeywordFilterSchema(Schema):
         return text or None
 
 
-class FailureModeFilterSchema(KeywordFilterSchema):
-    subsystem: Optional[str] = None
-    module: Optional[str] = None
-    status: Optional[str] = None
-    author_id: Optional[str] = None
+def _normalize_query_list(value: Any) -> list[str]:
+    if value is None:
+        return []
 
-    @field_validator('subsystem', 'module', 'status', 'author_id', mode='before')
+    raw_values = value if isinstance(value, list) else [value]
+    normalized: list[str] = []
+    seen: set[str] = set()
+
+    for item in raw_values:
+        pieces = item if isinstance(item, list) else [item]
+        for piece in pieces:
+            for part in str(piece or '').split(','):
+                text = part.strip()
+                if not text or text in seen:
+                    continue
+                seen.add(text)
+                normalized.append(text)
+    return normalized
+
+
+class FailureModeFilterSchema(KeywordFilterSchema):
+    subsystem: list[str] = Field(default_factory=list)
+    module: list[str] = Field(default_factory=list)
+    status: list[str] = Field(default_factory=list)
+    author_id: Optional[str] = None
+    author_keyword: Optional[str] = None
+
+    @field_validator(
+        'subsystem',
+        'module',
+        'status',
+        mode='before',
+    )
     @classmethod
-    def normalize_optional_text(cls, value: Any):
+    def normalize_dict_filter_values(cls, value: Any):
+        return _normalize_query_list(value)
+
+    @field_validator('author_id', 'author_keyword', mode='before')
+    @classmethod
+    def normalize_text_filters(cls, value: Any):
         if value is None:
             return None
         text = str(value).strip()
         return text or None
+
+
+class HandlingMeasureFilterSchema(KeywordFilterSchema):
+    measure_category: list[str] = Field(default_factory=list)
+
+    @field_validator('measure_category', mode='before')
+    @classmethod
+    def normalize_measure_category(cls, value: Any):
+        return _normalize_query_list(value)
+
+
+class ObservationMethodFilterSchema(KeywordFilterSchema):
+    monitor_type: list[str] = Field(default_factory=list)
+
+    @field_validator('monitor_type', mode='before')
+    @classmethod
+    def normalize_monitor_type(cls, value: Any):
+        return _normalize_query_list(value)
 
 
 class ListTextSchemaMixin(Schema):

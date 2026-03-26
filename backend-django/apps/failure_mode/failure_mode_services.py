@@ -93,6 +93,23 @@ def _users_brief(users: Iterable[User]) -> list[dict[str, str | None]]:
     return items
 
 
+def _filter_users_by_keyword(queryset, relation_name: str, keyword: str):
+    text = _normalize_optional_text(keyword)
+    if not text:
+        return queryset
+    return queryset.filter(
+        Q(**{f'{relation_name}__username__icontains': text})
+        | Q(**{f'{relation_name}__name__icontains': text})
+    ).distinct()
+
+
+def _filter_by_exact_values(queryset, field_name: str, values: Any):
+    normalized_values = _normalize_text_list(values)
+    if not normalized_values:
+        return queryset
+    return queryset.filter(**{f'{field_name}__in': normalized_values})
+
+
 def _fetch_ordered_objects(model: Type[Any], ids: list[str], label: str):
     normalized_ids = _normalize_text_list(ids)
     if not normalized_ids:
@@ -442,12 +459,11 @@ def list_failure_modes(filters, pagination=None) -> Any:
             | Q(status__icontains=filters.keyword)
             | Q(related_dts_nos__icontains=filters.keyword)
         )
-    if filters.subsystem:
-        queryset = queryset.filter(subsystem=filters.subsystem)
-    if filters.module:
-        queryset = queryset.filter(module_name=filters.module)
-    if filters.status:
-        queryset = queryset.filter(status=filters.status)
+    if getattr(filters, 'author_keyword', None):
+        queryset = _filter_users_by_keyword(queryset, 'authors', filters.author_keyword)
+    queryset = _filter_by_exact_values(queryset, 'subsystem', filters.subsystem)
+    queryset = _filter_by_exact_values(queryset, 'module_name', filters.module)
+    queryset = _filter_by_exact_values(queryset, 'status', filters.status)
     if filters.author_id:
         queryset = queryset.filter(authors__id=filters.author_id)
     queryset = queryset.distinct().order_by('-sort', '-sys_create_datetime')
@@ -584,6 +600,8 @@ def list_interception_strategies(filters, pagination=None) -> Any:
             Q(interception_item__icontains=filters.keyword)
             | Q(station__icontains=filters.keyword)
         )
+    if getattr(filters, 'owner_keyword', None):
+        queryset = _filter_users_by_keyword(queryset, 'owners', filters.owner_keyword)
     queryset = queryset.order_by('-sort', '-sys_create_datetime')
     return _serialize_paginated_queryset(
         queryset,
@@ -653,6 +671,9 @@ def list_handling_measures(filters, pagination=None) -> Any:
             | Q(measure_category__icontains=filters.keyword)
             | Q(measure_effect__icontains=filters.keyword)
         )
+    queryset = _filter_by_exact_values(queryset, 'measure_category', filters.measure_category)
+    if getattr(filters, 'owner_keyword', None):
+        queryset = _filter_users_by_keyword(queryset, 'owners', filters.owner_keyword)
     queryset = queryset.order_by('-sort', '-sys_create_datetime')
     return _serialize_paginated_queryset(queryset, _serialize_handling_measure, pagination)
 
@@ -743,6 +764,9 @@ def list_observation_methods(filters, pagination=None) -> Any:
             | Q(log_keyword__icontains=filters.keyword)
             | Q(log_path__icontains=filters.keyword)
         )
+    queryset = _filter_by_exact_values(queryset, 'monitor_type', filters.monitor_type)
+    if getattr(filters, 'owner_keyword', None):
+        queryset = _filter_users_by_keyword(queryset, 'owners', filters.owner_keyword)
     queryset = queryset.order_by('-sort', '-sys_create_datetime')
     return _serialize_paginated_queryset(queryset, _serialize_observation_method, pagination)
 
@@ -796,6 +820,8 @@ def list_huatuo_diagnoses(filters, pagination=None) -> Any:
     queryset = _huatuo_diagnosis_queryset()
     if filters.keyword:
         queryset = queryset.filter(description__icontains=filters.keyword)
+    if getattr(filters, 'owner_keyword', None):
+        queryset = _filter_users_by_keyword(queryset, 'owners', filters.owner_keyword)
     queryset = queryset.order_by('-sort', '-sys_create_datetime')
     return _serialize_paginated_queryset(queryset, _serialize_huatuo_diagnosis, pagination)
 
@@ -854,6 +880,8 @@ def list_test_cases(filters, pagination=None) -> Any:
             Q(brief__icontains=filters.keyword)
             | Q(cida_link__icontains=filters.keyword)
         )
+    if getattr(filters, 'owner_keyword', None):
+        queryset = _filter_users_by_keyword(queryset, 'owners', filters.owner_keyword)
     queryset = queryset.order_by('-sort', '-sys_create_datetime')
     return _serialize_paginated_queryset(queryset, _serialize_test_case, pagination)
 
