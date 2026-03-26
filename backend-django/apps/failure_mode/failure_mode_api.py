@@ -39,9 +39,9 @@ def get_dict_options(request):
 
 
 @router.get('/failure-modes', response=list[FailureModeOutSchema], summary='获取故障模式列表')
-@paginate(MyPagination)
-def list_failure_modes(request, filters: FailureModeFilterSchema = Query(...)):
-    return failure_mode_services.list_failure_modes(filters)
+@paginate(MyPagination, pass_parameter='page_params')
+def list_failure_modes(request, filters: FailureModeFilterSchema = Query(...), page_params=None):
+    return failure_mode_services.list_failure_modes(filters, page_params)
 
 
 @router.post('/failure-modes', response=FailureModeOutSchema, summary='创建故障模式')
@@ -65,9 +65,9 @@ def delete_failure_mode(request, failure_mode_id: str):
 
 
 @router.get('/interception-strategies', response=list[InterceptionStrategyOutSchema], summary='获取产线拦截策略列表')
-@paginate(MyPagination)
-def list_interception_strategies(request, filters: KeywordFilterSchema = Query(...)):
-    return failure_mode_services.list_interception_strategies(filters)
+@paginate(MyPagination, pass_parameter='page_params')
+def list_interception_strategies(request, filters: KeywordFilterSchema = Query(...), page_params=None):
+    return failure_mode_services.list_interception_strategies(filters, page_params)
 
 
 @router.post('/interception-strategies', response=InterceptionStrategyOutSchema, summary='创建产线拦截策略')
@@ -91,9 +91,9 @@ def delete_interception_strategy(request, item_id: str):
 
 
 @router.get('/handling-measures', response=list[HandlingMeasureOutSchema], summary='获取故障处理措施列表')
-@paginate(MyPagination)
-def list_handling_measures(request, filters: KeywordFilterSchema = Query(...)):
-    return failure_mode_services.list_handling_measures(filters)
+@paginate(MyPagination, pass_parameter='page_params')
+def list_handling_measures(request, filters: KeywordFilterSchema = Query(...), page_params=None):
+    return failure_mode_services.list_handling_measures(filters, page_params)
 
 
 @router.post('/handling-measures', response=HandlingMeasureOutSchema, summary='创建故障处理措施')
@@ -117,9 +117,9 @@ def delete_handling_measure(request, item_id: str):
 
 
 @router.get('/observation-methods', response=list[ObservationMethodOutSchema], summary='获取维测手段列表')
-@paginate(MyPagination)
-def list_observation_methods(request, filters: KeywordFilterSchema = Query(...)):
-    return failure_mode_services.list_observation_methods(filters)
+@paginate(MyPagination, pass_parameter='page_params')
+def list_observation_methods(request, filters: KeywordFilterSchema = Query(...), page_params=None):
+    return failure_mode_services.list_observation_methods(filters, page_params)
 
 
 @router.post('/observation-methods', response=ObservationMethodOutSchema, summary='创建维测手段')
@@ -143,9 +143,9 @@ def delete_observation_method(request, item_id: str):
 
 
 @router.get('/huatuo-diagnoses', response=list[HuatuoDiagnosisOutSchema], summary='获取华佗诊断方案列表')
-@paginate(MyPagination)
-def list_huatuo_diagnoses(request, filters: KeywordFilterSchema = Query(...)):
-    return failure_mode_services.list_huatuo_diagnoses(filters)
+@paginate(MyPagination, pass_parameter='page_params')
+def list_huatuo_diagnoses(request, filters: KeywordFilterSchema = Query(...), page_params=None):
+    return failure_mode_services.list_huatuo_diagnoses(filters, page_params)
 
 
 @router.post('/huatuo-diagnoses', response=HuatuoDiagnosisOutSchema, summary='创建华佗诊断方案')
@@ -169,9 +169,9 @@ def delete_huatuo_diagnosis(request, item_id: str):
 
 
 @router.get('/test-cases', response=list[TestCaseOutSchema], summary='获取测试用例列表')
-@paginate(MyPagination)
-def list_test_cases(request, filters: KeywordFilterSchema = Query(...)):
-    return failure_mode_services.list_test_cases(filters)
+@paginate(MyPagination, pass_parameter='page_params')
+def list_test_cases(request, filters: KeywordFilterSchema = Query(...), page_params=None):
+    return failure_mode_services.list_test_cases(filters, page_params)
 
 
 @router.post('/test-cases', response=TestCaseOutSchema, summary='创建测试用例')

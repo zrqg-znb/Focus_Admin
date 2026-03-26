@@ -1,4 +1,5 @@
 from ninja import Router
+from apps.failure_mode.router import router as failure_mode_router
 from apps.performance.api import router as performance_router
 from apps.project_manager.router import router as project_manager_router
 from apps.requirement_center.router import router as requirement_center_router
@@ -11,6 +12,7 @@ from apps.deepaudit.router import router as deepaudit_router
 
 router = Router()
 
+router.add_router("/failure-mode", failure_mode_router, tags=["Apps-FailureMode"])
 router.add_router("/performance", performance_router, tags=["Apps-Performance"])
 router.add_router("/project-manager", project_manager_router)
 router.add_router("/requirement-center", requirement_center_router, tags=["Apps-RequirementCenter"])

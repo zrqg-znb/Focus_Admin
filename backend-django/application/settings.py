@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'channels',
     'core',
     'scheduler',
+    'apps.failure_mode',
     'apps.performance',
     'apps.project_manager',
     'apps.requirement_center',

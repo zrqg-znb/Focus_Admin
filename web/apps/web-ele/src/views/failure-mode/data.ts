@@ -11,7 +11,7 @@ import type {
   ObservationMethodItem,
   RelationItem,
   TestCaseItem,
-} from '#/api/project-manager/failure_mode';
+} from '#/api/failure_mode';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
 import { z } from '#/adapter/form';
@@ -489,7 +489,7 @@ export function useFailureModeFormSchema(
       component: 'Input',
       fieldName: 'brief',
       label: '故障模式 brief',
-      formItemClass: 'md:col-span-2',
+      formItemClass: 'xl:col-span-2',
       rules: z.string().min(1, '请输入故障模式 brief'),
     },
     {
@@ -595,7 +595,7 @@ export function useFailureModeFormSchema(
       component: 'RichTextEditor',
       fieldName: 'effect_html',
       label: '故障影响',
-      formItemClass: 'md:col-span-2',
+      formItemClass: 'xl:col-span-2',
       defaultValue: '',
       componentProps: {
         minHeight: 220,
@@ -606,7 +606,7 @@ export function useFailureModeFormSchema(
       component: 'RichTextEditor',
       fieldName: 'root_cause_html',
       label: '故障根因',
-      formItemClass: 'md:col-span-2',
+      formItemClass: 'xl:col-span-2',
       defaultValue: '',
       componentProps: {
         minHeight: 220,
@@ -627,7 +627,7 @@ export function useMasterFormSchema(
           component: 'Textarea',
           fieldName: 'description',
           label: '诊断方案描述',
-          formItemClass: 'md:col-span-2',
+          formItemClass: 'xl:col-span-2',
           componentProps: { rows: 6, placeholder: '请输入诊断方案描述' },
           rules: z.string().min(1, '请输入诊断方案描述'),
         },
@@ -652,7 +652,7 @@ export function useMasterFormSchema(
           component: 'RichTextEditor',
           fieldName: 'version_detection_html',
           label: '产线版本检测方案',
-          formItemClass: 'md:col-span-2',
+          formItemClass: 'xl:col-span-2',
           defaultValue: '',
           componentProps: { minHeight: 220, maxHeight: 420 },
         },
@@ -691,7 +691,7 @@ export function useMasterFormSchema(
           component: 'RichTextEditor',
           fieldName: 'measure_detail_html',
           label: '处理措施详情',
-          formItemClass: 'md:col-span-2',
+          formItemClass: 'xl:col-span-2',
           defaultValue: '',
           componentProps: { minHeight: 220, maxHeight: 420 },
         },
@@ -699,7 +699,7 @@ export function useMasterFormSchema(
           component: 'Textarea',
           fieldName: 'measure_effect',
           label: '措施影响',
-          formItemClass: 'md:col-span-2',
+          formItemClass: 'xl:col-span-2',
           componentProps: { rows: 3, placeholder: '请输入措施影响' },
         },
         {
@@ -728,7 +728,7 @@ export function useMasterFormSchema(
           component: 'Input',
           fieldName: 'log_path',
           label: '日志获取路径',
-          formItemClass: 'md:col-span-2',
+          formItemClass: 'xl:col-span-2',
         },
         {
           component: 'UserSelector',
@@ -751,7 +751,7 @@ export function useMasterFormSchema(
           component: 'RichTextEditor',
           fieldName: 'detail_html',
           label: '测试用例详情',
-          formItemClass: 'md:col-span-2',
+          formItemClass: 'xl:col-span-2',
           defaultValue: '',
           componentProps: { minHeight: 220, maxHeight: 420 },
         },
@@ -759,7 +759,7 @@ export function useMasterFormSchema(
           component: 'Input',
           fieldName: 'cida_link',
           label: 'CIDA 链接',
-          formItemClass: 'md:col-span-2',
+          formItemClass: 'xl:col-span-2',
         },
         {
           component: 'UserSelector',

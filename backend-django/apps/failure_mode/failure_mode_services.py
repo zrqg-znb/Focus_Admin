@@ -369,6 +369,20 @@ def _sync_ordered_relations(
         )
 
 
+def _serialize_paginated_queryset(queryset, serializer, pagination=None):
+    if pagination is None:
+        return [serializer(item) for item in queryset]
+
+    page = max(getattr(pagination, 'page', 1), 1)
+    page_size = max(getattr(pagination, 'pageSize', 10), 1)
+    offset = page_size * (page - 1)
+    page_queryset = queryset[offset: offset + page_size]
+    return {
+        'items': [serializer(item) for item in page_queryset],
+        'total': queryset.count(),
+    }
+
+
 def _failure_mode_attrs(payload: dict[str, Any]) -> dict[str, Any]:
     attrs = {
         'brief': _normalize_optional_text(payload.get('brief')),
@@ -417,7 +431,7 @@ def _update_failure_mode_attrs(instance: FailureMode, payload: dict[str, Any]):
         setattr(instance, field_name, value)
 
 
-def list_failure_modes(filters) -> Any:
+def list_failure_modes(filters, pagination=None) -> Any:
     queryset = _failure_mode_queryset()
     if filters.keyword:
         queryset = queryset.filter(
@@ -435,7 +449,8 @@ def list_failure_modes(filters) -> Any:
         queryset = queryset.filter(status=filters.status)
     if filters.author_id:
         queryset = queryset.filter(authors__id=filters.author_id)
-    return queryset.distinct().order_by('-sort', '-sys_create_datetime')
+    queryset = queryset.distinct().order_by('-sort', '-sys_create_datetime')
+    return _serialize_paginated_queryset(queryset, _serialize_failure_mode, pagination)
 
 
 @transaction.atomic
@@ -561,14 +576,19 @@ def delete_failure_mode(failure_mode_id: str) -> dict[str, bool]:
     return {'success': True}
 
 
-def list_interception_strategies(filters) -> Any:
+def list_interception_strategies(filters, pagination=None) -> Any:
     queryset = _interception_strategy_queryset()
     if filters.keyword:
         queryset = queryset.filter(
             Q(interception_item__icontains=filters.keyword)
             | Q(station__icontains=filters.keyword)
         )
-    return queryset.order_by('-sort', '-sys_create_datetime')
+    queryset = queryset.order_by('-sort', '-sys_create_datetime')
+    return _serialize_paginated_queryset(
+        queryset,
+        _serialize_interception_strategy,
+        pagination,
+    )
 
 
 @transaction.atomic
@@ -624,7 +644,7 @@ def delete_interception_strategy(item_id: str) -> dict[str, bool]:
     return {'success': True}
 
 
-def list_handling_measures(filters) -> Any:
+def list_handling_measures(filters, pagination=None) -> Any:
     queryset = _handling_measure_queryset()
     if filters.keyword:
         queryset = queryset.filter(
@@ -632,7 +652,8 @@ def list_handling_measures(filters) -> Any:
             | Q(measure_category__icontains=filters.keyword)
             | Q(measure_effect__icontains=filters.keyword)
         )
-    return queryset.order_by('-sort', '-sys_create_datetime')
+    queryset = queryset.order_by('-sort', '-sys_create_datetime')
+    return _serialize_paginated_queryset(queryset, _serialize_handling_measure, pagination)
 
 
 @transaction.atomic
@@ -712,7 +733,7 @@ def delete_handling_measure(item_id: str) -> dict[str, bool]:
     return {'success': True}
 
 
-def list_observation_methods(filters) -> Any:
+def list_observation_methods(filters, pagination=None) -> Any:
     queryset = _observation_method_queryset()
     if filters.keyword:
         queryset = queryset.filter(
@@ -721,7 +742,8 @@ def list_observation_methods(filters) -> Any:
             | Q(log_keyword__icontains=filters.keyword)
             | Q(log_path__icontains=filters.keyword)
         )
-    return queryset.order_by('-sort', '-sys_create_datetime')
+    queryset = queryset.order_by('-sort', '-sys_create_datetime')
+    return _serialize_paginated_queryset(queryset, _serialize_observation_method, pagination)
 
 
 @transaction.atomic
@@ -769,11 +791,12 @@ def delete_observation_method(item_id: str) -> dict[str, bool]:
     return {'success': True}
 
 
-def list_huatuo_diagnoses(filters) -> Any:
+def list_huatuo_diagnoses(filters, pagination=None) -> Any:
     queryset = _huatuo_diagnosis_queryset()
     if filters.keyword:
         queryset = queryset.filter(description__icontains=filters.keyword)
-    return queryset.order_by('-sort', '-sys_create_datetime')
+    queryset = queryset.order_by('-sort', '-sys_create_datetime')
+    return _serialize_paginated_queryset(queryset, _serialize_huatuo_diagnosis, pagination)
 
 
 @transaction.atomic
@@ -823,14 +846,15 @@ def delete_huatuo_diagnosis(item_id: str) -> dict[str, bool]:
     return {'success': True}
 
 
-def list_test_cases(filters) -> Any:
+def list_test_cases(filters, pagination=None) -> Any:
     queryset = _test_case_queryset()
     if filters.keyword:
         queryset = queryset.filter(
             Q(brief__icontains=filters.keyword)
             | Q(cida_link__icontains=filters.keyword)
         )
-    return queryset.order_by('-sort', '-sys_create_datetime')
+    queryset = queryset.order_by('-sort', '-sys_create_datetime')
+    return _serialize_paginated_queryset(queryset, _serialize_test_case, pagination)
 
 
 @transaction.atomic

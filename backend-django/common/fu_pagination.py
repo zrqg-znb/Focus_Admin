@@ -30,6 +30,16 @@ class MyPagination(PaginationBase):
     ) -> Any:
         offset = pagination.pageSize * (pagination.page - 1)
         limit: int = pagination.pageSize
+        if isinstance(queryset, dict) and self.items_attribute in queryset:
+            total = queryset.get('total', queryset.get('count'))
+            if total is None:
+                total = self._items_count(queryset[self.items_attribute])
+            return {
+                "page": offset,
+                "limit": limit,
+                "items": queryset[self.items_attribute],
+                "total": total,
+            }
         return {
             "page": offset,
             "limit": limit,

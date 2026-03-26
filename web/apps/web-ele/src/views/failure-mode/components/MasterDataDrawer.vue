@@ -9,7 +9,7 @@ import type {
   ObservationMethodItem,
   RelationItem,
   TestCaseItem,
-} from '#/api/project-manager/failure_mode';
+} from '#/api/failure_mode';
 
 import { computed, nextTick, ref } from 'vue';
 
@@ -33,7 +33,7 @@ import {
   updateInterceptionStrategyApi,
   updateObservationMethodApi,
   updateTestCaseApi,
-} from '#/api/project-manager/failure_mode';
+} from '#/api/failure_mode';
 import { ZqDrawer } from '#/components/zq-drawer';
 
 import {
@@ -89,10 +89,12 @@ const [Form, formApi] = useVbenForm({
   commonConfig: {
     colon: true,
     componentProps: { class: 'w-full' },
+    labelClass: 'whitespace-nowrap',
+    labelWidth: 156,
   },
   schema: useMasterFormSchema('interception', props.dictOptions),
   showDefaultActions: false,
-  wrapperClass: 'grid-cols-1 gap-x-4 md:grid-cols-2',
+  wrapperClass: 'grid-cols-1 gap-x-6 xl:grid-cols-2',
 });
 
 function applySchema(kind: MasterResourceKind) {

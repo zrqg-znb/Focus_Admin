@@ -4,7 +4,6 @@ from .milestone.milestone_api import router as milestone_router
 from .iteration.iteration_api import router as iteration_router
 from .code_quality.code_quality_api import router as code_quality_router
 from .dts.dts_api import router as dts_router
-from .failure_mode.failure_mode_api import router as failure_mode_router
 from .hardware.hardware_api import router as hardware_router
 from .report.report_api import router as report_router
 from .requirement_board.requirement_board_api import router as requirement_board_router
@@ -21,7 +20,6 @@ router.add_router("/milestones", milestone_router)
 router.add_router("/iterations", iteration_router)
 router.add_router("/code_quality", code_quality_router)
 router.add_router("/dts", dts_router)
-router.add_router("/failure-mode", failure_mode_router)
 router.add_router("/hardware", hardware_router)
 router.add_router("/report", report_router)
 router.add_router("/requirement-board", requirement_board_router)

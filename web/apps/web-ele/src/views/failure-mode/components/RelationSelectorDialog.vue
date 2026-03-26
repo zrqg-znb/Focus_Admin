@@ -8,7 +8,7 @@ import type {
   ObservationMethodItem,
   RelationItem,
   TestCaseItem,
-} from '#/api/project-manager/failure_mode';
+} from '#/api/failure_mode';
 
 import { computed, nextTick, ref } from 'vue';
 
@@ -31,7 +31,7 @@ import {
   listInterceptionStrategiesApi,
   listObservationMethodsApi,
   listTestCasesApi,
-} from '#/api/project-manager/failure_mode';
+} from '#/api/failure_mode';
 
 import {
   buildRelationItem,

@@ -204,7 +204,7 @@ export interface KeywordQuery {
   pageSize?: number;
 }
 
-const base = '/api/project-manager/failure-mode';
+const base = '/api/failure-mode';
 
 export async function getFailureModeDictOptionsApi() {
   return requestClient.get<FailureModeDictOptions>(`${base}/dict-options`);
