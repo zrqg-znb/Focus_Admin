@@ -95,7 +95,7 @@ bash scripts/deepaudit-local.sh all
 
 - 自动确保本地 Redis 可用
 - 后台拉起 DeepAudit Celery Worker
-- 前台启动 Django 开发服务器
+- 前台启动 Django ASGI 服务器
 
 Worker 日志默认输出到：
 
@@ -129,7 +129,7 @@ python -m celery -A application inspect ping
 启动 Django 后，访问或连接：
 
 ```text
-ws://127.0.0.1:8000/ws/deepaudit/tasks/{task_id}/?token=<jwt>
+ws://127.0.0.1:8001/ws/deepaudit/tasks/{task_id}/?token=<jwt>
 ```
 
 如果 JWT 正常、任务存在且用户有权限，连接后会收到 DeepAudit ready / subscribed 事件。

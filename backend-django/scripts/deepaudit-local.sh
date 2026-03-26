@@ -52,7 +52,7 @@ resolve_python_bin() {
 }
 
 PYTHON_BIN="$(resolve_python_bin)"
-RUNSERVER_ADDR="${RUNSERVER_ADDR:-0.0.0.0:8000}"
+RUNSERVER_ADDR="${RUNSERVER_ADDR:-0.0.0.0:8001}"
 DEEPAUDIT_QUEUE="${DEEPAUDIT_QUEUE:-deepaudit}"
 REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
 REDIS_PORT="${REDIS_PORT:-6379}"
@@ -72,8 +72,8 @@ print_usage() {
   bash scripts/deepaudit-local.sh check   # 检查 DeepAudit 本地依赖与配置
   bash scripts/deepaudit-local.sh redis   # 确保本地 Redis 可用
   bash scripts/deepaudit-local.sh worker  # 启动 DeepAudit Celery Worker
-  bash scripts/deepaudit-local.sh server  # 启动 Django 开发服务器
-  bash scripts/deepaudit-local.sh all     # 自动拉起 Redis + Worker，并在前台启动 Django
+  bash scripts/deepaudit-local.sh server  # 启动 Django ASGI 服务器
+  bash scripts/deepaudit-local.sh all     # 自动拉起 Redis + Worker，并在前台启动 Django ASGI 服务器
 
 可选环境变量:
   PYTHON_BIN=/path/to/python
@@ -81,7 +81,7 @@ print_usage() {
   REDIS_PORT=6379
   REDIS_PASSWORD=
   DEEPAUDIT_QUEUE=deepaudit
-  RUNSERVER_ADDR=0.0.0.0:8000
+  RUNSERVER_ADDR=0.0.0.0:8001
 EOF
 }
 
@@ -179,23 +179,30 @@ run_server() {
   ensure_redis
   check_python_deps
   check_django_settings
-  exec "$PYTHON_BIN" manage.py runserver "$RUNSERVER_ADDR"
+  local host="${RUNSERVER_ADDR%:*}"
+  local port="${RUNSERVER_ADDR##*:}"
+  exec "$PYTHON_BIN" -m uvicorn application.asgi:application --host "$host" --port "$port" --reload
 }
 
 run_all() {
   ensure_redis
   check_python_deps
 
-  "$PYTHON_BIN" -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -l info >"$LOG_DIR/celery-deepaudit.log" 2>&1 &
-  local celery_pid=$!
-  echo "DeepAudit Celery Worker 已启动，PID=$celery_pid，日志: $LOG_DIR/celery-deepaudit.log"
-
+  celery_pid=""
   cleanup() {
-    kill "$celery_pid" >/dev/null 2>&1 || true
+    if [[ -n "${celery_pid:-}" ]]; then
+      kill "$celery_pid" >/dev/null 2>&1 || true
+    fi
   }
+
+  "$PYTHON_BIN" -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -l info >"$LOG_DIR/celery-deepaudit.log" 2>&1 &
+  celery_pid=$!
+  printf 'DeepAudit Celery Worker 已启动，PID=%s，日志: %s\n' "$celery_pid" "$LOG_DIR/celery-deepaudit.log"
   trap cleanup EXIT INT TERM
 
-  exec "$PYTHON_BIN" manage.py runserver "$RUNSERVER_ADDR"
+  local host="${RUNSERVER_ADDR%:*}"
+  local port="${RUNSERVER_ADDR##*:}"
+  exec "$PYTHON_BIN" -m uvicorn application.asgi:application --host "$host" --port "$port" --reload
 }
 
 cmd="${1:-check}"
