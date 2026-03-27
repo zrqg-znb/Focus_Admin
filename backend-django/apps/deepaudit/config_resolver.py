@@ -44,16 +44,10 @@ PROVIDER_BASE_URL_SETTINGS = {
 }
 
 SUPPORTED_LLM_PROVIDERS = {
-    "gemini",
     "openai",
-    "claude",
     "qwen",
     "deepseek",
     "zhipu",
-    "moonshot",
-    "baidu",
-    "minimax",
-    "doubao",
     "ollama",
 }
 
@@ -165,14 +159,15 @@ def _normalize_timeout_seconds(value: Any) -> int | None:
 
 
 def _legacy_llm_to_snake(llm_config: dict[str, Any]) -> dict[str, Any]:
-    provider = str(
+    provider_raw = str(
         llm_config.get("provider") or llm_config.get("llmProvider") or ""
     ).strip().lower()
+    provider = coerce_llm_provider(provider_raw)
     api_key = str(
         llm_config.get("api_key") or llm_config.get("llmApiKey") or ""
     ).strip()
-    if not api_key and provider:
-        provider_field = PROVIDER_API_KEY_FIELDS.get(provider)
+    if not api_key and provider_raw:
+        provider_field = PROVIDER_API_KEY_FIELDS.get(provider_raw)
         api_key = str(llm_config.get(provider_field) or "").strip()
     return _clean_dict(
         {

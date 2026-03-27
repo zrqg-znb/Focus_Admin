@@ -112,10 +112,56 @@ DEFAULT_RULE_PATTERNS: tuple[RulePattern, ...] = (
         suggestion='Disable external entity resolution in XML parsers before processing untrusted XML.',
         description='Detected XML parsing APIs that may require XXE hardening.',
     ),
+    RulePattern(
+        code='C_BUF',
+        issue_type='buffer_overflow',
+        title='Potential buffer overflow',
+        severity=SEVERITY_CRITICAL,
+        patterns=(r'\bstrcpy\s*\(', r'\bstrcat\s*\(', r'\bsprintf\s*\(', r'\bvsprintf\s*\(', r'\bgets\s*\(', r'\bscanf\s*\([^)]*%s'),
+        suggestion='Use bounded APIs such as snprintf, strlcpy, strlcat, and always validate destination sizes.',
+        description='Detected classic unsafe C string APIs that can overflow fixed-size buffers.',
+    ),
+    RulePattern(
+        code='C_MEM',
+        issue_type='memory_corruption',
+        title='Potential memory corruption',
+        severity=SEVERITY_HIGH,
+        patterns=(r'\bmemcpy\s*\(', r'\bmemmove\s*\(', r'\bmemset\s*\(', r'\bfree\s*\(', r'\bdelete\s*\w+', r'\bdelete\[\]\s*\w+'),
+        suggestion='Verify pointer validity, object lifetime, and length arguments before memory operations.',
+        description='Detected manual memory-management and bulk-memory APIs that need careful bounds and lifetime checks.',
+    ),
+    RulePattern(
+        code='C_LEAK',
+        issue_type='memory_leak',
+        title='Potential memory leak',
+        severity=SEVERITY_MEDIUM,
+        patterns=(r'\bmalloc\s*\(', r'\bcalloc\s*\(', r'\brealloc\s*\(', r'\bnew\s+\w+', r'\bnew\[\]\s+\w+'),
+        suggestion='Ensure every allocation has a matching free/delete on all control-flow paths.',
+        description='Detected allocation sites that should be paired with explicit release logic.',
+    ),
+    RulePattern(
+        code='C_RACE',
+        issue_type='race_condition',
+        title='Potential race condition',
+        severity=SEVERITY_HIGH,
+        patterns=(r'\bpthread_create\s*\(', r'\bstd::thread\b', r'\bstd::async\b', r'\bCreateThread\s*\(', r'\bTask\s+\w+\s*=', r'\bvolatile\b'),
+        suggestion='Protect shared mutable state with mutexes, atomics, or explicit synchronization primitives.',
+        description='Detected thread creation and shared-state markers that merit synchronization review.',
+    ),
+    RulePattern(
+        code='C_FMT',
+        issue_type='format_string',
+        title='Potential format string bug',
+        severity=SEVERITY_HIGH,
+        patterns=(r'\bprintf\s*\([^,]+$', r'\bfprintf\s*\([^,]+$', r'\bsyslog\s*\([^,]+$', r'\bscanf\s*\([^)]*%n'),
+        suggestion='Always use a fixed format string and pass user data as arguments, never as the format itself.',
+        description='Detected format-style functions that can mis-handle attacker-controlled format strings.',
+    ),
 )
 
 TEXT_EXTENSIONS = {
-    '.js', '.jsx', '.ts', '.tsx', '.py', '.java', '.go', '.rs', '.cpp', '.c', '.h', '.cc', '.hh', '.cs', '.php', '.rb', '.kt', '.swift', '.sql', '.sh', '.json', '.yml', '.yaml', '.vue', '.xml', '.html', '.tsx', '.mjs', '.mts', '.cts'
+    '.js', '.jsx', '.ts', '.tsx', '.py', '.java', '.go', '.rs', '.cpp', '.c', '.h', '.cc', '.hh', '.cxx', '.hpp', '.hxx',
+    '.cs', '.php', '.rb', '.kt', '.swift', '.sql', '.sh', '.json', '.yml', '.yaml', '.vue', '.xml', '.html', '.mjs', '.mts', '.cts'
 }
 
 DEFAULT_EXCLUDES = ['node_modules/**', '.git/**', 'dist/**', 'build/**', '__pycache__/**', '.venv/**', 'vendor/**']
@@ -188,11 +234,17 @@ def detect_language_from_path(path: str) -> str:
         '.rs': 'rust',
         '.cpp': 'cpp',
         '.c': 'c',
+        '.cc': 'cpp',
+        '.cxx': 'cpp',
         '.cs': 'csharp',
         '.php': 'php',
         '.rb': 'ruby',
         '.kt': 'kotlin',
         '.swift': 'swift',
+        '.h': 'c',
+        '.hh': 'cpp',
+        '.hpp': 'cpp',
+        '.hxx': 'cpp',
         '.vue': 'vue',
     }
     return mapping.get(ext, 'text')

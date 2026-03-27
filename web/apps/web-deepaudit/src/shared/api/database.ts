@@ -31,7 +31,7 @@ const DEFAULT_CONFIG = {
     llmTimeout: 150_000,
     llmTemperature: 0.1,
     llmMaxTokens: 4096,
-    llmFirstTokenTimeout: 30,
+    llmFirstTokenTimeout: 90,
     llmStreamTimeout: 60,
     agentTimeout: 1800,
     subAgentTimeout: 600,
@@ -505,10 +505,11 @@ export const api = {
   async getLLMProviders() {
     return {
       providers: [
-        { id: "openai", name: "OpenAI", defaultModel: "gpt-5", models: ["gpt-5", "gpt-5-mini", "o3"], defaultBaseUrl: "" },
-        { id: "claude", name: "Claude", defaultModel: "claude-sonnet-4.5", models: ["claude-sonnet-4.5", "claude-opus-4"], defaultBaseUrl: "" },
-        { id: "deepseek", name: "DeepSeek", defaultModel: "deepseek-chat", models: ["deepseek-chat", "deepseek-reasoner"], defaultBaseUrl: "https://api.deepseek.com" },
-        { id: "ollama", name: "Ollama", defaultModel: "llama3.3", models: ["llama3.3", "qwen3"], defaultBaseUrl: "http://127.0.0.1:11434" },
+        { id: "openai", name: "内网统一入口", defaultModel: "gpt-5", models: ["gpt-5", "gpt-5.1", "gpt-4o-mini"], defaultBaseUrl: "" },
+        { id: "qwen", name: "Qwen", defaultModel: "gpt-5.4", models: ["qwen3-max-instruct", "qwen3-plus", "qwen3-8b"], defaultBaseUrl: "" },
+        { id: "deepseek", name: "DeepSeek", defaultModel: "deepseek-v3.1-terminus", models: ["deepseek-v3.1-terminus", "deepseek-chat", "deepseek-reasoner"], defaultBaseUrl: "" },
+        { id: "zhipu", name: "智谱AI (GLM)", defaultModel: "glm-4.6", models: ["glm-4.6", "glm-4.5-flash", "glm-4.5"], defaultBaseUrl: "" },
+        { id: "ollama", name: "Ollama 本地兜底", defaultModel: "llama3.3-70b", models: ["llama3.3-70b", "qwen3-8b", "deepseek-r1"], defaultBaseUrl: "" },
       ],
     };
   },

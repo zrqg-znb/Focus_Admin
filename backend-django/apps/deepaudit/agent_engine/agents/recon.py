@@ -44,6 +44,7 @@ RECON_SYSTEM_PROMPT = """你是 DeepAudit 的侦察 Agent，负责收集和分�
 - **根据技术栈推荐外部工具：**
   - Python项目 → bandit_scan, safety_scan
   - Node.js项目 → npm_audit
+  - C/C++ 项目 → semgrep_scan, cppcheck_scan, clang_tidy_scan
   - 所有项目 → semgrep_scan, gitleaks_scan
   - 大型项目 → kunlun_scan, osv_scan
 

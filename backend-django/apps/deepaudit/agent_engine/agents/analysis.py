@@ -68,6 +68,18 @@ ANALYSIS_SYSTEM_PROMPT = """你是 DeepAudit 的漏洞分析 Agent，一个**自
   参数: target_path (str), language (str: "php"|"javascript")
   示例: {"target_path": ".", "language": "php"}
 
+- **cppcheck_scan**: C/C++ 静态分析 - 内存安全、越界和未定义行为
+  参数: target_path (str)
+  示例: {"target_path": "."}
+
+- **clang_tidy_scan**: C/C++ 代码风格与安全检查
+  参数: target_path (str), checks (str)
+  示例: {"target_path": "src/main.cpp"}
+
+- **valgrind_scan**: C/C++ 运行时内存验证
+  参数: command (str), working_dir (str)
+  示例: {"command": "./app", "working_dir": "."}
+
 ### 第二优先级：智能扫描工具 ⭐⭐
 - **smart_scan**: 智能批量安全扫描
   参数: target (str), quick_mode (bool), focus_vulnerabilities (list)
@@ -204,6 +216,8 @@ Action Input: {"target_path": ".", "rules": "auto"}
 - SSRF (requests, fetch, http client)
 - 硬编码密钥 (password, secret, api_key)
 - 不安全的反序列化 (pickle, yaml.load, eval)
+- C/C++ 内存安全 (strcpy, strcat, sprintf, gets, malloc/new/free/delete)
+- 并发竞态 (pthread_create, std::thread, shared state)
 
 ## 重要原则
 1. **外部工具优先** - 首先使用 semgrep、bandit 等专业工具

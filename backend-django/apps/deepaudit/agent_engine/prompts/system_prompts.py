@@ -110,44 +110,48 @@ VULNERABILITY_PRIORITIES = """
    - Source: 用户输入、配置文件
    - Sink: eval(), exec(), pickle.loads(), yaml.unsafe_load()
    - 特征: 模板注入、反序列化
+4. **C/C++ 内存安全** - 缓冲区溢出、UAF、双重释放
+   - Source: 用户输入、长度参数、指针生命周期
+   - Sink: strcpy(), strcat(), sprintf(), gets(), free(), delete
+   - 特征: 越界写、释放后使用、未同步共享状态
 
 ### 🟠 High - 信息泄露和权限提升
-4. **路径遍历** - 任意文件访问
+5. **路径遍历** - 任意文件访问
    - Source: 文件名参数、路径参数
    - Sink: open(), readFile(), send_file()
    - 绕过: ../, URL编码, 空字节
 
-5. **SSRF** - 服务器端请求伪造
+6. **SSRF** - 服务器端请求伪造
    - Source: URL参数、redirect参数
    - Sink: requests.get(), fetch(), http.request()
    - 内网: 127.0.0.1, 169.254.169.254, localhost
 
-6. **认证绕过** - 权限控制缺陷
+7. **认证绕过** - 权限控制缺陷
    - 缺失认证装饰器
    - JWT漏洞: 无签名验证、弱密钥
    - IDOR: 直接对象引用
 
 ### 🟡 Medium - XSS和数据暴露
-7. **XSS** - 跨站脚本
+8. **XSS** - 跨站脚本
    - Source: 用户输入、URL参数
    - Sink: innerHTML, document.write, v-html
    - 类型: 反射型、存储型、DOM型
 
-8. **敏感信息泄露**
+9. **敏感信息泄露**
    - 硬编码密钥、密码
    - 调试信息、错误堆栈
    - API密钥、数据库凭证
 
-9. **XXE** - XML外部实体注入
+10. **XXE** - XML外部实体注入
    - Source: XML输入、SOAP请求
    - Sink: etree.parse(), XMLParser()
    - 特征: 禁用external entities
 
 ### 🟢 Low - 配置和最佳实践
-10. **CSRF** - 跨站请求伪造
-11. **弱加密** - MD5、SHA1、DES
-12. **不安全传输** - HTTP、明文密码
-13. **日志记录敏感信息**
+11. **CSRF** - 跨站请求伪造
+12. **弱加密** - MD5、SHA1、DES
+13. **不安全传输** - HTTP、明文密码
+14. **日志记录敏感信息**
 </vulnerability_priorities>
 """
 
@@ -175,6 +179,9 @@ TOOL_USAGE_GUIDE = """
 | `bandit_scan` | Python安全扫描 | Python项目**必用**，检测注入/反序列化等 |
 | `gitleaks_scan` | 密钥泄露检测 | **每次分析必用**，检测150+种密钥类型 |
 | `kunlun_scan` | 深度代码审计 | 大型项目推荐，支持PHP/Java/JS深度分析 |
+| `cppcheck_scan` | C/C++ 静态分析 | 内存安全、越界、未定义行为 |
+| `clang_tidy_scan` | C/C++ 语义检查 | 风格、安全和现代 C++ 规则 |
+| `valgrind_scan` | C/C++ 运行时验证 | 内存泄漏、越界和原生崩溃定位 |
 | `npm_audit` | Node.js依赖漏洞 | package.json项目**必用** |
 | `safety_scan` | Python依赖漏洞 | requirements.txt项目**必用** |
 | `osv_scan` | 开源漏洞扫描 | 多语言依赖检查 |

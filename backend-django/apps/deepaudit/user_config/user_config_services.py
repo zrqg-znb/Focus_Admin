@@ -7,8 +7,10 @@ from copy import deepcopy
 from urllib.parse import urlencode
 
 import requests
+from django.conf import settings
 
 from apps.deepaudit.constants import DEFAULT_LLM_CONFIG, DEFAULT_OTHER_CONFIG, EMBEDDING_PROVIDERS
+from apps.deepaudit.config_resolver import coerce_llm_provider
 from apps.deepaudit.encryption import decrypt_value, encrypt_value
 from apps.deepaudit.permissions import get_user_id
 from apps.deepaudit.serialization import format_datetime_text
@@ -129,6 +131,12 @@ def _default_model_for_provider(provider: str) -> str:
 
 
 def _default_base_url_for_provider(provider: str) -> str:
+    if provider == 'openai':
+        for setting_name in ('LLM_BASE_URL', 'INTERNAL_LLM_BASE_URL', 'OPENAI_BASE_URL'):
+            value = str(getattr(settings, setting_name, '') or '').strip()
+            if value:
+                return value
+        return LLM_TEST_BASE_URLS.get('ollama', '')
     return LLM_TEST_BASE_URLS.get(provider, '')
 
 
@@ -473,7 +481,7 @@ def test_embedding(payload: dict) -> dict:
 
 
 def test_llm_connection(user, payload: dict) -> dict:
-    provider = str(payload.get('provider') or '').strip().lower() or 'openai'
+    provider_requested = coerce_llm_provider(str(payload.get('provider') or '').strip().lower() or 'openai')
     saved_debug = _build_saved_debug(user)
     saved_config = get_user_config(user).get('llm_config') or {}
     api_key = str(
@@ -482,17 +490,27 @@ def test_llm_connection(user, payload: dict) -> dict:
         or saved_config.get('api_key')
         or ''
     ).strip()
-    model = str(payload.get('model') or '').strip() or _default_model_for_provider(provider)
-    base_url = str(payload.get('base_url') or payload.get('baseUrl') or '').strip() or _default_base_url_for_provider(provider)
+    explicit_model = str(payload.get('model') or '').strip()
+    explicit_base_url = str(payload.get('base_url') or payload.get('baseUrl') or '').strip()
+    provider = provider_requested
+    model = explicit_model or _default_model_for_provider(provider)
+    base_url = explicit_base_url or _default_base_url_for_provider(provider)
+
+    if provider == 'openai' and not explicit_base_url:
+        provider = 'ollama'
+        model = explicit_model or _default_model_for_provider(provider)
+        base_url = _default_base_url_for_provider(provider)
+
     timeout_seconds = max(5, int(saved_config.get('timeout') or DEFAULT_LLM_CONFIG['timeout']))
     temperature = float(saved_config.get('temperature', DEFAULT_LLM_CONFIG['temperature']))
     max_tokens = int(saved_config.get('max_tokens', DEFAULT_LLM_CONFIG['max_tokens']))
 
     debug = {
-        'provider': provider,
-        'model_requested': str(payload.get('model') or ''),
+        'provider_requested': provider_requested,
+        'provider_used': provider,
+        'model_requested': explicit_model,
         'model_used': model,
-        'base_url_requested': str(payload.get('base_url') or payload.get('baseUrl') or ''),
+        'base_url_requested': explicit_base_url,
         'base_url_used': base_url,
         'api_key_length': len(api_key),
         'api_key_prefix': _mask_api_key(api_key),
@@ -508,7 +526,7 @@ def test_llm_connection(user, payload: dict) -> dict:
         debug['error_category'] = 'unsupported_provider'
         return {
             'success': False,
-            'message': f'暂不支持的 LLM Provider: {provider}',
+            'message': f'暂不支持的 LLM Provider: {provider_requested}',
             'model': model,
             'debug': debug,
         }
@@ -522,149 +540,176 @@ def test_llm_connection(user, payload: dict) -> dict:
             'debug': debug,
         }
 
-    start = time.perf_counter()
+    def _attempt_connection(attempt_provider: str, attempt_model: str, attempt_base_url: str, attempt_api_key: str, *, is_fallback: bool = False):
+        start = time.perf_counter()
+        attempt_debug = dict(debug)
+        attempt_debug['provider_used'] = attempt_provider
+        attempt_debug['model_used'] = attempt_model
+        attempt_debug['base_url_used'] = attempt_base_url
+        if is_fallback:
+            attempt_debug['fallback_provider'] = attempt_provider
 
-    try:
-        if provider in OPENAI_COMPATIBLE_PROVIDERS:
-            debug['adapter_type'] = 'openai-compatible'
-            response_payload, transport_debug = _send_openai_compatible_request(
-                provider,
-                api_key,
-                model,
-                base_url,
-                timeout=timeout_seconds,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            content = _extract_openai_content(response_payload)
-        elif provider == 'claude':
-            debug['adapter_type'] = 'anthropic-native'
-            response_payload, transport_debug = _send_claude_request(
-                api_key,
-                model,
-                base_url,
-                timeout=timeout_seconds,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            content = _extract_claude_content(response_payload)
-        elif provider == 'gemini':
-            debug['adapter_type'] = 'gemini-native'
-            response_payload, transport_debug = _send_gemini_request(
-                api_key,
-                model,
-                base_url,
-                timeout=timeout_seconds,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            content = _extract_gemini_content(response_payload)
-        elif provider == 'baidu':
-            debug['adapter_type'] = 'baidu-native'
-            response_payload, transport_debug = _send_baidu_request(
-                api_key,
-                model,
-                base_url,
-                timeout=timeout_seconds,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            content = str(response_payload.get('result') or '')
-        elif provider == 'minimax':
-            debug['adapter_type'] = 'minimax-native'
-            response_payload, transport_debug = _send_minimax_request(
-                api_key,
-                model,
-                base_url,
-                timeout=timeout_seconds,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            content = _extract_openai_content(response_payload)
-        else:
-            debug['error_category'] = 'unsupported_provider'
+        try:
+            if attempt_provider in OPENAI_COMPATIBLE_PROVIDERS:
+                attempt_debug['adapter_type'] = 'openai-compatible'
+                response_payload, transport_debug = _send_openai_compatible_request(
+                    attempt_provider,
+                    attempt_api_key,
+                    attempt_model,
+                    attempt_base_url,
+                    timeout=timeout_seconds,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                content = _extract_openai_content(response_payload)
+            elif attempt_provider == 'claude':
+                attempt_debug['adapter_type'] = 'anthropic-native'
+                response_payload, transport_debug = _send_claude_request(
+                    attempt_api_key,
+                    attempt_model,
+                    attempt_base_url,
+                    timeout=timeout_seconds,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                content = _extract_claude_content(response_payload)
+            elif attempt_provider == 'gemini':
+                attempt_debug['adapter_type'] = 'gemini-native'
+                response_payload, transport_debug = _send_gemini_request(
+                    attempt_api_key,
+                    attempt_model,
+                    attempt_base_url,
+                    timeout=timeout_seconds,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                content = _extract_gemini_content(response_payload)
+            elif attempt_provider == 'baidu':
+                attempt_debug['adapter_type'] = 'baidu-native'
+                response_payload, transport_debug = _send_baidu_request(
+                    attempt_api_key,
+                    attempt_model,
+                    attempt_base_url,
+                    timeout=timeout_seconds,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                content = str(response_payload.get('result') or '')
+            elif attempt_provider == 'minimax':
+                attempt_debug['adapter_type'] = 'minimax-native'
+                response_payload, transport_debug = _send_minimax_request(
+                    attempt_api_key,
+                    attempt_model,
+                    attempt_base_url,
+                    timeout=timeout_seconds,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                content = _extract_openai_content(response_payload)
+            else:
+                attempt_debug['error_category'] = 'unsupported_provider'
+                return {
+                    'success': False,
+                    'message': f'当前 Provider 暂未接入在线测试: {attempt_provider}',
+                    'model': attempt_model,
+                    'debug': attempt_debug,
+                }
+
+            elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+            attempt_debug['elapsed_time_ms'] = elapsed_ms
+            attempt_debug.update(transport_debug)
+
+            status_code = int(transport_debug.get('status_code') or 0)
+            if status_code and status_code >= 400:
+                attempt_debug['error_category'] = 'http_error'
+                attempt_debug['error_message'] = _extract_error_message(
+                    response_payload,
+                    f'LLM 服务返回 HTTP {status_code}',
+                )
+                return {
+                    'success': False,
+                    'message': attempt_debug['error_message'],
+                    'model': attempt_model,
+                    'debug': attempt_debug,
+                }
+
+            if not content:
+                attempt_debug['error_category'] = 'empty_response'
+                attempt_debug['error_message'] = 'LLM 返回空响应，请检查模型名、端点和 API Key'
+                return {
+                    'success': False,
+                    'message': attempt_debug['error_message'],
+                    'model': attempt_model,
+                    'debug': attempt_debug,
+                }
+
+            usage = response_payload.get('usage')
+            if usage is not None:
+                attempt_debug['usage'] = usage
+
+            return {
+                'success': True,
+                'message': f'连接成功 ({elapsed_ms} ms)',
+                'model': attempt_model,
+                'response': content[:100],
+                'debug': attempt_debug,
+            }
+        except requests.Timeout:
+            elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+            attempt_debug['elapsed_time_ms'] = elapsed_ms
+            attempt_debug['error_category'] = 'timeout'
+            attempt_debug['error_type'] = 'Timeout'
+            attempt_debug['error_message'] = f'请求超时，请检查网络连通性或适当增大超时时间（当前 {timeout_seconds}s）'
             return {
                 'success': False,
-                'message': f'当前 Provider 暂未接入在线测试: {provider}',
-                'model': model,
-                'debug': debug,
+                'message': attempt_debug['error_message'],
+                'model': attempt_model,
+                'debug': attempt_debug,
             }
-
-        elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
-        debug['elapsed_time_ms'] = elapsed_ms
-        debug.update(transport_debug)
-
-        status_code = int(transport_debug.get('status_code') or 0)
-        if status_code and status_code >= 400:
-            debug['error_category'] = 'http_error'
-            debug['error_message'] = _extract_error_message(
-                response_payload,
-                f'LLM 服务返回 HTTP {status_code}',
-            )
+        except requests.RequestException as exc:
+            elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+            attempt_debug['elapsed_time_ms'] = elapsed_ms
+            attempt_debug['error_category'] = 'network'
+            attempt_debug['error_type'] = type(exc).__name__
+            attempt_debug['error_message'] = str(exc)
             return {
                 'success': False,
-                'message': debug['error_message'],
-                'model': model,
-                'debug': debug,
+                'message': f'网络请求失败: {exc}',
+                'model': attempt_model,
+                'debug': attempt_debug,
             }
-
-        if not content:
-            debug['error_category'] = 'empty_response'
-            debug['error_message'] = 'LLM 返回空响应，请检查模型名、端点和 API Key'
+        except Exception as exc:
+            elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+            attempt_debug['elapsed_time_ms'] = elapsed_ms
+            attempt_debug['error_category'] = 'unexpected'
+            attempt_debug['error_type'] = type(exc).__name__
+            attempt_debug['error_message'] = str(exc)
             return {
                 'success': False,
-                'message': debug['error_message'],
-                'model': model,
-                'debug': debug,
+                'message': str(exc) or 'LLM 测试失败',
+                'model': attempt_model,
+                'debug': attempt_debug,
             }
 
-        usage = response_payload.get('usage')
-        if usage is not None:
-            debug['usage'] = usage
+    primary_result = _attempt_connection(provider, model, base_url, api_key)
+    if primary_result.get('success') or provider == 'ollama':
+        return primary_result
 
-        return {
-            'success': True,
-            'message': f'连接成功 ({elapsed_ms} ms)',
-            'model': model,
-            'response': content[:100],
-            'debug': debug,
-        }
-    except requests.Timeout:
-        elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
-        debug['elapsed_time_ms'] = elapsed_ms
-        debug['error_category'] = 'timeout'
-        debug['error_type'] = 'Timeout'
-        debug['error_message'] = f'请求超时，请检查网络连通性或适当增大超时时间（当前 {timeout_seconds}s）'
-        return {
-            'success': False,
-            'message': debug['error_message'],
-            'model': model,
-            'debug': debug,
-        }
-    except requests.RequestException as exc:
-        elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
-        debug['elapsed_time_ms'] = elapsed_ms
-        debug['error_category'] = 'network'
-        debug['error_type'] = type(exc).__name__
-        debug['error_message'] = str(exc)
-        return {
-            'success': False,
-            'message': f'网络请求失败: {exc}',
-            'model': model,
-            'debug': debug,
-        }
-    except Exception as exc:
-        elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
-        debug['elapsed_time_ms'] = elapsed_ms
-        debug['error_category'] = 'unexpected'
-        debug['error_type'] = type(exc).__name__
-        debug['error_message'] = str(exc)
-        return {
-            'success': False,
-            'message': str(exc) or 'LLM 测试失败',
-            'model': model,
-            'debug': debug,
-        }
+    fallback_provider = 'ollama'
+    fallback_model = explicit_model or _default_model_for_provider(fallback_provider)
+    fallback_base_url = _default_base_url_for_provider(fallback_provider)
+    fallback_api_key = str(payload.get('fallback_api_key') or saved_config.get('fallback_api_key') or '').strip()
+    fallback_result = _attempt_connection(
+        fallback_provider,
+        fallback_model,
+        fallback_base_url,
+        fallback_api_key,
+        is_fallback=True,
+    )
+
+    if not fallback_result.get('success'):
+        fallback_result['debug']['primary_error'] = primary_result.get('debug', {}).get('error_message') or primary_result.get('message')
+    return fallback_result
 
 
 def _fingerprint(public_key: str) -> str:

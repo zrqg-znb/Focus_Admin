@@ -22,7 +22,7 @@ import { clearKnownHosts, deleteSSHKey, getSSHKey, saveSSHKey } from "@/shared/a
 import { useAuth } from "@/shared/context/AuthContext";
 import { DEEPAUDIT_ACTION_CODES } from "@/shared/focus/focusPermission";
 
-// LLM Providers - 2025
+// LLM Providers
 const LLM_PROVIDERS = [
   { value: 'openai', label: 'OpenAI GPT', icon: '🟢', category: 'litellm', hint: 'gpt-5, gpt-5-mini, o3 等' },
   { value: 'claude', label: 'Anthropic Claude', icon: '🟣', category: 'litellm', hint: 'claude-sonnet-4.5, claude-opus-4 等' },
@@ -43,6 +43,10 @@ const DEFAULT_MODELS: Record<string, string> = {
   ollama: 'llama3.3-70b', baidu: 'ernie-4.5', minimax: 'minimax-m2', doubao: 'doubao-1.6-pro',
 };
 
+const VISIBLE_LLM_PROVIDERS = LLM_PROVIDERS.filter((item) =>
+  ["openai", "deepseek", "qwen", "zhipu", "ollama"].includes(item.value)
+);
+
 interface SystemConfigData {
   llmProvider: string; llmApiKey: string; llmModel: string; llmBaseUrl: string;
   llmTimeout: number; llmTemperature: number; llmMaxTokens: number;
@@ -54,7 +58,10 @@ interface SystemConfigData {
 }
 
 type UserConfigPayload = {
-  llmConfig?: Partial<SystemConfigData>;
+  llmConfig?: Partial<SystemConfigData> & {
+    provider?: string;
+    llmProvider?: string;
+  };
   otherConfig?: Partial<Pick<
     SystemConfigData,
     | "githubToken"
@@ -75,7 +82,7 @@ const DEFAULT_SYSTEM_CONFIG: SystemConfigData = {
   llmTimeout: 150000,
   llmTemperature: 0.1,
   llmMaxTokens: 4096,
-  llmFirstTokenTimeout: 30,
+  llmFirstTokenTimeout: 90,
   llmStreamTimeout: 60,
   agentTimeout: 1800,
   subAgentTimeout: 600,
@@ -89,6 +96,8 @@ const DEFAULT_SYSTEM_CONFIG: SystemConfigData = {
   outputLanguage: "zh-CN",
 };
 
+const INTERNAL_LLM_LABEL = "内网统一入口";
+
 function toSystemConfigData(
   payload?: null | UserConfigPayload,
   fallback: SystemConfigData = DEFAULT_SYSTEM_CONFIG,
@@ -97,7 +106,7 @@ function toSystemConfigData(
   const otherConfig = payload?.otherConfig ?? {};
 
   return {
-    llmProvider: llmConfig.llmProvider || fallback.llmProvider,
+    llmProvider: llmConfig.llmProvider || llmConfig.provider || fallback.llmProvider,
     llmApiKey: llmConfig.llmApiKey || fallback.llmApiKey,
     llmModel: llmConfig.llmModel || fallback.llmModel,
     llmBaseUrl: llmConfig.llmBaseUrl || fallback.llmBaseUrl,
@@ -326,8 +335,8 @@ export function SystemConfig() {
 
   const testLLMConnection = async () => {
     if (!config) return;
-    if (!config.llmApiKey && config.llmProvider !== 'ollama') {
-      toast.error('请先配置 API Key');
+    if (!config.llmBaseUrl.trim()) {
+      toast.error('请先填写内网中转地址');
       return;
     }
     setTestingLLM(true);
@@ -362,8 +371,7 @@ export function SystemConfig() {
     );
   }
 
-  const currentProvider = LLM_PROVIDERS.find(p => p.value === config.llmProvider);
-  const isConfigured = config.llmApiKey !== '' || config.llmProvider === 'ollama';
+  const isConfigured = config.llmBaseUrl.trim() !== '' || config.llmApiKey.trim() !== '' || config.llmModel.trim() !== '';
 
   return (
     <div className="space-y-6">
@@ -375,11 +383,11 @@ export function SystemConfig() {
             <span className="font-mono text-sm">
               {isConfigured ? (
                 <span className="text-emerald-400 flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4" /> LLM 已配置 ({currentProvider?.label})
+                  <CheckCircle2 className="h-4 w-4" /> 内网统一入口已配置
                 </span>
               ) : (
                 <span className="text-amber-400 flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4" /> 请配置 LLM API Key
+                  <AlertCircle className="h-4 w-4" /> 请配置内网中转地址和模型
                 </span>
               )}
             </span>
@@ -418,40 +426,41 @@ export function SystemConfig() {
         {/* LLM Config */}
         <TabsContent value="llm" className="space-y-6">
           <div className="cyber-card p-6 space-y-6">
-            {/* Provider Selection */}
-            <div className="space-y-2">
-              <Label className="text-xs font-bold text-muted-foreground uppercase">选择 LLM 提供商</Label>
-              <Select value={config.llmProvider} onValueChange={(v) => updateConfig('llmProvider', v)}>
-                <SelectTrigger className="h-12 cyber-input">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="cyber-dialog border-border">
-                  <div className="px-2 py-1.5 text-xs font-bold text-muted-foreground uppercase">LiteLLM 统一适配 (推荐)</div>
-                  {LLM_PROVIDERS.filter(p => p.category === 'litellm').map(p => (
-                    <SelectItem key={p.value} value={p.value} className="font-mono">
-                      <span className="flex items-center gap-2">
-                        <span>{p.icon}</span>
-                        <span>{p.label}</span>
-                        <span className="text-xs text-muted-foreground">- {p.hint}</span>
-                      </span>
-                    </SelectItem>
-                  ))}
-                  <div className="px-2 py-1.5 text-xs font-bold text-muted-foreground uppercase mt-2">原生适配器</div>
-                  {LLM_PROVIDERS.filter(p => p.category === 'native').map(p => (
-                    <SelectItem key={p.value} value={p.value} className="font-mono">
-                      <span className="flex items-center gap-2">
-                        <span>{p.icon}</span>
-                        <span>{p.label}</span>
-                        <span className="text-xs text-muted-foreground">- {p.hint}</span>
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="bg-muted/50 border border-border rounded-lg p-4 flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-bold text-muted-foreground uppercase">LLM 入口</p>
+                <p className="text-sm text-foreground font-mono">{config.llmProvider || INTERNAL_LLM_LABEL}</p>
+              </div>
+              <div className="text-xs text-muted-foreground text-right">
+                可按需选择 `openai / qwen / deepseek / zhipu`，后端仍会在失败时自动切换到本地兜底
+              </div>
             </div>
 
-            {/* API Key */}
-            {config.llmProvider !== 'ollama' && (
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="space-y-2">
+                <Label className="text-xs font-bold text-muted-foreground uppercase">Provider</Label>
+                <Select value={config.llmProvider} onValueChange={(v) => updateConfig('llmProvider', v)}>
+                  <SelectTrigger className="h-10 cyber-input">
+                    <SelectValue placeholder="选择 Provider" />
+                  </SelectTrigger>
+                  <SelectContent className="cyber-dialog border-border">
+                    {VISIBLE_LLM_PROVIDERS.map((item) => (
+                      <SelectItem key={item.value} value={item.value} className="font-mono">
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-bold text-muted-foreground uppercase">内网中转地址</Label>
+                <Input
+                  value={config.llmBaseUrl}
+                  onChange={(e) => updateConfig('llmBaseUrl', e.target.value)}
+                  placeholder="例如 https://llm-gateway.intra.example/v1"
+                  className="h-10 cyber-input"
+                />
+              </div>
               <div className="space-y-2">
                 <Label className="text-xs font-bold text-muted-foreground uppercase">API Key</Label>
                 <div className="flex gap-2">
@@ -459,38 +468,25 @@ export function SystemConfig() {
                     type={showApiKey ? 'text' : 'password'}
                     value={config.llmApiKey}
                     onChange={(e) => updateConfig('llmApiKey', e.target.value)}
-                    placeholder={config.llmProvider === 'baidu' ? 'API_KEY:SECRET_KEY 格式' : '输入你的 API Key'}
-                    className="h-12 cyber-input"
+                    placeholder="中转服务提供的 Key"
+                    className="h-10 cyber-input"
                   />
                   <Button
                     variant="outline"
                     size="icon"
                     onClick={() => setShowApiKey(!showApiKey)}
-                    className="h-12 w-12 cyber-btn-ghost"
+                    className="h-10 w-10 cyber-btn-ghost"
                   >
                     {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </Button>
                 </div>
               </div>
-            )}
-
-            {/* Model and Base URL */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground uppercase">模型名称 (可选)</Label>
+                <Label className="text-xs font-bold text-muted-foreground uppercase">模型名称</Label>
                 <Input
                   value={config.llmModel}
                   onChange={(e) => updateConfig('llmModel', e.target.value)}
-                  placeholder={`默认: ${DEFAULT_MODELS[config.llmProvider] || 'auto'}`}
-                  className="h-10 cyber-input"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-muted-foreground uppercase">API Base URL (可选)</Label>
-                <Input
-                  value={config.llmBaseUrl}
-                  onChange={(e) => updateConfig('llmBaseUrl', e.target.value)}
-                  placeholder="留空使用官方地址，或填入中转站地址"
+                  placeholder="例如 gpt-5, qwen3-max-instruct, deepseek-v3.1-terminus"
                   className="h-10 cyber-input"
                 />
               </div>
@@ -500,11 +496,11 @@ export function SystemConfig() {
             <div className="pt-4 border-t border-border border-dashed flex items-center justify-between flex-wrap gap-4">
               <div className="text-sm">
                 <span className="font-bold text-foreground">测试连接</span>
-                <span className="text-muted-foreground ml-2">验证配置是否正确</span>
+                <span className="text-muted-foreground ml-2">验证内网中转和本地兜底路径</span>
               </div>
               <Button
                 onClick={testLLMConnection}
-                disabled={testingLLM || (!isConfigured && config.llmProvider !== 'ollama')}
+                disabled={testingLLM || !isConfigured}
                 className="cyber-btn-primary h-10"
               >
                 {testingLLM ? (
@@ -546,7 +542,7 @@ export function SystemConfig() {
                   <div className="mt-3 pt-3 border-t border-border/50">
                     <div className="text-xs font-mono space-y-1 text-muted-foreground">
                       <div className="font-bold text-foreground mb-2">连接信息:</div>
-                      <div>Provider: <span className="text-foreground">{String(llmTestResult.debug.provider)}</span></div>
+                      <div>Provider: <span className="text-foreground">{String(llmTestResult.debug.provider_used || llmTestResult.debug.provider_requested || 'openai')}</span></div>
                       <div>Model: <span className="text-foreground">{String(llmTestResult.debug.model_used || llmTestResult.debug.model_requested || 'N/A')}</span></div>
                       <div>Base URL: <span className="text-foreground">{String(llmTestResult.debug.base_url_used || llmTestResult.debug.base_url_requested || '(default)')}</span></div>
                       <div>Adapter: <span className="text-foreground">{String(llmTestResult.debug.adapter_type || 'N/A')}</span></div>
@@ -729,9 +725,9 @@ export function SystemConfig() {
               <Info className="w-4 h-4 text-sky-400" />
               配置说明
             </p>
-            <p className="text-muted-foreground">• <strong className="text-muted-foreground">LiteLLM 统一适配</strong>: 大多数提供商通过 LiteLLM 统一处理，支持自动重试和负载均衡</p>
-            <p className="text-muted-foreground">• <strong className="text-muted-foreground">原生适配器</strong>: 百度、MiniMax、豆包因 API 格式特殊，使用专用适配器</p>
+            <p className="text-muted-foreground">• <strong className="text-muted-foreground">统一入口</strong>: 前端只保留内网中转配置，后端会自动对接本地兜底模型</p>
             <p className="text-muted-foreground">• <strong className="text-muted-foreground">API 中转站</strong>: 在 Base URL 填入中转站地址即可，API Key 填中转站提供的 Key</p>
+            <p className="text-muted-foreground">• <strong className="text-muted-foreground">兼容历史配置</strong>: 旧 provider 会被加载并归一为统一入口，不会再作为可选项展示</p>
           </div>
         </TabsContent>
 

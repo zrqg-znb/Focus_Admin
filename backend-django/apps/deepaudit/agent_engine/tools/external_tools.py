@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import tempfile
 import shutil
 from typing import Optional, List, Dict, Any
@@ -1136,6 +1137,154 @@ Google 开源的漏洞扫描工具。
             return ToolResult(success=False, data=error_msg, error=error_msg)
 
 
+# ============ C/C++ 专项工具 ============
+
+
+class CppcheckInput(BaseModel):
+    target_path: str = Field(default=".", description="要扫描的文件或目录")
+    max_results: int = Field(default=50, description="最大返回结果数")
+
+
+class CppcheckTool(AgentTool):
+    def __init__(self, project_root: str, sandbox_manager: Optional["SandboxManager"] = None):
+        super().__init__()
+        self.project_root = os.path.abspath(project_root)
+        self.sandbox_manager = sandbox_manager or SandboxManager()
+
+    @property
+    def name(self) -> str:
+        return "cppcheck_scan"
+
+    @property
+    def description(self) -> str:
+        return "使用 cppcheck 对 C/C++ 代码进行静态分析，重点覆盖内存安全、资源泄漏和可疑指针操作。"
+
+    @property
+    def args_schema(self):
+        return CppcheckInput
+
+    async def _execute(self, target_path: str = ".", max_results: int = 50, **kwargs) -> ToolResult:
+        await self.sandbox_manager.initialize()
+        if not self.sandbox_manager.is_available:
+            return ToolResult(success=False, data=f"cppcheck unavailable: {self.sandbox_manager.get_diagnosis()}", error="Sandbox unavailable")
+
+        safe_target_path, _, error_msg = _smart_resolve_target_path(target_path, self.project_root, "cppcheck")
+        if error_msg:
+            return ToolResult(success=False, data=error_msg, error=error_msg)
+
+        cmd = f"cppcheck --enable=all --inconclusive --inline-suppr --xml --xml-version=2 {safe_target_path} 2>&1 | head -n {max_results * 20}"
+        try:
+            result = await self.sandbox_manager.execute_tool_command(
+                command=cmd,
+                host_workdir=self.project_root,
+                timeout=300,
+            )
+            stdout = result.get("stdout", "")
+            stderr = result.get("stderr", "")
+            output = stdout or stderr or result.get("error") or "cppcheck executed"
+            return ToolResult(success=result.get("success", False), data=output, error=result.get("error"))
+        except Exception as exc:
+            return ToolResult(success=False, data=str(exc), error=str(exc))
+
+
+class ClangTidyInput(BaseModel):
+    target_path: str = Field(default=".", description="要检查的 C/C++ 文件路径")
+    checks: str = Field(default="clang-analyzer-*,bugprone-*,cert-*,cppcoreguidelines-*", description="clang-tidy checks 配置")
+
+
+class ClangTidyTool(AgentTool):
+    def __init__(self, project_root: str, sandbox_manager: Optional["SandboxManager"] = None):
+        super().__init__()
+        self.project_root = os.path.abspath(project_root)
+        self.sandbox_manager = sandbox_manager or SandboxManager()
+
+    @property
+    def name(self) -> str:
+        return "clang_tidy_scan"
+
+    @property
+    def description(self) -> str:
+        return "使用 clang-tidy 对 C/C++ 代码进行静态分析，偏重现代 C++ 安全与易错 API。"
+
+    @property
+    def args_schema(self):
+        return ClangTidyInput
+
+    async def _execute(self, target_path: str = ".", checks: str = "clang-analyzer-*,bugprone-*,cert-*,cppcoreguidelines-*", **kwargs) -> ToolResult:
+        await self.sandbox_manager.initialize()
+        if not self.sandbox_manager.is_available:
+            return ToolResult(success=False, data=f"clang-tidy unavailable: {self.sandbox_manager.get_diagnosis()}", error="Sandbox unavailable")
+
+        safe_target_path, _, error_msg = _smart_resolve_target_path(target_path, self.project_root, "clang-tidy")
+        if error_msg:
+            return ToolResult(success=False, data=error_msg, error=error_msg)
+
+        cmd = f"clang-tidy {safe_target_path} -checks='{checks}' -- 2>&1 | head -n 500"
+        try:
+            result = await self.sandbox_manager.execute_tool_command(
+                command=cmd,
+                host_workdir=self.project_root,
+                timeout=300,
+            )
+            output = result.get("stdout", "") or result.get("stderr", "") or result.get("error") or "clang-tidy executed"
+            return ToolResult(success=result.get("success", False), data=output, error=result.get("error"))
+        except Exception as exc:
+            return ToolResult(success=False, data=str(exc), error=str(exc))
+
+
+class ValgrindInput(BaseModel):
+    command: str = Field(default="", description="要在 Valgrind 下执行的命令")
+    working_dir: str = Field(default=".", description="工作目录")
+
+
+class ValgrindTool(AgentTool):
+    def __init__(self, project_root: str, sandbox_manager: Optional["SandboxManager"] = None):
+        super().__init__()
+        self.project_root = os.path.abspath(project_root)
+        self.sandbox_manager = sandbox_manager or SandboxManager()
+
+    @property
+    def name(self) -> str:
+        return "valgrind_scan"
+
+    @property
+    def description(self) -> str:
+        return "使用 Valgrind 进行内存泄漏和越界访问验证。"
+
+    @property
+    def args_schema(self):
+        return ValgrindInput
+
+    async def _execute(self, command: str = "", working_dir: str = ".", **kwargs) -> ToolResult:
+        await self.sandbox_manager.initialize()
+        if not self.sandbox_manager.is_available:
+            return ToolResult(success=False, data=f"valgrind unavailable: {self.sandbox_manager.get_diagnosis()}", error="Sandbox unavailable")
+
+        if not command.strip():
+            return ToolResult(success=False, data="请提供要执行的命令", error="missing command")
+
+        safe_working_dir, _, error_msg = _smart_resolve_target_path(working_dir, self.project_root, "valgrind")
+        if error_msg:
+            return ToolResult(success=False, data=error_msg, error=error_msg)
+
+        workdir_suffix = "" if safe_working_dir in (".", "") else f"cd /workspace/{shlex.quote(safe_working_dir)} && "
+        cmd = (
+            "valgrind --leak-check=full --track-origins=yes --error-exitcode=1 "
+            f"sh -c {shlex.quote(f'{workdir_suffix}{command}')}"
+        )
+        try:
+            result = await self.sandbox_manager.execute_tool_command(
+                command=cmd,
+                host_workdir=self.project_root,
+                timeout=600,
+                network_mode="none",
+            )
+            output = result.get("stdout", "") or result.get("stderr", "") or result.get("error") or "valgrind executed"
+            return ToolResult(success=result.get("success", False), data=output, error=result.get("error"))
+        except Exception as exc:
+            return ToolResult(success=False, data=str(exc), error=str(exc))
+
+
 # ============ 导出所有工具 ============
 
 __all__ = [
@@ -1146,5 +1295,7 @@ __all__ = [
     "SafetyTool",
     "TruffleHogTool",
     "OSVScannerTool",
+    "CppcheckTool",
+    "ClangTidyTool",
+    "ValgrindTool",
 ]
-

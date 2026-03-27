@@ -83,7 +83,8 @@ class LLMFactory:
     def _get_cache_key(cls, config: LLMConfig) -> str:
         """生成缓存键"""
         api_key_prefix = config.api_key[:8] if config.api_key else "no-key"
-        return f"{config.provider.value}:{config.model}:{api_key_prefix}"
+        base_url_prefix = (config.base_url or "default").rstrip("/")
+        return f"{config.provider.value}:{config.model}:{base_url_prefix}:{api_key_prefix}"
 
     @classmethod
     def clear_cache(cls) -> None:
@@ -93,7 +94,13 @@ class LLMFactory:
     @classmethod
     def get_supported_providers(cls) -> List[LLMProvider]:
         """获取支持的提供商列表"""
-        return list(LLMProvider)
+        return [
+            LLMProvider.OPENAI,
+            LLMProvider.QWEN,
+            LLMProvider.DEEPSEEK,
+            LLMProvider.ZHIPU,
+            LLMProvider.OLLAMA,
+        ]
 
     @classmethod
     def get_default_model(cls, provider: LLMProvider) -> str:
@@ -104,6 +111,22 @@ class LLMFactory:
     def get_available_models(cls, provider: LLMProvider) -> List[str]:
         """获取提供商的可用模型列表 (2025年最新)"""
         models = {
+            LLMProvider.OPENAI: [
+                "gpt-5",
+                "gpt-5.1",
+                "gpt-5.1-instant",
+                "gpt-4o",
+                "gpt-4o-mini",
+                "o3",
+                "o3-mini",
+            ],
+            LLMProvider.OLLAMA: [
+                "llama3.3-70b",
+                "qwen3-8b",
+                "gemma3-27b",
+                "deepseek-r1",
+                "mistral-nemo",
+            ],
             LLMProvider.GEMINI: [
                 "gemini-3-pro",
                 "gemini-3.0-deep-think",
@@ -113,20 +136,6 @@ class LLMFactory:
                 "gemini-2.5-flash-live-api",
                 "veo-3.1",
                 "veo-3.1-fast",
-            ],
-            LLMProvider.OPENAI: [
-                "gpt-5",
-                "gpt-5.1",
-                "gpt-5.1-instant",
-                "gpt-5.1-codex-max",
-                "gpt-4o",
-                "gpt-4o-mini",
-                "gpt-4.5",
-                "o4-mini",
-                "o3",
-                "o3-mini",
-                "gpt-oss-120b",
-                "gpt-oss-20b",
             ],
             LLMProvider.CLAUDE: [
                 "claude-opus-4.5",
@@ -201,18 +210,6 @@ class LLMFactory:
                 "doubao-seed-code",
                 "doubao-seed-1.6",
                 "doubao-vision-language",
-            ],
-            LLMProvider.OLLAMA: [
-                "llama3.3-70b",
-                "qwen3-8b",
-                "gemma3-27b",
-                "dolphin-3.0-llama3.1-8b",
-                "cogito-v1",
-                "deepseek-r1",
-                "gpt-oss-120b",
-                "llama3.1-405b",
-                "mistral-nemo",
-                "phi-3",
             ],
         }
         return models.get(provider, [])

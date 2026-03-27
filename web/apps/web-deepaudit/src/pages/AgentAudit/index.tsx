@@ -39,6 +39,25 @@ import type { LogItem } from "./types";
 import { useAuth } from "@/shared/context/AuthContext";
 import { DEEPAUDIT_ACTION_CODES } from "@/shared/focus/focusPermission";
 
+const PHASE_LABEL_MAP: Record<string, string> = {
+  planning: 'Planning',
+  indexing: 'Indexing',
+  reconnaissance: 'Reconnaissance',
+  analysis: 'Analysis',
+  verification: 'Verification',
+  reporting: 'Reporting',
+};
+
+const LIVE_PROGRESS_PATTERNS: { pattern: RegExp; key: string }[] = [
+  { pattern: /索引进度[:：]?\s*\d+\/\d+/, key: 'index_progress' },
+  { pattern: /嵌入进度[:：]?\s*\d+\/\d+/, key: 'embed_progress' },
+  { pattern: /克隆进度[:：]?\s*\d+%/, key: 'clone_progress' },
+  { pattern: /下载进度[:：]?\s*\d+%/, key: 'download_progress' },
+  { pattern: /上传进度[:：]?\s*\d+%/, key: 'upload_progress' },
+  { pattern: /扫描进度[:：]?\s*\d+/, key: 'scan_progress' },
+  { pattern: /分析进度[:：]?\s*\d+/, key: 'analyze_progress' },
+];
+
 function AgentAuditPageContent() {
   const { taskId } = useParams<{ taskId: string }>();
   const { hasAccess } = useAuth();
@@ -449,16 +468,14 @@ function AgentAuditPageContent() {
     includeToolCalls: true,
     // 🔥 使用 state 变量，确保在历史事件加载后能获取最新值
     afterSequence: afterSequence,
-    onEvent: (event: { type: string; message?: string; phase?: string; metadata?: { agent_name?: string; agent?: string } }) => {
+    onEvent: (event: {
+      type: string;
+      message?: string;
+      phase?: string;
+      metadata?: { agent_name?: string; agent?: string; thought?: string; observation?: string };
+    }) => {
       const phaseFallback = event.phase
-        ? ({
-            planning: 'Planning',
-            indexing: 'Indexing',
-            reconnaissance: 'Reconnaissance',
-            analysis: 'Analysis',
-            verification: 'Verification',
-            reporting: 'Reporting',
-          } as Record<string, string>)[String(event.phase).toLowerCase()] || event.phase
+        ? PHASE_LABEL_MAP[String(event.phase).toLowerCase()] || event.phase
         : undefined;
       const currentAgentName = event.metadata?.agent_name || phaseFallback || getCurrentAgentName() || undefined;
 
@@ -466,7 +483,7 @@ function AgentAuditPageContent() {
         setCurrentAgentName(currentAgentName);
       }
 
-      const dispatchEvents = ['dispatch', 'dispatch_complete', 'node_start', 'phase_start', 'phase_complete'];
+      const dispatchEvents = ['dispatch', 'dispatch_complete', 'node_start', 'node_end', 'phase_start', 'phase_end', 'phase_complete'];
       if (dispatchEvents.includes(event.type)) {
         // 所有 dispatch 类型事件都添加到日志
         dispatch({
@@ -481,23 +498,39 @@ function AgentAuditPageContent() {
         return;
       }
 
+      const thinkingEvents = ['llm_start', 'llm_thought', 'llm_decision', 'llm_action', 'llm_observation', 'llm_complete'];
+      if (thinkingEvents.includes(event.type)) {
+        const thoughtContent =
+          event.message ||
+          event.metadata?.thought ||
+          event.metadata?.observation ||
+          '';
+        const title =
+          event.message ||
+          (event.type === 'llm_start'
+            ? 'Thinking...'
+            : thoughtContent
+              ? thoughtContent.slice(0, 100) + (thoughtContent.length > 100 ? '...' : '')
+              : 'Thinking...');
+
+        dispatch({
+          type: 'ADD_LOG',
+          payload: {
+            type: 'thinking',
+            title,
+            content: thoughtContent,
+            agentName: currentAgentName,
+          },
+        });
+        return;
+      }
+
       // 🔥 处理 info、warning、error 类型事件（克隆进度、索引进度等）
       const infoEvents = ['info', 'warning', 'error', 'progress'];
       if (infoEvents.includes(event.type)) {
         const message = event.message || event.type;
 
-        // 🔥 检测进度类型消息，使用更新而不是添加
-        const progressPatterns: { pattern: RegExp; key: string }[] = [
-          { pattern: /索引进度[:：]?\s*\d+\/\d+/, key: 'index_progress' },
-          { pattern: /嵌入进度[:：]?\s*\d+\/\d+/, key: 'embed_progress' },
-          { pattern: /克隆进度[:：]?\s*\d+%/, key: 'clone_progress' },
-          { pattern: /下载进度[:：]?\s*\d+%/, key: 'download_progress' },
-          { pattern: /上传进度[:：]?\s*\d+%/, key: 'upload_progress' },
-          { pattern: /扫描进度[:：]?\s*\d+/, key: 'scan_progress' },
-          { pattern: /分析进度[:：]?\s*\d+/, key: 'analyze_progress' },
-        ];
-
-        const matchedProgress = progressPatterns.find(p => p.pattern.test(message));
+        const matchedProgress = LIVE_PROGRESS_PATTERNS.find(p => p.pattern.test(message));
 
         if (matchedProgress) {
           // 使用 UPDATE_OR_ADD_PROGRESS_LOG 来更新进度而不是添加新日志

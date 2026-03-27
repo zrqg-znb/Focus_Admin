@@ -8,7 +8,10 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
+from apps.deepaudit.agent_engine.tools.run_code import RunCodeTool
+from apps.deepaudit.config_resolver import coerce_llm_provider, normalize_runtime_user_config
 from apps.deepaudit.agent_engine.knowledge.rag_knowledge import SecurityKnowledgeRAG
+from apps.deepaudit.llm.service import LLMService
 from apps.deepaudit.llm import tokenizer
 
 
@@ -80,3 +83,50 @@ class RuntimeFallbacksTestCase(SimpleTestCase):
         self.assertIsNone(rag._indexer)
         self.assertIsNone(rag._retriever)
         mock_embedding_service.assert_not_called()
+
+    def test_legacy_llm_provider_is_normalized_to_internal_entry(self) -> None:
+        normalized = normalize_runtime_user_config(
+            {
+                "llmConfig": {
+                    "provider": "qwen",
+                    "model": "qwen3-max-instruct",
+                    "api_key": "legacy-key",
+                    "base_url": "https://legacy.example/v1",
+                }
+            }
+        )
+
+        self.assertEqual(coerce_llm_provider("qwen"), "qwen")
+        self.assertEqual(normalized["llm_config"]["provider"], "qwen")
+        self.assertEqual(normalized["llm_config"]["model"], "qwen3-max-instruct")
+        self.assertEqual(normalized["llm_config"]["api_key"], "legacy-key")
+        self.assertEqual(normalized["llmConfig"]["llmProvider"], "qwen")
+
+    def test_agent_timeout_config_raises_first_token_floor(self) -> None:
+        service = LLMService(
+            {
+                "llmConfig": {
+                    "llmProvider": "openai",
+                    "llmFirstTokenTimeout": 30,
+                    "llmStreamTimeout": 45,
+                }
+            }
+        )
+
+        timeout_config = service.get_agent_timeout_config()
+
+        self.assertEqual(timeout_config["llm_first_token_timeout"], 90)
+        self.assertEqual(timeout_config["llm_stream_timeout"], 60)
+
+    def test_run_code_c_and_cpp_commands_enable_sanitizers(self) -> None:
+        tool = RunCodeTool()
+
+        c_command = tool._build_command("int main(void) { return 0; }", "c")
+        cpp_command = tool._build_command("int main() { return 0; }", "cpp")
+
+        self.assertIsNotNone(c_command)
+        self.assertIsNotNone(cpp_command)
+        self.assertIn("gcc -O0 -g -Wall -Wextra -fsanitize=address,undefined", c_command)
+        self.assertIn("clang -O0 -g -Wall -Wextra -fsanitize=address,undefined", c_command)
+        self.assertIn("g++ -O0 -g -Wall -Wextra -fsanitize=address,undefined", cpp_command)
+        self.assertIn("clang++ -O0 -g -Wall -Wextra -fsanitize=address,undefined", cpp_command)

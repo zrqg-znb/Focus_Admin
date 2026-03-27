@@ -175,6 +175,9 @@ async def _initialize_tools(project_root: str, llm_service, input_data: Dict[str
         SqlInjectionTestTool,
         SstiTestTool,
         ThinkTool,
+        CppcheckTool,
+        ClangTidyTool,
+        ValgrindTool,
         VulnerabilityValidationTool,
         XssTestTool,
     )
@@ -250,6 +253,9 @@ async def _initialize_tools(project_root: str, llm_service, input_data: Dict[str
     smart_scan_tool = SmartScanTool(project_root)
     quick_audit_tool = QuickAuditTool(project_root)
     kunlun_tool = KunlunMTool(project_root)
+    cppcheck_tool = CppcheckTool(project_root, sandbox_manager=sandbox_manager)
+    clang_tidy_tool = ClangTidyTool(project_root, sandbox_manager=sandbox_manager)
+    valgrind_tool = ValgrindTool(project_root, sandbox_manager=sandbox_manager)
 
     analysis_tools = {
         **common_file_tools,
@@ -269,6 +275,9 @@ async def _initialize_tools(project_root: str, llm_service, input_data: Dict[str
         "smart_scan": smart_scan_tool,
         "quick_audit": quick_audit_tool,
         "kunlun_scan": kunlun_tool,
+        "cppcheck_scan": cppcheck_tool,
+        "clang_tidy_scan": clang_tidy_tool,
+        "valgrind_scan": valgrind_tool,
         "create_vulnerability_report": report_tool,
     }
 
@@ -289,6 +298,9 @@ async def _initialize_tools(project_root: str, llm_service, input_data: Dict[str
         "semgrep_scan": semgrep_tool,
         "gitleaks_scan": gitleaks_tool,
         "smart_scan": smart_scan_tool,
+        "cppcheck_scan": cppcheck_tool,
+        "clang_tidy_scan": clang_tidy_tool,
+        "valgrind_scan": valgrind_tool,
     }
     orchestrator_tools = {
         "think": ThinkTool(),

@@ -238,7 +238,7 @@ function mapConfigPath(pathname: string) {
     return pathname;
   }
   if (pathname === '/config/llm-providers') {
-    return pathname;
+    return '/deepaudit/settings/me';
   }
   if (pathname === '/config/test-llm') {
     return '/deepaudit/settings/test-llm';
@@ -571,7 +571,7 @@ export function normalizeUserConfig(raw: JsonRecord | null | undefined) {
       llmTimeout: (llm.llmTimeout || llm.timeout || 150) * 1000,
       llmTemperature: llm.llmTemperature ?? llm.temperature ?? 0.1,
       llmMaxTokens: llm.llmMaxTokens || llm.maxTokens || llm.max_tokens || 4096,
-      llmFirstTokenTimeout: llm.llmFirstTokenTimeout || llm.firstTokenTimeout || llm.first_token_timeout || 30,
+      llmFirstTokenTimeout: llm.llmFirstTokenTimeout || llm.firstTokenTimeout || llm.first_token_timeout || 90,
       llmStreamTimeout: llm.llmStreamTimeout || llm.streamTimeout || llm.stream_timeout || 60,
       toolTimeout: llm.toolTimeout || llm.tool_timeout || 60,
       subAgentTimeout: llm.subAgentTimeout || llm.sub_agent_timeout || 600,

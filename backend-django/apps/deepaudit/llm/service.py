@@ -109,9 +109,18 @@ class LLMService:
         """
         user_llm_config = self._user_config.get('llmConfig', {})
 
+        first_token_timeout = int(
+            user_llm_config.get('llmFirstTokenTimeout')
+            or get_setting('LLM_FIRST_TOKEN_TIMEOUT', 90)
+        )
+        stream_timeout = int(
+            user_llm_config.get('llmStreamTimeout')
+            or get_setting('LLM_STREAM_TIMEOUT', 60)
+        )
+
         return {
-            'llm_first_token_timeout': user_llm_config.get('llmFirstTokenTimeout') or get_setting('LLM_FIRST_TOKEN_TIMEOUT', 30),
-            'llm_stream_timeout': user_llm_config.get('llmStreamTimeout') or get_setting('LLM_STREAM_TIMEOUT', 60),
+            'llm_first_token_timeout': max(90, first_token_timeout),
+            'llm_stream_timeout': max(60, stream_timeout),
             'agent_timeout': user_llm_config.get('agentTimeout') or get_setting('AGENT_TIMEOUT_SECONDS', 1800),
             'sub_agent_timeout': user_llm_config.get('subAgentTimeout') or get_setting('SUB_AGENT_TIMEOUT_SECONDS', 600),
             'tool_timeout': user_llm_config.get('toolTimeout') or get_setting('TOOL_TIMEOUT_SECONDS', 60),
@@ -173,6 +182,57 @@ class LLMService:
                 max_tokens=max_tokens,
             )
         return self._config
+
+    def _build_fallback_config(self) -> Optional[LLMConfig]:
+        """构造本地兜底配置。"""
+        if self.config.provider == LLMProvider.OLLAMA:
+            return None
+
+        fallback_llm_config = dict(self._user_config.get("llm_config") or {})
+        fallback_provider = LLMProvider.OLLAMA
+        return LLMConfig(
+            provider=fallback_provider,
+            api_key=resolve_provider_api_key(fallback_provider.value, fallback_llm_config),
+            model=resolve_provider_model(fallback_provider.value, fallback_llm_config),
+            base_url=resolve_provider_base_url(fallback_provider.value, fallback_llm_config),
+            timeout=self.config.timeout,
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+            top_p=self.config.top_p,
+            frequency_penalty=self.config.frequency_penalty,
+            presence_penalty=self.config.presence_penalty,
+            custom_headers=dict(self.config.custom_headers or {}),
+        )
+
+    async def _complete_with_fallback(self, request: LLMRequest):
+        """优先使用主配置，失败后自动降级到本地 Ollama。"""
+        configs = [self.config]
+        fallback_config = self._build_fallback_config()
+        if fallback_config:
+            configs.append(fallback_config)
+
+        last_error: Optional[Exception] = None
+        for index, config in enumerate(configs):
+            adapter = LLMFactory.create_adapter(config)
+            try:
+                if index > 0:
+                    logger.warning(
+                        "Primary LLM provider failed, falling back to local provider: %s",
+                        config.provider.value,
+                    )
+                return await adapter.complete(request)
+            except Exception as error:  # noqa: BLE001 - fallback boundary
+                last_error = error
+                logger.warning(
+                    "LLM provider %s failed: %s",
+                    config.provider.value,
+                    error,
+                    exc_info=True,
+                )
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("LLM completion failed without a captured error")
     
     def _get_provider_api_key_from_user_config(self, provider: LLMProvider, user_llm_config: Dict[str, Any]) -> Optional[str]:
         """从用户配置中获取平台专属API Key"""
@@ -411,8 +471,6 @@ Please analyze the following code:
 {code_with_lines}"""
         
         try:
-            adapter = LLMFactory.create_adapter(self.config)
-            
             # 使用用户配置的 temperature（如果未设置则使用 config 中的默认值）
             request = LLMRequest(
                 messages=[
@@ -422,8 +480,8 @@ Please analyze the following code:
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
             )
-            
-            response = await adapter.complete(request)
+
+            response = await self._complete_with_fallback(request)
             content = response.content
             
             # 记录 LLM 原始响应（用于调试）
@@ -493,9 +551,7 @@ Please analyze the following code:
             max_tokens=actual_max_tokens,
             tools=tools,
         )
-
-        adapter = LLMFactory.create_adapter(self.config)
-        response = await adapter.complete(request)
+        response = await self._complete_with_fallback(request)
 
         result = {
             "content": response.content,
@@ -544,9 +600,7 @@ Please analyze the following code:
             temperature=actual_temperature,
             max_tokens=actual_max_tokens,
         )
-
-        adapter = LLMFactory.create_adapter(self.config)
-        response = await adapter.complete(request)
+        response = await self._complete_with_fallback(request)
 
         return {
             "content": response.content,
@@ -588,47 +642,39 @@ Please analyze the following code:
             temperature=actual_temperature,
             max_tokens=actual_max_tokens,
         )
-        
-        if self.config.provider in NATIVE_ONLY_PROVIDERS:
-            adapter = LLMFactory.create_adapter(self.config)
-            response = await adapter.complete(request)
-            content = response.content or ""
-            usage = None
-            if response.usage:
-                usage = {
-                    "prompt_tokens": response.usage.prompt_tokens or 0,
-                    "completion_tokens": response.usage.completion_tokens or 0,
-                    "total_tokens": response.usage.total_tokens or 0,
-                }
-            if not content:
-                yield {
-                    "type": "done",
-                    "content": "",
-                    "usage": usage,
-                    "finish_reason": response.finish_reason or "stop",
-                }
-            else:
-                accumulated = ""
-                chunk_size = 20
-                for i in range(0, len(content), chunk_size):
-                    part = content[i:i + chunk_size]
-                    accumulated += part
-                    yield {
-                        "type": "token",
-                        "content": part,
-                        "accumulated": accumulated,
-                    }
-                yield {
-                    "type": "done",
-                    "content": content,
-                    "usage": usage,
-                    "finish_reason": response.finish_reason or "stop",
-                }
+        response = await self._complete_with_fallback(request)
+        content = response.content or ""
+        usage = None
+        if response.usage:
+            usage = {
+                "prompt_tokens": response.usage.prompt_tokens or 0,
+                "completion_tokens": response.usage.completion_tokens or 0,
+                "total_tokens": response.usage.total_tokens or 0,
+            }
+        if not content:
+            yield {
+                "type": "done",
+                "content": "",
+                "usage": usage,
+                "finish_reason": response.finish_reason or "stop",
+            }
         else:
-            from .adapters.litellm_adapter import LiteLLMAdapter
-            adapter = LiteLLMAdapter(self.config)
-            async for chunk in adapter.stream_complete(request):
-                yield chunk
+            accumulated = ""
+            chunk_size = 20
+            for i in range(0, len(content), chunk_size):
+                part = content[i:i + chunk_size]
+                accumulated += part
+                yield {
+                    "type": "token",
+                    "content": part,
+                    "accumulated": accumulated,
+                }
+            yield {
+                "type": "done",
+                "content": content,
+                "usage": usage,
+                "finish_reason": response.finish_reason or "stop",
+            }
     
     def _parse_json(self, text: str) -> Dict[str, Any]:
         """从LLM响应中解析JSON（增强版）"""

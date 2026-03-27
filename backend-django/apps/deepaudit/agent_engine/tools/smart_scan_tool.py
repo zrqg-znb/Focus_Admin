@@ -122,6 +122,37 @@ class SmartScanTool(AgentTool):
             (r'requests\.(get|post)\s*\([^)]*request\.', "requests用户URL"),
             (r'fetch\s*\([^)]*req\.', "fetch用户URL"),
         ],
+        "buffer_overflow": [
+            (r'\bstrcpy\s*\(', "strcpy"),
+            (r'\bstrcat\s*\(', "strcat"),
+            (r'\bsprintf\s*\(', "sprintf"),
+            (r'\bvsprintf\s*\(', "vsprintf"),
+            (r'\bgets\s*\(', "gets"),
+            (r'\bscanf\s*\([^)]*%s', "scanf %s"),
+        ],
+        "memory_corruption": [
+            (r'\bmemcpy\s*\(', "memcpy"),
+            (r'\bmemmove\s*\(', "memmove"),
+            (r'\bmemset\s*\(', "memset"),
+            (r'\bfree\s*\(', "free"),
+            (r'\bdelete\s*\w+', "delete"),
+        ],
+        "memory_leak": [
+            (r'\bmalloc\s*\(', "malloc"),
+            (r'\bcalloc\s*\(', "calloc"),
+            (r'\brealloc\s*\(', "realloc"),
+            (r'\bnew\s+\w+', "new"),
+        ],
+        "race_condition": [
+            (r'\bpthread_create\s*\(', "pthread_create"),
+            (r'\bstd::thread\b', "std::thread"),
+            (r'\bstd::async\b', "std::async"),
+        ],
+        "format_string": [
+            (r'\bprintf\s*\(\s*[A-Za-z_][\w->]*\s*\)', "printf变量格式串"),
+            (r'\bfprintf\s*\(\s*[A-Za-z_][\w->]*\s*\)', "fprintf变量格式串"),
+            (r'\bsyslog\s*\(\s*[A-Za-z_][\w->]*\s*\)', "syslog变量格式串"),
+        ],
     }
     
     def __init__(self, project_root: str):
@@ -225,7 +256,7 @@ class SmartScanTool(AgentTool):
         # 支持的代码文件扩展名
         code_extensions = {
             '.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.php',
-            '.go', '.rb', '.cs', '.c', '.cpp', '.h', '.hpp',
+            '.go', '.rb', '.cs', '.c', '.cpp', '.cc', '.cxx', '.h', '.hh', '.hpp', '.hxx',
             '.swift', '.m', '.mm', '.kt', '.rs', '.sh', '.bat',
             '.vue', '.html', '.htm', '.xml', '.gradle', '.properties'
         }
@@ -325,6 +356,11 @@ class SmartScanTool(AgentTool):
             "path_traversal": "high",
             "ssrf": "high",
             "hardcoded_secret": "medium",
+            "buffer_overflow": "critical",
+            "memory_corruption": "high",
+            "memory_leak": "medium",
+            "race_condition": "high",
+            "format_string": "high",
         }
         return severity_map.get(vuln_type, "medium")
     
@@ -530,8 +566,22 @@ class QuickAuditTool(AgentTool):
             
             # 检测语言
             ext = os.path.splitext(file_path)[1].lower()
-            lang_map = {".py": "python", ".js": "javascript", ".ts": "javascript", 
-                       ".php": "php", ".java": "java", ".go": "go"}
+            lang_map = {
+                ".py": "python",
+                ".js": "javascript",
+                ".ts": "javascript",
+                ".php": "php",
+                ".java": "java",
+                ".go": "go",
+                ".c": "c",
+                ".cc": "cpp",
+                ".cpp": "cpp",
+                ".cxx": "cpp",
+                ".h": "c",
+                ".hh": "cpp",
+                ".hpp": "cpp",
+                ".hxx": "cpp",
+            }
             language = lang_map.get(ext)
             
             patterns_to_check = patterns_dict.get(language, [])
@@ -578,6 +628,11 @@ class QuickAuditTool(AgentTool):
             "hardcoded_secret": "使用环境变量或密钥管理服务存储敏感信息。",
             "deserialization": "避免反序列化不可信数据。使用安全的序列化格式如 JSON。",
             "weak_crypto": "使用 SHA-256 或更强的哈希算法。使用 AES-256-GCM 进行加密。",
+            "buffer_overflow": "改用 snprintf、strlcpy、strlcat 等有边界的 API，并检查目标缓冲区长度。",
+            "memory_corruption": "审查指针生命周期、释放次数和长度参数，优先使用 RAII 或所有权清晰的封装。",
+            "memory_leak": "确保 malloc/new 对应的 free/delete 在所有分支都能执行，必要时使用智能指针。",
+            "race_condition": "用 mutex、atomic 或其他同步原语保护共享状态，避免裸线程修改全局数据。",
+            "format_string": "永远不要把不可信字符串作为格式串，固定 format 模板并把用户数据作为参数传入。",
         }
         return recommendations.get(vuln_type, "请手动审查此代码段的安全性。")
     

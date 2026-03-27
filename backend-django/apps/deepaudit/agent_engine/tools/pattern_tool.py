@@ -61,7 +61,7 @@ class PatternMatchTool(AgentTool):
     def __init__(self, project_root: str = None):
         """
         初始化模式匹配工具
-        
+
         Args:
             project_root: 项目根目录（可选，用于上下文）
         """
@@ -268,6 +268,107 @@ class PatternMatchTool(AgentTool):
             "description": "硬编码密钥：敏感信息不应该硬编码在代码中",
         },
         
+        # C/C++ 常见内存安全问题
+        "buffer_overflow": {
+            "patterns": {
+                "c": [
+                    (r'\bstrcpy\s*\(', "strcpy"),
+                    (r'\bstrcat\s*\(', "strcat"),
+                    (r'\bsprintf\s*\(', "sprintf"),
+                    (r'\bvsprintf\s*\(', "vsprintf"),
+                    (r'\bgets\s*\(', "gets"),
+                    (r'\bscanf\s*\([^)]*%s', "scanf %s"),
+                ],
+                "cpp": [
+                    (r'\bstrcpy\s*\(', "strcpy"),
+                    (r'\bstrcat\s*\(', "strcat"),
+                    (r'\bsprintf\s*\(', "sprintf"),
+                    (r'\bvsprintf\s*\(', "vsprintf"),
+                    (r'\bgets\s*\(', "gets"),
+                    (r'\bscanf\s*\([^)]*%s', "scanf %s"),
+                ],
+            },
+            "severity": "critical",
+            "description": "C/C++ 缓冲区溢出风险：危险的字符串与格式化函数可能写越界",
+            "cwe_id": "CWE-120",
+        },
+        "memory_corruption": {
+            "patterns": {
+                "c": [
+                    (r'\bmemcpy\s*\(', "memcpy"),
+                    (r'\bmemmove\s*\(', "memmove"),
+                    (r'\bmemset\s*\(', "memset"),
+                    (r'\bfree\s*\(', "free"),
+                ],
+                "cpp": [
+                    (r'\bmemcpy\s*\(', "memcpy"),
+                    (r'\bmemmove\s*\(', "memmove"),
+                    (r'\bmemset\s*\(', "memset"),
+                    (r'\bdelete\s*\w+', "delete"),
+                    (r'\bdelete\[\]\s*\w+', "delete[]"),
+                ],
+            },
+            "severity": "high",
+            "description": "C/C++ 手动内存操作风险：需要确认长度、生命周期和释放时机",
+            "cwe_id": "CWE-416",
+        },
+        "memory_leak": {
+            "patterns": {
+                "c": [
+                    (r'\bmalloc\s*\(', "malloc"),
+                    (r'\bcalloc\s*\(', "calloc"),
+                    (r'\brealloc\s*\(', "realloc"),
+                ],
+                "cpp": [
+                    (r'\bnew\s+\w+', "new"),
+                    (r'\bnew\[\]\s+\w+', "new[]"),
+                    (r'\bmalloc\s*\(', "malloc"),
+                    (r'\bcalloc\s*\(', "calloc"),
+                    (r'\brealloc\s*\(', "realloc"),
+                ],
+            },
+            "severity": "medium",
+            "description": "C/C++ 内存泄漏风险：分配点需要确认在所有路径都正确释放",
+            "cwe_id": "CWE-401",
+        },
+        "race_condition": {
+            "patterns": {
+                "c": [
+                    (r'\bpthread_create\s*\(', "pthread_create"),
+                    (r'\bvolatile\b', "volatile"),
+                    (r'\bshared\s+static\b', "shared static"),
+                ],
+                "cpp": [
+                    (r'\bstd::thread\b', "std::thread"),
+                    (r'\bstd::async\b', "std::async"),
+                    (r'\bpthread_create\s*\(', "pthread_create"),
+                    (r'\bvolatile\b', "volatile"),
+                ],
+            },
+            "severity": "high",
+            "description": "C/C++ 并发访问风险：线程创建后需要检查共享状态是否被同步保护",
+            "cwe_id": "CWE-362",
+        },
+        "format_string": {
+            "patterns": {
+                "c": [
+                    (r'\bprintf\s*\(\s*[A-Za-z_][\w->]*\s*\)', "printf变量格式串"),
+                    (r'\bfprintf\s*\(\s*[A-Za-z_][\w->]*\s*\)', "fprintf变量格式串"),
+                    (r'\bsyslog\s*\(\s*[A-Za-z_][\w->]*\s*\)', "syslog变量格式串"),
+                    (r'\bscanf\s*\([^)]*%n', "scanf %n"),
+                ],
+                "cpp": [
+                    (r'\bprintf\s*\(\s*[A-Za-z_][\w->]*\s*\)', "printf变量格式串"),
+                    (r'\bfprintf\s*\(\s*[A-Za-z_][\w->]*\s*\)', "fprintf变量格式串"),
+                    (r'\bsyslog\s*\(\s*[A-Za-z_][\w->]*\s*\)', "syslog变量格式串"),
+                    (r'\bscanf\s*\([^)]*%n', "scanf %n"),
+                ],
+            },
+            "severity": "high",
+            "description": "C/C++ 格式化字符串风险：把不可信数据作为 format 参数会导致信息泄露或写内存",
+            "cwe_id": "CWE-134",
+        },
+
         # 弱加密
         "weak_crypto": {
             "patterns": {
@@ -498,4 +599,3 @@ class PatternMatchTool(AgentTool):
                 return lang
         
         return None
-

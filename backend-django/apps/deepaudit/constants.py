@@ -178,7 +178,7 @@ DEFAULT_LLM_CONFIG = {
     'timeout': 150,
     'temperature': 0.1,
     'max_tokens': 4096,
-    'first_token_timeout': 30,
+    'first_token_timeout': 90,
     'stream_timeout': 60,
     'tool_timeout': 60,
     'sub_agent_timeout': 600,

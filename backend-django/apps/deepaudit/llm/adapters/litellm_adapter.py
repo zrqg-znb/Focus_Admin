@@ -217,6 +217,9 @@ class LiteLLMAdapter(BaseLLMAdapter):
             "max_tokens": request.max_tokens if request.max_tokens is not None else self.config.max_tokens,
         }
 
+        if request.tools:
+            kwargs["tools"] = request.tools
+
         # Claude 不允许同时传 temperature 和 top_p
         if self.config.provider != LLMProvider.CLAUDE:
             kwargs["top_p"] = request.top_p if request.top_p is not None else self.config.top_p
@@ -298,6 +301,7 @@ class LiteLLMAdapter(BaseLLMAdapter):
             model=response.model,
             usage=usage,
             finish_reason=choice.finish_reason,
+            tool_calls=getattr(choice.message, "tool_calls", None),
         )
 
     async def stream_complete(self, request: LLMRequest):

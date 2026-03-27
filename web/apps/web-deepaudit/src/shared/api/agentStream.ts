@@ -115,6 +115,7 @@ export class AgentStreamHandler {
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
   private isConnected = false;
+  private lastSequence = 0;
   private thinkingBuffer: string[] = [];
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null; // 🔥 保存 reader 引用
   private abortController: AbortController | null = null; // 🔥 用于取消请求
@@ -128,6 +129,7 @@ export class AgentStreamHandler {
       afterSequence: 0,
       ...options,
     };
+    this.lastSequence = this.options.afterSequence ?? 0;
   }
 
   /**
@@ -168,10 +170,14 @@ export class AgentStreamHandler {
       return;
     }
 
+    const nextSequence = Math.max(this.lastSequence, this.options.afterSequence ?? 0);
+    params.set('after_sequence', String(nextSequence));
+
     const url = resolveApiUrl(`/agent-tasks/${this.taskId}/stream?${params}`);
 
     // 🔥 创建 AbortController 用于取消请求
     this.abortController = new AbortController();
+    let shouldReconnect = false;
 
     try {
       const response = await fetch(url, {
@@ -208,6 +214,7 @@ export class AgentStreamHandler {
 
         if (done) {
           console.log('[AgentStream] Reader done, stream ended');
+          shouldReconnect = !this.isDisconnecting;
           break;
         }
 
@@ -238,6 +245,11 @@ export class AgentStreamHandler {
         this.reader.releaseLock();
         this.reader = null;
       }
+
+      if (shouldReconnect && !this.isDisconnecting) {
+        this.isConnected = false;
+        this.scheduleReconnect('stream ended');
+      }
     } catch (error: any) {
       // 🔥 如果是取消错误，不处理
       if (error.name === 'AbortError') {
@@ -248,16 +260,7 @@ export class AgentStreamHandler {
       console.error('Stream connection error:', error);
 
       // 🔥 只有在未断开时才尝试重连
-      if (!this.isDisconnecting && this.reconnectAttempts < this.maxReconnectAttempts) {
-        this.reconnectAttempts++;
-        setTimeout(() => {
-          if (!this.isDisconnecting) {
-            this.connect();
-          }
-        }, this.reconnectDelay * this.reconnectAttempts);
-      } else {
-        this.options.onError?.(`连接失败: ${error}`);
-      }
+      this.scheduleReconnect(`连接失败: ${error}`);
     } finally {
       // 🔥 清理 reader
       if (this.reader) {
@@ -269,6 +272,26 @@ export class AgentStreamHandler {
         this.reader = null;
       }
     }
+  }
+
+  private scheduleReconnect(reason: string): void {
+    if (this.isDisconnecting) {
+      return;
+    }
+
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      this.options.onError?.(`${reason}，已达到最大重连次数`);
+      return;
+    }
+
+    this.reconnectAttempts++;
+    const delay = this.reconnectDelay * this.reconnectAttempts;
+
+    setTimeout(() => {
+      if (!this.isDisconnecting) {
+        this.connect();
+      }
+    }, delay);
   }
 
   /**
@@ -323,6 +346,10 @@ export class AgentStreamHandler {
     // Extract agent_name from metadata if present
     if (event.metadata?.agent_name && !event.agent_name) {
       event.agent_name = event.metadata.agent_name as string;
+    }
+
+    if (typeof event.sequence === 'number' && event.sequence > this.lastSequence) {
+      this.lastSequence = event.sequence;
     }
 
     // 通用回调

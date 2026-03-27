@@ -384,13 +384,13 @@ class BaseAgent(ABC):
             return self.llm_service.get_agent_timeout_config()
 
         # 回退到环境变量默认值
-        return {
-            'llm_first_token_timeout': getattr(settings, 'LLM_FIRST_TOKEN_TIMEOUT', 30),
-            'llm_stream_timeout': getattr(settings, 'LLM_STREAM_TIMEOUT', 60),
-            'agent_timeout': getattr(settings, 'AGENT_TIMEOUT_SECONDS', 1800),
-            'sub_agent_timeout': getattr(settings, 'SUB_AGENT_TIMEOUT_SECONDS', 600),
-            'tool_timeout': getattr(settings, 'TOOL_TIMEOUT_SECONDS', 60),
-        }
+            return {
+                'llm_first_token_timeout': getattr(settings, 'LLM_FIRST_TOKEN_TIMEOUT', 90),
+                'llm_stream_timeout': getattr(settings, 'LLM_STREAM_TIMEOUT', 60),
+                'agent_timeout': getattr(settings, 'AGENT_TIMEOUT_SECONDS', 1800),
+                'sub_agent_timeout': getattr(settings, 'SUB_AGENT_TIMEOUT_SECONDS', 600),
+                'tool_timeout': getattr(settings, 'TOOL_TIMEOUT_SECONDS', 60),
+            }
     
     @property
     def name(self) -> str:
