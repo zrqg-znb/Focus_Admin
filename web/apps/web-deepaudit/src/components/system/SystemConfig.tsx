@@ -432,7 +432,7 @@ export function SystemConfig() {
                 <p className="text-sm text-foreground font-mono">{config.llmProvider || INTERNAL_LLM_LABEL}</p>
               </div>
               <div className="text-xs text-muted-foreground text-right">
-                可按需选择 `openai / qwen / deepseek / zhipu`，后端仍会在失败时自动切换到本地兜底
+                可按需选择 `openai / qwen / deepseek / zhipu`；测试连接只验证当前入口，不再自动切换到 Ollama
               </div>
             </div>
 
@@ -496,7 +496,7 @@ export function SystemConfig() {
             <div className="pt-4 border-t border-border border-dashed flex items-center justify-between flex-wrap gap-4">
               <div className="text-sm">
                 <span className="font-bold text-foreground">测试连接</span>
-                <span className="text-muted-foreground ml-2">验证内网中转和本地兜底路径</span>
+                <span className="text-muted-foreground ml-2">仅验证当前 Provider / Base URL / API Key</span>
               </div>
               <Button
                 onClick={testLLMConnection}
@@ -725,7 +725,7 @@ export function SystemConfig() {
               <Info className="w-4 h-4 text-sky-400" />
               配置说明
             </p>
-            <p className="text-muted-foreground">• <strong className="text-muted-foreground">统一入口</strong>: 前端只保留内网中转配置，后端会自动对接本地兜底模型</p>
+            <p className="text-muted-foreground">• <strong className="text-muted-foreground">统一入口</strong>: 前端只保留内网中转配置，“测试连接”只验证当前填写的入口</p>
             <p className="text-muted-foreground">• <strong className="text-muted-foreground">API 中转站</strong>: 在 Base URL 填入中转站地址即可，API Key 填中转站提供的 Key</p>
             <p className="text-muted-foreground">• <strong className="text-muted-foreground">兼容历史配置</strong>: 旧 provider 会被加载并归一为统一入口，不会再作为可选项展示</p>
           </div>

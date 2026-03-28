@@ -63,6 +63,7 @@ Browser
 
 - 差异项：`server_name`、后端端口、前端静态目录、后端 `static_root` / `media` / 日志路径。
 - 保持一致：`/`、`/deepaudit-app/`、`/basic-api/`、`/ws/`、DeepAudit `/stream`。
+- DeepAudit 入口务必使用带尾部斜杠的 `/deepaudit-app/`；建议把 `/deepaudit-app` 301 到 `/deepaudit-app/`，否则请求会落到主站 SPA 并显示 404。
 - 正式 API 入口：`https://focus.example.com/basic-api/`
 - 测试 API 入口：`https://focus-test.example.com/basic-api/`
 - 正式 DeepAudit：`https://focus.example.com/deepaudit-app/`
@@ -485,6 +486,7 @@ rsync -av --delete /srv/focus-test/Focus_Admin/web/apps/web-deepaudit/dist/ /var
 说明：
 
 - 这四个目录必须事先存在且 nginx 可读。
+- 发布后目标文件应直接落在 `/var/www/deepaudit/index.html` 与 `/var/www/deepaudit_test/index.html`，不要变成多一层的 `dist/index.html`。
 - DeepAudit 继续通过 `/deepaudit-app/` 访问，不修改 `base`。
 - 测试和正式的路径规则保持完全一致，只是各自指向不同域名和不同静态目录。
 
@@ -990,6 +992,10 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
+    location = /deepaudit-app {
+        return 301 /deepaudit-app/;
+    }
+
     location /deepaudit-app/ {
         alias /var/www/deepaudit/;
         index index.html;
@@ -1061,6 +1067,10 @@ server {
 
     location / {
         try_files $uri $uri/ /index.html;
+    }
+
+    location = /deepaudit-app {
+        return 301 /deepaudit-app/;
     }
 
     location /deepaudit-app/ {

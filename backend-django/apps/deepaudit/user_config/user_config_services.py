@@ -136,7 +136,6 @@ def _default_base_url_for_provider(provider: str) -> str:
             value = str(getattr(settings, setting_name, '') or '').strip()
             if value:
                 return value
-        return LLM_TEST_BASE_URLS.get('ollama', '')
     return LLM_TEST_BASE_URLS.get(provider, '')
 
 
@@ -492,14 +491,11 @@ def test_llm_connection(user, payload: dict) -> dict:
     ).strip()
     explicit_model = str(payload.get('model') or '').strip()
     explicit_base_url = str(payload.get('base_url') or payload.get('baseUrl') or '').strip()
+    saved_model = str(saved_config.get('model') or '').strip()
+    saved_base_url = str(saved_config.get('base_url') or '').strip()
     provider = provider_requested
-    model = explicit_model or _default_model_for_provider(provider)
-    base_url = explicit_base_url or _default_base_url_for_provider(provider)
-
-    if provider == 'openai' and not explicit_base_url:
-        provider = 'ollama'
-        model = explicit_model or _default_model_for_provider(provider)
-        base_url = _default_base_url_for_provider(provider)
+    model = explicit_model or saved_model or _default_model_for_provider(provider)
+    base_url = explicit_base_url or saved_base_url or _default_base_url_for_provider(provider)
 
     timeout_seconds = max(5, int(saved_config.get('timeout') or DEFAULT_LLM_CONFIG['timeout']))
     temperature = float(saved_config.get('temperature', DEFAULT_LLM_CONFIG['temperature']))
@@ -691,25 +687,8 @@ def test_llm_connection(user, payload: dict) -> dict:
                 'debug': attempt_debug,
             }
 
-    primary_result = _attempt_connection(provider, model, base_url, api_key)
-    if primary_result.get('success') or provider == 'ollama':
-        return primary_result
-
-    fallback_provider = 'ollama'
-    fallback_model = explicit_model or _default_model_for_provider(fallback_provider)
-    fallback_base_url = _default_base_url_for_provider(fallback_provider)
-    fallback_api_key = str(payload.get('fallback_api_key') or saved_config.get('fallback_api_key') or '').strip()
-    fallback_result = _attempt_connection(
-        fallback_provider,
-        fallback_model,
-        fallback_base_url,
-        fallback_api_key,
-        is_fallback=True,
-    )
-
-    if not fallback_result.get('success'):
-        fallback_result['debug']['primary_error'] = primary_result.get('debug', {}).get('error_message') or primary_result.get('message')
-    return fallback_result
+    # 手动“测试连接”只验证当前填写/已保存的入口，避免主请求失败后被本地兜底掩盖。
+    return _attempt_connection(provider, model, base_url, api_key)
 
 
 def _fingerprint(public_key: str) -> str:
