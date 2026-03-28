@@ -11,6 +11,7 @@ from apps.project_manager.failure_mode.failure_mode_model import (
     FailureModeHuatuoDiagnosisRel,
     FailureModeInterceptionStrategyRel,
     FailureModeObservationMethodRel,
+    FailureModeSubsystemConfig,
     HandlingMeasure,
     HandlingMeasureTestCaseRel,
     HuatuoDiagnosis,

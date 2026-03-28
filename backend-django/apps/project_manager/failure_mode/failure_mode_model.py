@@ -33,6 +33,18 @@ class FailureMode(RootModel):
     severity = models.CharField(max_length=32, blank=True, null=True, verbose_name='严重程度')
     related_dts_nos = models.JSONField(default=list, blank=True, verbose_name='关联问题单')
     status = models.CharField(max_length=64, blank=True, null=True, verbose_name='状态')
+    interception_required = models.BooleanField(default=False, verbose_name='需要产线拦截策略')
+    huatuo_required = models.BooleanField(default=False, verbose_name='需要华佗诊断方案')
+    required_handling_measure_categories = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='必配故障处理措施类别',
+    )
+    required_observation_method_types = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='必配维测手段类型',
+    )
     authors = models.ManyToManyField(
         'core.User',
         blank=True,
@@ -49,6 +61,18 @@ class FailureMode(RootModel):
             models.Index(fields=['subsystem', 'status'], name='idx_pm_fm_sub_status'),
             models.Index(fields=['module_name'], name='idx_pm_fm_module'),
         ]
+
+
+class FailureModeSubsystemConfig(RootModel):
+    subsystem = models.CharField(max_length=128, unique=True, verbose_name='子系统')
+    module_options = models.JSONField(default=list, blank=True, verbose_name='模块选项')
+    chip_options = models.JSONField(default=list, blank=True, verbose_name='芯片选项')
+
+    class Meta:
+        db_table = 'pm_failure_mode_subsystem_config'
+        verbose_name = '故障模式子系统联动配置'
+        verbose_name_plural = verbose_name
+        indexes = [models.Index(fields=['subsystem'], name='idx_pm_fm_sub_cfg_subsystem')]
 
 
 class InterceptionStrategy(RootModel):

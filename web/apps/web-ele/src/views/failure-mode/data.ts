@@ -5,6 +5,8 @@ import type {
   DictOption,
   FailureModeDictOptions,
   FailureModeItem,
+  FailureModeSubsystemConfigItem,
+  FailureModeSubsystemConfigOptions,
   HandlingMeasureItem,
   HuatuoDiagnosisItem,
   InterceptionStrategyItem,
@@ -29,11 +31,13 @@ export type FailureModeTabKey =
   | 'interception'
   | 'measure'
   | 'observation'
+  | 'subsystemConfig'
   | 'testCase';
 
 export const failureModeTabs: Array<{ key: FailureModeTabKey; label: string }> =
   [
     { key: 'failureMode', label: '故障模式' },
+    { key: 'subsystemConfig', label: '子系统配置' },
     { key: 'interception', label: '产线拦截策略' },
     { key: 'measure', label: '故障处理措施' },
     { key: 'observation', label: '维测手段' },
@@ -58,6 +62,15 @@ export function createEmptyDictOptions(): FailureModeDictOptions {
   };
 }
 
+export function createEmptySubsystemConfigOptions(): FailureModeSubsystemConfigOptions {
+  return {
+    subsystem_options: [],
+    module_options: [],
+    chip_options: [],
+    items: [],
+  };
+}
+
 export function replaceDictOptions(
   target: FailureModeDictOptions,
   next: FailureModeDictOptions,
@@ -66,6 +79,36 @@ export function replaceDictOptions(
     (key) => {
       target[key].splice(0, target[key].length, ...(next[key] || []));
     },
+  );
+}
+
+export function replaceSubsystemConfigOptions(
+  target: FailureModeSubsystemConfigOptions,
+  next: FailureModeSubsystemConfigOptions,
+) {
+  target.subsystem_options.splice(
+    0,
+    target.subsystem_options.length,
+    ...(next.subsystem_options || []),
+  );
+  target.module_options.splice(
+    0,
+    target.module_options.length,
+    ...(next.module_options || []),
+  );
+  target.chip_options.splice(
+    0,
+    target.chip_options.length,
+    ...(next.chip_options || []),
+  );
+  target.items.splice(
+    0,
+    target.items.length,
+    ...((next.items || []).map((item) => ({
+      subsystem: item.subsystem,
+      module_options: [...(item.module_options || [])],
+      chip_options: [...(item.chip_options || [])],
+    })) as FailureModeSubsystemConfigOptions['items']),
   );
 }
 
@@ -121,6 +164,24 @@ export function removeRelationItem(
   id: string,
 ): RelationItem[] {
   return items.filter((item) => item.id !== id);
+}
+
+export function filterRelationItemsBySubtitle(
+  ids: string[] = [],
+  items: RelationItem[] = [],
+  allowedValues: string[] = [],
+) {
+  const allowSet = new Set(normalizeStringList(allowedValues));
+  if (allowSet.size === 0) {
+    return { ids: [] as string[], items: [] as RelationItem[] };
+  }
+  const nextItems = ensureOrderedRelationItems(ids, items).filter((item) => {
+    return item.subtitle ? allowSet.has(item.subtitle) : false;
+  });
+  return {
+    ids: nextItems.map((item) => item.id),
+    items: nextItems,
+  };
 }
 
 export function buildRelationItem(
@@ -233,8 +294,20 @@ export function useFailureModeColumns(): ZqTableGridOptions<FailureModeItem>['co
       width: 300,
       headerSlotName: 'header-brief',
     },
-    { key: 'subsystem', dataKey: 'subsystem', title: '子系统', width: 140 },
-    { key: 'module', dataKey: 'module', title: '模块', width: 140 },
+    {
+      key: 'subsystem',
+      dataKey: 'subsystem',
+      title: '子系统',
+      width: 140,
+      headerSlotName: 'header-subsystem',
+    },
+    {
+      key: 'module',
+      dataKey: 'module',
+      title: '模块',
+      width: 140,
+      headerSlotName: 'header-module',
+    },
     { key: 'chips', dataKey: 'chips', title: '芯片', width: 180 },
     {
       key: 'fault_categories',
@@ -248,7 +321,13 @@ export function useFailureModeColumns(): ZqTableGridOptions<FailureModeItem>['co
       title: '故障现象',
       width: 180,
     },
-    { key: 'status', dataKey: 'status', title: '状态', width: 120 },
+    {
+      key: 'status',
+      dataKey: 'status',
+      title: '状态',
+      width: 120,
+      headerSlotName: 'header-status',
+    },
     {
       key: 'author_info',
       dataKey: 'author_info',
@@ -272,6 +351,43 @@ export function useFailureModeColumns(): ZqTableGridOptions<FailureModeItem>['co
       key: 'sys_create_datetime',
       dataKey: 'sys_create_datetime',
       title: '创建时间',
+      width: 180,
+    },
+    {
+      key: 'actions',
+      dataKey: 'actions',
+      title: '操作',
+      width: 140,
+      showOverflowTooltip: false,
+    },
+  ]);
+}
+
+export function useSubsystemConfigColumns(): ZqTableGridOptions<FailureModeSubsystemConfigItem>['columns'] {
+  return withCenter<FailureModeSubsystemConfigItem>([
+    {
+      key: 'subsystem',
+      dataKey: 'subsystem',
+      title: '子系统',
+      width: 180,
+      headerSlotName: 'header-subsystem-config-keyword',
+    },
+    {
+      key: 'module_options',
+      dataKey: 'module_options',
+      title: '模块选项',
+      width: 280,
+    },
+    {
+      key: 'chip_options',
+      dataKey: 'chip_options',
+      title: '芯片选项',
+      width: 280,
+    },
+    {
+      key: 'sys_update_datetime',
+      dataKey: 'sys_update_datetime',
+      title: '更新时间',
       width: 180,
     },
     {
@@ -456,9 +572,76 @@ function mapDictOptions(options: DictOption[]) {
   return options.map((item) => ({ label: item.label, value: item.value }));
 }
 
+export function toDictOptions(values: string[]) {
+  return normalizeStringList(values).map((item) => ({
+    label: item,
+    value: item,
+  }));
+}
+
+export function resolveSubsystemScopedOptions(
+  subsystemConfigOptions: FailureModeSubsystemConfigOptions,
+  subsystem?: null | string | string[],
+) {
+  const selectedSubsystems = Array.isArray(subsystem)
+    ? normalizeStringList(subsystem)
+    : normalizeStringList(subsystem || undefined);
+
+  if (selectedSubsystems.length === 0) {
+    return {
+      moduleOptions: subsystemConfigOptions.module_options || [],
+      chipOptions: subsystemConfigOptions.chip_options || [],
+    };
+  }
+
+  const moduleValues: string[] = [];
+  const chipValues: string[] = [];
+  const moduleSeen = new Set<string>();
+  const chipSeen = new Set<string>();
+
+  subsystemConfigOptions.items.forEach((item) => {
+    if (!selectedSubsystems.includes(item.subsystem)) {
+      return;
+    }
+    normalizeStringList(item.module_options).forEach((value) => {
+      if (moduleSeen.has(value)) {
+        return;
+      }
+      moduleSeen.add(value);
+      moduleValues.push(value);
+    });
+    normalizeStringList(item.chip_options).forEach((value) => {
+      if (chipSeen.has(value)) {
+        return;
+      }
+      chipSeen.add(value);
+      chipValues.push(value);
+    });
+  });
+
+  return {
+    moduleOptions:
+      moduleValues.length > 0
+        ? toDictOptions(moduleValues)
+        : subsystemConfigOptions.module_options || [],
+    chipOptions:
+      chipValues.length > 0
+        ? toDictOptions(chipValues)
+        : subsystemConfigOptions.chip_options || [],
+  };
+}
+
 export function useFailureModeFormSchema(
   dictOptions: FailureModeDictOptions,
+  subsystemConfigOptions: FailureModeSubsystemConfigOptions,
+  selectedSubsystem?: null | string,
+  onSubsystemChange?: (value?: string) => void,
 ): VbenFormSchema[] {
+  const scopedOptions = resolveSubsystemScopedOptions(
+    subsystemConfigOptions,
+    selectedSubsystem,
+  );
+
   return [
     {
       component: 'Input',
@@ -473,7 +656,15 @@ export function useFailureModeFormSchema(
       label: '子系统',
       componentProps: {
         clearable: true,
-        options: mapDictOptions(dictOptions.subsystem),
+        filterable: true,
+        options: mapDictOptions(
+          subsystemConfigOptions.subsystem_options?.length > 0
+            ? subsystemConfigOptions.subsystem_options
+            : dictOptions.subsystem,
+        ),
+        onChange: (value: string) => {
+          onSubsystemChange?.(String(value || '').trim() || undefined);
+        },
       },
     },
     {
@@ -482,7 +673,8 @@ export function useFailureModeFormSchema(
       label: '模块',
       componentProps: {
         clearable: true,
-        options: mapDictOptions(dictOptions.module),
+        filterable: true,
+        options: mapDictOptions(scopedOptions.moduleOptions),
       },
     },
     {
@@ -494,7 +686,8 @@ export function useFailureModeFormSchema(
         multiple: true,
         collapseTags: true,
         collapseTagsTooltip: true,
-        options: mapDictOptions(dictOptions.chip),
+        filterable: true,
+        options: mapDictOptions(scopedOptions.chipOptions),
       },
       defaultValue: [],
     },
@@ -599,6 +792,20 @@ export function useFailureModeFormSchema(
       componentProps: {
         minHeight: 220,
         maxHeight: 420,
+      },
+    },
+  ];
+}
+
+export function useSubsystemConfigFormSchema(): VbenFormSchema[] {
+  return [
+    {
+      component: 'Input',
+      fieldName: 'subsystem',
+      label: '子系统',
+      rules: z.string().min(1, '请输入子系统'),
+      componentProps: {
+        placeholder: '请输入子系统名称',
       },
     },
   ];

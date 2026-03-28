@@ -1,34 +1,47 @@
-from ninja import Query, Router
-from ninja.pagination import paginate
+from ninja import Router
 
 from common.fu_auth import BearerAuth as GlobalAuth
-from common.fu_pagination import MyPagination
 
 from . import failure_mode_services
 from .failure_mode_schemas import (
     FailureModeCreateSchema,
     FailureModeDictOptionsSchema,
-    FailureModeFilterSchema,
     FailureModeOutSchema,
+    FailureModePageSchema,
+    FailureModeSearchSchema,
+    FailureModeStatisticsSubsystemPageSchema,
+    FailureModeStatisticsSubsystemSearchSchema,
+    FailureModeStatisticsSummarySchema,
+    FailureModeSubsystemConfigCreateSchema,
+    FailureModeSubsystemConfigOptionsSchema,
+    FailureModeSubsystemConfigOutSchema,
+    FailureModeSubsystemConfigPageSchema,
+    FailureModeSubsystemConfigSearchSchema,
+    FailureModeSubsystemConfigUpdateSchema,
     FailureModeUpdateSchema,
     HandlingMeasureCreateSchema,
-    HandlingMeasureFilterSchema,
     HandlingMeasureOutSchema,
+    HandlingMeasurePageSchema,
+    HandlingMeasureSearchSchema,
     HandlingMeasureUpdateSchema,
     HuatuoDiagnosisCreateSchema,
     HuatuoDiagnosisOutSchema,
+    HuatuoDiagnosisPageSchema,
     HuatuoDiagnosisUpdateSchema,
     InterceptionStrategyCreateSchema,
     InterceptionStrategyOutSchema,
+    InterceptionStrategyPageSchema,
     InterceptionStrategyUpdateSchema,
-    KeywordFilterSchema,
+    KeywordSearchSchema,
     ObservationMethodCreateSchema,
-    ObservationMethodFilterSchema,
     ObservationMethodOutSchema,
+    ObservationMethodPageSchema,
+    ObservationMethodSearchSchema,
     ObservationMethodUpdateSchema,
     SaveSuccessSchema,
     TestCaseCreateSchema,
     TestCaseOutSchema,
+    TestCasePageSchema,
     TestCaseUpdateSchema,
 )
 
@@ -40,10 +53,49 @@ def get_dict_options(request):
     return failure_mode_services.get_failure_mode_dict_options()
 
 
-@router.get('/failure-modes', response=list[FailureModeOutSchema], summary='获取故障模式列表')
-@paginate(MyPagination, pass_parameter='page_params')
-def list_failure_modes(request, filters: FailureModeFilterSchema = Query(...), page_params=None):
-    return failure_mode_services.list_failure_modes(filters, page_params)
+@router.post('/statistics/summary', response=FailureModeStatisticsSummarySchema, summary='获取故障管理统计摘要')
+def get_statistics_summary(request):
+    return failure_mode_services.get_failure_mode_statistics_summary()
+
+
+@router.post('/statistics/subsystems/search', response=FailureModeStatisticsSubsystemPageSchema, summary='搜索故障管理子系统统计表')
+def search_statistics_subsystems(request, filters: FailureModeStatisticsSubsystemSearchSchema):
+    return failure_mode_services.list_failure_mode_statistics_subsystems(filters)
+
+
+@router.post('/subsystem-configs/search', response=FailureModeSubsystemConfigPageSchema, summary='搜索故障模式子系统配置列表')
+def search_subsystem_configs(request, filters: FailureModeSubsystemConfigSearchSchema):
+    return failure_mode_services.list_failure_mode_subsystem_configs(filters)
+
+
+@router.post('/subsystem-configs', response=FailureModeSubsystemConfigOutSchema, summary='创建故障模式子系统配置')
+def create_subsystem_config(request, data: FailureModeSubsystemConfigCreateSchema):
+    return failure_mode_services.create_failure_mode_subsystem_config(request, data)
+
+
+@router.get('/subsystem-configs/options', response=FailureModeSubsystemConfigOptionsSchema, summary='获取故障模式子系统联动选项')
+def get_subsystem_config_options(request):
+    return failure_mode_services.get_failure_mode_subsystem_config_options()
+
+
+@router.get('/subsystem-configs/{item_id}', response=FailureModeSubsystemConfigOutSchema, summary='获取故障模式子系统配置详情')
+def get_subsystem_config_detail(request, item_id: str):
+    return failure_mode_services.get_failure_mode_subsystem_config_detail(item_id)
+
+
+@router.put('/subsystem-configs/{item_id}', response=FailureModeSubsystemConfigOutSchema, summary='更新故障模式子系统配置')
+def update_subsystem_config(request, item_id: str, data: FailureModeSubsystemConfigUpdateSchema):
+    return failure_mode_services.update_failure_mode_subsystem_config(request, item_id, data)
+
+
+@router.delete('/subsystem-configs/{item_id}', response=SaveSuccessSchema, summary='删除故障模式子系统配置')
+def delete_subsystem_config(request, item_id: str):
+    return failure_mode_services.delete_failure_mode_subsystem_config(item_id)
+
+
+@router.post('/failure-modes/search', response=FailureModePageSchema, summary='搜索故障模式列表')
+def search_failure_modes(request, filters: FailureModeSearchSchema):
+    return failure_mode_services.list_failure_modes(filters)
 
 
 @router.post('/failure-modes', response=FailureModeOutSchema, summary='创建故障模式')
@@ -66,10 +118,9 @@ def delete_failure_mode(request, failure_mode_id: str):
     return failure_mode_services.delete_failure_mode(failure_mode_id)
 
 
-@router.get('/interception-strategies', response=list[InterceptionStrategyOutSchema], summary='获取产线拦截策略列表')
-@paginate(MyPagination, pass_parameter='page_params')
-def list_interception_strategies(request, filters: KeywordFilterSchema = Query(...), page_params=None):
-    return failure_mode_services.list_interception_strategies(filters, page_params)
+@router.post('/interception-strategies/search', response=InterceptionStrategyPageSchema, summary='搜索产线拦截策略列表')
+def search_interception_strategies(request, filters: KeywordSearchSchema):
+    return failure_mode_services.list_interception_strategies(filters)
 
 
 @router.post('/interception-strategies', response=InterceptionStrategyOutSchema, summary='创建产线拦截策略')
@@ -92,10 +143,9 @@ def delete_interception_strategy(request, item_id: str):
     return failure_mode_services.delete_interception_strategy(item_id)
 
 
-@router.get('/handling-measures', response=list[HandlingMeasureOutSchema], summary='获取故障处理措施列表')
-@paginate(MyPagination, pass_parameter='page_params')
-def list_handling_measures(request, filters: HandlingMeasureFilterSchema = Query(...), page_params=None):
-    return failure_mode_services.list_handling_measures(filters, page_params)
+@router.post('/handling-measures/search', response=HandlingMeasurePageSchema, summary='搜索故障处理措施列表')
+def search_handling_measures(request, filters: HandlingMeasureSearchSchema):
+    return failure_mode_services.list_handling_measures(filters)
 
 
 @router.post('/handling-measures', response=HandlingMeasureOutSchema, summary='创建故障处理措施')
@@ -118,10 +168,9 @@ def delete_handling_measure(request, item_id: str):
     return failure_mode_services.delete_handling_measure(item_id)
 
 
-@router.get('/observation-methods', response=list[ObservationMethodOutSchema], summary='获取维测手段列表')
-@paginate(MyPagination, pass_parameter='page_params')
-def list_observation_methods(request, filters: ObservationMethodFilterSchema = Query(...), page_params=None):
-    return failure_mode_services.list_observation_methods(filters, page_params)
+@router.post('/observation-methods/search', response=ObservationMethodPageSchema, summary='搜索维测手段列表')
+def search_observation_methods(request, filters: ObservationMethodSearchSchema):
+    return failure_mode_services.list_observation_methods(filters)
 
 
 @router.post('/observation-methods', response=ObservationMethodOutSchema, summary='创建维测手段')
@@ -144,10 +193,9 @@ def delete_observation_method(request, item_id: str):
     return failure_mode_services.delete_observation_method(item_id)
 
 
-@router.get('/huatuo-diagnoses', response=list[HuatuoDiagnosisOutSchema], summary='获取华佗诊断方案列表')
-@paginate(MyPagination, pass_parameter='page_params')
-def list_huatuo_diagnoses(request, filters: KeywordFilterSchema = Query(...), page_params=None):
-    return failure_mode_services.list_huatuo_diagnoses(filters, page_params)
+@router.post('/huatuo-diagnoses/search', response=HuatuoDiagnosisPageSchema, summary='搜索华佗诊断方案列表')
+def search_huatuo_diagnoses(request, filters: KeywordSearchSchema):
+    return failure_mode_services.list_huatuo_diagnoses(filters)
 
 
 @router.post('/huatuo-diagnoses', response=HuatuoDiagnosisOutSchema, summary='创建华佗诊断方案')
@@ -170,10 +218,9 @@ def delete_huatuo_diagnosis(request, item_id: str):
     return failure_mode_services.delete_huatuo_diagnosis(item_id)
 
 
-@router.get('/test-cases', response=list[TestCaseOutSchema], summary='获取测试用例列表')
-@paginate(MyPagination, pass_parameter='page_params')
-def list_test_cases(request, filters: KeywordFilterSchema = Query(...), page_params=None):
-    return failure_mode_services.list_test_cases(filters, page_params)
+@router.post('/test-cases/search', response=TestCasePageSchema, summary='搜索测试用例列表')
+def search_test_cases(request, filters: KeywordSearchSchema):
+    return failure_mode_services.list_test_cases(filters)
 
 
 @router.post('/test-cases', response=TestCaseOutSchema, summary='创建测试用例')

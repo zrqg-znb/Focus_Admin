@@ -36,7 +36,12 @@ class FailureModeDictOptionsSchema(Schema):
     monitor_type: list[DictOptionSchema] = Field(default_factory=list)
 
 
-class KeywordFilterSchema(Schema):
+class SearchPaginationSchema(Schema):
+    page: int = Field(1, ge=1)
+    pageSize: int = Field(10, gt=0)
+
+
+class KeywordSearchSchema(SearchPaginationSchema):
     keyword: Optional[str] = Field(None, description='关键词')
     owner_keyword: Optional[str] = None
 
@@ -69,12 +74,21 @@ def _normalize_query_list(value: Any) -> list[str]:
     return normalized
 
 
-class FailureModeFilterSchema(KeywordFilterSchema):
+class FailureModeSearchSchema(SearchPaginationSchema):
+    keyword: Optional[str] = Field(None, description='关键词')
     subsystem: list[str] = Field(default_factory=list)
     module: list[str] = Field(default_factory=list)
     status: list[str] = Field(default_factory=list)
     author_id: Optional[str] = None
     author_keyword: Optional[str] = None
+
+    @field_validator('keyword', 'author_id', 'author_keyword', mode='before')
+    @classmethod
+    def normalize_text_filters(cls, value: Any):
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
 
     @field_validator(
         'subsystem',
@@ -86,16 +100,8 @@ class FailureModeFilterSchema(KeywordFilterSchema):
     def normalize_dict_filter_values(cls, value: Any):
         return _normalize_query_list(value)
 
-    @field_validator('author_id', 'author_keyword', mode='before')
-    @classmethod
-    def normalize_text_filters(cls, value: Any):
-        if value is None:
-            return None
-        text = str(value).strip()
-        return text or None
 
-
-class HandlingMeasureFilterSchema(KeywordFilterSchema):
+class HandlingMeasureSearchSchema(KeywordSearchSchema):
     measure_category: list[str] = Field(default_factory=list)
 
     @field_validator('measure_category', mode='before')
@@ -104,7 +110,7 @@ class HandlingMeasureFilterSchema(KeywordFilterSchema):
         return _normalize_query_list(value)
 
 
-class ObservationMethodFilterSchema(KeywordFilterSchema):
+class ObservationMethodSearchSchema(KeywordSearchSchema):
     monitor_type: list[str] = Field(default_factory=list)
 
     @field_validator('monitor_type', mode='before')
@@ -159,6 +165,10 @@ class FailureModeCreateSchema(ListTextSchemaMixin):
     author_ids: list[str] = Field(default_factory=list)
     related_dts_nos: list[str] = Field(default_factory=list)
     status: Optional[str] = None
+    interception_required: bool = False
+    huatuo_required: bool = False
+    required_handling_measure_categories: list[str] = Field(default_factory=list)
+    required_observation_method_types: list[str] = Field(default_factory=list)
     interception_strategy_ids: list[str] = Field(default_factory=list)
     handling_measure_ids: list[str] = Field(default_factory=list)
     observation_method_ids: list[str] = Field(default_factory=list)
@@ -170,6 +180,8 @@ class FailureModeCreateSchema(ListTextSchemaMixin):
         'symptoms',
         'author_ids',
         'related_dts_nos',
+        'required_handling_measure_categories',
+        'required_observation_method_types',
         'interception_strategy_ids',
         'handling_measure_ids',
         'observation_method_ids',
@@ -205,6 +217,8 @@ class FailureModeUpdateSchema(FailureModeCreateSchema):
     brief: Optional[str] = None
     effect_html: Optional[str] = None
     root_cause_html: Optional[str] = None
+    interception_required: Optional[bool] = None
+    huatuo_required: Optional[bool] = None
 
     @field_validator('effect_html', 'root_cause_html', mode='before')
     @classmethod
@@ -232,6 +246,10 @@ class FailureModeOutSchema(Schema):
     author_info: list[UserBriefSchema] = Field(default_factory=list)
     related_dts_nos: list[str] = Field(default_factory=list)
     status: Optional[str] = None
+    interception_required: bool = False
+    huatuo_required: bool = False
+    required_handling_measure_categories: list[str] = Field(default_factory=list)
+    required_observation_method_types: list[str] = Field(default_factory=list)
     interception_strategy_ids: list[str] = Field(default_factory=list)
     interception_strategy_items: list[RelationItemSchema] = Field(default_factory=list)
     handling_measure_ids: list[str] = Field(default_factory=list)
@@ -242,6 +260,11 @@ class FailureModeOutSchema(Schema):
     huatuo_diagnosis_items: list[RelationItemSchema] = Field(default_factory=list)
     sys_create_datetime: Optional[str] = None
     sys_update_datetime: Optional[str] = None
+
+
+class FailureModePageSchema(Schema):
+    items: list[FailureModeOutSchema] = Field(default_factory=list)
+    total: int
 
 
 class OwnerResourceCreateSchema(ListTextSchemaMixin):
@@ -291,6 +314,11 @@ class InterceptionStrategyOutSchema(Schema):
     display_name: str
     sys_create_datetime: Optional[str] = None
     sys_update_datetime: Optional[str] = None
+
+
+class InterceptionStrategyPageSchema(Schema):
+    items: list[InterceptionStrategyOutSchema] = Field(default_factory=list)
+    total: int
 
 
 class HandlingMeasureCreateSchema(OwnerResourceCreateSchema):
@@ -345,6 +373,11 @@ class HandlingMeasureOutSchema(Schema):
     sys_update_datetime: Optional[str] = None
 
 
+class HandlingMeasurePageSchema(Schema):
+    items: list[HandlingMeasureOutSchema] = Field(default_factory=list)
+    total: int
+
+
 class ObservationMethodCreateSchema(OwnerResourceCreateSchema):
     monitor_type: Optional[str] = None
     log_id: Optional[str] = None
@@ -374,6 +407,11 @@ class ObservationMethodOutSchema(Schema):
     sys_update_datetime: Optional[str] = None
 
 
+class ObservationMethodPageSchema(Schema):
+    items: list[ObservationMethodOutSchema] = Field(default_factory=list)
+    total: int
+
+
 class HuatuoDiagnosisCreateSchema(OwnerResourceCreateSchema):
     description: str
 
@@ -395,6 +433,11 @@ class HuatuoDiagnosisOutSchema(Schema):
     display_name: str
     sys_create_datetime: Optional[str] = None
     sys_update_datetime: Optional[str] = None
+
+
+class HuatuoDiagnosisPageSchema(Schema):
+    items: list[HuatuoDiagnosisOutSchema] = Field(default_factory=list)
+    total: int
 
 
 class TestCaseCreateSchema(OwnerResourceCreateSchema):
@@ -436,6 +479,104 @@ class TestCaseOutSchema(Schema):
     display_name: str
     sys_create_datetime: Optional[str] = None
     sys_update_datetime: Optional[str] = None
+
+
+class TestCasePageSchema(Schema):
+    items: list[TestCaseOutSchema] = Field(default_factory=list)
+    total: int
+
+
+class FailureModeSubsystemConfigSearchSchema(KeywordSearchSchema):
+    pass
+
+
+class FailureModeSubsystemConfigCreateSchema(ListTextSchemaMixin):
+    subsystem: str
+    module_options: list[str] = Field(default_factory=list)
+    chip_options: list[str] = Field(default_factory=list)
+
+    @field_validator('subsystem', mode='before')
+    @classmethod
+    def normalize_subsystem(cls, value: Any):
+        return cls._normalize_optional_text(value)
+
+    @field_validator('module_options', 'chip_options', mode='before')
+    @classmethod
+    def normalize_option_lists(cls, value: Any):
+        return cls._normalize_string_list(value)
+
+
+class FailureModeSubsystemConfigUpdateSchema(FailureModeSubsystemConfigCreateSchema):
+    subsystem: Optional[str] = None
+
+
+class FailureModeSubsystemConfigOutSchema(Schema):
+    id: str
+    subsystem: str
+    module_options: list[str] = Field(default_factory=list)
+    chip_options: list[str] = Field(default_factory=list)
+    sys_create_datetime: Optional[str] = None
+    sys_update_datetime: Optional[str] = None
+
+
+class FailureModeSubsystemConfigPageSchema(Schema):
+    items: list[FailureModeSubsystemConfigOutSchema] = Field(default_factory=list)
+    total: int
+
+
+class FailureModeSubsystemLinkedOptionSchema(Schema):
+    subsystem: str
+    module_options: list[str] = Field(default_factory=list)
+    chip_options: list[str] = Field(default_factory=list)
+
+
+class FailureModeSubsystemConfigOptionsSchema(Schema):
+    subsystem_options: list[DictOptionSchema] = Field(default_factory=list)
+    module_options: list[DictOptionSchema] = Field(default_factory=list)
+    chip_options: list[DictOptionSchema] = Field(default_factory=list)
+    items: list[FailureModeSubsystemLinkedOptionSchema] = Field(default_factory=list)
+
+
+class FailureModeStatisticsSubsystemSearchSchema(KeywordSearchSchema):
+    pass
+
+
+class FailureModeStatisticsChartDatumSchema(Schema):
+    name: str
+    value: int
+
+
+class FailureModeStatisticsSummarySchema(Schema):
+    subsystem_counts: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
+    interception_status: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
+    huatuo_status: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
+    handling_detection_status: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
+    handling_prevention_status: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
+    handling_self_heal_status: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
+    observation_pipeline_log_status: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
+    observation_dmd_status: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
+    observation_fmp_status: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
+
+
+class FailureModeStatisticsSubsystemRowSchema(Schema):
+    subsystem: str
+    failure_mode_count: int
+    interception_relation_count: int
+    handling_detection_relation_count: int
+    handling_prevention_relation_count: int
+    handling_self_heal_relation_count: int
+    observation_pipeline_log_relation_count: int
+    observation_dmd_relation_count: int
+    observation_fmp_relation_count: int
+    huatuo_relation_count: int
+    pending_failure_mode_count: int
+    pending_rate: float
+    status_light: str
+
+
+class FailureModeStatisticsSubsystemPageSchema(Schema):
+    items: list[FailureModeStatisticsSubsystemRowSchema] = Field(default_factory=list)
+    total: int
 
 
 class SaveSuccessSchema(Schema):

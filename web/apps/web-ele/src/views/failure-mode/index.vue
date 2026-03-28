@@ -3,6 +3,7 @@ import type { FailureModeTabKey, MasterResourceKind } from './data';
 
 import type {
   FailureModeItem,
+  FailureModeSubsystemConfigItem,
   HandlingMeasureItem,
   HuatuoDiagnosisItem,
   InterceptionStrategyItem,
@@ -11,7 +12,7 @@ import type {
 } from '#/api/failure_mode';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
-import { nextTick, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
 
 import { Page } from '@vben/common-ui';
 import { IconifyIcon } from '@vben/icons';
@@ -32,13 +33,16 @@ import {
 
 import {
   deleteFailureModeApi,
+  deleteFailureModeSubsystemConfigApi,
   deleteHandlingMeasureApi,
   deleteHuatuoDiagnosisApi,
   deleteInterceptionStrategyApi,
   deleteObservationMethodApi,
   deleteTestCaseApi,
   getFailureModeDictOptionsApi,
+  getFailureModeSubsystemConfigOptionsApi,
   listFailureModesApi,
+  listFailureModeSubsystemConfigsApi,
   listHandlingMeasuresApi,
   listHuatuoDiagnosesApi,
   listInterceptionStrategiesApi,
@@ -49,19 +53,24 @@ import { useZqTable } from '#/components/zq-table';
 
 import FailureModeDrawer from './components/FailureModeDrawer.vue';
 import MasterDataDrawer from './components/MasterDataDrawer.vue';
+import SubsystemConfigDrawer from './components/SubsystemConfigDrawer.vue';
 import {
   createEmptyDictOptions,
+  createEmptySubsystemConfigOptions,
   formatRelationLabels,
   formatTextList,
   formatUserNames,
   getMasterResourceLabel,
   normalizeStringList,
   replaceDictOptions,
+  replaceSubsystemConfigOptions,
+  resolveSubsystemScopedOptions,
   useFailureModeColumns,
   useHandlingMeasureColumns,
   useHuatuoColumns,
   useInterceptionColumns,
   useObservationColumns,
+  useSubsystemConfigColumns,
   useTestCaseColumns,
 } from './data';
 
@@ -92,8 +101,11 @@ interface ReloadableGridApi {
 
 const activeTab = ref<FailureModeTabKey>('failureMode');
 const dictOptions = reactive(createEmptyDictOptions());
+const subsystemConfigOptions = reactive(createEmptySubsystemConfigOptions());
 const failureModeDrawerRef = ref<any>();
 const masterDrawerRef = ref<any>();
+const subsystemConfigDrawerRef = ref<any>();
+
 const failureModeFilters = reactive({
   author_keyword: '',
   keyword: '',
@@ -101,6 +113,7 @@ const failureModeFilters = reactive({
   status: [] as string[],
   subsystem: [] as string[],
 });
+const subsystemConfigFilters = reactive({ keyword: '' });
 const interceptionFilters = reactive({ keyword: '', owner_keyword: '' });
 const handlingMeasureFilters = reactive({
   owner_keyword: '',
@@ -114,6 +127,22 @@ const observationFilters = reactive({
 });
 const huatuoFilters = reactive({ keyword: '', owner_keyword: '' });
 const testCaseFilters = reactive({ keyword: '', owner_keyword: '' });
+
+const failureModeSubsystemFilterOptions = computed(() => {
+  return subsystemConfigOptions.subsystem_options.length > 0
+    ? subsystemConfigOptions.subsystem_options
+    : dictOptions.subsystem;
+});
+
+const failureModeModuleFilterOptions = computed(() => {
+  const scoped = resolveSubsystemScopedOptions(
+    subsystemConfigOptions,
+    failureModeFilters.subsystem,
+  );
+  return scoped.moduleOptions.length > 0
+    ? scoped.moduleOptions
+    : dictOptions.module;
+});
 
 function createKeywordGrid<T extends Record<string, any>>(
   columns: ZqTableGridOptions<T>['columns'],
@@ -186,6 +215,14 @@ const [FailureModeGrid, failureModeGridApi] = useZqTable<FailureModeItem>({
     },
   },
 });
+
+const [SubsystemConfigGrid, subsystemConfigGridApi] = createKeywordGrid(
+  useSubsystemConfigColumns(),
+  listFailureModeSubsystemConfigsApi,
+  () => ({
+    keyword: normalizeQueryValue(subsystemConfigFilters.keyword),
+  }),
+);
 
 const [InterceptionGrid, interceptionGridApi] = createKeywordGrid(
   useInterceptionColumns(),
@@ -280,6 +317,9 @@ async function reloadGridAtFirstPage(
 const scheduleFailureModeReload = useDebounceFn(() => {
   void reloadGridAtFirstPage(failureModeGridApi);
 }, 250);
+const scheduleSubsystemConfigReload = useDebounceFn(() => {
+  void reloadGridAtFirstPage(subsystemConfigGridApi);
+}, 250);
 const scheduleInterceptionReload = useDebounceFn(() => {
   void reloadGridAtFirstPage(interceptionGridApi);
 }, 250);
@@ -298,6 +338,10 @@ const scheduleTestCaseReload = useDebounceFn(() => {
 
 function commitFailureModeFilters() {
   scheduleFailureModeReload();
+}
+
+function commitSubsystemConfigFilters() {
+  scheduleSubsystemConfigReload();
 }
 
 function commitInterceptionFilters() {
@@ -338,12 +382,16 @@ function handleObservationDictVisibleChange(visible: boolean) {
   handleVisibleChange(visible, commitObservationFilters);
 }
 
-async function loadDictOptions() {
-  const response = await getFailureModeDictOptionsApi();
-  replaceDictOptions(dictOptions, response);
+async function loadBaseOptions() {
+  const [dictResponse, linkedOptions] = await Promise.all([
+    getFailureModeDictOptionsApi(),
+    getFailureModeSubsystemConfigOptionsApi(),
+  ]);
+  replaceDictOptions(dictOptions, dictResponse);
+  replaceSubsystemConfigOptions(subsystemConfigOptions, linkedOptions);
 }
 
-async function reloadMasterGrid(kind: MasterResourceKind) {
+async function reloadMasterGrid(kind: FailureModeTabKey | MasterResourceKind) {
   switch (kind) {
     case 'huatuo': {
       await huatuoGridApi.reload();
@@ -359,6 +407,10 @@ async function reloadMasterGrid(kind: MasterResourceKind) {
     }
     case 'observation': {
       await observationGridApi.reload();
+      break;
+    }
+    case 'subsystemConfig': {
+      await subsystemConfigGridApi.reload();
       break;
     }
     default: {
@@ -441,6 +493,34 @@ async function handleFailureModeAction(
   }
 }
 
+async function handleSubsystemConfigAction(
+  action: 'delete' | 'edit',
+  row: FailureModeSubsystemConfigItem,
+) {
+  try {
+    if (action === 'edit') {
+      subsystemConfigDrawerRef.value?.openEdit(row.id);
+      return;
+    }
+    await ElMessageBox.confirm('确认删除该子系统配置吗？', '删除确认', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    });
+    await deleteFailureModeSubsystemConfigApi(row.id);
+    ElMessage.success('删除成功');
+    await Promise.all([
+      subsystemConfigGridApi.reload(),
+      failureModeGridApi.reload(),
+      loadBaseOptions(),
+    ]);
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error(error);
+    }
+  }
+}
+
 async function handleMasterAction(
   kind: MasterResourceKind,
   action: 'delete' | 'edit',
@@ -460,12 +540,35 @@ async function handleMasterAction(
 }
 
 async function handleFailureModeSaved() {
-  await failureModeGridApi.reload();
+  await Promise.all([failureModeGridApi.reload(), loadBaseOptions()]);
+}
+
+async function handleSubsystemConfigSaved() {
+  await Promise.all([
+    subsystemConfigGridApi.reload(),
+    failureModeGridApi.reload(),
+    loadBaseOptions(),
+  ]);
 }
 
 async function handleMasterSaved(payload: { kind: MasterResourceKind }) {
   await reloadMasterGrid(payload.kind);
 }
+
+watch(
+  () => [...failureModeFilters.subsystem],
+  () => {
+    const allowedSet = new Set(
+      failureModeModuleFilterOptions.value.map((item) => item.value),
+    );
+    const nextModules = normalizeStringList(failureModeFilters.module).filter(
+      (item) => allowedSet.size === 0 || allowedSet.has(item),
+    );
+    if (nextModules.join('|') !== failureModeFilters.module.join('|')) {
+      failureModeFilters.module = nextModules;
+    }
+  },
+);
 
 watch(
   () => activeTab.value,
@@ -477,10 +580,10 @@ watch(
 
 onMounted(async () => {
   try {
-    await loadDictOptions();
+    await loadBaseOptions();
   } catch (error) {
     console.error(error);
-    ElMessage.error('加载故障管理字典失败');
+    ElMessage.error('加载故障管理基础选项失败');
   }
 
   await nextTick();
@@ -493,12 +596,17 @@ onMounted(async () => {
     <FailureModeDrawer
       ref="failureModeDrawerRef"
       :dict-options="dictOptions"
+      :subsystem-config-options="subsystemConfigOptions"
       @success="handleFailureModeSaved"
     />
     <MasterDataDrawer
       ref="masterDrawerRef"
       :dict-options="dictOptions"
       @success="handleMasterSaved"
+    />
+    <SubsystemConfigDrawer
+      ref="subsystemConfigDrawerRef"
+      @success="handleSubsystemConfigSaved"
     />
 
     <div class="flex h-full flex-col">
@@ -531,11 +639,11 @@ onMounted(async () => {
                         v-model="failureModeFilters.keyword"
                         class="failure-mode-header-filter__input"
                         clearable
+                        placeholder="请输入关键词"
+                        size="small"
                         @change="commitFailureModeFilters"
                         @clear="commitFailureModeFilters"
                         @keyup.enter="commitFailureModeFilters"
-                        placeholder="请输入关键词"
-                        size="small"
                       />
                     </div>
                   </template>
@@ -549,11 +657,11 @@ onMounted(async () => {
                         v-model="failureModeFilters.author_keyword"
                         class="failure-mode-header-filter__input"
                         clearable
+                        placeholder="关键词搜索"
+                        size="small"
                         @change="commitFailureModeFilters"
                         @clear="commitFailureModeFilters"
                         @keyup.enter="commitFailureModeFilters"
-                        placeholder="关键词搜索"
-                        size="small"
                       />
                     </div>
                   </template>
@@ -571,13 +679,13 @@ onMounted(async () => {
                         collapse-tags-tooltip
                         filterable
                         multiple
-                        @clear="commitFailureModeFilters"
-                        @visible-change="handleFailureModeDictVisibleChange"
                         placeholder="全部，可多选"
                         size="small"
+                        @clear="commitFailureModeFilters"
+                        @visible-change="handleFailureModeDictVisibleChange"
                       >
                         <ElOption
-                          v-for="item in dictOptions.subsystem"
+                          v-for="item in failureModeSubsystemFilterOptions"
                           :key="item.value"
                           :label="item.label"
                           :value="item.value"
@@ -599,13 +707,13 @@ onMounted(async () => {
                         collapse-tags-tooltip
                         filterable
                         multiple
-                        @clear="commitFailureModeFilters"
-                        @visible-change="handleFailureModeDictVisibleChange"
                         placeholder="全部，可多选"
                         size="small"
+                        @clear="commitFailureModeFilters"
+                        @visible-change="handleFailureModeDictVisibleChange"
                       >
                         <ElOption
-                          v-for="item in dictOptions.module"
+                          v-for="item in failureModeModuleFilterOptions"
                           :key="item.value"
                           :label="item.label"
                           :value="item.value"
@@ -627,10 +735,10 @@ onMounted(async () => {
                         collapse-tags-tooltip
                         filterable
                         multiple
-                        @clear="commitFailureModeFilters"
-                        @visible-change="handleFailureModeDictVisibleChange"
                         placeholder="全部，可多选"
                         size="small"
+                        @clear="commitFailureModeFilters"
+                        @visible-change="handleFailureModeDictVisibleChange"
                       >
                         <ElOption
                           v-for="item in dictOptions.status"
@@ -699,6 +807,74 @@ onMounted(async () => {
             </section>
           </ElTabPane>
 
+          <ElTabPane label="子系统配置" lazy name="subsystemConfig">
+            <section class="flex h-full min-h-0 flex-col">
+              <div class="min-h-0 flex-1">
+                <SubsystemConfigGrid class="h-full">
+                  <template #toolbar-actions>
+                    <ElButton
+                      type="primary"
+                      @click="subsystemConfigDrawerRef?.openCreate()"
+                    >
+                      新增子系统配置
+                    </ElButton>
+                  </template>
+
+                  <template #header-subsystem-config-keyword>
+                    <div class="failure-mode-header-filter" @click.stop>
+                      <span class="failure-mode-header-filter__label">
+                        子系统
+                      </span>
+                      <ElInput
+                        v-model="subsystemConfigFilters.keyword"
+                        class="failure-mode-header-filter__input"
+                        clearable
+                        placeholder="搜索子系统 / 模块 / 芯片"
+                        size="small"
+                        @change="commitSubsystemConfigFilters"
+                        @clear="commitSubsystemConfigFilters"
+                        @keyup.enter="commitSubsystemConfigFilters"
+                      />
+                    </div>
+                  </template>
+
+                  <template #cell-module_options="{ row }">
+                    {{ formatTextList(row.module_options) || '-' }}
+                  </template>
+                  <template #cell-chip_options="{ row }">
+                    {{ formatTextList(row.chip_options) || '-' }}
+                  </template>
+                  <template #cell-actions="{ row }">
+                    <div class="flex justify-center gap-1">
+                      <ElTooltip content="编辑" placement="top">
+                        <ElButton
+                          circle
+                          link
+                          size="small"
+                          type="primary"
+                          @click="handleSubsystemConfigAction('edit', row)"
+                        >
+                          <IconifyIcon icon="ep:edit" />
+                        </ElButton>
+                      </ElTooltip>
+                      <ElTooltip content="删除" placement="top">
+                        <ElButton
+                          circle
+                          link
+                          size="small"
+                          type="danger"
+                          @click="handleSubsystemConfigAction('delete', row)"
+                        >
+                          <IconifyIcon icon="ep:delete" />
+                        </ElButton>
+                      </ElTooltip>
+                    </div>
+                  </template>
+                </SubsystemConfigGrid>
+              </div>
+            </section>
+          </ElTabPane>
+
           <ElTabPane label="产线拦截策略" lazy name="interception">
             <section class="flex h-full min-h-0 flex-col">
               <div class="min-h-0 flex-1">
@@ -721,11 +897,11 @@ onMounted(async () => {
                         v-model="interceptionFilters.keyword"
                         class="failure-mode-header-filter__input"
                         clearable
+                        placeholder="输入关键词"
+                        size="small"
                         @change="commitInterceptionFilters"
                         @clear="commitInterceptionFilters"
                         @keyup.enter="commitInterceptionFilters"
-                        placeholder="输入关键词"
-                        size="small"
                       />
                     </div>
                   </template>
@@ -739,11 +915,11 @@ onMounted(async () => {
                         v-model="interceptionFilters.owner_keyword"
                         class="failure-mode-header-filter__input"
                         clearable
+                        placeholder="关键词搜索"
+                        size="small"
                         @change="commitInterceptionFilters"
                         @clear="commitInterceptionFilters"
                         @keyup.enter="commitInterceptionFilters"
-                        placeholder="关键词搜索"
-                        size="small"
                       />
                     </div>
                   </template>
@@ -808,11 +984,11 @@ onMounted(async () => {
                         v-model="handlingMeasureFilters.keyword"
                         class="failure-mode-header-filter__input"
                         clearable
+                        placeholder="输入关键词"
+                        size="small"
                         @change="commitHandlingMeasureFilters"
                         @clear="commitHandlingMeasureFilters"
                         @keyup.enter="commitHandlingMeasureFilters"
-                        placeholder="输入关键词"
-                        size="small"
                       />
                     </div>
                   </template>
@@ -830,10 +1006,10 @@ onMounted(async () => {
                         collapse-tags-tooltip
                         filterable
                         multiple
-                        @clear="commitHandlingMeasureFilters"
-                        @visible-change="handleHandlingMeasureDictVisibleChange"
                         placeholder="全部，可多选"
                         size="small"
+                        @clear="commitHandlingMeasureFilters"
+                        @visible-change="handleHandlingMeasureDictVisibleChange"
                       >
                         <ElOption
                           v-for="item in dictOptions.measure_category"
@@ -854,11 +1030,11 @@ onMounted(async () => {
                         v-model="handlingMeasureFilters.owner_keyword"
                         class="failure-mode-header-filter__input"
                         clearable
+                        placeholder="关键词搜索"
+                        size="small"
                         @change="commitHandlingMeasureFilters"
                         @clear="commitHandlingMeasureFilters"
                         @keyup.enter="commitHandlingMeasureFilters"
-                        placeholder="关键词搜索"
-                        size="small"
                       />
                     </div>
                   </template>
@@ -922,11 +1098,11 @@ onMounted(async () => {
                         v-model="observationFilters.keyword"
                         class="failure-mode-header-filter__input"
                         clearable
+                        placeholder="输入关键词"
+                        size="small"
                         @change="commitObservationFilters"
                         @clear="commitObservationFilters"
                         @keyup.enter="commitObservationFilters"
-                        placeholder="输入关键词"
-                        size="small"
                       />
                     </div>
                   </template>
@@ -944,10 +1120,10 @@ onMounted(async () => {
                         collapse-tags-tooltip
                         filterable
                         multiple
-                        @clear="commitObservationFilters"
-                        @visible-change="handleObservationDictVisibleChange"
                         placeholder="全部，可多选"
                         size="small"
+                        @clear="commitObservationFilters"
+                        @visible-change="handleObservationDictVisibleChange"
                       >
                         <ElOption
                           v-for="item in dictOptions.monitor_type"
@@ -968,11 +1144,11 @@ onMounted(async () => {
                         v-model="observationFilters.owner_keyword"
                         class="failure-mode-header-filter__input"
                         clearable
+                        placeholder="关键词搜索"
+                        size="small"
                         @change="commitObservationFilters"
                         @clear="commitObservationFilters"
                         @keyup.enter="commitObservationFilters"
-                        placeholder="关键词搜索"
-                        size="small"
                       />
                     </div>
                   </template>
@@ -1037,11 +1213,11 @@ onMounted(async () => {
                         v-model="huatuoFilters.keyword"
                         class="failure-mode-header-filter__input"
                         clearable
+                        placeholder="输入关键词"
+                        size="small"
                         @change="commitHuatuoFilters"
                         @clear="commitHuatuoFilters"
                         @keyup.enter="commitHuatuoFilters"
-                        placeholder="输入关键词"
-                        size="small"
                       />
                     </div>
                   </template>
@@ -1055,11 +1231,11 @@ onMounted(async () => {
                         v-model="huatuoFilters.owner_keyword"
                         class="failure-mode-header-filter__input"
                         clearable
+                        placeholder="关键词搜索"
+                        size="small"
                         @change="commitHuatuoFilters"
                         @clear="commitHuatuoFilters"
                         @keyup.enter="commitHuatuoFilters"
-                        placeholder="关键词搜索"
-                        size="small"
                       />
                     </div>
                   </template>
@@ -1120,11 +1296,11 @@ onMounted(async () => {
                         v-model="testCaseFilters.keyword"
                         class="failure-mode-header-filter__input"
                         clearable
+                        placeholder="输入关键词"
+                        size="small"
                         @change="commitTestCaseFilters"
                         @clear="commitTestCaseFilters"
                         @keyup.enter="commitTestCaseFilters"
-                        placeholder="输入关键词"
-                        size="small"
                       />
                     </div>
                   </template>
@@ -1138,11 +1314,11 @@ onMounted(async () => {
                         v-model="testCaseFilters.owner_keyword"
                         class="failure-mode-header-filter__input"
                         clearable
+                        placeholder="关键词搜索"
+                        size="small"
                         @change="commitTestCaseFilters"
                         @clear="commitTestCaseFilters"
                         @keyup.enter="commitTestCaseFilters"
-                        placeholder="关键词搜索"
-                        size="small"
                       />
                     </div>
                   </template>

@@ -22,7 +22,6 @@ import {
   ElScrollbar,
   ElTable,
   ElTableColumn,
-  ElTag,
 } from 'element-plus';
 
 import {
@@ -64,6 +63,7 @@ interface SelectorOpenOptions {
   kind: MasterResourceKind;
   selectedIds?: string[];
   selectedItems?: RelationItem[];
+  extraFilters?: Record<string, any>;
 }
 
 const visible = ref(false);
@@ -78,6 +78,7 @@ const tableRef = ref<InstanceType<typeof ElTable>>();
 const selectedIds = ref<string[]>([]);
 const selectedItems = ref<RelationItem[]>([]);
 const syncingSelection = ref(false);
+const extraFilters = ref<Record<string, any>>({});
 
 const dialogTitle = computed(
   () => `选择${getMasterResourceLabel(currentKind.value)}`,
@@ -153,6 +154,7 @@ async function syncTableSelection() {
   const selectedSet = new Set(selectedIds.value);
   rows.value.forEach((row) => {
     if (selectedSet.has(row.id)) {
+      updateSelectedItem(buildRelationItem(currentKind.value, row), true);
       tableRef.value?.toggleRowSelection(row, true, false);
     }
   });
@@ -164,10 +166,11 @@ async function loadList() {
   try {
     const api = getListApi(currentKind.value);
     const response = await api({
+      ...extraFilters.value,
       keyword: keyword.value.trim() || undefined,
       page: page.value,
       pageSize: pageSize.value,
-    });
+    } as any);
     rows.value = response.items || [];
     total.value = response.total || 0;
     await syncTableSelection();
@@ -183,24 +186,26 @@ function handleSelect(selection: ResourceRow[], row: ResourceRow) {
     updateSelectedItem(buildRelationItem(currentKind.value, row), true);
   } else {
     selectedIds.value = selectedIds.value.filter((id) => id !== row.id);
-    selectedItems.value = selectedItems.value.filter((item) => item.id !== row.id);
+    selectedItems.value = selectedItems.value.filter(
+      (item) => item.id !== row.id,
+    );
   }
 }
 
 function handleSelectAll(selection: ResourceRow[]) {
   if (syncingSelection.value) return;
   const isAllSelected = selection.length > 0;
-  
+
   if (isAllSelected) {
-    // Add all current page rows
     rows.value.forEach((row) => {
       updateSelectedItem(buildRelationItem(currentKind.value, row), true);
     });
   } else {
-    // Remove all current page rows
     const visibleIds = new Set(rows.value.map((item) => item.id));
     selectedIds.value = selectedIds.value.filter((id) => !visibleIds.has(id));
-    selectedItems.value = selectedItems.value.filter((item) => !visibleIds.has(item.id));
+    selectedItems.value = selectedItems.value.filter(
+      (item) => !visibleIds.has(item.id),
+    );
   }
 }
 
@@ -214,6 +219,7 @@ function handleOpen(options: SelectorOpenOptions) {
   keyword.value = '';
   page.value = 1;
   pageSize.value = 10;
+  extraFilters.value = { ...options.extraFilters };
   selectedIds.value = normalizeStringList(options.selectedIds || []);
   selectedItems.value = ensureOrderedRelationItems(
     selectedIds.value,
@@ -332,7 +338,7 @@ defineExpose({
                 </div>
               </template>
             </ElTableColumn>
-              <ElTableColumn label="责任人" min-width="180">
+            <ElTableColumn label="责任人" min-width="180">
               <template #default="{ row }">
                 {{ formatUserNames(row.owner_info) || '-' }}
               </template>
@@ -342,133 +348,85 @@ defineExpose({
                 <ElButton
                   :icon="Edit"
                   link
+                  size="small"
                   type="primary"
                   @click="handleQuickEdit(row.id)"
                 >
-                  快编
+                  编辑
                 </ElButton>
               </template>
             </ElTableColumn>
           </ElTable>
 
-          <div
-            class="flex justify-end border-t border-[var(--el-border-color-light)] px-4 py-3"
-          >
+          <div class="border-t border-[var(--el-border-color-light)] px-4 py-3">
             <ElPagination
-              :current-page="page"
-              :page-size="pageSize"
+              v-model:current-page="page"
+              v-model:page-size="pageSize"
               :page-sizes="[10, 20, 50]"
               :total="total"
               background
               layout="total, sizes, prev, pager, next"
-              @current-change="
-                (value) => {
-                  page = value;
-                  loadList();
-                }
-              "
-              @size-change="
-                (value) => {
-                  page = 1;
-                  pageSize = value;
-                  loadList();
-                }
-              "
+              @current-change="loadList"
+              @size-change="handleSearch"
             />
           </div>
         </div>
       </div>
 
       <div
-        class="flex min-h-0 flex-col overflow-hidden rounded-xl border border-[var(--el-border-color-light)] bg-[var(--el-fill-color-blank)]"
+        class="flex min-h-0 flex-col rounded-xl border border-[var(--el-border-color-light)] bg-[var(--el-fill-color-blank)]"
       >
-        <div
-          class="flex items-center justify-between border-b border-[var(--el-border-color-light)] px-4 py-3"
-        >
+        <div class="flex items-center justify-between border-b px-4 py-3">
           <div>
             <div
               class="text-sm font-semibold text-[var(--el-text-color-primary)]"
             >
-              已选 {{ getMasterResourceLabel(currentKind) }}
+              已选 {{ selectedIds.length }} 项
             </div>
             <div class="mt-1 text-xs text-[var(--el-text-color-secondary)]">
-              共 {{ selectedIds.length }} 项，支持跨搜索结果保留选择
+              支持跨页保留当前选中内容
             </div>
           </div>
           <ElButton link type="danger" @click="clearSelected">清空</ElButton>
         </div>
 
-        <ElScrollbar class="min-h-0 flex-1" height="100%">
-          <div class="space-y-3 p-4">
-            <template v-if="selectedItemsInOrder.length > 0">
-              <div
-                v-for="item in selectedItemsInOrder"
-                :key="item.id"
-                class="rounded-lg border border-[var(--el-border-color-lighter)] bg-[var(--el-fill-color-light)] px-3 py-3"
-              >
-                <div class="flex items-start justify-between gap-3">
-                  <div class="min-w-0 flex-1">
-                    <div
-                      class="truncate text-sm font-medium text-[var(--el-text-color-primary)]"
-                    >
-                      {{ item.label }}
-                    </div>
-                    <div
-                      v-if="item.subtitle"
-                      class="mt-1 text-xs text-[var(--el-text-color-secondary)]"
-                    >
-                      {{ item.subtitle }}
-                    </div>
-                  </div>
-                  <ElTag
-                    closable
-                    size="small"
-                    type="info"
-                    @close="removeSelected(item.id)"
+        <ElScrollbar class="min-h-0 flex-1 px-4 py-3">
+          <div v-if="selectedItemsInOrder.length > 0" class="space-y-3">
+            <div
+              v-for="item in selectedItemsInOrder"
+              :key="item.id"
+              class="rounded-lg border border-[var(--el-border-color-lighter)] bg-[var(--el-fill-color-light)] px-3 py-3"
+            >
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0 flex-1">
+                  <div
+                    class="truncate text-sm font-medium text-[var(--el-text-color-primary)]"
                   >
-                    已选
-                  </ElTag>
+                    {{ item.label }}
+                  </div>
+                  <div
+                    v-if="item.subtitle"
+                    class="mt-1 text-xs text-[var(--el-text-color-secondary)]"
+                  >
+                    {{ item.subtitle }}
+                  </div>
                 </div>
+                <ElButton link type="danger" @click="removeSelected(item.id)">
+                  移除
+                </ElButton>
               </div>
-            </template>
-            <ElEmpty v-else description="暂未选择任何主数据" :image-size="72" />
+            </div>
           </div>
+          <ElEmpty v-else description="暂未选择任何主数据" :image-size="72" />
         </ElScrollbar>
       </div>
     </div>
 
     <template #footer>
-      <div class="flex items-center justify-end gap-2">
+      <div class="flex items-center justify-end gap-3">
         <ElButton @click="visible = false">取消</ElButton>
-        <ElButton type="primary" @click="handleConfirm">确认选择</ElButton>
+        <ElButton type="primary" @click="handleConfirm">确定关联</ElButton>
       </div>
     </template>
   </ElDialog>
 </template>
-
-<style scoped>
-.relation-selector-dialog__content {
-  padding-top: 20px;
-  height: 60vh;
-}
-
-.relation-selector-dialog :deep(.el-dialog) {
-  display: flex;
-  max-height: calc(100vh - 12vh);
-  flex-direction: column;
-}
-
-.relation-selector-dialog :deep(.el-dialog__body) {
-  min-height: 0;
-  flex: 1;
-  overflow: hidden;
-  padding-top: 0;
-  padding-bottom: 0;
-}
-
-.relation-selector-dialog :deep(.el-dialog__footer) {
-  position: relative;
-  z-index: 1;
-  background: var(--el-bg-color);
-}
-</style>

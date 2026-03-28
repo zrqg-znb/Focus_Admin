@@ -3,10 +3,10 @@ from dataclasses import dataclass
 from django.core.management.base import BaseCommand
 from django.db.models import Q
 
+from common.fu_cache import MenuCacheManager, PermissionCacheManager
 from core.menu.menu_model import Menu
 from core.permission.permission_model import Permission
 from core.user.user_model import User
-from common.fu_cache import MenuCacheManager, PermissionCacheManager
 
 HTTP_METHOD_MAP = {
     'GET': 0,
@@ -36,7 +36,10 @@ class MenuSeed:
 
 
 LEGACY_MENU_PATHS = ['/project-manager/failure-mode']
-LEGACY_MENU_COMPONENTS = ['/failure-mode/index', '/project-manager/failure-mode/index']
+LEGACY_MENU_COMPONENTS = [
+    '/failure-mode/index',
+    '/project-manager/failure-mode/index',
+]
 LEGACY_API_PREFIX = '/api/project-manager/failure-mode'
 TARGET_API_PREFIX = '/api/failure-mode'
 
@@ -55,6 +58,20 @@ MENU_SEEDS = [
         hide_in_menu=False,
         keep_alive=True,
     ),
+    MenuSeed(
+        key='failure_mode_statistics',
+        parent_key=None,
+        name='FailureModeStatistics',
+        title='故障管理统计',
+        path='/failure-mode/statistics',
+        component='/failure-mode/statistics/index',
+        menu_type='menu',
+        order=56,
+        auth_code='failure-mode:statistics',
+        icon='lucide:chart-column-big',
+        hide_in_menu=False,
+        keep_alive=True,
+    ),
 ]
 
 PERMISSION_SEEDS = {
@@ -64,20 +81,32 @@ PERMISSION_SEEDS = {
         {'name': '编辑故障模式', 'code': 'failure-mode:update', 'permission_type': 0},
         {'name': '删除故障模式', 'code': 'failure-mode:delete', 'permission_type': 0},
         {'name': '获取故障管理字典选项', 'code': 'failure-mode:api:dict-options', 'permission_type': 1, 'api_path': '/api/failure-mode/dict-options', 'http_method': 'GET'},
-        {'name': '获取故障模式列表', 'code': 'failure-mode:api:list', 'permission_type': 1, 'api_path': '/api/failure-mode/failure-modes', 'http_method': 'GET'},
+        {'name': '获取故障模式列表', 'code': 'failure-mode:api:list', 'permission_type': 1, 'api_path': '/api/failure-mode/failure-modes/search', 'http_method': 'POST'},
         {'name': '创建故障模式', 'code': 'failure-mode:api:create', 'permission_type': 1, 'api_path': '/api/failure-mode/failure-modes', 'http_method': 'POST'},
+        {'name': '获取故障模式详情', 'code': 'failure-mode:api:detail', 'permission_type': 1, 'api_path': '/api/failure-mode/failure-modes/{failure_mode_id}', 'http_method': 'GET'},
         {'name': '更新故障模式', 'code': 'failure-mode:api:update', 'permission_type': 1, 'api_path': '/api/failure-mode/failure-modes/{failure_mode_id}', 'http_method': 'PUT'},
         {'name': '删除故障模式', 'code': 'failure-mode:api:delete', 'permission_type': 1, 'api_path': '/api/failure-mode/failure-modes/{failure_mode_id}', 'http_method': 'DELETE'},
-        {'name': '获取产线拦截策略列表', 'code': 'failure-mode:api:interception:list', 'permission_type': 1, 'api_path': '/api/failure-mode/interception-strategies', 'http_method': 'GET'},
+        {'name': '获取产线拦截策略列表', 'code': 'failure-mode:api:interception:list', 'permission_type': 1, 'api_path': '/api/failure-mode/interception-strategies/search', 'http_method': 'POST'},
         {'name': '保存产线拦截策略', 'code': 'failure-mode:api:interception:save', 'permission_type': 1, 'api_path': '/api/failure-mode/interception-strategies', 'http_method': 'POST'},
-        {'name': '获取故障处理措施列表', 'code': 'failure-mode:api:measure:list', 'permission_type': 1, 'api_path': '/api/failure-mode/handling-measures', 'http_method': 'GET'},
+        {'name': '获取故障处理措施列表', 'code': 'failure-mode:api:measure:list', 'permission_type': 1, 'api_path': '/api/failure-mode/handling-measures/search', 'http_method': 'POST'},
         {'name': '保存故障处理措施', 'code': 'failure-mode:api:measure:save', 'permission_type': 1, 'api_path': '/api/failure-mode/handling-measures', 'http_method': 'POST'},
-        {'name': '获取维测手段列表', 'code': 'failure-mode:api:observation:list', 'permission_type': 1, 'api_path': '/api/failure-mode/observation-methods', 'http_method': 'GET'},
+        {'name': '获取维测手段列表', 'code': 'failure-mode:api:observation:list', 'permission_type': 1, 'api_path': '/api/failure-mode/observation-methods/search', 'http_method': 'POST'},
         {'name': '保存维测手段', 'code': 'failure-mode:api:observation:save', 'permission_type': 1, 'api_path': '/api/failure-mode/observation-methods', 'http_method': 'POST'},
-        {'name': '获取华佗诊断方案列表', 'code': 'failure-mode:api:huatuo:list', 'permission_type': 1, 'api_path': '/api/failure-mode/huatuo-diagnoses', 'http_method': 'GET'},
+        {'name': '获取华佗诊断方案列表', 'code': 'failure-mode:api:huatuo:list', 'permission_type': 1, 'api_path': '/api/failure-mode/huatuo-diagnoses/search', 'http_method': 'POST'},
         {'name': '保存华佗诊断方案', 'code': 'failure-mode:api:huatuo:save', 'permission_type': 1, 'api_path': '/api/failure-mode/huatuo-diagnoses', 'http_method': 'POST'},
-        {'name': '获取测试用例列表', 'code': 'failure-mode:api:test-case:list', 'permission_type': 1, 'api_path': '/api/failure-mode/test-cases', 'http_method': 'GET'},
+        {'name': '获取测试用例列表', 'code': 'failure-mode:api:test-case:list', 'permission_type': 1, 'api_path': '/api/failure-mode/test-cases/search', 'http_method': 'POST'},
         {'name': '保存测试用例', 'code': 'failure-mode:api:test-case:save', 'permission_type': 1, 'api_path': '/api/failure-mode/test-cases', 'http_method': 'POST'},
+        {'name': '获取子系统配置列表', 'code': 'failure-mode:api:subsystem-config:list', 'permission_type': 1, 'api_path': '/api/failure-mode/subsystem-configs/search', 'http_method': 'POST'},
+        {'name': '创建子系统配置', 'code': 'failure-mode:api:subsystem-config:create', 'permission_type': 1, 'api_path': '/api/failure-mode/subsystem-configs', 'http_method': 'POST'},
+        {'name': '获取子系统配置详情', 'code': 'failure-mode:api:subsystem-config:detail', 'permission_type': 1, 'api_path': '/api/failure-mode/subsystem-configs/{item_id}', 'http_method': 'GET'},
+        {'name': '更新子系统配置', 'code': 'failure-mode:api:subsystem-config:update', 'permission_type': 1, 'api_path': '/api/failure-mode/subsystem-configs/{item_id}', 'http_method': 'PUT'},
+        {'name': '删除子系统配置', 'code': 'failure-mode:api:subsystem-config:delete', 'permission_type': 1, 'api_path': '/api/failure-mode/subsystem-configs/{item_id}', 'http_method': 'DELETE'},
+        {'name': '获取子系统联动选项', 'code': 'failure-mode:api:subsystem-config:options', 'permission_type': 1, 'api_path': '/api/failure-mode/subsystem-configs/options', 'http_method': 'GET'},
+    ],
+    'failure_mode_statistics': [
+        {'name': '查看故障管理统计页面', 'code': 'failure-mode:statistics:view', 'permission_type': 0},
+        {'name': '获取故障管理统计摘要', 'code': 'failure-mode:statistics:api:summary', 'permission_type': 1, 'api_path': '/api/failure-mode/statistics/summary', 'http_method': 'POST'},
+        {'name': '获取故障管理子系统统计表', 'code': 'failure-mode:statistics:api:subsystems', 'permission_type': 1, 'api_path': '/api/failure-mode/statistics/subsystems/search', 'http_method': 'POST'},
     ],
 }
 
@@ -221,6 +250,12 @@ class Command(BaseCommand):
         ).delete()
 
     def _build_legacy_permission_code(self, code: str):
+        if code.startswith('failure-mode:statistics:api:'):
+            suffix = code.removeprefix('failure-mode:statistics:api:')
+            return f'project_manager:api:failure-mode:statistics:{suffix}'
+        if code.startswith('failure-mode:statistics:'):
+            suffix = code.removeprefix('failure-mode:statistics:')
+            return f'project_manager:failure-mode:statistics:{suffix}'
         if code.startswith('failure-mode:api:'):
             suffix = code.removeprefix('failure-mode:api:')
             return f'project_manager:api:failure-mode:{suffix}'
