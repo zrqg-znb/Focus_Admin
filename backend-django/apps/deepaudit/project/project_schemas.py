@@ -78,6 +78,16 @@ class ProjectTaskSummarySchema(Schema):
     open_issue_count: int = 0
 
 
+class ProjectStatsSchema(Schema):
+    total_projects: int = 0
+    active_projects: int = 0
+    total_tasks: int = 0
+    completed_tasks: int = 0
+    total_issues: int = 0
+    resolved_issues: int = 0
+    avg_quality_score: float = 0.0
+
+
 class AuditProjectSummarySchema(Schema):
     id: str
     name: str

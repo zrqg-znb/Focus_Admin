@@ -117,3 +117,30 @@ class AgentEvent(RootModel):
             models.Index(fields=['task', 'sequence']),
             models.Index(fields=['task', 'event_type']),
         ]
+
+
+class AgentCheckpoint(RootModel):
+    task = models.ForeignKey(AgentTask, on_delete=models.CASCADE, related_name='persisted_checkpoints', verbose_name='所属任务')
+    agent_id = models.CharField(max_length=50, db_index=True, verbose_name='Agent ID')
+    agent_name = models.CharField(max_length=255, verbose_name='Agent 名称')
+    agent_type = models.CharField(max_length=50, verbose_name='Agent 类型')
+    parent_agent_id = models.CharField(max_length=50, blank=True, null=True, verbose_name='父 Agent ID')
+    state_data = models.JSONField(default=dict, blank=True, verbose_name='状态快照')
+    iteration = models.IntegerField(default=0, verbose_name='迭代次数')
+    status = models.CharField(max_length=30, db_index=True, verbose_name='状态')
+    total_tokens = models.IntegerField(default=0, verbose_name='累计 Token')
+    tool_calls = models.IntegerField(default=0, verbose_name='工具调用次数')
+    findings_count = models.IntegerField(default=0, verbose_name='发现数量')
+    checkpoint_type = models.CharField(max_length=30, default='auto', verbose_name='检查点类型')
+    checkpoint_name = models.CharField(max_length=255, blank=True, null=True, verbose_name='检查点名称')
+    checkpoint_metadata = models.JSONField(default=dict, blank=True, verbose_name='检查点元数据')
+
+    class Meta:
+        db_table = 'deepaudit_agent_checkpoint'
+        verbose_name = 'DeepAudit Agent 检查点'
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=['task', 'agent_id']),
+            models.Index(fields=['task', 'sys_create_datetime']),
+            models.Index(fields=['task', 'checkpoint_type']),
+        ]

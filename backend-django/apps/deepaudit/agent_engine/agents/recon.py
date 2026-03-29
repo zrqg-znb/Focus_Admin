@@ -256,6 +256,37 @@ class ReconAgent(BaseAgent):
         
         self._conversation_history: List[Dict[str, str]] = []
         self._steps: List[ReconStep] = []
+
+    def _build_runtime_state(self) -> Dict[str, Any]:
+        return {
+            "conversation_history": list(self._conversation_history),
+            "steps": [
+                {
+                    "thought": step.thought,
+                    "action": step.action,
+                    "action_input": step.action_input,
+                    "observation": step.observation,
+                    "is_final": step.is_final,
+                    "final_answer": step.final_answer,
+                }
+                for step in self._steps
+            ],
+        }
+
+    def _restore_runtime_state(self, runtime_state: Dict[str, Any]) -> None:
+        self._conversation_history = list(runtime_state.get("conversation_history") or [])
+        self._steps = [
+            ReconStep(
+                thought=str(step.get("thought") or ""),
+                action=step.get("action"),
+                action_input=dict(step.get("action_input") or {}) if isinstance(step.get("action_input"), dict) else None,
+                observation=step.get("observation"),
+                is_final=bool(step.get("is_final", False)),
+                final_answer=dict(step.get("final_answer") or {}) if isinstance(step.get("final_answer"), dict) else None,
+            )
+            for step in (runtime_state.get("steps") or [])
+            if isinstance(step, dict)
+        ]
     
     def _parse_llm_response(self, response: str) -> ReconStep:
         """解析 LLM 响应 - 增强版，更健壮地提取思考内容"""
@@ -345,18 +376,20 @@ class ReconAgent(BaseAgent):
         """
         import time
         start_time = time.time()
+        self._remember_input(input_data)
         
         project_info = input_data.get("project_info", {})
         config = input_data.get("config", {})
         task = input_data.get("task", "")
         task_context = input_data.get("task_context", "")
+        resume_mode = bool(self._conversation_history)
         
         # 🔥 获取目标文件列表
         target_files = config.get("target_files", [])
         exclude_patterns = config.get("exclude_patterns", [])
         
-        # 构建初始消息
-        initial_message = f"""请开始收集项目信息。
+        if not resume_mode:
+            initial_message = f"""请开始收集项目信息。
 
 ## 项目基本信息
 - 名称: {project_info.get('name', 'unknown')}
@@ -365,24 +398,23 @@ class ReconAgent(BaseAgent):
 
 ## 审计范围
 """
-        # 🔥 如果指定了目标文件，明确告知 Agent
-        if target_files:
-            initial_message += f"""⚠️ **重要**: 用户指定了 {len(target_files)} 个目标文件进行审计：
+            if target_files:
+                initial_message += f"""⚠️ **重要**: 用户指定了 {len(target_files)} 个目标文件进行审计：
 """
-            for tf in target_files[:10]:
-                initial_message += f"- {tf}\n"
-            if len(target_files) > 10:
-                initial_message += f"- ... 还有 {len(target_files) - 10} 个文件\n"
-            initial_message += """
+                for tf in target_files[:10]:
+                    initial_message += f"- {tf}\n"
+                if len(target_files) > 10:
+                    initial_message += f"- ... 还有 {len(target_files) - 10} 个文件\n"
+                initial_message += """
 请直接读取和分析这些指定的文件，不要浪费时间遍历其他目录。
 """
-        else:
-            initial_message += "全项目审计（无特定文件限制）\n"
-        
-        if exclude_patterns:
-            initial_message += f"\n排除模式: {', '.join(exclude_patterns[:5])}\n"
-        
-        initial_message += f"""
+            else:
+                initial_message += "全项目审计（无特定文件限制）\n"
+
+            if exclude_patterns:
+                initial_message += f"\n排除模式: {', '.join(exclude_patterns[:5])}\n"
+
+            initial_message += f"""
 ## 任务上下文
 {task_context or task or '进行全面的信息收集，为安全审计做准备。'}
 
@@ -391,20 +423,23 @@ class ReconAgent(BaseAgent):
 
 请开始你的信息收集工作。首先思考应该收集什么信息，然后**立即**选择合适的工具执行（输出 Action）。不要只输出 Thought，必须紧接着输出 Action。"""
 
-        # 初始化对话历史
-        self._conversation_history = [
-            {"role": "system", "content": self.config.system_prompt},
-            {"role": "user", "content": initial_message},
-        ]
-        
-        self._steps = []
+            self._conversation_history = [
+                {"role": "system", "content": self.config.system_prompt},
+                {"role": "user", "content": initial_message},
+            ]
+            self._steps = []
         final_result = None
         error_message = None  # 🔥 跟踪错误信息
         
-        await self.emit_thinking("Recon Agent 启动，LLM 开始自主收集信息...")
+        await self.emit_thinking(
+            "Recon Agent 从检查点恢复，继续收集信息..."
+            if resume_mode
+            else "Recon Agent 启动，LLM 开始自主收集信息..."
+        )
         
         try:
-            for iteration in range(self.config.max_iterations):
+            start_iteration = max(int(self._iteration or 0), 0)
+            for iteration in range(start_iteration, self.config.max_iterations):
                 if self.is_cancelled:
                     break
                 

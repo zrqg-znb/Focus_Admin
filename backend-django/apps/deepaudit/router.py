@@ -10,6 +10,7 @@ from apps.deepaudit.project import project_services
 from apps.deepaudit.project.project_api import router as project_router
 from apps.deepaudit.project.project_schemas import ProjectMemberSaveSchema, ProjectMemberSchema, ProjectOwnerTransferSchema
 from apps.deepaudit.prompt_template.prompt_template_api import router as prompt_template_router
+from apps.deepaudit.rag.rag_api import router as rag_router
 from apps.deepaudit.scan_task import scan_task_services
 from apps.deepaudit.scan_task.scan_task_api import scan_router, tasks_router
 from apps.deepaudit.user_config.user_config_api import embedding_router, settings_router, ssh_router
@@ -84,6 +85,7 @@ router.add_router('/rules', audit_rule_router)
 router.add_router('/prompts', prompt_template_router)
 router.add_router('/settings', settings_router)
 router.add_router('/embedding', embedding_router)
+router.add_router('/rag', rag_router)
 router.add_router('/ssh-keys', ssh_router)
 router.add_router('/reports', reports_router)
 router.add_router('/dashboard', dashboard_router)

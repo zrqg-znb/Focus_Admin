@@ -100,6 +100,11 @@ def delete_instant_history_record(request, record_id: str):
     return scan_task_services.delete_instant_record(request.auth, record_id)
 
 
+@scan_router.delete('/instant/history', response=bool, summary='清空即时分析历史')
+def delete_all_instant_history(request):
+    return scan_task_services.delete_all_instant_records(request.auth)
+
+
 @reports_router.get('/tasks/{task_id}/json', summary='导出扫描任务 JSON 报告')
 def export_task_json(request, task_id: str):
     return scan_task_services.export_task_json_response(request.auth, task_id)

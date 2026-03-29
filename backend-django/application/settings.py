@@ -492,6 +492,12 @@ TOOL_TIMEOUT_SECONDS = _env_int('TOOL_TIMEOUT_SECONDS', 60)
 SUB_AGENT_TIMEOUT_SECONDS = _env_int('SUB_AGENT_TIMEOUT_SECONDS', 600)
 AGENT_TIMEOUT_SECONDS = _env_int('AGENT_TIMEOUT_SECONDS', 1800)
 OUTPUT_LANGUAGE = _env_str('OUTPUT_LANGUAGE', 'zh-CN') or 'zh-CN'
+GITHUB_TOKEN = _env_str('GITHUB_TOKEN', '')
+GITLAB_TOKEN = _env_str('GITLAB_TOKEN', '')
+GITEA_TOKEN = _env_str('GITEA_TOKEN', '')
+MAX_ANALYZE_FILES = _env_int('MAX_ANALYZE_FILES', 0)
+LLM_CONCURRENCY = _env_int('LLM_CONCURRENCY', 3)
+LLM_GAP_MS = _env_int('LLM_GAP_MS', 500)
 
 OPENAI_API_KEY = _env_str('OPENAI_API_KEY', '')
 OPENAI_BASE_URL = _env_str('OPENAI_BASE_URL', '')
@@ -511,6 +517,23 @@ EMBEDDING_MODEL = _env_str('EMBEDDING_MODEL', '')
 EMBEDDING_API_KEY = _env_str('EMBEDDING_API_KEY', '')
 EMBEDDING_BASE_URL = _env_str('EMBEDDING_BASE_URL', '')
 EMBEDDING_DIMENSIONS = _env_int('EMBEDDING_DIMENSIONS', 1536)
+EMBEDDING_BATCH_SIZE = _env_int('EMBEDDING_BATCH_SIZE', 100)
+VECTOR_DB_TYPE = _env_str('VECTOR_DB_TYPE', 'chroma') or 'chroma'
+CHROMA_PERSIST_DIRECTORY = _env_str('CHROMA_PERSIST_DIRECTORY', os.path.join(BASE_DIR, 'media', 'deepaudit', 'vector_db'))
+
+SSH_CONNECT_TIMEOUT = _env_int('SSH_CONNECT_TIMEOUT', 15)
+SSH_TEST_TIMEOUT = _env_int('SSH_TEST_TIMEOUT', 20)
+SSH_CLONE_TIMEOUT = _env_int('SSH_CLONE_TIMEOUT', 300)
+SSH_CONFIG_PATH = _env_str('SSH_CONFIG_PATH', os.path.join(BASE_DIR, 'media', 'deepaudit', 'ssh'))
+
+SANDBOX_IMAGE = _env_str('SANDBOX_IMAGE', 'python:3.11-slim')
+SANDBOX_MEMORY_LIMIT = _env_str('SANDBOX_MEMORY_LIMIT', '512m')
+SANDBOX_CPU_LIMIT = _env_float('SANDBOX_CPU_LIMIT', 1.0)
+SANDBOX_TIMEOUT_SECONDS = _env_int('SANDBOX_TIMEOUT_SECONDS', 30)
+SANDBOX_NETWORK_DISABLED = _env_str('SANDBOX_NETWORK_DISABLED', 'true').lower() not in {'0', 'false', 'no'}
+SANDBOX_READ_ONLY_ROOTFS = _env_str('SANDBOX_READ_ONLY_ROOTFS', 'true').lower() not in {'0', 'false', 'no'}
+SANDBOX_CAP_DROP = _env_str('SANDBOX_CAP_DROP', 'ALL') or 'ALL'
+SANDBOX_NO_NEW_PRIVILEGES = _env_str('SANDBOX_NO_NEW_PRIVILEGES', 'true').lower() not in {'0', 'false', 'no'}
 
 # ================================================= #
 # ********************* 阿里云短信服务配置 ******************* #

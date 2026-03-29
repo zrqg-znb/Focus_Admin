@@ -30,7 +30,7 @@ from apps.deepaudit.runtime import docker_available
 from apps.deepaudit.scan_task import scan_task_services
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact, AuditIssue, AuditTask, InstantAnalysisRecord
 from apps.deepaudit.serialization import format_datetime_text, normalize_json_payload
-from apps.deepaudit.storage import ARTIFACTS_DIR, REPORTS_DIR, SSH_DIR, VECTOR_DB_DIR, WORKSPACE_DIR, ZIP_DIR, delete_project_zip
+from apps.deepaudit import storage as deepaudit_storage
 from apps.deepaudit.user_config import user_config_services
 from apps.deepaudit.user_config.user_config_model import AuditSshCredential, AuditUserConfig
 from core.user.user_model import User
@@ -139,11 +139,11 @@ def get_dashboard_overview(user, *, limit: int = 10) -> dict:
             'low': issues.filter(severity='low').count() + findings.filter(severity='low').count(),
         },
         'storage_summary': {
-            'zip_size': _dir_size(ZIP_DIR),
-            'report_size': _dir_size(REPORTS_DIR),
-            'artifact_size': _dir_size(ARTIFACTS_DIR),
-            'vector_db_size': _dir_size(VECTOR_DB_DIR),
-            'workspace_count': len(list(WORKSPACE_DIR.glob('*'))) if WORKSPACE_DIR.exists() else 0,
+            'zip_size': _dir_size(deepaudit_storage.ZIP_DIR),
+            'report_size': _dir_size(deepaudit_storage.REPORTS_DIR),
+            'artifact_size': _dir_size(deepaudit_storage.ARTIFACTS_DIR),
+            'vector_db_size': _dir_size(deepaudit_storage.VECTOR_DB_DIR),
+            'workspace_count': len(list(deepaudit_storage.WORKSPACE_DIR.glob('*'))) if deepaudit_storage.WORKSPACE_DIR.exists() else 0,
         },
         'recent_activities': activities[:limit],
     }
@@ -158,12 +158,13 @@ def get_health_report(user) -> dict:
         'docker_available': docker_enabled and docker_available(),
         'queue': getattr(settings, 'DEEPAUDIT_QUEUE', 'deepaudit'),
         'storage_paths': [
-            {'name': 'zip', 'path': str(ZIP_DIR), 'exists': ZIP_DIR.exists(), 'size_bytes': _dir_size(ZIP_DIR)},
-            {'name': 'workspaces', 'path': str(WORKSPACE_DIR), 'exists': WORKSPACE_DIR.exists(), 'size_bytes': _dir_size(WORKSPACE_DIR)},
-            {'name': 'reports', 'path': str(REPORTS_DIR), 'exists': REPORTS_DIR.exists(), 'size_bytes': _dir_size(REPORTS_DIR)},
-            {'name': 'artifacts', 'path': str(ARTIFACTS_DIR), 'exists': ARTIFACTS_DIR.exists(), 'size_bytes': _dir_size(ARTIFACTS_DIR)},
-            {'name': 'vector_db', 'path': str(VECTOR_DB_DIR), 'exists': VECTOR_DB_DIR.exists(), 'size_bytes': _dir_size(VECTOR_DB_DIR)},
-            {'name': 'ssh', 'path': str(SSH_DIR), 'exists': SSH_DIR.exists(), 'size_bytes': _dir_size(SSH_DIR)},
+            {'name': 'zip', 'path': str(deepaudit_storage.ZIP_DIR), 'exists': deepaudit_storage.ZIP_DIR.exists(), 'size_bytes': _dir_size(deepaudit_storage.ZIP_DIR)},
+            {'name': 'workspaces', 'path': str(deepaudit_storage.WORKSPACE_DIR), 'exists': deepaudit_storage.WORKSPACE_DIR.exists(), 'size_bytes': _dir_size(deepaudit_storage.WORKSPACE_DIR)},
+            {'name': 'reports', 'path': str(deepaudit_storage.REPORTS_DIR), 'exists': deepaudit_storage.REPORTS_DIR.exists(), 'size_bytes': _dir_size(deepaudit_storage.REPORTS_DIR)},
+            {'name': 'artifacts', 'path': str(deepaudit_storage.ARTIFACTS_DIR), 'exists': deepaudit_storage.ARTIFACTS_DIR.exists(), 'size_bytes': _dir_size(deepaudit_storage.ARTIFACTS_DIR)},
+            {'name': 'vector_db', 'path': str(deepaudit_storage.VECTOR_DB_DIR), 'exists': deepaudit_storage.VECTOR_DB_DIR.exists(), 'size_bytes': _dir_size(deepaudit_storage.VECTOR_DB_DIR)},
+            {'name': 'knowledge', 'path': str(deepaudit_storage.KNOWLEDGE_DIR), 'exists': deepaudit_storage.KNOWLEDGE_DIR.exists(), 'size_bytes': _dir_size(deepaudit_storage.KNOWLEDGE_DIR)},
+            {'name': 'ssh', 'path': str(deepaudit_storage.SSH_DIR), 'exists': deepaudit_storage.SSH_DIR.exists(), 'size_bytes': _dir_size(deepaudit_storage.SSH_DIR)},
         ],
         'counts': {
             'projects': projects.count(),
@@ -210,7 +211,7 @@ def export_domain_data(user, *, project_id: str = '') -> dict:
             {
                 'task': agent_task_services.serialize_task(task),
                 'summary': agent_task_services.build_summary(task),
-                'checkpoints': agent_task_services.build_checkpoints(task),
+                'checkpoints': agent_task_services.build_phase_checkpoints(task),
                 'findings': agent_task_services.list_findings(user, str(task.id)),
                 'events': agent_task_services.list_events(user, str(task.id), limit=5000),
             }
@@ -239,8 +240,8 @@ def cleanup_runtime_storage(*, days: int = 1, remove_reports: bool = False) -> d
     removed_reports = 0
     removed_files: list[str] = []
 
-    if WORKSPACE_DIR.exists():
-        for path in WORKSPACE_DIR.iterdir():
+    if deepaudit_storage.WORKSPACE_DIR.exists():
+        for path in deepaudit_storage.WORKSPACE_DIR.iterdir():
             try:
                 modified_at = datetime.fromtimestamp(path.stat().st_mtime)
             except Exception:
@@ -254,8 +255,8 @@ def cleanup_runtime_storage(*, days: int = 1, remove_reports: bool = False) -> d
             removed_workspaces += 1
             removed_files.append(str(path))
 
-    if remove_reports and REPORTS_DIR.exists():
-        for path in REPORTS_DIR.rglob('*'):
+    if remove_reports and deepaudit_storage.REPORTS_DIR.exists():
+        for path in deepaudit_storage.REPORTS_DIR.rglob('*'):
             if not path.is_file():
                 continue
             try:
@@ -349,11 +350,11 @@ def clear_domain_data(user) -> dict:
 
     with transaction.atomic():
         for project_id in project_ids:
-            delete_project_zip(str(project_id))
+            deepaudit_storage.delete_project_zip(str(project_id))
         for path_text in removable_paths:
             removed = _safe_remove_file(
                 path_text,
-                allowed_roots=(ARTIFACTS_DIR, REPORTS_DIR, ZIP_DIR),
+                allowed_roots=(deepaudit_storage.ARTIFACTS_DIR, deepaudit_storage.REPORTS_DIR, deepaudit_storage.ZIP_DIR),
             )
             if removed:
                 removed_files.append(removed)

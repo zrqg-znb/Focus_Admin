@@ -55,6 +55,7 @@ class SandboxManager:
         self._docker_client = None
         self._initialized = False
         self._init_error = None
+        self._command_availability_cache: dict[str, bool] = {}
     
     async def initialize(self):
         """初始化 Docker 客户端"""
@@ -248,6 +249,27 @@ class SandboxManager:
                 "stderr": "",
                 "exit_code": -1,
             }
+
+    async def command_available(self, command_name: str) -> bool:
+        """检查当前 sandbox 镜像中是否存在指定命令，并缓存结果。"""
+        command_name = str(command_name or "").strip()
+        if not command_name:
+            return False
+        if command_name in self._command_availability_cache:
+            return self._command_availability_cache[command_name]
+
+        await self.initialize()
+        if not self.is_available:
+            self._command_availability_cache[command_name] = False
+            return False
+
+        result = await self.execute_command(
+            f"command -v {command_name} >/dev/null 2>&1",
+            timeout=15,
+        )
+        available = bool(result.get("success"))
+        self._command_availability_cache[command_name] = available
+        return available
         
         timeout = timeout or self.config.timeout
 

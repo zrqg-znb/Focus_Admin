@@ -120,11 +120,13 @@ export interface StatsPanelProps {
 export interface HeaderProps {
   task: AgentTask | null;
   canCancel: boolean;
+  canInspectCheckpoints: boolean;
   canCreate: boolean;
   canExport: boolean;
   isRunning: boolean;
   isCancelling: boolean;
   onCancel: () => void;
+  onCheckpoints: () => void;
   onExport: () => void;
   onNewAudit: () => void;
 }

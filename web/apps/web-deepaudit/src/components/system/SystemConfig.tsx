@@ -13,12 +13,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import {
   Settings, Save, RotateCcw, Eye, EyeOff, CheckCircle2, AlertCircle,
-  Info, Zap, Globe, PlayCircle, Brain, Key, Copy, Trash2, ServerCrash
+  Info, Zap, Globe, PlayCircle, Brain, Key, Copy, Trash2, ServerCrash, BookOpen, Wrench
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/shared/api/database";
 import EmbeddingConfig from "@/components/agent/EmbeddingConfig";
-import { clearKnownHosts, deleteSSHKey, getSSHKey, saveSSHKey } from "@/shared/api/sshKeys";
+import { KnowledgeBaseManager } from "@/components/system/KnowledgeBaseManager";
+import { clearKnownHosts, deleteSSHKey, generateSSHKey, getSSHKey, saveSSHKey, testSSHKey } from "@/shared/api/sshKeys";
 import { useAuth } from "@/shared/context/AuthContext";
 import { DEEPAUDIT_ACTION_CODES } from "@/shared/focus/focusPermission";
 
@@ -139,10 +140,21 @@ export function SystemConfig() {
   const [showDebugInfo, setShowDebugInfo] = useState(true);
 
   // SSH Key states
-  const [sshKey, setSSHKey] = useState<{ has_key: boolean; public_key?: string; fingerprint?: string }>({ has_key: false });
+  const [sshKey, setSSHKey] = useState<{
+    has_key: boolean;
+    public_key?: string;
+    fingerprint?: string;
+    known_hosts?: string;
+    updated_at?: string;
+  }>({ has_key: false });
   const [generatingKey, setGeneratingKey] = useState(false);
   const [deletingKey, setDeletingKey] = useState(false);
   const [clearingKnownHosts, setClearingKnownHosts] = useState(false);
+  const [testingKey, setTestingKey] = useState(false);
+  const [testRepoUrl, setTestRepoUrl] = useState("");
+  const [sshTestResult, setSshTestResult] = useState<null | { success: boolean; message: string; output?: string }>(null);
+  const [sshKeyType, setSshKeyType] = useState<"rsa" | "ed25519">("ed25519");
+  const [sshKeySize, setSshKeySize] = useState(4096);
   const [manualPrivateKey, setManualPrivateKey] = useState("");
   const [manualPublicKey, setManualPublicKey] = useState("");
   const [manualKnownHosts, setManualKnownHosts] = useState("");
@@ -193,6 +205,28 @@ export function SystemConfig() {
     }
   };
 
+  const handleGenerateSSHKey = async () => {
+    if (!canSaveSettings) {
+      toast.error("当前账号没有保存设置的权限");
+      return;
+    }
+    try {
+      setGeneratingKey(true);
+      const data = await generateSSHKey({
+        keyType: sshKeyType,
+        keySize: sshKeyType === "rsa" ? sshKeySize : 4096,
+      });
+      await loadSSHKey();
+      setSshTestResult(null);
+      toast.success(data.message || "SSH 密钥生成成功");
+    } catch (error: any) {
+      console.error('Failed to generate SSH key:', error);
+      toast.error(error.response?.data?.detail || "生成 SSH 密钥失败");
+    } finally {
+      setGeneratingKey(false);
+    }
+  };
+
   const handleImportSSHKey = async () => {
     if (!canSaveSettings) {
       toast.error("当前账号没有保存设置的权限");
@@ -214,6 +248,7 @@ export function SystemConfig() {
         known_hosts: manualKnownHosts.trim(),
       });
       setSSHKey(data);
+      setSshTestResult(null);
       toast.success("SSH 密钥已导入");
     } catch (error: any) {
       console.error('Failed to import SSH key:', error);
@@ -235,6 +270,8 @@ export function SystemConfig() {
       setManualPrivateKey("");
       setManualPublicKey("");
       setManualKnownHosts("");
+      setTestRepoUrl("");
+      setSshTestResult(null);
       toast.success("SSH密钥已删除");
       setShowDeleteKeyDialog(false);
     } catch (error: any) {
@@ -242,6 +279,31 @@ export function SystemConfig() {
       toast.error(error.response?.data?.detail || "删除SSH密钥失败");
     } finally {
       setDeletingKey(false);
+    }
+  };
+
+  const handleTestSSHKey = async () => {
+    if (!testRepoUrl.trim()) {
+      toast.error("请输入用于测试的 SSH 仓库地址");
+      return;
+    }
+    try {
+      setTestingKey(true);
+      const result = await testSSHKey(testRepoUrl.trim());
+      setSshTestResult(result);
+      if (result.success) {
+        toast.success(result.message || "SSH 连接测试成功");
+      } else {
+        toast.error(result.message || "SSH 连接测试失败");
+      }
+      await loadSSHKey();
+    } catch (error: any) {
+      console.error('Failed to test SSH key:', error);
+      const message = error.response?.data?.detail || "测试 SSH 连接失败";
+      setSshTestResult({ success: false, message });
+      toast.error(message);
+    } finally {
+      setTestingKey(false);
     }
   };
 
@@ -255,6 +317,7 @@ export function SystemConfig() {
       const result = await clearKnownHosts();
       if (result.success) {
         toast.success(result.message || "known_hosts已清理");
+        await loadSSHKey();
       } else {
         toast.error("清理known_hosts失败");
       }
@@ -408,7 +471,7 @@ export function SystemConfig() {
       </div>
 
       <Tabs defaultValue="llm" className="w-full">
-        <TabsList className="grid w-full grid-cols-4 bg-muted border border-border p-1 h-auto gap-1 rounded-lg mb-6">
+        <TabsList className="grid w-full grid-cols-5 bg-muted border border-border p-1 h-auto gap-1 rounded-lg mb-6">
           <TabsTrigger value="llm" className="data-[state=active]:bg-primary data-[state=active]:text-foreground font-mono font-bold uppercase py-2.5 text-muted-foreground transition-all rounded text-xs flex items-center gap-2">
             <Zap className="w-3 h-3" /> LLM 配置
           </TabsTrigger>
@@ -420,6 +483,9 @@ export function SystemConfig() {
           </TabsTrigger>
           <TabsTrigger value="git" className="data-[state=active]:bg-primary data-[state=active]:text-foreground font-mono font-bold uppercase py-2.5 text-muted-foreground transition-all rounded text-xs flex items-center gap-2">
             <Globe className="w-3 h-3" /> Git 集成
+          </TabsTrigger>
+          <TabsTrigger value="knowledge" className="data-[state=active]:bg-primary data-[state=active]:text-foreground font-mono font-bold uppercase py-2.5 text-muted-foreground transition-all rounded text-xs flex items-center gap-2">
+            <BookOpen className="w-3 h-3" /> 知识库
           </TabsTrigger>
         </TabsList>
 
@@ -873,9 +939,62 @@ export function SystemConfig() {
 
             {!sshKey.has_key ? (
               <div className="space-y-4">
-                <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-4 text-xs text-muted-foreground">
-                  当前 Focus 后端已支持保存 SSH 凭据，但未开放在线自动生成。
-                  请粘贴已有的 SSH 私钥、公钥与可选的 `known_hosts` 内容完成导入。
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-4 space-y-4">
+                    <div>
+                      <div className="text-sm font-semibold text-foreground">在线生成 SSH 密钥</div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        后端已支持直接生成密钥对，生成后会自动安全保存私钥并返回公钥。
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <Label className="text-xs font-bold text-muted-foreground uppercase">密钥类型</Label>
+                        <Select value={sshKeyType} onValueChange={(value: "rsa" | "ed25519") => setSshKeyType(value)}>
+                          <SelectTrigger className="cyber-input h-10">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="cyber-dialog border-border">
+                            <SelectItem value="ed25519" className="font-mono">ed25519</SelectItem>
+                            <SelectItem value="rsa" className="font-mono">rsa</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs font-bold text-muted-foreground uppercase">RSA 位数</Label>
+                        <Input
+                          type="number"
+                          value={sshKeySize}
+                          disabled={sshKeyType !== "rsa"}
+                          onChange={(event) => setSshKeySize(Number(event.target.value) || 4096)}
+                          className="cyber-input"
+                        />
+                      </div>
+                    </div>
+
+                    {canSaveSettings && (
+                      <div className="flex justify-end">
+                        <Button onClick={handleGenerateSSHKey} disabled={generatingKey} className="cyber-btn-primary h-10">
+                          {generatingKey ? (
+                            <>
+                              <div className="loading-spinner w-4 h-4 mr-2" />
+                              生成中...
+                            </>
+                          ) : (
+                            <>
+                              <Wrench className="w-4 h-4 mr-2" />
+                              生成 SSH 密钥
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-4 text-xs text-muted-foreground">
+                    如果你已经有现成的 SSH 私钥，也可以手动导入。导入时支持同时写入 `known_hosts`，便于首次连仓时复用。
+                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -967,6 +1086,25 @@ export function SystemConfig() {
                     </div>
                   )}
 
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="p-3 bg-muted/50 rounded border border-border">
+                      <Label className="text-xs font-bold text-muted-foreground uppercase mb-1 block">
+                        最后更新时间
+                      </Label>
+                      <div className="text-xs text-foreground font-mono">
+                        {sshKey.updated_at || "未知"}
+                      </div>
+                    </div>
+                    <div className="p-3 bg-muted/50 rounded border border-border">
+                      <Label className="text-xs font-bold text-muted-foreground uppercase mb-1 block">
+                        known_hosts
+                      </Label>
+                      <div className="text-xs text-foreground font-mono">
+                        {sshKey.known_hosts ? `已记录 ${sshKey.known_hosts.split("\n").filter(Boolean).length} 条主机指纹` : "尚未缓存"}
+                      </div>
+                    </div>
+                  </div>
+
                   <p className="text-xs text-muted-foreground">
                     请将此公钥添加到 <a href="https://github.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">GitHub</a> 或 <a href="https://gitlab.com/-/profile/keys" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">GitLab</a> 账户
                   </p>
@@ -974,11 +1112,53 @@ export function SystemConfig() {
 
                 <div className="space-y-2 pt-4 border-t border-border">
                   <Label className="text-xs font-bold text-muted-foreground uppercase">
-                    使用说明
+                    在线连通性测试
                   </Label>
+                  <div className="flex flex-col md:flex-row gap-3">
+                    <Input
+                      value={testRepoUrl}
+                      onChange={(event) => setTestRepoUrl(event.target.value)}
+                      placeholder="git@github.com:owner/repo.git"
+                      className="cyber-input"
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={handleTestSSHKey}
+                      disabled={testingKey}
+                      className="cyber-btn-outline whitespace-nowrap"
+                    >
+                      {testingKey ? (
+                        <>
+                          <div className="loading-spinner w-4 h-4 mr-2" />
+                          测试中...
+                        </>
+                      ) : (
+                        <>
+                          <PlayCircle className="w-4 h-4 mr-2" />
+                          测试 SSH
+                        </>
+                      )}
+                    </Button>
+                  </div>
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    在线 SSH 探测接口当前未开放。导入密钥后，可直接在项目创建或代码拉取流程中使用 SSH 仓库地址进行验证。
+                    推荐使用 `git@...` 形式的 SSH 仓库地址。测试成功后，后端会自动补充或更新 `known_hosts`。
                   </p>
+                  {sshTestResult && (
+                    <div
+                      className={`rounded-lg border p-4 text-xs font-mono ${
+                        sshTestResult.success
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300/90"
+                          : "border-rose-500/30 bg-rose-500/10 text-rose-300/90"
+                      }`}
+                    >
+                      <div className="font-semibold mb-2">{sshTestResult.message}</div>
+                      {sshTestResult.output && (
+                        <pre className="whitespace-pre-wrap break-all text-[11px] leading-5 max-h-40 overflow-y-auto">
+                          {sshTestResult.output}
+                        </pre>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Delete Key and Clear Known Hosts */}
@@ -1015,6 +1195,10 @@ export function SystemConfig() {
               </div>
             )}
           </div>
+        </TabsContent>
+
+        <TabsContent value="knowledge" className="space-y-6">
+          <KnowledgeBaseManager />
         </TabsContent>
       </Tabs>
 

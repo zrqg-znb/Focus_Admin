@@ -58,8 +58,15 @@ REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 REDIS_PASSWORD="${REDIS_PASSWORD:-}"
 LOG_DIR="$ROOT_DIR/logs"
+HOST_TAG="$(hostname -s 2>/dev/null || hostname || echo local)"
+HOST_TAG="${HOST_TAG//[^A-Za-z0-9._-]/-}"
+WORKER_NAME="${WORKER_NAME:-focus-local-${DEEPAUDIT_QUEUE}@${HOST_TAG}}"
+PID_DIR="$ROOT_DIR/run"
+WORKER_PID_FILE="$PID_DIR/celery-${DEEPAUDIT_QUEUE}.pid"
+WORKER_LOG_FILE="$LOG_DIR/celery-${DEEPAUDIT_QUEUE}.log"
 
 mkdir -p "$LOG_DIR"
+mkdir -p "$PID_DIR"
 
 redis_auth_args=()
 if [[ -n "$REDIS_PASSWORD" ]]; then
@@ -72,6 +79,9 @@ print_usage() {
   bash scripts/deepaudit-local.sh check   # 检查 DeepAudit 本地依赖与配置
   bash scripts/deepaudit-local.sh redis   # 确保本地 Redis 可用
   bash scripts/deepaudit-local.sh worker  # 启动 DeepAudit Celery Worker
+  bash scripts/deepaudit-local.sh stop    # 停止 DeepAudit Celery Worker
+  bash scripts/deepaudit-local.sh restart # 重启 DeepAudit Celery Worker
+  bash scripts/deepaudit-local.sh status  # 查看 DeepAudit Celery Worker 状态
   bash scripts/deepaudit-local.sh server  # 启动 Django ASGI 服务器
   bash scripts/deepaudit-local.sh all     # 自动拉起 Redis + Worker，并在前台启动 Django ASGI 服务器
 
@@ -82,7 +92,38 @@ print_usage() {
   REDIS_PASSWORD=
   DEEPAUDIT_QUEUE=deepaudit
   RUNSERVER_ADDR=0.0.0.0:8001
+  WORKER_NAME=focus-local-deepaudit@your-host
 EOF
+}
+
+read_worker_pid() {
+  if [[ -f "$WORKER_PID_FILE" ]]; then
+    tr -d '[:space:]' <"$WORKER_PID_FILE"
+  fi
+}
+
+worker_process_alive() {
+  local pid="${1:-}"
+  [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1
+}
+
+cleanup_worker_pidfile() {
+  local pid
+  pid="$(read_worker_pid)"
+  if [[ -n "$pid" ]] && ! worker_process_alive "$pid"; then
+    rm -f "$WORKER_PID_FILE"
+  fi
+}
+
+ensure_no_duplicate_worker() {
+  cleanup_worker_pidfile
+  local pid
+  pid="$(read_worker_pid)"
+  if [[ -n "$pid" ]] && worker_process_alive "$pid"; then
+    echo "DeepAudit Worker 已在运行: PID=$pid NAME=$WORKER_NAME QUEUE=$DEEPAUDIT_QUEUE"
+    return 1
+  fi
+  return 0
 }
 
 check_python_deps() {
@@ -172,7 +213,58 @@ run_worker() {
   ensure_redis
   check_python_deps
   check_django_settings
-  exec "$PYTHON_BIN" -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -l info
+  ensure_no_duplicate_worker || exit 0
+  exec "$PYTHON_BIN" -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l info
+}
+
+run_stop() {
+  cleanup_worker_pidfile
+  local pid
+  pid="$(read_worker_pid)"
+  if [[ -z "$pid" ]]; then
+    echo "DeepAudit Worker 未运行。"
+    return 0
+  fi
+  echo "停止 DeepAudit Worker: PID=$pid NAME=$WORKER_NAME"
+  kill "$pid" >/dev/null 2>&1 || true
+  for _ in {1..10}; do
+    if ! worker_process_alive "$pid"; then
+      rm -f "$WORKER_PID_FILE"
+      echo "DeepAudit Worker 已停止。"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Worker 未在预期时间内退出，尝试强制结束 PID=$pid"
+  kill -9 "$pid" >/dev/null 2>&1 || true
+  rm -f "$WORKER_PID_FILE"
+}
+
+run_status() {
+  cleanup_worker_pidfile
+  local pid
+  pid="$(read_worker_pid)"
+  if [[ -n "$pid" ]] && worker_process_alive "$pid"; then
+    echo "DeepAudit Worker 运行中: PID=$pid NAME=$WORKER_NAME QUEUE=$DEEPAUDIT_QUEUE"
+    echo "日志: $WORKER_LOG_FILE"
+    return 0
+  fi
+  echo "DeepAudit Worker 未运行。"
+}
+
+run_restart() {
+  run_stop
+  run_background_worker
+}
+
+run_background_worker() {
+  ensure_redis
+  check_python_deps
+  check_django_settings
+  ensure_no_duplicate_worker || return 0
+  "$PYTHON_BIN" -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l info >"$WORKER_LOG_FILE" 2>&1 &
+  local celery_pid=$!
+  printf 'DeepAudit Celery Worker 已启动，PID=%s，NAME=%s，日志: %s\n' "$celery_pid" "$WORKER_NAME" "$WORKER_LOG_FILE"
 }
 
 run_server() {
@@ -195,9 +287,10 @@ run_all() {
     fi
   }
 
-  "$PYTHON_BIN" -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -l info >"$LOG_DIR/celery-deepaudit.log" 2>&1 &
+  ensure_no_duplicate_worker || exit 0
+  "$PYTHON_BIN" -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l info >"$WORKER_LOG_FILE" 2>&1 &
   celery_pid=$!
-  printf 'DeepAudit Celery Worker 已启动，PID=%s，日志: %s\n' "$celery_pid" "$LOG_DIR/celery-deepaudit.log"
+  printf 'DeepAudit Celery Worker 已启动，PID=%s，NAME=%s，日志: %s\n' "$celery_pid" "$WORKER_NAME" "$WORKER_LOG_FILE"
   trap cleanup EXIT INT TERM
 
   local host="${RUNSERVER_ADDR%:*}"
@@ -215,6 +308,15 @@ case "$cmd" in
     ;;
   worker)
     run_worker
+    ;;
+  stop)
+    run_stop
+    ;;
+  restart)
+    run_restart
+    ;;
+  status)
+    run_status
     ;;
   server)
     run_server

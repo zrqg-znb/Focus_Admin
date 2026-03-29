@@ -18,6 +18,7 @@ REPORTS_DIR = DEEPAUDIT_ROOT / 'reports'
 ARTIFACTS_DIR = DEEPAUDIT_ROOT / 'artifacts'
 VECTOR_DB_DIR = DEEPAUDIT_ROOT / 'vector_db'
 SSH_DIR = DEEPAUDIT_ROOT / 'ssh'
+KNOWLEDGE_DIR = DEEPAUDIT_ROOT / 'knowledge'
 
 
 
@@ -31,6 +32,7 @@ def ensure_storage_dirs() -> None:
         ARTIFACTS_DIR,
         VECTOR_DB_DIR,
         SSH_DIR,
+        KNOWLEDGE_DIR,
     ]:
         directory.mkdir(parents=True, exist_ok=True)
 

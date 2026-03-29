@@ -9,14 +9,18 @@ from unittest.mock import patch
 from django.test import TestCase
 from django.utils import timezone
 
-from apps.deepaudit.agent_task.agent_task_model import AgentEvent, AgentFinding, AgentTask
+from apps.deepaudit.agent_task.agent_task_model import AgentCheckpoint, AgentEvent, AgentFinding, AgentTask
 from apps.deepaudit.agent_task.agent_task_services import (
     build_checkpoints,
     build_tree,
     export_agent_pdf_response,
     export_agent_report_response,
     export_agent_json_response,
+    get_checkpoint_detail,
+    list_checkpoints,
+    persist_checkpoint,
     refresh_task_snapshot,
+    resume_task_from_checkpoint,
 )
 from apps.deepaudit.constants import (
     AGENT_PHASE_ANALYSIS,
@@ -254,6 +258,91 @@ class AgentTaskServicesTestCase(TestCase):
             error_message='',
         )
 
+    def _create_restorable_checkpoint(self, task: AgentTask, *, agent_type: str = 'orchestrator') -> AgentCheckpoint:
+        now_text = timezone.now().isoformat()
+        return AgentCheckpoint.objects.create(
+            task=task,
+            agent_id='orch-resume-1',
+            agent_name='Orchestrator',
+            agent_type=agent_type,
+            iteration=2,
+            status='running',
+            total_tokens=128,
+            tool_calls=3,
+            findings_count=1,
+            checkpoint_type='llm',
+            checkpoint_name='可恢复状态',
+            state_data={
+                'version': '2.0',
+                'state': {
+                    'agent_id': 'orch-resume-1',
+                    'agent_name': 'Orchestrator',
+                    'agent_type': agent_type,
+                    'parent_id': None,
+                    'task': '继续编排审计',
+                    'task_context': {'task_id': str(task.id), 'root_task_id': str(task.id)},
+                    'inherited_context': {},
+                    'knowledge_modules': [],
+                    'status': 'running',
+                    'iteration': 2,
+                    'max_iterations': 20,
+                    'messages': [],
+                    'system_prompt': '',
+                    'actions_taken': [],
+                    'observations': [],
+                    'errors': [],
+                    'findings': [],
+                    'created_at': now_text,
+                    'started_at': now_text,
+                    'last_updated': now_text,
+                    'finished_at': None,
+                    'waiting_for_input': False,
+                    'waiting_start_time': None,
+                    'waiting_reason': '',
+                    'waiting_timeout_seconds': 600,
+                    'final_result': None,
+                    'total_tokens': 128,
+                    'tool_calls': 3,
+                    'stop_requested': False,
+                    'max_iterations_warning_sent': False,
+                },
+                'runtime': {
+                    'base': {
+                        'iteration': 2,
+                        'tool_calls': 3,
+                        'total_tokens': 128,
+                        'cancelled': False,
+                        'incoming_handoff': None,
+                        'insights': [],
+                        'work_completed': ['planning completed'],
+                        'last_input_data': {
+                            'task': '继续编排审计',
+                            'task_context': '恢复到上次状态继续执行',
+                            'project_info': {'name': task.project.name, 'root': '/tmp/workspace'},
+                            'config': {'target_files': []},
+                            'project_root': '/tmp/workspace',
+                            'task_id': str(task.id),
+                        },
+                    },
+                    'agent': {
+                        'conversation_history': [
+                            {'role': 'system', 'content': 'sys'},
+                            {'role': 'user', 'content': 'continue'},
+                        ],
+                        'steps': [],
+                        'all_findings': [],
+                        'runtime_context': {'task_id': str(task.id)},
+                        'dispatched_tasks': {'recon': 1},
+                        'agent_results': {},
+                        'agent_handoffs': {},
+                    },
+                },
+            },
+            checkpoint_metadata={'phase': AGENT_PHASE_ANALYSIS, 'sequence': 9},
+            sys_creator=self.user,
+            sys_modifier=self.user,
+        )
+
     def test_refresh_task_snapshot_recomputes_stats_and_reporting_phase(self) -> None:
         task = self._seed_completed_runtime(self.task)
         self.assertIsNotNone(task)
@@ -287,6 +376,64 @@ class AgentTaskServicesTestCase(TestCase):
         self.assertEqual(checkpoint_by_phase[AGENT_PHASE_ANALYSIS]['status'], 'completed')
         self.assertEqual(checkpoint_by_phase[AGENT_PHASE_VERIFICATION]['status'], 'completed')
         self.assertEqual(checkpoint_by_phase[AGENT_PHASE_REPORTING]['status'], 'completed')
+
+    def test_persist_checkpoint_creates_history_and_detail(self) -> None:
+        task = self._seed_completed_runtime(self.task)
+        assert task is not None
+
+        checkpoint = persist_checkpoint(
+            task.id,
+            checkpoint_type='final',
+            checkpoint_name='报告生成完成',
+            phase=AGENT_PHASE_REPORTING,
+            sequence=15,
+        )
+
+        self.assertIsNotNone(checkpoint)
+        assert checkpoint is not None
+        self.assertTrue(AgentCheckpoint.objects.filter(id=checkpoint.id, is_deleted=False).exists())
+
+        checkpoints = build_checkpoints(task)
+        checkpoint_by_phase = {item['phase']: item for item in checkpoints}
+        self.assertEqual(checkpoint_by_phase[AGENT_PHASE_REPORTING]['id'], str(checkpoint.id))
+
+        persisted_list = list_checkpoints(task)
+        self.assertEqual(len(persisted_list), 1)
+        self.assertEqual(persisted_list[0]['id'], str(checkpoint.id))
+        self.assertEqual(persisted_list[0]['checkpoint_type'], 'final')
+
+        detail = get_checkpoint_detail(task, checkpoint.id)
+        self.assertEqual(detail['id'], str(checkpoint.id))
+        self.assertEqual(detail['checkpoint_type'], 'final')
+        self.assertEqual(detail['task_id'], task.id)
+        self.assertTrue(detail['events'])
+        self.assertIn('task', detail['state_data'])
+        self.assertIn('phase', detail['metadata'])
+
+    @patch("apps.deepaudit.agent_task.agent_task_services.dispatch_deepaudit_task", return_value=None)
+    def test_resume_task_from_checkpoint_creates_new_task(self, mock_dispatch) -> None:
+        task = self._seed_completed_runtime(self.task)
+        assert task is not None
+        restorable = self._create_restorable_checkpoint(task)
+        checkpoint = persist_checkpoint(
+            task.id,
+            checkpoint_type='final',
+            checkpoint_name='报告生成完成',
+            phase=AGENT_PHASE_REPORTING,
+            sequence=15,
+        )
+        assert checkpoint is not None
+
+        resumed = resume_task_from_checkpoint(self.user, task.id, str(checkpoint.id))
+
+        self.assertNotEqual(resumed.id, task.id)
+        self.assertEqual(resumed.project_id, task.project_id)
+        self.assertEqual(resumed.status, 'pending')
+        self.assertEqual(resumed.audit_scope.get('resume_from_checkpoint_id'), str(restorable.id))
+        self.assertEqual(resumed.audit_scope.get('resume_from_task_id'), task.id)
+        self.assertEqual(resumed.agent_config.get('resume', {}).get('requested_checkpoint_id'), str(checkpoint.id))
+        self.assertEqual(resumed.agent_config.get('resume', {}).get('resume_checkpoint_id'), str(restorable.id))
+        mock_dispatch.assert_called_once()
 
     def test_refresh_task_snapshot_preserves_last_real_phase_on_failure(self) -> None:
         failed_task = self._create_task(name='Failed Task', current_phase=AGENT_PHASE_ANALYSIS)

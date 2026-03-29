@@ -2,12 +2,25 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import tempfile
 import time
+from base64 import b64decode, b64encode
 from copy import deepcopy
 from urllib.parse import urlencode
 
 import requests
+from asgiref.sync import async_to_sync
 from django.conf import settings
+from ninja.errors import HttpError
+
+from apps.deepaudit.llm.factory import LLMFactory
+from apps.deepaudit.llm.types import DEFAULT_BASE_URLS, LLMProvider
+from apps.deepaudit.rag import EmbeddingService
 
 from apps.deepaudit.constants import DEFAULT_LLM_CONFIG, DEFAULT_OTHER_CONFIG, EMBEDDING_PROVIDERS
 from apps.deepaudit.config_resolver import coerce_llm_provider
@@ -15,6 +28,16 @@ from apps.deepaudit.encryption import decrypt_value, encrypt_value
 from apps.deepaudit.permissions import get_user_id
 from apps.deepaudit.serialization import format_datetime_text
 from apps.deepaudit.user_config.user_config_model import AuditSshCredential, AuditUserConfig
+
+try:
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
+except ImportError:  # pragma: no cover - runtime dependency expected in app env
+    default_backend = None
+    serialization = None
+    ed25519 = None
+    rsa = None
 
 
 SENSITIVE_LLM_FIELDS = {'api_key'}
@@ -74,6 +97,58 @@ def _deep_merge(base: dict, override: dict) -> dict:
         else:
             result[key] = value
     return result
+
+
+def _build_system_default_llm_config() -> dict:
+    payload = deepcopy(DEFAULT_LLM_CONFIG)
+    payload.update(
+        {
+            'provider': str(getattr(settings, 'LLM_PROVIDER', '') or payload['provider']).strip() or payload['provider'],
+            'model': str(getattr(settings, 'LLM_MODEL', '') or payload['model']).strip(),
+            'base_url': str(getattr(settings, 'LLM_BASE_URL', '') or payload['base_url']).strip(),
+            'timeout': int(getattr(settings, 'LLM_TIMEOUT', payload['timeout']) or payload['timeout']),
+            'temperature': float(getattr(settings, 'LLM_TEMPERATURE', payload['temperature']) or payload['temperature']),
+            'max_tokens': int(getattr(settings, 'LLM_MAX_TOKENS', payload['max_tokens']) or payload['max_tokens']),
+            'first_token_timeout': int(getattr(settings, 'LLM_FIRST_TOKEN_TIMEOUT', payload['first_token_timeout']) or payload['first_token_timeout']),
+            'stream_timeout': int(getattr(settings, 'LLM_STREAM_TIMEOUT', payload['stream_timeout']) or payload['stream_timeout']),
+            'tool_timeout': int(getattr(settings, 'TOOL_TIMEOUT_SECONDS', payload['tool_timeout']) or payload['tool_timeout']),
+            'sub_agent_timeout': int(getattr(settings, 'SUB_AGENT_TIMEOUT_SECONDS', payload['sub_agent_timeout']) or payload['sub_agent_timeout']),
+            'agent_timeout': int(getattr(settings, 'AGENT_TIMEOUT_SECONDS', payload['agent_timeout']) or payload['agent_timeout']),
+        }
+    )
+    return payload
+
+
+def _build_system_default_other_config() -> dict:
+    payload = deepcopy(DEFAULT_OTHER_CONFIG)
+    payload.update(
+        {
+            'github_token': str(getattr(settings, 'GITHUB_TOKEN', '') or '').strip(),
+            'gitlab_token': str(getattr(settings, 'GITLAB_TOKEN', '') or '').strip(),
+            'gitea_token': str(getattr(settings, 'GITEA_TOKEN', '') or '').strip(),
+            'output_language': str(getattr(settings, 'OUTPUT_LANGUAGE', payload['output_language']) or payload['output_language']).strip() or payload['output_language'],
+        }
+    )
+    payload['scan_config'] = _deep_merge(
+        payload.get('scan_config') or {},
+        {
+            'max_analyze_files': int(getattr(settings, 'MAX_ANALYZE_FILES', payload['scan_config']['max_analyze_files']) or 0),
+            'llm_concurrency': int(getattr(settings, 'LLM_CONCURRENCY', payload['scan_config']['llm_concurrency']) or payload['scan_config']['llm_concurrency']),
+            'llm_gap_ms': int(getattr(settings, 'LLM_GAP_MS', payload['scan_config']['llm_gap_ms']) or payload['scan_config']['llm_gap_ms']),
+        },
+    )
+    payload['embedding_config'] = _deep_merge(
+        payload.get('embedding_config') or {},
+        {
+            'provider': str(getattr(settings, 'EMBEDDING_PROVIDER', '') or payload['embedding_config']['provider']).strip() or payload['embedding_config']['provider'],
+            'model': str(getattr(settings, 'EMBEDDING_MODEL', '') or payload['embedding_config']['model']).strip() or payload['embedding_config']['model'],
+            'api_key': str(getattr(settings, 'EMBEDDING_API_KEY', '') or '').strip(),
+            'base_url': str(getattr(settings, 'EMBEDDING_BASE_URL', '') or '').strip(),
+            'dimensions': int(getattr(settings, 'EMBEDDING_DIMENSIONS', payload['embedding_config']['dimensions']) or payload['embedding_config']['dimensions']),
+            'batch_size': int(getattr(settings, 'EMBEDDING_BATCH_SIZE', payload['embedding_config']['batch_size']) or payload['embedding_config']['batch_size']),
+        },
+    )
+    return payload
 
 
 def _decrypt_llm_config(payload: dict) -> dict:
@@ -414,8 +489,8 @@ def get_or_create_config(user) -> AuditUserConfig:
     config, _ = AuditUserConfig.objects.get_or_create(
         user=user,
         defaults={
-            'llm_config': _encrypt_llm_config(DEFAULT_LLM_CONFIG),
-            'other_config': _encrypt_other_config(DEFAULT_OTHER_CONFIG),
+            'llm_config': _encrypt_llm_config(_build_system_default_llm_config()),
+            'other_config': _encrypt_other_config(_build_system_default_other_config()),
             'sys_creator': user,
             'sys_modifier': user,
         },
@@ -423,9 +498,16 @@ def get_or_create_config(user) -> AuditUserConfig:
     return config
 
 
+def get_default_user_config() -> dict:
+    return {
+        'llm_config': _build_system_default_llm_config(),
+        'other_config': _build_system_default_other_config(),
+    }
+
+
 def serialize_user_config(instance: AuditUserConfig) -> dict:
-    llm_config = _deep_merge(DEFAULT_LLM_CONFIG, _decrypt_llm_config(instance.llm_config or {}))
-    other_config = _deep_merge(DEFAULT_OTHER_CONFIG, _decrypt_other_config(instance.other_config or {}))
+    llm_config = _deep_merge(_build_system_default_llm_config(), _decrypt_llm_config(instance.llm_config or {}))
+    other_config = _deep_merge(_build_system_default_other_config(), _decrypt_other_config(instance.other_config or {}))
     return {
         'user_id': str(instance.user_id),
         'llm_config': llm_config,
@@ -451,8 +533,42 @@ def update_user_config(user, payload: dict) -> dict:
     return serialize_user_config(instance)
 
 
+def delete_user_config(user) -> bool:
+    AuditUserConfig.objects.filter(user_id=get_user_id(user)).delete()
+    return True
+
+
+def list_llm_providers() -> list[dict]:
+    providers: list[dict] = []
+    for provider in LLMProvider:
+        models = LLMFactory.get_available_models(provider)
+        providers.append(
+            {
+                'id': provider.value,
+                'name': provider.value.upper(),
+                'default_model': LLMFactory.get_default_model(provider),
+                'models': models,
+                'default_base_url': DEFAULT_BASE_URLS.get(provider),
+            }
+        )
+    return providers
+
+
 def list_embedding_providers() -> list[dict]:
     return EMBEDDING_PROVIDERS
+
+
+def get_embedding_provider_models(provider: str) -> dict:
+    provider_id = str(provider or '').strip().lower()
+    provider_meta = next((item for item in EMBEDDING_PROVIDERS if item['id'] == provider_id), None)
+    if not provider_meta:
+        raise HttpError(404, f'Embedding provider 不存在: {provider}')
+    return {
+        'provider': provider_id,
+        'models': list(provider_meta.get('models') or []),
+        'default_model': provider_meta.get('default_model'),
+        'requires_api_key': bool(provider_meta.get('requires_api_key')),
+    }
 
 
 def get_embedding_config(user) -> dict:
@@ -467,16 +583,47 @@ def update_embedding_config(user, payload: dict) -> dict:
 def test_embedding(payload: dict) -> dict:
     provider = str(payload.get('provider') or '').strip() or 'openai'
     model = str(payload.get('model') or '').strip()
+    test_text = str(payload.get('test_text') or 'Focus DeepAudit embedding health check')
+    dimension = payload.get('dimensions') or payload.get('dimension')
     requires_key = any(item['id'] == provider and item['requires_api_key'] for item in EMBEDDING_PROVIDERS)
     if requires_key and not str(payload.get('api_key') or '').strip():
-        return {'success': False, 'message': '当前 embedding provider 需要 API Key', 'preview_vector_length': 0}
-    checksum = hashlib.sha256(f"{provider}:{model}:{payload.get('test_text') or ''}".encode('utf-8')).hexdigest()
-    preview_length = min(16, len(checksum))
-    return {
-        'success': True,
-        'message': f'Embedding 配置校验通过（provider={provider}, model={model or "default"}）',
-        'preview_vector_length': preview_length,
-    }
+        return {
+            'success': False,
+            'message': '当前 embedding provider 需要 API Key',
+            'preview_vector_length': 0,
+            'dimensions': None,
+            'sample_embedding': [],
+            'latency_ms': None,
+        }
+    started = time.perf_counter()
+    try:
+        service = EmbeddingService(
+            provider=provider,
+            model=model,
+            api_key=str(payload.get('api_key') or '').strip() or None,
+            base_url=str(payload.get('base_url') or '').strip() or None,
+            dimension=dimension,
+        )
+        embedding = async_to_sync(service.embed)(test_text)
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        return {
+            'success': True,
+            'message': f'嵌入成功! 维度: {len(embedding)}',
+            'preview_vector_length': min(16, len(embedding)),
+            'dimensions': len(embedding),
+            'sample_embedding': [float(item) for item in embedding[:5]],
+            'latency_ms': latency_ms,
+        }
+    except Exception as exc:
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        return {
+            'success': False,
+            'message': f'嵌入失败: {exc}',
+            'preview_vector_length': 0,
+            'dimensions': None,
+            'sample_embedding': [],
+            'latency_ms': latency_ms,
+        }
 
 
 def test_llm_connection(user, payload: dict) -> dict:
@@ -694,8 +841,100 @@ def test_llm_connection(user, payload: dict) -> dict:
 def _fingerprint(public_key: str) -> str:
     if not public_key:
         return ''
+    try:
+        parts = public_key.strip().split()
+        if len(parts) >= 2:
+            key_bytes = b64decode(parts[1].encode('utf-8'))
+            digest = b64encode(hashlib.sha256(key_bytes).digest()).decode('utf-8').rstrip('=')
+            return f'SHA256:{digest}'
+    except Exception:
+        pass
     digest = hashlib.sha256(public_key.encode('utf-8')).hexdigest()
     return ':'.join(digest[index:index + 2] for index in range(0, 32, 2))
+
+
+def _ensure_ssh_runtime_support() -> None:
+    if not serialization or not default_backend:
+        raise HttpError(500, '当前环境缺少 cryptography 依赖，无法生成 SSH 密钥')
+
+
+def _generate_rsa_key(key_size: int = 4096) -> tuple[str, str]:
+    _ensure_ssh_runtime_support()
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=max(2048, int(key_size or 4096)),
+        backend=default_backend(),
+    )
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode('utf-8')
+    public_key = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.OpenSSH,
+        format=serialization.PublicFormat.OpenSSH,
+    ).decode('utf-8')
+    return private_pem, public_key
+
+
+def _generate_ed25519_key() -> tuple[str, str]:
+    _ensure_ssh_runtime_support()
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.OpenSSH,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode('utf-8')
+    public_key = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.OpenSSH,
+        format=serialization.PublicFormat.OpenSSH,
+    ).decode('utf-8')
+    return private_pem, public_key
+
+
+def _verify_key_pair(private_key: str, public_key: str) -> bool:
+    _ensure_ssh_runtime_support()
+    if not private_key or not public_key:
+        return False
+    private_key_bytes = private_key.encode('utf-8')
+    key_obj = None
+    try:
+        key_obj = serialization.load_ssh_private_key(private_key_bytes, password=None, backend=default_backend())
+    except Exception:
+        try:
+            key_obj = serialization.load_pem_private_key(private_key_bytes, password=None, backend=default_backend())
+        except Exception:
+            return False
+    derived_public = key_obj.public_key().public_bytes(
+        encoding=serialization.Encoding.OpenSSH,
+        format=serialization.PublicFormat.OpenSSH,
+    ).decode('utf-8').strip()
+    expected_parts = public_key.strip().split()
+    actual_parts = derived_public.strip().split()
+    return len(expected_parts) >= 2 and len(actual_parts) >= 2 and expected_parts[:2] == actual_parts[:2]
+
+
+def _extract_ssh_host(repo_url: str) -> str:
+    value = str(repo_url or '').strip()
+    if not value:
+        raise HttpError(422, 'repo_url 不能为空')
+    if value.startswith('ssh://'):
+        host = value.split('ssh://', 1)[1].split('/', 1)[0].split('@')[-1].split(':', 1)[0]
+    elif '@' in value and ':' in value.split('@', 1)[1]:
+        host = value.split('@', 1)[1].split(':', 1)[0]
+    else:
+        raise HttpError(422, '仅支持 SSH 仓库地址进行测试')
+    if not re.match(r'^[A-Za-z0-9.-]+$', host):
+        raise HttpError(422, '仓库地址中的主机名不合法')
+    return host
+
+
+def _write_temp_private_key(temp_dir: str, private_key: str) -> str:
+    key_path = os.path.join(temp_dir, 'id_key')
+    with open(key_path, 'w', encoding='utf-8') as handle:
+        handle.write(private_key)
+    os.chmod(key_path, stat.S_IRUSR | stat.S_IWUSR)
+    return key_path
 
 
 def get_ssh_credential(user) -> dict:
@@ -717,6 +956,26 @@ def get_ssh_credential(user) -> dict:
     }
 
 
+def generate_ssh_credential(user, payload: dict) -> dict:
+    key_type = str(payload.get('key_type') or 'rsa').strip().lower()
+    if key_type == 'ed25519':
+        private_key, public_key = _generate_ed25519_key()
+    else:
+        private_key, public_key = _generate_rsa_key(payload.get('key_size') or 4096)
+    save_ssh_credential(
+        user,
+        {
+            'private_key': private_key,
+            'public_key': public_key,
+        },
+    )
+    return {
+        'public_key': public_key,
+        'fingerprint': _fingerprint(public_key),
+        'message': 'SSH 密钥生成成功，请将公钥添加到 Git 服务账号或 Deploy Key',
+    }
+
+
 def save_ssh_credential(user, payload: dict) -> dict:
     credential, _ = AuditSshCredential.objects.get_or_create(
         user=user,
@@ -735,6 +994,109 @@ def save_ssh_credential(user, payload: dict) -> dict:
     credential.sys_modifier = user
     credential.save()
     return get_ssh_credential(user)
+
+
+def test_ssh_credential(user, payload: dict) -> dict:
+    credential = AuditSshCredential.objects.filter(user_id=get_user_id(user), is_deleted=False).first()
+    if not credential or not credential.private_key_encrypted:
+        raise HttpError(404, '未找到 SSH 私钥，请先生成或上传 SSH 密钥')
+    private_key = decrypt_value(credential.private_key_encrypted)
+    public_key = str(credential.public_key or '').strip()
+    if public_key and not _verify_key_pair(private_key, public_key):
+        return {
+            'success': False,
+            'message': '密钥对验证失败：私钥和公钥不匹配',
+            'output': '',
+        }
+
+    host = _extract_ssh_host(payload.get('repo_url'))
+    temp_dir = tempfile.mkdtemp(prefix='deepaudit-ssh-test-')
+    try:
+        key_path = _write_temp_private_key(temp_dir, private_key)
+        known_hosts_file = os.path.join(temp_dir, 'known_hosts')
+        known_hosts_payload = str(credential.known_hosts or '').strip()
+        with open(known_hosts_file, 'w', encoding='utf-8') as handle:
+            handle.write(known_hosts_payload)
+        os.chmod(known_hosts_file, stat.S_IRUSR | stat.S_IWUSR)
+
+        cmd = [
+            'ssh',
+            '-i',
+            key_path,
+            '-o',
+            'StrictHostKeyChecking=accept-new',
+            '-o',
+            f'UserKnownHostsFile={known_hosts_file}',
+            '-o',
+            f'ConnectTimeout={int(getattr(settings, "SSH_CONNECT_TIMEOUT", 15))}',
+            '-o',
+            'PreferredAuthentications=publickey',
+            '-o',
+            'IdentitiesOnly=yes',
+            '-T',
+            f'git@{host}',
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=int(getattr(settings, 'SSH_TEST_TIMEOUT', 20)),
+        )
+        output = f'{result.stdout or ""}{result.stderr or ""}'.strip()
+        credential.known_hosts = open(known_hosts_file, 'r', encoding='utf-8').read() or None
+        credential.sys_modifier = user
+        credential.save(update_fields=['known_hosts', 'sys_modifier', 'sys_update_datetime'])
+
+        lowered = output.lower()
+        success_markers = (
+            'successfully authenticated',
+            'welcome to gitlab',
+            'welcome to codeup',
+            'hi ',
+        )
+        if any(marker in lowered for marker in success_markers):
+            return {'success': True, 'message': 'SSH 密钥验证成功', 'output': output}
+        if 'anonymous' in lowered:
+            return {
+                'success': True,
+                'message': 'SSH 连接成功，但公钥尚未关联到具体账号',
+                'output': output,
+            }
+        if 'permission denied' in lowered:
+            return {
+                'success': False,
+                'message': 'SSH 密钥验证失败：权限被拒绝，请确认公钥已添加到 Git 服务',
+                'output': output,
+            }
+        if 'connection refused' in lowered or 'no route to host' in lowered:
+            return {
+                'success': False,
+                'message': 'SSH 连接失败，请检查网络或 Git 服务可用性',
+                'output': output,
+            }
+        return {
+            'success': result.returncode == 0,
+            'message': 'SSH 测试完成' if result.returncode == 0 else 'SSH 密钥验证失败',
+            'output': output,
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            'success': False,
+            'message': f'SSH 连接超时（{int(getattr(settings, "SSH_TEST_TIMEOUT", 20))}秒）',
+            'output': '',
+        }
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def clear_ssh_known_hosts(user) -> bool:
+    credential = AuditSshCredential.objects.filter(user_id=get_user_id(user), is_deleted=False).first()
+    if not credential:
+        return True
+    credential.known_hosts = ''
+    credential.sys_modifier = user
+    credential.save(update_fields=['known_hosts', 'sys_modifier', 'sys_update_datetime'])
+    return True
 
 
 def delete_ssh_credential(user) -> bool:

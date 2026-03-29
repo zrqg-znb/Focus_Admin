@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 from asgiref.sync import sync_to_async
 
 from apps.deepaudit.agent_task.agent_task_model import AgentEvent, AgentFinding
+from apps.deepaudit.db_runtime import run_with_fresh_connection
 from apps.deepaudit.realtime import push_task_event
 
 logger = logging.getLogger(__name__)
@@ -225,8 +226,11 @@ class EventManager:
         # Get the latest sequence from db safely
         @sync_to_async
         def get_max_sequence():
-            last_event = AgentEvent.objects.filter(task_id=self.task_id).order_by('-sequence').first()
-            return last_event.sequence if last_event else 0
+            def _query():
+                last_event = AgentEvent.objects.filter(task_id=self.task_id).order_by('-sequence').first()
+                return last_event.sequence if last_event else 0
+
+            return run_with_fresh_connection(_query)
         self.sequence = await get_max_sequence()
 
     async def emit(self, event_type: str, phase: str = None, message: str = None, **kwargs):
@@ -269,7 +273,7 @@ class EventManager:
         # Async db write
         @sync_to_async
         def save_event():
-            AgentEvent.objects.create(**event_data)
+            return run_with_fresh_connection(AgentEvent.objects.create, **event_data)
         
         try:
             await save_event()
@@ -278,9 +282,23 @@ class EventManager:
         else:
             if event_type in SNAPSHOT_EVENT_TYPES:
                 try:
-                    from apps.deepaudit.agent_task.agent_task_services import refresh_task_snapshot
+                    from apps.deepaudit.agent_task.agent_task_services import persist_checkpoint, refresh_task_snapshot
 
                     await sync_to_async(refresh_task_snapshot)(self.task_id)
+                    if event_type in {'phase_complete', 'task_complete', 'task_error', 'task_cancel'}:
+                        checkpoint_type = {
+                            'phase_complete': 'auto',
+                            'task_complete': 'final',
+                            'task_error': 'error',
+                            'task_cancel': 'manual',
+                        }.get(event_type, 'auto')
+                        await sync_to_async(persist_checkpoint)(
+                            self.task_id,
+                            checkpoint_type=checkpoint_type,
+                            checkpoint_name=message,
+                            phase=phase,
+                            sequence=self.sequence,
+                        )
                 except Exception as e:
                     logger.error(f"Failed to refresh AgentTask snapshot: {e}")
 

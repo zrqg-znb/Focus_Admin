@@ -2,12 +2,19 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict
 
 from asgiref.sync import sync_to_async
+from django.apps import apps
 
-from apps.deepaudit.agent_task.agent_task_model import AgentFinding
-from apps.deepaudit.constants import AGENT_PHASE_PLANNING, AGENT_PHASE_REPORTING
+from apps.deepaudit.constants import (
+    AGENT_PHASE_ANALYSIS,
+    AGENT_PHASE_PLANNING,
+    AGENT_PHASE_RECONNAISSANCE,
+    AGENT_PHASE_REPORTING,
+    AGENT_PHASE_VERIFICATION,
+)
+from apps.deepaudit.db_runtime import run_with_fresh_connection
 from apps.deepaudit.agent_engine.agents import (
     AnalysisAgent,
     OrchestratorAgent,
@@ -15,6 +22,9 @@ from apps.deepaudit.agent_engine.agents import (
     VerificationAgent,
 )
 from apps.deepaudit.agent_engine.event_manager import AgentEventEmitter, EventManager
+
+if TYPE_CHECKING:
+    from apps.deepaudit.agent_task.agent_task_model import AgentCheckpoint, AgentFinding
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +79,18 @@ SKIP_DIRECTORIES = {
     ".nuxt",
 }
 ALLOWED_SEVERITIES = {"critical", "high", "medium", "low"}
+VULNERABILITY_TYPE_ALIASES = {
+    "hardcoded_secrets": "hardcoded_secret",
+    "hardcoded_credentials": "hardcoded_secret",
+}
+
+
+def _agent_finding_model():
+    return apps.get_model("deepaudit", "AgentFinding")
+
+
+def _agent_checkpoint_model():
+    return apps.get_model("deepaudit", "AgentCheckpoint")
 
 
 def _build_llm_service(input_data: Dict[str, Any]):
@@ -321,6 +343,7 @@ def _normalize_finding_payload(item: Dict[str, Any]) -> Dict[str, Any] | None:
     title = str(item.get("title") or "").strip()
     file_path = str(item.get("file_path") or item.get("file") or "").strip()
     vulnerability_type = str(item.get("vulnerability_type") or item.get("type") or "other").strip().lower() or "other"
+    vulnerability_type = VULNERABILITY_TYPE_ALIASES.get(vulnerability_type, vulnerability_type)
     severity = str(item.get("severity") or "low").strip().lower()
     if severity not in ALLOWED_SEVERITIES:
         severity = "low"
@@ -370,27 +393,100 @@ def _normalize_finding_payload(item: Dict[str, Any]) -> Dict[str, Any] | None:
 
 @sync_to_async
 def _persist_findings(task_id: str, findings: list[Dict[str, Any]]) -> int:
-    created = 0
-    for item in findings:
-        if not isinstance(item, dict):
-            continue
-        payload = _normalize_finding_payload(item)
-        if not payload:
-            continue
-        AgentFinding.objects.create(task_id=task_id, **payload)
-        created += 1
-    return created
+    def _persist() -> int:
+        AgentFinding = _agent_finding_model()
+        created = 0
+        for item in findings:
+            if not isinstance(item, dict):
+                continue
+            payload = _normalize_finding_payload(item)
+            if not payload:
+                continue
+            AgentFinding.objects.create(task_id=task_id, **payload)
+            created += 1
+        return created
+
+    return run_with_fresh_connection(_persist)
 
 
 @sync_to_async
 def _initialize_task_runtime_state(task_id: str, total_files: int) -> None:
     from apps.deepaudit.agent_task.agent_task_model import AgentTask
 
-    AgentTask.objects.filter(id=task_id).update(
+    run_with_fresh_connection(
+        AgentTask.objects.filter(id=task_id).update,
         total_files=total_files,
         current_phase=AGENT_PHASE_PLANNING,
         current_step="开始 planning 阶段",
     )
+
+
+@sync_to_async
+def _load_resume_checkpoint_context(resume_config: Dict[str, Any]) -> Dict[str, Any] | None:
+    checkpoint_id = str(resume_config.get("resume_checkpoint_id") or "").strip()
+    if not checkpoint_id:
+        return None
+
+    def _load() -> Dict[str, Any] | None:
+        AgentCheckpoint = _agent_checkpoint_model()
+        checkpoint = AgentCheckpoint.objects.filter(id=checkpoint_id, is_deleted=False).first()
+        if not checkpoint:
+            return None
+
+        from apps.deepaudit.agent_engine.core.persistence import agent_persistence
+
+        state_data = dict(checkpoint.state_data or {})
+        if not agent_persistence.is_restorable_payload(state_data):
+            return None
+
+        return {
+            "checkpoint_id": str(checkpoint.id),
+            "agent_id": str(checkpoint.agent_id),
+            "agent_type": str(checkpoint.agent_type or "").strip().lower() or "orchestrator",
+            "checkpoint_name": checkpoint.checkpoint_name,
+            "state_data": state_data,
+        }
+
+    return run_with_fresh_connection(_load)
+
+
+def _phase_for_agent(agent_type: str) -> str | None:
+    return {
+        "recon": AGENT_PHASE_RECONNAISSANCE,
+        "analysis": AGENT_PHASE_ANALYSIS,
+        "verification": AGENT_PHASE_VERIFICATION,
+        "orchestrator": AGENT_PHASE_PLANNING,
+    }.get(str(agent_type or "").strip().lower())
+
+
+def _build_resume_input(
+    resume_context: Dict[str, Any],
+    fallback_input: Dict[str, Any],
+) -> Dict[str, Any]:
+    runtime = dict((resume_context.get("state_data") or {}).get("runtime") or {})
+    base_runtime = dict(runtime.get("base") or {})
+    last_input = dict(base_runtime.get("last_input_data") or {})
+    merged = {**last_input, **fallback_input}
+
+    merged["project_info"] = {
+        **dict(last_input.get("project_info") or {}),
+        **dict(fallback_input.get("project_info") or {}),
+    }
+    merged["config"] = {
+        **dict(last_input.get("config") or {}),
+        **dict(fallback_input.get("config") or {}),
+    }
+    merged["project_root"] = fallback_input.get("project_root")
+    merged["task_id"] = fallback_input.get("task_id")
+    return merged
+
+
+def _extract_result_findings(agent_type: str, result_data: Dict[str, Any]) -> list[Dict[str, Any]]:
+    if str(agent_type or "").strip().lower() == "recon":
+        findings = result_data.get("initial_findings") or result_data.get("findings") or []
+    else:
+        findings = result_data.get("findings") or []
+    return [item for item in findings if isinstance(item, dict)]
 
 
 async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any], workspace: str):
@@ -434,10 +530,50 @@ async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any],
             "verification": verification_agent,
         },
     )
+    agent_map = {
+        "orchestrator": orchestrator,
+        "recon": recon_agent,
+        "analysis": analysis_agent,
+        "verification": verification_agent,
+    }
 
     try:
-        await event_emitter.emit_phase_start(AGENT_PHASE_PLANNING, "Starting Orchestrator Agent planning phase")
-        result = await orchestrator.run(normalized_input)
+        resume_config = dict((input_data.get("agent_config") or {}).get("resume") or {})
+        resume_context = await _load_resume_checkpoint_context(resume_config)
+        resume_agent_type = str((resume_context or {}).get("agent_type") or "orchestrator").strip().lower() or "orchestrator"
+        target_agent = agent_map.get(resume_agent_type, orchestrator)
+
+        if resume_context:
+            target_agent.restore_from_checkpoint_payload(dict(resume_context.get("state_data") or {}))
+            resume_input = _build_resume_input(resume_context, normalized_input)
+            resume_phase = _phase_for_agent(resume_agent_type)
+            if resume_agent_type != "orchestrator" and resume_phase:
+                await event_emitter.emit_phase_start(
+                    resume_phase,
+                    f"从检查点 {resume_context['checkpoint_id']} 恢复 {resume_agent_type} Agent",
+                )
+            else:
+                await event_manager.emit(
+                    event_type="info",
+                    phase=resume_phase or AGENT_PHASE_PLANNING,
+                    message=(
+                        f"从检查点 {resume_context['checkpoint_id']} "
+                        f"({resume_context.get('checkpoint_name') or resume_agent_type}) 恢复执行"
+                    ),
+                    event_metadata={
+                        "resume": True,
+                        "checkpoint_id": resume_context["checkpoint_id"],
+                        "agent_id": resume_context["agent_id"],
+                        "agent_type": resume_agent_type,
+                    },
+                )
+            result = await target_agent.run(resume_input)
+            if resume_agent_type != "orchestrator" and resume_phase:
+                await event_emitter.emit_phase_complete(resume_phase, f"{resume_phase} 阶段完成")
+        else:
+            await event_emitter.emit_phase_start(AGENT_PHASE_PLANNING, "Starting Orchestrator Agent planning phase")
+            result = await orchestrator.run(normalized_input)
+
         if result is None:
             raise RuntimeError("Orchestrator returned no result")
         if not result.success:
@@ -452,7 +588,7 @@ async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any],
         except Exception:
             logger.debug("Failed to collect in-memory vulnerability reports", exc_info=True)
 
-        findings = result_data.get("findings") if isinstance(result_data.get("findings"), list) else []
+        findings = _extract_result_findings(resume_agent_type, result_data)
         if not findings and report_findings:
             findings = report_findings
             result_data["findings"] = findings

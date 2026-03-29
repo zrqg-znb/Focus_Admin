@@ -181,6 +181,18 @@ Semgrep 是业界领先的静态分析工具，支持 30+ 种编程语言。
                 data=error_msg,  # 🔥 修复：设置 data 字段避免 None
                 error=error_msg
             )
+        if not await self.sandbox_manager.command_available("semgrep"):
+            message = (
+                "Semgrep 当前 sandbox 镜像中不可用，已跳过该工具。"
+                "如需启用，请在 SANDBOX_IMAGE 中安装 semgrep。"
+            )
+            logger.info("[Semgrep] %s", message)
+            return ToolResult(
+                success=False,
+                data=message,
+                error=message,
+                metadata={"skipped": True, "reason": "command_not_available"},
+            )
 
         # 🔥 使用公共函数进行智能路径解析
         safe_target_path, host_check_path, error_msg = _smart_resolve_target_path(
@@ -378,6 +390,18 @@ Bandit 是 Python 专用的安全分析工具。
         if not self.sandbox_manager.is_available:
             error_msg = f"Bandit unavailable: {self.sandbox_manager.get_diagnosis()}"
             return ToolResult(success=False, data=error_msg, error=error_msg)
+        if not await self.sandbox_manager.command_available("bandit"):
+            message = (
+                "Bandit 当前 sandbox 镜像中不可用，已跳过该工具。"
+                "如需启用，请在 SANDBOX_IMAGE 中安装 bandit。"
+            )
+            logger.info("[Bandit] %s", message)
+            return ToolResult(
+                success=False,
+                data=message,
+                error=message,
+                metadata={"skipped": True, "reason": "command_not_available"},
+            )
 
         # 🔥 使用公共函数进行智能路径解析
         safe_target_path, host_check_path, error_msg = _smart_resolve_target_path(

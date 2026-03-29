@@ -185,6 +185,62 @@ class OrchestratorAgent(BaseAgent):
     def register_sub_agent(self, name: str, agent: BaseAgent):
         """注册子 Agent"""
         self.sub_agents[name] = agent
+
+    def _build_runtime_state(self) -> Dict[str, Any]:
+        return {
+            "conversation_history": list(self._conversation_history),
+            "steps": [
+                {
+                    "thought": step.thought,
+                    "action": step.action,
+                    "action_input": step.action_input,
+                    "observation": step.observation,
+                    "sub_agent_result": step.sub_agent_result.to_dict() if step.sub_agent_result else None,
+                }
+                for step in self._steps
+            ],
+            "all_findings": list(self._all_findings),
+            "runtime_context": dict(self._runtime_context),
+            "dispatched_tasks": dict(self._dispatched_tasks),
+            "agent_results": dict(self._agent_results),
+            "agent_handoffs": {
+                name: handoff.to_dict()
+                for name, handoff in self._agent_handoffs.items()
+            },
+        }
+
+    def _restore_runtime_state(self, runtime_state: Dict[str, Any]) -> None:
+        self._conversation_history = list(runtime_state.get("conversation_history") or [])
+        self._steps = [
+            AgentStep(
+                thought=str(step.get("thought") or ""),
+                action=str(step.get("action") or ""),
+                action_input=dict(step.get("action_input") or {}),
+                observation=step.get("observation"),
+            )
+            for step in (runtime_state.get("steps") or [])
+            if isinstance(step, dict)
+        ]
+        self._all_findings = [
+            dict(item)
+            for item in (runtime_state.get("all_findings") or [])
+            if isinstance(item, dict)
+        ]
+        self._runtime_context = dict(runtime_state.get("runtime_context") or {})
+        self._dispatched_tasks = {
+            str(name): int(count)
+            for name, count in dict(runtime_state.get("dispatched_tasks") or {}).items()
+        }
+        self._agent_results = {
+            str(name): dict(result)
+            for name, result in dict(runtime_state.get("agent_results") or {}).items()
+            if isinstance(result, dict)
+        }
+        self._agent_handoffs = {
+            str(name): TaskHandoff.from_dict(handoff)
+            for name, handoff in dict(runtime_state.get("agent_handoffs") or {}).items()
+            if isinstance(handoff, dict)
+        }
     
     def cancel(self):
         """
@@ -249,38 +305,44 @@ class OrchestratorAgent(BaseAgent):
         """
         import time
         start_time = time.time()
+        self._remember_input(input_data)
         
         project_info = input_data.get("project_info", {})
         config = input_data.get("config", {})
+        resume_mode = bool(self._conversation_history)
         
         # 🔥 保存运行时上下文，用于传递给子 Agent
         self._runtime_context = {
+            **dict(self._runtime_context or {}),
             "project_info": project_info,
             "config": config,
             "project_root": input_data.get("project_root", project_info.get("root", ".")),
             "task_id": input_data.get("task_id"),
         }
-        
-        # 构建初始消息
-        initial_message = self._build_initial_message(project_info, config)
-        
-        # 初始化对话历史
-        self._conversation_history = [
-            {"role": "system", "content": self.config.system_prompt},
-            {"role": "user", "content": initial_message},
-        ]
-        
-        self._steps = []
-        self._all_findings = []
-        self._agent_results = {}  # 🔥 重置 Agent 结果缓存
-        self._agent_handoffs = {}  # 🔥 重置 Agent handoff 缓存
+
+        if not resume_mode:
+            initial_message = self._build_initial_message(project_info, config)
+            self._conversation_history = [
+                {"role": "system", "content": self.config.system_prompt},
+                {"role": "user", "content": initial_message},
+            ]
+            self._steps = []
+            self._all_findings = []
+            self._agent_results = {}
+            self._agent_handoffs = {}
+            self._dispatched_tasks = {}
         final_result = None
         error_message = None  # 🔥 跟踪错误信息
         
-        await self.emit_thinking("🧠 Orchestrator Agent 启动，LLM 开始自主编排决策...")
+        await self.emit_thinking(
+            "🧠 从检查点恢复 Orchestrator，继续执行编排决策..."
+            if resume_mode
+            else "🧠 Orchestrator Agent 启动，LLM 开始自主编排决策..."
+        )
         
         try:
-            for iteration in range(self.config.max_iterations):
+            start_iteration = max(int(self._iteration or 0), 0)
+            for iteration in range(start_iteration, self.config.max_iterations):
                 if self.is_cancelled:
                     break
                 

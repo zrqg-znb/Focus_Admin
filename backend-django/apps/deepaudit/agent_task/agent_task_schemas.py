@@ -126,11 +126,27 @@ class AgentSummarySchema(Schema):
 
 
 class AgentCheckpointSchema(Schema):
+    id: str | None = None
     phase: str
     status: str
     sequence: int
     message: str | None = None
     timestamp: str | None = None
+    agent_id: str | None = None
+    agent_name: str | None = None
+    agent_type: str | None = None
+    iteration: int = 0
+    checkpoint_type: str | None = None
+
+
+class AgentCheckpointDetailSchema(AgentCheckpointSchema):
+    task_id: str
+    task_status: str
+    progress_percentage: float = 0.0
+    events: list[dict] = Field(default_factory=list)
+    statistics: dict[str, int] = Field(default_factory=dict)
+    state_data: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentTreeNodeSchema(Schema):

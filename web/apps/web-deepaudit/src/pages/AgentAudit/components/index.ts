@@ -13,3 +13,4 @@ export { Header } from './Header';
 export { AgentErrorBoundary } from './AgentErrorBoundary';
 export { ConnectionStatus } from './ConnectionStatus';
 export { ReportExportDialog } from './ReportExportDialog';
+export { CheckpointDialog } from './CheckpointDialog';

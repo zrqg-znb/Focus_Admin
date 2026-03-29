@@ -15,6 +15,11 @@ from .base import AgentTool, ToolResult
 
 logger = logging.getLogger(__name__)
 
+VULNERABILITY_TYPE_ALIASES = {
+    "hardcoded_secrets": "hardcoded_secret",
+    "hardcoded_credentials": "hardcoded_secret",
+}
+
 
 class VulnerabilityReportInput(BaseModel):
     """漏洞报告输入参数"""
@@ -164,7 +169,7 @@ class CreateVulnerabilityReportTool(AgentTool):
             "xxe", "deserialization", "race_condition", "business_logic",
             "csrf", "open_redirect", "mass_assignment", "other"
         ]
-        vulnerability_type = vulnerability_type.lower()
+        vulnerability_type = VULNERABILITY_TYPE_ALIASES.get(vulnerability_type.lower(), vulnerability_type.lower())
         if vulnerability_type not in valid_types:
             # 允许未知类型，但记录警告
             logger.warning(f"Unknown vulnerability type: {vulnerability_type}")

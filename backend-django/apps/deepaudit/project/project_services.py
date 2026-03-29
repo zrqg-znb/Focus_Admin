@@ -17,6 +17,7 @@ from apps.deepaudit.permissions import (
     sync_owner_membership,
     visible_member_roles,
 )
+from apps.deepaudit.agent_task.agent_task_model import AgentFinding, AgentTask
 from apps.deepaudit.project.project_model import AuditProject, AuditProjectMember
 from apps.deepaudit.runtime import (
     cleanup_runtime_workspace,
@@ -24,7 +25,7 @@ from apps.deepaudit.runtime import (
     load_user_config_payload,
     prepare_workspace,
 )
-from apps.deepaudit.scan_task.scan_task_model import AuditArtifact, AuditIssue
+from apps.deepaudit.scan_task.scan_task_model import AuditArtifact, AuditIssue, AuditTask
 from apps.deepaudit.serialization import format_datetime_text
 from apps.deepaudit.storage import delete_project_zip, get_project_zip, save_project_zip
 from core.user.user_model import User
@@ -109,6 +110,31 @@ def serialize_project(project: AuditProject, current_role: str = 'viewer', inclu
         payload['task_summary'] = _project_task_summary(project)
         payload['zip_meta'] = _project_zip_meta(project)
     return payload
+
+
+def get_project_stats(user) -> dict:
+    projects = accessible_project_queryset(user, include_deleted=True)
+    active_projects = projects.filter(is_deleted=False, is_active=True)
+    scan_tasks = AuditTask.objects.filter(project__in=projects, is_deleted=False)
+    agent_tasks = AgentTask.objects.filter(project__in=projects, is_deleted=False)
+    quality_scores = list(
+        scan_tasks.filter(status='completed', quality_score__gt=0).values_list('quality_score', flat=True)
+    ) + list(
+        agent_tasks.filter(status='completed', quality_score__gt=0).values_list('quality_score', flat=True)
+    )
+    avg_quality_score = round(sum(quality_scores) / len(quality_scores), 2) if quality_scores else 0.0
+    resolved_finding_statuses = {'fixed', 'wont_fix', 'false_positive', 'resolved'}
+    return {
+        'total_projects': projects.count(),
+        'active_projects': active_projects.count(),
+        'total_tasks': scan_tasks.count() + agent_tasks.count(),
+        'completed_tasks': scan_tasks.filter(status='completed').count() + agent_tasks.filter(status='completed').count(),
+        'total_issues': AuditIssue.objects.filter(task__project__in=projects, is_deleted=False).count()
+        + AgentFinding.objects.filter(task__project__in=projects, is_deleted=False).count(),
+        'resolved_issues': AuditIssue.objects.filter(task__project__in=projects, is_deleted=False, status='resolved').count()
+        + AgentFinding.objects.filter(task__project__in=projects, is_deleted=False, status__in=resolved_finding_statuses).count(),
+        'avg_quality_score': avg_quality_score,
+    }
 
 
 def list_projects(user, *, keyword: str = '', source_type: str = '', page: int = 1, page_size: int = 20, recycle: bool = False) -> dict:

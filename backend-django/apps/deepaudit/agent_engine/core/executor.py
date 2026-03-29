@@ -153,6 +153,7 @@ class DynamicAgentExecutor:
             return {"success": False, "error": "Execution cancelled"}
         
         async with self._semaphore:
+            agent = None
             try:
                 # 创建 Agent 实例
                 agent = agent_class(
@@ -163,13 +164,30 @@ class DynamicAgentExecutor:
                     knowledge_modules=knowledge_modules,
                     **agent_config,
                 )
+                if input_data.get("task_id"):
+                    agent.state.update_context("task_id", input_data.get("task_id"))
+                    agent.state.update_context("root_task_id", input_data.get("task_id"))
+                if input_data.get("project_info"):
+                    agent.state.update_context("project_info", input_data.get("project_info"))
+                if input_data.get("config"):
+                    agent.state.update_context("config", input_data.get("config"))
+                if input_data.get("task"):
+                    agent.state.task = str(input_data.get("task"))
                 
                 # 执行 Agent
+                agent.on_start()
+                await agent._persist_state("start")
                 start_time = time.time()
                 result = await asyncio.wait_for(
                     agent.run(input_data),
                     timeout=self.default_timeout,
                 )
+                if result.success:
+                    agent.on_complete(result.data if isinstance(result.data, dict) else {"result": result.data})
+                    await agent._persist_state("final")
+                else:
+                    agent.on_error(result.error or "Agent returned unsuccessful result")
+                    await agent._persist_state("error")
                 duration_ms = int((time.time() - start_time) * 1000)
                 
                 return {
@@ -186,12 +204,33 @@ class DynamicAgentExecutor:
                 
             except asyncio.TimeoutError:
                 logger.error(f"Agent execution timed out")
+                try:
+                    if not agent:
+                        raise RuntimeError("agent not initialized")
+                    agent.on_error("Execution timed out")
+                    await agent._persist_state("error")
+                except Exception:
+                    logger.debug("Failed to persist timeout checkpoint", exc_info=True)
                 return {"success": False, "error": "Execution timed out"}
             except asyncio.CancelledError:
                 logger.info(f"Agent execution cancelled")
+                try:
+                    if not agent:
+                        raise RuntimeError("agent not initialized")
+                    agent.on_error("Execution cancelled")
+                    await agent._persist_state("error")
+                except Exception:
+                    logger.debug("Failed to persist cancelled checkpoint", exc_info=True)
                 return {"success": False, "error": "Execution cancelled"}
             except Exception as e:
                 logger.error(f"Agent execution failed: {e}", exc_info=True)
+                try:
+                    if not agent:
+                        raise RuntimeError("agent not initialized")
+                    agent.on_error(str(e))
+                    await agent._persist_state("error")
+                except Exception:
+                    logger.debug("Failed to persist error checkpoint", exc_info=True)
                 return {"success": False, "error": str(e)}
     
     async def execute_parallel(

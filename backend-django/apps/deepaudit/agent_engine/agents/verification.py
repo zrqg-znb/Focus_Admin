@@ -366,6 +366,37 @@ class VerificationAgent(BaseAgent):
         self._conversation_history: List[Dict[str, str]] = []
         self._steps: List[VerificationStep] = []
 
+    def _build_runtime_state(self) -> Dict[str, Any]:
+        return {
+            "conversation_history": list(self._conversation_history),
+            "steps": [
+                {
+                    "thought": step.thought,
+                    "action": step.action,
+                    "action_input": step.action_input,
+                    "observation": step.observation,
+                    "is_final": step.is_final,
+                    "final_answer": step.final_answer,
+                }
+                for step in self._steps
+            ],
+        }
+
+    def _restore_runtime_state(self, runtime_state: Dict[str, Any]) -> None:
+        self._conversation_history = list(runtime_state.get("conversation_history") or [])
+        self._steps = [
+            VerificationStep(
+                thought=str(step.get("thought") or ""),
+                action=step.get("action"),
+                action_input=dict(step.get("action_input") or {}) if isinstance(step.get("action_input"), dict) else None,
+                observation=step.get("observation"),
+                is_final=bool(step.get("is_final", False)),
+                final_answer=dict(step.get("final_answer") or {}) if isinstance(step.get("final_answer"), dict) else None,
+            )
+            for step in (runtime_state.get("steps") or [])
+            if isinstance(step, dict)
+        ]
+
 
 
     
@@ -463,11 +494,13 @@ class VerificationAgent(BaseAgent):
         """
         import time
         start_time = time.time()
+        self._remember_input(input_data)
         
         previous_results = input_data.get("previous_results", {})
         config = input_data.get("config", {})
         task = input_data.get("task", "")
         task_context = input_data.get("task_context", "")
+        resume_mode = bool(self._conversation_history)
         
         # 🔥 处理交接信息
         handoff = input_data.get("handoff")
@@ -628,19 +661,23 @@ class VerificationAgent(BaseAgent):
 3. 判断是否为真实漏洞
 {f"特别注意 Analysis Agent 提到的关注点。" if handoff_context else ""}"""
 
-        # 初始化对话历史
-        self._conversation_history = [
-            {"role": "system", "content": self.config.system_prompt},
-            {"role": "user", "content": initial_message},
-        ]
-        
-        self._steps = []
+        if not resume_mode:
+            self._conversation_history = [
+                {"role": "system", "content": self.config.system_prompt},
+                {"role": "user", "content": initial_message},
+            ]
+            self._steps = []
         final_result = None
         
-        await self.emit_thinking("🔐 Verification Agent 启动，LLM 开始自主验证漏洞...")
+        await self.emit_thinking(
+            "🔐 Verification Agent 从检查点恢复，继续验证漏洞..."
+            if resume_mode
+            else "🔐 Verification Agent 启动，LLM 开始自主验证漏洞..."
+        )
         
         try:
-            for iteration in range(self.config.max_iterations):
+            start_iteration = max(int(self._iteration or 0), 0)
+            for iteration in range(start_iteration, self.config.max_iterations):
                 if self.is_cancelled:
                     break
                 

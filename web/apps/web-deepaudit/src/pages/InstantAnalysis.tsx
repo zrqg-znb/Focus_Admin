@@ -4,10 +4,13 @@
  */
 
 import { useState, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -30,22 +33,45 @@ import {
   History,
   ChevronRight,
   MessageSquare,
-  Terminal
+  Terminal,
+  GitBranch,
+  FolderGit2,
+  Search,
 } from "lucide-react";
 import { CodeAnalysisEngine } from "@/features/analysis/services";
 import { api } from "@/shared/config/database";
-import type { CodeAnalysisResult, InstantAnalysis as InstantAnalysisType } from "@/shared/types";
+import type { CodeAnalysisResult, InstantAnalysis as InstantAnalysisType, Project } from "@/shared/types";
 import { toast } from "sonner";
 import InstantExportDialog from "@/components/reports/InstantExportDialog";
 import { getPromptTemplates, type PromptTemplate } from "@/shared/api/prompts";
 import { useAuth } from "@/shared/context/AuthContext";
 import { DEEPAUDIT_ACTION_CODES } from "@/shared/focus/focusPermission";
 import { parseAIExplanation } from "@/shared/utils/aiExplanation";
+import { BranchSelector } from "@/components/ui/branch-selector";
+
+type AnalysisMode = "snippet" | "repository";
+
+function parsePatternInput(value: string) {
+  return value
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (typeof error === "object" && error !== null) {
+    const record = error as { message?: string };
+    return record.message || fallback;
+  }
+  return fallback;
+}
 
 export default function InstantAnalysis() {
+  const navigate = useNavigate();
   const { hasAccess } = useAuth();
   const [code, setCode] = useState("");
   const [language, setLanguage] = useState("");
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("snippet");
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState<CodeAnalysisResult | null>(null);
   const [analysisTime, setAnalysisTime] = useState(0);
@@ -59,11 +85,21 @@ export default function InstantAnalysis() {
   const [historyRecords, setHistoryRecords] = useState<InstantAnalysisType[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
+  const [repositoryProjects, setRepositoryProjects] = useState<Project[]>([]);
+  const [projectSearch, setProjectSearch] = useState("");
+  const [loadingProjects, setLoadingProjects] = useState(false);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [availableBranches, setAvailableBranches] = useState<string[]>([]);
+  const [loadingBranches, setLoadingBranches] = useState(false);
+  const [selectedBranch, setSelectedBranch] = useState("");
+  const [repositoryExcludePatterns, setRepositoryExcludePatterns] = useState("");
+  const [repositoryAnalysisDepth, setRepositoryAnalysisDepth] = useState<"basic" | "standard" | "deep">("standard");
 
   // Prompt templates
   const [promptTemplates, setPromptTemplates] = useState<PromptTemplate[]>([]);
   const [selectedPromptTemplateId, setSelectedPromptTemplateId] = useState<string>("");
   const canExportReport = hasAccess(DEEPAUDIT_ACTION_CODES.REPORTS_EXPORT);
+  const canCreateAuditTask = hasAccess(DEEPAUDIT_ACTION_CODES.TASKS_CREATE);
 
   const supportedLanguages = CodeAnalysisEngine.getSupportedLanguages();
 
@@ -85,6 +121,52 @@ export default function InstantAnalysis() {
     };
     loadPromptTemplates();
   }, []);
+
+  useEffect(() => {
+    const loadRepositoryProjects = async () => {
+      try {
+        setLoadingProjects(true);
+        const projects = await CodeAnalysisEngine.getRepositories();
+        setRepositoryProjects(projects);
+        setSelectedProjectId((current) => current || projects[0]?.id || "");
+      } catch (error) {
+        console.error("加载仓库项目失败:", error);
+        toast.error("加载仓库项目失败");
+      } finally {
+        setLoadingProjects(false);
+      }
+    };
+    void loadRepositoryProjects();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedProjectId) {
+      setAvailableBranches([]);
+      setSelectedBranch("");
+      return;
+    }
+    const loadBranches = async () => {
+      try {
+        setLoadingBranches(true);
+        const payload = await CodeAnalysisEngine.getBranches(selectedProjectId);
+        const branches = payload.branches.length > 0 ? payload.branches : [payload.default_branch || "main"];
+        setAvailableBranches(branches);
+        setSelectedBranch((current) => {
+          if (current && branches.includes(current)) {
+            return current;
+          }
+          return payload.default_branch || branches[0] || "main";
+        });
+      } catch (error) {
+        console.error("加载项目分支失败:", error);
+        setAvailableBranches(["main"]);
+        setSelectedBranch("main");
+      } finally {
+        setLoadingBranches(false);
+      }
+    };
+    void loadBranches();
+  }, [selectedProjectId]);
 
   // Load history
   const loadHistory = async () => {
@@ -267,12 +349,45 @@ public class Example {
       setCurrentAnalysisId(analysisResult.analysis_id || null);
 
       toast.success(`分析完成！发现 ${analysisResult.issues.length} 个问题`);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Analysis failed:', error);
-      toast.error(error?.message || "分析失败，请稍后重试");
+      toast.error(getErrorMessage(error, "分析失败，请稍后重试"));
     } finally {
       setAnalyzing(false);
       setCode("");
+    }
+  };
+
+  const handleRepositoryAnalyze = async () => {
+    if (!canCreateAuditTask) {
+      toast.error("当前账号没有创建仓库审计任务的权限");
+      return;
+    }
+    if (!selectedProjectId) {
+      toast.error("请选择一个仓库项目");
+      return;
+    }
+    if (!selectedBranch.trim()) {
+      toast.error("请选择要分析的分支");
+      return;
+    }
+
+    try {
+      setAnalyzing(true);
+      const createdTask = await CodeAnalysisEngine.analyzeRepository({
+        projectId: selectedProjectId,
+        branch: selectedBranch.trim(),
+        excludePatterns: parsePatternInput(repositoryExcludePatterns),
+        promptTemplateId: selectedPromptTemplateId || undefined,
+        analysisDepth: repositoryAnalysisDepth,
+      });
+      toast.success("仓库审计任务已创建，正在跳转到任务详情");
+      navigate(`/tasks/${createdTask.id}`);
+    } catch (error) {
+      console.error("Repository analysis failed:", error);
+      toast.error(error instanceof Error ? error.message : "启动仓库分析失败");
+    } finally {
+      setAnalyzing(false);
     }
   };
 
@@ -337,8 +452,21 @@ public class Example {
     setAnalysisTime(0);
   };
 
+  const selectedProject = repositoryProjects.find((project) => project.id === selectedProjectId) || null;
+  const filteredProjects = repositoryProjects.filter((project) => {
+    const keyword = projectSearch.trim().toLowerCase();
+    if (!keyword) {
+      return true;
+    }
+    return (
+      project.name.toLowerCase().includes(keyword) ||
+      project.description?.toLowerCase().includes(keyword) ||
+      project.repository_url?.toLowerCase().includes(keyword)
+    );
+  });
+
   // Render issue with cyberpunk style
-  const renderIssue = (issue: any, index: number) => (
+  const renderIssue = (issue: CodeAnalysisResult["issues"][number], index: number) => (
     <div key={index} className="cyber-card p-4 mb-4 hover:border-border transition-all group">
       <div className="flex items-start justify-between mb-3 pb-3 border-b border-border">
         <div className="flex items-start space-x-3">
@@ -532,13 +660,14 @@ public class Example {
               <ScrollArea className="h-[400px]">
                 <div className="space-y-3">
                   {historyRecords.map((record) => (
-                    <div
+                    <button
                       key={record.id}
+                      type="button"
                       className={`p-4 rounded-lg border transition-colors cursor-pointer ${
                         selectedHistoryId === record.id
                           ? 'bg-primary/10 border-primary/30'
                           : 'bg-muted/50 border-border hover:bg-muted hover:border-border'
-                      }`}
+                      } w-full text-left`}
                       onClick={() => viewHistoryRecord(record)}
                     >
                       <div className="flex items-center justify-between mb-2">
@@ -575,7 +704,7 @@ public class Example {
                           {(record.analysis_time ?? 0).toFixed(2)}s
                         </span>
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </ScrollArea>
@@ -588,7 +717,9 @@ public class Example {
       <div className="cyber-card p-0 relative z-10">
         <div className="cyber-card-header">
           <Terminal className="w-5 h-5 text-primary" />
-          <h3 className="text-lg font-bold uppercase tracking-wider text-foreground">代码分析</h3>
+          <h3 className="text-lg font-bold uppercase tracking-wider text-foreground">
+            {analysisMode === "snippet" ? "代码分析" : "仓库分析"}
+          </h3>
           <div className="ml-auto flex items-center gap-2">
             <Button
               variant="outline"
@@ -609,113 +740,293 @@ public class Example {
         </div>
 
         <div className="p-6 space-y-4">
-          {/* Toolbar */}
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="flex-1 space-y-1">
-              <label className="text-xs font-bold text-muted-foreground uppercase">编程语言</label>
-              <Select value={language} onValueChange={setLanguage}>
-                <SelectTrigger className="cyber-input h-10">
-                  <SelectValue placeholder="选择编程语言" />
-                </SelectTrigger>
-                <SelectContent className="cyber-dialog border-border">
-                  {supportedLanguages.map((lang) => (
-                    <SelectItem key={lang} value={lang}>
-                      {lang.charAt(0).toUpperCase() + lang.slice(1)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex-1 space-y-1">
-              <label className="text-xs font-bold text-muted-foreground uppercase">提示词模板</label>
-              <Select value={selectedPromptTemplateId} onValueChange={setSelectedPromptTemplateId}>
-                <SelectTrigger className="cyber-input h-10">
-                  <div className="flex items-center gap-2">
-                    <MessageSquare className="w-4 h-4 text-violet-400" />
-                    <SelectValue placeholder="选择提示词模板" />
-                  </div>
-                </SelectTrigger>
-                <SelectContent className="cyber-dialog border-border">
-                  {promptTemplates.map((pt) => (
-                    <SelectItem key={pt.id} value={pt.id}>
-                      {pt.name} {pt.is_default && '(默认)'}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-end">
-              <Button
-                variant="outline"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={analyzing}
-                className="cyber-btn-outline h-10"
-              >
-                <Upload className="w-4 h-4 mr-2" />
-                上传文件
-              </Button>
-            </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".js,.jsx,.ts,.tsx,.py,.java,.go,.rs,.cpp,.c,.cc,.h,.hh,.cs,.php,.rb,.swift,.kt"
-              onChange={handleFileUpload}
-              className="hidden"
-            />
-          </div>
-
-          {/* Quick Examples */}
-          <div className="flex flex-wrap gap-2 items-center p-3 bg-muted border border-border rounded">
-            <span className="text-xs font-bold uppercase text-muted-foreground mr-2">示例：</span>
-            {['javascript', 'python', 'java'].map((lang) => (
-              <Button
-                key={lang}
-                variant="outline"
-                size="sm"
-                onClick={() => loadExampleCode(lang)}
-                disabled={analyzing}
-                className="h-7 px-2 text-xs cyber-btn-ghost"
-              >
-                {lang.charAt(0).toUpperCase() + lang.slice(1)}
-              </Button>
-            ))}
-          </div>
-
-          {/* Code Editor */}
-          <div className="relative">
-            <div className="absolute top-0 right-0 bg-muted text-muted-foreground px-2 py-1 text-xs font-mono uppercase z-10 rounded-bl border-l border-b border-border">
-              Editor
-            </div>
-            <Textarea
-              placeholder="// 粘贴代码或上传文件..."
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              className="min-h-[300px] font-mono text-sm cyber-bg-elevated text-emerald-400 border border-border p-4 focus:ring-0 focus:border-primary/50 placeholder:text-muted-foreground"
-              disabled={analyzing}
-            />
-            <div className="text-xs text-muted-foreground mt-1 font-mono text-right">
-              {code.length} 字符，{code.split('\n').length} 行
-            </div>
-          </div>
-
-          {/* Analyze Button */}
-          <Button
-            onClick={handleAnalyze}
-            disabled={!code.trim() || !language || analyzing}
-            className="w-full cyber-btn-primary h-12 text-lg font-bold uppercase"
+          <Tabs
+            value={analysisMode}
+            onValueChange={(value) => setAnalysisMode(value as AnalysisMode)}
+            className="space-y-4"
           >
-            {analyzing ? (
-              <>
-                <div className="loading-spinner w-5 h-5 mr-3"></div>
-                分析中...
-              </>
-            ) : (
-              <>
-                <Zap className="w-5 h-5 mr-2" />
-                开始分析
-              </>
-            )}
-          </Button>
+            <TabsList className="grid w-full grid-cols-2 bg-muted border border-border p-1 h-auto gap-1 rounded-lg">
+              <TabsTrigger value="snippet" className="data-[state=active]:bg-primary data-[state=active]:text-foreground font-mono font-bold uppercase py-2.5 text-muted-foreground transition-all rounded text-xs flex items-center gap-2">
+                <Code className="w-3 h-3" />
+                代码片段
+              </TabsTrigger>
+              <TabsTrigger value="repository" className="data-[state=active]:bg-primary data-[state=active]:text-foreground font-mono font-bold uppercase py-2.5 text-muted-foreground transition-all rounded text-xs flex items-center gap-2">
+                <FolderGit2 className="w-3 h-3" />
+                仓库项目
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="snippet" className="space-y-4">
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="flex-1 space-y-1">
+                  <Label className="text-xs font-bold text-muted-foreground uppercase">编程语言</Label>
+                  <Select value={language} onValueChange={setLanguage}>
+                    <SelectTrigger className="cyber-input h-10">
+                      <SelectValue placeholder="选择编程语言" />
+                    </SelectTrigger>
+                    <SelectContent className="cyber-dialog border-border">
+                      {supportedLanguages.map((lang) => (
+                        <SelectItem key={lang} value={lang}>
+                          {lang.charAt(0).toUpperCase() + lang.slice(1)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex-1 space-y-1">
+                  <Label className="text-xs font-bold text-muted-foreground uppercase">提示词模板</Label>
+                  <Select value={selectedPromptTemplateId} onValueChange={setSelectedPromptTemplateId}>
+                    <SelectTrigger className="cyber-input h-10">
+                      <div className="flex items-center gap-2">
+                        <MessageSquare className="w-4 h-4 text-violet-400" />
+                        <SelectValue placeholder="选择提示词模板" />
+                      </div>
+                    </SelectTrigger>
+                    <SelectContent className="cyber-dialog border-border">
+                      {promptTemplates.map((pt) => (
+                        <SelectItem key={pt.id} value={pt.id}>
+                          {pt.name} {pt.is_default && '(默认)'}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-end">
+                  <Button
+                    variant="outline"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={analyzing}
+                    className="cyber-btn-outline h-10"
+                  >
+                    <Upload className="w-4 h-4 mr-2" />
+                    上传文件
+                  </Button>
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".js,.jsx,.ts,.tsx,.py,.java,.go,.rs,.cpp,.c,.cc,.h,.hh,.cs,.php,.rb,.swift,.kt"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-2 items-center p-3 bg-muted border border-border rounded">
+                <span className="text-xs font-bold uppercase text-muted-foreground mr-2">示例：</span>
+                {['javascript', 'python', 'java'].map((lang) => (
+                  <Button
+                    key={lang}
+                    variant="outline"
+                    size="sm"
+                    onClick={() => loadExampleCode(lang)}
+                    disabled={analyzing}
+                    className="h-7 px-2 text-xs cyber-btn-ghost"
+                  >
+                    {lang.charAt(0).toUpperCase() + lang.slice(1)}
+                  </Button>
+                ))}
+              </div>
+
+              <div className="relative">
+                <div className="absolute top-0 right-0 bg-muted text-muted-foreground px-2 py-1 text-xs font-mono uppercase z-10 rounded-bl border-l border-b border-border">
+                  Editor
+                </div>
+                <Textarea
+                  placeholder="// 粘贴代码或上传文件..."
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  className="min-h-[300px] font-mono text-sm cyber-bg-elevated text-emerald-400 border border-border p-4 focus:ring-0 focus:border-primary/50 placeholder:text-muted-foreground"
+                  disabled={analyzing}
+                />
+                <div className="text-xs text-muted-foreground mt-1 font-mono text-right">
+                  {code.length} 字符，{code.split('\n').length} 行
+                </div>
+              </div>
+
+              <Button
+                onClick={handleAnalyze}
+                disabled={!code.trim() || !language || analyzing}
+                className="w-full cyber-btn-primary h-12 text-lg font-bold uppercase"
+              >
+                {analyzing ? (
+                  <>
+                    <div className="loading-spinner w-5 h-5 mr-3"></div>
+                    分析中...
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-5 h-5 mr-2" />
+                    开始分析
+                  </>
+                )}
+              </Button>
+            </TabsContent>
+
+            <TabsContent value="repository" className="space-y-4">
+              <div className="rounded-lg border border-border bg-muted/40 p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <FolderGit2 className="w-4 h-4 text-primary" />
+                  启动真实仓库审计任务
+                </div>
+                <p className="mt-2 text-xs leading-6 text-muted-foreground">
+                  这里会直接复用 DeepAudit 的仓库扫描后端，创建正式审计任务并跳转到任务详情，而不是走任何 mock 流程。
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)] gap-4">
+                <div className="space-y-3">
+                  <Label className="text-xs font-bold text-muted-foreground uppercase">仓库项目</Label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={projectSearch}
+                      onChange={(event) => setProjectSearch(event.target.value)}
+                      placeholder="搜索项目名称或仓库地址"
+                      className="cyber-input pl-10"
+                    />
+                  </div>
+                  <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                    {loadingProjects ? (
+                      <div className="cyber-card p-6 text-center text-sm font-mono text-muted-foreground">加载仓库项目中...</div>
+                    ) : filteredProjects.length === 0 ? (
+                      <div className="cyber-card p-6 text-center text-sm font-mono text-muted-foreground">当前没有可用于仓库分析的项目</div>
+                    ) : (
+                      filteredProjects.map((project) => {
+                        const active = project.id === selectedProjectId;
+                        return (
+                          <button
+                            key={project.id}
+                            type="button"
+                            onClick={() => setSelectedProjectId(project.id)}
+                            className={`w-full rounded-lg border p-4 text-left transition-all ${
+                              active
+                                ? "border-primary bg-primary/10 shadow-[0_0_0_1px_rgba(255,107,44,0.35)]"
+                                : "border-border bg-background hover:border-primary/40"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="font-semibold text-foreground">{project.name}</div>
+                                <div className="mt-1 truncate text-xs font-mono text-muted-foreground">
+                                  {project.repository_url}
+                                </div>
+                              </div>
+                              <Badge variant="outline" className="font-mono uppercase">
+                                {project.repository_type || "other"}
+                              </Badge>
+                            </div>
+                            <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
+                              <span>默认分支: {project.default_branch || "main"}</span>
+                              {project.description && <span className="truncate">{project.description}</span>}
+                            </div>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold text-muted-foreground uppercase">目标分支</Label>
+                    <BranchSelector
+                      value={selectedBranch}
+                      onChange={setSelectedBranch}
+                      branches={availableBranches}
+                      disabled={!selectedProjectId || loadingBranches}
+                      className="h-10 w-full"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {loadingBranches ? "正在拉取分支列表..." : `可选分支 ${availableBranches.length || 0} 个`}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold text-muted-foreground uppercase">提示词模板</Label>
+                    <Select value={selectedPromptTemplateId} onValueChange={setSelectedPromptTemplateId}>
+                      <SelectTrigger className="cyber-input h-10">
+                        <div className="flex items-center gap-2">
+                          <MessageSquare className="w-4 h-4 text-violet-400" />
+                          <SelectValue placeholder="选择提示词模板" />
+                        </div>
+                      </SelectTrigger>
+                      <SelectContent className="cyber-dialog border-border">
+                        {promptTemplates.map((pt) => (
+                          <SelectItem key={pt.id} value={pt.id}>
+                            {pt.name} {pt.is_default && '(默认)'}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold text-muted-foreground uppercase">分析深度</Label>
+                    <Select
+                      value={repositoryAnalysisDepth}
+                      onValueChange={(value: "basic" | "standard" | "deep") => setRepositoryAnalysisDepth(value)}
+                    >
+                      <SelectTrigger className="cyber-input h-10">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="cyber-dialog border-border">
+                        <SelectItem value="basic">Basic</SelectItem>
+                        <SelectItem value="standard">Standard</SelectItem>
+                        <SelectItem value="deep">Deep</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold text-muted-foreground uppercase">排除模式</Label>
+                    <Textarea
+                      value={repositoryExcludePatterns}
+                      onChange={(event) => setRepositoryExcludePatterns(event.target.value)}
+                      placeholder={"每行一个，或使用逗号分隔，例如\nnode_modules/**\ndist/**\n*.min.js"}
+                      className="cyber-input min-h-32 font-mono text-xs"
+                    />
+                  </div>
+
+                  {selectedProject && (
+                    <div className="rounded-lg border border-border bg-muted/30 p-4 text-xs font-mono text-muted-foreground">
+                      <div className="flex items-center gap-2 text-foreground">
+                        <GitBranch className="w-4 h-4 text-primary" />
+                        当前项目
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        <div>名称: {selectedProject.name}</div>
+                        <div className="break-all">仓库: {selectedProject.repository_url}</div>
+                        <div>默认分支: {selectedProject.default_branch || "main"}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  <Button
+                    onClick={handleRepositoryAnalyze}
+                    disabled={!selectedProjectId || !selectedBranch || analyzing || !canCreateAuditTask}
+                    className="w-full cyber-btn-primary h-12 text-base font-bold uppercase"
+                  >
+                    {analyzing ? (
+                      <>
+                        <div className="loading-spinner w-5 h-5 mr-3"></div>
+                        创建任务中...
+                      </>
+                    ) : (
+                      <>
+                        <FolderGit2 className="w-5 h-5 mr-2" />
+                        启动仓库审计
+                      </>
+                    )}
+                  </Button>
+                  {!canCreateAuditTask && (
+                    <p className="text-xs text-amber-400">
+                      当前账号没有创建仓库审计任务的权限。
+                    </p>
+                  )}
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
         </div>
       </div>
 

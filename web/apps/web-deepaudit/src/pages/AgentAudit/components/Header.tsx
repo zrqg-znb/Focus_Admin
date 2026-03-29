@@ -4,7 +4,7 @@
  * Features: Enhanced glow effects, refined controls, premium feel
  */
 
-import { Square, Download, Loader2, Radio, Cpu, Sparkles } from "lucide-react";
+import { Square, Download, Loader2, Radio, Cpu, Sparkles, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "./StatusBadge";
 import type { HeaderProps } from "../types";
@@ -12,11 +12,13 @@ import type { HeaderProps } from "../types";
 export function Header({
   task,
   canCancel,
+  canInspectCheckpoints,
   canCreate,
   canExport,
   isRunning,
   isCancelling,
   onCancel,
+  onCheckpoints,
   onExport,
   onNewAudit
 }: HeaderProps) {
@@ -93,7 +95,20 @@ export function Header({
           </Button>
         )}
 
-        {(canExport || canCreate) && <div className="h-8 w-px bg-border/50 mx-1" />}
+        {(canInspectCheckpoints || canExport || canCreate) && <div className="h-8 w-px bg-border/50 mx-1" />}
+
+        {canInspectCheckpoints && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onCheckpoints}
+            disabled={!task}
+            className="h-9 px-4 text-xs font-mono uppercase tracking-wider text-violet-400 hover:text-violet-300 bg-violet-500/10 hover:bg-violet-500/20 border border-violet-500/30 hover:border-violet-500/50 transition-all duration-300 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:border-transparent rounded-md shadow-[0_0_15px_rgba(139,92,246,0.1)] hover:shadow-[0_0_20px_rgba(139,92,246,0.2)]"
+          >
+            <History className="w-3.5 h-3.5 mr-2" />
+            <span>Checkpoints</span>
+          </Button>
+        )}
 
         {canExport && (
           <Button

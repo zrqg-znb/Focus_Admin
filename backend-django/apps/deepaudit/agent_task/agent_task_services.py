@@ -12,7 +12,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from ninja.errors import HttpError
 
-from apps.deepaudit.agent_task.agent_task_model import AgentEvent, AgentFinding, AgentTask
+from apps.deepaudit.agent_task.agent_task_model import AgentCheckpoint, AgentEvent, AgentFinding, AgentTask
 from apps.deepaudit.constants import (
     AGENT_PHASE_ANALYSIS,
     AGENT_PHASE_CHOICES,
@@ -30,7 +30,9 @@ from apps.deepaudit.reporting import ReportBuilder
 from apps.deepaudit.runtime import cleanup_runtime_workspace, docker_available, prepare_workspace
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact
 from apps.deepaudit.serialization import format_datetime_text, normalize_json_payload
+from apps.deepaudit.db_runtime import close_runtime_db_connections, ensure_runtime_db_connection, run_with_fresh_connection
 from apps.deepaudit.storage import save_json_artifact, save_report_file
+from apps.deepaudit.tasks import dispatch_deepaudit_task, run_agent_task
 
 PHASE_LABELS = {
     AGENT_PHASE_PLANNING: 'Planning',
@@ -44,6 +46,7 @@ PHASE_LABELS = {
 VALID_FINDING_STATUSES = {value for value, _label in FINDING_STATUS_CHOICES}
 ACTIVE_STATUSES = {'pending', 'initializing', 'running', 'planning', 'indexing', 'analyzing', 'verifying', 'reporting'}
 TERMINAL_STATUSES = {'completed', 'failed', 'cancelled'}
+MAX_PERSISTED_CHECKPOINTS = 50
 THINKING_EVENT_TYPES = {
     'thinking',
     'thinking_start',
@@ -189,7 +192,7 @@ def _serialize_report_payload(instance: AgentTask) -> dict:
         {
             'task': serialize_task(instance),
             'summary': build_summary(instance, findings=findings),
-            'checkpoints': build_checkpoints(instance),
+            'checkpoints': build_phase_checkpoints(instance),
             'findings': [serialize_finding(item) for item in findings],
             'events': [serialize_event(item) for item in instance.events.filter(is_deleted=False).order_by('sequence')[:1000]],
         }
@@ -513,6 +516,7 @@ def create_task(user, payload: dict) -> AgentTask:
         branch_name=payload.get('branch_name') or access.project.default_branch,
         exclude_patterns=payload.get('exclude_patterns') or [],
         target_files=payload.get('target_files') or [],
+        agent_config=payload.get('agent_config') or {},
         max_iterations=int(payload.get('max_iterations') or 50),
         timeout_seconds=int(payload.get('timeout_seconds') or 1800),
         status='pending',
@@ -545,6 +549,110 @@ def mark_dispatch_failed(instance: AgentTask, message: str) -> AgentTask:
     instance.save(update_fields=['status', 'current_step', 'error_message', 'completed_at', 'sys_modifier', 'sys_update_datetime'])
     create_event(instance, 'task_error', phase=instance.current_phase or AGENT_PHASE_PLANNING, message=message)
     return instance
+
+
+def _is_restorable_checkpoint(checkpoint: AgentCheckpoint | None) -> bool:
+    if not checkpoint:
+        return False
+    try:
+        from apps.deepaudit.agent_engine.core.persistence import agent_persistence
+
+        return agent_persistence.is_restorable_payload(checkpoint.state_data or {})
+    except Exception:
+        return False
+
+
+def _resolve_resume_checkpoint(source_task: AgentTask, checkpoint: AgentCheckpoint) -> AgentCheckpoint | None:
+    if _is_restorable_checkpoint(checkpoint) and str(checkpoint.agent_type or '').strip().lower() == 'orchestrator':
+        return checkpoint
+
+    orchestrator_candidates = source_task.persisted_checkpoints.filter(
+        is_deleted=False,
+        agent_type='orchestrator',
+        sys_create_datetime__lte=checkpoint.sys_create_datetime,
+    ).order_by('-sys_create_datetime')
+    for candidate in orchestrator_candidates:
+        if _is_restorable_checkpoint(candidate):
+            return candidate
+
+    latest_orchestrator = source_task.persisted_checkpoints.filter(
+        is_deleted=False,
+        agent_type='orchestrator',
+    ).order_by('-sys_create_datetime')
+    for candidate in latest_orchestrator:
+        if _is_restorable_checkpoint(candidate):
+            return candidate
+
+    if _is_restorable_checkpoint(checkpoint):
+        return checkpoint
+    return None
+
+
+def resume_task_from_checkpoint(user, task_id: str, checkpoint_id: str) -> AgentTask:
+    source_task = get_task(user, task_id)
+    require_project_role(user, source_task.project, min_role='member')
+    selected_checkpoint = get_object_or_404(
+        AgentCheckpoint.objects.filter(is_deleted=False),
+        id=checkpoint_id,
+        task=source_task,
+    )
+    resume_checkpoint = _resolve_resume_checkpoint(source_task, selected_checkpoint)
+    if not resume_checkpoint:
+        raise HttpError(422, '所选检查点不包含可恢复的运行时状态，请选择带状态快照的检查点后重试')
+
+    payload = {
+        'project_id': str(source_task.project_id),
+        'name': f"{source_task.name or source_task.project.name} [resume]",
+        'description': source_task.description or '',
+        'audit_scope': {
+            **dict(source_task.audit_scope or {}),
+            'resume_from_checkpoint_id': str(resume_checkpoint.id),
+            'resume_from_task_id': str(source_task.id),
+            'resume_agent_id': resume_checkpoint.agent_id,
+            'resume_requested_checkpoint_id': str(selected_checkpoint.id),
+        },
+        'target_vulnerabilities': list(source_task.target_vulnerabilities or []),
+        'verification_level': source_task.verification_level or 'sandbox',
+        'branch_name': source_task.branch_name or source_task.project.default_branch,
+        'exclude_patterns': list(source_task.exclude_patterns or []),
+        'target_files': list(source_task.target_files or []),
+        'agent_config': {
+            **dict(source_task.agent_config or {}),
+            'resume': {
+                'mode': 'checkpoint_state',
+                'source_task_id': str(source_task.id),
+                'requested_checkpoint_id': str(selected_checkpoint.id),
+                'resume_checkpoint_id': str(resume_checkpoint.id),
+                'resume_agent_id': str(resume_checkpoint.agent_id),
+                'resume_agent_type': str(resume_checkpoint.agent_type or '').strip().lower() or 'orchestrator',
+            },
+        },
+        'max_iterations': int(source_task.max_iterations or 50),
+        'timeout_seconds': int(source_task.timeout_seconds or 1800),
+    }
+    resumed_task = create_task(user, payload)
+    resumed_task.description = (
+        f"{resumed_task.description}\n\nResumed from checkpoint {resume_checkpoint.id} ({resume_checkpoint.checkpoint_name or resume_checkpoint.checkpoint_type})."
+    ).strip()
+    resumed_task.audit_scope = payload['audit_scope']
+    resumed_task.agent_config = payload['agent_config']
+    resumed_task.sys_modifier = user
+    resumed_task.save(update_fields=['description', 'audit_scope', 'agent_config', 'sys_modifier', 'sys_update_datetime'])
+    dispatch_error = dispatch_deepaudit_task(run_agent_task, str(resumed_task.id))
+    if dispatch_error:
+        return mark_dispatch_failed(resumed_task, dispatch_error)
+    create_event(
+        resumed_task,
+        'info',
+        phase=resumed_task.current_phase,
+        message=f'从检查点 {resume_checkpoint.id} 恢复任务状态并重新继续执行',
+        metadata={
+            'source_task_id': str(source_task.id),
+            'source_checkpoint_id': str(resume_checkpoint.id),
+            'requested_checkpoint_id': str(selected_checkpoint.id),
+        },
+    )
+    return resumed_task
 
 
 def list_events(user, task_id: str, *, after_sequence: int = 0, limit: int = 200) -> list[dict]:
@@ -681,6 +789,7 @@ def refresh_task_snapshot(
     completed_at=UNSET,
     error_message=UNSET,
 ) -> AgentTask | None:
+    ensure_runtime_db_connection()
     if isinstance(task_or_id, AgentTask):
         instance = AgentTask.objects.filter(id=task_or_id.id, is_deleted=False).first()
     else:
@@ -807,6 +916,7 @@ def refresh_task_snapshot(
 
     if update_fields:
         instance.save(update_fields=update_fields + ['sys_update_datetime'])
+    close_runtime_db_connections()
     return instance
 
 
@@ -843,10 +953,11 @@ def build_summary(instance: AgentTask, *, findings: list[AgentFinding] | None = 
     }
 
 
-def build_checkpoints(instance: AgentTask) -> list[dict]:
+def build_phase_checkpoints(instance: AgentTask) -> list[dict]:
     phase_order = [choice[0] for choice in AGENT_PHASE_CHOICES]
     checkpoint_map = {
         phase: {
+            'id': phase,
             'phase': phase,
             'status': 'pending',
             'sequence': 0,
@@ -855,6 +966,12 @@ def build_checkpoints(instance: AgentTask) -> list[dict]:
         }
         for phase in phase_order
     }
+
+    persisted_by_phase: dict[str, AgentCheckpoint] = {}
+    for checkpoint in instance.persisted_checkpoints.filter(is_deleted=False).order_by('-sys_create_datetime'):
+        phase = str((checkpoint.checkpoint_metadata or {}).get('phase') or '').strip()
+        if phase and phase not in persisted_by_phase:
+            persisted_by_phase[phase] = checkpoint
 
     for event in instance.events.filter(is_deleted=False).order_by('sequence'):
         phase = event.phase
@@ -933,12 +1050,195 @@ def build_checkpoints(instance: AgentTask) -> list[dict]:
             inferred_status = 'running'
         checkpoint_map[phase] = {
             **checkpoint,
+            'id': phase,
             'status': inferred_status,
             'message': checkpoint['message'] or f'{PHASE_LABELS.get(phase, phase.title())} (legacy inferred)',
             'timestamp': checkpoint['timestamp'] or legacy_timestamp,
         }
 
+    for phase, persisted in persisted_by_phase.items():
+        if phase not in checkpoint_map:
+            continue
+        metadata = dict(persisted.checkpoint_metadata or {})
+        checkpoint_map[phase] = {
+            **checkpoint_map[phase],
+            'id': str(persisted.id),
+            'status': str(persisted.status or checkpoint_map[phase]['status']),
+            'sequence': _to_int(metadata.get('sequence'), checkpoint_map[phase]['sequence']),
+            'message': persisted.checkpoint_name or checkpoint_map[phase]['message'],
+            'timestamp': format_datetime_text(persisted.sys_create_datetime) or checkpoint_map[phase]['timestamp'],
+            'agent_id': persisted.agent_id,
+            'agent_name': persisted.agent_name,
+            'agent_type': persisted.agent_type,
+            'iteration': persisted.iteration,
+            'checkpoint_type': persisted.checkpoint_type,
+        }
+
     return [checkpoint_map[phase] for phase in phase_order]
+
+
+def serialize_persisted_checkpoint(checkpoint: AgentCheckpoint) -> dict:
+    metadata = dict(checkpoint.checkpoint_metadata or {})
+    return {
+        'id': str(checkpoint.id),
+        'phase': str(metadata.get('phase') or checkpoint.agent_type or ''),
+        'status': checkpoint.status,
+        'sequence': _to_int(metadata.get('sequence'), 0),
+        'message': checkpoint.checkpoint_name,
+        'timestamp': format_datetime_text(checkpoint.sys_create_datetime),
+        'agent_id': checkpoint.agent_id,
+        'agent_name': checkpoint.agent_name,
+        'agent_type': checkpoint.agent_type,
+        'iteration': checkpoint.iteration,
+        'checkpoint_type': checkpoint.checkpoint_type,
+    }
+
+
+def list_checkpoints(instance: AgentTask, *, agent_id: str = '', limit: int = 20) -> list[dict]:
+    queryset = instance.persisted_checkpoints.filter(is_deleted=False)
+    normalized_agent_id = str(agent_id or '').strip()
+    if normalized_agent_id:
+        queryset = queryset.filter(agent_id=normalized_agent_id)
+    checkpoints = list(queryset.order_by('-sys_create_datetime')[: max(1, min(limit, 100))])
+    if checkpoints:
+        return [serialize_persisted_checkpoint(item) for item in checkpoints]
+    return build_phase_checkpoints(instance)
+
+
+def build_checkpoints(instance: AgentTask) -> list[dict]:
+    return build_phase_checkpoints(instance)
+
+
+def persist_checkpoint(
+    task_or_id: AgentTask | str,
+    *,
+    checkpoint_type: str = 'auto',
+    checkpoint_name: str | None = None,
+    phase: str | None = None,
+    sequence: int | None = None,
+) -> AgentCheckpoint | None:
+    ensure_runtime_db_connection()
+    instance = refresh_task_snapshot(task_or_id)
+    if not instance:
+        return None
+
+    recent_events = list(instance.events.filter(is_deleted=False).order_by('-sequence')[:20])
+    latest_event = recent_events[0] if recent_events else None
+    metadata = dict((latest_event.event_metadata or {}) if latest_event else {})
+    checkpoint_phase = str(phase or metadata.get('phase') or instance.current_phase or '').strip() or None
+    agent_id = str(metadata.get('agent_id') or metadata.get('agent_name') or instance.id).strip() or str(instance.id)
+    agent_name = str(metadata.get('agent_name') or 'Orchestrator').strip() or 'Orchestrator'
+    agent_type = str(metadata.get('agent_type') or 'orchestrator').strip() or 'orchestrator'
+    parent_agent_id = str(metadata.get('parent_agent_id') or '').strip() or None
+    iteration = _to_int(metadata.get('iteration'), 0)
+
+    findings = instance.findings.filter(is_deleted=False).order_by('-sys_create_datetime')[:20]
+    state_data = {
+        'task': serialize_task(instance),
+        'summary': build_summary(instance),
+        'tree': build_tree(instance),
+        'recent_events': [
+            {
+                'sequence': event.sequence,
+                'event_type': event.event_type,
+                'phase': event.phase,
+                'message': event.message,
+                'timestamp': format_datetime_text(event.sys_create_datetime),
+            }
+            for event in reversed(recent_events)
+        ],
+        'recent_findings': [serialize_finding(finding) for finding in findings],
+    }
+    checkpoint = AgentCheckpoint.objects.create(
+        task=instance,
+        agent_id=agent_id,
+        agent_name=agent_name,
+        agent_type=agent_type,
+        parent_agent_id=parent_agent_id,
+        state_data=state_data,
+        iteration=iteration,
+        status=instance.status,
+        total_tokens=instance.tokens_used,
+        tool_calls=instance.tool_calls_count,
+        findings_count=instance.findings_count,
+        checkpoint_type=checkpoint_type,
+        checkpoint_name=checkpoint_name or instance.current_step or instance.current_phase or checkpoint_type,
+        checkpoint_metadata={
+            'phase': checkpoint_phase,
+            'sequence': sequence or (latest_event.sequence if latest_event else 0),
+        },
+        sys_creator=instance.created_by,
+        sys_modifier=instance.created_by,
+    )
+    stale_ids = list(
+        instance.persisted_checkpoints.filter(is_deleted=False)
+        .order_by('-sys_create_datetime')
+        .values_list('id', flat=True)[MAX_PERSISTED_CHECKPOINTS:]
+    )
+    if stale_ids:
+        AgentCheckpoint.objects.filter(id__in=stale_ids).update(is_deleted=True, sys_modifier=instance.created_by)
+    close_runtime_db_connections()
+    return checkpoint
+
+
+def get_checkpoint_detail(instance: AgentTask, checkpoint_id: str) -> dict:
+    checkpoint_key = str(checkpoint_id or '').strip()
+    persisted = instance.persisted_checkpoints.filter(id=checkpoint_key, is_deleted=False).first()
+    if persisted:
+        state_data = dict(persisted.state_data or {})
+        metadata = dict(persisted.checkpoint_metadata or {})
+        payload = serialize_persisted_checkpoint(persisted)
+        return {
+            **payload,
+            'task_id': str(instance.id),
+            'task_status': instance.status,
+            'progress_percentage': instance.progress_percentage,
+            'events': list(state_data.get('recent_events') or []),
+            'statistics': {
+                'total_files': _to_int(state_data.get('task', {}).get('total_files'), instance.total_files),
+                'indexed_files': _to_int(state_data.get('summary', {}).get('statistics', {}).get('indexed_files'), instance.indexed_files),
+                'analyzed_files': _to_int(state_data.get('summary', {}).get('statistics', {}).get('analyzed_files'), instance.analyzed_files),
+                'findings_count': persisted.findings_count,
+                'verified_count': _to_int(state_data.get('summary', {}).get('statistics', {}).get('verified_count'), instance.verified_count),
+                'false_positive_count': _to_int(state_data.get('summary', {}).get('statistics', {}).get('false_positive_count'), instance.false_positive_count),
+                'tool_calls_count': persisted.tool_calls,
+            },
+            'state_data': state_data,
+            'metadata': metadata,
+        }
+    checkpoints = {item['id'] or item['phase']: item for item in build_phase_checkpoints(instance)}
+    checkpoint = checkpoints.get(checkpoint_key)
+    if not checkpoint:
+        raise HttpError(404, '检查点不存在')
+    phase_events = instance.events.filter(is_deleted=False, phase=checkpoint['phase']).order_by('sequence')[:50]
+    return {
+        **checkpoint,
+        'task_id': str(instance.id),
+        'task_status': instance.status,
+        'progress_percentage': instance.progress_percentage,
+        'events': [
+            {
+                'sequence': event.sequence,
+                'event_type': event.event_type,
+                'message': event.message,
+                'timestamp': format_datetime_text(event.sys_create_datetime),
+                'tool_name': event.tool_name,
+                'progress_percent': event.progress_percent,
+            }
+            for event in phase_events
+        ],
+        'statistics': {
+            'total_files': instance.total_files,
+            'indexed_files': instance.indexed_files,
+            'analyzed_files': instance.analyzed_files,
+            'findings_count': instance.findings_count,
+            'verified_count': instance.verified_count,
+            'false_positive_count': instance.false_positive_count,
+            'tool_calls_count': instance.tool_calls_count,
+        },
+        'state_data': {},
+        'metadata': {},
+    }
 
 
 def _normalize_tree_status(value: str | None, *, default: str = 'running') -> str:
@@ -1082,7 +1382,7 @@ def _build_phase_fallback_tree(instance: AgentTask) -> list[dict]:
         }
     ]
 
-    for checkpoint in build_checkpoints(instance):
+    for checkpoint in build_phase_checkpoints(instance):
         if checkpoint['status'] == 'pending':
             continue
         phase = checkpoint['phase']
@@ -1248,7 +1548,10 @@ def execute_agent_task(task_id: str) -> None:
     Celery Task 入口
     在这里重写，抛弃旧的 heurustic scan，直接使用真正的 OrchestratorAgent 执行全链路
     """
-    instance = AgentTask.objects.select_related('project', 'created_by').filter(id=task_id).first()
+    close_runtime_db_connections()
+    instance = run_with_fresh_connection(
+        AgentTask.objects.select_related('project', 'created_by').filter(id=task_id).first
+    )
     if not instance:
         return
     workspace = None
@@ -1260,7 +1563,10 @@ def execute_agent_task(task_id: str) -> None:
         instance.status = 'running'
         instance.started_at = timezone.now()
         instance.error_message = ''
-        instance.save(update_fields=['status', 'started_at', 'error_message', 'sys_update_datetime'])
+        run_with_fresh_connection(
+            instance.save,
+            update_fields=['status', 'started_at', 'error_message', 'sys_update_datetime'],
+        )
         
         # 克隆或解压代码空间
         workspace, user_payload = prepare_workspace(instance.project, branch_name=instance.branch_name, user_id=str(instance.created_by_id))
@@ -1305,4 +1611,5 @@ def execute_agent_task(task_id: str) -> None:
         )
         raise
     finally:
+        close_runtime_db_connections()
         cleanup_runtime_workspace(workspace)

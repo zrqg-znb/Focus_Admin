@@ -315,6 +315,37 @@ class AnalysisAgent(BaseAgent):
         
         self._conversation_history: List[Dict[str, str]] = []
         self._steps: List[AnalysisStep] = []
+
+    def _build_runtime_state(self) -> Dict[str, Any]:
+        return {
+            "conversation_history": list(self._conversation_history),
+            "steps": [
+                {
+                    "thought": step.thought,
+                    "action": step.action,
+                    "action_input": step.action_input,
+                    "observation": step.observation,
+                    "is_final": step.is_final,
+                    "final_answer": step.final_answer,
+                }
+                for step in self._steps
+            ],
+        }
+
+    def _restore_runtime_state(self, runtime_state: Dict[str, Any]) -> None:
+        self._conversation_history = list(runtime_state.get("conversation_history") or [])
+        self._steps = [
+            AnalysisStep(
+                thought=str(step.get("thought") or ""),
+                action=step.get("action"),
+                action_input=dict(step.get("action_input") or {}) if isinstance(step.get("action_input"), dict) else None,
+                observation=step.get("observation"),
+                is_final=bool(step.get("is_final", False)),
+                final_answer=dict(step.get("final_answer") or {}) if isinstance(step.get("final_answer"), dict) else None,
+            )
+            for step in (runtime_state.get("steps") or [])
+            if isinstance(step, dict)
+        ]
     
 
     
@@ -404,6 +435,7 @@ class AnalysisAgent(BaseAgent):
         """
         import time
         start_time = time.time()
+        self._remember_input(input_data)
         
         project_info = input_data.get("project_info", {})
         config = input_data.get("config", {})
@@ -411,6 +443,7 @@ class AnalysisAgent(BaseAgent):
         previous_results = input_data.get("previous_results", {})
         task = input_data.get("task", "")
         task_context = input_data.get("task_context", "")
+        resume_mode = bool(self._conversation_history)
         
         # 🔥 处理交接信息
         handoff = input_data.get("handoff")
@@ -492,20 +525,24 @@ class AnalysisAgent(BaseAgent):
         # 🔥 记录工作开始
         self.record_work("开始安全漏洞分析")
 
-        # 初始化对话历史
-        self._conversation_history = [
-            {"role": "system", "content": self.config.system_prompt},
-            {"role": "user", "content": initial_message},
-        ]
-        
-        self._steps = []
+        if not resume_mode:
+            self._conversation_history = [
+                {"role": "system", "content": self.config.system_prompt},
+                {"role": "user", "content": initial_message},
+            ]
+            self._steps = []
         all_findings = []
         error_message = None  # 🔥 跟踪错误信息
         
-        await self.emit_thinking("🔬 Analysis Agent 启动，LLM 开始自主安全分析...")
+        await self.emit_thinking(
+            "🔬 Analysis Agent 从检查点恢复，继续安全分析..."
+            if resume_mode
+            else "🔬 Analysis Agent 启动，LLM 开始自主安全分析..."
+        )
         
         try:
-            for iteration in range(self.config.max_iterations):
+            start_iteration = max(int(self._iteration or 0), 0)
+            for iteration in range(start_iteration, self.config.max_iterations):
                 if self.is_cancelled:
                     break
                 

@@ -7,6 +7,7 @@ from apps.deepaudit.tasks import dispatch_deepaudit_task, run_agent_task
 from . import agent_task_services
 from .agent_task_schemas import (
     AgentCheckpointSchema,
+    AgentCheckpointDetailSchema,
     AgentEventSchema,
     AgentFindingSchema,
     AgentFindingStatusUpdateSchema,
@@ -86,10 +87,23 @@ def get_agent_summary(request, task_id: str):
 
 
 @router.get('/{task_id}/checkpoints', response=list[AgentCheckpointSchema], summary='获取 Agent 任务检查点')
-def list_agent_checkpoints(request, task_id: str):
+def list_agent_checkpoints(request, task_id: str, agent_id: str = '', limit: int = 20):
     instance = agent_task_services.get_task(request.auth, task_id)
     instance = agent_task_services.refresh_task_snapshot(instance) or instance
-    return agent_task_services.build_checkpoints(instance)
+    return agent_task_services.list_checkpoints(instance, agent_id=agent_id, limit=limit)
+
+
+@router.get('/{task_id}/checkpoints/{checkpoint_id}', response=AgentCheckpointDetailSchema, summary='获取 Agent 检查点详情')
+def get_agent_checkpoint(request, task_id: str, checkpoint_id: str):
+    instance = agent_task_services.get_task(request.auth, task_id)
+    instance = agent_task_services.refresh_task_snapshot(instance) or instance
+    return agent_task_services.get_checkpoint_detail(instance, checkpoint_id)
+
+
+@router.post('/{task_id}/checkpoints/{checkpoint_id}/resume', response=AgentTaskSchema, summary='从检查点恢复为新 Agent 任务')
+def resume_agent_task_from_checkpoint(request, task_id: str, checkpoint_id: str):
+    instance = agent_task_services.resume_task_from_checkpoint(request.auth, task_id, checkpoint_id)
+    return agent_task_services.serialize_task(instance)
 
 
 @router.get('/{task_id}/tree', response=list[AgentTreeNodeSchema], summary='获取 Agent 树')

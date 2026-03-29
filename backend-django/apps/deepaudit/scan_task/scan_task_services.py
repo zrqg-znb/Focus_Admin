@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 
+from asgiref.sync import async_to_sync, sync_to_async
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -10,9 +12,11 @@ from ninja.errors import HttpError
 
 from apps.deepaudit.analysis_payload import get_analysis_issue_count, get_analysis_quality_score, normalize_analysis_result
 from apps.deepaudit.constants import ISSUE_STATUS_FALSE_POSITIVE, ISSUE_STATUS_OPEN, ISSUE_STATUS_RESOLVED
+from apps.deepaudit.heuristics import detect_language_from_path
+from apps.deepaudit.llm.service import LLMService
 from apps.deepaudit.permissions import accessible_project_queryset, get_user_id, require_project_role, serialize_user_brief
 from apps.deepaudit.reporting import ReportBuilder
-from apps.deepaudit.runtime import cleanup_runtime_workspace, prepare_workspace, run_heuristic_scan
+from apps.deepaudit.runtime import cleanup_runtime_workspace, list_project_files, prepare_workspace
 from apps.deepaudit.scan_profile import resolve_scan_profile, serialize_scan_profile
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact, AuditIssue, AuditTask, InstantAnalysisRecord
 from apps.deepaudit.serialization import format_datetime_text, normalize_json_payload
@@ -217,7 +221,13 @@ def run_instant_analysis(user, payload: dict) -> dict:
     config = user_config_services.get_user_config(user)
     scan_config = (config.get('other_config') or {}).get('scan_config') or {}
     profile = resolve_scan_profile(user, scan_config, strict=False)
-    result = normalize_analysis_result(run_heuristic_scan_from_code(code_content, language, profile=profile))
+    result = _analyze_code_payload(
+        config,
+        code_content,
+        language,
+        file_path=str(payload.get('file_name') or f'snippet.{language}'),
+        profile=profile,
+    )
     record = InstantAnalysisRecord.objects.create(
         user=user,
         language=language,
@@ -264,6 +274,103 @@ def run_heuristic_scan_from_code(code_content: str, language: str, *, profile: d
     return {'issues': issues, **summary}
 
 
+def _safe_int(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_code_snippet(code_content: str, line_number: int | None) -> str:
+    if not code_content or not line_number or line_number <= 0:
+        return ''
+    lines = code_content.splitlines()
+    index = min(max(line_number - 1, 0), max(len(lines) - 1, 0))
+    start = max(0, index - 2)
+    end = min(len(lines), index + 3)
+    return '\n'.join(lines[start:end]).strip()
+
+
+def _normalize_issue_payload(issue: dict, *, file_path: str, code_content: str) -> dict:
+    line_number = _safe_int(issue.get('line') or issue.get('line_number'))
+    column_number = _safe_int(issue.get('column') or issue.get('column_number'))
+    title = str(issue.get('title') or issue.get('name') or issue.get('issue_type') or issue.get('type') or 'Issue').strip() or 'Issue'
+    description = str(issue.get('description') or issue.get('message') or title).strip()
+    suggestion = str(issue.get('suggestion') or '').strip() or None
+    ai_explanation = issue.get('ai_explanation') or issue.get('xai') or {}
+    code_snippet = str(issue.get('code_snippet') or '').strip() or _build_code_snippet(code_content, line_number) or None
+    return {
+        'file_path': file_path,
+        'line_number': line_number,
+        'column_number': column_number,
+        'issue_type': str(issue.get('issue_type') or issue.get('type') or issue.get('vulnerability_type') or 'maintainability').strip() or 'maintainability',
+        'severity': str(issue.get('severity') or 'low').strip().lower() or 'low',
+        'title': title,
+        'message': description,
+        'description': description,
+        'suggestion': suggestion,
+        'code_snippet': code_snippet,
+        'ai_explanation': ai_explanation if isinstance(ai_explanation, dict) else {'detail': ai_explanation},
+    }
+
+
+async def _analyze_code_payload_async(
+    user_config: dict,
+    code_content: str,
+    language: str,
+    *,
+    file_path: str,
+    profile: dict,
+) -> dict:
+    service = LLMService(user_config=user_config)
+    rule_set = profile.get('rule_set')
+    prompt_template = profile.get('prompt_template')
+    try:
+        result = await service.analyze_code_with_rules(
+            code_content,
+            language,
+            rule_set_id=str(rule_set.id) if rule_set else None,
+            prompt_template_id=str(prompt_template.id) if prompt_template else None,
+        )
+        normalized = normalize_analysis_result(result)
+        normalized['analysis_profile'] = {
+            **dict(normalized.get('analysis_profile') or {}),
+            'engine': 'llm',
+            'analysis_depth': profile.get('analysis_depth') or 'standard',
+            'rule_set_id': str(rule_set.id) if rule_set else None,
+            'prompt_template_id': str(prompt_template.id) if prompt_template else None,
+        }
+        return normalized
+    except Exception as exc:
+        fallback = normalize_analysis_result(run_heuristic_scan_from_code(code_content, language, profile=profile))
+        fallback['analysis_profile'] = {
+            **dict(fallback.get('analysis_profile') or {}),
+            'engine': 'heuristic_fallback',
+            'fallback_reason': str(exc),
+            'analysis_depth': profile.get('analysis_depth') or 'standard',
+            'rule_set_id': str(rule_set.id) if rule_set else None,
+            'prompt_template_id': str(prompt_template.id) if prompt_template else None,
+        }
+        return fallback
+
+
+def _analyze_code_payload(
+    user_config: dict,
+    code_content: str,
+    language: str,
+    *,
+    file_path: str,
+    profile: dict,
+) -> dict:
+    return async_to_sync(_analyze_code_payload_async)(
+        user_config,
+        code_content,
+        language,
+        file_path=file_path,
+        profile=profile,
+    )
+
+
 def list_instant_records(user, *, page: int = 1, page_size: int = 20, language: str = '') -> dict:
     queryset = InstantAnalysisRecord.objects.filter(user_id=get_user_id(user), is_deleted=False).order_by('-sys_create_datetime')
     if language:
@@ -283,6 +390,15 @@ def delete_instant_record(user, record_id: str) -> bool:
     record.is_deleted = True
     record.sys_modifier = user
     record.save(update_fields=['is_deleted', 'sys_modifier', 'sys_update_datetime'])
+    return True
+
+
+def delete_all_instant_records(user) -> bool:
+    InstantAnalysisRecord.objects.filter(user_id=get_user_id(user), is_deleted=False).update(
+        is_deleted=True,
+        sys_modifier=user,
+        sys_update_datetime=timezone.now(),
+    )
     return True
 
 
@@ -362,6 +478,166 @@ def _is_cancelled(task_id: str) -> bool:
     return AuditTask.objects.filter(id=task_id, status='cancelled').exists()
 
 
+def _persist_scan_issues(task_id: str, created_by_id, file_path: str, code_content: str, issues: list[dict]) -> int:
+    issue_models: list[AuditIssue] = []
+    for raw_issue in issues:
+        normalized_issue = _normalize_issue_payload(raw_issue, file_path=file_path, code_content=code_content)
+        issue_models.append(
+            AuditIssue(
+                task_id=task_id,
+                file_path=normalized_issue['file_path'],
+                line_number=normalized_issue['line_number'],
+                column_number=normalized_issue['column_number'],
+                issue_type=normalized_issue['issue_type'],
+                severity=normalized_issue['severity'],
+                title=normalized_issue['title'],
+                message=normalized_issue['message'],
+                description=normalized_issue['description'],
+                suggestion=normalized_issue['suggestion'],
+                code_snippet=normalized_issue['code_snippet'],
+                ai_explanation=normalized_issue['ai_explanation'],
+                status='open',
+                sys_creator_id=created_by_id,
+                sys_modifier_id=created_by_id,
+            )
+        )
+    if issue_models:
+        AuditIssue.objects.bulk_create(issue_models)
+    return len(issue_models)
+
+
+def _update_scan_progress(task_id: str, created_by_id, *, scanned_files: int, total_lines: int, issues_count: int, quality_score: float) -> None:
+    AuditTask.objects.filter(id=task_id).update(
+        scanned_files=scanned_files,
+        total_lines=total_lines,
+        issues_count=issues_count,
+        quality_score=quality_score,
+        sys_modifier_id=created_by_id,
+        sys_update_datetime=timezone.now(),
+    )
+
+
+async def _scan_files_with_concurrency(
+    *,
+    task_id: str,
+    created_by_id,
+    files: list[dict],
+    user_payload: dict,
+    profile: dict,
+    llm_concurrency: int,
+    llm_gap_ms: int,
+) -> dict:
+    semaphore = asyncio.Semaphore(max(1, llm_concurrency))
+    gap_seconds = max(0.0, llm_gap_ms / 1000.0)
+    cancelled_checker = sync_to_async(_is_cancelled, thread_sensitive=True)
+    persist_issues = sync_to_async(_persist_scan_issues, thread_sensitive=True)
+    update_progress = sync_to_async(_update_scan_progress, thread_sensitive=True)
+
+    async def analyze_file(index: int, file_item: dict) -> dict:
+        code_content = str(file_item.get('content') or '')
+        if not code_content.strip():
+            return {'status': 'skipped'}
+        file_path = str(file_item.get('path') or '')
+        language = detect_language_from_path(file_path)
+        if gap_seconds > 0:
+            await asyncio.sleep(index * gap_seconds)
+        if await cancelled_checker(task_id):
+            return {'status': 'cancelled'}
+        async with semaphore:
+            if await cancelled_checker(task_id):
+                return {'status': 'cancelled'}
+            analysis = await _analyze_code_payload_async(
+                user_payload,
+                code_content,
+                language,
+                file_path=file_path,
+                profile=profile,
+            )
+            return {
+                'status': 'success',
+                'file_path': file_path,
+                'code_content': code_content,
+                'analysis': analysis,
+                'lines': int(analysis.get('total_lines') or file_item.get('lines') or 0),
+                'quality_score': float(analysis.get('quality_score') or 0),
+                'issues': list(analysis.get('issues') or []),
+            }
+
+    tasks = [asyncio.create_task(analyze_file(index, file_item)) for index, file_item in enumerate(files)]
+    scanned_files = 0
+    skipped_files = 0
+    failed_files = 0
+    total_lines = 0
+    total_issues = 0
+    quality_scores: list[float] = []
+
+    try:
+        for future in asyncio.as_completed(tasks):
+            try:
+                result = await future
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                failed_files += 1
+                continue
+
+            status = str(result.get('status') or '').strip().lower()
+            if status == 'cancelled':
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                return {
+                    'cancelled': True,
+                    'scanned_files': scanned_files,
+                    'skipped_files': skipped_files,
+                    'failed_files': failed_files,
+                    'total_lines': total_lines,
+                    'total_issues': total_issues,
+                    'quality_scores': quality_scores,
+                }
+            if status == 'skipped':
+                skipped_files += 1
+                continue
+            if status != 'success':
+                failed_files += 1
+                continue
+
+            created_count = await persist_issues(
+                task_id,
+                created_by_id,
+                str(result.get('file_path') or ''),
+                str(result.get('code_content') or ''),
+                list(result.get('issues') or []),
+            )
+            scanned_files += 1
+            total_lines += int(result.get('lines') or 0)
+            total_issues += created_count
+            quality_score = float(result.get('quality_score') or 0)
+            if quality_score > 0:
+                quality_scores.append(quality_score)
+            await update_progress(
+                task_id,
+                created_by_id,
+                scanned_files=scanned_files,
+                total_lines=total_lines,
+                issues_count=total_issues,
+                quality_score=round(sum(quality_scores) / len(quality_scores), 2) if quality_scores else 0.0,
+            )
+    finally:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    return {
+        'cancelled': False,
+        'scanned_files': scanned_files,
+        'skipped_files': skipped_files,
+        'failed_files': failed_files,
+        'total_lines': total_lines,
+        'total_issues': total_issues,
+        'quality_scores': quality_scores,
+    }
+
+
 def execute_scan_task(task_id: str) -> None:
     task = AuditTask.objects.select_related('project', 'created_by').filter(id=task_id).first()
     if not task:
@@ -381,50 +657,68 @@ def execute_scan_task(task_id: str) -> None:
         task.error_message = ''
         task.scan_config = scan_config
         task.save(update_fields=['status', 'started_at', 'error_message', 'scan_config', 'sys_update_datetime'])
-        workspace, _user_payload = prepare_workspace(task.project, branch_name=task.branch_name, user_id=str(task.created_by_id))
-        result = run_heuristic_scan(
+        workspace, user_payload = prepare_workspace(task.project, branch_name=task.branch_name, user_id=str(task.created_by_id))
+        runtime_scan_config = (user_payload.get('other_config') or {}).get('scan_config') or {}
+        files = list_project_files(
             workspace,
             exclude_patterns=task.exclude_patterns or [],
             file_paths=scan_config.get('file_paths') or [],
             include_tests=bool(scan_config.get('include_tests', False)),
             include_docs=bool(scan_config.get('include_docs', False)),
-            max_file_size=scan_config.get('max_file_size') or 0,
-            rule_patterns=profile.get('rule_patterns'),
-            prompt_context=profile.get('prompt_context'),
-            analysis_depth=profile.get('analysis_depth') or 'standard',
-            severity_weights=profile.get('severity_weights'),
+            max_file_size=scan_config.get('max_file_size') or runtime_scan_config.get('max_file_size') or 0,
         )
+        max_analyze_files = int(runtime_scan_config.get('max_analyze_files') or 0)
+        if max_analyze_files > 0:
+            files = files[:max_analyze_files]
+        llm_concurrency = max(1, int(runtime_scan_config.get('llm_concurrency') or 1))
+        llm_gap_ms = max(0, int(runtime_scan_config.get('llm_gap_ms') or 0))
+        task.total_files = len(files)
+        task.scanned_files = 0
+        task.total_lines = 0
+        task.issues_count = 0
+        task.quality_score = 0
+        task.save(update_fields=['total_files', 'scanned_files', 'total_lines', 'issues_count', 'quality_score', 'sys_update_datetime'])
         if _is_cancelled(task.id):
             return
         task.issues.filter(is_deleted=False).delete()
-        issue_models = []
-        for issue in result['issues']:
-            issue_models.append(
-                AuditIssue(
-                    task=task,
-                    file_path=issue['file_path'],
-                    line_number=issue['line_number'],
-                    column_number=issue.get('column_number'),
-                    issue_type=issue['issue_type'],
-                    severity=issue['severity'],
-                    title=issue['title'],
-                    message=issue['title'],
-                    description=issue.get('description'),
-                    suggestion=issue.get('suggestion'),
-                    code_snippet=issue.get('code_snippet'),
-                    ai_explanation=issue.get('ai_explanation') or {},
-                    status='open',
-                    sys_creator=task.created_by,
-                    sys_modifier=task.created_by,
-                )
+        summary = asyncio.run(
+            _scan_files_with_concurrency(
+                task_id=str(task.id),
+                created_by_id=task.created_by_id,
+                files=files,
+                user_payload=user_payload,
+                profile=profile,
+                llm_concurrency=llm_concurrency,
+                llm_gap_ms=llm_gap_ms,
             )
-        if issue_models:
-            AuditIssue.objects.bulk_create(issue_models)
-        task.total_files = result['total_files']
-        task.scanned_files = result['total_files']
-        task.total_lines = result['total_lines']
-        task.issues_count = len(result['issues'])
-        task.quality_score = get_analysis_quality_score(result)
+        )
+        if summary.get('cancelled'):
+            return
+        total_lines = int(summary.get('total_lines') or 0)
+        total_issues = int(summary.get('total_issues') or 0)
+        scanned_files = int(summary.get('scanned_files') or 0)
+        skipped_files = int(summary.get('skipped_files') or 0)
+        failed_files = int(summary.get('failed_files') or 0)
+        quality_scores = [float(item) for item in (summary.get('quality_scores') or [])]
+
+        if len(files) > 0 and scanned_files == 0 and skipped_files == len(files):
+            task.status = 'completed'
+            task.completed_at = timezone.now()
+            task.total_lines = 0
+            task.issues_count = 0
+            task.quality_score = 100.0
+            task.save(update_fields=['status', 'completed_at', 'total_lines', 'issues_count', 'quality_score', 'sys_update_datetime'])
+            return
+        if len(files) > 0 and scanned_files == 0 and failed_files > 0:
+            task.status = 'failed'
+            task.error_message = '所有文件分析均失败，请检查 LLM 配置或网络连通性'
+            task.completed_at = timezone.now()
+            task.quality_score = 0.0
+            task.save(update_fields=['status', 'error_message', 'completed_at', 'quality_score', 'sys_update_datetime'])
+            return
+        task.total_lines = total_lines
+        task.issues_count = total_issues
+        task.quality_score = round(sum(quality_scores) / len(quality_scores), 2) if quality_scores else (100.0 if scanned_files > 0 else 0.0)
         task.status = 'completed'
         task.completed_at = timezone.now()
         task.scan_config = scan_config

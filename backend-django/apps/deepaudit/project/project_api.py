@@ -5,6 +5,7 @@ from ninja import File, Form, Router, UploadedFile
 from .project_schemas import (
     AuditProjectCreateSchema,
     AuditProjectDetailSchema,
+    ProjectStatsSchema,
     AuditProjectUpdateSchema,
     PaginatedProjectRecycleSchema,
     PaginatedProjectSchema,
@@ -38,6 +39,11 @@ def list_recycle_projects(request, keyword: str = '', page: int = 1, pageSize: i
         page_size=pageSize,
         recycle=True,
     )
+
+
+@router.get('/stats', response=ProjectStatsSchema, summary='获取项目统计')
+def get_project_stats(request):
+    return project_services.get_project_stats(request.auth)
 
 
 @router.post('', response=AuditProjectDetailSchema, summary='创建项目')

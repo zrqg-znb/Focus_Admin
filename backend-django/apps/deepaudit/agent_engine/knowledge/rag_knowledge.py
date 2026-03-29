@@ -4,13 +4,16 @@
 利用现有的RAG模块实现安全知识的向量检索
 """
 
+import json
 import logging
+import re
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from apps.deepaudit.config_resolver import resolve_embedding_config
+from apps.deepaudit import storage as deepaudit_storage
 
 from .base import KnowledgeDocument, KnowledgeCategory
-from apps.deepaudit.storage import VECTOR_DB_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +31,15 @@ class SecurityKnowledgeRAG:
         self,
         persist_directory: Optional[str] = None,
     ):
-        self.persist_directory = persist_directory or str(VECTOR_DB_DIR)
+        self.persist_directory = persist_directory or str(deepaudit_storage.VECTOR_DB_DIR)
         self._indexer = None
         self._retriever = None
         self._initialized = False
         
         # 内置知识库 - 从模块化文件加载
+        self._builtin_knowledge = self._load_builtin_knowledge()
+
+    def reload_knowledge_sources(self) -> None:
         self._builtin_knowledge = self._load_builtin_knowledge()
     
     async def initialize(self):
@@ -110,9 +116,58 @@ class SecurityKnowledgeRAG:
             logger.debug(f"Loaded {len(ALL_FRAMEWORK_DOCS)} framework docs")
         except ImportError as e:
             logger.warning(f"Failed to load framework docs: {e}")
+
+        all_docs.extend(self._load_custom_knowledge())
         
         logger.info(f"Total knowledge documents loaded: {len(all_docs)}")
         return all_docs
+
+    def _load_custom_knowledge(self) -> List[KnowledgeDocument]:
+        ensure_dir = deepaudit_storage.KNOWLEDGE_DIR
+        ensure_dir.mkdir(parents=True, exist_ok=True)
+        custom_docs: List[KnowledgeDocument] = []
+        for path in sorted(ensure_dir.glob("*.json")):
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                logger.warning("Failed to load custom knowledge file %s: %s", path, exc)
+                continue
+
+            category_name = str(raw.get("category") or KnowledgeCategory.BEST_PRACTICE.value).strip().lower()
+            try:
+                category = KnowledgeCategory(category_name)
+            except ValueError:
+                category = KnowledgeCategory.BEST_PRACTICE
+
+            document_id = str(raw.get("id") or path.stem).strip() or path.stem
+            title = str(raw.get("title") or document_id).strip() or document_id
+            content = str(raw.get("content") or "").strip()
+            if not content:
+                continue
+
+            custom_docs.append(
+                KnowledgeDocument(
+                    id=document_id,
+                    title=title,
+                    content=content,
+                    category=category,
+                    tags=[str(tag).strip() for tag in (raw.get("tags") or []) if str(tag).strip()],
+                    severity=str(raw.get("severity") or "").strip() or None,
+                    cwe_ids=[str(item).strip() for item in (raw.get("cwe_ids") or []) if str(item).strip()],
+                    owasp_ids=[str(item).strip() for item in (raw.get("owasp_ids") or []) if str(item).strip()],
+                    metadata={
+                        **dict(raw.get("metadata") or {}),
+                        "source": "custom",
+                        "path": str(path),
+                    },
+                )
+            )
+        return custom_docs
+
+    def _custom_doc_path(self, document_id: str) -> Path:
+        slug = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(document_id or "").strip()).strip("_").lower() or "knowledge"
+        deepaudit_storage.KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
+        return deepaudit_storage.KNOWLEDGE_DIR / f"{slug}.json"
     
     async def _index_builtin_knowledge(self):
         """索引内置知识到向量数据库"""
@@ -120,6 +175,7 @@ class SecurityKnowledgeRAG:
             return
         
         logger.info("Indexing builtin security knowledge...")
+        self.reload_knowledge_sources()
         
         # 转换为RAG可索引的格式
         files = []
@@ -133,6 +189,51 @@ class SecurityKnowledgeRAG:
             pass
         
         logger.info(f"Indexed {len(files)} knowledge documents")
+
+    async def rebuild_index(self) -> Dict[str, Any]:
+        self.reload_knowledge_sources()
+        await self.initialize()
+        if not self._indexer:
+            stats = self.get_knowledge_stats()
+            return {
+                "enabled": False,
+                "chunk_count": 0,
+                "document_count": stats.get("total", 0),
+            }
+
+        await self._indexer.vector_store.initialize(force_recreate=True)
+        files = [
+            {
+                "path": f"knowledge/{doc.category.value}/{doc.id}.md",
+                "content": doc.to_embedding_text(),
+            }
+            for doc in self._builtin_knowledge
+        ]
+        async for _progress in self._indexer.index_files(files, base_path="knowledge"):
+            pass
+        if self._retriever:
+            await self._retriever.initialize()
+        return {
+            "enabled": True,
+            "chunk_count": await self._indexer.get_chunk_count(),
+            "document_count": len(self._builtin_knowledge),
+        }
+
+    async def get_index_status(self) -> Dict[str, Any]:
+        self.reload_knowledge_sources()
+        await self.initialize()
+        if not self._indexer:
+            stats = self.get_knowledge_stats()
+            return {
+                "enabled": False,
+                "chunk_count": 0,
+                "document_count": stats.get("total", 0),
+            }
+        return {
+            "enabled": True,
+            "chunk_count": await self._indexer.get_chunk_count(),
+            "document_count": len(self._builtin_knowledge),
+        }
     
     async def search(
         self,
@@ -151,6 +252,7 @@ class SecurityKnowledgeRAG:
         Returns:
             匹配的知识文档列表
         """
+        self.reload_knowledge_sources()
         await self.initialize()
         
         # 如果RAG可用，使用向量检索
@@ -251,6 +353,7 @@ class SecurityKnowledgeRAG:
         Returns:
             漏洞知识文档
         """
+        self.reload_knowledge_sources()
         # 标准化漏洞类型名称
         vuln_type_normalized = vuln_type.lower().replace("-", "_").replace(" ", "_")
         
@@ -281,6 +384,7 @@ class SecurityKnowledgeRAG:
         Returns:
             框架安全知识文档
         """
+        self.reload_knowledge_sources()
         framework_normalized = framework.lower().replace("-", "_").replace(" ", "_")
         
         for doc in self._builtin_knowledge:
@@ -294,6 +398,7 @@ class SecurityKnowledgeRAG:
     
     def get_all_vulnerability_types(self) -> List[str]:
         """获取所有支持的漏洞类型"""
+        self.reload_knowledge_sources()
         return [
             doc.id.replace("vuln_", "")
             for doc in self._builtin_knowledge
@@ -302,6 +407,7 @@ class SecurityKnowledgeRAG:
     
     def get_all_frameworks(self) -> List[str]:
         """获取所有支持的框架"""
+        self.reload_knowledge_sources()
         return [
             doc.id.replace("framework_", "")
             for doc in self._builtin_knowledge
@@ -310,6 +416,7 @@ class SecurityKnowledgeRAG:
     
     def get_knowledge_by_tags(self, tags: List[str]) -> List[Dict[str, Any]]:
         """根据标签获取知识"""
+        self.reload_knowledge_sources()
         results = []
         tags_lower = [t.lower() for t in tags]
         
@@ -322,6 +429,7 @@ class SecurityKnowledgeRAG:
     
     def get_knowledge_stats(self) -> Dict[str, Any]:
         """获取知识库统计信息"""
+        self.reload_knowledge_sources()
         stats = {
             "total": len(self._builtin_knowledge),
             "by_category": {},
@@ -337,6 +445,73 @@ class SecurityKnowledgeRAG:
                 stats["by_severity"][sev] = stats["by_severity"].get(sev, 0) + 1
         
         return stats
+
+    def list_documents(
+        self,
+        *,
+        category: str | None = None,
+        keyword: str | None = None,
+        tag: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        self.reload_knowledge_sources()
+        category_value = str(category or "").strip().lower()
+        keyword_value = str(keyword or "").strip().lower()
+        tag_value = str(tag or "").strip().lower()
+        items: List[Dict[str, Any]] = []
+        for doc in self._builtin_knowledge:
+            if category_value and doc.category.value != category_value:
+                continue
+            if tag_value and tag_value not in {item.lower() for item in doc.tags}:
+                continue
+            if keyword_value:
+                haystack = "\n".join([doc.id, doc.title, doc.content, " ".join(doc.tags)]).lower()
+                if keyword_value not in haystack:
+                    continue
+            items.append(doc.to_dict())
+        return items
+
+    def get_document(self, document_id: str) -> Optional[Dict[str, Any]]:
+        self.reload_knowledge_sources()
+        needle = str(document_id or "").strip().lower()
+        for doc in self._builtin_knowledge:
+            if doc.id.lower() == needle:
+                return doc.to_dict()
+        return None
+
+    def save_custom_document(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        document_id = str(payload.get("id") or "").strip()
+        if not document_id:
+            document_id = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(payload.get("title") or "knowledge").strip()).strip("_").lower() or "knowledge"
+        content = str(payload.get("content") or "").strip()
+        if not content:
+            raise ValueError("content 不能为空")
+
+        document = {
+            "id": document_id,
+            "title": str(payload.get("title") or document_id).strip() or document_id,
+            "content": content,
+            "category": str(payload.get("category") or KnowledgeCategory.BEST_PRACTICE.value).strip().lower() or KnowledgeCategory.BEST_PRACTICE.value,
+            "tags": [str(tag).strip() for tag in (payload.get("tags") or []) if str(tag).strip()],
+            "severity": str(payload.get("severity") or "").strip() or None,
+            "cwe_ids": [str(item).strip() for item in (payload.get("cwe_ids") or []) if str(item).strip()],
+            "owasp_ids": [str(item).strip() for item in (payload.get("owasp_ids") or []) if str(item).strip()],
+            "metadata": {
+                **dict(payload.get("metadata") or {}),
+                "source": "custom",
+            },
+        }
+        path = self._custom_doc_path(document_id)
+        path.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.reload_knowledge_sources()
+        return document
+
+    def delete_custom_document(self, document_id: str) -> bool:
+        path = self._custom_doc_path(document_id)
+        if path.exists():
+            path.unlink()
+            self.reload_knowledge_sources()
+            return True
+        return False
 
 
 # 全局实例

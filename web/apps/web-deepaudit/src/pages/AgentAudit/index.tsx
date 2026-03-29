@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { Terminal, Bot, Loader2, Radio, Filter, Maximize2, ArrowDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
@@ -30,6 +30,7 @@ import {
   AgentDetailPanel,
   StatsPanel,
   AgentErrorBoundary,
+  CheckpointDialog,
 } from "./components";
 import ReportExportDialog from "./components/ReportExportDialog";
 import { useAgentAuditState } from "./hooks";
@@ -60,6 +61,7 @@ const LIVE_PROGRESS_PATTERNS: { pattern: RegExp; key: string }[] = [
 
 function AgentAuditPageContent() {
   const { taskId } = useParams<{ taskId: string }>();
+  const navigate = useNavigate();
   const { hasAccess } = useAuth();
   const {
     task, findings, agentTree, logs, selectedAgentId, showAllLogs,
@@ -75,6 +77,7 @@ function AgentAuditPageContent() {
   const [showSplash, setShowSplash] = useState(!taskId);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
+  const [showCheckpointDialog, setShowCheckpointDialog] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [statusVerb, setStatusVerb] = useState(ACTION_VERBS[0]);
   const [statusDots, setStatusDots] = useState(0);
@@ -93,6 +96,7 @@ function AgentAuditPageContent() {
   const canCreateAgentTask = hasAccess(DEEPAUDIT_ACTION_CODES.AGENT_TASKS_CREATE);
   const canCancelAgentTask = hasAccess(DEEPAUDIT_ACTION_CODES.AGENT_TASKS_CANCEL);
   const canExportReport = hasAccess(DEEPAUDIT_ACTION_CODES.REPORTS_EXPORT);
+  const canInspectCheckpoints = Boolean(task?.id);
 
   // 🔥 当 taskId 变化时立即重置状态（新建任务时清理旧日志）
   useEffect(() => {
@@ -106,6 +110,7 @@ function AgentAuditPageContent() {
       // 2. 重置所有状态
       reset();
       setShowSplash(!taskId);
+      setShowCheckpointDialog(false);
       // 3. 重置事件序列号和加载状态
       lastEventSequenceRef.current = 0;
       hasConnectedRef.current = false; // 🔥 重置 SSE 连接标志
@@ -858,11 +863,13 @@ function AgentAuditPageContent() {
       <Header
         task={task}
         canCancel={canCancelAgentTask}
+        canInspectCheckpoints={canInspectCheckpoints}
         canCreate={canCreateAgentTask}
         canExport={canExportReport}
         isRunning={isRunning}
         isCancelling={isCancelling}
         onCancel={handleCancel}
+        onCheckpoints={() => setShowCheckpointDialog(true)}
         onExport={handleExportReport}
         onNewAudit={() => setShowCreateDialog(true)}
       />
@@ -1094,6 +1101,17 @@ function AgentAuditPageContent() {
         task={task}
         findings={findings}
       />
+      {task?.id && (
+        <CheckpointDialog
+          open={showCheckpointDialog}
+          onOpenChange={setShowCheckpointDialog}
+          taskId={task.id}
+          canResume={canCreateAgentTask}
+          onResumed={(nextTaskId) => {
+            navigate(`/agent-audit/${nextTaskId}`);
+          }}
+        />
+      )}
     </div>
   );
 }

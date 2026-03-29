@@ -403,6 +403,10 @@ export interface AgentTreeResponse {
 
 export interface AgentCheckpoint {
   id: string;
+  phase: string;
+  sequence: number;
+  message: string | null;
+  timestamp: string | null;
   agent_id: string;
   agent_name: string;
   agent_type: string;
@@ -411,16 +415,20 @@ export interface AgentCheckpoint {
   total_tokens: number;
   tool_calls: number;
   findings_count: number;
-  checkpoint_type: "auto" | "manual" | "error" | "final";
+  checkpoint_type: string;
   checkpoint_name: string | null;
   created_at: string | null;
 }
 
 export interface CheckpointDetail extends AgentCheckpoint {
   task_id: string;
+  task_status: string;
+  progress_percentage: number;
   parent_agent_id: string | null;
+  events: Record<string, unknown>[];
+  statistics: Record<string, number>;
   state_data: Record<string, unknown>;
-  metadata: Record<string, unknown> | null;
+  metadata: Record<string, unknown>;
 }
 
 // ============ Agent Tree API Functions ============
@@ -462,6 +470,29 @@ export async function getAgentTree(taskId: string): Promise<AgentTreeResponse> {
   };
 }
 
+function normalizeAgentCheckpoint(item: any, fallbackTaskId: string, index = 0): AgentCheckpoint {
+  const fallbackPhase = String(item?.phase || item?.agent_type || "unknown");
+  const fallbackId = `${fallbackTaskId}-${fallbackPhase}-${item?.sequence || index}`;
+  return {
+    id: String(item?.id || fallbackId),
+    phase: fallbackPhase,
+    sequence: Number(item?.sequence || index),
+    message: item?.message || null,
+    timestamp: item?.timestamp || null,
+    agent_id: String(item?.agent_id || item?.phase || "agent"),
+    agent_name: String(item?.agent_name || item?.phase || "Agent"),
+    agent_type: String(item?.agent_type || item?.phase || "agent"),
+    iteration: Number(item?.iteration || 0),
+    status: String(item?.status || "pending"),
+    total_tokens: Number(item?.total_tokens || 0),
+    tool_calls: Number(item?.tool_calls || 0),
+    findings_count: Number(item?.findings_count || 0),
+    checkpoint_type: String(item?.checkpoint_type || "auto"),
+    checkpoint_name: item?.checkpoint_name || item?.message || null,
+    created_at: item?.created_at || item?.timestamp || null,
+  };
+}
+
 /**
  * 获取任务的检查点列表
  */
@@ -471,20 +502,7 @@ export async function getAgentCheckpoints(
 ): Promise<AgentCheckpoint[]> {
   const response = await apiClient.get(`/agent-tasks/${taskId}/checkpoints`, { params });
   return Array.isArray(response.data)
-    ? response.data.map((item: any, index: number) => ({
-        id: `${taskId}-${item.sequence || index}`,
-        agent_id: item.phase || "agent",
-        agent_name: item.phase || "agent",
-        agent_type: item.phase || "agent",
-        iteration: item.sequence || index,
-        status: item.status || "pending",
-        total_tokens: 0,
-        tool_calls: 0,
-        findings_count: 0,
-        checkpoint_type: "auto",
-        checkpoint_name: item.message || null,
-        created_at: item.timestamp || null,
-      }))
+    ? response.data.map((item: any, index: number) => normalizeAgentCheckpoint(item, taskId, index))
     : [];
 }
 
@@ -495,15 +513,31 @@ export async function getCheckpointDetail(
   taskId: string,
   checkpointId: string
 ): Promise<CheckpointDetail> {
-  const checkpoints = await getAgentCheckpoints(taskId);
-  const target = checkpoints.find((item) => item.id === checkpointId) || checkpoints[0];
+  const response = await apiClient.get(`/agent-tasks/${taskId}/checkpoints/${checkpointId}`);
+  const base = normalizeAgentCheckpoint(response.data, taskId);
   return {
-    ...(target as AgentCheckpoint),
+    ...base,
     task_id: taskId,
-    parent_agent_id: null,
-    state_data: {},
-    metadata: null,
+    task_status: String(response.data?.task_status || ""),
+    progress_percentage: Number(response.data?.progress_percentage || 0),
+    parent_agent_id: response.data?.parent_agent_id ? String(response.data.parent_agent_id) : null,
+    events: Array.isArray(response.data?.events) ? response.data.events : [],
+    statistics:
+      response.data?.statistics && typeof response.data.statistics === "object"
+        ? Object.fromEntries(
+            Object.entries(response.data.statistics).map(([key, value]) => [key, Number(value || 0)]),
+          )
+        : {},
+    state_data:
+      response.data?.state_data && typeof response.data.state_data === "object" ? response.data.state_data : {},
+    metadata:
+      response.data?.metadata && typeof response.data.metadata === "object" ? response.data.metadata : {},
   };
+}
+
+export async function resumeAgentTaskFromCheckpoint(taskId: string, checkpointId: string): Promise<AgentTask> {
+  const response = await apiClient.post(`/agent-tasks/${taskId}/checkpoints/${checkpointId}/resume`);
+  return normalizeAgentTask(response.data) as unknown as AgentTask;
 }
 
 

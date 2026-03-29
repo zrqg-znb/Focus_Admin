@@ -11,6 +11,7 @@ Agent 基类
 """
 
 from abc import ABC, abstractmethod
+import copy
 from typing import List, Dict, Any, Optional, AsyncGenerator, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
@@ -298,6 +299,7 @@ class BaseAgent(ABC):
         self._tool_calls = 0
         self._cancelled = False
         self._cancel_callback = None
+        self._last_input_data: Dict[str, Any] = {}
 
         # 获取超时配置
         self._timeout_config = self._get_timeout_config()
@@ -403,10 +405,89 @@ class BaseAgent(ABC):
     @property
     def state(self) -> AgentState:
         return self._state
+
+    async def _persist_state(self, checkpoint_name: str | None = None) -> None:
+        try:
+            from ..core.persistence import agent_persistence
+
+            self._state.iteration = self._iteration
+            self._state.tool_calls = self._tool_calls
+            self._state.total_tokens = self._total_tokens
+            await agent_persistence.save_state(
+                self._state,
+                checkpoint_name,
+                payload=self.export_checkpoint_payload(),
+            )
+        except Exception:
+            logger.debug("[%s] Failed to persist agent state", self.name, exc_info=True)
     
     @property
     def agent_type(self) -> AgentType:
         return self.config.agent_type
+
+    def _remember_input(self, input_data: Dict[str, Any]) -> None:
+        try:
+            self._last_input_data = copy.deepcopy(input_data or {})
+        except Exception:
+            self._last_input_data = dict(input_data or {})
+
+    def _build_runtime_state(self) -> Dict[str, Any]:
+        return {}
+
+    def _restore_runtime_state(self, runtime_state: Dict[str, Any]) -> None:
+        return None
+
+    def export_checkpoint_payload(self) -> Dict[str, Any]:
+        self._state.iteration = self._iteration
+        self._state.tool_calls = self._tool_calls
+        self._state.total_tokens = self._total_tokens
+        return {
+            "version": "2.0",
+            "state": self._state.model_dump(mode="json"),
+            "runtime": {
+                "base": {
+                    "iteration": self._iteration,
+                    "tool_calls": self._tool_calls,
+                    "total_tokens": self._total_tokens,
+                    "cancelled": self._cancelled,
+                    "incoming_handoff": self._incoming_handoff.to_dict() if self._incoming_handoff else None,
+                    "insights": list(self._insights),
+                    "work_completed": list(self._work_completed),
+                    "last_input_data": copy.deepcopy(self._last_input_data or {}),
+                },
+                "agent": self._build_runtime_state(),
+            },
+        }
+
+    def restore_from_checkpoint_payload(self, payload: Dict[str, Any] | None) -> None:
+        if not isinstance(payload, dict):
+            return
+
+        state_payload = payload.get("state") if isinstance(payload.get("state"), dict) else payload
+        self._state = AgentState(**state_payload)
+        self._agent_id = self._state.agent_id
+        self.parent_id = self._state.parent_id
+        self.knowledge_modules = list(self._state.knowledge_modules or [])
+        self.config.max_iterations = max(int(self._state.max_iterations or 0), int(self.config.max_iterations or 0))
+
+        runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
+        base_runtime = runtime.get("base") if isinstance(runtime.get("base"), dict) else {}
+        self._iteration = int(base_runtime.get("iteration") or self._state.iteration or 0)
+        self._tool_calls = int(base_runtime.get("tool_calls") or self._state.tool_calls or 0)
+        self._total_tokens = int(base_runtime.get("total_tokens") or self._state.total_tokens or 0)
+        self._cancelled = bool(base_runtime.get("cancelled", False))
+        self._insights = [str(item) for item in (base_runtime.get("insights") or []) if str(item).strip()]
+        self._work_completed = [str(item) for item in (base_runtime.get("work_completed") or []) if str(item).strip()]
+        self._last_input_data = copy.deepcopy(base_runtime.get("last_input_data") or {})
+        incoming_handoff = base_runtime.get("incoming_handoff")
+        self._incoming_handoff = TaskHandoff.from_dict(incoming_handoff) if isinstance(incoming_handoff, dict) else None
+        self._registered = False
+
+        if self.knowledge_modules:
+            self._load_knowledge_modules()
+
+        agent_runtime = runtime.get("agent") if isinstance(runtime.get("agent"), dict) else {}
+        self._restore_runtime_state(agent_runtime)
     
     # ============ Agent间消息处理 ============
     
@@ -654,6 +735,8 @@ class BaseAgent(ABC):
             metadata.setdefault("status", self._state.status)
             if self._state.task:
                 metadata.setdefault("task", self._state.task)
+            if kwargs.get("phase"):
+                self._state.update_context("phase", kwargs.get("phase"))
             
             # 分离已知字段和未知字段
             known_fields = {
@@ -852,16 +935,20 @@ class BaseAgent(ABC):
             return None
         
         self._tool_calls += 1
+        self._state.tool_calls = self._tool_calls
+        self._state.add_action({"tool_name": tool_name, "tool_input": kwargs})
         await self.emit_tool_call(tool_name, kwargs)
         
         import time
         start = time.time()
         
         result = await tool.execute(**kwargs)
-        
+        self._state.add_observation({"tool_name": tool_name, "tool_output": str(result.data)[:1000]})
+
         duration_ms = int((time.time() - start) * 1000)
         await self.emit_tool_result(tool_name, str(result.data)[:500], duration_ms)
-        
+        await self._persist_state("tool")
+
         return result
     
     async def call_llm(
@@ -880,6 +967,7 @@ class BaseAgent(ABC):
             LLM 响应
         """
         self._iteration += 1
+        self._state.iteration = self._iteration
 
         try:
             # 🔥 不传递 temperature 和 max_tokens，让 LLMService 使用用户配置
@@ -889,7 +977,11 @@ class BaseAgent(ABC):
             )
 
             if response.get("usage"):
-                self._total_tokens += response["usage"].get("total_tokens", 0)
+                used_tokens = response["usage"].get("total_tokens", 0)
+                self._total_tokens += used_tokens
+                self._state.add_tokens(used_tokens)
+
+            await self._persist_state("llm")
 
             return response
 

@@ -136,13 +136,20 @@ class KnowledgeLoader:
     
     def get_available_modules(self) -> List[str]:
         """获取所有可用的知识模块"""
-        return self._rag.get_all_vulnerability_types()
+        return self.get_all_module_names()
     
     def get_all_module_names(self) -> List[str]:
         """获取所有模块名称（包括漏洞和框架）"""
-        vuln_types = self._rag.get_all_vulnerability_types()
-        frameworks = self._rag.get_all_frameworks()
-        return vuln_types + frameworks
+        documents = self._rag.list_documents()
+        module_names: List[str] = []
+        seen = set()
+        for document in documents:
+            document_id = str((document or {}).get("id") or "").strip()
+            if not document_id or document_id in seen:
+                continue
+            seen.add(document_id)
+            module_names.append(document_id)
+        return module_names
     
     def validate_modules(self, module_names: List[str]) -> Dict[str, List[str]]:
         """
