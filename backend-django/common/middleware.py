@@ -1,7 +1,10 @@
 from django.http import HttpResponse
 import json
+import logging
 
 from django.conf import settings
+from django.db import close_old_connections, connection
+from django.db.utils import DatabaseError, InterfaceError, OperationalError
 from django.utils.deprecation import MiddlewareMixin
 from core.models import OperationLog, User
 
@@ -14,6 +17,29 @@ from common.utils.request_util import (
     get_request_user,
     get_verbose_name,
 )
+
+
+logger = logging.getLogger(__name__)
+
+DB_CONNECTION_ERROR_MARKERS = (
+    'mysql server has gone away',
+    'lost connection',
+    'connection refused',
+    'connection reset',
+    'broken pipe',
+    '(0, \'\')',
+    '2006',
+    '2013',
+)
+
+
+def _is_connection_error(exc: Exception) -> bool:
+    if isinstance(exc, (InterfaceError, OperationalError)):
+        return True
+    if isinstance(exc, DatabaseError):
+        message = str(exc).lower()
+        return any(marker in message for marker in DB_CONNECTION_ERROR_MARKERS)
+    return False
 
 
 class SecurityHeadersMiddleware(MiddlewareMixin):
@@ -66,9 +92,48 @@ class ApiLoggingMiddleware(MiddlewareMixin):
 
     @classmethod
     def __handle_request(cls, request):
+        close_old_connections()
         request.request_ip = get_request_ip(request)
         request.request_data = get_request_data(request)
         request.request_path = get_request_path(request)
+
+    @staticmethod
+    def __close_connection():
+        if connection.in_atomic_block:
+            return
+        try:
+            connection.close()
+        except Exception:
+            pass
+        close_old_connections()
+
+    def __write_operation_log(self, operation_log_id, info, request_path):
+        last_error = None
+        for attempt in range(3):
+            try:
+                self.__close_connection()
+                operation_log, _created = OperationLog.objects.update_or_create(
+                    defaults=info,
+                    id=operation_log_id
+                )
+
+                if not operation_log.request_modular and settings.API_MODEL_MAP.get(request_path, None):
+                    operation_log.request_modular = settings.API_MODEL_MAP[request_path]
+                    operation_log.save(update_fields=['request_modular'])
+                return
+            except Exception as exc:
+                last_error = exc
+                self.__close_connection()
+                if not _is_connection_error(exc) or attempt >= 2:
+                    break
+                logger.warning(
+                    'OperationLog write retried after DB connection error (attempt %s/3): %s',
+                    attempt + 1,
+                    exc,
+                )
+
+        if last_error:
+            logger.warning('Skip OperationLog persistence because DB write failed: %s', last_error)
 
     def __handle_response(self, request, response):
         body = getattr(request, 'request_data', {})
@@ -112,15 +177,7 @@ class ApiLoggingMiddleware(MiddlewareMixin):
 
         # 如果 process_view 中创建了 log，这里进行更新；否则新建
         operation_log_id = getattr(request, 'operation_log_id', None)
-        operation_log, created = OperationLog.objects.update_or_create(
-            defaults=info, 
-            id=operation_log_id
-        )
-        
-        # 如果是新建且没有模块名，再次尝试匹配
-        if not operation_log.request_modular and settings.API_MODEL_MAP.get(request.request_path, None):
-            operation_log.request_modular = settings.API_MODEL_MAP[request.request_path]
-            operation_log.save()
+        self.__write_operation_log(operation_log_id, info, request.request_path)
 
     def process_view(self, request, view_func, view_args, view_kwargs):
         if self.enable:
@@ -145,5 +202,9 @@ class ApiLoggingMiddleware(MiddlewareMixin):
         """
         if self.enable:
             if self.methods == 'ALL' or request.method in self.methods:
-                self.__handle_response(request, response)
+                try:
+                    self.__handle_response(request, response)
+                except Exception as exc:
+                    logger.warning('ApiLoggingMiddleware skipped response logging: %s', exc)
+        close_old_connections()
         return response

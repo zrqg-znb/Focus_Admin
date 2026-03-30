@@ -47,6 +47,8 @@ VALID_FINDING_STATUSES = {value for value, _label in FINDING_STATUS_CHOICES}
 ACTIVE_STATUSES = {'pending', 'initializing', 'running', 'planning', 'indexing', 'analyzing', 'verifying', 'reporting'}
 TERMINAL_STATUSES = {'completed', 'failed', 'cancelled'}
 MAX_PERSISTED_CHECKPOINTS = 50
+TASK_STEP_MAX_LENGTH = 255
+CHECKPOINT_NAME_MAX_LENGTH = 255
 THINKING_EVENT_TYPES = {
     'thinking',
     'thinking_start',
@@ -69,6 +71,15 @@ TOOL_EVENT_TYPES = {
     'tool_call_output',
     'tool_call_end',
 }
+
+
+def truncate_runtime_text(value: str | None, *, max_length: int = TASK_STEP_MAX_LENGTH) -> str | None:
+    text = str(value or '').strip()
+    if not text:
+        return None
+    if len(text) <= max_length:
+        return text
+    return f'{text[: max_length - 1].rstrip()}…'
 
 TASK_STATUS_BY_PHASE = {
     AGENT_PHASE_PLANNING: 'planning',
@@ -531,7 +542,7 @@ def cancel_task(user, task_id: str) -> bool:
     if instance.status not in ACTIVE_STATUSES:
         return True
     instance.status = 'cancelled'
-    instance.current_step = '用户已取消任务'
+    instance.current_step = truncate_runtime_text('用户已取消任务')
     instance.completed_at = timezone.now()
     instance.sys_modifier = user
     instance.save(update_fields=['status', 'current_step', 'completed_at', 'sys_modifier', 'sys_update_datetime'])
@@ -541,7 +552,7 @@ def cancel_task(user, task_id: str) -> bool:
 
 def mark_dispatch_failed(instance: AgentTask, message: str) -> AgentTask:
     instance.status = 'failed'
-    instance.current_step = '任务队列不可用'
+    instance.current_step = truncate_runtime_text('任务队列不可用')
     instance.error_message = message
     instance.completed_at = timezone.now()
     if instance.created_by_id:
@@ -681,16 +692,19 @@ def stream_events_response(
 
     @sync_to_async
     def load_stream_state(last_sequence: int):
-        events = list(
-            AgentEvent.objects.filter(task=instance, is_deleted=False, sequence__gt=last_sequence)
-            .order_by('sequence')[:100]
-        )
-        current_task = AgentTask.objects.filter(id=instance.id, is_deleted=False).only(
-            'status',
-            'findings_count',
-            'security_score',
-        ).first()
-        return events, current_task
+        def _load():
+            events = list(
+                AgentEvent.objects.filter(task=instance, is_deleted=False, sequence__gt=last_sequence)
+                .order_by('sequence')[:100]
+            )
+            current_task = AgentTask.objects.filter(id=instance.id, is_deleted=False).only(
+                'status',
+                'findings_count',
+                'security_score',
+            ).first()
+            return events, current_task
+
+        return run_with_fresh_connection(_load)
 
     async def event_generator():
         last_sequence = max(after_sequence, 0)
@@ -789,135 +803,136 @@ def refresh_task_snapshot(
     completed_at=UNSET,
     error_message=UNSET,
 ) -> AgentTask | None:
-    ensure_runtime_db_connection()
-    if isinstance(task_or_id, AgentTask):
-        instance = AgentTask.objects.filter(id=task_or_id.id, is_deleted=False).first()
-    else:
-        instance = AgentTask.objects.filter(id=task_or_id, is_deleted=False).first()
+    def _refresh() -> AgentTask | None:
+        if isinstance(task_or_id, AgentTask):
+            instance = AgentTask.objects.filter(id=task_or_id.id, is_deleted=False).first()
+        else:
+            instance = AgentTask.objects.filter(id=task_or_id, is_deleted=False).first()
 
-    if not instance:
-        return None
+        if not instance:
+            return None
 
-    events = list(instance.events.filter(is_deleted=False).order_by('sequence'))
-    findings = list(instance.findings.filter(is_deleted=False))
+        events = list(instance.events.filter(is_deleted=False).order_by('sequence'))
+        findings = list(instance.findings.filter(is_deleted=False))
 
-    severity_distribution = _severity_distribution_from_findings(findings)
-    vulnerability_types = _vulnerability_types_from_findings(findings)
-    quality_score, security_score = _calculate_task_scores(findings)
+        severity_distribution = _severity_distribution_from_findings(findings)
+        vulnerability_types = _vulnerability_types_from_findings(findings)
+        quality_score, security_score = _calculate_task_scores(findings)
 
-    tokens_by_agent: dict[str, int] = {}
-    tools_by_agent: dict[str, int] = {}
-    iterations_by_agent: dict[str, int] = {}
-    target_file_count = len(instance.target_files or [])
-    indexed_files = instance.indexed_files
-    analyzed_files = instance.analyzed_files
-    total_files = max(instance.total_files, target_file_count)
-    latest_phase = instance.current_phase
-    latest_step = instance.current_step
+        tokens_by_agent: dict[str, int] = {}
+        tools_by_agent: dict[str, int] = {}
+        iterations_by_agent: dict[str, int] = {}
+        target_file_count = len(instance.target_files or [])
+        indexed_files = instance.indexed_files
+        analyzed_files = instance.analyzed_files
+        total_files = max(instance.total_files, target_file_count)
+        latest_phase = instance.current_phase
+        latest_step = truncate_runtime_text(instance.current_step)
 
-    for event in events:
-        metadata = dict(event.event_metadata or {})
-        agent_id = str(metadata.get('agent_id') or metadata.get('agent_name') or '').strip()
-        if agent_id:
-            tokens_by_agent[agent_id] = max(
-                tokens_by_agent.get(agent_id, 0),
-                _to_int(metadata.get('tokens_used'), _to_int(event.tokens_used, 0)),
-            )
-            tools_by_agent[agent_id] = max(
-                tools_by_agent.get(agent_id, 0),
-                _to_int(metadata.get('tool_calls'), 0),
-            )
-            iterations_by_agent[agent_id] = max(
-                iterations_by_agent.get(agent_id, 0),
-                _to_int(metadata.get('iteration'), 0),
-            )
+        for event in events:
+            metadata = dict(event.event_metadata or {})
+            agent_id = str(metadata.get('agent_id') or metadata.get('agent_name') or '').strip()
+            if agent_id:
+                tokens_by_agent[agent_id] = max(
+                    tokens_by_agent.get(agent_id, 0),
+                    _to_int(metadata.get('tokens_used'), _to_int(event.tokens_used, 0)),
+                )
+                tools_by_agent[agent_id] = max(
+                    tools_by_agent.get(agent_id, 0),
+                    _to_int(metadata.get('tool_calls'), 0),
+                )
+                iterations_by_agent[agent_id] = max(
+                    iterations_by_agent.get(agent_id, 0),
+                    _to_int(metadata.get('iteration'), 0),
+                )
 
-        if event.phase:
-            latest_phase = event.phase
-        if event.message:
-            latest_step = event.message
+            if event.phase:
+                latest_phase = event.phase
+            if event.message:
+                latest_step = truncate_runtime_text(event.message)
 
-        current = _to_int(metadata.get('current'))
-        total = _to_int(metadata.get('total'))
-        hinted_current, hinted_total = _extract_file_count_hints(event.message)
-        current = max(current, hinted_current)
-        total = max(total, hinted_total)
-        if total > 0:
-            total_files = max(total_files, total)
-        if event.phase == AGENT_PHASE_INDEXING and current > 0:
-            indexed_files = max(indexed_files, current)
-        if event.phase == AGENT_PHASE_ANALYSIS and current > 0:
-            analyzed_files = max(analyzed_files, current)
+            current = _to_int(metadata.get('current'))
+            total = _to_int(metadata.get('total'))
+            hinted_current, hinted_total = _extract_file_count_hints(event.message)
+            current = max(current, hinted_current)
+            total = max(total, hinted_total)
+            if total > 0:
+                total_files = max(total_files, total)
+            if event.phase == AGENT_PHASE_INDEXING and current > 0:
+                indexed_files = max(indexed_files, current)
+            if event.phase == AGENT_PHASE_ANALYSIS and current > 0:
+                analyzed_files = max(analyzed_files, current)
 
-        if event.event_type in {'dispatch', 'dispatch_complete'} and total > 0:
-            total_files = max(total_files, total)
-        if current > 0 and event.event_type in {'llm_observation', 'progress', 'info'}:
-            analyzed_files = max(analyzed_files, current)
+            if event.event_type in {'dispatch', 'dispatch_complete'} and total > 0:
+                total_files = max(total_files, total)
+            if current > 0 and event.event_type in {'llm_observation', 'progress', 'info'}:
+                analyzed_files = max(analyzed_files, current)
 
-    if total_files <= 0 and target_file_count > 0:
-        total_files = target_file_count
+        if total_files <= 0 and target_file_count > 0:
+            total_files = target_file_count
 
-    if instance.status in TERMINAL_STATUSES and total_files > 0:
-        analysis_reached = any([
-            analyzed_files > 0,
-            findings,
-            any(event.event_type in {'dispatch', 'dispatch_complete', 'tool_call', 'tool_result'} for event in events),
-        ])
-        if analysis_reached:
-            analyzed_files = max(analyzed_files, total_files)
-        if indexed_files <= 0 and any(event.event_type in {'dispatch', 'dispatch_complete'} for event in events):
-            indexed_files = max(indexed_files, min(analyzed_files or total_files, total_files))
+        if instance.status in TERMINAL_STATUSES and total_files > 0:
+            analysis_reached = any([
+                analyzed_files > 0,
+                findings,
+                any(event.event_type in {'dispatch', 'dispatch_complete', 'tool_call', 'tool_result'} for event in events),
+            ])
+            if analysis_reached:
+                analyzed_files = max(analyzed_files, total_files)
+            if indexed_files <= 0 and any(event.event_type in {'dispatch', 'dispatch_complete'} for event in events):
+                indexed_files = max(indexed_files, min(analyzed_files or total_files, total_files))
 
-    findings_count = len(findings)
-    files_with_findings = len({str(item.file_path).strip() for item in findings if str(item.file_path or '').strip()})
-    verified_count = sum(1 for item in findings if item.is_verified)
-    false_positive_count = sum(
-        1
-        for item in findings
-        if item.status == 'false_positive' or str((item.poc or {}).get('verdict') or '').strip().lower() == 'false_positive'
-    )
+        findings_count = len(findings)
+        files_with_findings = len({str(item.file_path).strip() for item in findings if str(item.file_path or '').strip()})
+        verified_count = sum(1 for item in findings if item.is_verified)
+        false_positive_count = sum(
+            1
+            for item in findings
+            if item.status == 'false_positive' or str((item.poc or {}).get('verdict') or '').strip().lower() == 'false_positive'
+        )
 
-    if status is UNSET:
-        computed_status = instance.status
-        if computed_status not in TERMINAL_STATUSES and latest_phase:
-            computed_status = TASK_STATUS_BY_PHASE.get(latest_phase, computed_status or 'running')
-    else:
-        computed_status = status
+        if status is UNSET:
+            computed_status = instance.status
+            if computed_status not in TERMINAL_STATUSES and latest_phase:
+                computed_status = TASK_STATUS_BY_PHASE.get(latest_phase, computed_status or 'running')
+        else:
+            computed_status = status
 
-    new_values = {
-        'current_phase': latest_phase if current_phase is UNSET else current_phase,
-        'current_step': latest_step if current_step is UNSET else current_step,
-        'status': computed_status,
-        'total_files': total_files,
-        'indexed_files': indexed_files,
-        'analyzed_files': analyzed_files,
-        'files_with_findings': files_with_findings,
-        'total_iterations': sum(iterations_by_agent.values()),
-        'tool_calls_count': sum(tools_by_agent.values()) or sum(1 for item in events if item.event_type in TOOL_COUNT_EVENT_TYPES),
-        'tokens_used': sum(tokens_by_agent.values()),
-        'findings_count': findings_count,
-        'verified_count': verified_count,
-        'false_positive_count': false_positive_count,
-        'critical_count': severity_distribution['critical'],
-        'high_count': severity_distribution['high'],
-        'medium_count': severity_distribution['medium'],
-        'low_count': severity_distribution['low'],
-        'quality_score': quality_score,
-        'security_score': security_score,
-        'completed_at': instance.completed_at if completed_at is UNSET else completed_at,
-        'error_message': instance.error_message if error_message is UNSET else error_message,
-    }
+        new_values = {
+            'current_phase': latest_phase if current_phase is UNSET else current_phase,
+            'current_step': latest_step if current_step is UNSET else truncate_runtime_text(current_step),
+            'status': computed_status,
+            'total_files': total_files,
+            'indexed_files': indexed_files,
+            'analyzed_files': analyzed_files,
+            'files_with_findings': files_with_findings,
+            'total_iterations': sum(iterations_by_agent.values()),
+            'tool_calls_count': sum(tools_by_agent.values()) or sum(1 for item in events if item.event_type in TOOL_COUNT_EVENT_TYPES),
+            'tokens_used': sum(tokens_by_agent.values()),
+            'findings_count': findings_count,
+            'verified_count': verified_count,
+            'false_positive_count': false_positive_count,
+            'critical_count': severity_distribution['critical'],
+            'high_count': severity_distribution['high'],
+            'medium_count': severity_distribution['medium'],
+            'low_count': severity_distribution['low'],
+            'quality_score': quality_score,
+            'security_score': security_score,
+            'completed_at': instance.completed_at if completed_at is UNSET else completed_at,
+            'error_message': instance.error_message if error_message is UNSET else error_message,
+        }
 
-    update_fields: list[str] = []
-    for field, value in new_values.items():
-        if getattr(instance, field) != value:
-            setattr(instance, field, value)
-            update_fields.append(field)
+        update_fields: list[str] = []
+        for field, value in new_values.items():
+            if getattr(instance, field) != value:
+                setattr(instance, field, value)
+                update_fields.append(field)
 
-    if update_fields:
-        instance.save(update_fields=update_fields + ['sys_update_datetime'])
-    close_runtime_db_connections()
-    return instance
+        if update_fields:
+            instance.save(update_fields=update_fields + ['sys_update_datetime'])
+        return instance
+
+    return run_with_fresh_connection(_refresh)
 
 
 def build_summary(instance: AgentTask, *, findings: list[AgentFinding] | None = None) -> dict:
@@ -1162,7 +1177,10 @@ def persist_checkpoint(
         tool_calls=instance.tool_calls_count,
         findings_count=instance.findings_count,
         checkpoint_type=checkpoint_type,
-        checkpoint_name=checkpoint_name or instance.current_step or instance.current_phase or checkpoint_type,
+            checkpoint_name=truncate_runtime_text(
+                checkpoint_name or instance.current_step or instance.current_phase or checkpoint_type,
+                max_length=CHECKPOINT_NAME_MAX_LENGTH,
+            ),
         checkpoint_metadata={
             'phase': checkpoint_phase,
             'sequence': sequence or (latest_event.sequence if latest_event else 0),

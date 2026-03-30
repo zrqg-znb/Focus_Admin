@@ -186,6 +186,15 @@ class OrchestratorAgent(BaseAgent):
         """注册子 Agent"""
         self.sub_agents[name] = agent
 
+    def _get_sub_agent_timeout(self, agent_name: str) -> int:
+        default_sub_agent_timeout = int(self._timeout_config.get('sub_agent_timeout', 600) or 600)
+        agent_timeouts = {
+            "recon": default_sub_agent_timeout,
+            "analysis": default_sub_agent_timeout,
+            "verification": default_sub_agent_timeout,
+        }
+        return int(agent_timeouts.get(agent_name, default_sub_agent_timeout))
+
     def _build_runtime_state(self) -> Dict[str, Any]:
         return {
             "conversation_history": list(self._conversation_history),
@@ -854,14 +863,7 @@ Action Input: {{"参数": "值"}}
 
             # 🔥 执行子 Agent - 支持取消和超时
             # 使用用户配置的子Agent超时时间
-            default_sub_agent_timeout = self._timeout_config.get('sub_agent_timeout', 600)
-            # 设置子 Agent 超时（根据 Agent 类型，recon稍短）
-            agent_timeouts = {
-                "recon": min(300, default_sub_agent_timeout),  # recon 通常较快
-                "analysis": default_sub_agent_timeout,
-                "verification": default_sub_agent_timeout,
-            }
-            timeout = agent_timeouts.get(agent_name, default_sub_agent_timeout)
+            timeout = self._get_sub_agent_timeout(agent_name)
 
             async def run_with_cancel_check():
                 """包装子 Agent 执行，定期检查取消状态"""

@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 from asgiref.sync import sync_to_async
@@ -31,6 +32,20 @@ SNAPSHOT_EVENT_TYPES = {
     "tool_end",
     "warning",
 }
+
+SNAPSHOT_FORCE_EVENT_TYPES = {
+    "phase_start",
+    "phase_complete",
+    "finding_new",
+    "finding_verified",
+    "task_complete",
+    "task_error",
+    "task_cancel",
+    "error",
+}
+
+SNAPSHOT_REFRESH_MIN_INTERVAL_SECONDS = 2.0
+SNAPSHOT_REFRESH_MIN_SEQUENCE_GAP = 25
 
 
 def _sanitize_text(value: Optional[str]) -> Optional[str]:
@@ -221,6 +236,22 @@ class EventManager:
         self.task_id = task_id
         self.websocket_manager = websocket_manager
         self.sequence = 0
+        self._last_snapshot_refresh_at = 0.0
+        self._last_snapshot_refresh_sequence = 0
+
+    def _should_refresh_snapshot(self, event_type: str) -> bool:
+        if event_type in SNAPSHOT_FORCE_EVENT_TYPES:
+            return True
+
+        now = time.monotonic()
+        if (
+            self.sequence - self._last_snapshot_refresh_sequence
+            >= SNAPSHOT_REFRESH_MIN_SEQUENCE_GAP
+        ):
+            return True
+        if now - self._last_snapshot_refresh_at >= SNAPSHOT_REFRESH_MIN_INTERVAL_SECONDS:
+            return True
+        return False
 
     async def init_sequence(self):
         # Get the latest sequence from db safely
@@ -284,7 +315,10 @@ class EventManager:
                 try:
                     from apps.deepaudit.agent_task.agent_task_services import persist_checkpoint, refresh_task_snapshot
 
-                    await sync_to_async(refresh_task_snapshot)(self.task_id)
+                    if self._should_refresh_snapshot(event_type):
+                        await sync_to_async(refresh_task_snapshot)(self.task_id)
+                        self._last_snapshot_refresh_at = time.monotonic()
+                        self._last_snapshot_refresh_sequence = self.sequence
                     if event_type in {'phase_complete', 'task_complete', 'task_error', 'task_cancel'}:
                         checkpoint_type = {
                             'phase_complete': 'auto',

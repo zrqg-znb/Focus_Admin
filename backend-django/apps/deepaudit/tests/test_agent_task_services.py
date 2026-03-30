@@ -529,6 +529,39 @@ class AgentTaskServicesTestCase(TestCase):
         self.assertEqual(legacy_nodes[0]['agent_type'], 'orchestrator')
         self.assertTrue(any(item['agent_type'] == 'recon' for item in legacy_nodes[1:]))
 
+    def test_refresh_task_snapshot_truncates_oversized_current_step_and_checkpoint_name(self) -> None:
+        task = self._create_task(name='Long Message Task')
+        long_message = 'A' * 400
+        self._create_event(
+            task,
+            1,
+            'info',
+            phase=AGENT_PHASE_ANALYSIS,
+            message=long_message,
+            metadata={
+                'agent_id': 'orch-1',
+                'agent_name': 'Orchestrator',
+                'agent_type': 'orchestrator',
+                'task': long_message,
+            },
+        )
+
+        refreshed = refresh_task_snapshot(task.id)
+        assert refreshed is not None
+        refreshed.refresh_from_db()
+
+        self.assertEqual(len(refreshed.current_step), 255)
+        self.assertTrue(refreshed.current_step.endswith('…'))
+
+        checkpoint = persist_checkpoint(
+            task.id,
+            checkpoint_name=long_message,
+            phase=AGENT_PHASE_ANALYSIS,
+        )
+        assert checkpoint is not None
+        self.assertEqual(len(checkpoint.checkpoint_name), 255)
+        self.assertTrue(checkpoint.checkpoint_name.endswith('…'))
+
     def test_export_agent_report_response_supports_json_markdown_and_pdf(self) -> None:
         task = self._seed_completed_runtime(self.task)
         assert task is not None

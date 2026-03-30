@@ -633,7 +633,7 @@ def _upsert_agent_task(task_payload: dict[str, Any], project: AuditProject, curr
     task.timeout_seconds = int(task_payload.get('timeout_seconds') or 1800)
     task.status = str(task_payload.get('status') or 'pending').strip() or 'pending'
     task.current_phase = str(task_payload.get('current_phase') or '').strip() or None
-    task.current_step = str(task_payload.get('current_step') or '').strip() or None
+    task.current_step = agent_task_services.truncate_runtime_text(task_payload.get('current_step'))
     task.error_message = str(task_payload.get('error_message') or '').strip() or None
     task.total_files = int(task_payload.get('total_files') or 0)
     task.indexed_files = int(task_payload.get('indexed_files') or 0)
