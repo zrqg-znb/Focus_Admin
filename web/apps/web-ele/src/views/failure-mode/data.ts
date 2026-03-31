@@ -325,8 +325,15 @@ export function useFailureModeColumns(): ZqTableGridOptions<FailureModeItem>['co
       key: 'status',
       dataKey: 'status',
       title: '状态',
-      width: 120,
+      width: 140,
       headerSlotName: 'header-status',
+    },
+    {
+      key: 'source_task_no',
+      dataKey: 'source_task_no',
+      title: '来源',
+      width: 180,
+      cellSlotName: 'cell-source-task-no',
     },
     {
       key: 'author_info',
@@ -636,13 +643,16 @@ export function useFailureModeFormSchema(
   subsystemConfigOptions: FailureModeSubsystemConfigOptions,
   selectedSubsystem?: null | string,
   onSubsystemChange?: (value?: string) => void,
+  options?: {
+    hideStatusField?: boolean;
+  },
 ): VbenFormSchema[] {
   const scopedOptions = resolveSubsystemScopedOptions(
     subsystemConfigOptions,
     selectedSubsystem,
   );
 
-  return [
+  const schema: VbenFormSchema[] = [
     {
       component: 'Input',
       fieldName: 'brief',
@@ -795,6 +805,12 @@ export function useFailureModeFormSchema(
       },
     },
   ];
+
+  if (options?.hideStatusField) {
+    return schema.filter((item) => item.fieldName !== 'status');
+  }
+
+  return schema;
 }
 
 export function useSubsystemConfigFormSchema(): VbenFormSchema[] {
@@ -996,6 +1012,22 @@ export function formatUserNames(
 
 export function formatRelationLabels(items?: RelationLike[]) {
   return (items || []).map((item) => item.label).join('、');
+}
+
+export function formatFailureModeSourceLabel(item: {
+  source_type?: null | string;
+}) {
+  return item.source_type === 'task_quick_create' ? '本任务新增' : '已有全局库';
+}
+
+export function formatFailureModeSourceHint(item: {
+  source_task_no?: null | string;
+  source_type?: null | string;
+}) {
+  if (item.source_type === 'task_quick_create') {
+    return item.source_task_no || '';
+  }
+  return '';
 }
 
 export interface RelationLike {

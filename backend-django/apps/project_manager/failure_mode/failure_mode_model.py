@@ -5,6 +5,13 @@ from common.fu_model import RootModel
 
 
 class FailureMode(RootModel):
+    SOURCE_TYPE_MANUAL = 'manual'
+    SOURCE_TYPE_TASK_QUICK_CREATE = 'task_quick_create'
+    SOURCE_TYPE_CHOICES = [
+        (SOURCE_TYPE_MANUAL, '手工维护'),
+        (SOURCE_TYPE_TASK_QUICK_CREATE, '任务快速新增'),
+    ]
+
     brief = models.CharField(max_length=255, verbose_name='故障模式简述')
     subsystem = models.CharField(max_length=128, blank=True, null=True, verbose_name='子系统')
     module_name = models.CharField(max_length=128, blank=True, null=True, verbose_name='模块')
@@ -34,6 +41,21 @@ class FailureMode(RootModel):
     severity = models.CharField(max_length=32, blank=True, null=True, verbose_name='严重程度')
     related_dts_nos = models.JSONField(default=list, blank=True, verbose_name='关联问题单')
     status = models.CharField(max_length=64, blank=True, null=True, verbose_name='状态')
+    source_type = models.CharField(
+        max_length=32,
+        choices=SOURCE_TYPE_CHOICES,
+        default=SOURCE_TYPE_MANUAL,
+        db_index=True,
+        verbose_name='来源类型',
+    )
+    source_task = models.ForeignKey(
+        'FailureModeTask',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_failure_modes',
+        verbose_name='来源任务',
+    )
     interception_required = models.BooleanField(default=False, verbose_name='需要产线拦截策略')
     huatuo_required = models.BooleanField(default=False, verbose_name='需要华佗诊断方案')
     required_handling_measure_categories = models.JSONField(
@@ -61,6 +83,7 @@ class FailureMode(RootModel):
             models.Index(fields=['brief'], name='idx_pm_fm_brief'),
             models.Index(fields=['subsystem', 'status'], name='idx_pm_fm_sub_status'),
             models.Index(fields=['module_name'], name='idx_pm_fm_module'),
+            models.Index(fields=['source_type', 'source_task'], name='idx_pm_fm_source_task'),
         ]
 
 

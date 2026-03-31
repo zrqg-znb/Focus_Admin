@@ -27,7 +27,6 @@ import {
   ElSelect,
   ElTabPane,
   ElTabs,
-  ElTag,
   ElTooltip,
 } from 'element-plus';
 
@@ -57,6 +56,8 @@ import SubsystemConfigDrawer from './components/SubsystemConfigDrawer.vue';
 import {
   createEmptyDictOptions,
   createEmptySubsystemConfigOptions,
+  formatFailureModeSourceHint,
+  formatFailureModeSourceLabel,
   formatRelationLabels,
   formatTextList,
   formatUserNames,
@@ -288,7 +289,10 @@ function buildPageQuery(
       if (Array.isArray(value)) {
         return value.length > 0;
       }
-      return value !== undefined && value !== null && value !== '';
+      if (typeof value === 'string') {
+        return value !== '';
+      }
+      return value !== undefined && value !== null;
     }),
   );
 }
@@ -771,10 +775,18 @@ onMounted(async () => {
                     }}
                   </template>
                   <template #cell-status="{ row }">
-                    <ElTag v-if="row.status" size="small" type="success">
-                      {{ row.status }}
-                    </ElTag>
-                    <span v-else>-</span>
+                    {{ row.status || '-' }}
+                  </template>
+                  <template #cell-source_task_no="{ row }">
+                    <div class="text-sm text-gray-700">
+                      {{ formatFailureModeSourceLabel(row) }}
+                    </div>
+                    <div
+                      v-if="formatFailureModeSourceHint(row)"
+                      class="mt-1 text-xs text-gray-500"
+                    >
+                      {{ formatFailureModeSourceHint(row) }}
+                    </div>
                   </template>
                   <template #cell-actions="{ row }">
                     <div class="flex justify-center gap-1">

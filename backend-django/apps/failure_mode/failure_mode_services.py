@@ -96,6 +96,17 @@ def _normalize_enum_list(values: Any, allowed_values: list[str]) -> list[str]:
     return [item for item in allowed_values if item in normalized_set]
 
 
+def _normalize_failure_mode_source_type(value: Any) -> str:
+    normalized = _normalize_optional_text(value) or FailureMode.SOURCE_TYPE_MANUAL
+    allowed_values = {
+        FailureMode.SOURCE_TYPE_MANUAL,
+        FailureMode.SOURCE_TYPE_TASK_QUICK_CREATE,
+    }
+    if normalized not in allowed_values:
+        raise HttpError(422, 'source_type 非法')
+    return normalized
+
+
 def _append_unique_text(target: list[str], seen: set[str], value: Any):
     text = _normalize_optional_text(value)
     if not text or text in seen:
@@ -312,6 +323,9 @@ def _serialize_failure_mode(failure_mode: FailureMode) -> dict[str, Any]:
         'author_info': _users_brief(authors),
         'related_dts_nos': failure_mode.related_dts_nos or [],
         'status': failure_mode.status,
+        'source_type': failure_mode.source_type,
+        'source_task_id': str(failure_mode.source_task_id) if failure_mode.source_task_id else None,
+        'source_task_no': getattr(getattr(failure_mode, 'source_task', None), 'task_no', None),
         'interception_required': bool(failure_mode.interception_required),
         'huatuo_required': bool(failure_mode.huatuo_required),
         'required_handling_measure_categories': _normalize_enum_list(
@@ -380,7 +394,7 @@ def _serialize_subsystem_config(config: FailureModeSubsystemConfig) -> dict[str,
 
 
 def _failure_mode_queryset():
-    return FailureMode.objects.filter(is_deleted=False).prefetch_related(
+    return FailureMode.objects.filter(is_deleted=False).select_related('source_task').prefetch_related(
         'authors',
         Prefetch(
             'interception_relations',
@@ -655,6 +669,8 @@ def _failure_mode_attrs(payload: dict[str, Any]) -> dict[str, Any]:
         'severity': _normalize_optional_text(payload.get('severity')),
         'related_dts_nos': _normalize_text_list(payload.get('related_dts_nos')),
         'status': _normalize_optional_text(payload.get('status')),
+        'source_type': _normalize_failure_mode_source_type(payload.get('source_type')),
+        'source_task_id': _normalize_optional_text(payload.get('source_task_id')),
         'interception_required': _normalize_bool(payload.get('interception_required')),
         'huatuo_required': _normalize_bool(payload.get('huatuo_required')),
         'required_handling_measure_categories': _normalize_enum_list(
@@ -666,6 +682,8 @@ def _failure_mode_attrs(payload: dict[str, Any]) -> dict[str, Any]:
             FIXED_OBSERVATION_METHOD_TYPES,
         ),
     }
+    if attrs['source_type'] == FailureMode.SOURCE_TYPE_MANUAL:
+        attrs['source_task_id'] = None
     if not attrs['brief']:
         raise HttpError(422, 'brief 不能为空')
     return attrs

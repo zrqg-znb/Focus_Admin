@@ -47,6 +47,7 @@ defineOptions({ name: 'FailureModeDrawer' });
 const props = defineProps<{
   createHandler?: (payload: FailureModePayload) => Promise<FailureModeItem>;
   dictOptions: FailureModeDictOptions;
+  hideStatusField?: boolean;
   subsystemConfigOptions: FailureModeSubsystemConfigOptions;
 }>();
 const emit = defineEmits<{
@@ -151,6 +152,10 @@ const [Form, formApi] = useVbenForm({
     props.dictOptions,
     props.subsystemConfigOptions,
     selectedSubsystem.value,
+    undefined,
+    {
+      hideStatusField: props.hideStatusField,
+    },
   ),
   showDefaultActions: false,
   wrapperClass: 'grid-cols-1 gap-x-6 xl:grid-cols-2',
@@ -164,6 +169,9 @@ function applySchema() {
       selectedSubsystem.value,
       (value) => {
         void handleSubsystemChange(value);
+      },
+      {
+        hideStatusField: props.hideStatusField,
       },
     ),
   });

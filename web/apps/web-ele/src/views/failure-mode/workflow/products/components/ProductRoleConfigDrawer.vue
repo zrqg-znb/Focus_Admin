@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type {
   FailureModeProductItem,
+  FailureModeRoleAssignmentItem,
   ProductRoleAssignmentSaveItem,
   VisibleSubsystemItem,
 } from '#/api/failure_mode_workflow';
@@ -43,6 +44,12 @@ const roleOptions = [
   { label: '普通成员', value: 'member' },
 ];
 
+function isEditableRoleAssignment(
+  item: FailureModeRoleAssignmentItem,
+): item is FailureModeRoleAssignmentItem & { role: EditableRoleRow['role'] } {
+  return item.role === 'feature_se' || item.role === 'member';
+}
+
 const drawerTitle = computed(() => {
   const productName = currentProduct.value?.project_name || '';
   return productName ? `${productName} 角色配置` : '产品角色配置';
@@ -80,7 +87,7 @@ async function loadData(product: FailureModeProductItem) {
     );
     ownerId.value = product.owner_id || '';
     roleRows.value = roleAssignments
-      .filter((item) => item.role === 'feature_se' || item.role === 'member')
+      .filter((item) => isEditableRoleAssignment(item))
       .map((item) => ({
         tempKey: item.id,
         role: item.role,
@@ -174,7 +181,7 @@ defineExpose({ open });
         <UserSelector
           v-model="ownerId"
           clearable
-          display-mode="button"
+          display-mode="select"
           placeholder="请选择主版本SE"
         />
       </div>
@@ -217,7 +224,7 @@ defineExpose({ open });
             <UserSelector
               v-model="item.user_id"
               clearable
-              display-mode="button"
+              display-mode="select"
               placeholder="选择用户"
             />
             <ElButton type="danger" link @click="removeRoleRow(item.tempKey)">

@@ -13,8 +13,16 @@ export interface FailureModeProductItem {
   owner_id?: null | string;
   owner_info?: null | UserBriefInfo;
   owner_assignment_id?: null | string;
+  can_manage_roles: boolean;
+  role_preview: FailureModeRolePreviewItem[];
   sys_create_datetime?: null | string;
   sys_update_datetime?: null | string;
+}
+
+export interface FailureModeRolePreviewItem {
+  subsystem: string;
+  feature_se_info: UserBriefInfo[];
+  member_info: UserBriefInfo[];
 }
 
 export interface ProductFailureModeItem {

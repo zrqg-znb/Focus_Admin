@@ -77,7 +77,7 @@ export function useTaskColumns(): ZqTableGridOptions<FailureModeTaskItem>['colum
       dataKey: 'actions',
       title: '操作',
       width: 260,
-      fixed: 'right',
+      fixed: true,
       cellSlotName: 'cell-actions',
     },
   ]);

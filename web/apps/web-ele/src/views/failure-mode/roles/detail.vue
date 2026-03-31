@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import type {
   FailureModeProductItem,
+  FailureModeRoleAssignmentItem,
   ProductRoleAssignmentSaveItem,
   VisibleSubsystemItem,
 } from '#/api/failure_mode_workflow';
@@ -10,14 +11,7 @@ import { useRoute, useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
-import {
-  ElButton,
-  ElCard,
-  ElMessage,
-  ElOption,
-  ElSelect,
-  ElTag,
-} from 'element-plus';
+import { ElButton, ElCard, ElMessage, ElOption, ElSelect } from 'element-plus';
 
 import { getFailureModeDictOptionsApi } from '#/api/failure_mode';
 import {
@@ -44,8 +38,10 @@ const productId = computed(() => String(route.params.id || ''));
 
 const loading = ref(false);
 const submitting = ref(false);
+const isEditing = ref(false);
 const currentProduct = ref<FailureModeProductItem | null>(null);
 const ownerId = ref('');
+const roleAssignments = ref<FailureModeRoleAssignmentItem[]>([]);
 const roleRows = ref<EditableRoleRow[]>([]);
 const subsystemOptions = ref<VisibleSubsystemItem[]>([]);
 
@@ -54,23 +50,54 @@ const roleOptions = [
   { label: '普通成员', value: 'member' },
 ];
 
-const roleSummary = computed(() => {
-  const grouped = new Map<string, { feature: number; member: number }>();
-  for (const item of roleRows.value) {
-    if (!item.subsystem) {
+function isEditableRoleAssignment(
+  item: FailureModeRoleAssignmentItem,
+): item is FailureModeRoleAssignmentItem & { role: EditableRoleRow['role'] } {
+  return item.role === 'feature_se' || item.role === 'member';
+}
+
+const canManageRoles = computed(() =>
+  Boolean(currentProduct.value?.can_manage_roles),
+);
+
+const roleMatrixRows = computed(() => {
+  const grouped = new Map<
+    string,
+    {
+      featureUsers: string[];
+      memberUsers: string[];
+    }
+  >();
+  for (const item of roleAssignments.value) {
+    if (item.role !== 'feature_se' && item.role !== 'member') {
       continue;
     }
-    const current = grouped.get(item.subsystem) || { feature: 0, member: 0 };
+    const subsystem = item.subsystem || '未配置子系统';
+    const current = grouped.get(subsystem) || {
+      featureUsers: [],
+      memberUsers: [],
+    };
+    const userName =
+      item.user_info?.name || item.user_info?.username || item.user_id;
     if (item.role === 'feature_se') {
-      current.feature += 1;
+      current.featureUsers.push(userName);
     } else {
-      current.member += 1;
+      current.memberUsers.push(userName);
     }
-    grouped.set(item.subsystem, current);
+    grouped.set(subsystem, current);
   }
   return [...grouped.entries()].map(([subsystem, value]) => ({
     subsystem,
-    ...value,
+    featureUsers: value.featureUsers,
+    memberUsers: value.memberUsers,
+  }));
+});
+
+const roleSummary = computed(() => {
+  return roleMatrixRows.value.map((item) => ({
+    subsystem: item.subsystem,
+    featureText: item.featureUsers.join(' / ') || '未配置',
+    memberText: item.memberUsers.join(' / ') || '未配置',
   }));
 });
 
@@ -107,17 +134,16 @@ async function loadData() {
       return;
     }
 
-    const [roleAssignments, visibleSubsystems, dictOptions] = await Promise.all(
-      [
-        listProductRoleAssignmentsApi(productId.value),
-        listVisibleSubsystemsApi(productId.value),
-        getFailureModeDictOptionsApi(),
-      ],
-    );
+    const [assignmentRows, visibleSubsystems, dictOptions] = await Promise.all([
+      listProductRoleAssignmentsApi(productId.value),
+      listVisibleSubsystemsApi(productId.value),
+      getFailureModeDictOptionsApi(),
+    ]);
 
     ownerId.value = currentProduct.value.owner_id || '';
-    roleRows.value = roleAssignments
-      .filter((item) => item.role === 'feature_se' || item.role === 'member')
+    roleAssignments.value = assignmentRows;
+    roleRows.value = assignmentRows
+      .filter((item) => isEditableRoleAssignment(item))
       .map((item) => ({
         tempKey: item.id,
         role: item.role,
@@ -159,6 +185,18 @@ function buildPayload(): ProductRoleAssignmentSaveItem[] {
     .filter((item) => item.subsystem && item.user_id);
 }
 
+function handleStartEditing() {
+  if (!canManageRoles.value) {
+    return;
+  }
+  isEditing.value = true;
+}
+
+async function handleCancelEditing() {
+  isEditing.value = false;
+  await loadData();
+}
+
 async function handleSave() {
   if (!currentProduct.value) {
     return;
@@ -177,6 +215,7 @@ async function handleSave() {
     );
     ElMessage.success('角色配置已保存');
     await loadData();
+    isEditing.value = false;
   } finally {
     submitting.value = false;
   }
@@ -191,7 +230,7 @@ void loadData();
 
 <template>
   <Page content-class="flex h-full min-h-0 flex-col" auto-content-height>
-    <div class="flex min-h-0 flex-1 flex-col gap-4">
+    <div v-loading="loading" class="flex min-h-0 flex-1 flex-col gap-4">
       <div
         class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white p-5 shadow-sm"
       >
@@ -200,11 +239,33 @@ void loadData();
           <span class="text-xl font-semibold text-gray-900">
             {{ currentProduct?.project_name || '角色配置详情' }}
           </span>
-          <ElTag type="primary">产品级授权矩阵</ElTag>
+          <span class="text-sm text-gray-500">
+            {{ canManageRoles ? '可编辑' : '只读查看' }}
+          </span>
         </div>
-        <ElButton type="primary" :loading="submitting" @click="handleSave">
-          保存配置
-        </ElButton>
+        <div class="flex items-center gap-2">
+          <ElButton
+            v-if="canManageRoles && !isEditing"
+            type="primary"
+            @click="handleStartEditing"
+          >
+            进入编辑模式
+          </ElButton>
+          <ElButton
+            v-if="canManageRoles && isEditing"
+            @click="handleCancelEditing"
+          >
+            取消编辑
+          </ElButton>
+          <ElButton
+            v-if="canManageRoles && isEditing"
+            type="primary"
+            :loading="submitting"
+            @click="handleSave"
+          >
+            保存配置
+          </ElButton>
+        </div>
       </div>
 
       <div
@@ -228,11 +289,19 @@ void loadData();
             <div>
               <div class="mb-2 text-sm text-gray-500">主版本SE</div>
               <UserSelector
+                v-if="canManageRoles && isEditing"
                 v-model="ownerId"
                 clearable
-                display-mode="button"
+                display-mode="select"
                 placeholder="请选择主版本SE"
               />
+              <div v-else class="font-medium text-gray-900">
+                {{
+                  currentProduct?.owner_info?.name ||
+                  currentProduct?.owner_info?.username ||
+                  '未配置'
+                }}
+              </div>
             </div>
           </div>
         </ElCard>
@@ -245,13 +314,39 @@ void loadData();
           <template #header>
             <div class="flex items-center justify-between">
               <span class="font-medium">子系统角色矩阵</span>
-              <ElButton type="primary" plain @click="addRoleRow">
+              <ElButton
+                v-if="canManageRoles && isEditing"
+                type="primary"
+                plain
+                @click="addRoleRow"
+              >
                 新增一行
               </ElButton>
             </div>
           </template>
+          <div v-if="!isEditing" class="h-full space-y-3 overflow-auto pr-1">
+            <div
+              v-for="item in roleSummary"
+              :key="item.subsystem"
+              class="rounded-xl border p-4"
+            >
+              <div class="font-medium text-gray-900">{{ item.subsystem }}</div>
+              <div class="mt-3 text-sm text-gray-600">
+                特性SE：{{ item.featureText }}
+              </div>
+              <div class="mt-1 text-sm text-gray-600">
+                普通成员：{{ item.memberText }}
+              </div>
+            </div>
+            <div
+              v-if="roleSummary.length === 0"
+              class="rounded-xl border border-dashed p-10 text-center text-sm text-gray-500"
+            >
+              当前范围内暂无角色授权配置
+            </div>
+          </div>
           <div
-            v-if="roleRows.length === 0"
+            v-else-if="roleRows.length === 0"
             class="rounded-xl border border-dashed p-10 text-center text-sm text-gray-500"
           >
             暂无角色授权，请新增矩阵行后保存
@@ -285,7 +380,7 @@ void loadData();
               <UserSelector
                 v-model="item.user_id"
                 clearable
-                display-mode="button"
+                display-mode="select"
                 placeholder="选择用户"
               />
               <ElButton type="danger" link @click="removeRoleRow(item.tempKey)">
@@ -305,7 +400,11 @@ void loadData();
           </template>
           <div class="space-y-3">
             <div class="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">
-              角色页是高复杂配置区，建议由管理员或版本SE集中维护，不建议在业务列表里做碎片化调整。
+              {{
+                canManageRoles
+                  ? '建议先在只读模式确认当前负责人，再进入编辑模式做集中调整。'
+                  : '当前账号仅有查看权限，可在此核对各子系统 SE 与成员对应关系。'
+              }}
             </div>
             <div
               v-for="item in roleSummary"
@@ -314,10 +413,10 @@ void loadData();
             >
               <div class="font-medium text-gray-900">{{ item.subsystem }}</div>
               <div class="mt-2 text-sm text-gray-600">
-                特性SE：{{ item.feature }} 人
+                特性SE：{{ item.featureText }}
               </div>
               <div class="mt-1 text-sm text-gray-600">
-                普通成员：{{ item.member }} 人
+                普通成员：{{ item.memberText }}
               </div>
             </div>
             <div v-if="roleSummary.length === 0" class="text-sm text-gray-500">

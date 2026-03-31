@@ -1,20 +1,14 @@
 <script lang="ts" setup>
-import type {
-  FailureModeProductItem,
-  FailureModeRoleAssignmentItem,
-} from '#/api/failure_mode_workflow';
+import type { FailureModeProductItem } from '#/api/failure_mode_workflow';
 
-import { computed, ref, watch } from 'vue';
+import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
-import { ElButton, ElCard, ElEmpty, ElInput, ElTag } from 'element-plus';
+import { ElButton, ElCard, ElEmpty, ElInput } from 'element-plus';
 
-import {
-  listProductRoleAssignmentsApi,
-  listProductsApi,
-} from '#/api/failure_mode_workflow';
+import { listProductsApi } from '#/api/failure_mode_workflow';
 
 defineOptions({ name: 'FailureModeRoleIndex' });
 
@@ -24,7 +18,6 @@ const loading = ref(false);
 const keyword = ref('');
 const products = ref<FailureModeProductItem[]>([]);
 const selectedProductId = ref('');
-const roleAssignments = ref<FailureModeRoleAssignmentItem[]>([]);
 
 const filteredProducts = computed(() => {
   const normalizedKeyword = keyword.value.trim().toLowerCase();
@@ -42,26 +35,18 @@ const selectedProduct = computed(() => {
   );
 });
 
-const assignmentSummary = computed(() => {
-  const summary = new Map<string, { feature: number; member: number }>();
-  for (const item of roleAssignments.value) {
-    if (item.role !== 'feature_se' && item.role !== 'member') {
-      continue;
-    }
-    const key = item.subsystem || '未配置子系统';
-    const current = summary.get(key) || { feature: 0, member: 0 };
-    if (item.role === 'feature_se') {
-      current.feature += 1;
-    } else {
-      current.member += 1;
-    }
-    summary.set(key, current);
+const assignmentSummary = computed(
+  () => selectedProduct.value?.role_preview || [],
+);
+
+function formatUserNames(
+  items?: Array<{ name?: null | string; username: string }>,
+) {
+  if (!items || items.length === 0) {
+    return '未配置';
   }
-  return [...summary.entries()].map(([subsystem, value]) => ({
-    subsystem,
-    ...value,
-  }));
-});
+  return items.map((item) => item.name || item.username).join(' / ');
+}
 
 async function loadProducts() {
   loading.value = true;
@@ -76,19 +61,6 @@ async function loadProducts() {
   }
 }
 
-async function loadAssignments(productId: string) {
-  if (!productId) {
-    roleAssignments.value = [];
-    return;
-  }
-  loading.value = true;
-  try {
-    roleAssignments.value = await listProductRoleAssignmentsApi(productId);
-  } finally {
-    loading.value = false;
-  }
-}
-
 function handleOpenDetail() {
   if (!selectedProductId.value) {
     return;
@@ -96,20 +68,12 @@ function handleOpenDetail() {
   router.push(`/failure-mode/roles/detail/${selectedProductId.value}`);
 }
 
-watch(
-  selectedProductId,
-  (value) => {
-    void loadAssignments(value);
-  },
-  { immediate: true },
-);
-
 void loadProducts();
 </script>
 
 <template>
   <Page content-class="flex h-full min-h-0 flex-col" auto-content-height>
-    <div class="flex min-h-0 flex-1 flex-col gap-4">
+    <div v-loading="loading" class="flex min-h-0 flex-1 flex-col gap-4">
       <div class="rounded-xl bg-white p-5 shadow-sm">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -186,14 +150,25 @@ void loadProducts();
               }}</span>
             </div>
             <div
+              class="rounded-lg border border-dashed p-3 text-sm text-gray-600"
+            >
+              主版本SE：{{
+                selectedProduct.owner_info?.name ||
+                selectedProduct.owner_info?.username ||
+                '未配置'
+              }}
+            </div>
+            <div
               v-for="item in assignmentSummary"
               :key="item.subsystem"
               class="rounded-xl border p-3"
             >
               <div class="font-medium text-gray-900">{{ item.subsystem }}</div>
-              <div class="mt-2 flex items-center gap-2 text-sm text-gray-600">
-                <ElTag type="primary">特性SE {{ item.feature }}</ElTag>
-                <ElTag>普通成员 {{ item.member }}</ElTag>
+              <div class="mt-2 text-sm text-gray-600">
+                特性SE：{{ formatUserNames(item.feature_se_info) }}
+              </div>
+              <div class="mt-1 text-sm text-gray-600">
+                普通成员：{{ formatUserNames(item.member_info) }}
               </div>
             </div>
             <div

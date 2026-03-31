@@ -41,6 +41,14 @@ def _format_user(user: User | None) -> dict[str, str | None] | None:
     }
 
 
+TASK_STATUS_FAILURE_MODE_STATUS_MAP = {
+    'CREATED': '待梳理',
+    'PROCESSING': '梳理中',
+    'REVIEWING': '待评审',
+    'CLOSED': '已基线',
+}
+
+
 def _normalize_text(value: Any) -> str:
     return str(value or '').strip()
 
@@ -61,10 +69,72 @@ def _normalize_id_list(values: Any) -> list[str]:
     return result
 
 
-def _serialize_product(product: FailureModeProduct) -> dict[str, Any]:
+def _filter_visible_role_assignments(
+    product: FailureModeProduct,
+    assignments: list[FailureModeRoleAssignment],
+    policy: 'FailureModeAccessPolicy',
+) -> list[FailureModeRoleAssignment]:
+    if policy.is_admin or str(product.id) in policy.version_product_ids:
+        return list(assignments)
+
+    visible_subsystems = {
+        subsystem
+        for product_id, subsystem in policy.scope_pairs
+        if product_id == str(product.id)
+    }
+    return [
+        item
+        for item in assignments
+        if item.role == FailureModeRoleAssignment.ROLE_VERSION_SE
+        or (
+            item.role in {
+                FailureModeRoleAssignment.ROLE_FEATURE_SE,
+                FailureModeRoleAssignment.ROLE_MEMBER,
+            }
+            and item.subsystem in visible_subsystems
+        )
+    ]
+
+
+def _build_role_preview(assignments: list[FailureModeRoleAssignment]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, list[dict[str, str | None]]]] = defaultdict(
+        lambda: {
+            'feature_se_info': [],
+            'member_info': [],
+        }
+    )
+    for item in assignments:
+        if not item.subsystem:
+            continue
+        if item.role == FailureModeRoleAssignment.ROLE_FEATURE_SE:
+            target_key = 'feature_se_info'
+        elif item.role == FailureModeRoleAssignment.ROLE_MEMBER:
+            target_key = 'member_info'
+        else:
+            continue
+        user_info = _format_user(item.user)
+        if not user_info:
+            continue
+        grouped[item.subsystem][target_key].append(user_info)
+
+    return [
+        {
+            'subsystem': subsystem,
+            'feature_se_info': values['feature_se_info'],
+            'member_info': values['member_info'],
+        }
+        for subsystem, values in sorted(grouped.items(), key=lambda item: item[0])
+    ]
+
+
+def _serialize_product(
+    product: FailureModeProduct,
+    policy: 'FailureModeAccessPolicy',
+) -> dict[str, Any]:
     owner_assignment = None
     prefetched = getattr(product, '_prefetched_objects_cache', {})
-    assignments = prefetched.get('role_assignments')
+    assignments = prefetched.get('role_assignments') or []
+    visible_assignments = _filter_visible_role_assignments(product, assignments, policy)
     if assignments is not None:
         owner_assignment = next(
             (
@@ -81,6 +151,8 @@ def _serialize_product(product: FailureModeProduct) -> dict[str, Any]:
         'owner_id': str(product.owner_id) if product.owner_id else None,
         'owner_info': _format_user(product.owner),
         'owner_assignment_id': str(owner_assignment.id) if owner_assignment else None,
+        'can_manage_roles': policy.can_manage_product_roles(product),
+        'role_preview': _build_role_preview(visible_assignments),
         'sys_create_datetime': _format_datetime(product.sys_create_datetime),
         'sys_update_datetime': _format_datetime(product.sys_update_datetime),
     }
@@ -230,8 +302,8 @@ class FailureModeAccessPolicy:
     def can_manage_product_roles(self, product: FailureModeProduct) -> bool:
         return self.is_admin or str(product.id) in self.version_product_ids
 
-    def can_update_owner(self) -> bool:
-        return self.is_admin
+    def can_view_product_roles(self, product: FailureModeProduct) -> bool:
+        return self.can_view_product(product)
 
     def can_create_task(self, product: FailureModeProduct) -> bool:
         return self.is_admin or str(product.id) in self.version_product_ids
@@ -351,25 +423,30 @@ class ProductWorkflowService:
         queryset = policy.filter_products(queryset)
         if owner_id:
             queryset = queryset.filter(owner_id=owner_id)
-        return [_serialize_product(item) for item in queryset.order_by('project__name', '-sys_create_datetime')]
+        return [
+            _serialize_product(item, policy)
+            for item in queryset.order_by('project__name', '-sys_create_datetime')
+        ]
 
     @classmethod
     def update_product_owner(cls, user: User, product_id: str, owner_id: str | None = None) -> dict[str, Any]:
         cls.sync_projects()
         policy = FailureModeAccessPolicy(user)
-        if not policy.can_update_owner():
-            raise HttpError(403, '只有管理员可以设置主版本SE。')
-
         product = get_object_or_404(
             FailureModeProduct.objects.select_related('project', 'owner').prefetch_related('role_assignments'),
             id=product_id,
         )
+        if not policy.can_manage_product_roles(product):
+            raise HttpError(403, '只有管理员或当前产品主版本SE可以设置主版本SE。')
         product.owner = User.objects.get(id=owner_id) if owner_id else None
         product.sys_modifier = user
         product.save()
         cls._sync_owner_assignment(product)
         product.refresh_from_db()
-        return _serialize_product(product)
+        product = FailureModeProduct.objects.select_related('project', 'owner').prefetch_related(
+            Prefetch('role_assignments', queryset=FailureModeRoleAssignment.objects.filter(is_active=True).select_related('user'))
+        ).get(id=product.id)
+        return _serialize_product(product, policy)
 
     @classmethod
     def list_product_failure_modes(
@@ -395,13 +472,22 @@ class ProductWorkflowService:
         cls.sync_projects()
         policy = FailureModeAccessPolicy(user)
         product = get_object_or_404(FailureModeProduct.objects.select_related('owner'), id=product_id)
-        if not policy.can_manage_product_roles(product):
-            raise HttpError(403, '无权管理当前产品角色配置。')
+        if not policy.can_view_product_roles(product):
+            raise HttpError(403, '无权查看当前产品角色配置。')
 
         queryset = FailureModeRoleAssignment.objects.filter(product=product, is_active=True).select_related('user')
+        visible_rows = _filter_visible_role_assignments(product, list(queryset), policy)
         return [
             _serialize_role_assignment(item)
-            for item in queryset.order_by('role', 'subsystem', 'user__name', 'user__username')
+            for item in sorted(
+                visible_rows,
+                key=lambda item: (
+                    item.role,
+                    item.subsystem,
+                    getattr(item.user, 'name', '') or '',
+                    item.user.username,
+                ),
+            )
         ]
 
     @classmethod
@@ -523,6 +609,20 @@ class TaskWorkflowService:
         )
 
     @classmethod
+    def _resolve_failure_mode_status_for_task(cls, task: FailureModeTask) -> str | None:
+        return TASK_STATUS_FAILURE_MODE_STATUS_MAP.get(task.status)
+
+    @classmethod
+    def _sync_task_created_failure_mode_status(cls, task: FailureModeTask):
+        status = cls._resolve_failure_mode_status_for_task(task)
+        if not status:
+            return
+        FailureMode.objects.filter(
+            source_type=FailureMode.SOURCE_TYPE_TASK_QUICK_CREATE,
+            source_task=task,
+        ).update(status=status)
+
+    @classmethod
     def list_tasks(
         cls,
         user: User,
@@ -614,6 +714,7 @@ class TaskWorkflowService:
         task.accepted_at = timezone.now()
         task.sys_modifier = user
         task.save()
+        cls._sync_task_created_failure_mode_status(task)
         cls._log(
             task=task,
             operator=user,
@@ -676,6 +777,11 @@ class TaskWorkflowService:
         payload = data.dict()
         if not _normalize_text(payload.get('subsystem')):
             payload['subsystem'] = task.subsystem
+        payload['status'] = cls._resolve_failure_mode_status_for_task(task)
+        payload['source_type'] = FailureMode.SOURCE_TYPE_TASK_QUICK_CREATE
+        payload['source_task_id'] = str(task.id)
+        if not _normalize_id_list(payload.get('author_ids')):
+            payload['author_ids'] = [str(request.auth.id)]
         shim = SimpleNamespace(dict=lambda **kwargs: payload)
         created_item = failure_mode_services.create_failure_mode(request, shim)
         TaskFailureMode.objects.get_or_create(
@@ -708,6 +814,7 @@ class TaskWorkflowService:
         task.submitted_at = timezone.now()
         task.sys_modifier = user
         task.save()
+        cls._sync_task_created_failure_mode_status(task)
         cls._log(
             task=task,
             operator=user,
@@ -751,6 +858,7 @@ class TaskWorkflowService:
         task.closed_at = task.reviewed_at
         task.sys_modifier = user
         task.save()
+        cls._sync_task_created_failure_mode_status(task)
 
         task_failure_modes = list(TaskFailureMode.objects.filter(task=task).values_list('failure_mode_id', flat=True))
         if task.task_type in ['CREATE', 'REVISE']:
@@ -808,6 +916,7 @@ class TaskWorkflowService:
             task.submitted_at = None
         task.sys_modifier = user
         task.save()
+        cls._sync_task_created_failure_mode_status(task)
         cls._log(
             task=task,
             operator=user,

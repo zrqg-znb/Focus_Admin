@@ -532,6 +532,7 @@ defineExpose({ open });
     ref="failureModeDrawerRef"
     :create-handler="quickCreateHandler"
     :dict-options="dictOptions"
+    hide-status-field
     :subsystem-config-options="subsystemConfigOptions"
     @success="handleQuickCreateSuccess"
   />

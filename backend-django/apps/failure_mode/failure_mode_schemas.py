@@ -246,6 +246,9 @@ class FailureModeOutSchema(Schema):
     author_info: list[UserBriefSchema] = Field(default_factory=list)
     related_dts_nos: list[str] = Field(default_factory=list)
     status: Optional[str] = None
+    source_type: str = 'manual'
+    source_task_id: Optional[str] = None
+    source_task_no: Optional[str] = None
     interception_required: bool = False
     huatuo_required: bool = False
     required_handling_measure_categories: list[str] = Field(default_factory=list)
@@ -585,6 +588,12 @@ class SaveSuccessSchema(Schema):
 
 # --- Workflow & Product Schemas ---
 
+class FailureModeRolePreviewOutSchema(Schema):
+    subsystem: str
+    feature_se_info: list[UserBriefSchema] = Field(default_factory=list)
+    member_info: list[UserBriefSchema] = Field(default_factory=list)
+
+
 class FailureModeProductOutSchema(Schema):
     id: str
     project_id: str
@@ -592,6 +601,8 @@ class FailureModeProductOutSchema(Schema):
     owner_id: Optional[str] = None
     owner_info: Optional[UserBriefSchema] = None
     owner_assignment_id: Optional[str] = None
+    can_manage_roles: bool = False
+    role_preview: list[FailureModeRolePreviewOutSchema] = Field(default_factory=list)
     sys_create_datetime: Optional[str] = None
     sys_update_datetime: Optional[str] = None
 

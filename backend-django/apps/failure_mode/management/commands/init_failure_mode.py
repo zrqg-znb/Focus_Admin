@@ -36,6 +36,7 @@ class MenuSeed:
     keep_alive: bool = True
     redirect: str | None = None
     inherit_parent_roles: bool = False
+    inherit_roles_from: str | None = None
 
 
 LEGACY_MENU_PATHS = ['/project-manager/failure-mode']
@@ -45,6 +46,10 @@ LEGACY_MENU_COMPONENTS = [
     '/failure-mode/workflow/tasks/index',
     '/failure-mode/workflow/products/index',
 ]
+OBSOLETE_MENU_REDIRECTS = {
+    '/failure-mode/workflow/tasks': '/failure-mode/tasks',
+    '/failure-mode/workflow/products': '/failure-mode/products/baselines',
+}
 LEGACY_API_PREFIX = '/api/project-manager/failure-mode'
 TARGET_API_PREFIX = '/api/failure-mode'
 
@@ -108,7 +113,7 @@ MENU_SEEDS = [
     ),
     MenuSeed(
         key='failure_mode_workflow_task_detail',
-        parent_key='failure_mode_workflow_tasks',
+        parent_key='failure_mode',
         name='FailureModeTaskDetail',
         title='任务详情',
         path='/failure-mode/tasks/detail/:id',
@@ -119,7 +124,8 @@ MENU_SEEDS = [
         active_path='/failure-mode/tasks',
         hide_in_menu=True,
         keep_alive=False,
-        inherit_parent_roles=True,
+        inherit_parent_roles=False,
+        inherit_roles_from='failure_mode_workflow_tasks',
     ),
     MenuSeed(
         key='failure_mode_workflow_products',
@@ -151,7 +157,7 @@ MENU_SEEDS = [
     ),
     MenuSeed(
         key='failure_mode_roles_detail',
-        parent_key='failure_mode_roles',
+        parent_key='failure_mode',
         name='FailureModeRoleDetail',
         title='角色配置详情',
         path='/failure-mode/roles/detail/:id',
@@ -162,7 +168,8 @@ MENU_SEEDS = [
         active_path='/failure-mode/roles',
         hide_in_menu=True,
         keep_alive=False,
-        inherit_parent_roles=True,
+        inherit_parent_roles=False,
+        inherit_roles_from='failure_mode_roles',
     ),
 ]
 
@@ -211,6 +218,12 @@ PERMISSION_SEEDS = {
     'failure_mode_roles': [
         {'name': '查看角色配置页面', 'code': 'failure-mode:roles:view', 'permission_type': 0},
     ],
+    'failure_mode_roles_detail': [
+        {'name': '查看角色配置详情', 'code': 'failure-mode:roles:detail:view', 'permission_type': 0},
+    ],
+    'failure_mode_workflow_task_detail': [
+        {'name': '查看任务详情', 'code': 'failure-mode:workflow-tasks:detail:view', 'permission_type': 0},
+    ],
 }
 
 
@@ -225,6 +238,7 @@ class Command(BaseCommand):
 
         menus = self._seed_menus(operator)
         permission_count = self._seed_permissions(menus, operator)
+        self._cleanup_obsolete_menus(menus)
         self._cleanup_stale_legacy_permissions(menus)
         MenuCacheManager.invalidate_menu_cache()
         PermissionCacheManager.invalidate_permission_cache()
@@ -269,6 +283,8 @@ class Command(BaseCommand):
             menu.save()
             if seed.inherit_parent_roles and parent:
                 self._inherit_parent_roles(parent, menu)
+            elif seed.inherit_roles_from and seed.inherit_roles_from in created:
+                self._inherit_parent_roles(created[seed.inherit_roles_from], menu)
             created[seed.key] = menu
         return created
 
@@ -313,7 +329,25 @@ class Command(BaseCommand):
         for role in legacy_menu.core_roles.all():
             role.menu.add(target_menu)
         Menu.objects.filter(parent=legacy_menu).update(parent=target_menu)
-        Permission.objects.filter(menu=legacy_menu).update(menu=target_menu)
+        legacy_permissions = list(Permission.objects.filter(menu=legacy_menu))
+        for legacy_permission in legacy_permissions:
+            target_permission = (
+                Permission.objects.filter(menu=target_menu, code=legacy_permission.code).first()
+                or (
+                    Permission.objects.filter(
+                        menu=target_menu,
+                        api_path=legacy_permission.api_path,
+                        http_method=legacy_permission.http_method,
+                    ).first()
+                    if legacy_permission.api_path
+                    else None
+                )
+            )
+            if target_permission is not None:
+                self._merge_permission_relations(legacy_permission, target_permission)
+                continue
+            legacy_permission.menu = target_menu
+            legacy_permission.save(update_fields=['menu', 'sys_update_datetime'])
 
     def _inherit_parent_roles(self, parent_menu: Menu, child_menu: Menu):
         for role in parent_menu.core_roles.all():
@@ -360,6 +394,16 @@ class Command(BaseCommand):
             Q(code__startswith='project_manager:')
             | Q(api_path__startswith=LEGACY_API_PREFIX)
         ).delete()
+
+    def _cleanup_obsolete_menus(self, menus: dict[str, Menu]):
+        for obsolete_path, target_path in OBSOLETE_MENU_REDIRECTS.items():
+            target_menu = Menu.objects.filter(path=target_path).first()
+            if target_menu is None:
+                continue
+            obsolete_menus = Menu.objects.filter(path=obsolete_path).exclude(id=target_menu.id)
+            for obsolete_menu in obsolete_menus:
+                self._merge_menu_relations(obsolete_menu, target_menu)
+                obsolete_menu.delete()
 
     def _build_legacy_permission_code(self, code: str):
         if code.startswith('failure-mode:statistics:api:'):

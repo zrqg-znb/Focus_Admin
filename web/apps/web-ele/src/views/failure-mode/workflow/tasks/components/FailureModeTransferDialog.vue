@@ -1,19 +1,21 @@
 <script lang="ts" setup>
-import { ref, computed, nextTick } from 'vue';
+import type { FailureModeItem } from '#/api/failure_mode';
+
+import { nextTick, ref } from 'vue';
+
+import { Delete, Search } from '@element-plus/icons-vue';
 import {
-  ElDialog,
-  ElInput,
   ElButton,
-  ElTable,
-  ElTableColumn,
+  ElDialog,
+  ElEmpty,
+  ElInput,
   ElPagination,
   ElScrollbar,
-  ElEmpty,
-  ElMessage
+  ElTable,
+  ElTableColumn,
 } from 'element-plus';
-import { Search, Delete, Plus } from '@element-plus/icons-vue';
+
 import { listFailureModesApi } from '#/api/failure_mode';
-import type { FailureModeItem } from '#/api/failure_mode';
 
 const emit = defineEmits<{
   confirm: [payload: { ids: string[]; items: FailureModeItem[] }];
@@ -140,7 +142,11 @@ function handleConfirm() {
   visible.value = false;
 }
 
-function open(options?: { selectedIds?: string[]; selectedItems?: FailureModeItem[]; extraFilters?: Record<string, any> }) {
+function open(options?: {
+  extraFilters?: Record<string, any>;
+  selectedIds?: string[];
+  selectedItems?: FailureModeItem[];
+}) {
   keyword.value = '';
   page.value = 1;
   selectedIds.value = [...(options?.selectedIds || [])];
@@ -163,8 +169,8 @@ defineExpose({ open });
     :close-on-click-modal="false"
   >
     <div class="flex h-[600px] gap-4">
-      <div class="flex flex-1 flex-col overflow-hidden border rounded-lg">
-        <div class="flex items-center justify-between p-3 border-b bg-gray-50">
+      <div class="flex flex-1 flex-col overflow-hidden rounded-lg border">
+        <div class="flex items-center justify-between border-b bg-gray-50 p-3">
           <span class="font-medium text-gray-700">故障模式列表</span>
           <div class="flex w-64 items-center gap-2">
             <ElInput
@@ -191,13 +197,28 @@ defineExpose({ open });
             @select-all="handleSelectAll"
           >
             <ElTableColumn type="selection" width="50" align="center" />
-            <ElTableColumn prop="brief" label="故障模式简述" min-width="200" show-overflow-tooltip />
-            <ElTableColumn prop="subsystem" label="子系统" width="120" show-overflow-tooltip />
-            <ElTableColumn prop="module" label="模块" width="120" show-overflow-tooltip />
+            <ElTableColumn
+              prop="brief"
+              label="故障模式简述"
+              min-width="200"
+              show-overflow-tooltip
+            />
+            <ElTableColumn
+              prop="subsystem"
+              label="子系统"
+              width="120"
+              show-overflow-tooltip
+            />
+            <ElTableColumn
+              prop="module"
+              label="模块"
+              width="120"
+              show-overflow-tooltip
+            />
             <ElTableColumn prop="status" label="状态" width="100" />
           </ElTable>
         </div>
-        <div class="flex items-center justify-end p-2 border-t">
+        <div class="flex items-center justify-end border-t p-2">
           <ElPagination
             v-model:current-page="page"
             v-model:page-size="pageSize"
@@ -211,10 +232,19 @@ defineExpose({ open });
         </div>
       </div>
 
-      <div class="flex w-[350px] flex-col overflow-hidden border rounded-lg bg-gray-50">
-        <div class="flex items-center justify-between p-3 border-b bg-white">
-          <span class="font-medium text-gray-700">已选 ({{ selectedItems.length }})</span>
-          <ElButton v-if="selectedItems.length" type="danger" link @click="clearSelected">
+      <div
+        class="flex w-[350px] flex-col overflow-hidden rounded-lg border bg-gray-50"
+      >
+        <div class="flex items-center justify-between border-b bg-white p-3">
+          <span class="font-medium text-gray-700">
+            已选 ({{ selectedItems.length }})
+          </span>
+          <ElButton
+            v-if="selectedItems.length > 0"
+            type="danger"
+            link
+            @click="clearSelected"
+          >
             清空
           </ElButton>
         </div>
@@ -224,11 +254,16 @@ defineExpose({ open });
               <div
                 v-for="item in selectedItems"
                 :key="item.id"
-                class="group flex items-center justify-between rounded border bg-white p-2 text-sm shadow-sm transition-colors hover:border-primary"
+                class="hover:border-primary group flex items-center justify-between rounded border bg-white p-2 text-sm shadow-sm transition-colors"
               >
                 <div class="flex flex-1 flex-col overflow-hidden">
-                  <span class="truncate font-medium" :title="item.brief">{{ item.brief }}</span>
-                  <span class="text-xs text-gray-500 truncate" v-if="item.subsystem">
+                  <span class="truncate font-medium" :title="item.brief">{{
+                    item.brief
+                  }}</span>
+                  <span
+                    class="truncate text-xs text-gray-500"
+                    v-if="item.subsystem"
+                  >
                     {{ item.subsystem }}
                   </span>
                 </div>
@@ -250,11 +285,12 @@ defineExpose({ open });
     <template #footer>
       <div class="flex items-center justify-end">
         <ElButton @click="visible = false">取消</ElButton>
-        <ElButton type="primary" :loading="loading" @click="handleConfirm">确定绑定</ElButton>
+        <ElButton type="primary" :loading="loading" @click="handleConfirm">
+          确定绑定
+        </ElButton>
       </div>
     </template>
   </ElDialog>
 </template>
 
-<style scoped>
-</style>
+<style scoped></style>

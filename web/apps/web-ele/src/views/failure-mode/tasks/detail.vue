@@ -19,14 +19,12 @@ import { useUserStore } from '@vben/stores';
 
 import {
   ElButton,
-  ElCard,
-  ElDescriptions,
-  ElDescriptionsItem,
   ElEmpty,
-  ElInput,
   ElMessage,
   ElOption,
   ElSelect,
+  ElStep,
+  ElSteps,
   ElTabPane,
   ElTabs,
   ElTag,
@@ -56,6 +54,8 @@ import FailureModeDrawer from '../components/FailureModeDrawer.vue';
 import {
   createEmptyDictOptions,
   createEmptySubsystemConfigOptions,
+  formatFailureModeSourceHint,
+  formatFailureModeSourceLabel,
   useFailureModeColumns,
 } from '../data';
 import FailureModeTransferDialog from '../workflow/tasks/components/FailureModeTransferDialog.vue';
@@ -75,7 +75,17 @@ const currentUserId = userStore.userInfo?.id;
 const taskId = computed(() => String(route.params.id || ''));
 const loading = ref(false);
 const actionLoading = ref(false);
-const activeTab = ref('overview');
+const activeTab = ref('workbench');
+
+const activeStep = computed(() => {
+  const status = currentTask.value?.status;
+  if (status === 'CREATED') return 0;
+  if (status === 'PROCESSING') return 1;
+  if (status === 'REVIEWING') return 2;
+  if (status === 'CLOSED') return 3;
+  return 0;
+});
+
 const currentTask = ref<FailureModeTaskItem | null>(null);
 const boundFailureModes = ref<FailureModeItem[]>([]);
 const baselineFailureModes = ref<ProductFailureModeItem[]>([]);
@@ -201,18 +211,6 @@ const assigneeOptions = computed(() => {
     }));
 });
 
-const taskTimelineSummary = computed(() => {
-  if (!currentTask.value) {
-    return [];
-  }
-  return [
-    { label: '创建时间', value: currentTask.value.sys_create_datetime || '-' },
-    { label: '接收时间', value: currentTask.value.accepted_at || '-' },
-    { label: '提交评审', value: currentTask.value.submitted_at || '-' },
-    { label: '关闭时间', value: currentTask.value.closed_at || '-' },
-  ];
-});
-
 async function loadTaskContext() {
   if (!taskId.value) {
     return;
@@ -314,6 +312,12 @@ function quickCreateHandler(payload: any) {
   return quickCreateTaskFailureModeApi(currentTask.value.id, payload);
 }
 
+function handleViewFailureMode(row: FailureModeItem) {
+  // router.push({ name: 'FailureModeDetail', params: { id: row.id } }); // If there is a detail page
+  // Actually, wait, maybe we should open FailureModeDrawer in edit/view mode.
+  failureModeDrawerRef.value?.openEdit(row);
+}
+
 async function handleSubmitTask() {
   if (!currentTask.value) {
     return;
@@ -344,13 +348,13 @@ async function handleReassignTask() {
 }
 
 async function handleCloseTask() {
-  if (!currentTask.value || !reviewForm.review_minutes_html.trim()) {
+  if (!currentTask.value) {
     return;
   }
   actionLoading.value = true;
   try {
     await closeTaskApi(currentTask.value.id, {
-      review_minutes_html: reviewForm.review_minutes_html,
+      review_minutes_html: reviewForm.review_minutes_html || '<p>评审通过</p>',
       review_attachment_ids: reviewForm.review_attachment_ids,
     });
     ElMessage.success('任务已关闭并同步基线');
@@ -372,39 +376,109 @@ watch(
 <template>
   <Page content-class="flex h-full min-h-0 flex-col" auto-content-height>
     <div class="flex min-h-0 flex-1 flex-col gap-4">
-      <div class="rounded-xl bg-white p-5 shadow-sm">
-        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div class="flex flex-wrap items-center gap-3">
-            <ElButton plain @click="handleBack">返回任务列表</ElButton>
-            <span class="text-xl font-semibold text-gray-900">
-              {{ currentTask?.name || '任务详情' }}
-            </span>
-            <ElTag v-if="currentTask" type="info">
-              {{ currentTask.task_no }}
-            </ElTag>
-            <ElTag
-              v-if="currentTask"
-              :type="getTaskStatusTagType(currentTask.status)"
+      <div class="rounded-xl bg-white p-6 shadow-sm">
+        <div
+          class="flex flex-col justify-between gap-6 lg:flex-row lg:items-start"
+        >
+          <div class="flex-1">
+            <div class="mb-4 flex items-center gap-3">
+              <ElButton plain @click="handleBack" size="small">返回</ElButton>
+              <span class="text-xl font-bold text-gray-900">
+                {{ currentTask?.name || '任务详情' }}
+              </span>
+              <ElTag
+                v-if="currentTask"
+                :type="getTaskStatusTagType(currentTask.status)"
+                effect="light"
+                round
+              >
+                {{
+                  FM_TASK_STATUS_LABEL_MAP[currentTask.status] ||
+                  currentTask.status
+                }}
+              </ElTag>
+            </div>
+
+            <div
+              class="mb-6 grid grid-cols-2 gap-x-8 gap-y-3 text-sm text-gray-600 md:grid-cols-3"
             >
-              {{
-                FM_TASK_STATUS_LABEL_MAP[currentTask.status] ||
-                currentTask.status
-              }}
-            </ElTag>
-            <ElTag v-if="currentTask" type="warning">
-              {{
-                FM_TASK_TYPE_LABEL_MAP[currentTask.task_type] ||
-                currentTask.task_type
-              }}
-            </ElTag>
+              <div class="flex items-center">
+                <span class="w-20 text-gray-400">任务编号：</span>
+                <span class="font-medium text-gray-900">{{
+                  currentTask?.task_no || '-'
+                }}</span>
+              </div>
+              <div class="flex items-center">
+                <span class="w-20 text-gray-400">任务类型：</span>
+                <span class="font-medium text-gray-900">{{
+                  currentTask
+                    ? FM_TASK_TYPE_LABEL_MAP[currentTask.task_type] ||
+                      currentTask.task_type
+                    : '-'
+                }}</span>
+              </div>
+              <div class="flex items-center">
+                <span class="w-20 text-gray-400">产品：</span>
+                <span class="font-medium text-gray-900">{{
+                  currentTask?.product_name || '-'
+                }}</span>
+              </div>
+              <div class="flex items-center">
+                <span class="w-20 text-gray-400">子系统：</span>
+                <span class="font-medium text-gray-900">{{
+                  currentTask?.subsystem || '-'
+                }}</span>
+              </div>
+              <div class="flex items-center">
+                <span class="w-20 text-gray-400">创建人：</span>
+                <span class="font-medium text-gray-900">{{
+                  currentTask?.creator_info?.name ||
+                  currentTask?.creator_info?.username ||
+                  '-'
+                }}</span>
+              </div>
+              <div class="flex items-center">
+                <span class="w-20 text-gray-400">责任人：</span>
+                <span class="font-medium text-gray-900">{{
+                  currentTask?.assignee_info?.name ||
+                  currentTask?.assignee_info?.username ||
+                  '-'
+                }}</span>
+              </div>
+            </div>
+
+            <ElSteps
+              :active="activeStep"
+              align-center
+              finish-status="success"
+              class="max-w-3xl"
+            >
+              <ElStep
+                title="已创建"
+                :description="currentTask?.sys_create_datetime || '-'"
+              />
+              <ElStep
+                title="梳理/修订中"
+                :description="currentTask?.accepted_at || '-'"
+              />
+              <ElStep
+                title="评审中"
+                :description="currentTask?.submitted_at || '-'"
+              />
+              <ElStep
+                title="已关闭"
+                :description="currentTask?.closed_at || '-'"
+              />
+            </ElSteps>
           </div>
 
-          <div class="flex flex-wrap items-center gap-2">
+          <div class="flex min-w-[140px] flex-col gap-3">
             <ElButton
               v-if="canAccept"
               type="primary"
               :loading="actionLoading"
               @click="handleAcceptTask"
+              class="w-full"
             >
               接收任务
             </ElButton>
@@ -413,6 +487,7 @@ watch(
               type="primary"
               plain
               @click="handleManageFailureModes"
+              class="!ml-0 w-full"
             >
               管理绑定
             </ElButton>
@@ -421,14 +496,16 @@ watch(
               type="success"
               plain
               @click="handleQuickCreateFailureMode"
+              class="!ml-0 w-full"
             >
-              快速新增故障模式
+              快速新增模式
             </ElButton>
             <ElButton
               v-if="canSubmit"
               type="success"
               :loading="actionLoading"
               @click="handleSubmitTask"
+              class="!ml-0 w-full"
             >
               提交评审
             </ElButton>
@@ -437,75 +514,18 @@ watch(
               type="success"
               :loading="actionLoading"
               @click="handleCloseTask"
+              class="!ml-0 w-full"
             >
               评审关闭
             </ElButton>
           </div>
         </div>
-
-        <ElDescriptions v-if="currentTask" :column="4" border>
-          <ElDescriptionsItem label="产品">
-            {{ currentTask.product_name }}
-          </ElDescriptionsItem>
-          <ElDescriptionsItem label="子系统">
-            {{ currentTask.subsystem }}
-          </ElDescriptionsItem>
-          <ElDescriptionsItem label="创建人">
-            {{
-              currentTask.creator_info?.name ||
-              currentTask.creator_info?.username ||
-              '-'
-            }}
-          </ElDescriptionsItem>
-          <ElDescriptionsItem label="责任人">
-            {{
-              currentTask.assignee_info?.name ||
-              currentTask.assignee_info?.username ||
-              '-'
-            }}
-          </ElDescriptionsItem>
-        </ElDescriptions>
       </div>
 
       <div
         class="flex min-h-0 flex-1 flex-col rounded-xl bg-white p-4 shadow-sm"
       >
         <ElTabs v-model="activeTab" class="failure-mode-task-detail__tabs">
-          <ElTabPane label="概览" name="overview">
-            <div
-              class="grid h-full min-h-0 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]"
-            >
-              <ElCard shadow="never">
-                <template #header>
-                  <span class="font-medium">任务摘要</span>
-                </template>
-                <div class="space-y-3 text-sm text-gray-600">
-                  <div
-                    v-for="item in taskTimelineSummary"
-                    :key="item.label"
-                    class="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2"
-                  >
-                    <span>{{ item.label }}</span>
-                    <span class="font-medium text-gray-900">{{
-                      item.value
-                    }}</span>
-                  </div>
-                </div>
-              </ElCard>
-
-              <ElCard shadow="never">
-                <template #header>
-                  <span class="font-medium">职责说明</span>
-                </template>
-                <div class="space-y-3 text-sm text-gray-600">
-                  <div>特性SE 在“梳理工作台”完成故障模式绑定与快速新增。</div>
-                  <div>版本SE 在“评审归档”完成纪要沉淀与关闭动作。</div>
-                  <div>普通成员可在“流程记录”与“评审归档”中只读查看。</div>
-                </div>
-              </ElCard>
-            </div>
-          </ElTabPane>
-
           <ElTabPane label="梳理工作台" name="workbench">
             <div class="flex h-full min-h-0 flex-col gap-4">
               <div
@@ -540,7 +560,54 @@ watch(
               </div>
 
               <div class="min-h-0 flex-1 rounded-xl border bg-white p-2">
-                <FailureModeGrid />
+                <FailureModeGrid>
+                  <template #cell-status="{ row }">
+                    <span>{{ row.status || '-' }}</span>
+                  </template>
+                  <template #cell-source_task_no="{ row }">
+                    <div class="text-sm text-gray-700">
+                      {{ formatFailureModeSourceLabel(row) }}
+                    </div>
+                    <div
+                      v-if="formatFailureModeSourceHint(row)"
+                      class="mt-1 text-xs text-gray-500"
+                    >
+                      {{ formatFailureModeSourceHint(row) }}
+                    </div>
+                  </template>
+                  <template #cell-author_info="{ row }">
+                    <span>{{
+                      row.author_info
+                        ?.map((item) => item.name || item.username)
+                        .join(' / ') || '-'
+                    }}</span>
+                  </template>
+                  <template #cell-handling_measure_items="{ row }">
+                    <div
+                      v-if="row.handling_measure_items?.length"
+                      class="space-y-1"
+                    >
+                      <div
+                        v-for="item in row.handling_measure_items"
+                        :key="item.id"
+                        class="truncate text-sm text-gray-700"
+                        :title="item.label"
+                      >
+                        • {{ item.label }}
+                      </div>
+                    </div>
+                    <span v-else class="text-gray-400">-</span>
+                  </template>
+                  <template #cell-actions="{ row }">
+                    <ElButton
+                      link
+                      type="primary"
+                      @click="handleViewFailureMode(row)"
+                    >
+                      查看详情
+                    </ElButton>
+                  </template>
+                </FailureModeGrid>
               </div>
             </div>
           </ElTabPane>
@@ -589,34 +656,38 @@ watch(
           </ElTabPane>
 
           <ElTabPane label="评审归档" name="review">
-            <div class="flex h-full min-h-0 flex-col gap-4">
-              <div class="rounded-xl border bg-white p-4">
-                <div class="mb-3 text-base font-medium text-gray-800">
-                  评审纪要
+            <div class="grid h-full min-h-0 grid-rows-[auto_1fr] gap-4">
+              <div class="rounded-xl border border-gray-100 bg-gray-50/50 p-5">
+                <div class="mb-4 flex items-center justify-between">
+                  <div class="text-base font-semibold text-gray-800">
+                    评审附件
+                  </div>
+                  <div class="text-sm text-gray-500">
+                    上传相关评审会议纪要、专家意见等附件资料
+                  </div>
                 </div>
-                <div class="space-y-4">
-                  <ElInput
-                    v-model="reviewForm.review_minutes_html"
-                    :autosize="{ minRows: 4, maxRows: 8 }"
-                    :disabled="isClosed"
-                    placeholder="请录入评审纪要"
-                    type="textarea"
-                  />
+                <div class="rounded-lg bg-white p-4 shadow-sm">
                   <FileSelector
                     v-model="reviewForm.review_attachment_ids"
                     :disabled="isClosed"
                     display-mode="list"
                     multiple
-                    placeholder="上传评审附件"
+                    placeholder="点击或拖拽上传评审附件"
                   />
                 </div>
               </div>
 
-              <div class="min-h-0 flex-1 rounded-xl border bg-white p-2">
-                <div class="px-2 pb-3 pt-2 text-base font-medium text-gray-800">
-                  当前生效基线
+              <div
+                class="flex min-h-0 flex-col rounded-xl border border-gray-100 bg-white p-2 shadow-sm"
+              >
+                <div
+                  class="px-3 pb-3 pt-2 text-base font-semibold text-gray-800"
+                >
+                  当前生效基线预览
                 </div>
-                <BaselineGrid />
+                <div class="min-h-0 flex-1">
+                  <BaselineGrid />
+                </div>
               </div>
             </div>
           </ElTabPane>
@@ -632,6 +703,7 @@ watch(
       ref="failureModeDrawerRef"
       :create-handler="quickCreateHandler"
       :dict-options="dictOptions"
+      hide-status-field
       :subsystem-config-options="subsystemConfigOptions"
       @success="loadTaskContext"
     />

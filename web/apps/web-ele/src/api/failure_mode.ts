@@ -91,6 +91,9 @@ export interface FailureModeItem {
   author_info: UserBriefInfo[];
   related_dts_nos: string[];
   status?: null | string;
+  source_type: 'manual' | 'task_quick_create';
+  source_task_id?: null | string;
+  source_task_no?: null | string;
   interception_required: boolean;
   huatuo_required: boolean;
   required_handling_measure_categories: string[];
