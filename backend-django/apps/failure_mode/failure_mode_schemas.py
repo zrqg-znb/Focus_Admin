@@ -581,3 +581,133 @@ class FailureModeStatisticsSubsystemPageSchema(Schema):
 
 class SaveSuccessSchema(Schema):
     success: bool = True
+
+
+# --- Workflow & Product Schemas ---
+
+class FailureModeProductOutSchema(Schema):
+    id: str
+    project_id: str
+    project_name: str
+    owner_id: Optional[str] = None
+    owner_info: Optional[UserBriefSchema] = None
+    owner_assignment_id: Optional[str] = None
+    sys_create_datetime: Optional[str] = None
+    sys_update_datetime: Optional[str] = None
+
+class FailureModeProductPageSchema(Schema):
+    items: list[FailureModeProductOutSchema] = Field(default_factory=list)
+    total: int
+
+class FailureModeProductUpdateSchema(Schema):
+    owner_id: Optional[str] = None
+
+
+class FailureModeTaskOutSchema(Schema):
+    id: str
+    task_no: str
+    name: str
+    task_type: str
+    status: str
+    product_id: str
+    product_name: str
+    subsystem: str
+    creator_id: Optional[str] = None
+    creator_info: Optional[UserBriefSchema] = None
+    assignee_id: Optional[str] = None
+    assignee_info: Optional[UserBriefSchema] = None
+    review_result: str = ''
+    review_minutes_html: str = ''
+    review_attachment_ids: list[str] = Field(default_factory=list)
+    accepted_at: Optional[str] = None
+    submitted_at: Optional[str] = None
+    reviewed_at: Optional[str] = None
+    closed_at: Optional[str] = None
+    sys_create_datetime: Optional[str] = None
+    sys_update_datetime: Optional[str] = None
+
+class FailureModeTaskPageSchema(Schema):
+    items: list[FailureModeTaskOutSchema] = Field(default_factory=list)
+    total: int
+
+class FailureModeTaskCreateSchema(Schema):
+    name: str
+    task_type: str
+    product_id: str
+    subsystem: str
+    assignee_id: str
+
+class FailureModeTaskUpdateSchema(Schema):
+    name: Optional[str] = None
+    assignee_id: Optional[str] = None
+
+class TaskReassignSchema(Schema):
+    assignee_id: str
+
+class TaskCloseSchema(Schema):
+    review_result: str = 'approved'
+    review_minutes_html: str
+    review_attachment_ids: list[str] = Field(default_factory=list)
+
+class TaskFailureModeBindSchema(Schema):
+    failure_mode_ids: list[str] = Field(default_factory=list)
+
+class TaskFailureModeSearchSchema(SearchPaginationSchema):
+    keyword: Optional[str] = Field(None, description='关键词')
+
+class ProductFailureModeOutSchema(Schema):
+    id: str
+    product_id: str
+    subsystem: str
+    failure_mode_id: str
+    failure_mode_brief: str
+    sys_create_datetime: Optional[str] = None
+
+class ProductFailureModePageSchema(Schema):
+    items: list[ProductFailureModeOutSchema] = Field(default_factory=list)
+    total: int
+
+
+class FailureModeRoleAssignmentOutSchema(Schema):
+    id: str
+    user_id: str
+    user_info: UserBriefSchema
+    role: str
+    product_id: Optional[str] = None
+    subsystem: str = ''
+    is_active: bool = True
+    sys_create_datetime: Optional[str] = None
+    sys_update_datetime: Optional[str] = None
+
+
+class ProductRoleAssignmentSaveItemSchema(Schema):
+    user_id: str
+    role: str
+    subsystem: str
+
+    @field_validator('user_id', 'role', 'subsystem', mode='before')
+    @classmethod
+    def normalize_role_assignment_text(cls, value: Any):
+        text = str(value or '').strip()
+        return text
+
+
+class ProductRoleAssignmentBatchSaveSchema(Schema):
+    assignments: list[ProductRoleAssignmentSaveItemSchema] = Field(default_factory=list)
+
+
+class VisibleSubsystemOutSchema(Schema):
+    label: str
+    value: str
+
+
+class FailureModeTaskLogOutSchema(Schema):
+    id: str
+    action: str
+    from_status: str = ''
+    to_status: str = ''
+    note: str = ''
+    operator_id: Optional[str] = None
+    operator_info: Optional[UserBriefSchema] = None
+    extra_data: dict[str, Any] = Field(default_factory=dict)
+    sys_create_datetime: Optional[str] = None

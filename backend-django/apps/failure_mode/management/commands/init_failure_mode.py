@@ -25,7 +25,7 @@ class MenuSeed:
     name: str
     title: str
     path: str
-    component: str
+    component: str | None
     menu_type: str = 'menu'
     order: int = 0
     auth_code: str | None = None
@@ -33,12 +33,15 @@ class MenuSeed:
     hide_in_menu: bool = False
     hide_children_in_menu: bool = False
     keep_alive: bool = True
+    redirect: str | None = None
 
 
 LEGACY_MENU_PATHS = ['/project-manager/failure-mode']
 LEGACY_MENU_COMPONENTS = [
     '/failure-mode/index',
     '/project-manager/failure-mode/index',
+    '/failure-mode/workflow/tasks/index',
+    '/failure-mode/workflow/products/index',
 ]
 LEGACY_API_PREFIX = '/api/project-manager/failure-mode'
 TARGET_API_PREFIX = '/api/failure-mode'
@@ -47,28 +50,85 @@ MENU_SEEDS = [
     MenuSeed(
         key='failure_mode',
         parent_key=None,
-        name='FailureMode',
+        name='FailureModeCatalog',
         title='故障管理',
         path='/failure-mode',
-        component='/failure-mode/index',
-        menu_type='menu',
+        component=None,
+        menu_type='catalog',
         order=55,
         auth_code='failure-mode',
         icon='lucide:shield-alert',
         hide_in_menu=False,
         keep_alive=True,
+        redirect='/failure-mode/index',
+    ),
+    MenuSeed(
+        key='failure_mode_index',
+        parent_key='failure_mode',
+        name='FailureModeIndex',
+        title='故障模式数据',
+        path='/failure-mode/index',
+        component='/failure-mode/index',
+        menu_type='menu',
+        order=1,
+        auth_code='failure-mode',
+        icon='lucide:database',
+        hide_in_menu=False,
+        keep_alive=True,
     ),
     MenuSeed(
         key='failure_mode_statistics',
-        parent_key=None,
+        parent_key='failure_mode',
         name='FailureModeStatistics',
         title='故障管理统计',
         path='/failure-mode/statistics',
         component='/failure-mode/statistics/index',
         menu_type='menu',
-        order=56,
+        order=2,
         auth_code='failure-mode:statistics',
         icon='lucide:chart-column-big',
+        hide_in_menu=False,
+        keep_alive=True,
+    ),
+    MenuSeed(
+        key='failure_mode_workflow_tasks',
+        parent_key='failure_mode',
+        name='FailureModeTasks',
+        title='任务管理',
+        path='/failure-mode/tasks',
+        component='/failure-mode/tasks/index',
+        menu_type='menu',
+        order=3,
+        auth_code='failure-mode:workflow-tasks',
+        icon='lucide:list-todo',
+        hide_in_menu=False,
+        keep_alive=True,
+    ),
+    MenuSeed(
+        key='failure_mode_workflow_products',
+        parent_key='failure_mode',
+        name='FailureModeProductBaselines',
+        title='产品基线',
+        path='/failure-mode/products/baselines',
+        component='/failure-mode/products/baselines/index',
+        menu_type='menu',
+        order=4,
+        auth_code='failure-mode:workflow-products',
+        icon='lucide:package-check',
+        hide_in_menu=False,
+        keep_alive=True,
+    ),
+    MenuSeed(
+        key='failure_mode_roles',
+        parent_key='failure_mode',
+        name='FailureModeRoles',
+        title='角色配置',
+        path='/failure-mode/roles',
+        component='/failure-mode/roles/index',
+        menu_type='menu',
+        order=5,
+        auth_code='failure-mode:roles',
+        icon='lucide:shield-check',
         hide_in_menu=False,
         keep_alive=True,
     ),
@@ -107,6 +167,17 @@ PERMISSION_SEEDS = {
         {'name': '查看故障管理统计页面', 'code': 'failure-mode:statistics:view', 'permission_type': 0},
         {'name': '获取故障管理统计摘要', 'code': 'failure-mode:statistics:api:summary', 'permission_type': 1, 'api_path': '/api/failure-mode/statistics/summary', 'http_method': 'POST'},
         {'name': '获取故障管理子系统统计表', 'code': 'failure-mode:statistics:api:subsystems', 'permission_type': 1, 'api_path': '/api/failure-mode/statistics/subsystems/search', 'http_method': 'POST'},
+    ],
+    'failure_mode_workflow_tasks': [
+        {'name': '查看故障工作流任务', 'code': 'failure-mode:workflow-tasks:view', 'permission_type': 0},
+        {'name': '任务工作流相关接口', 'code': 'failure-mode:workflow-tasks:api', 'permission_type': 1, 'api_path': '/api/failure-mode/workflow/tasks*', 'http_method': 'ALL'},
+    ],
+    'failure_mode_workflow_products': [
+        {'name': '查看产品基线', 'code': 'failure-mode:workflow-products:view', 'permission_type': 0},
+        {'name': '产品基线相关接口', 'code': 'failure-mode:workflow-products:api', 'permission_type': 1, 'api_path': '/api/failure-mode/workflow/products*', 'http_method': 'ALL'},
+    ],
+    'failure_mode_roles': [
+        {'name': '查看角色配置页面', 'code': 'failure-mode:roles:view', 'permission_type': 0},
     ],
 }
 
@@ -154,6 +225,8 @@ class Command(BaseCommand):
             menu.path = seed.path
             menu.type = seed.menu_type
             menu.component = seed.component
+            if seed.redirect:
+                menu.redirect = seed.redirect
             menu.icon = seed.icon
             menu.order = seed.order
             menu.hideInMenu = seed.hide_in_menu

@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 
 from common.fu_model import RootModel
 
@@ -305,3 +306,245 @@ class HandlingMeasureTestCaseRel(RootModel):
             )
         ]
         indexes = [models.Index(fields=['handling_measure', 'order_index'], name='idx_pm_fm_test_rel')]
+
+
+class FailureModeProduct(RootModel):
+    project = models.OneToOneField(
+        'project_manager.Project',
+        on_delete=models.CASCADE,
+        related_name='failure_mode_product',
+        verbose_name='关联产品(项目)'
+    )
+    owner = models.ForeignKey(
+        'core.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='owned_failure_mode_products',
+        verbose_name='产品归属人(版本SE)'
+    )
+
+    class Meta:
+        db_table = 'pm_failure_mode_product'
+        verbose_name = '产品故障模式配置'
+        verbose_name_plural = verbose_name
+
+
+class ProductFailureMode(RootModel):
+    product = models.ForeignKey(
+        FailureModeProduct,
+        on_delete=models.CASCADE,
+        related_name='bound_failure_modes',
+        verbose_name='所属产品'
+    )
+    subsystem = models.CharField(max_length=128, verbose_name='子系统')
+    failure_mode = models.ForeignKey(
+        FailureMode,
+        on_delete=models.CASCADE,
+        related_name='product_bindings',
+        verbose_name='故障模式'
+    )
+
+    class Meta:
+        db_table = 'pm_product_failure_mode'
+        verbose_name = '产品故障模式基线'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product', 'subsystem', 'failure_mode'],
+                name='uniq_pm_product_fm'
+            )
+        ]
+        indexes = [
+            models.Index(fields=['product', 'subsystem'], name='idx_pm_prod_fm_subsys')
+        ]
+
+
+class FailureModeTask(RootModel):
+    TASK_TYPE_CHOICES = [
+        ('CREATE', '创建'),
+        ('REVISE', '修订'),
+        ('DELETE', '删除'),
+    ]
+    STATUS_CHOICES = [
+        ('CREATED', '创建'),
+        ('PROCESSING', '梳理/修订中'),
+        ('REVIEWING', '评审中'),
+        ('CLOSED', '已关闭'),
+    ]
+    REVIEW_RESULT_CHOICES = [
+        ('approved', '通过'),
+        ('rejected', '驳回'),
+    ]
+    task_no = models.CharField(max_length=64, blank=True, default='', db_index=True, verbose_name='任务编号')
+    name = models.CharField(max_length=255, verbose_name='任务名称')
+    task_type = models.CharField(max_length=32, choices=TASK_TYPE_CHOICES, verbose_name='任务类型')
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, default='CREATED', verbose_name='任务状态')
+    product = models.ForeignKey(
+        FailureModeProduct,
+        on_delete=models.CASCADE,
+        related_name='tasks',
+        verbose_name='关联产品'
+    )
+    subsystem = models.CharField(max_length=128, verbose_name='子系统')
+    creator = models.ForeignKey(
+        'core.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='created_fm_tasks',
+        verbose_name='创建人(版本SE)'
+    )
+    assignee = models.ForeignKey(
+        'core.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='assigned_fm_tasks',
+        verbose_name='责任人(特性SE)'
+    )
+    accepted_at = models.DateTimeField(null=True, blank=True, verbose_name='接收时间')
+    submitted_at = models.DateTimeField(null=True, blank=True, verbose_name='提交评审时间')
+    reviewed_at = models.DateTimeField(null=True, blank=True, verbose_name='评审完成时间')
+    closed_at = models.DateTimeField(null=True, blank=True, verbose_name='关闭时间')
+    review_result = models.CharField(
+        max_length=32,
+        choices=REVIEW_RESULT_CHOICES,
+        blank=True,
+        default='',
+        verbose_name='评审结果',
+    )
+    review_minutes_html = models.TextField(blank=True, default='', verbose_name='评审会议纪要')
+    review_attachment_ids = models.JSONField(default=list, blank=True, verbose_name='评审附件')
+
+    class Meta:
+        db_table = 'pm_failure_mode_task'
+        verbose_name = '故障模式梳理任务'
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=['status'], name='idx_pm_fm_task_status'),
+            models.Index(fields=['assignee', 'status'], name='idx_pm_fm_task_assignee'),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self.task_no:
+            self.task_no = timezone.now().strftime('FMT%Y%m%d%H%M%S%f')
+        super().save(*args, **kwargs)
+
+
+class TaskFailureMode(RootModel):
+    task = models.ForeignKey(
+        FailureModeTask,
+        on_delete=models.CASCADE,
+        related_name='task_failure_modes',
+        verbose_name='关联任务'
+    )
+    failure_mode = models.ForeignKey(
+        FailureMode,
+        on_delete=models.CASCADE,
+        related_name='task_bindings',
+        verbose_name='故障模式'
+    )
+
+    class Meta:
+        db_table = 'pm_task_failure_mode'
+        verbose_name = '任务关联故障模式'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['task', 'failure_mode'],
+                name='uniq_pm_task_fm'
+            )
+        ]
+
+
+class FailureModeRoleAssignment(RootModel):
+    ROLE_FM_ADMIN = 'fm_admin'
+    ROLE_VERSION_SE = 'version_se'
+    ROLE_FEATURE_SE = 'feature_se'
+    ROLE_MEMBER = 'member'
+    ROLE_CHOICES = [
+        (ROLE_FM_ADMIN, '管理员'),
+        (ROLE_VERSION_SE, '版本SE'),
+        (ROLE_FEATURE_SE, '特性SE'),
+        (ROLE_MEMBER, '普通成员'),
+    ]
+
+    user = models.ForeignKey(
+        'core.User',
+        on_delete=models.CASCADE,
+        related_name='failure_mode_role_assignments',
+        verbose_name='用户',
+    )
+    role = models.CharField(max_length=32, choices=ROLE_CHOICES, db_index=True, verbose_name='角色')
+    product = models.ForeignKey(
+        FailureModeProduct,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='role_assignments',
+        verbose_name='关联产品',
+    )
+    subsystem = models.CharField(max_length=128, blank=True, default='', verbose_name='子系统')
+    is_active = models.BooleanField(default=True, db_index=True, verbose_name='是否启用')
+
+    class Meta:
+        db_table = 'pm_failure_mode_role_assignment'
+        verbose_name = '故障模式角色授权'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'role', 'product', 'subsystem'],
+                name='uniq_pm_fm_role_assignment',
+            )
+        ]
+        indexes = [
+            models.Index(fields=['user', 'is_active'], name='idx_pm_fm_role_user_active'),
+            models.Index(fields=['product', 'role', 'subsystem'], name='idx_pm_fm_role_scope'),
+        ]
+
+
+class FailureModeTaskLog(RootModel):
+    ACTION_CREATE = 'create'
+    ACTION_ACCEPT = 'accept'
+    ACTION_BIND_FAILURE_MODES = 'bind_failure_modes'
+    ACTION_QUICK_CREATE_FAILURE_MODE = 'quick_create_failure_mode'
+    ACTION_SUBMIT = 'submit'
+    ACTION_CLOSE = 'close'
+    ACTION_REASSIGN = 'reassign'
+    ACTION_CHOICES = [
+        (ACTION_CREATE, '创建任务'),
+        (ACTION_ACCEPT, '接收任务'),
+        (ACTION_BIND_FAILURE_MODES, '绑定故障模式'),
+        (ACTION_QUICK_CREATE_FAILURE_MODE, '快速新增故障模式'),
+        (ACTION_SUBMIT, '提交评审'),
+        (ACTION_CLOSE, '评审关闭'),
+        (ACTION_REASSIGN, '改派责任人'),
+    ]
+
+    task = models.ForeignKey(
+        FailureModeTask,
+        on_delete=models.CASCADE,
+        related_name='logs',
+        verbose_name='任务',
+    )
+    action = models.CharField(max_length=64, choices=ACTION_CHOICES, db_index=True, verbose_name='动作')
+    from_status = models.CharField(max_length=32, blank=True, default='', verbose_name='原状态')
+    to_status = models.CharField(max_length=32, blank=True, default='', verbose_name='新状态')
+    operator = models.ForeignKey(
+        'core.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='failure_mode_task_logs',
+        verbose_name='操作人',
+    )
+    note = models.TextField(blank=True, default='', verbose_name='备注')
+    extra_data = models.JSONField(default=dict, blank=True, verbose_name='扩展数据')
+
+    class Meta:
+        db_table = 'pm_failure_mode_task_log'
+        verbose_name = '故障模式任务日志'
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=['task', 'sys_create_datetime'], name='idx_pm_fm_task_log_time'),
+            models.Index(fields=['action', 'sys_create_datetime'], name='idx_pm_fm_task_log_action'),
+        ]
