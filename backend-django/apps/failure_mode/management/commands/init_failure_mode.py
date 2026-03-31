@@ -30,10 +30,12 @@ class MenuSeed:
     order: int = 0
     auth_code: str | None = None
     icon: str | None = None
+    active_path: str | None = None
     hide_in_menu: bool = False
     hide_children_in_menu: bool = False
     keep_alive: bool = True
     redirect: str | None = None
+    inherit_parent_roles: bool = False
 
 
 LEGACY_MENU_PATHS = ['/project-manager/failure-mode']
@@ -105,6 +107,21 @@ MENU_SEEDS = [
         keep_alive=True,
     ),
     MenuSeed(
+        key='failure_mode_workflow_task_detail',
+        parent_key='failure_mode_workflow_tasks',
+        name='FailureModeTaskDetail',
+        title='任务详情',
+        path='/failure-mode/tasks/detail/:id',
+        component='/failure-mode/tasks/detail',
+        menu_type='menu',
+        order=1,
+        auth_code='failure-mode:workflow-tasks',
+        active_path='/failure-mode/tasks',
+        hide_in_menu=True,
+        keep_alive=False,
+        inherit_parent_roles=True,
+    ),
+    MenuSeed(
         key='failure_mode_workflow_products',
         parent_key='failure_mode',
         name='FailureModeProductBaselines',
@@ -131,6 +148,21 @@ MENU_SEEDS = [
         icon='lucide:shield-check',
         hide_in_menu=False,
         keep_alive=True,
+    ),
+    MenuSeed(
+        key='failure_mode_roles_detail',
+        parent_key='failure_mode_roles',
+        name='FailureModeRoleDetail',
+        title='角色配置详情',
+        path='/failure-mode/roles/detail/:id',
+        component='/failure-mode/roles/detail',
+        menu_type='menu',
+        order=1,
+        auth_code='failure-mode:roles',
+        active_path='/failure-mode/roles',
+        hide_in_menu=True,
+        keep_alive=False,
+        inherit_parent_roles=True,
     ),
 ]
 
@@ -227,6 +259,7 @@ class Command(BaseCommand):
             menu.component = seed.component
             if seed.redirect:
                 menu.redirect = seed.redirect
+            menu.activePath = seed.active_path
             menu.icon = seed.icon
             menu.order = seed.order
             menu.hideInMenu = seed.hide_in_menu
@@ -234,6 +267,8 @@ class Command(BaseCommand):
             menu.keepAlive = seed.keep_alive
             menu.sys_modifier = operator
             menu.save()
+            if seed.inherit_parent_roles and parent:
+                self._inherit_parent_roles(parent, menu)
             created[seed.key] = menu
         return created
 
@@ -279,6 +314,10 @@ class Command(BaseCommand):
             role.menu.add(target_menu)
         Menu.objects.filter(parent=legacy_menu).update(parent=target_menu)
         Permission.objects.filter(menu=legacy_menu).update(menu=target_menu)
+
+    def _inherit_parent_roles(self, parent_menu: Menu, child_menu: Menu):
+        for role in parent_menu.core_roles.all():
+            role.menu.add(child_menu)
 
     def _find_permission_candidate(self, menu: Menu, item: dict):
         desired_code = item['code']
