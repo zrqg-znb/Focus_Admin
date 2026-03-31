@@ -249,8 +249,8 @@ async function loadTaskContext() {
     reviewForm.review_attachment_ids = [
       ...(detail.review_attachment_ids || []),
     ];
-    failureModeGridApi.grid.commitProxy('query');
-    baselineGridApi.grid.commitProxy('query');
+    await failureModeGridApi.query();
+    await baselineGridApi.query();
   } finally {
     loading.value = false;
   }
@@ -370,8 +370,8 @@ watch(
 </script>
 
 <template>
-  <Page auto-content-height>
-    <div class="space-y-4">
+  <Page content-class="flex h-full min-h-0 flex-col" auto-content-height>
+    <div class="flex min-h-0 flex-1 flex-col gap-4">
       <div class="rounded-xl bg-white p-5 shadow-sm">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-wrap items-center gap-3">
@@ -467,11 +467,13 @@ watch(
         </ElDescriptions>
       </div>
 
-      <div class="rounded-xl bg-white p-4 shadow-sm">
-        <ElTabs v-model="activeTab">
+      <div
+        class="flex min-h-0 flex-1 flex-col rounded-xl bg-white p-4 shadow-sm"
+      >
+        <ElTabs v-model="activeTab" class="failure-mode-task-detail__tabs">
           <ElTabPane label="概览" name="overview">
             <div
-              class="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]"
+              class="grid h-full min-h-0 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]"
             >
               <ElCard shadow="never">
                 <template #header>
@@ -505,7 +507,7 @@ watch(
           </ElTabPane>
 
           <ElTabPane label="梳理工作台" name="workbench">
-            <div class="space-y-4">
+            <div class="flex h-full min-h-0 flex-col gap-4">
               <div
                 v-if="canReassign"
                 class="grid gap-3 rounded-xl border p-4 lg:grid-cols-[200px_minmax(0,1fr)_120px]"
@@ -537,7 +539,7 @@ watch(
                 </ElButton>
               </div>
 
-              <div class="rounded-xl border bg-white p-2">
+              <div class="min-h-0 flex-1 rounded-xl border bg-white p-2">
                 <FailureModeGrid />
               </div>
             </div>
@@ -587,7 +589,7 @@ watch(
           </ElTabPane>
 
           <ElTabPane label="评审归档" name="review">
-            <div class="space-y-4">
+            <div class="flex h-full min-h-0 flex-col gap-4">
               <div class="rounded-xl border bg-white p-4">
                 <div class="mb-3 text-base font-medium text-gray-800">
                   评审纪要
@@ -610,7 +612,7 @@ watch(
                 </div>
               </div>
 
-              <div class="rounded-xl border bg-white p-2">
+              <div class="min-h-0 flex-1 rounded-xl border bg-white p-2">
                 <div class="px-2 pb-3 pt-2 text-base font-medium text-gray-800">
                   当前生效基线
                 </div>
@@ -635,3 +637,21 @@ watch(
     />
   </Page>
 </template>
+
+<style scoped>
+:deep(.failure-mode-task-detail__tabs) {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+:deep(.failure-mode-task-detail__tabs > .el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+}
+
+:deep(.failure-mode-task-detail__tabs .el-tab-pane) {
+  height: 100%;
+}
+</style>

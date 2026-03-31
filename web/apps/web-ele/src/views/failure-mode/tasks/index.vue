@@ -126,8 +126,9 @@ const scopeCounts = computed(() => ({
   ).length,
 }));
 
-function handleSearch() {
-  taskGridApi.grid.commitProxy('query');
+async function handleSearch() {
+  taskGridApi.pagination.currentPage = 1;
+  await taskGridApi.query();
 }
 
 function handleReset() {
@@ -149,118 +150,122 @@ function handleOpenTask(row: FailureModeTaskItem) {
 </script>
 
 <template>
-  <Page auto-content-height class="flex flex-col">
-    <div class="mb-4 rounded-xl bg-white p-4 shadow-sm">
-      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <ElTabs v-model="activeScope" @tab-change="handleSearch">
-          <ElTabPane :label="`我的待办 (${scopeCounts.todo})`" name="todo" />
-          <ElTabPane
-            :label="`我发起的 (${scopeCounts.created})`"
-            name="created"
+  <Page content-class="flex h-full min-h-0 flex-col" auto-content-height>
+    <div class="flex min-h-0 flex-1 flex-col gap-4">
+      <div class="rounded-xl bg-white p-4 shadow-sm">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <ElTabs v-model="activeScope" @tab-change="handleSearch">
+            <ElTabPane :label="`我的待办 (${scopeCounts.todo})`" name="todo" />
+            <ElTabPane
+              :label="`我发起的 (${scopeCounts.created})`"
+              name="created"
+            />
+            <ElTabPane :label="`全部任务 (${scopeCounts.all})`" name="all" />
+          </ElTabs>
+          <ElButton type="primary" @click="handleCreateTask">发起任务</ElButton>
+        </div>
+
+        <div
+          class="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1.2fr)_180px_180px_180px_140px]"
+        >
+          <ElInput
+            v-model="keyword"
+            clearable
+            placeholder="搜索任务编号、任务名称、产品、责任人"
+            @keyup.enter="handleSearch"
           />
-          <ElTabPane :label="`全部任务 (${scopeCounts.all})`" name="all" />
-        </ElTabs>
-        <ElButton type="primary" @click="handleCreateTask">发起任务</ElButton>
+          <ElSelect
+            v-model="statusFilter"
+            clearable
+            placeholder="任务状态"
+            @change="handleSearch"
+          >
+            <ElOption
+              v-for="item in FM_TASK_STATUS_OPTIONS"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </ElSelect>
+          <ElSelect
+            v-model="productFilter"
+            clearable
+            filterable
+            placeholder="产品"
+            @change="handleSearch"
+          >
+            <ElOption
+              v-for="item in products"
+              :key="item"
+              :label="item"
+              :value="item"
+            />
+          </ElSelect>
+          <ElSelect
+            v-model="subsystemFilter"
+            clearable
+            filterable
+            placeholder="子系统"
+            @change="handleSearch"
+          >
+            <ElOption
+              v-for="item in subsystems"
+              :key="item"
+              :label="item"
+              :value="item"
+            />
+          </ElSelect>
+          <div class="flex items-center justify-end gap-2">
+            <ElButton @click="handleReset">重置</ElButton>
+            <ElButton type="primary" plain @click="handleSearch">查询</ElButton>
+          </div>
+        </div>
       </div>
 
       <div
-        class="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1.2fr)_180px_180px_180px_140px]"
+        class="min-h-0 flex-1 overflow-hidden rounded-xl bg-white p-4 shadow-sm"
       >
-        <ElInput
-          v-model="keyword"
-          clearable
-          placeholder="搜索任务编号、任务名称、产品、责任人"
-          @keyup.enter="handleSearch"
-        />
-        <ElSelect
-          v-model="statusFilter"
-          clearable
-          placeholder="任务状态"
-          @change="handleSearch"
-        >
-          <ElOption
-            v-for="item in FM_TASK_STATUS_OPTIONS"
-            :key="item.value"
-            :label="item.label"
-            :value="item.value"
-          />
-        </ElSelect>
-        <ElSelect
-          v-model="productFilter"
-          clearable
-          filterable
-          placeholder="产品"
-          @change="handleSearch"
-        >
-          <ElOption
-            v-for="item in products"
-            :key="item"
-            :label="item"
-            :value="item"
-          />
-        </ElSelect>
-        <ElSelect
-          v-model="subsystemFilter"
-          clearable
-          filterable
-          placeholder="子系统"
-          @change="handleSearch"
-        >
-          <ElOption
-            v-for="item in subsystems"
-            :key="item"
-            :label="item"
-            :value="item"
-          />
-        </ElSelect>
-        <div class="flex items-center justify-end gap-2">
-          <ElButton @click="handleReset">重置</ElButton>
-          <ElButton type="primary" plain @click="handleSearch">查询</ElButton>
-        </div>
+        <TaskGrid>
+          <template #cell-task-type="{ row }">
+            <span>{{
+              FM_TASK_TYPE_LABEL_MAP[row.task_type] || row.task_type
+            }}</span>
+          </template>
+          <template #cell-status="{ row }">
+            <ElTag :type="getTaskStatusTagType(row.status)">
+              {{ FM_TASK_STATUS_LABEL_MAP[row.status] || row.status }}
+            </ElTag>
+          </template>
+          <template #cell-creator="{ row }">
+            <span>{{
+              row.creator_info?.name || row.creator_info?.username || '-'
+            }}</span>
+          </template>
+          <template #cell-assignee="{ row }">
+            <span>{{
+              row.assignee_info?.name || row.assignee_info?.username || '-'
+            }}</span>
+          </template>
+          <template #cell-actions="{ row }">
+            <ElButton
+              link
+              size="small"
+              type="primary"
+              @click="handleOpenTask(row)"
+            >
+              {{
+                row.status === 'CREATED'
+                  ? '进入详情'
+                  : row.status === 'PROCESSING'
+                    ? '进入工作台'
+                    : row.status === 'REVIEWING'
+                      ? '进入评审'
+                      : '查看归档'
+              }}
+            </ElButton>
+          </template>
+        </TaskGrid>
       </div>
-    </div>
-
-    <div class="flex-1 overflow-hidden rounded-xl bg-white p-4 shadow-sm">
-      <TaskGrid>
-        <template #cell-task-type="{ row }">
-          <span>{{
-            FM_TASK_TYPE_LABEL_MAP[row.task_type] || row.task_type
-          }}</span>
-        </template>
-        <template #cell-status="{ row }">
-          <ElTag :type="getTaskStatusTagType(row.status)">
-            {{ FM_TASK_STATUS_LABEL_MAP[row.status] || row.status }}
-          </ElTag>
-        </template>
-        <template #cell-creator="{ row }">
-          <span>{{
-            row.creator_info?.name || row.creator_info?.username || '-'
-          }}</span>
-        </template>
-        <template #cell-assignee="{ row }">
-          <span>{{
-            row.assignee_info?.name || row.assignee_info?.username || '-'
-          }}</span>
-        </template>
-        <template #cell-actions="{ row }">
-          <ElButton
-            link
-            size="small"
-            type="primary"
-            @click="handleOpenTask(row)"
-          >
-            {{
-              row.status === 'CREATED'
-                ? '进入详情'
-                : row.status === 'PROCESSING'
-                  ? '进入工作台'
-                  : row.status === 'REVIEWING'
-                    ? '进入评审'
-                    : '查看归档'
-            }}
-          </ElButton>
-        </template>
-      </TaskGrid>
     </div>
 
     <TaskCreateDrawer ref="taskCreateDrawerRef" @success="handleSearch" />

@@ -182,7 +182,7 @@ async function loadTaskContext() {
     reviewForm.review_attachment_ids = [
       ...(currentTask.value.review_attachment_ids || []),
     ];
-    failureModeGridApi.grid.commitProxy('query');
+    await failureModeGridApi.query();
   } finally {
     loading.value = false;
   }

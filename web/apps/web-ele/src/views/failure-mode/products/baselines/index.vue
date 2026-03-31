@@ -92,8 +92,9 @@ async function handleProductChange() {
   handleSearch();
 }
 
-function handleSearch() {
-  baselineGridApi.grid.commitProxy('query');
+async function handleSearch() {
+  baselineGridApi.pagination.currentPage = 1;
+  await baselineGridApi.query();
 }
 
 function handleGoRoleConfig() {
@@ -109,87 +110,89 @@ onMounted(() => {
 </script>
 
 <template>
-  <Page auto-content-height class="flex flex-col">
-    <div class="mb-4 rounded-xl bg-white p-4 shadow-sm">
-      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div class="text-xl font-semibold text-gray-900">产品基线</div>
-          <div class="mt-1 text-sm text-gray-500">
-            查看某产品某子系统当前已生效的故障模式基线结果
+  <Page content-class="flex h-full min-h-0 flex-col" auto-content-height>
+    <div class="flex min-h-0 flex-1 flex-col gap-4">
+      <div class="rounded-xl bg-white p-4 shadow-sm">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div class="text-xl font-semibold text-gray-900">产品基线</div>
+            <div class="mt-1 text-sm text-gray-500">
+              查看某产品某子系统当前已生效的故障模式基线结果
+            </div>
+          </div>
+          <ElButton
+            type="primary"
+            plain
+            :disabled="!selectedProductId"
+            @click="handleGoRoleConfig"
+          >
+            前往角色配置
+          </ElButton>
+        </div>
+
+        <div
+          class="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_220px_140px]"
+        >
+          <ElSelect
+            v-model="selectedProductId"
+            filterable
+            placeholder="请选择产品"
+            :loading="loadingProducts"
+            @change="handleProductChange"
+          >
+            <ElOption
+              v-for="item in products"
+              :key="item.id"
+              :label="item.project_name"
+              :value="item.id"
+            />
+          </ElSelect>
+          <ElSelect
+            v-model="selectedSubsystem"
+            clearable
+            filterable
+            placeholder="选择子系统"
+            @change="handleSearch"
+          >
+            <ElOption
+              v-for="item in subsystemOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </ElSelect>
+          <div class="flex items-center justify-end">
+            <ElButton type="primary" plain @click="handleSearch">查询</ElButton>
           </div>
         </div>
-        <ElButton
-          type="primary"
-          plain
-          :disabled="!selectedProductId"
-          @click="handleGoRoleConfig"
-        >
-          前往角色配置
-        </ElButton>
-      </div>
 
-      <div
-        class="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_220px_140px]"
-      >
-        <ElSelect
-          v-model="selectedProductId"
-          filterable
-          placeholder="请选择产品"
-          :loading="loadingProducts"
-          @change="handleProductChange"
+        <div
+          v-if="selectedProduct"
+          class="mt-4 flex items-center gap-3 text-sm text-gray-600"
         >
-          <ElOption
-            v-for="item in products"
-            :key="item.id"
-            :label="item.project_name"
-            :value="item.id"
-          />
-        </ElSelect>
-        <ElSelect
-          v-model="selectedSubsystem"
-          clearable
-          filterable
-          placeholder="选择子系统"
-          @change="handleSearch"
-        >
-          <ElOption
-            v-for="item in subsystemOptions"
-            :key="item.value"
-            :label="item.label"
-            :value="item.value"
-          />
-        </ElSelect>
-        <div class="flex items-center justify-end">
-          <ElButton type="primary" plain @click="handleSearch">查询</ElButton>
+          <span>主版本SE：</span>
+          <ElTag type="primary">
+            {{
+              selectedProduct.owner_info?.name ||
+              selectedProduct.owner_info?.username ||
+              '未配置'
+            }}
+          </ElTag>
         </div>
       </div>
 
       <div
-        v-if="selectedProduct"
-        class="mt-4 flex items-center gap-3 text-sm text-gray-600"
+        class="relative min-h-0 flex-1 overflow-hidden rounded-xl bg-white p-4 shadow-sm"
       >
-        <span>主版本SE：</span>
-        <ElTag type="primary">
-          {{
-            selectedProduct.owner_info?.name ||
-            selectedProduct.owner_info?.username ||
-            '未配置'
-          }}
-        </ElTag>
-      </div>
-    </div>
-
-    <div
-      class="relative flex-1 overflow-hidden rounded-xl bg-white p-4 shadow-sm"
-    >
-      <div
-        v-if="!selectedProductId"
-        class="absolute inset-0 z-10 flex items-center justify-center bg-white"
-      >
-        <ElEmpty description="请先选择一个产品以查看基线结果" />
-      </div>
-      <div class="h-full">
-        <BaselineGrid />
+        <div
+          v-if="!selectedProductId"
+          class="absolute inset-0 z-10 flex items-center justify-center bg-white"
+        >
+          <ElEmpty description="请先选择一个产品以查看基线结果" />
+        </div>
+        <div class="h-full">
+          <BaselineGrid />
+        </div>
       </div>
     </div>
   </Page>

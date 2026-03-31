@@ -190,8 +190,8 @@ void loadData();
 </script>
 
 <template>
-  <Page auto-content-height>
-    <div class="space-y-4">
+  <Page content-class="flex h-full min-h-0 flex-col" auto-content-height>
+    <div class="flex min-h-0 flex-1 flex-col gap-4">
       <div
         class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white p-5 shadow-sm"
       >
@@ -207,8 +207,14 @@ void loadData();
         </ElButton>
       </div>
 
-      <div class="grid gap-4 xl:grid-cols-[320px_minmax(0,1.4fr)_320px]">
-        <ElCard shadow="never">
+      <div
+        class="grid min-h-0 flex-1 gap-4 xl:grid-cols-[320px_minmax(0,1.4fr)_320px]"
+      >
+        <ElCard
+          class="h-full"
+          shadow="never"
+          :body-style="{ height: '100%', overflow: 'auto', padding: '20px' }"
+        >
           <template #header>
             <span class="font-medium">产品信息</span>
           </template>
@@ -231,7 +237,11 @@ void loadData();
           </div>
         </ElCard>
 
-        <ElCard shadow="never">
+        <ElCard
+          class="h-full"
+          shadow="never"
+          :body-style="{ height: '100%', overflow: 'hidden', padding: '20px' }"
+        >
           <template #header>
             <div class="flex items-center justify-between">
               <span class="font-medium">子系统角色矩阵</span>
@@ -246,7 +256,7 @@ void loadData();
           >
             暂无角色授权，请新增矩阵行后保存
           </div>
-          <div v-else class="space-y-3">
+          <div v-else class="h-full space-y-3 overflow-auto pr-1">
             <div
               v-for="item in roleRows"
               :key="item.tempKey"
@@ -285,7 +295,11 @@ void loadData();
           </div>
         </ElCard>
 
-        <ElCard shadow="never">
+        <ElCard
+          class="h-full"
+          shadow="never"
+          :body-style="{ height: '100%', overflow: 'auto', padding: '20px' }"
+        >
           <template #header>
             <span class="font-medium">授权影响预览</span>
           </template>

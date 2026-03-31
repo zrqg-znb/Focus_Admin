@@ -108,8 +108,8 @@ void loadProducts();
 </script>
 
 <template>
-  <Page auto-content-height>
-    <div class="space-y-4">
+  <Page content-class="flex h-full min-h-0 flex-col" auto-content-height>
+    <div class="flex min-h-0 flex-1 flex-col gap-4">
       <div class="rounded-xl bg-white p-5 shadow-sm">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -129,15 +129,21 @@ void loadProducts();
         <ElInput v-model="keyword" clearable placeholder="搜索产品名称" />
       </div>
 
-      <div class="grid gap-4 xl:grid-cols-[340px_minmax(0,1fr)_320px]">
-        <ElCard shadow="never">
+      <div
+        class="grid min-h-0 flex-1 gap-4 xl:grid-cols-[340px_minmax(0,1fr)_320px]"
+      >
+        <ElCard
+          class="h-full"
+          shadow="never"
+          :body-style="{ height: '100%', overflow: 'hidden', padding: '20px' }"
+        >
           <template #header>
             <span class="font-medium">产品列表</span>
           </template>
           <div v-if="filteredProducts.length === 0" class="py-8">
             <ElEmpty description="暂无可配置产品" />
           </div>
-          <div v-else class="space-y-3">
+          <div v-else class="h-full space-y-3 overflow-auto pr-1">
             <button
               v-for="item in filteredProducts"
               :key="item.id"
@@ -162,14 +168,18 @@ void loadProducts();
           </div>
         </ElCard>
 
-        <ElCard shadow="never">
+        <ElCard
+          class="h-full"
+          shadow="never"
+          :body-style="{ height: '100%', overflow: 'hidden', padding: '20px' }"
+        >
           <template #header>
             <span class="font-medium">矩阵预览</span>
           </template>
           <div v-if="!selectedProduct" class="py-8">
             <ElEmpty description="请选择左侧产品" />
           </div>
-          <div v-else class="space-y-3">
+          <div v-else class="h-full space-y-3 overflow-auto pr-1">
             <div class="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">
               当前产品：<span class="font-medium text-gray-900">{{
                 selectedProduct.project_name
@@ -195,11 +205,15 @@ void loadProducts();
           </div>
         </ElCard>
 
-        <ElCard shadow="never">
+        <ElCard
+          class="h-full"
+          shadow="never"
+          :body-style="{ height: '100%', overflow: 'hidden', padding: '20px' }"
+        >
           <template #header>
             <span class="font-medium">配置说明</span>
           </template>
-          <div class="space-y-3 text-sm text-gray-600">
+          <div class="h-full space-y-3 overflow-auto text-sm text-gray-600">
             <div>
               角色配置是低频高复杂动作，建议独立成页，不再嵌在基线页抽屉里。
             </div>
