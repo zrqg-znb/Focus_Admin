@@ -45,6 +45,7 @@ import StringListEditor from './StringListEditor.vue';
 defineOptions({ name: 'FailureModeDrawer' });
 
 const props = defineProps<{
+  createHandler?: (payload: FailureModePayload) => Promise<FailureModeItem>;
   dictOptions: FailureModeDictOptions;
   subsystemConfigOptions: FailureModeSubsystemConfigOptions;
 }>();
@@ -540,10 +541,14 @@ async function handleConfirm() {
       ],
     };
 
-    const result =
-      mode.value === 'create'
-        ? await createFailureModeApi(payload)
-        : await updateFailureModeApi(editingId.value, payload);
+    let result: FailureModeItem;
+    if (mode.value === 'create') {
+      result = props.createHandler
+        ? await props.createHandler(payload)
+        : await createFailureModeApi(payload);
+    } else {
+      result = await updateFailureModeApi(editingId.value, payload);
+    }
 
     ElMessage.success(mode.value === 'create' ? '创建成功' : '保存成功');
     visible.value = false;
