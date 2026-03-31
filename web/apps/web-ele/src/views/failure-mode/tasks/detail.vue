@@ -376,70 +376,115 @@ watch(
 <template>
   <Page content-class="flex h-full min-h-0 flex-col" auto-content-height>
     <div class="flex min-h-0 flex-1 flex-col gap-4">
-      <div class="rounded-xl bg-white p-6 shadow-sm">
+      <div class="rounded-xl bg-white p-4 shadow-sm">
         <div
-          class="flex flex-col justify-between gap-6 lg:flex-row lg:items-start"
+          class="flex flex-col justify-between gap-4 lg:flex-row lg:items-start"
         >
-          <div class="flex-1">
-            <div class="mb-4 flex items-center gap-3">
-              <ElButton plain @click="handleBack" size="small">返回</ElButton>
-              <span class="text-xl font-bold text-gray-900">
-                {{ currentTask?.name || '任务详情' }}
-              </span>
-              <ElTag
-                v-if="currentTask"
-                :type="getTaskStatusTagType(currentTask.status)"
-                effect="light"
-                round
-              >
-                {{
-                  FM_TASK_STATUS_LABEL_MAP[currentTask.status] ||
-                  currentTask.status
-                }}
-              </ElTag>
+          <div class="flex-1 min-w-0">
+            <div class="mb-2 flex flex-col gap-4 lg:flex-row lg:items-center justify-between">
+              <div class="flex items-center gap-3 flex-wrap">
+                <ElButton plain @click="handleBack" size="small">返回</ElButton>
+                <span class="text-xl font-bold text-gray-900 truncate max-w-[300px] sm:max-w-[400px]">
+                  {{ currentTask?.name || '任务详情' }}
+                </span>
+                <ElTag
+                  v-if="currentTask"
+                  :type="getTaskStatusTagType(currentTask.status)"
+                  effect="light"
+                  round
+                >
+                  {{
+                    FM_TASK_STATUS_LABEL_MAP[currentTask.status] ||
+                    currentTask.status
+                  }}
+                </ElTag>
+              </div>
+              
+              <div class="flex gap-3 flex-wrap">
+                <ElButton
+                  v-if="canAccept"
+                  type="primary"
+                  :loading="actionLoading"
+                  @click="handleAcceptTask"
+                >
+                  接收任务
+                </ElButton>
+                <ElButton
+                  v-if="canEdit"
+                  type="primary"
+                  plain
+                  @click="handleManageFailureModes"
+                >
+                  管理绑定
+                </ElButton>
+                <ElButton
+                  v-if="canEdit"
+                  type="success"
+                  plain
+                  @click="handleQuickCreateFailureMode"
+                >
+                  快速新增模式
+                </ElButton>
+                <ElButton
+                  v-if="canSubmit"
+                  type="success"
+                  :loading="actionLoading"
+                  @click="handleSubmitTask"
+                >
+                  提交评审
+                </ElButton>
+                <ElButton
+                  v-if="canClose"
+                  type="success"
+                  :loading="actionLoading"
+                  @click="handleCloseTask"
+                >
+                  评审关闭
+                </ElButton>
+              </div>
             </div>
 
             <div
-              class="mb-6 grid grid-cols-2 gap-x-8 gap-y-3 text-sm text-gray-600 md:grid-cols-3"
+              class="mb-3 grid grid-cols-1 gap-x-4 gap-y-2 text-sm text-gray-600 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5"
             >
-              <div class="flex items-center">
-                <span class="w-20 text-gray-400">任务编号：</span>
-                <span class="font-medium text-gray-900">{{
+              <div class="flex items-center col-span-1 sm:col-span-2 md:col-span-3 xl:col-span-2">
+                <span class="w-20 shrink-0 text-gray-400">任务编号：</span>
+                <span class="font-medium text-gray-900 truncate" :title="currentTask?.task_no || '-'">{{
                   currentTask?.task_no || '-'
                 }}</span>
               </div>
               <div class="flex items-center">
-                <span class="w-20 text-gray-400">任务类型：</span>
-                <span class="font-medium text-gray-900">{{
-                  currentTask
+                <span class="w-20 shrink-0 text-gray-400">任务类型：</span>
+                <span class="font-medium text-gray-900 truncate">{{
+                  currentTask?.task_type
                     ? FM_TASK_TYPE_LABEL_MAP[currentTask.task_type] ||
                       currentTask.task_type
                     : '-'
                 }}</span>
               </div>
               <div class="flex items-center">
-                <span class="w-20 text-gray-400">产品：</span>
-                <span class="font-medium text-gray-900">{{
+                <span class="w-20 shrink-0 text-gray-400">产品：</span>
+                <span class="font-medium text-gray-900 truncate">{{
                   currentTask?.product_name || '-'
                 }}</span>
               </div>
               <div class="flex items-center">
-                <span class="w-20 text-gray-400">子系统：</span>
-                <span class="font-medium text-gray-900">{{
+                <span class="w-20 shrink-0 text-gray-400">子系统：</span>
+                <span class="font-medium text-gray-900 truncate">{{
                   currentTask?.subsystem || '-'
                 }}</span>
               </div>
               <div class="flex items-center">
-                <span class="w-20 text-gray-400">创建人：</span>
-                <span class="font-medium text-gray-900">{{
+                <span class="w-20 shrink-0 text-gray-400">创建人：</span>
+                <span class="font-medium text-gray-900 truncate">{{
                   currentTask?.creator_info?.name ||
                   currentTask?.creator_info?.username ||
                   '-'
                 }}</span>
               </div>
               <div class="flex items-center">
-                <span class="w-20 text-gray-400">责任人：</span>
-                <span class="font-medium text-gray-900">{{
+                <span class="w-20 shrink-0 text-gray-400">责任人：</span>
+                <span class="font-medium text-gray-900 truncate">{{
                   currentTask?.assignee_info?.name ||
                   currentTask?.assignee_info?.username ||
                   '-'
@@ -447,77 +492,32 @@ watch(
               </div>
             </div>
 
-            <ElSteps
-              :active="activeStep"
-              align-center
-              finish-status="success"
-              class="max-w-3xl"
-            >
-              <ElStep
-                title="已创建"
-                :description="currentTask?.sys_create_datetime || '-'"
-              />
-              <ElStep
-                title="梳理/修订中"
-                :description="currentTask?.accepted_at || '-'"
-              />
-              <ElStep
-                title="评审中"
-                :description="currentTask?.submitted_at || '-'"
-              />
-              <ElStep
-                title="已关闭"
-                :description="currentTask?.closed_at || '-'"
-              />
-            </ElSteps>
-          </div>
-
-          <div class="flex min-w-[140px] flex-col gap-3">
-            <ElButton
-              v-if="canAccept"
-              type="primary"
-              :loading="actionLoading"
-              @click="handleAcceptTask"
-              class="w-full"
-            >
-              接收任务
-            </ElButton>
-            <ElButton
-              v-if="canEdit"
-              type="primary"
-              plain
-              @click="handleManageFailureModes"
-              class="!ml-0 w-full"
-            >
-              管理绑定
-            </ElButton>
-            <ElButton
-              v-if="canEdit"
-              type="success"
-              plain
-              @click="handleQuickCreateFailureMode"
-              class="!ml-0 w-full"
-            >
-              快速新增模式
-            </ElButton>
-            <ElButton
-              v-if="canSubmit"
-              type="success"
-              :loading="actionLoading"
-              @click="handleSubmitTask"
-              class="!ml-0 w-full"
-            >
-              提交评审
-            </ElButton>
-            <ElButton
-              v-if="canClose"
-              type="success"
-              :loading="actionLoading"
-              @click="handleCloseTask"
-              class="!ml-0 w-full"
-            >
-              评审关闭
-            </ElButton>
+            <div class="flex justify-center w-full">
+              <ElSteps
+                :active="activeStep"
+                finish-status="success"
+                align-center
+                class="w-full max-w-2xl pt-1 mx-auto"
+                style="--el-step-icon-size: 24px;"
+              >
+                <ElStep
+                  title="已创建"
+                  :description="currentTask?.sys_create_datetime || '-'"
+                />
+                <ElStep
+                  title="梳理中"
+                  :description="currentTask?.accepted_at || '-'"
+                />
+                <ElStep
+                  title="评审中"
+                  :description="currentTask?.submitted_at || '-'"
+                />
+                <ElStep
+                  title="已关闭"
+                  :description="currentTask?.closed_at || '-'"
+                />
+              </ElSteps>
+            </div>
           </div>
         </div>
       </div>
@@ -613,60 +613,57 @@ watch(
           </ElTabPane>
 
           <ElTabPane label="流程记录" name="flow">
-            <div v-if="taskLogs.length === 0" class="py-12">
-              <ElEmpty description="暂无流程记录" />
-            </div>
-            <div v-else class="space-y-3">
-              <div
-                v-for="item in taskLogs"
-                :key="item.id"
-                class="rounded-xl border bg-gray-50 p-4"
-              >
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                  <div class="font-medium text-gray-900">
-                    {{ item.note || item.action }}
+            <div class="flex h-full flex-col min-h-0">
+              <div v-if="taskLogs.length === 0" class="py-12">
+                <ElEmpty description="暂无流程记录" />
+              </div>
+              <div v-else class="flex-1 overflow-y-auto space-y-3 pr-2 pb-2">
+                <div
+                  v-for="item in taskLogs"
+                  :key="item.id"
+                  class="rounded-xl border bg-gray-50 p-4"
+                >
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="font-medium text-gray-900">
+                      {{ item.note || item.action }}
+                    </div>
+                    <div class="text-sm text-gray-500">
+                      {{ item.sys_create_datetime || '-' }}
+                    </div>
                   </div>
-                  <div class="text-sm text-gray-500">
-                    {{ item.sys_create_datetime || '-' }}
+                  <div class="mt-2 text-sm text-gray-600">
+                    操作人：{{
+                      item.operator_info?.name ||
+                      item.operator_info?.username ||
+                      '-'
+                    }}
                   </div>
-                </div>
-                <div class="mt-2 text-sm text-gray-600">
-                  操作人：{{
-                    item.operator_info?.name ||
-                    item.operator_info?.username ||
-                    '-'
-                  }}
-                </div>
-                <div class="mt-1 text-sm text-gray-600">
-                  状态：
-                  {{
-                    FM_TASK_STATUS_LABEL_MAP[item.from_status] ||
-                    item.from_status ||
-                    '-'
-                  }}
-                  ->
-                  {{
-                    FM_TASK_STATUS_LABEL_MAP[item.to_status] ||
-                    item.to_status ||
-                    '-'
-                  }}
+                  <div class="mt-1 text-sm text-gray-600">
+                    状态：
+                    {{
+                      FM_TASK_STATUS_LABEL_MAP[item.from_status] ||
+                      item.from_status ||
+                      '-'
+                    }}
+                    ->
+                    {{
+                      FM_TASK_STATUS_LABEL_MAP[item.to_status] ||
+                      item.to_status ||
+                      '-'
+                    }}
+                  </div>
                 </div>
               </div>
             </div>
           </ElTabPane>
 
           <ElTabPane label="评审归档" name="review">
-            <div class="grid h-full min-h-0 grid-rows-[auto_1fr] gap-4">
-              <div class="rounded-xl border border-gray-100 bg-gray-50/50 p-5">
-                <div class="mb-4 flex items-center justify-between">
-                  <div class="text-base font-semibold text-gray-800">
-                    评审附件
-                  </div>
-                  <div class="text-sm text-gray-500">
-                    上传相关评审会议纪要、专家意见等附件资料
-                  </div>
+            <div class="flex h-full flex-col min-h-0 gap-4">
+              <div class="shrink-0 rounded-xl border border-gray-100 bg-gray-50/50 p-4">
+                <div class="mb-3 text-base font-semibold text-gray-800">
+                  评审附件
                 </div>
-                <div class="rounded-lg bg-white p-4 shadow-sm">
+                <div class="rounded-lg bg-white p-2 shadow-sm max-h-[160px] overflow-y-auto">
                   <FileSelector
                     v-model="reviewForm.review_attachment_ids"
                     :disabled="isClosed"
@@ -678,7 +675,7 @@ watch(
               </div>
 
               <div
-                class="flex min-h-0 flex-col rounded-xl border border-gray-100 bg-white p-2 shadow-sm"
+                class="flex min-h-0 flex-1 flex-col rounded-xl border border-gray-100 bg-white p-2 shadow-sm"
               >
                 <div
                   class="px-3 pb-3 pt-2 text-base font-semibold text-gray-800"
@@ -725,5 +722,16 @@ watch(
 
 :deep(.failure-mode-task-detail__tabs .el-tab-pane) {
   height: 100%;
+}
+
+:deep(.el-step__title) {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+:deep(.el-step__description) {
+  font-size: 12px;
+  padding-right: 10%;
+  margin-top: 2px;
 }
 </style>
