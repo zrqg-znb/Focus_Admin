@@ -332,7 +332,7 @@ function getTaskChangeLabel(row: FailureModeItem) {
     : '';
 }
 
-function formatDate(dateStr?: string | null) {
+function formatDate(dateStr?: null | string) {
   if (!dateStr) return '-';
   try {
     const date = new Date(dateStr);
@@ -605,11 +605,15 @@ watch(
     <div class="flex min-h-0 flex-1 flex-col gap-4">
       <div class="rounded-xl bg-white shadow-sm">
         <!-- Header -->
-        <div class="flex flex-col gap-4 border-b border-gray-100 p-4 lg:flex-row lg:items-center lg:justify-between">
+        <div
+          class="flex flex-col gap-4 border-b border-gray-100 p-4 lg:flex-row lg:items-center lg:justify-between"
+        >
           <div class="flex flex-wrap items-center gap-3">
             <ElButton plain size="small" @click="handleBack">返回</ElButton>
             <div class="hidden h-4 w-[1px] bg-gray-300 sm:block"></div>
-            <span class="max-w-[300px] truncate text-lg font-bold text-gray-900 sm:max-w-[400px]">
+            <span
+              class="max-w-[300px] truncate text-lg font-bold text-gray-900 sm:max-w-[400px]"
+            >
               {{ currentTask?.name || '任务详情' }}
             </span>
             <ElTag
@@ -709,7 +713,11 @@ watch(
           class="border-b border-blue-100 bg-blue-50/50 px-4 py-2.5"
         >
           <div class="flex items-center gap-2 text-sm text-blue-600">
-            <span class="flex h-4 w-4 items-center justify-center rounded-full bg-blue-500 text-xs font-bold text-white">i</span>
+            <span
+              class="flex h-4 w-4 items-center justify-center rounded-full bg-blue-500 text-xs font-bold text-white"
+            >
+              i
+            </span>
             <span>
               {{
                 canClose
@@ -731,10 +739,15 @@ watch(
         <!-- Body -->
         <div class="flex flex-col gap-6 p-4 xl:flex-row xl:items-start">
           <!-- Info Grid -->
-          <div class="min-w-0 flex-1 grid grid-cols-2 gap-y-5 gap-x-4 sm:grid-cols-4">
+          <div
+            class="grid min-w-0 flex-1 grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-4"
+          >
             <div class="flex flex-col gap-1.5">
               <span class="text-xs text-gray-500">任务编号</span>
-              <span class="truncate text-sm font-medium text-gray-900" :title="currentTask?.task_no || '-'">
+              <span
+                class="truncate text-sm font-medium text-gray-900"
+                :title="currentTask?.task_no || '-'"
+              >
                 {{ currentTask?.task_no || '-' }}
               </span>
             </div>
@@ -751,13 +764,19 @@ watch(
             </div>
             <div class="flex flex-col gap-1.5">
               <span class="text-xs text-gray-500">产品</span>
-              <span class="truncate text-sm font-medium text-gray-900" :title="currentTask?.product_name || '-'">
+              <span
+                class="truncate text-sm font-medium text-gray-900"
+                :title="currentTask?.product_name || '-'"
+              >
                 {{ currentTask?.product_name || '-' }}
               </span>
             </div>
             <div class="flex flex-col gap-1.5">
               <span class="text-xs text-gray-500">子系统</span>
-              <span class="truncate text-sm font-medium text-gray-900" :title="currentTask?.subsystem || '-'">
+              <span
+                class="truncate text-sm font-medium text-gray-900"
+                :title="currentTask?.subsystem || '-'"
+              >
                 {{ currentTask?.subsystem || '-' }}
               </span>
             </div>
@@ -781,7 +800,10 @@ watch(
             </div>
             <div class="flex flex-col gap-1.5">
               <span class="text-xs text-gray-500">最近反馈</span>
-              <span class="truncate text-sm font-medium text-gray-900" :title="latestReviewFeedback">
+              <span
+                class="truncate text-sm font-medium text-gray-900"
+                :title="latestReviewFeedback"
+              >
                 {{ latestReviewFeedback }}
               </span>
             </div>
@@ -799,45 +821,45 @@ watch(
               finish-status="success"
               style="--el-step-icon-size: 24px"
             >
-              <ElStep
-                title="已创建"
-              >
+              <ElStep title="已创建">
                 <template #description>
-                  <div class="mt-1 flex justify-center w-[120%] -ml-[10%]">
-                    <div class="whitespace-pre-wrap text-center text-[11px] text-gray-500 leading-tight font-mono tracking-tighter">
+                  <div class="-ml-[10%] mt-1 flex w-[120%] justify-center">
+                    <div
+                      class="whitespace-pre-wrap text-center font-mono text-[11px] leading-tight tracking-tighter text-gray-500"
+                    >
                       {{ formatDate(currentTask?.sys_create_datetime) }}
                     </div>
                   </div>
                 </template>
               </ElStep>
-              <ElStep
-                title="梳理中"
-              >
+              <ElStep title="梳理中">
                 <template #description>
-                  <div class="mt-1 flex justify-center w-[120%] -ml-[10%]">
-                    <div class="whitespace-pre-wrap text-center text-[11px] text-gray-500 leading-tight font-mono tracking-tighter">
+                  <div class="-ml-[10%] mt-1 flex w-[120%] justify-center">
+                    <div
+                      class="whitespace-pre-wrap text-center font-mono text-[11px] leading-tight tracking-tighter text-gray-500"
+                    >
                       {{ formatDate(currentTask?.accepted_at) }}
                     </div>
                   </div>
                 </template>
               </ElStep>
-              <ElStep
-                title="评审中"
-              >
+              <ElStep title="评审中">
                 <template #description>
-                  <div class="mt-1 flex justify-center w-[120%] -ml-[10%]">
-                    <div class="whitespace-pre-wrap text-center text-[11px] text-gray-500 leading-tight font-mono tracking-tighter">
+                  <div class="-ml-[10%] mt-1 flex w-[120%] justify-center">
+                    <div
+                      class="whitespace-pre-wrap text-center font-mono text-[11px] leading-tight tracking-tighter text-gray-500"
+                    >
                       {{ formatDate(currentTask?.submitted_at) }}
                     </div>
                   </div>
                 </template>
               </ElStep>
-              <ElStep
-                title="已关闭"
-              >
+              <ElStep title="已关闭">
                 <template #description>
-                  <div class="mt-1 flex justify-center w-[120%] -ml-[10%]">
-                    <div class="whitespace-pre-wrap text-center text-[11px] text-gray-500 leading-tight font-mono tracking-tighter">
+                  <div class="-ml-[10%] mt-1 flex w-[120%] justify-center">
+                    <div
+                      class="whitespace-pre-wrap text-center font-mono text-[11px] leading-tight tracking-tighter text-gray-500"
+                    >
                       {{ formatDate(currentTask?.closed_at) }}
                     </div>
                   </div>
@@ -908,7 +930,7 @@ watch(
                     </div>
                   </template>
 
-                  <template #cell-source-task-no="{ row }">
+                  <template #cell-source_task_no="{ row }">
                     <div class="text-sm text-gray-700">
                       {{ formatFailureModeSourceLabel(row) }}
                     </div>

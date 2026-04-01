@@ -73,7 +73,7 @@ export function useTaskColumns(): ZqTableGridOptions<FailureModeTaskItem>['colum
       dataKey: 'task_type',
       title: '任务类型',
       width: 120,
-      cellSlotName: 'cell-task-type',
+      cellSlotName: 'cell-task_type',
     },
     {
       key: 'product_name',
@@ -99,21 +99,21 @@ export function useTaskColumns(): ZqTableGridOptions<FailureModeTaskItem>['colum
       dataKey: 'creator_info',
       title: '创建人(版本SE)',
       width: 150,
-      cellSlotName: 'cell-creator',
+      cellSlotName: 'cell-creator_info',
     },
     {
       key: 'assignee_info',
       dataKey: 'assignee_info',
       title: '责任人(特性SE)',
       width: 150,
-      cellSlotName: 'cell-assignee',
+      cellSlotName: 'cell-assignee_info',
     },
     {
       key: 'current_processor_info',
       dataKey: 'current_processor_info',
       title: '当前待办人',
       width: 150,
-      cellSlotName: 'cell-current-processor',
+      cellSlotName: 'cell-current_processor_info',
     },
     {
       key: 'sys_create_datetime',

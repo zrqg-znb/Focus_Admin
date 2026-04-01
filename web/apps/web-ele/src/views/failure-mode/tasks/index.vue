@@ -45,11 +45,12 @@ const subsystems = ref<string[]>([]);
 const taskRows = ref<FailureModeTaskItem[]>([]);
 const taskCreateDrawerRef = ref<InstanceType<typeof TaskCreateDrawer>>();
 
-function getUserNames(
-  value?:
-    | FailureModeTaskItem['assignee_info']
-    | FailureModeTaskItem['creator_info'],
-) {
+type TaskUserInfoValue =
+  | FailureModeTaskItem['assignee_info']
+  | FailureModeTaskItem['creator_info']
+  | FailureModeTaskItem['current_processor_info'];
+
+function getUserNames(value?: TaskUserInfoValue) {
   if (!value) {
     return [];
   }
@@ -59,11 +60,7 @@ function getUserNames(
     .filter(Boolean);
 }
 
-function formatUserNames(
-  value?:
-    | FailureModeTaskItem['assignee_info']
-    | FailureModeTaskItem['creator_info'],
-) {
+function formatUserNames(value?: TaskUserInfoValue) {
   const labels = getUserNames(value);
   return labels.length > 0 ? labels.join(' / ') : '-';
 }
@@ -258,7 +255,7 @@ function handleOpenTask(row: FailureModeTaskItem) {
         class="min-h-0 flex-1 overflow-hidden rounded-xl bg-white p-4 shadow-sm"
       >
         <TaskGrid>
-          <template #cell-task-type="{ row }">
+          <template #cell-task_type="{ row }">
             <span>{{
               FM_TASK_TYPE_LABEL_MAP[row.task_type] || row.task_type
             }}</span>
@@ -268,13 +265,13 @@ function handleOpenTask(row: FailureModeTaskItem) {
               {{ FM_TASK_STATUS_LABEL_MAP[row.status] || row.status }}
             </ElTag>
           </template>
-          <template #cell-creator="{ row }">
+          <template #cell-creator_info="{ row }">
             <span>{{ formatUserNames(row.creator_info) }}</span>
           </template>
-          <template #cell-assignee="{ row }">
+          <template #cell-assignee_info="{ row }">
             <span>{{ formatUserNames(row.assignee_info) }}</span>
           </template>
-          <template #cell-current-processor="{ row }">
+          <template #cell-current_processor_info="{ row }">
             <span>{{ formatUserNames(row.current_processor_info) }}</span>
           </template>
           <template #cell-actions="{ row }">
