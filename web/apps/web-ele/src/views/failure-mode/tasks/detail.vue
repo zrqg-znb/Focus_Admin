@@ -332,6 +332,18 @@ function getTaskChangeLabel(row: FailureModeItem) {
     : '';
 }
 
+function formatDate(dateStr?: string | null) {
+  if (!dateStr) return '-';
+  try {
+    const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime())) return dateStr;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}\n${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  } catch {
+    return dateStr;
+  }
+}
+
 async function loadTaskContext() {
   if (!taskId.value) {
     return;
@@ -591,228 +603,247 @@ watch(
 <template>
   <Page content-class="flex h-full min-h-0 flex-col" auto-content-height>
     <div class="flex min-h-0 flex-1 flex-col gap-4">
-      <div class="rounded-xl bg-white p-4 shadow-sm">
+      <div class="rounded-xl bg-white shadow-sm">
+        <!-- Header -->
+        <div class="flex flex-col gap-4 border-b border-gray-100 p-4 lg:flex-row lg:items-center lg:justify-between">
+          <div class="flex flex-wrap items-center gap-3">
+            <ElButton plain size="small" @click="handleBack">返回</ElButton>
+            <div class="hidden h-4 w-[1px] bg-gray-300 sm:block"></div>
+            <span class="max-w-[300px] truncate text-lg font-bold text-gray-900 sm:max-w-[400px]">
+              {{ currentTask?.name || '任务详情' }}
+            </span>
+            <ElTag
+              v-if="currentTask"
+              :type="getTaskStatusTagType(currentTask.status)"
+              effect="light"
+              round
+            >
+              {{
+                FM_TASK_STATUS_LABEL_MAP[currentTask.status] ||
+                currentTask.status
+              }}
+            </ElTag>
+          </div>
+
+          <!-- Actions -->
+          <div class="flex flex-wrap items-center gap-2">
+            <template v-if="canReassign">
+              <ElSelect
+                v-model="reassignUserId"
+                class="w-[136px]"
+                filterable
+                placeholder="选择责任人"
+              >
+                <ElOption
+                  v-for="item in assigneeOptions"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </ElSelect>
+              <ElButton
+                plain
+                type="warning"
+                :loading="actionLoading"
+                @click="handleReassignTask"
+              >
+                改派
+              </ElButton>
+            </template>
+
+            <ElButton
+              v-if="canAccept"
+              type="primary"
+              :loading="actionLoading"
+              @click="handleAcceptTask"
+            >
+              接收任务
+            </ElButton>
+            <ElButton
+              v-if="canSubmit"
+              type="success"
+              :loading="actionLoading"
+              @click="handleSubmitTask"
+            >
+              提交评审
+            </ElButton>
+            <ElButton
+              v-if="canRecall"
+              plain
+              type="warning"
+              :loading="actionLoading"
+              @click="handleRecallTask"
+            >
+              撤回评审
+            </ElButton>
+            <ElButton
+              v-if="canReject"
+              plain
+              type="danger"
+              :loading="actionLoading"
+              @click="handleRejectTask"
+            >
+              驳回任务
+            </ElButton>
+            <ElButton
+              v-if="canClose"
+              type="success"
+              :loading="actionLoading"
+              @click="handleCloseTask"
+            >
+              评审关闭
+            </ElButton>
+          </div>
+        </div>
+
+        <!-- Hint Area (if any actions available) -->
         <div
-          class="flex flex-col justify-between gap-4 lg:flex-row lg:items-start"
+          v-if="
+            canAccept ||
+            canReassign ||
+            canSubmit ||
+            canRecall ||
+            canReject ||
+            canClose
+          "
+          class="border-b border-blue-100 bg-blue-50/50 px-4 py-2.5"
         >
-          <div class="min-w-0 flex-1">
-            <div
-              class="mb-2 flex flex-col justify-between gap-4 lg:flex-row lg:items-center"
-            >
-              <div class="flex flex-wrap items-center gap-3">
-                <ElButton plain size="small" @click="handleBack">返回</ElButton>
-                <span
-                  class="max-w-[300px] truncate text-xl font-bold text-gray-900 sm:max-w-[400px]"
-                >
-                  {{ currentTask?.name || '任务详情' }}
-                </span>
-                <ElTag
-                  v-if="currentTask"
-                  :type="getTaskStatusTagType(currentTask.status)"
-                  effect="light"
-                  round
-                >
-                  {{
-                    FM_TASK_STATUS_LABEL_MAP[currentTask.status] ||
-                    currentTask.status
-                  }}
-                </ElTag>
-              </div>
-            </div>
-
-            <div
-              class="mb-3 grid grid-cols-1 gap-x-4 gap-y-2 text-sm text-gray-600 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4"
-            >
-              <div
-                class="col-span-1 flex items-center sm:col-span-2 md:col-span-3 xl:col-span-2"
-              >
-                <span class="w-20 shrink-0 text-gray-400">任务编号：</span>
-                <span
-                  class="truncate font-medium text-gray-900"
-                  :title="currentTask?.task_no || '-'"
-                >
-                  {{ currentTask?.task_no || '-' }}
-                </span>
-              </div>
-              <div class="flex items-center">
-                <span class="w-20 shrink-0 text-gray-400">任务类型：</span>
-                <span class="truncate font-medium text-gray-900">
-                  {{
-                    currentTask?.task_type
-                      ? FM_TASK_TYPE_LABEL_MAP[currentTask.task_type] ||
-                        currentTask.task_type
-                      : '-'
-                  }}
-                </span>
-              </div>
-              <div class="flex items-center">
-                <span class="w-20 shrink-0 text-gray-400">产品：</span>
-                <span class="truncate font-medium text-gray-900">
-                  {{ currentTask?.product_name || '-' }}
-                </span>
-              </div>
-              <div class="flex items-center">
-                <span class="w-20 shrink-0 text-gray-400">子系统：</span>
-                <span class="truncate font-medium text-gray-900">
-                  {{ currentTask?.subsystem || '-' }}
-                </span>
-              </div>
-              <div class="flex items-center">
-                <span class="w-20 shrink-0 text-gray-400">创建人：</span>
-                <span class="truncate font-medium text-gray-900">
-                  {{ formatUserName(currentTask?.creator_info) }}
-                </span>
-              </div>
-              <div class="flex items-center">
-                <span class="w-20 shrink-0 text-gray-400">责任人：</span>
-                <span class="truncate font-medium text-gray-900">
-                  {{ formatUserName(currentTask?.assignee_info) }}
-                </span>
-              </div>
-              <div class="flex items-center">
-                <span class="w-20 shrink-0 text-gray-400">当前待办：</span>
-                <span class="truncate font-medium text-gray-900">
-                  {{ formatUserName(currentTask?.current_processor_info) }}
-                </span>
-              </div>
-              <div
-                class="col-span-1 flex items-start sm:col-span-2 md:col-span-3 xl:col-span-4"
-              >
-                <span class="w-20 shrink-0 text-gray-400">最近反馈：</span>
-                <span class="text-sm font-medium text-gray-900">
-                  {{ latestReviewFeedback }}
-                </span>
-              </div>
-            </div>
-
-            <div class="flex w-full justify-center">
-              <ElSteps
-                :active="activeStep"
-                align-center
-                class="mx-auto w-full max-w-2xl pt-1"
-                finish-status="success"
-                style="--el-step-icon-size: 24px"
-              >
-                <ElStep
-                  title="已创建"
-                  :description="currentTask?.sys_create_datetime || '-'"
-                />
-                <ElStep
-                  title="梳理中"
-                  :description="currentTask?.accepted_at || '-'"
-                />
-                <ElStep
-                  title="评审中"
-                  :description="currentTask?.submitted_at || '-'"
-                />
-                <ElStep
-                  title="已关闭"
-                  :description="currentTask?.closed_at || '-'"
-                />
-              </ElSteps>
-            </div>
-
-            <div
-              v-if="
-                canAccept ||
-                canReassign ||
-                canSubmit ||
-                canRecall ||
-                canReject ||
+          <div class="flex items-center gap-2 text-sm text-blue-600">
+            <span class="flex h-4 w-4 items-center justify-center rounded-full bg-blue-500 text-xs font-bold text-white">i</span>
+            <span>
+              {{
                 canClose
-              "
-              class="mt-4 flex flex-col gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 xl:flex-row xl:items-center xl:justify-between"
-            >
-              <div class="min-w-0">
-                <div class="text-sm font-semibold text-gray-900">
-                  流程操作区
-                </div>
-                <div class="mt-1 text-xs text-gray-500">
-                  {{
-                    canClose
-                      ? '填写评审纪要并完成关闭。'
-                      : canReject
-                        ? '版本 SE 组织评审后，可驳回任务继续修订或直接关闭。'
-                        : canRecall
-                          ? '提交评审后如发现问题，可撤回到梳理阶段继续完善。'
-                          : canSubmit
-                            ? '完成工作集确认后提交版本 SE 进入评审。'
-                            : canAccept
-                              ? '责任人接收任务后进入梳理工作台。'
-                              : '需要时可在这里改派责任人。'
-                  }}
-                </div>
-              </div>
+                  ? '填写评审纪要并完成关闭。'
+                  : canReject
+                    ? '版本 SE 组织评审后，可驳回任务继续修订或直接关闭。'
+                    : canRecall
+                      ? '提交评审后如发现问题，可撤回到梳理阶段继续完善。'
+                      : canSubmit
+                        ? '完成工作集确认后提交版本 SE 进入评审。'
+                        : canAccept
+                          ? '责任人接收任务后进入梳理工作台。'
+                          : '需要时可在这里改派责任人。'
+              }}
+            </span>
+          </div>
+        </div>
 
-              <div class="flex flex-wrap items-center gap-2">
-                <template v-if="canReassign">
-                  <ElSelect
-                    v-model="reassignUserId"
-                    class="w-[136px]"
-                    filterable
-                    placeholder="选择责任人"
-                  >
-                    <ElOption
-                      v-for="item in assigneeOptions"
-                      :key="item.value"
-                      :label="item.label"
-                      :value="item.value"
-                    />
-                  </ElSelect>
-                  <ElButton
-                    plain
-                    type="warning"
-                    :loading="actionLoading"
-                    @click="handleReassignTask"
-                  >
-                    改派责任人
-                  </ElButton>
-                </template>
-
-                <ElButton
-                  v-if="canAccept"
-                  type="primary"
-                  :loading="actionLoading"
-                  @click="handleAcceptTask"
-                >
-                  接收任务
-                </ElButton>
-                <ElButton
-                  v-if="canSubmit"
-                  type="success"
-                  :loading="actionLoading"
-                  @click="handleSubmitTask"
-                >
-                  提交评审
-                </ElButton>
-                <ElButton
-                  v-if="canRecall"
-                  plain
-                  type="warning"
-                  :loading="actionLoading"
-                  @click="handleRecallTask"
-                >
-                  撤回评审
-                </ElButton>
-                <ElButton
-                  v-if="canReject"
-                  plain
-                  type="danger"
-                  :loading="actionLoading"
-                  @click="handleRejectTask"
-                >
-                  驳回任务
-                </ElButton>
-                <ElButton
-                  v-if="canClose"
-                  type="success"
-                  :loading="actionLoading"
-                  @click="handleCloseTask"
-                >
-                  评审关闭
-                </ElButton>
-              </div>
+        <!-- Body -->
+        <div class="flex flex-col gap-6 p-4 xl:flex-row xl:items-start">
+          <!-- Info Grid -->
+          <div class="min-w-0 flex-1 grid grid-cols-2 gap-y-5 gap-x-4 sm:grid-cols-4">
+            <div class="flex flex-col gap-1.5">
+              <span class="text-xs text-gray-500">任务编号</span>
+              <span class="truncate text-sm font-medium text-gray-900" :title="currentTask?.task_no || '-'">
+                {{ currentTask?.task_no || '-' }}
+              </span>
             </div>
+            <div class="flex flex-col gap-1.5">
+              <span class="text-xs text-gray-500">任务类型</span>
+              <span class="truncate text-sm font-medium text-gray-900">
+                {{
+                  currentTask?.task_type
+                    ? FM_TASK_TYPE_LABEL_MAP[currentTask.task_type] ||
+                      currentTask.task_type
+                    : '-'
+                }}
+              </span>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <span class="text-xs text-gray-500">产品</span>
+              <span class="truncate text-sm font-medium text-gray-900" :title="currentTask?.product_name || '-'">
+                {{ currentTask?.product_name || '-' }}
+              </span>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <span class="text-xs text-gray-500">子系统</span>
+              <span class="truncate text-sm font-medium text-gray-900" :title="currentTask?.subsystem || '-'">
+                {{ currentTask?.subsystem || '-' }}
+              </span>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <span class="text-xs text-gray-500">创建人</span>
+              <span class="truncate text-sm font-medium text-gray-900">
+                {{ formatUserName(currentTask?.creator_info) }}
+              </span>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <span class="text-xs text-gray-500">责任人</span>
+              <span class="truncate text-sm font-medium text-gray-900">
+                {{ formatUserName(currentTask?.assignee_info) }}
+              </span>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <span class="text-xs text-gray-500">当前待办</span>
+              <span class="truncate text-sm font-medium text-gray-900">
+                {{ formatUserName(currentTask?.current_processor_info) }}
+              </span>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <span class="text-xs text-gray-500">最近反馈</span>
+              <span class="truncate text-sm font-medium text-gray-900" :title="latestReviewFeedback">
+                {{ latestReviewFeedback }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Vertical Divider for Desktop -->
+          <div class="hidden h-24 w-[1px] bg-gray-100 xl:block"></div>
+
+          <!-- Steps -->
+          <div class="w-full shrink-0 pt-4 xl:w-[450px]">
+            <ElSteps
+              :active="activeStep"
+              align-center
+              class="w-full"
+              finish-status="success"
+              style="--el-step-icon-size: 24px"
+            >
+              <ElStep
+                title="已创建"
+              >
+                <template #description>
+                  <div class="mt-1 flex justify-center w-[120%] -ml-[10%]">
+                    <div class="whitespace-pre-wrap text-center text-[11px] text-gray-500 leading-tight font-mono tracking-tighter">
+                      {{ formatDate(currentTask?.sys_create_datetime) }}
+                    </div>
+                  </div>
+                </template>
+              </ElStep>
+              <ElStep
+                title="梳理中"
+              >
+                <template #description>
+                  <div class="mt-1 flex justify-center w-[120%] -ml-[10%]">
+                    <div class="whitespace-pre-wrap text-center text-[11px] text-gray-500 leading-tight font-mono tracking-tighter">
+                      {{ formatDate(currentTask?.accepted_at) }}
+                    </div>
+                  </div>
+                </template>
+              </ElStep>
+              <ElStep
+                title="评审中"
+              >
+                <template #description>
+                  <div class="mt-1 flex justify-center w-[120%] -ml-[10%]">
+                    <div class="whitespace-pre-wrap text-center text-[11px] text-gray-500 leading-tight font-mono tracking-tighter">
+                      {{ formatDate(currentTask?.submitted_at) }}
+                    </div>
+                  </div>
+                </template>
+              </ElStep>
+              <ElStep
+                title="已关闭"
+              >
+                <template #description>
+                  <div class="mt-1 flex justify-center w-[120%] -ml-[10%]">
+                    <div class="whitespace-pre-wrap text-center text-[11px] text-gray-500 leading-tight font-mono tracking-tighter">
+                      {{ formatDate(currentTask?.closed_at) }}
+                    </div>
+                  </div>
+                </template>
+              </ElStep>
+            </ElSteps>
           </div>
         </div>
       </div>
@@ -826,18 +857,18 @@ watch(
               <div class="min-h-0 flex-1 rounded-xl border bg-white p-2">
                 <FailureModeGrid>
                   <template #table-title>
-                    <div class="min-w-0">
-                      <div class="text-sm font-semibold text-gray-900">
+                    <div class="flex items-center gap-3">
+                      <span class="text-base font-semibold text-gray-900">
                         梳理工作台
-                      </div>
-                      <div class="mt-1 text-xs text-gray-500">
+                      </span>
+                      <span class="text-sm text-gray-500">
                         {{ workbenchSummary }}
-                      </div>
+                      </span>
                     </div>
                   </template>
 
                   <template #toolbar-actions>
-                    <div class="flex flex-1 flex-wrap items-center gap-2">
+                    <div class="flex flex-wrap items-center gap-2">
                       <ElButton
                         v-if="canManageBinding"
                         plain
@@ -1113,8 +1144,13 @@ watch(
 }
 
 :deep(.el-step__description) {
-  margin-top: 2px;
-  padding-right: 10%;
-  font-size: 12px;
+  margin-top: 4px;
+  padding-right: 0 !important;
+  display: flex;
+  justify-content: center;
+}
+
+:deep(.el-step__main) {
+  width: 100%;
 }
 </style>
