@@ -115,6 +115,85 @@ def _append_unique_text(target: list[str], seen: set[str], value: Any):
     target.append(text)
 
 
+FAILURE_MODE_SIMPLE_FIELD_NORMALIZERS = {
+    'brief': _normalize_optional_text,
+    'subsystem': _normalize_optional_text,
+    'module': _normalize_optional_text,
+    'chips': _normalize_text_list,
+    'fault_categories': _normalize_text_list,
+    'symptoms': _normalize_text_list,
+    'effect_html': _normalize_html_text,
+    'root_cause_html': _normalize_html_text,
+    'functional_safety_level': _normalize_optional_text,
+    'occurrence_frequency': _normalize_optional_text,
+    'detectability': _normalize_optional_text,
+    'severity': _normalize_optional_text,
+    'related_dts_nos': _normalize_text_list,
+    'status': _normalize_optional_text,
+    'interception_required': _normalize_bool,
+    'huatuo_required': _normalize_bool,
+    'required_handling_measure_categories': (
+        lambda value: _normalize_enum_list(value, FIXED_HANDLING_MEASURE_CATEGORIES)
+    ),
+    'required_observation_method_types': (
+        lambda value: _normalize_enum_list(value, FIXED_OBSERVATION_METHOD_TYPES)
+    ),
+}
+
+FAILURE_MODE_MODEL_FIELD_MAP = {
+    'brief': 'brief',
+    'subsystem': 'subsystem',
+    'module': 'module_name',
+    'chips': 'chips',
+    'fault_categories': 'fault_categories',
+    'symptoms': 'symptoms',
+    'effect_html': 'effect_html',
+    'root_cause_html': 'root_cause_html',
+    'functional_safety_level': 'functional_safety_level',
+    'occurrence_frequency': 'occurrence_frequency',
+    'detectability': 'detectability',
+    'severity': 'severity',
+    'related_dts_nos': 'related_dts_nos',
+    'status': 'status',
+    'interception_required': 'interception_required',
+    'huatuo_required': 'huatuo_required',
+    'required_handling_measure_categories': 'required_handling_measure_categories',
+    'required_observation_method_types': 'required_observation_method_types',
+}
+
+FAILURE_MODE_RELATION_TRIGGER_FIELDS = {
+    'interception': ('interception_required', 'interception_strategy_ids'),
+    'handling': ('required_handling_measure_categories', 'handling_measure_ids'),
+    'observation': ('required_observation_method_types', 'observation_method_ids'),
+    'huatuo': ('huatuo_required', 'huatuo_diagnosis_ids'),
+}
+
+FAILURE_MODE_TASK_DRAFT_ALLOWED_FIELDS = {
+    'brief',
+    'subsystem',
+    'module',
+    'chips',
+    'fault_categories',
+    'symptoms',
+    'effect_html',
+    'root_cause_html',
+    'functional_safety_level',
+    'occurrence_frequency',
+    'detectability',
+    'severity',
+    'author_ids',
+    'related_dts_nos',
+    'interception_required',
+    'huatuo_required',
+    'required_handling_measure_categories',
+    'required_observation_method_types',
+    'interception_strategy_ids',
+    'handling_measure_ids',
+    'observation_method_ids',
+    'huatuo_diagnosis_ids',
+}
+
+
 def _build_option_list(values: Iterable[str]) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -871,6 +950,243 @@ def _resolve_failure_mode_relation_plan(
     }
 
 
+def _normalize_failure_mode_update_fields(
+    payload: dict[str, Any],
+    *,
+    allowed_fields: set[str] | None = None,
+) -> dict[str, Any]:
+    normalized_payload: dict[str, Any] = {}
+    payload = _sanitize_subsystem_fields(dict(payload))
+    for payload_key, normalizer in FAILURE_MODE_SIMPLE_FIELD_NORMALIZERS.items():
+        if allowed_fields is not None and payload_key not in allowed_fields:
+            continue
+        if payload_key not in payload:
+            continue
+        value = normalizer(payload.get(payload_key))
+        if payload_key == 'brief' and not value:
+            raise HttpError(422, 'brief 不能为空')
+        normalized_payload[payload_key] = value
+    return normalized_payload
+
+
+def _relation_triggered(payload: dict[str, Any], relation_key: str) -> bool:
+    return any(field in payload for field in FAILURE_MODE_RELATION_TRIGGER_FIELDS[relation_key])
+
+
+def _prepare_failure_mode_update_plan(
+    instance: FailureMode,
+    payload: dict[str, Any],
+    current_user: User,
+    *,
+    allowed_fields: set[str] | None = None,
+) -> dict[str, Any]:
+    filtered_payload = dict(payload)
+    if allowed_fields is not None:
+        filtered_payload = {
+            key: value for key, value in filtered_payload.items() if key in allowed_fields
+        }
+
+    relation_plan = _resolve_failure_mode_relation_plan(filtered_payload, instance)
+    normalized_payload = _normalize_failure_mode_update_fields(
+        filtered_payload,
+        allowed_fields=allowed_fields,
+    )
+
+    if 'author_ids' in filtered_payload:
+        authors = _resolve_users(filtered_payload.get('author_ids'), current_user)
+        normalized_payload['author_ids'] = [str(item.id) for item in authors]
+
+    sync_interception = _relation_triggered(filtered_payload, 'interception')
+    sync_handling = _relation_triggered(filtered_payload, 'handling')
+    sync_observation = _relation_triggered(filtered_payload, 'observation')
+    sync_huatuo = _relation_triggered(filtered_payload, 'huatuo')
+
+    if sync_interception:
+        normalized_payload['interception_required'] = relation_plan['interception_required']
+        normalized_payload['interception_strategy_ids'] = relation_plan['interception_strategy_ids']
+    if sync_handling:
+        normalized_payload['required_handling_measure_categories'] = relation_plan[
+            'required_handling_measure_categories'
+        ]
+        normalized_payload['handling_measure_ids'] = relation_plan['handling_measure_ids']
+    if sync_observation:
+        normalized_payload['required_observation_method_types'] = relation_plan[
+            'required_observation_method_types'
+        ]
+        normalized_payload['observation_method_ids'] = relation_plan['observation_method_ids']
+    if sync_huatuo:
+        normalized_payload['huatuo_required'] = relation_plan['huatuo_required']
+        normalized_payload['huatuo_diagnosis_ids'] = relation_plan['huatuo_diagnosis_ids']
+
+    return {
+        'payload': normalized_payload,
+        'sync_interception': sync_interception,
+        'sync_handling': sync_handling,
+        'sync_observation': sync_observation,
+        'sync_huatuo': sync_huatuo,
+    }
+
+
+def _build_interception_relation_items(ids: list[str]) -> list[dict[str, str | None]]:
+    items = _fetch_ordered_objects(InterceptionStrategy, ids, '产线拦截策略')
+    return [
+        _relation_item(item.interception_item, str(item.id), item.station)
+        for item in items
+    ]
+
+
+def _build_handling_measure_relation_items(ids: list[str]) -> list[dict[str, str | None]]:
+    items = _fetch_ordered_objects(HandlingMeasure, ids, '故障处理措施')
+    return [
+        _relation_item(item.measure, str(item.id), item.measure_category)
+        for item in items
+    ]
+
+
+def _build_observation_method_relation_items(ids: list[str]) -> list[dict[str, str | None]]:
+    items = _fetch_ordered_objects(ObservationMethod, ids, '维测手段')
+    return [
+        _relation_item(
+            item.log_keyword or item.log_id or item.monitor_type or item.log_path or '未命名维测项',
+            str(item.id),
+            item.monitor_type,
+        )
+        for item in items
+    ]
+
+
+def _build_huatuo_relation_items(ids: list[str]) -> list[dict[str, str | None]]:
+    items = _fetch_ordered_objects(HuatuoDiagnosis, ids, '华佗诊断方案')
+    return [
+        _relation_item(
+            item.description[:60] + ('...' if len(item.description or '') > 60 else ''),
+            str(item.id),
+            None,
+        )
+        for item in items
+    ]
+
+
+def merge_failure_mode_snapshot(
+    instance: FailureMode,
+    snapshot_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    detail = _serialize_failure_mode(instance)
+    payload = dict(snapshot_payload or {})
+    for field_name in FAILURE_MODE_SIMPLE_FIELD_NORMALIZERS:
+        if field_name in payload:
+            detail[field_name] = payload[field_name]
+
+    if 'author_ids' in payload:
+        authors = _fetch_ordered_objects(User, payload.get('author_ids') or [], '用户')
+        detail['author_ids'] = [str(item.id) for item in authors]
+        detail['author_info'] = _users_brief(authors)
+
+    if 'interception_strategy_ids' in payload:
+        detail['interception_strategy_ids'] = _normalize_text_list(payload.get('interception_strategy_ids'))
+        detail['interception_strategy_items'] = _build_interception_relation_items(
+            detail['interception_strategy_ids']
+        )
+    if 'handling_measure_ids' in payload:
+        detail['handling_measure_ids'] = _normalize_text_list(payload.get('handling_measure_ids'))
+        detail['handling_measure_items'] = _build_handling_measure_relation_items(
+            detail['handling_measure_ids']
+        )
+    if 'observation_method_ids' in payload:
+        detail['observation_method_ids'] = _normalize_text_list(payload.get('observation_method_ids'))
+        detail['observation_method_items'] = _build_observation_method_relation_items(
+            detail['observation_method_ids']
+        )
+    if 'huatuo_diagnosis_ids' in payload:
+        detail['huatuo_diagnosis_ids'] = _normalize_text_list(payload.get('huatuo_diagnosis_ids'))
+        detail['huatuo_diagnosis_items'] = _build_huatuo_relation_items(
+            detail['huatuo_diagnosis_ids']
+        )
+    return detail
+
+
+@transaction.atomic
+def apply_failure_mode_snapshot(
+    instance: FailureMode,
+    snapshot_payload: dict[str, Any],
+    current_user: User,
+) -> dict[str, Any]:
+    plan = _prepare_failure_mode_update_plan(instance, snapshot_payload, current_user)
+    normalized_payload = plan['payload']
+    for payload_key, value in normalized_payload.items():
+        field_name = FAILURE_MODE_MODEL_FIELD_MAP.get(payload_key)
+        if field_name:
+            setattr(instance, field_name, value)
+
+    instance.sys_modifier = current_user
+    instance.save()
+
+    if 'author_ids' in normalized_payload:
+        _sync_owner_relation(instance, 'authors', normalized_payload.get('author_ids'), current_user)
+
+    if plan['sync_interception']:
+        _sync_ordered_relations(
+            parent=instance,
+            ids=normalized_payload.get('interception_strategy_ids'),
+            relation_model=FailureModeInterceptionStrategyRel,
+            target_model=InterceptionStrategy,
+            relation_field_name='interception_strategy',
+            parent_field_name='failure_mode',
+            label='产线拦截策略',
+            current_user=current_user,
+        )
+    if plan['sync_handling']:
+        _sync_ordered_relations(
+            parent=instance,
+            ids=normalized_payload.get('handling_measure_ids'),
+            relation_model=FailureModeHandlingMeasureRel,
+            target_model=HandlingMeasure,
+            relation_field_name='handling_measure',
+            parent_field_name='failure_mode',
+            label='故障处理措施',
+            current_user=current_user,
+        )
+    if plan['sync_observation']:
+        _sync_ordered_relations(
+            parent=instance,
+            ids=normalized_payload.get('observation_method_ids'),
+            relation_model=FailureModeObservationMethodRel,
+            target_model=ObservationMethod,
+            relation_field_name='observation_method',
+            parent_field_name='failure_mode',
+            label='维测手段',
+            current_user=current_user,
+        )
+    if plan['sync_huatuo']:
+        _sync_ordered_relations(
+            parent=instance,
+            ids=normalized_payload.get('huatuo_diagnosis_ids'),
+            relation_model=FailureModeHuatuoDiagnosisRel,
+            target_model=HuatuoDiagnosis,
+            relation_field_name='huatuo_diagnosis',
+            parent_field_name='failure_mode',
+            label='华佗诊断方案',
+            current_user=current_user,
+        )
+
+    instance = _failure_mode_queryset().get(id=instance.id)
+    return _serialize_failure_mode(instance)
+
+
+def prepare_failure_mode_task_draft_payload(
+    instance: FailureMode,
+    payload: dict[str, Any],
+    current_user: User,
+) -> dict[str, Any]:
+    plan = _prepare_failure_mode_update_plan(
+        instance,
+        payload,
+        current_user,
+        allowed_fields=FAILURE_MODE_TASK_DRAFT_ALLOWED_FIELDS,
+    )
+    return plan['payload']
+
+
 def list_failure_modes(filters) -> Any:
     queryset = _failure_mode_queryset()
     if filters.keyword:
@@ -952,76 +1268,7 @@ def create_failure_mode(request, data) -> dict[str, Any]:
 def update_failure_mode(request, failure_mode_id: str, data) -> dict[str, Any]:
     payload = data.dict(exclude_unset=True)
     instance = get_object_or_404(_failure_mode_queryset(), id=failure_mode_id)
-    relation_plan = _resolve_failure_mode_relation_plan(payload, instance)
-    _update_failure_mode_attrs(instance, {**payload, **relation_plan})
-    instance.sys_modifier = request.auth
-    instance.save()
-    if 'author_ids' in payload:
-        _sync_owner_relation(instance, 'authors', payload.get('author_ids'), request.auth)
-
-    should_sync_interception = (
-        'interception_strategy_ids' in payload
-        or 'interception_required' in payload
-    )
-    should_sync_handling = (
-        'handling_measure_ids' in payload
-        or 'required_handling_measure_categories' in payload
-    )
-    should_sync_observation = (
-        'observation_method_ids' in payload
-        or 'required_observation_method_types' in payload
-    )
-    should_sync_huatuo = (
-        'huatuo_diagnosis_ids' in payload
-        or 'huatuo_required' in payload
-    )
-
-    if should_sync_interception:
-        _sync_ordered_relations(
-            parent=instance,
-            ids=relation_plan['interception_strategy_ids'],
-            relation_model=FailureModeInterceptionStrategyRel,
-            target_model=InterceptionStrategy,
-            relation_field_name='interception_strategy',
-            parent_field_name='failure_mode',
-            label='产线拦截策略',
-            current_user=request.auth,
-        )
-    if should_sync_handling:
-        _sync_ordered_relations(
-            parent=instance,
-            ids=relation_plan['handling_measure_ids'],
-            relation_model=FailureModeHandlingMeasureRel,
-            target_model=HandlingMeasure,
-            relation_field_name='handling_measure',
-            parent_field_name='failure_mode',
-            label='故障处理措施',
-            current_user=request.auth,
-        )
-    if should_sync_observation:
-        _sync_ordered_relations(
-            parent=instance,
-            ids=relation_plan['observation_method_ids'],
-            relation_model=FailureModeObservationMethodRel,
-            target_model=ObservationMethod,
-            relation_field_name='observation_method',
-            parent_field_name='failure_mode',
-            label='维测手段',
-            current_user=request.auth,
-        )
-    if should_sync_huatuo:
-        _sync_ordered_relations(
-            parent=instance,
-            ids=relation_plan['huatuo_diagnosis_ids'],
-            relation_model=FailureModeHuatuoDiagnosisRel,
-            target_model=HuatuoDiagnosis,
-            relation_field_name='huatuo_diagnosis',
-            parent_field_name='failure_mode',
-            label='华佗诊断方案',
-            current_user=request.auth,
-        )
-    instance = _failure_mode_queryset().get(id=instance.id)
-    return _serialize_failure_mode(instance)
+    return apply_failure_mode_snapshot(instance, payload, request.auth)
 
 
 def get_failure_mode_detail(failure_mode_id: str) -> dict[str, Any]:

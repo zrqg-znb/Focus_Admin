@@ -261,6 +261,8 @@ class FailureModeOutSchema(Schema):
     observation_method_items: list[RelationItemSchema] = Field(default_factory=list)
     huatuo_diagnosis_ids: list[str] = Field(default_factory=list)
     huatuo_diagnosis_items: list[RelationItemSchema] = Field(default_factory=list)
+    task_change_type: Optional[str] = None
+    has_task_draft: bool = False
     sys_create_datetime: Optional[str] = None
     sys_update_datetime: Optional[str] = None
 

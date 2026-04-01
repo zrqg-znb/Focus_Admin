@@ -49,6 +49,10 @@ const props = defineProps<{
   dictOptions: FailureModeDictOptions;
   hideStatusField?: boolean;
   subsystemConfigOptions: FailureModeSubsystemConfigOptions;
+  updateHandler?: (
+    id: string,
+    payload: FailureModePayload,
+  ) => Promise<FailureModeItem>;
 }>();
 const emit = defineEmits<{
   success: [item: FailureModeItem];
@@ -352,7 +356,65 @@ async function openCreate() {
   });
 }
 
-async function openEdit(record: string | { id: string }) {
+function applyFailureModeDetail(detail: FailureModeItem) {
+  selectedSubsystem.value = detail.subsystem || undefined;
+  applySchema();
+  formApi.setValues({
+    author_ids: detail.author_ids || [],
+    brief: detail.brief,
+    chips: detail.chips || [],
+    detectability: detail.detectability || undefined,
+    effect_html: detail.effect_html || '',
+    fault_categories: detail.fault_categories || [],
+    symptoms: detail.symptoms || [],
+    functional_safety_level: detail.functional_safety_level || undefined,
+    module: detail.module || undefined,
+    occurrence_frequency: detail.occurrence_frequency || undefined,
+    root_cause_html: detail.root_cause_html || '',
+    severity: detail.severity || undefined,
+    status: detail.status || undefined,
+    subsystem: detail.subsystem || undefined,
+  });
+  relatedDtsNos.value = normalizeStringList(detail.related_dts_nos || []);
+  interceptionRequired.value = Boolean(detail.interception_required);
+  huatuoRequired.value = Boolean(detail.huatuo_required);
+  requiredHandlingMeasureCategories.value = normalizeStringList(
+    detail.required_handling_measure_categories || [],
+  );
+  requiredObservationMethodTypes.value = normalizeStringList(
+    detail.required_observation_method_types || [],
+  );
+  interceptionStrategyIds.value = normalizeStringList(
+    detail.interception_strategy_ids || [],
+  );
+  interceptionStrategyItems.value = ensureOrderedRelationItems(
+    interceptionStrategyIds.value,
+    detail.interception_strategy_items || [],
+  );
+  handlingMeasureIds.value = normalizeStringList(
+    detail.handling_measure_ids || [],
+  );
+  handlingMeasureItems.value = ensureOrderedRelationItems(
+    handlingMeasureIds.value,
+    detail.handling_measure_items || [],
+  );
+  observationMethodIds.value = normalizeStringList(
+    detail.observation_method_ids || [],
+  );
+  observationMethodItems.value = ensureOrderedRelationItems(
+    observationMethodIds.value,
+    detail.observation_method_items || [],
+  );
+  huatuoDiagnosisIds.value = normalizeStringList(
+    detail.huatuo_diagnosis_ids || [],
+  );
+  huatuoDiagnosisItems.value = ensureOrderedRelationItems(
+    huatuoDiagnosisIds.value,
+    detail.huatuo_diagnosis_items || [],
+  );
+}
+
+async function openEdit(record: FailureModeItem | string | { id: string }) {
   mode.value = 'edit';
   editingId.value = typeof record === 'string' ? record : record.id;
   visible.value = true;
@@ -361,62 +423,11 @@ async function openEdit(record: string | { id: string }) {
   resetRelations();
   try {
     await formApi.resetForm();
-    const detail = await getFailureModeDetailApi(editingId.value);
-    selectedSubsystem.value = detail.subsystem || undefined;
-    applySchema();
-    formApi.setValues({
-      author_ids: detail.author_ids || [],
-      brief: detail.brief,
-      chips: detail.chips || [],
-      detectability: detail.detectability || undefined,
-      effect_html: detail.effect_html || '',
-      fault_categories: detail.fault_categories || [],
-      symptoms: detail.symptoms || [],
-      functional_safety_level: detail.functional_safety_level || undefined,
-      module: detail.module || undefined,
-      occurrence_frequency: detail.occurrence_frequency || undefined,
-      root_cause_html: detail.root_cause_html || '',
-      severity: detail.severity || undefined,
-      status: detail.status || undefined,
-      subsystem: detail.subsystem || undefined,
-    });
-    relatedDtsNos.value = normalizeStringList(detail.related_dts_nos || []);
-    interceptionRequired.value = Boolean(detail.interception_required);
-    huatuoRequired.value = Boolean(detail.huatuo_required);
-    requiredHandlingMeasureCategories.value = normalizeStringList(
-      detail.required_handling_measure_categories || [],
-    );
-    requiredObservationMethodTypes.value = normalizeStringList(
-      detail.required_observation_method_types || [],
-    );
-    interceptionStrategyIds.value = normalizeStringList(
-      detail.interception_strategy_ids || [],
-    );
-    interceptionStrategyItems.value = ensureOrderedRelationItems(
-      interceptionStrategyIds.value,
-      detail.interception_strategy_items || [],
-    );
-    handlingMeasureIds.value = normalizeStringList(
-      detail.handling_measure_ids || [],
-    );
-    handlingMeasureItems.value = ensureOrderedRelationItems(
-      handlingMeasureIds.value,
-      detail.handling_measure_items || [],
-    );
-    observationMethodIds.value = normalizeStringList(
-      detail.observation_method_ids || [],
-    );
-    observationMethodItems.value = ensureOrderedRelationItems(
-      observationMethodIds.value,
-      detail.observation_method_items || [],
-    );
-    huatuoDiagnosisIds.value = normalizeStringList(
-      detail.huatuo_diagnosis_ids || [],
-    );
-    huatuoDiagnosisItems.value = ensureOrderedRelationItems(
-      huatuoDiagnosisIds.value,
-      detail.huatuo_diagnosis_items || [],
-    );
+    const detail =
+      typeof record === 'object' && 'brief' in record
+        ? record
+        : await getFailureModeDetailApi(editingId.value);
+    applyFailureModeDetail(detail as FailureModeItem);
   } finally {
     loading.value = false;
   }
@@ -555,7 +566,9 @@ async function handleConfirm() {
         ? await props.createHandler(payload)
         : await createFailureModeApi(payload);
     } else {
-      result = await updateFailureModeApi(editingId.value, payload);
+      result = props.updateHandler
+        ? await props.updateHandler(editingId.value, payload)
+        : await updateFailureModeApi(editingId.value, payload);
     }
 
     ElMessage.success(mode.value === 'create' ? '创建成功' : '保存成功');

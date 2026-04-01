@@ -365,6 +365,7 @@ export function useFailureModeColumns(): ZqTableGridOptions<FailureModeItem>['co
       dataKey: 'actions',
       title: '操作',
       width: 140,
+      cellSlotName: 'cell-actions',
       showOverflowTooltip: false,
     },
   ]);

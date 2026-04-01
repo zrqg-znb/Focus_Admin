@@ -114,6 +114,14 @@ const [TaskGrid, taskGridApi] = useZqTable<FailureModeTaskItem>({
         },
       },
     },
+    rowKey: 'id',
+    stripe: true,
+    toolbarConfig: {
+      custom: true,
+      refresh: true,
+      search: false,
+      zoom: true,
+    },
   },
 });
 
@@ -238,12 +246,18 @@ function handleOpenTask(row: FailureModeTaskItem) {
           </template>
           <template #cell-creator="{ row }">
             <span>{{
-              row.creator_info?.name || row.creator_info?.username || '-'
+              row.creator_info?.name ||
+              row.creator_info?.username ||
+              row.creator_info?.id ||
+              '-'
             }}</span>
           </template>
           <template #cell-assignee="{ row }">
             <span>{{
-              row.assignee_info?.name || row.assignee_info?.username || '-'
+              row.assignee_info?.name ||
+              row.assignee_info?.username ||
+              row.assignee_info?.id ||
+              '-'
             }}</span>
           </template>
           <template #cell-actions="{ row }">

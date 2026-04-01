@@ -28,6 +28,10 @@ const page = ref(1);
 const pageSize = ref(10);
 const total = ref(0);
 const rows = ref<FailureModeItem[]>([]);
+const localRows = ref<FailureModeItem[]>([]);
+const dialogTitle = ref('选择故障模式');
+const confirmButtonText = ref('确定绑定');
+const sourceTitle = ref('故障模式列表');
 const tableRef = ref<InstanceType<typeof ElTable>>();
 
 const selectedIds = ref<string[]>([]);
@@ -35,18 +39,38 @@ const selectedItems = ref<FailureModeItem[]>([]);
 const syncingSelection = ref(false);
 
 const extraFilters = ref<Record<string, any>>({});
+const useLocalRows = ref(false);
 
 async function loadList() {
   loading.value = true;
   try {
-    const response = await listFailureModesApi({
-      ...extraFilters.value,
-      keyword: keyword.value.trim() || undefined,
-      page: page.value,
-      pageSize: pageSize.value,
-    });
-    rows.value = response.items || [];
-    total.value = response.total || 0;
+    if (useLocalRows.value) {
+      const normalizedKeyword = keyword.value.trim().toLowerCase();
+      const filtered = localRows.value.filter((item) => {
+        if (!normalizedKeyword) {
+          return true;
+        }
+        return [item.brief, item.subsystem, item.module, item.status]
+          .filter(Boolean)
+          .some((value) =>
+            String(value || '')
+              .toLowerCase()
+              .includes(normalizedKeyword),
+          );
+      });
+      total.value = filtered.length;
+      const start = (page.value - 1) * pageSize.value;
+      rows.value = filtered.slice(start, start + pageSize.value);
+    } else {
+      const response = await listFailureModesApi({
+        ...extraFilters.value,
+        keyword: keyword.value.trim() || undefined,
+        page: page.value,
+        pageSize: pageSize.value,
+      });
+      rows.value = response.items || [];
+      total.value = response.total || 0;
+    }
     await syncTableSelection();
   } finally {
     loading.value = false;
@@ -143,15 +167,24 @@ function handleConfirm() {
 }
 
 function open(options?: {
+  confirmButtonText?: string;
   extraFilters?: Record<string, any>;
+  localRows?: FailureModeItem[];
   selectedIds?: string[];
   selectedItems?: FailureModeItem[];
+  sourceTitle?: string;
+  title?: string;
 }) {
   keyword.value = '';
   page.value = 1;
   selectedIds.value = [...(options?.selectedIds || [])];
   selectedItems.value = [...(options?.selectedItems || [])];
   extraFilters.value = options?.extraFilters || {};
+  localRows.value = [...(options?.localRows || [])];
+  useLocalRows.value = localRows.value.length > 0;
+  dialogTitle.value = options?.title || '选择故障模式';
+  confirmButtonText.value = options?.confirmButtonText || '确定绑定';
+  sourceTitle.value = options?.sourceTitle || '故障模式列表';
   visible.value = true;
   loadList();
 }
@@ -162,7 +195,7 @@ defineExpose({ open });
 <template>
   <ElDialog
     v-model="visible"
-    title="选择故障模式"
+    :title="dialogTitle"
     width="80%"
     top="5vh"
     destroy-on-close
@@ -171,7 +204,7 @@ defineExpose({ open });
     <div class="flex h-[600px] gap-4">
       <div class="flex flex-1 flex-col overflow-hidden rounded-lg border">
         <div class="flex items-center justify-between border-b bg-gray-50 p-3">
-          <span class="font-medium text-gray-700">故障模式列表</span>
+          <span class="font-medium text-gray-700">{{ sourceTitle }}</span>
           <div class="flex w-64 items-center gap-2">
             <ElInput
               v-model="keyword"
@@ -286,7 +319,7 @@ defineExpose({ open });
       <div class="flex items-center justify-end">
         <ElButton @click="visible = false">取消</ElButton>
         <ElButton type="primary" :loading="loading" @click="handleConfirm">
-          确定绑定
+          {{ confirmButtonText }}
         </ElButton>
       </div>
     </template>

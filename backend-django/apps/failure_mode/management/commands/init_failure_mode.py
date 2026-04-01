@@ -113,7 +113,7 @@ MENU_SEEDS = [
     ),
     MenuSeed(
         key='failure_mode_workflow_task_detail',
-        parent_key='failure_mode',
+        parent_key='failure_mode_workflow_tasks',
         name='FailureModeTaskDetail',
         title='任务详情',
         path='/failure-mode/tasks/detail/:id',
@@ -157,7 +157,7 @@ MENU_SEEDS = [
     ),
     MenuSeed(
         key='failure_mode_roles_detail',
-        parent_key='failure_mode',
+        parent_key='failure_mode_roles',
         name='FailureModeRoleDetail',
         title='角色配置详情',
         path='/failure-mode/roles/detail/:id',

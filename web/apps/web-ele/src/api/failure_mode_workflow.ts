@@ -198,6 +198,26 @@ export function bindTaskFailureModesApi(
   );
 }
 
+export function saveTaskFailureModeDraftApi(
+  taskId: string,
+  failureModeId: string,
+  data: Partial<FailureModePayload>,
+) {
+  return requestClient.post<FailureModeItem>(
+    `/api/failure-mode/workflow/tasks/${taskId}/failure-modes/${failureModeId}/draft`,
+    data,
+  );
+}
+
+export function deleteTaskFailureModeDraftApi(
+  taskId: string,
+  failureModeId: string,
+) {
+  return requestClient.delete<{ success: boolean }>(
+    `/api/failure-mode/workflow/tasks/${taskId}/failure-modes/${failureModeId}/draft`,
+  );
+}
+
 export function quickCreateTaskFailureModeApi(
   taskId: string,
   data: FailureModePayload,

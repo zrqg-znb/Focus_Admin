@@ -437,6 +437,7 @@ class FailureModeTask(RootModel):
     )
     review_minutes_html = models.TextField(blank=True, default='', verbose_name='评审会议纪要')
     review_attachment_ids = models.JSONField(default=list, blank=True, verbose_name='评审附件')
+    baseline_snapshot_ids = models.JSONField(default=list, blank=True, verbose_name='任务创建时基线快照')
 
     class Meta:
         db_table = 'pm_failure_mode_task'
@@ -476,6 +477,38 @@ class TaskFailureMode(RootModel):
                 fields=['task', 'failure_mode'],
                 name='uniq_pm_task_fm'
             )
+        ]
+
+
+class FailureModeTaskDraft(RootModel):
+    task = models.ForeignKey(
+        FailureModeTask,
+        on_delete=models.CASCADE,
+        related_name='drafts',
+        verbose_name='关联任务',
+    )
+    failure_mode = models.ForeignKey(
+        FailureMode,
+        on_delete=models.CASCADE,
+        related_name='task_drafts',
+        verbose_name='故障模式',
+    )
+    draft_payload_json = models.JSONField(default=dict, blank=True, verbose_name='任务修订草稿')
+    is_active = models.BooleanField(default=True, db_index=True, verbose_name='是否生效')
+
+    class Meta:
+        db_table = 'pm_failure_mode_task_draft'
+        verbose_name = '故障模式任务修订草稿'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['task', 'failure_mode'],
+                name='uniq_pm_task_failure_mode_draft',
+            )
+        ]
+        indexes = [
+            models.Index(fields=['task', 'is_active'], name='idx_pm_fm_task_draft_task'),
+            models.Index(fields=['failure_mode', 'is_active'], name='idx_pm_fm_task_draft_fm'),
         ]
 
 
@@ -530,6 +563,8 @@ class FailureModeTaskLog(RootModel):
     ACTION_ACCEPT = 'accept'
     ACTION_BIND_FAILURE_MODES = 'bind_failure_modes'
     ACTION_QUICK_CREATE_FAILURE_MODE = 'quick_create_failure_mode'
+    ACTION_SAVE_DRAFT = 'save_draft'
+    ACTION_DELETE_DRAFT = 'delete_draft'
     ACTION_SUBMIT = 'submit'
     ACTION_CLOSE = 'close'
     ACTION_REASSIGN = 'reassign'
@@ -538,6 +573,8 @@ class FailureModeTaskLog(RootModel):
         (ACTION_ACCEPT, '接收任务'),
         (ACTION_BIND_FAILURE_MODES, '绑定故障模式'),
         (ACTION_QUICK_CREATE_FAILURE_MODE, '快速新增故障模式'),
+        (ACTION_SAVE_DRAFT, '保存修订草稿'),
+        (ACTION_DELETE_DRAFT, '撤销修订草稿'),
         (ACTION_SUBMIT, '提交评审'),
         (ACTION_CLOSE, '评审关闭'),
         (ACTION_REASSIGN, '改派责任人'),

@@ -3,12 +3,14 @@ import type {
   FailureModeProductItem,
   FailureModeRoleAssignmentItem,
   FailureModeTaskCreatePayload,
+  ProductFailureModeItem,
   VisibleSubsystemItem,
 } from '#/api/failure_mode_workflow';
 
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 
 import {
+  ElAlert,
   ElForm,
   ElFormItem,
   ElInput,
@@ -19,6 +21,7 @@ import {
 
 import {
   createTaskApi,
+  listProductFailureModesApi,
   listProductRoleAssignmentsApi,
   listProductsApi,
   listVisibleSubsystemsApi,
@@ -33,6 +36,7 @@ const submitting = ref(false);
 const products = ref<FailureModeProductItem[]>([]);
 const subsystemOptions = ref<VisibleSubsystemItem[]>([]);
 const roleAssignments = ref<FailureModeRoleAssignmentItem[]>([]);
+const baselinePreviewItems = ref<ProductFailureModeItem[]>([]);
 const formRef = ref<InstanceType<typeof ElForm>>();
 
 const formModel = reactive<FailureModeTaskCreatePayload>({
@@ -63,6 +67,14 @@ const assigneeOptions = computed(() => {
     }));
 });
 
+const requiresBaseline = computed(() =>
+  ['DELETE', 'REVISE'].includes(formModel.task_type),
+);
+
+const baselinePreviewNames = computed(() =>
+  baselinePreviewItems.value.slice(0, 6).map((item) => item.failure_mode_brief),
+);
+
 const rules = {
   name: [{ message: '请输入任务名称', required: true, trigger: 'blur' }],
   task_type: [{ message: '请选择任务类型', required: true, trigger: 'change' }],
@@ -83,6 +95,7 @@ async function loadProductContext() {
   if (!formModel.product_id) {
     subsystemOptions.value = [];
     roleAssignments.value = [];
+    baselinePreviewItems.value = [];
     return;
   }
   loading.value = true;
@@ -108,6 +121,26 @@ function handleSubsystemChange() {
   formModel.assignee_id = '';
 }
 
+async function loadBaselinePreview() {
+  if (
+    !requiresBaseline.value ||
+    !formModel.product_id ||
+    !formModel.subsystem
+  ) {
+    baselinePreviewItems.value = [];
+    return;
+  }
+  loading.value = true;
+  try {
+    baselinePreviewItems.value = await listProductFailureModesApi(
+      formModel.product_id,
+      { subsystem: formModel.subsystem },
+    );
+  } finally {
+    loading.value = false;
+  }
+}
+
 async function open() {
   visible.value = true;
   submitting.value = false;
@@ -119,6 +152,7 @@ async function open() {
   formModel.assignee_id = '';
   subsystemOptions.value = [];
   roleAssignments.value = [];
+  baselinePreviewItems.value = [];
   try {
     await loadProducts();
   } finally {
@@ -129,6 +163,10 @@ async function open() {
 async function handleConfirm() {
   const valid = await formRef.value?.validate().catch(() => false);
   if (!valid) {
+    return;
+  }
+  if (requiresBaseline.value && baselinePreviewItems.value.length === 0) {
+    ElMessage.warning('当前产品子系统下暂无已生效基线，不能发起修订或删除任务');
     return;
   }
 
@@ -144,6 +182,13 @@ async function handleConfirm() {
     submitting.value = false;
   }
 }
+
+watch(
+  () => [formModel.task_type, formModel.product_id, formModel.subsystem],
+  () => {
+    void loadBaselinePreview();
+  },
+);
 
 defineExpose({ open });
 </script>
@@ -213,6 +258,47 @@ defineExpose({ open });
               :value="item.value"
             />
           </ElSelect>
+        </ElFormItem>
+        <ElFormItem
+          v-if="requiresBaseline && formModel.product_id && formModel.subsystem"
+          label="当前基线"
+        >
+          <div
+            class="w-full rounded-lg border border-dashed border-gray-300 bg-gray-50 p-3"
+          >
+            <ElAlert
+              v-if="baselinePreviewItems.length === 0"
+              :closable="false"
+              title="当前产品 + 子系统下暂无已生效基线，不能发起此类任务"
+              type="warning"
+            />
+            <template v-else>
+              <div class="text-sm text-gray-700">
+                当前已生效故障模式 {{ baselinePreviewItems.length }} 条
+              </div>
+              <div class="mt-2 flex flex-wrap gap-2 text-xs text-gray-500">
+                <span
+                  v-for="item in baselinePreviewNames"
+                  :key="item"
+                  class="rounded-full bg-white px-3 py-1"
+                >
+                  {{ item }}
+                </span>
+                <span
+                  v-if="
+                    baselinePreviewItems.length > baselinePreviewNames.length
+                  "
+                  class="rounded-full bg-white px-3 py-1"
+                >
+                  还有
+                  {{
+                    baselinePreviewItems.length - baselinePreviewNames.length
+                  }}
+                  条
+                </span>
+              </div>
+            </template>
+          </div>
         </ElFormItem>
       </ElForm>
     </div>

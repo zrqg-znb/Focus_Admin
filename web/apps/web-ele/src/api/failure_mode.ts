@@ -106,6 +106,8 @@ export interface FailureModeItem {
   observation_method_items: RelationItem[];
   huatuo_diagnosis_ids: string[];
   huatuo_diagnosis_items: RelationItem[];
+  task_change_type?: 'baseline' | 'delete_candidate' | 'edited' | 'new' | null;
+  has_task_draft?: boolean;
   sys_create_datetime?: string;
   sys_update_datetime?: string;
 }

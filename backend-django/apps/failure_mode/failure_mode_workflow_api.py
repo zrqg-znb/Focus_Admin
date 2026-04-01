@@ -13,6 +13,7 @@ from apps.failure_mode.failure_mode_schemas import (
     FailureModeTaskLogOutSchema,
     FailureModeTaskOutSchema,
     FailureModeTaskCreateSchema,
+    FailureModeUpdateSchema,
     ProductFailureModeOutSchema,
     ProductRoleAssignmentBatchSaveSchema,
     SaveSuccessSchema,
@@ -88,6 +89,22 @@ def get_task_failure_modes(request, task_id: str):
 @router.post('/tasks/{task_id}/failure-modes/bind', response=SaveSuccessSchema, summary='绑定故障模式到任务')
 def bind_task_failure_modes(request, task_id: str, data: TaskFailureModeBindSchema):
     TaskWorkflowService.bind_failure_modes(request.auth, task_id, data.failure_mode_ids)
+    return {'success': True}
+
+
+@router.post('/tasks/{task_id}/failure-modes/{failure_mode_id}/draft', response=FailureModeOutSchema, summary='保存修订任务中的故障模式草稿')
+def save_task_failure_mode_draft(request, task_id: str, failure_mode_id: str, data: FailureModeUpdateSchema):
+    return TaskWorkflowService.save_failure_mode_draft(
+        request.auth,
+        task_id,
+        failure_mode_id,
+        data.dict(exclude_unset=True),
+    )
+
+
+@router.delete('/tasks/{task_id}/failure-modes/{failure_mode_id}/draft', response=SaveSuccessSchema, summary='撤销修订任务中的故障模式草稿')
+def delete_task_failure_mode_draft(request, task_id: str, failure_mode_id: str):
+    TaskWorkflowService.delete_failure_mode_draft(request.auth, task_id, failure_mode_id)
     return {'success': True}
 
 

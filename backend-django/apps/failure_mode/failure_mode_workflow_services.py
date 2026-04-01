@@ -17,6 +17,7 @@ from apps.project_manager.failure_mode.failure_mode_model import (
     FailureModeRoleAssignment,
     FailureModeSubsystemConfig,
     FailureModeTask,
+    FailureModeTaskDraft,
     FailureModeTaskLog,
     ProductFailureMode,
     TaskFailureMode,
@@ -623,6 +624,133 @@ class TaskWorkflowService:
         ).update(status=status)
 
     @classmethod
+    def _load_baseline_failure_mode_ids(
+        cls,
+        product: FailureModeProduct,
+        subsystem: str,
+    ) -> list[str]:
+        return [
+            str(item)
+            for item in ProductFailureMode.objects.filter(
+                product=product,
+                subsystem=subsystem,
+            )
+            .order_by('sys_create_datetime', 'id')
+            .values_list('failure_mode_id', flat=True)
+        ]
+
+    @classmethod
+    def _get_task_selected_failure_mode_ids(cls, task: FailureModeTask) -> list[str]:
+        return [
+            str(item)
+            for item in TaskFailureMode.objects.filter(task=task)
+            .order_by('sys_create_datetime', 'id')
+            .values_list('failure_mode_id', flat=True)
+        ]
+
+    @classmethod
+    def _ensure_revise_task_initialized(
+        cls,
+        task: FailureModeTask,
+        operator: User | None = None,
+    ) -> FailureModeTask:
+        if task.task_type != 'REVISE':
+            return task
+        has_workset = TaskFailureMode.objects.filter(task=task).exists()
+        if task.baseline_snapshot_ids or has_workset:
+            return task
+
+        baseline_ids = cls._load_baseline_failure_mode_ids(task.product, task.subsystem)
+        if not baseline_ids:
+            return task
+
+        task.baseline_snapshot_ids = baseline_ids
+        if operator:
+            task.sys_modifier = operator
+        task.save()
+        TaskFailureMode.objects.bulk_create(
+            [
+                TaskFailureMode(
+                    task=task,
+                    failure_mode_id=failure_mode_id,
+                    sys_creator=operator or task.creator or task.sys_creator,
+                    sys_modifier=operator or task.creator or task.sys_creator,
+                )
+                for failure_mode_id in baseline_ids
+            ]
+        )
+        return cls._get_task_or_404(str(task.id))
+
+    @classmethod
+    def _build_task_failure_mode_rows(cls, task: FailureModeTask) -> list[dict[str, Any]]:
+        selected_ids = cls._get_task_selected_failure_mode_ids(task)
+        selected_set = set(selected_ids)
+        active_drafts = {
+            str(item.failure_mode_id): item
+            for item in FailureModeTaskDraft.objects.filter(task=task, is_active=True)
+        }
+
+        if task.task_type == 'DELETE':
+            baseline_relations = (
+                ProductFailureMode.objects.filter(product=task.product, subsystem=task.subsystem)
+                .select_related('failure_mode')
+                .order_by('sys_create_datetime', 'id')
+            )
+            rows: list[dict[str, Any]] = []
+            for relation in baseline_relations:
+                if not relation.failure_mode_id:
+                    continue
+                item = failure_mode_services._serialize_failure_mode(relation.failure_mode)
+                item['task_change_type'] = (
+                    'delete_candidate'
+                    if str(relation.failure_mode_id) in selected_set
+                    else 'baseline'
+                )
+                item['has_task_draft'] = False
+                rows.append(item)
+            return rows
+
+        bindings = (
+            TaskFailureMode.objects.filter(task=task)
+            .select_related('failure_mode')
+            .order_by('sys_create_datetime', 'id')
+        )
+        baseline_snapshot_set = {str(item) for item in (task.baseline_snapshot_ids or [])}
+        rows = []
+        for binding in bindings:
+            failure_mode = binding.failure_mode
+            draft = active_drafts.get(str(binding.failure_mode_id))
+            item = (
+                failure_mode_services.merge_failure_mode_snapshot(
+                    failure_mode,
+                    draft.draft_payload_json,
+                )
+                if draft
+                else failure_mode_services._serialize_failure_mode(failure_mode)
+            )
+            if task.task_type == 'REVISE' and draft:
+                change_type = 'edited'
+            elif str(binding.failure_mode_id) in baseline_snapshot_set:
+                change_type = 'baseline'
+            else:
+                change_type = 'new'
+            item['task_change_type'] = change_type
+            item['has_task_draft'] = bool(draft)
+            rows.append(item)
+        return rows
+
+    @classmethod
+    def _apply_revise_drafts(cls, task: FailureModeTask, operator: User):
+        draft_queryset = FailureModeTaskDraft.objects.filter(task=task, is_active=True).select_related('failure_mode')
+        for draft in draft_queryset:
+            failure_mode_services.apply_failure_mode_snapshot(
+                draft.failure_mode,
+                draft.draft_payload_json or {},
+                operator,
+            )
+        draft_queryset.update(is_active=False, sys_modifier_id=operator.id)
+
+    @classmethod
     def list_tasks(
         cls,
         user: User,
@@ -656,8 +784,11 @@ class TaskWorkflowService:
         if not policy.can_create_task(product):
             raise HttpError(403, '只有该产品主版本SE或管理员可以发起任务。')
 
+        task_type = _normalize_text(data.get('task_type'))
         subsystem = _normalize_text(data.get('subsystem'))
         assignee_id = _normalize_text(data.get('assignee_id'))
+        if task_type not in {'CREATE', 'REVISE', 'DELETE'}:
+            raise HttpError(422, '任务类型非法。')
         if not subsystem:
             raise HttpError(422, '子系统不能为空。')
         if not assignee_id:
@@ -665,24 +796,44 @@ class TaskWorkflowService:
         if not policy.can_assign_feature_user(product, subsystem, assignee_id):
             raise HttpError(422, '责任人必须是当前产品子系统下的特性SE。')
 
+        baseline_ids = cls._load_baseline_failure_mode_ids(product, subsystem)
+        if task_type in {'REVISE', 'DELETE'} and not baseline_ids:
+            raise HttpError(422, '当前产品子系统下暂无已生效基线，不能发起修订或删除任务。')
+
         task = FailureModeTask.objects.create(
             name=_normalize_text(data.get('name')),
-            task_type=_normalize_text(data.get('task_type')),
+            task_type=task_type,
             status='CREATED',
             product=product,
             subsystem=subsystem,
             creator=user,
             assignee_id=assignee_id,
+            baseline_snapshot_ids=baseline_ids if task_type == 'REVISE' else [],
             sys_creator=user,
             sys_modifier=user,
         )
+        if task_type == 'REVISE' and baseline_ids:
+            TaskFailureMode.objects.bulk_create(
+                [
+                    TaskFailureMode(
+                        task=task,
+                        failure_mode_id=failure_mode_id,
+                        sys_creator=user,
+                        sys_modifier=user,
+                    )
+                    for failure_mode_id in baseline_ids
+                ]
+            )
         cls._log(
             task=task,
             operator=user,
             action=FailureModeTaskLog.ACTION_CREATE,
             to_status=task.status,
             note='创建任务',
-            extra_data={'assignee_id': assignee_id},
+            extra_data={
+                'assignee_id': assignee_id,
+                'baseline_failure_mode_count': len(baseline_ids),
+            },
         )
         task = cls._get_task_or_404(str(task.id))
         return _serialize_task(task)
@@ -693,12 +844,8 @@ class TaskWorkflowService:
         policy = FailureModeAccessPolicy(user)
         if not policy.can_view_task(task):
             raise HttpError(403, '无权查看当前任务。')
-        queryset = (
-            TaskFailureMode.objects.filter(task_id=task_id)
-            .select_related('failure_mode')
-            .order_by('sys_create_datetime')
-        )
-        return [failure_mode_services._serialize_failure_mode(item.failure_mode) for item in queryset]
+        task = cls._ensure_revise_task_initialized(task, user)
+        return cls._build_task_failure_mode_rows(task)
 
     @classmethod
     @transaction.atomic
@@ -729,6 +876,7 @@ class TaskWorkflowService:
     @transaction.atomic
     def bind_failure_modes(cls, user: User, task_id: str, failure_mode_ids: list[str]):
         task = cls._get_task_or_404(task_id)
+        task = cls._ensure_revise_task_initialized(task, user)
         policy = FailureModeAccessPolicy(user)
         if not policy.can_process_task(task):
             raise HttpError(403, '只有当前任务责任人可以维护任务故障模式。')
@@ -740,6 +888,12 @@ class TaskWorkflowService:
         missing_ids = [item_id for item_id in normalized_ids if item_id not in found_ids]
         if missing_ids:
             raise HttpError(422, f'故障模式不存在: {missing_ids[0]}')
+
+        if task.task_type == 'DELETE':
+            baseline_ids = set(cls._load_baseline_failure_mode_ids(task.product, task.subsystem))
+            invalid_ids = [item_id for item_id in normalized_ids if item_id not in baseline_ids]
+            if invalid_ids:
+                raise HttpError(422, '删除任务只能选择当前产品子系统已生效基线中的故障模式。')
 
         TaskFailureMode.objects.filter(task=task).delete()
         if normalized_ids:
@@ -754,15 +908,120 @@ class TaskWorkflowService:
                     for item_id in normalized_ids
                 ]
             )
+
+        if task.task_type == 'REVISE':
+            FailureModeTaskDraft.objects.filter(task=task, is_active=True).exclude(
+                failure_mode_id__in=normalized_ids,
+            ).update(is_active=False, sys_modifier_id=user.id)
+
+        bind_note = (
+            f'选择待删除故障模式 {len(normalized_ids)} 条'
+            if task.task_type == 'DELETE'
+            else f'绑定故障模式 {len(normalized_ids)} 条'
+        )
         cls._log(
             task=task,
             operator=user,
             action=FailureModeTaskLog.ACTION_BIND_FAILURE_MODES,
             from_status=task.status,
             to_status=task.status,
-            note=f'绑定故障模式 {len(normalized_ids)} 条',
+            note=bind_note,
             extra_data={'failure_mode_ids': normalized_ids},
         )
+
+    @classmethod
+    @transaction.atomic
+    def save_failure_mode_draft(
+        cls,
+        user: User,
+        task_id: str,
+        failure_mode_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        task = cls._get_task_or_404(task_id)
+        task = cls._ensure_revise_task_initialized(task, user)
+        policy = FailureModeAccessPolicy(user)
+        if not policy.can_process_task(task):
+            raise HttpError(403, '只有当前任务责任人可以保存修订草稿。')
+        if task.status != 'PROCESSING':
+            raise HttpError(422, '只有梳理/修订中的任务可以保存修订草稿。')
+        if task.task_type != 'REVISE':
+            raise HttpError(422, '只有修订任务支持编辑已有故障模式草稿。')
+
+        if not TaskFailureMode.objects.filter(task=task, failure_mode_id=failure_mode_id).exists():
+            raise HttpError(422, '当前故障模式未加入该任务工作集。')
+
+        failure_mode = get_object_or_404(
+            failure_mode_services._failure_mode_queryset(),
+            id=failure_mode_id,
+        )
+        draft_payload = failure_mode_services.prepare_failure_mode_task_draft_payload(
+            failure_mode,
+            payload,
+            user,
+        )
+
+        draft = FailureModeTaskDraft.objects.filter(task=task, failure_mode=failure_mode).first()
+        if draft:
+            draft.draft_payload_json = draft_payload
+            draft.is_active = True
+            draft.sys_modifier = user
+            draft.save()
+        else:
+            FailureModeTaskDraft.objects.create(
+                task=task,
+                failure_mode=failure_mode,
+                draft_payload_json=draft_payload,
+                is_active=True,
+                sys_creator=user,
+                sys_modifier=user,
+            )
+
+        cls._log(
+            task=task,
+            operator=user,
+            action=FailureModeTaskLog.ACTION_SAVE_DRAFT,
+            from_status=task.status,
+            to_status=task.status,
+            note=f'保存修订草稿: {failure_mode.brief}',
+            extra_data={'failure_mode_id': str(failure_mode.id)},
+        )
+
+        item = failure_mode_services.merge_failure_mode_snapshot(failure_mode, draft_payload)
+        item['task_change_type'] = 'edited'
+        item['has_task_draft'] = True
+        return item
+
+    @classmethod
+    @transaction.atomic
+    def delete_failure_mode_draft(cls, user: User, task_id: str, failure_mode_id: str):
+        task = cls._get_task_or_404(task_id)
+        policy = FailureModeAccessPolicy(user)
+        if not policy.can_process_task(task):
+            raise HttpError(403, '只有当前任务责任人可以撤销修订草稿。')
+        if task.status != 'PROCESSING':
+            raise HttpError(422, '只有梳理/修订中的任务可以撤销修订草稿。')
+        if task.task_type != 'REVISE':
+            raise HttpError(422, '只有修订任务支持撤销修订草稿。')
+
+        draft = FailureModeTaskDraft.objects.filter(
+            task=task,
+            failure_mode_id=failure_mode_id,
+            is_active=True,
+        ).first()
+        if draft:
+            draft.is_active = False
+            draft.sys_modifier = user
+            draft.save()
+            cls._log(
+                task=task,
+                operator=user,
+                action=FailureModeTaskLog.ACTION_DELETE_DRAFT,
+                from_status=task.status,
+                to_status=task.status,
+                note='撤销修订草稿',
+                extra_data={'failure_mode_id': failure_mode_id},
+            )
 
     @classmethod
     @transaction.atomic
@@ -837,6 +1096,7 @@ class TaskWorkflowService:
         review_attachment_ids: list[str],
     ) -> dict[str, Any]:
         task = cls._get_task_or_404(task_id)
+        task = cls._ensure_revise_task_initialized(task, user)
         policy = FailureModeAccessPolicy(user)
         if not policy.can_close_task(task):
             raise HttpError(403, '只有主版本SE或管理员可以关闭任务。')
@@ -860,8 +1120,13 @@ class TaskWorkflowService:
         task.save()
         cls._sync_task_created_failure_mode_status(task)
 
-        task_failure_modes = list(TaskFailureMode.objects.filter(task=task).values_list('failure_mode_id', flat=True))
-        if task.task_type in ['CREATE', 'REVISE']:
+        task_failure_modes = cls._get_task_selected_failure_mode_ids(task)
+        baseline_sync_result = {
+            'selected_failure_mode_ids': task_failure_modes,
+            'added_failure_mode_ids': [],
+            'removed_failure_mode_ids': [],
+        }
+        if task.task_type == 'CREATE':
             for failure_mode_id in task_failure_modes:
                 ProductFailureMode.objects.get_or_create(
                     product=task.product,
@@ -869,12 +1134,44 @@ class TaskWorkflowService:
                     failure_mode_id=failure_mode_id,
                     defaults={'sys_creator': user, 'sys_modifier': user},
                 )
+            baseline_sync_result['added_failure_mode_ids'] = task_failure_modes
+        elif task.task_type == 'REVISE':
+            cls._apply_revise_drafts(task, user)
+            baseline_snapshot_ids = [str(item) for item in (task.baseline_snapshot_ids or [])]
+            current_failure_mode_set = set(task_failure_modes)
+            add_ids = [
+                failure_mode_id
+                for failure_mode_id in task_failure_modes
+                if failure_mode_id not in baseline_snapshot_ids
+            ]
+            remove_ids = [
+                failure_mode_id
+                for failure_mode_id in baseline_snapshot_ids
+                if failure_mode_id not in current_failure_mode_set
+            ]
+
+            for failure_mode_id in add_ids:
+                ProductFailureMode.objects.get_or_create(
+                    product=task.product,
+                    subsystem=task.subsystem,
+                    failure_mode_id=failure_mode_id,
+                    defaults={'sys_creator': user, 'sys_modifier': user},
+                )
+            if remove_ids:
+                ProductFailureMode.objects.filter(
+                    product=task.product,
+                    subsystem=task.subsystem,
+                    failure_mode_id__in=remove_ids,
+                ).delete()
+            baseline_sync_result['added_failure_mode_ids'] = add_ids
+            baseline_sync_result['removed_failure_mode_ids'] = remove_ids
         elif task.task_type == 'DELETE':
             ProductFailureMode.objects.filter(
                 product=task.product,
                 subsystem=task.subsystem,
                 failure_mode_id__in=task_failure_modes,
             ).delete()
+            baseline_sync_result['removed_failure_mode_ids'] = task_failure_modes
 
         cls._log(
             task=task,
@@ -887,6 +1184,7 @@ class TaskWorkflowService:
                 'review_result': task.review_result,
                 'review_attachment_ids': task.review_attachment_ids,
                 'failure_mode_ids': task_failure_modes,
+                'baseline_sync_result': baseline_sync_result,
             },
         )
         return _serialize_task(cls._get_task_or_404(task_id))
