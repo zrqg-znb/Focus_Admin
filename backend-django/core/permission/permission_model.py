@@ -20,6 +20,8 @@ class Permission(RootModel):
     4. 添加字段验证
     5. 添加索引优化查询性能
     """
+
+    CODE_MAX_LENGTH = 128
     
     # 权限类型选择
     PERMISSION_TYPE_CHOICES = [
@@ -57,7 +59,7 @@ class Permission(RootModel):
     
     # 权限编码（唯一标识）
     code = models.CharField(
-        max_length=64, 
+        max_length=CODE_MAX_LENGTH,
         help_text="权限编码",
         db_index=True,
         validators=[
@@ -130,4 +132,4 @@ class Permission(RootModel):
         """获取权限类型的显示名称"""
         type_map = dict(self.PERMISSION_TYPE_CHOICES)
         return type_map.get(self.permission_type, 'UNKNOWN')
-
+    CODE_MAX_LENGTH = 128

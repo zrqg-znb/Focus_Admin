@@ -33,6 +33,8 @@ class PermissionSchemaIn(ModelSchema):
             raise ValueError('权限编码不能为空')
         if not all(c.isalnum() or c in '_:' for c in v):
             raise ValueError('权限编码只能包含字母、数字、下划线和冒号')
+        if len(v) > Permission.CODE_MAX_LENGTH:
+            raise ValueError(f'权限编码最长不能超过 {Permission.CODE_MAX_LENGTH} 个字符')
         return v
     
     @field_validator('http_method', check_fields=False)
@@ -76,6 +78,8 @@ class PermissionSchemaPatch(Schema):
                 raise ValueError('权限编码不能为空')
             if not all(c.isalnum() or c in '_:' for c in v):
                 raise ValueError('权限编码只能包含字母、数字、下划线和冒号')
+            if len(v) > Permission.CODE_MAX_LENGTH:
+                raise ValueError(f'权限编码最长不能超过 {Permission.CODE_MAX_LENGTH} 个字符')
         return v
     
     @field_validator('http_method')
@@ -174,4 +178,3 @@ class PermissionByMenuOut(Schema):
     menu_id: str
     menu_name: str
     permissions: List[PermissionSchemaOut]
-

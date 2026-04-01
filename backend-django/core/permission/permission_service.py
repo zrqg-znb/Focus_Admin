@@ -4,8 +4,11 @@
 Permission Service - 权限生成服务
 从 Django Ninja Router 自动扫描 API 并生成权限
 """
+import hashlib
 import logging
+import re
 from typing import List, Dict, Tuple
+from django.db.models import Q
 from core.permission.permission_model import Permission
 from core.menu.menu_model import Menu
 from common.fu_cache import PermissionCacheManager
@@ -15,7 +18,191 @@ logger = logging.getLogger(__name__)
 
 class PermissionGenerator:
     """权限生成器 - 从 API 路由自动生成权限"""
-    
+
+    METHOD_OPERATION_MAP = {
+        'DELETE': 'delete',
+        'GET': 'read',
+        'PATCH': 'update',
+        'POST': 'create',
+        'PUT': 'update',
+    }
+    ACTION_ALIASES = {
+        'bind': 'bind',
+        'cancel': 'cancel',
+        'checkpoints': 'checkpoints',
+        'clear': 'clear',
+        'close': 'close',
+        'debug': 'debug',
+        'detail': 'detail',
+        'draft': 'draft',
+        'events': 'events',
+        'export': 'export',
+        'failure_modes': 'failure_modes',
+        'findings': 'findings',
+        'history': 'history',
+        'import': 'import',
+        'issues': 'issues',
+        'logs': 'logs',
+        'options': 'options',
+        'purge': 'purge',
+        'query': 'query',
+        'quick_create': 'quick_create',
+        'reassign': 'reassign',
+        'rebuild': 'rebuild',
+        'recall': 'recall',
+        'reject': 'reject',
+        'reset': 'reset',
+        'restore': 'restore',
+        'resume': 'resume',
+        'save': 'save',
+        'scan': 'scan',
+        'search': 'query',
+        'set_default': 'set_default',
+        'stats': 'stats',
+        'status': 'status',
+        'submit': 'submit',
+        'summary': 'summary',
+        'test': 'test',
+        'toggle': 'toggle',
+        'tree': 'tree',
+        'upload': 'upload',
+        'validate': 'validate',
+        'zip': 'zip',
+    }
+    PLACEHOLDER_RE = re.compile(r'^\{(.+)\}$')
+
+    @classmethod
+    def sanitize_code_segment(cls, value: str) -> str:
+        value = (value or '').strip().lower()
+        if not value:
+            return ''
+        value = value.replace('-', '_').replace('.', '_').replace(' ', '_')
+        if value.startswith(':'):
+            value = value.removeprefix(':')
+        match = cls.PLACEHOLDER_RE.match(value)
+        if match:
+            value = f"by_{match.group(1)}"
+        value = re.sub(r'[^a-z0-9_]+', '_', value)
+        value = re.sub(r'_+', '_', value).strip('_')
+        return value
+
+    @classmethod
+    def is_path_parameter(cls, segment: str) -> bool:
+        segment = (segment or '').strip()
+        return bool(segment.startswith(':') or cls.PLACEHOLDER_RE.match(segment))
+
+    @classmethod
+    def split_api_path(cls, path: str) -> list[str]:
+        parts = [item for item in (path or '').split('/') if item]
+        if parts and parts[0] == 'api':
+            parts = parts[1:]
+        return parts
+
+    @classmethod
+    def resolve_operation(cls, path: str, method: str) -> str:
+        parts = cls.split_api_path(path)
+        static_parts = [
+            cls.sanitize_code_segment(item) for item in parts if not cls.is_path_parameter(item)
+        ]
+        last_raw = parts[-1] if parts else ''
+        last_static = static_parts[-1] if static_parts else ''
+        method = (method or 'GET').upper()
+
+        if method == 'GET':
+            if cls.is_path_parameter(last_raw):
+                return 'detail'
+            return cls.ACTION_ALIASES.get(last_static, 'read')
+        if method == 'POST':
+            if parts and not cls.is_path_parameter(last_raw) and len(static_parts) > 1:
+                return cls.ACTION_ALIASES.get(last_static, 'create')
+            return 'create'
+        if method in {'PUT', 'PATCH'}:
+            if parts and not cls.is_path_parameter(last_raw) and len(static_parts) > 1:
+                action = cls.ACTION_ALIASES.get(last_static, last_static or 'update')
+                return f"update_{action}" if action not in {'update'} else 'update'
+            return 'update'
+        if method == 'DELETE':
+            if parts and not cls.is_path_parameter(last_raw) and len(static_parts) > 1:
+                action = cls.ACTION_ALIASES.get(last_static, last_static or 'delete')
+                return f"delete_{action}" if action not in {'delete'} else 'delete'
+            return 'delete'
+        return cls.METHOD_OPERATION_MAP.get(method, 'access')
+
+    @classmethod
+    def build_permission_code(cls, path: str, method: str) -> str:
+        parts = cls.split_api_path(path)
+        static_parts = [
+            cls.sanitize_code_segment(item) for item in parts if not cls.is_path_parameter(item)
+        ]
+        static_parts = [item for item in static_parts if item]
+
+        domain = static_parts[0] if static_parts else 'api'
+        operation = cls.resolve_operation(path, method)
+        context_parts = static_parts[1:]
+        if context_parts and cls.ACTION_ALIASES.get(context_parts[-1], context_parts[-1]) == operation:
+            context_parts = context_parts[:-1]
+
+        base_segments = [domain]
+        if context_parts:
+            base_segments.append('_'.join(context_parts))
+        base_segments.append(operation)
+        code = ':'.join(filter(None, base_segments))
+        return cls.ensure_code_length(code, path, method)
+
+    @classmethod
+    def ensure_code_length(cls, code: str, path: str, method: str) -> str:
+        max_length = Permission.CODE_MAX_LENGTH
+        if len(code) <= max_length:
+            return code
+
+        parts = cls.split_api_path(path)
+        static_parts = [
+            cls.sanitize_code_segment(item) for item in parts if not cls.is_path_parameter(item)
+        ]
+        static_parts = [item for item in static_parts if item]
+        domain = static_parts[0] if static_parts else 'api'
+        operation = cls.resolve_operation(path, method)
+        context_parts = static_parts[1:]
+
+        compact_context = '_'.join(part[:8] for part in context_parts if part)
+        compact_code = ':'.join(filter(None, [domain, compact_context, operation]))
+        if len(compact_code) <= max_length:
+            return compact_code
+
+        digest = hashlib.md5(f'{method}:{path}'.encode('utf-8')).hexdigest()[:8]
+        fallback = ':'.join(filter(None, [domain, operation, digest]))
+        if len(fallback) <= max_length:
+            return fallback
+
+        return fallback[:max_length]
+
+    @classmethod
+    def normalize_submitted_code(
+        cls,
+        code: str | None,
+        *,
+        path: str,
+        method: str,
+    ) -> str:
+        normalized = ':'.join(
+            filter(
+                None,
+                [
+                    cls.sanitize_code_segment(part)
+                    for part in str(code or '').split(':')
+                ],
+            ),
+        )
+        if not normalized:
+            normalized = cls.build_permission_code(path, method)
+        return cls.ensure_code_length(normalized, path, method)
+
+    @classmethod
+    def validate_code_length(cls, code: str):
+        max_length = Permission.CODE_MAX_LENGTH
+        if len(code) > max_length:
+            raise ValueError(f'权限编码过长，最长 {max_length} 个字符')
+
     @staticmethod
     def extract_api_info(path: str, method: str) -> Tuple[str, str]:
         """
@@ -25,25 +212,15 @@ class PermissionGenerator:
         - /api/core/user -> menu_code: 'user', perm_code: 'user:read'
         - /api/core/user (POST) -> menu_code: 'user', perm_code: 'user:create'
         """
-        # 移除前缀
-        path = path.replace('/api/core/', '').replace('/api/system/', '')
-        
-        # 提取第一个路径段作为菜单编码
-        parts = path.strip('/').split('/')
-        menu_code = parts[0] if parts else 'unknown'
-        
-        # 根据 HTTP 方法映射权限操作
-        method_map = {
-            'GET': 'read',
-            'POST': 'create',
-            'PUT': 'update',
-            'PATCH': 'update',
-            'DELETE': 'delete',
-        }
-        
-        operation = method_map.get(method.upper(), 'access')
-        perm_code = f"{menu_code}:{operation}"
-        
+        parts = PermissionGenerator.split_api_path(path)
+        static_parts = [
+            PermissionGenerator.sanitize_code_segment(item)
+            for item in parts
+            if not PermissionGenerator.is_path_parameter(item)
+        ]
+        static_parts = [item for item in static_parts if item]
+        menu_code = static_parts[0] if static_parts else 'unknown'
+        perm_code = PermissionGenerator.build_permission_code(path, method)
         return menu_code, perm_code
     
     @staticmethod
@@ -152,7 +329,15 @@ class PermissionGenerator:
                 )
                 
                 # 查找对应的菜单
-                menu = Menu.objects.filter(code=menu_code).first()
+                menu = (
+                    Menu.objects.filter(
+                        Q(authCode=menu_code)
+                        | Q(authCode=menu_code.replace('_', '-'))
+                        | Q(path__icontains=f"/{menu_code.replace('_', '-')}")
+                    )
+                    .order_by('order', 'sys_create_datetime')
+                    .first()
+                )
                 if not menu:
                     logger.warning(f"菜单 {menu_code} 不存在，跳过权限 {perm_code}")
                     skipped_count += 1

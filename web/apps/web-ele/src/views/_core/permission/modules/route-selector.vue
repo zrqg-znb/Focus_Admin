@@ -14,6 +14,11 @@ import {
   ElTag,
 } from 'element-plus';
 
+import {
+  buildPermissionCode,
+  buildPermissionCodeWithHash,
+} from './permission-code';
+
 interface RouteItem {
   path: string;
   method: string;
@@ -145,22 +150,7 @@ function isCodeDuplicate(route: RouteItem): boolean {
 
 // 生成扩展的权限编码（添加路径后续段）
 function generateExtendedCode(route: RouteItem): string {
-  // 不使用 filter，保留空字符串以保持索引一致
-  const parts = route.path.split('/');
-  // parts[0] = '', parts[1] = 'api', parts[2] = 'core', parts[3] = 'user', parts[4+] = 额外段
-
-  if (parts.length <= 4) {
-    // 没有额外段，无法扩展
-    return route.code || '';
-  }
-
-  // 获取原始编码的方法部分（例如 'user:read' 的 'user:read'）
-  const baseCode = route.code || '';
-
-  // 添加第4段（索引4）及之后的所有段
-  const extraParts = parts.slice(4).filter(Boolean).join('_');
-
-  return extraParts ? `${baseCode}_${extraParts}` : baseCode;
+  return buildPermissionCodeWithHash(route.path, route.method);
 }
 
 // 自动修复重复的权限编码
@@ -250,6 +240,9 @@ function getMethodTagType(
 // 切换选择
 function toggleSelect(route: RouteItem) {
   route.selected = !route.selected;
+  if (route.selected && !route.code) {
+    route.code = buildPermissionCode(route.path, route.method);
+  }
 
   // 如果是选中操作，立即检查并修复重复编码
   if (route.selected) {

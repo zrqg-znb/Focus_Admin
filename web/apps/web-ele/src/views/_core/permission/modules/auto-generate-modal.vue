@@ -10,6 +10,7 @@ import {
   getAllRoutesApi,
 } from '#/api/core/permission';
 
+import { buildPermissionCode } from './permission-code';
 import RouteSelector from './route-selector.vue';
 
 interface RouteItem {
@@ -114,7 +115,7 @@ async function initRoutes() {
       return {
         ...route,
         name: `${route.summary || route.operation_id}`,
-        code: `${route.path.split('/')[3]}:${methodInfo.name.toLowerCase()}`,
+        code: route.code || buildPermissionCode(route.path, route.method),
         permission_type: 1,
         http_method: methodInfo.code,
         is_active: true,

@@ -339,7 +339,17 @@ def get_all_routes(request):
     from application.main import api as ninja_api
     
     routes = PermissionGenerator.get_all_routes_from_ninja_api(ninja_api)
-    return routes
+    result = []
+    for route in routes:
+        code = PermissionGenerator.build_permission_code(
+            route.get('path', ''),
+            route.get('method', 'GET'),
+        )
+        result.append({
+            **route,
+            'code': code,
+        })
+    return result
 
 
 @router.get("/permission/debug/routes", summary="调试：获取所有路由信息")
@@ -400,10 +410,17 @@ def batch_create_permissions_from_routes(request, data: PermissionBatchCreateFro
     
     for route in data.routes:
         try:
+            normalized_code = PermissionGenerator.normalize_submitted_code(
+                route.code,
+                path=route.path,
+                method=route.method,
+            )
+            PermissionGenerator.validate_code_length(normalized_code)
+
             # 检查权限是否已存在
             exists = Permission.objects.filter(
                 menu_id=data.menu_id,
-                code=route.code
+                code=normalized_code
             ).exists()
             
             if exists:
@@ -414,7 +431,7 @@ def batch_create_permissions_from_routes(request, data: PermissionBatchCreateFro
             Permission.objects.create(
                 menu_id=data.menu_id,
                 name=route.name,
-                code=route.code,
+                code=normalized_code,
                 permission_type=route.permission_type,
                 api_path=route.path,
                 http_method=route.http_method,
@@ -422,12 +439,12 @@ def batch_create_permissions_from_routes(request, data: PermissionBatchCreateFro
                 is_active=route.is_active,
             )
             created_count += 1
-            logger.info(f"创建权限: {route.code}")
+            logger.info(f"创建权限: {normalized_code}")
             
         except Exception as e:
             failed_count += 1
-            errors.append(f"创建权限 {route.code} 失败: {str(e)}")
-            logger.error(f"创建权限 {route.code} 失败: {str(e)}")
+            errors.append(f"创建权限 {route.code or route.path} 失败: {str(e)}")
+            logger.error(f"创建权限 {route.code or route.path} 失败: {str(e)}")
     
     # 清除缓存
     if created_count > 0:
@@ -469,4 +486,3 @@ def auto_scan_and_generate_permissions(request, dry_run: bool = Query(False)):
     
     result = PermissionGenerator.auto_generate_permissions(ninja_api, dry_run=dry_run)
     return result
-
