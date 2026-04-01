@@ -8,8 +8,8 @@ class FailureMode(RootModel):
     SOURCE_TYPE_MANUAL = 'manual'
     SOURCE_TYPE_TASK_QUICK_CREATE = 'task_quick_create'
     SOURCE_TYPE_CHOICES = [
-        (SOURCE_TYPE_MANUAL, '手工维护'),
-        (SOURCE_TYPE_TASK_QUICK_CREATE, '任务快速新增'),
+        (SOURCE_TYPE_MANUAL, '手动维护'),
+        (SOURCE_TYPE_TASK_QUICK_CREATE, '任务新增'),
     ]
 
     brief = models.CharField(max_length=255, verbose_name='故障模式简述')
@@ -424,6 +424,14 @@ class FailureModeTask(RootModel):
         related_name='assigned_fm_tasks',
         verbose_name='责任人(特性SE)'
     )
+    current_processor = models.ForeignKey(
+        'core.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='current_processing_fm_tasks',
+        verbose_name='当前待办归属人',
+    )
     accepted_at = models.DateTimeField(null=True, blank=True, verbose_name='接收时间')
     submitted_at = models.DateTimeField(null=True, blank=True, verbose_name='提交评审时间')
     reviewed_at = models.DateTimeField(null=True, blank=True, verbose_name='评审完成时间')
@@ -446,6 +454,7 @@ class FailureModeTask(RootModel):
         indexes = [
             models.Index(fields=['status'], name='idx_pm_fm_task_status'),
             models.Index(fields=['assignee', 'status'], name='idx_pm_fm_task_assignee'),
+            models.Index(fields=['current_processor', 'status'], name='idx_pm_fm_task_processor'),
         ]
 
     def save(self, *args, **kwargs):
@@ -566,6 +575,8 @@ class FailureModeTaskLog(RootModel):
     ACTION_SAVE_DRAFT = 'save_draft'
     ACTION_DELETE_DRAFT = 'delete_draft'
     ACTION_SUBMIT = 'submit'
+    ACTION_RECALL = 'recall'
+    ACTION_REJECT = 'reject'
     ACTION_CLOSE = 'close'
     ACTION_REASSIGN = 'reassign'
     ACTION_CHOICES = [
@@ -576,6 +587,8 @@ class FailureModeTaskLog(RootModel):
         (ACTION_SAVE_DRAFT, '保存修订草稿'),
         (ACTION_DELETE_DRAFT, '撤销修订草稿'),
         (ACTION_SUBMIT, '提交评审'),
+        (ACTION_RECALL, '撤回评审'),
+        (ACTION_REJECT, '驳回任务'),
         (ACTION_CLOSE, '评审关闭'),
         (ACTION_REASSIGN, '改派责任人'),
     ]

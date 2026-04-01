@@ -3,7 +3,6 @@ import type { FailureModeTabKey, MasterResourceKind } from './data';
 
 import type {
   FailureModeItem,
-  FailureModeSubsystemConfigItem,
   HandlingMeasureItem,
   HuatuoDiagnosisItem,
   InterceptionStrategyItem,
@@ -32,7 +31,6 @@ import {
 
 import {
   deleteFailureModeApi,
-  deleteFailureModeSubsystemConfigApi,
   deleteHandlingMeasureApi,
   deleteHuatuoDiagnosisApi,
   deleteInterceptionStrategyApi,
@@ -41,7 +39,6 @@ import {
   getFailureModeDictOptionsApi,
   getFailureModeSubsystemConfigOptionsApi,
   listFailureModesApi,
-  listFailureModeSubsystemConfigsApi,
   listHandlingMeasuresApi,
   listHuatuoDiagnosesApi,
   listInterceptionStrategiesApi,
@@ -52,7 +49,6 @@ import { useZqTable } from '#/components/zq-table';
 
 import FailureModeDrawer from './components/FailureModeDrawer.vue';
 import MasterDataDrawer from './components/MasterDataDrawer.vue';
-import SubsystemConfigDrawer from './components/SubsystemConfigDrawer.vue';
 import {
   createEmptyDictOptions,
   createEmptySubsystemConfigOptions,
@@ -71,7 +67,6 @@ import {
   useHuatuoColumns,
   useInterceptionColumns,
   useObservationColumns,
-  useSubsystemConfigColumns,
   useTestCaseColumns,
 } from './data';
 
@@ -105,7 +100,6 @@ const dictOptions = reactive(createEmptyDictOptions());
 const subsystemConfigOptions = reactive(createEmptySubsystemConfigOptions());
 const failureModeDrawerRef = ref<any>();
 const masterDrawerRef = ref<any>();
-const subsystemConfigDrawerRef = ref<any>();
 
 const failureModeFilters = reactive({
   author_keyword: '',
@@ -114,7 +108,6 @@ const failureModeFilters = reactive({
   status: [] as string[],
   subsystem: [] as string[],
 });
-const subsystemConfigFilters = reactive({ keyword: '' });
 const interceptionFilters = reactive({ keyword: '', owner_keyword: '' });
 const handlingMeasureFilters = reactive({
   owner_keyword: '',
@@ -217,14 +210,6 @@ const [FailureModeGrid, failureModeGridApi] = useZqTable<FailureModeItem>({
   },
 });
 
-const [SubsystemConfigGrid, subsystemConfigGridApi] = createKeywordGrid(
-  useSubsystemConfigColumns(),
-  listFailureModeSubsystemConfigsApi,
-  () => ({
-    keyword: normalizeQueryValue(subsystemConfigFilters.keyword),
-  }),
-);
-
 const [InterceptionGrid, interceptionGridApi] = createKeywordGrid(
   useInterceptionColumns(),
   listInterceptionStrategiesApi,
@@ -321,9 +306,6 @@ async function reloadGridAtFirstPage(
 const scheduleFailureModeReload = useDebounceFn(() => {
   void reloadGridAtFirstPage(failureModeGridApi);
 }, 250);
-const scheduleSubsystemConfigReload = useDebounceFn(() => {
-  void reloadGridAtFirstPage(subsystemConfigGridApi);
-}, 250);
 const scheduleInterceptionReload = useDebounceFn(() => {
   void reloadGridAtFirstPage(interceptionGridApi);
 }, 250);
@@ -342,10 +324,6 @@ const scheduleTestCaseReload = useDebounceFn(() => {
 
 function commitFailureModeFilters() {
   scheduleFailureModeReload();
-}
-
-function commitSubsystemConfigFilters() {
-  scheduleSubsystemConfigReload();
 }
 
 function commitInterceptionFilters() {
@@ -411,10 +389,6 @@ async function reloadMasterGrid(kind: FailureModeTabKey | MasterResourceKind) {
     }
     case 'observation': {
       await observationGridApi.reload();
-      break;
-    }
-    case 'subsystemConfig': {
-      await subsystemConfigGridApi.reload();
       break;
     }
     default: {
@@ -497,34 +471,6 @@ async function handleFailureModeAction(
   }
 }
 
-async function handleSubsystemConfigAction(
-  action: 'delete' | 'edit',
-  row: FailureModeSubsystemConfigItem,
-) {
-  try {
-    if (action === 'edit') {
-      subsystemConfigDrawerRef.value?.openEdit(row.id);
-      return;
-    }
-    await ElMessageBox.confirm('确认删除该子系统配置吗？', '删除确认', {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-      type: 'warning',
-    });
-    await deleteFailureModeSubsystemConfigApi(row.id);
-    ElMessage.success('删除成功');
-    await Promise.all([
-      subsystemConfigGridApi.reload(),
-      failureModeGridApi.reload(),
-      loadBaseOptions(),
-    ]);
-  } catch (error) {
-    if (error !== 'cancel') {
-      console.error(error);
-    }
-  }
-}
-
 async function handleMasterAction(
   kind: MasterResourceKind,
   action: 'delete' | 'edit',
@@ -545,14 +491,6 @@ async function handleMasterAction(
 
 async function handleFailureModeSaved() {
   await Promise.all([failureModeGridApi.reload(), loadBaseOptions()]);
-}
-
-async function handleSubsystemConfigSaved() {
-  await Promise.all([
-    subsystemConfigGridApi.reload(),
-    failureModeGridApi.reload(),
-    loadBaseOptions(),
-  ]);
 }
 
 async function handleMasterSaved(payload: { kind: MasterResourceKind }) {
@@ -607,10 +545,6 @@ onMounted(async () => {
       ref="masterDrawerRef"
       :dict-options="dictOptions"
       @success="handleMasterSaved"
-    />
-    <SubsystemConfigDrawer
-      ref="subsystemConfigDrawerRef"
-      @success="handleSubsystemConfigSaved"
     />
 
     <div class="flex h-full flex-col">
@@ -815,74 +749,6 @@ onMounted(async () => {
                     </div>
                   </template>
                 </FailureModeGrid>
-              </div>
-            </section>
-          </ElTabPane>
-
-          <ElTabPane label="子系统配置" lazy name="subsystemConfig">
-            <section class="flex h-full min-h-0 flex-col">
-              <div class="min-h-0 flex-1">
-                <SubsystemConfigGrid class="h-full">
-                  <template #toolbar-actions>
-                    <ElButton
-                      type="primary"
-                      @click="subsystemConfigDrawerRef?.openCreate()"
-                    >
-                      新增子系统配置
-                    </ElButton>
-                  </template>
-
-                  <template #header-subsystem-config-keyword>
-                    <div class="failure-mode-header-filter" @click.stop>
-                      <span class="failure-mode-header-filter__label">
-                        子系统
-                      </span>
-                      <ElInput
-                        v-model="subsystemConfigFilters.keyword"
-                        class="failure-mode-header-filter__input"
-                        clearable
-                        placeholder="搜索子系统 / 模块 / 芯片"
-                        size="small"
-                        @change="commitSubsystemConfigFilters"
-                        @clear="commitSubsystemConfigFilters"
-                        @keyup.enter="commitSubsystemConfigFilters"
-                      />
-                    </div>
-                  </template>
-
-                  <template #cell-module_options="{ row }">
-                    {{ formatTextList(row.module_options) || '-' }}
-                  </template>
-                  <template #cell-chip_options="{ row }">
-                    {{ formatTextList(row.chip_options) || '-' }}
-                  </template>
-                  <template #cell-actions="{ row }">
-                    <div class="flex justify-center gap-1">
-                      <ElTooltip content="编辑" placement="top">
-                        <ElButton
-                          circle
-                          link
-                          size="small"
-                          type="primary"
-                          @click="handleSubsystemConfigAction('edit', row)"
-                        >
-                          <IconifyIcon icon="ep:edit" />
-                        </ElButton>
-                      </ElTooltip>
-                      <ElTooltip content="删除" placement="top">
-                        <ElButton
-                          circle
-                          link
-                          size="small"
-                          type="danger"
-                          @click="handleSubsystemConfigAction('delete', row)"
-                        >
-                          <IconifyIcon icon="ep:delete" />
-                        </ElButton>
-                      </ElTooltip>
-                    </div>
-                  </template>
-                </SubsystemConfigGrid>
               </div>
             </section>
           </ElTabPane>

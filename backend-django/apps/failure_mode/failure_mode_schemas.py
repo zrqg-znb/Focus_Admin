@@ -629,6 +629,9 @@ class FailureModeTaskOutSchema(Schema):
     creator_info: Optional[UserBriefSchema] = None
     assignee_id: Optional[str] = None
     assignee_info: Optional[UserBriefSchema] = None
+    current_processor_id: Optional[str] = None
+    current_processor_info: Optional[UserBriefSchema] = None
+    available_actions: list[str] = Field(default_factory=list)
     review_result: str = ''
     review_minutes_html: str = ''
     review_attachment_ids: list[str] = Field(default_factory=list)
@@ -656,6 +659,12 @@ class FailureModeTaskUpdateSchema(Schema):
 
 class TaskReassignSchema(Schema):
     assignee_id: str
+
+class TaskRecallSchema(Schema):
+    reason: str = ''
+
+class TaskRejectSchema(Schema):
+    reason: str
 
 class TaskCloseSchema(Schema):
     review_result: str = 'approved'

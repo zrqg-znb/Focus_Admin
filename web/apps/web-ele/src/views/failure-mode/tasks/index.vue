@@ -91,7 +91,8 @@ const [TaskGrid, taskGridApi] = useZqTable<FailureModeTaskItem>({
           const filtered = rows.filter((item) => {
             if (
               activeScope.value === 'todo' &&
-              (item.assignee_id !== currentUserId || item.status === 'CLOSED')
+              (item.current_processor_id !== currentUserId ||
+                item.status === 'CLOSED')
             ) {
               return false;
             }
@@ -123,6 +124,7 @@ const [TaskGrid, taskGridApi] = useZqTable<FailureModeTaskItem>({
               item.subsystem,
               ...getUserNames(item.creator_info),
               ...getUserNames(item.assignee_info),
+              ...getUserNames(item.current_processor_info),
             ]
               .filter(Boolean)
               .some((value) =>
@@ -151,7 +153,8 @@ const scopeCounts = computed(() => ({
   created: taskRows.value.filter((item) => item.creator_id === currentUserId)
     .length,
   todo: taskRows.value.filter(
-    (item) => item.assignee_id === currentUserId && item.status !== 'CLOSED',
+    (item) =>
+      item.current_processor_id === currentUserId && item.status !== 'CLOSED',
   ).length,
 }));
 
@@ -270,6 +273,9 @@ function handleOpenTask(row: FailureModeTaskItem) {
           </template>
           <template #cell-assignee="{ row }">
             <span>{{ formatUserNames(row.assignee_info) }}</span>
+          </template>
+          <template #cell-current-processor="{ row }">
+            <span>{{ formatUserNames(row.current_processor_info) }}</span>
           </template>
           <template #cell-actions="{ row }">
             <ElButton

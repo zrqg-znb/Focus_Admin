@@ -184,7 +184,31 @@ def _serialize_product_failure_mode(item: ProductFailureMode) -> dict[str, Any]:
     }
 
 
-def _serialize_task(task: FailureModeTask) -> dict[str, Any]:
+def _build_task_available_actions(
+    task: FailureModeTask,
+    policy: 'FailureModeAccessPolicy',
+) -> list[str]:
+    actions: list[str] = []
+    if task.status == 'CREATED' and policy.can_accept_task(task):
+        actions.append('accept')
+    if task.status == 'PROCESSING' and policy.can_process_task(task):
+        actions.extend(['bind', 'submit'])
+        if task.task_type != 'DELETE':
+            actions.append('quick_create')
+        if task.task_type == 'REVISE':
+            actions.append('edit_draft')
+    if task.status in {'CREATED', 'PROCESSING'} and policy.can_reassign_task(task):
+        actions.append('reassign')
+    if task.status == 'REVIEWING' and policy.can_recall_task(task):
+        actions.append('recall')
+    if task.status == 'REVIEWING' and policy.can_reject_task(task):
+        actions.append('reject')
+    if task.status == 'REVIEWING' and policy.can_close_task(task):
+        actions.append('close')
+    return actions
+
+
+def _serialize_task(task: FailureModeTask, policy: 'FailureModeAccessPolicy') -> dict[str, Any]:
     return {
         'id': str(task.id),
         'task_no': task.task_no,
@@ -198,6 +222,9 @@ def _serialize_task(task: FailureModeTask) -> dict[str, Any]:
         'creator_info': _format_user(task.creator),
         'assignee_id': str(task.assignee_id) if task.assignee_id else None,
         'assignee_info': _format_user(task.assignee),
+        'current_processor_id': str(task.current_processor_id) if task.current_processor_id else None,
+        'current_processor_info': _format_user(task.current_processor),
+        'available_actions': _build_task_available_actions(task, policy),
         'review_result': task.review_result or '',
         'review_minutes_html': task.review_minutes_html or '',
         'review_attachment_ids': task.review_attachment_ids or [],
@@ -289,7 +316,7 @@ class FailureModeAccessPolicy:
     def filter_tasks(self, queryset):
         if self.is_admin:
             return queryset
-        query = Q(assignee=self.user)
+        query = Q(assignee=self.user) | Q(current_processor=self.user)
         if self.version_product_ids:
             query |= Q(product_id__in=list(self.version_product_ids))
         scope_q = self._scope_q('product_id', 'subsystem')
@@ -314,18 +341,26 @@ class FailureModeAccessPolicy:
             return True
         if task.assignee_id and str(task.assignee_id) == self.user_id:
             return True
+        if task.current_processor_id and str(task.current_processor_id) == self.user_id:
+            return True
         if str(task.product_id) in self.version_product_ids:
             return True
         return (str(task.product_id), task.subsystem or '') in self.scope_pairs
 
     def can_accept_task(self, task: FailureModeTask) -> bool:
-        return self.is_admin or (task.assignee_id and str(task.assignee_id) == self.user_id)
+        return bool(task.assignee_id and str(task.assignee_id) == self.user_id)
 
     def can_process_task(self, task: FailureModeTask) -> bool:
-        return self.can_accept_task(task)
+        return bool(task.assignee_id and str(task.assignee_id) == self.user_id)
+
+    def can_recall_task(self, task: FailureModeTask) -> bool:
+        return bool(task.assignee_id and str(task.assignee_id) == self.user_id)
+
+    def can_reject_task(self, task: FailureModeTask) -> bool:
+        return self.is_admin or str(task.product_id) in self.version_product_ids
 
     def can_close_task(self, task: FailureModeTask) -> bool:
-        return self.is_admin or str(task.product_id) in self.version_product_ids
+        return self.can_reject_task(task)
 
     def can_reassign_task(self, task: FailureModeTask) -> bool:
         return self.can_close_task(task)
@@ -575,6 +610,7 @@ class TaskWorkflowService:
             'product__owner',
             'creator',
             'assignee',
+            'current_processor',
         )
 
     @classmethod
@@ -765,7 +801,7 @@ class TaskWorkflowService:
             queryset = queryset.filter(status=status)
         if product_id:
             queryset = queryset.filter(product_id=product_id)
-        return [_serialize_task(item) for item in queryset.order_by('-sys_create_datetime')]
+        return [_serialize_task(item, policy) for item in queryset.order_by('-sys_create_datetime')]
 
     @classmethod
     def get_task_detail(cls, user: User, task_id: str) -> dict[str, Any]:
@@ -773,7 +809,7 @@ class TaskWorkflowService:
         policy = FailureModeAccessPolicy(user)
         if not policy.can_view_task(task):
             raise HttpError(403, '无权查看当前任务。')
-        return _serialize_task(task)
+        return _serialize_task(task, policy)
 
     @classmethod
     @transaction.atomic
@@ -808,6 +844,7 @@ class TaskWorkflowService:
             subsystem=subsystem,
             creator=user,
             assignee_id=assignee_id,
+            current_processor_id=assignee_id,
             baseline_snapshot_ids=baseline_ids if task_type == 'REVISE' else [],
             sys_creator=user,
             sys_modifier=user,
@@ -832,11 +869,12 @@ class TaskWorkflowService:
             note='创建任务',
             extra_data={
                 'assignee_id': assignee_id,
+                'assignee_info': _format_user(task.assignee),
                 'baseline_failure_mode_count': len(baseline_ids),
             },
         )
         task = cls._get_task_or_404(str(task.id))
-        return _serialize_task(task)
+        return _serialize_task(task, FailureModeAccessPolicy(user))
 
     @classmethod
     def get_task_failure_modes(cls, user: User, task_id: str) -> list[dict[str, Any]]:
@@ -859,6 +897,7 @@ class TaskWorkflowService:
         from_status = task.status
         task.status = 'PROCESSING'
         task.accepted_at = timezone.now()
+        task.current_processor_id = task.assignee_id
         task.sys_modifier = user
         task.save()
         cls._sync_task_created_failure_mode_status(task)
@@ -870,7 +909,7 @@ class TaskWorkflowService:
             to_status=task.status,
             note='接收任务',
         )
-        return _serialize_task(cls._get_task_or_404(task_id))
+        return _serialize_task(cls._get_task_or_404(task_id), FailureModeAccessPolicy(user))
 
     @classmethod
     @transaction.atomic
@@ -1071,6 +1110,7 @@ class TaskWorkflowService:
         from_status = task.status
         task.status = 'REVIEWING'
         task.submitted_at = timezone.now()
+        task.current_processor_id = task.creator_id
         task.sys_modifier = user
         task.save()
         cls._sync_task_created_failure_mode_status(task)
@@ -1081,8 +1121,84 @@ class TaskWorkflowService:
             from_status=from_status,
             to_status=task.status,
             note='提交评审',
+            extra_data={
+                'from_processor_info': _format_user(task.assignee),
+                'to_processor_info': _format_user(task.creator),
+            },
         )
-        return _serialize_task(cls._get_task_or_404(task_id))
+        return _serialize_task(cls._get_task_or_404(task_id), FailureModeAccessPolicy(user))
+
+    @classmethod
+    @transaction.atomic
+    def recall_task(cls, user: User, task_id: str, reason: str = '') -> dict[str, Any]:
+        task = cls._get_task_or_404(task_id)
+        policy = FailureModeAccessPolicy(user)
+        if not policy.can_recall_task(task):
+            raise HttpError(403, '只有当前任务责任特性SE可以撤回任务。')
+        if task.status != 'REVIEWING':
+            raise HttpError(422, '只有评审中的任务可以撤回。')
+
+        from_status = task.status
+        previous_processor_id = str(task.current_processor_id) if task.current_processor_id else None
+        task.status = 'PROCESSING'
+        task.current_processor_id = task.assignee_id
+        task.sys_modifier = user
+        task.save()
+        cls._sync_task_created_failure_mode_status(task)
+        cls._log(
+            task=task,
+            operator=user,
+            action=FailureModeTaskLog.ACTION_RECALL,
+            from_status=from_status,
+            to_status=task.status,
+            note='撤回评审',
+            extra_data={
+                'reason': _normalize_text(reason),
+                'from_processor_id': previous_processor_id,
+                'to_processor_id': str(task.assignee_id) if task.assignee_id else None,
+                'from_processor_info': _format_user(task.creator),
+                'to_processor_info': _format_user(task.assignee),
+            },
+        )
+        return _serialize_task(cls._get_task_or_404(task_id), FailureModeAccessPolicy(user))
+
+    @classmethod
+    @transaction.atomic
+    def reject_task(cls, user: User, task_id: str, reason: str) -> dict[str, Any]:
+        task = cls._get_task_or_404(task_id)
+        policy = FailureModeAccessPolicy(user)
+        if not policy.can_reject_task(task):
+            raise HttpError(403, '只有主版本SE或管理员可以驳回任务。')
+        if task.status != 'REVIEWING':
+            raise HttpError(422, '只有评审中的任务可以驳回。')
+
+        reason = _normalize_text(reason)
+        if not reason:
+            raise HttpError(422, '驳回原因不能为空。')
+
+        from_status = task.status
+        previous_processor_id = str(task.current_processor_id) if task.current_processor_id else None
+        task.status = 'PROCESSING'
+        task.current_processor_id = task.assignee_id
+        task.sys_modifier = user
+        task.save()
+        cls._sync_task_created_failure_mode_status(task)
+        cls._log(
+            task=task,
+            operator=user,
+            action=FailureModeTaskLog.ACTION_REJECT,
+            from_status=from_status,
+            to_status=task.status,
+            note='评审驳回',
+            extra_data={
+                'reason': reason,
+                'from_processor_id': previous_processor_id,
+                'to_processor_id': str(task.assignee_id) if task.assignee_id else None,
+                'from_processor_info': _format_user(task.creator),
+                'to_processor_info': _format_user(task.assignee),
+            },
+        )
+        return _serialize_task(cls._get_task_or_404(task_id), FailureModeAccessPolicy(user))
 
     @classmethod
     @transaction.atomic
@@ -1116,6 +1232,7 @@ class TaskWorkflowService:
         task.review_attachment_ids = _normalize_id_list(review_attachment_ids)
         task.reviewed_at = timezone.now()
         task.closed_at = task.reviewed_at
+        task.current_processor = None
         task.sys_modifier = user
         task.save()
         cls._sync_task_created_failure_mode_status(task)
@@ -1187,7 +1304,7 @@ class TaskWorkflowService:
                 'baseline_sync_result': baseline_sync_result,
             },
         )
-        return _serialize_task(cls._get_task_or_404(task_id))
+        return _serialize_task(cls._get_task_or_404(task_id), FailureModeAccessPolicy(user))
 
     @classmethod
     @transaction.atomic
@@ -1206,8 +1323,11 @@ class TaskWorkflowService:
             raise HttpError(422, '新的责任人必须是当前产品子系统下的特性SE。')
 
         old_assignee_id = str(task.assignee_id) if task.assignee_id else None
+        old_assignee_info = _format_user(task.assignee)
+        new_assignee = User.objects.filter(id=assignee_id).first()
         from_status = task.status
         task.assignee_id = assignee_id
+        task.current_processor_id = assignee_id
         if from_status == 'PROCESSING' and old_assignee_id != assignee_id:
             task.status = 'CREATED'
             task.accepted_at = None
@@ -1222,9 +1342,14 @@ class TaskWorkflowService:
             from_status=from_status,
             to_status=task.status,
             note='改派责任人',
-            extra_data={'from_assignee_id': old_assignee_id, 'to_assignee_id': assignee_id},
+            extra_data={
+                'from_assignee_id': old_assignee_id,
+                'to_assignee_id': assignee_id,
+                'from_processor_info': old_assignee_info,
+                'to_processor_info': _format_user(new_assignee),
+            },
         )
-        return _serialize_task(cls._get_task_or_404(task_id))
+        return _serialize_task(cls._get_task_or_404(task_id), FailureModeAccessPolicy(user))
 
     @classmethod
     def list_task_logs(cls, user: User, task_id: str) -> list[dict[str, Any]]:

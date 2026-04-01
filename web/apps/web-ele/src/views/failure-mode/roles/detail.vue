@@ -222,7 +222,7 @@ async function handleSave() {
 }
 
 function handleBack() {
-  router.push('/failure-mode/roles');
+  router.push('/failure-mode/config/roles');
 }
 
 void loadData();

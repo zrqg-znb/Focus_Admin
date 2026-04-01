@@ -109,6 +109,13 @@ export function useTaskColumns(): ZqTableGridOptions<FailureModeTaskItem>['colum
       cellSlotName: 'cell-assignee',
     },
     {
+      key: 'current_processor_info',
+      dataKey: 'current_processor_info',
+      title: '当前待办人',
+      width: 150,
+      cellSlotName: 'cell-current-processor',
+    },
+    {
       key: 'sys_create_datetime',
       dataKey: 'sys_create_datetime',
       title: '创建时间',

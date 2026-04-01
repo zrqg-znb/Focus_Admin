@@ -49,6 +49,7 @@ LEGACY_MENU_COMPONENTS = [
 OBSOLETE_MENU_REDIRECTS = {
     '/failure-mode/workflow/tasks': '/failure-mode/tasks',
     '/failure-mode/workflow/products': '/failure-mode/products/baselines',
+    '/failure-mode/roles': '/failure-mode/config/roles',
 }
 LEGACY_API_PREFIX = '/api/project-manager/failure-mode'
 TARGET_API_PREFIX = '/api/failure-mode'
@@ -142,14 +143,43 @@ MENU_SEEDS = [
         keep_alive=True,
     ),
     MenuSeed(
-        key='failure_mode_roles',
+        key='failure_mode_config',
         parent_key='failure_mode',
+        name='FailureModeConfigCatalog',
+        title='配置管理',
+        path='/failure-mode/config',
+        component=None,
+        menu_type='catalog',
+        order=5,
+        auth_code='failure-mode',
+        icon='lucide:settings-2',
+        hide_in_menu=False,
+        keep_alive=True,
+        redirect='/failure-mode/config/subsystems',
+    ),
+    MenuSeed(
+        key='failure_mode_subsystems',
+        parent_key='failure_mode_config',
+        name='FailureModeSubsystemConfig',
+        title='子系统配置',
+        path='/failure-mode/config/subsystems',
+        component='/failure-mode/config/subsystems/index',
+        menu_type='menu',
+        order=1,
+        auth_code='failure-mode',
+        icon='lucide:blocks',
+        hide_in_menu=False,
+        keep_alive=True,
+    ),
+    MenuSeed(
+        key='failure_mode_roles',
+        parent_key='failure_mode_config',
         name='FailureModeRoles',
         title='角色配置',
-        path='/failure-mode/roles',
+        path='/failure-mode/config/roles',
         component='/failure-mode/roles/index',
         menu_type='menu',
-        order=5,
+        order=2,
         auth_code='failure-mode:roles',
         icon='lucide:shield-check',
         hide_in_menu=False,
@@ -157,15 +187,15 @@ MENU_SEEDS = [
     ),
     MenuSeed(
         key='failure_mode_roles_detail',
-        parent_key='failure_mode',
+        parent_key='failure_mode_config',
         name='FailureModeRoleDetail',
         title='角色配置详情',
-        path='/failure-mode/roles/detail/:id',
+        path='/failure-mode/config/roles/detail/:id',
         component='/failure-mode/roles/detail',
         menu_type='menu',
         order=91,
         auth_code='failure-mode:roles',
-        active_path='/failure-mode/roles',
+        active_path='/failure-mode/config/roles',
         hide_in_menu=True,
         keep_alive=False,
         inherit_parent_roles=False,
@@ -261,6 +291,10 @@ class Command(BaseCommand):
             return '/failure-mode'
         if path in OBSOLETE_MENU_REDIRECTS:
             return OBSOLETE_MENU_REDIRECTS[path]
+        if path.startswith('/failure-mode/roles/detail'):
+            return '/failure-mode/config/roles/detail/:id'
+        if path.startswith('/failure-mode/roles'):
+            return '/failure-mode/config/roles'
         if path.startswith('/failure-mode/workflow/tasks'):
             return '/failure-mode/tasks'
         if path.startswith('/failure-mode/workflow/products'):

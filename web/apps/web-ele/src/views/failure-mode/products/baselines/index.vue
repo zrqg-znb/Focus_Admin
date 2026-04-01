@@ -101,7 +101,7 @@ function handleGoRoleConfig() {
   if (!selectedProductId.value) {
     return;
   }
-  router.push(`/failure-mode/roles/detail/${selectedProductId.value}`);
+  router.push(`/failure-mode/config/roles/detail/${selectedProductId.value}`);
 }
 
 onMounted(() => {

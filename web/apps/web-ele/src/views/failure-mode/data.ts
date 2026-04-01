@@ -37,7 +37,6 @@ export type FailureModeTabKey =
 export const failureModeTabs: Array<{ key: FailureModeTabKey; label: string }> =
   [
     { key: 'failureMode', label: '故障模式' },
-    { key: 'subsystemConfig', label: '子系统配置' },
     { key: 'interception', label: '产线拦截策略' },
     { key: 'measure', label: '故障处理措施' },
     { key: 'observation', label: '维测手段' },
@@ -1018,7 +1017,7 @@ export function formatRelationLabels(items?: RelationLike[]) {
 export function formatFailureModeSourceLabel(item: {
   source_type?: null | string;
 }) {
-  return item.source_type === 'task_quick_create' ? '本任务新增' : '已有全局库';
+  return item.source_type === 'task_quick_create' ? '任务新增' : '手动维护';
 }
 
 export function formatFailureModeSourceHint(item: {

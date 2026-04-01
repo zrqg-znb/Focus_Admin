@@ -57,7 +57,8 @@ export interface ProductRoleAssignmentSaveItem {
   subsystem: string;
 }
 
-export type TaskUserInfo = UserBriefInfo | UserBriefInfo[];
+type RawTaskUserInfo = null | UserBriefInfo | UserBriefInfo[];
+export type TaskUserInfo = null | UserBriefInfo;
 
 export interface FailureModeTaskItem {
   id: string;
@@ -72,6 +73,9 @@ export interface FailureModeTaskItem {
   creator_info?: null | TaskUserInfo;
   assignee_id?: null | string;
   assignee_info?: null | TaskUserInfo;
+  current_processor_id?: null | string;
+  current_processor_info?: null | TaskUserInfo;
+  available_actions: string[];
   review_result: string;
   review_minutes_html: string;
   review_attachment_ids: string[];
@@ -107,6 +111,50 @@ export interface TaskClosePayload {
   review_result?: string;
   review_minutes_html: string;
   review_attachment_ids?: string[];
+}
+
+export interface TaskRecallPayload {
+  reason?: string;
+}
+
+export interface TaskRejectPayload {
+  reason: string;
+}
+
+function normalizeUserInfo(value?: RawTaskUserInfo) {
+  if (!value) {
+    return null;
+  }
+  const item = Array.isArray(value) ? value[0] : value;
+  if (!item) {
+    return null;
+  }
+  return {
+    id: item.id,
+    name: item.name,
+    username: item.username,
+  } satisfies UserBriefInfo;
+}
+
+function normalizeTaskItem(item: FailureModeTaskItem): FailureModeTaskItem {
+  return {
+    ...item,
+    available_actions: item.available_actions || [],
+    assignee_info: normalizeUserInfo(item.assignee_info as RawTaskUserInfo),
+    creator_info: normalizeUserInfo(item.creator_info as RawTaskUserInfo),
+    current_processor_info: normalizeUserInfo(
+      item.current_processor_info as RawTaskUserInfo,
+    ),
+  };
+}
+
+function normalizeTaskLogItem(
+  item: FailureModeTaskLogItem,
+): FailureModeTaskLogItem {
+  return {
+    ...item,
+    operator_info: normalizeUserInfo(item.operator_info as RawTaskUserInfo),
+  };
 }
 
 export function listProductsApi(params?: { owner_id?: string }) {
@@ -159,29 +207,29 @@ export function listTasksApi(params?: {
   product_id?: string;
   status?: string;
 }) {
-  return requestClient.get<FailureModeTaskItem[]>(
-    '/api/failure-mode/workflow/tasks',
-    { params },
-  );
+  return requestClient
+    .get<FailureModeTaskItem[]>('/api/failure-mode/workflow/tasks', { params })
+    .then((rows) => rows.map((item) => normalizeTaskItem(item)));
 }
 
 export function getTaskApi(taskId: string) {
-  return requestClient.get<FailureModeTaskItem>(
-    `/api/failure-mode/workflow/tasks/${taskId}`,
-  );
+  return requestClient
+    .get<FailureModeTaskItem>(`/api/failure-mode/workflow/tasks/${taskId}`)
+    .then(normalizeTaskItem);
 }
 
 export function createTaskApi(data: FailureModeTaskCreatePayload) {
-  return requestClient.post<FailureModeTaskItem>(
-    '/api/failure-mode/workflow/tasks',
-    data,
-  );
+  return requestClient
+    .post<FailureModeTaskItem>('/api/failure-mode/workflow/tasks', data)
+    .then(normalizeTaskItem);
 }
 
 export function acceptTaskApi(taskId: string) {
-  return requestClient.post<FailureModeTaskItem>(
-    `/api/failure-mode/workflow/tasks/${taskId}/accept`,
-  );
+  return requestClient
+    .post<FailureModeTaskItem>(
+      `/api/failure-mode/workflow/tasks/${taskId}/accept`,
+    )
+    .then(normalizeTaskItem);
 }
 
 export function getTaskFailureModesApi(taskId: string) {
@@ -231,27 +279,53 @@ export function quickCreateTaskFailureModeApi(
 }
 
 export function submitTaskApi(taskId: string) {
-  return requestClient.post<FailureModeTaskItem>(
-    `/api/failure-mode/workflow/tasks/${taskId}/submit`,
-  );
+  return requestClient
+    .post<FailureModeTaskItem>(
+      `/api/failure-mode/workflow/tasks/${taskId}/submit`,
+    )
+    .then(normalizeTaskItem);
+}
+
+export function recallTaskApi(taskId: string, data: TaskRecallPayload = {}) {
+  return requestClient
+    .post<FailureModeTaskItem>(
+      `/api/failure-mode/workflow/tasks/${taskId}/recall`,
+      data,
+    )
+    .then(normalizeTaskItem);
+}
+
+export function rejectTaskApi(taskId: string, data: TaskRejectPayload) {
+  return requestClient
+    .post<FailureModeTaskItem>(
+      `/api/failure-mode/workflow/tasks/${taskId}/reject`,
+      data,
+    )
+    .then(normalizeTaskItem);
 }
 
 export function closeTaskApi(taskId: string, data: TaskClosePayload) {
-  return requestClient.post<FailureModeTaskItem>(
-    `/api/failure-mode/workflow/tasks/${taskId}/close`,
-    data,
-  );
+  return requestClient
+    .post<FailureModeTaskItem>(
+      `/api/failure-mode/workflow/tasks/${taskId}/close`,
+      data,
+    )
+    .then(normalizeTaskItem);
 }
 
 export function reassignTaskApi(taskId: string, assignee_id: string) {
-  return requestClient.post<FailureModeTaskItem>(
-    `/api/failure-mode/workflow/tasks/${taskId}/reassign`,
-    { assignee_id },
-  );
+  return requestClient
+    .post<FailureModeTaskItem>(
+      `/api/failure-mode/workflow/tasks/${taskId}/reassign`,
+      { assignee_id },
+    )
+    .then(normalizeTaskItem);
 }
 
 export function listTaskLogsApi(taskId: string) {
-  return requestClient.get<FailureModeTaskLogItem[]>(
-    `/api/failure-mode/workflow/tasks/${taskId}/logs`,
-  );
+  return requestClient
+    .get<
+      FailureModeTaskLogItem[]
+    >(`/api/failure-mode/workflow/tasks/${taskId}/logs`)
+    .then((rows) => rows.map((item) => normalizeTaskLogItem(item)));
 }

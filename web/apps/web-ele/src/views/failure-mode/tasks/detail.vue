@@ -17,13 +17,13 @@ import { computed, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
-import { useUserStore } from '@vben/stores';
 
 import {
   ElButton,
   ElEmpty,
   ElInput,
   ElMessage,
+  ElMessageBox,
   ElOption,
   ElSelect,
   ElStep,
@@ -51,6 +51,8 @@ import {
   listTaskLogsApi,
   quickCreateTaskFailureModeApi,
   reassignTaskApi,
+  recallTaskApi,
+  rejectTaskApi,
   saveTaskFailureModeDraftApi,
   submitTaskApi,
 } from '#/api/failure_mode_workflow';
@@ -83,8 +85,6 @@ const TASK_CHANGE_TYPE_LABEL_MAP: Record<string, string> = {
 
 const route = useRoute();
 const router = useRouter();
-const userStore = useUserStore();
-const currentUserId = userStore.userInfo?.id;
 
 const taskId = computed(() => String(route.params.id || ''));
 const loading = ref(false);
@@ -120,36 +120,25 @@ const activeStep = computed(() => {
 
 const isReviseTask = computed(() => currentTask.value?.task_type === 'REVISE');
 const isDeleteTask = computed(() => currentTask.value?.task_type === 'DELETE');
+const availableActions = computed(
+  () => new Set(currentTask.value?.available_actions || []),
+);
 
-const canAccept = computed(() => {
-  return (
-    currentTask.value?.status === 'CREATED' &&
-    currentTask.value.assignee_id === currentUserId
-  );
-});
-
-const canEdit = computed(() => {
-  return (
-    currentTask.value?.status === 'PROCESSING' &&
-    currentTask.value.assignee_id === currentUserId
-  );
-});
-
-const canSubmit = computed(() => canEdit.value);
-
-const canReassign = computed(() => {
-  return (
-    currentTask.value?.status === 'CREATED' ||
-    currentTask.value?.status === 'PROCESSING'
-  );
-});
-
-const canClose = computed(() => currentTask.value?.status === 'REVIEWING');
+const canAccept = computed(() => availableActions.value.has('accept'));
+const canEdit = computed(() => availableActions.value.has('bind'));
+const canSubmit = computed(() => availableActions.value.has('submit'));
+const canReassign = computed(() => availableActions.value.has('reassign'));
+const canRecall = computed(() => availableActions.value.has('recall'));
+const canReject = computed(() => availableActions.value.has('reject'));
+const canClose = computed(() => availableActions.value.has('close'));
 const isClosed = computed(() => currentTask.value?.status === 'CLOSED');
 
 const canManageBinding = computed(() => canEdit.value && !isDeleteTask.value);
-const canQuickCreate = computed(() => canEdit.value && !isDeleteTask.value);
+const canQuickCreate = computed(
+  () => availableActions.value.has('quick_create') && !isDeleteTask.value,
+);
 const canSelectDelete = computed(() => canEdit.value && isDeleteTask.value);
+const canEditDraft = computed(() => availableActions.value.has('edit_draft'));
 
 const selectedDeleteRows = computed(() =>
   boundFailureModes.value.filter(
@@ -191,6 +180,16 @@ const workbenchSummary = computed(() => {
     return `当前工作集 ${boundFailureModes.value.length} 条，其中已修订 ${editedCount} 条`;
   }
   return `当前工作集 ${boundFailureModes.value.length} 条，可继续绑定已有故障模式或快速新增`;
+});
+
+const latestReviewFeedback = computed(() => {
+  const record = taskLogs.value.find((item) =>
+    ['recall', 'reject'].includes(item.action),
+  );
+  if (!record) {
+    return '-';
+  }
+  return record.extra_data?.reason || record.note || '-';
 });
 
 const workbenchColumns = useFailureModeColumns().map((column) =>
@@ -272,6 +271,20 @@ const [BaselineGrid, baselineGridApi] = useZqTable<ProductFailureModeItem>({
   },
 });
 
+const TASK_LOG_ACTION_LABEL_MAP: Record<string, string> = {
+  accept: '接收任务',
+  bind_failure_modes: '维护任务工作集',
+  close: '评审关闭',
+  create: '创建任务',
+  delete_draft: '撤销修订草稿',
+  quick_create_failure_mode: '任务内快速新增故障模式',
+  recall: '撤回评审',
+  reassign: '改派责任人',
+  reject: '评审驳回',
+  save_draft: '保存修订草稿',
+  submit: '提交评审',
+};
+
 function formatUserName(
   user?:
     | null
@@ -307,6 +320,10 @@ function getTaskLogColor(item: FailureModeTaskLogItem) {
     return '#2563eb';
   }
   return '#94a3b8';
+}
+
+function getTaskLogTitle(item: FailureModeTaskLogItem) {
+  return TASK_LOG_ACTION_LABEL_MAP[item.action] || item.note || item.action;
 }
 
 function getTaskChangeLabel(row: FailureModeItem) {
@@ -475,6 +492,61 @@ async function handleSubmitTask() {
   }
 }
 
+async function handleRecallTask() {
+  if (!currentTask.value) {
+    return;
+  }
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '如有需要可补充撤回说明，留空也可继续撤回。',
+      '撤回评审',
+      {
+        confirmButtonText: '确认撤回',
+        inputPlaceholder: '请输入撤回说明（选填）',
+      },
+    );
+    actionLoading.value = true;
+    await recallTaskApi(currentTask.value.id, { reason: value || '' });
+    ElMessage.success('任务已撤回到梳理阶段');
+    activeTab.value = 'workbench';
+    await loadTaskContext();
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      throw error;
+    }
+  } finally {
+    actionLoading.value = false;
+  }
+}
+
+async function handleRejectTask() {
+  if (!currentTask.value) {
+    return;
+  }
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '请输入驳回原因，任务会退回给特性 SE 继续修订。',
+      '驳回任务',
+      {
+        confirmButtonText: '确认驳回',
+        inputPlaceholder: '请输入驳回原因',
+        inputValidator: (value) => (value.trim() ? true : '驳回原因不能为空'),
+      },
+    );
+    actionLoading.value = true;
+    await rejectTaskApi(currentTask.value.id, { reason: value.trim() });
+    ElMessage.success('任务已驳回');
+    activeTab.value = 'flow';
+    await loadTaskContext();
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      throw error;
+    }
+  } finally {
+    actionLoading.value = false;
+  }
+}
+
 async function handleReassignTask() {
   if (!currentTask.value || !reassignUserId.value) {
     return;
@@ -549,7 +621,7 @@ watch(
             </div>
 
             <div
-              class="mb-3 grid grid-cols-1 gap-x-4 gap-y-2 text-sm text-gray-600 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5"
+              class="mb-3 grid grid-cols-1 gap-x-4 gap-y-2 text-sm text-gray-600 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4"
             >
               <div
                 class="col-span-1 flex items-center sm:col-span-2 md:col-span-3 xl:col-span-2"
@@ -597,6 +669,20 @@ watch(
                   {{ formatUserName(currentTask?.assignee_info) }}
                 </span>
               </div>
+              <div class="flex items-center">
+                <span class="w-20 shrink-0 text-gray-400">当前待办：</span>
+                <span class="truncate font-medium text-gray-900">
+                  {{ formatUserName(currentTask?.current_processor_info) }}
+                </span>
+              </div>
+              <div
+                class="col-span-1 flex items-start sm:col-span-2 md:col-span-3 xl:col-span-4"
+              >
+                <span class="w-20 shrink-0 text-gray-400">最近反馈：</span>
+                <span class="text-sm font-medium text-gray-900">
+                  {{ latestReviewFeedback }}
+                </span>
+              </div>
             </div>
 
             <div class="flex w-full justify-center">
@@ -627,7 +713,14 @@ watch(
             </div>
 
             <div
-              v-if="canAccept || canReassign || canSubmit || canClose"
+              v-if="
+                canAccept ||
+                canReassign ||
+                canSubmit ||
+                canRecall ||
+                canReject ||
+                canClose
+              "
               class="mt-4 flex flex-col gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 xl:flex-row xl:items-center xl:justify-between"
             >
               <div class="min-w-0">
@@ -638,11 +731,15 @@ watch(
                   {{
                     canClose
                       ? '填写评审纪要并完成关闭。'
-                      : canSubmit
-                        ? '完成工作集确认后提交版本 SE 进入评审。'
-                        : canAccept
-                          ? '责任人接收任务后进入梳理工作台。'
-                          : '需要时可在这里改派责任人。'
+                      : canReject
+                        ? '版本 SE 组织评审后，可驳回任务继续修订或直接关闭。'
+                        : canRecall
+                          ? '提交评审后如发现问题，可撤回到梳理阶段继续完善。'
+                          : canSubmit
+                            ? '完成工作集确认后提交版本 SE 进入评审。'
+                            : canAccept
+                              ? '责任人接收任务后进入梳理工作台。'
+                              : '需要时可在这里改派责任人。'
                   }}
                 </div>
               </div>
@@ -651,7 +748,7 @@ watch(
                 <template v-if="canReassign">
                   <ElSelect
                     v-model="reassignUserId"
-                    class="w-[168px]"
+                    class="w-[136px]"
                     filterable
                     placeholder="选择责任人"
                   >
@@ -687,6 +784,24 @@ watch(
                   @click="handleSubmitTask"
                 >
                   提交评审
+                </ElButton>
+                <ElButton
+                  v-if="canRecall"
+                  plain
+                  type="warning"
+                  :loading="actionLoading"
+                  @click="handleRecallTask"
+                >
+                  撤回评审
+                </ElButton>
+                <ElButton
+                  v-if="canReject"
+                  plain
+                  type="danger"
+                  :loading="actionLoading"
+                  @click="handleRejectTask"
+                >
+                  驳回任务
                 </ElButton>
                 <ElButton
                   v-if="canClose"
@@ -801,7 +916,7 @@ watch(
 
                   <template #cell-actions="{ row }">
                     <div
-                      v-if="isReviseTask && canEdit"
+                      v-if="isReviseTask && canEditDraft"
                       class="flex items-center justify-center gap-2"
                     >
                       <ElButton
@@ -841,26 +956,49 @@ watch(
                     :timestamp="item.sys_create_datetime || '-'"
                     placement="top"
                   >
-                    <div class="rounded-xl border bg-white p-4 shadow-sm">
-                      <div class="font-medium text-gray-900">
-                        {{ item.note || item.action }}
+                    <div
+                      class="rounded-2xl border border-gray-200 bg-gradient-to-br from-white to-gray-50 p-4 shadow-sm"
+                    >
+                      <div class="flex flex-wrap items-center gap-2">
+                        <div class="font-medium text-gray-900">
+                          {{ getTaskLogTitle(item) }}
+                        </div>
+                        <div class="text-xs text-gray-400">
+                          {{
+                            FM_TASK_STATUS_LABEL_MAP[item.from_status] ||
+                            item.from_status ||
+                            '-'
+                          }}
+                          ->
+                          {{
+                            FM_TASK_STATUS_LABEL_MAP[item.to_status] ||
+                            item.to_status ||
+                            '-'
+                          }}
+                        </div>
                       </div>
                       <div class="mt-2 text-sm text-gray-600">
                         操作人：{{ formatUserName(item.operator_info) }}
                       </div>
-                      <div class="mt-1 text-sm text-gray-600">
-                        状态：
+                      <div
+                        v-if="item.extra_data?.reason"
+                        class="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800"
+                      >
+                        说明：{{ item.extra_data.reason }}
+                      </div>
+                      <div
+                        v-if="
+                          item.extra_data?.from_processor_info ||
+                          item.extra_data?.to_processor_info
+                        "
+                        class="mt-2 text-sm text-gray-500"
+                      >
+                        待办流转：
                         {{
-                          FM_TASK_STATUS_LABEL_MAP[item.from_status] ||
-                          item.from_status ||
-                          '-'
+                          formatUserName(item.extra_data?.from_processor_info)
                         }}
                         ->
-                        {{
-                          FM_TASK_STATUS_LABEL_MAP[item.to_status] ||
-                          item.to_status ||
-                          '-'
-                        }}
+                        {{ formatUserName(item.extra_data?.to_processor_info) }}
                       </div>
                     </div>
                   </ElTimelineItem>

@@ -19,7 +19,9 @@ from apps.failure_mode.failure_mode_schemas import (
     SaveSuccessSchema,
     TaskCloseSchema,
     TaskFailureModeBindSchema,
+    TaskRecallSchema,
     TaskReassignSchema,
+    TaskRejectSchema,
     VisibleSubsystemOutSchema,
 )
 from apps.failure_mode.failure_mode_workflow_services import ProductWorkflowService, TaskWorkflowService
@@ -116,6 +118,16 @@ def quick_create_task_failure_mode(request, task_id: str, data: FailureModeCreat
 @router.post('/tasks/{task_id}/submit', response=FailureModeTaskOutSchema, summary='提交任务评审')
 def submit_task(request, task_id: str):
     return TaskWorkflowService.submit_task(request.auth, task_id)
+
+
+@router.post('/tasks/{task_id}/recall', response=FailureModeTaskOutSchema, summary='撤回评审中的任务')
+def recall_task(request, task_id: str, data: TaskRecallSchema):
+    return TaskWorkflowService.recall_task(request.auth, task_id, data.reason)
+
+
+@router.post('/tasks/{task_id}/reject', response=FailureModeTaskOutSchema, summary='驳回评审中的任务')
+def reject_task(request, task_id: str, data: TaskRejectSchema):
+    return TaskWorkflowService.reject_task(request.auth, task_id, data.reason)
 
 
 @router.post('/tasks/{task_id}/close', response=FailureModeTaskOutSchema, summary='评审并关闭任务')
