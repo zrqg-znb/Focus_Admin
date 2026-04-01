@@ -31,6 +31,8 @@ import {
   ElTabPane,
   ElTabs,
   ElTag,
+  ElTimeline,
+  ElTimelineItem,
 } from 'element-plus';
 
 import {
@@ -271,13 +273,40 @@ const [BaselineGrid, baselineGridApi] = useZqTable<ProductFailureModeItem>({
 });
 
 function formatUserName(
-  user?: null | {
-    id?: null | string;
-    name?: null | string;
-    username?: null | string;
-  },
+  user?:
+    | null
+    | {
+        id?: null | string;
+        name?: null | string;
+        username?: null | string;
+      }
+    | {
+        id?: null | string;
+        name?: null | string;
+        username?: null | string;
+      }[],
 ) {
-  return user?.name || user?.username || user?.id || '-';
+  if (!user) {
+    return '-';
+  }
+  const items = Array.isArray(user) ? user : [user];
+  const labels = items
+    .map((item) => item?.name || item?.username || item?.id || '')
+    .filter(Boolean);
+  return labels.length > 0 ? labels.join(' / ') : '-';
+}
+
+function getTaskLogColor(item: FailureModeTaskLogItem) {
+  if (item.to_status === 'CLOSED') {
+    return '#16a34a';
+  }
+  if (item.to_status === 'REVIEWING') {
+    return '#d97706';
+  }
+  if (item.to_status === 'PROCESSING') {
+    return '#2563eb';
+  }
+  return '#94a3b8';
 }
 
 function getTaskChangeLabel(row: FailureModeItem) {
@@ -517,25 +546,6 @@ watch(
                   }}
                 </ElTag>
               </div>
-
-              <div class="flex flex-wrap gap-3">
-                <ElButton
-                  v-if="canAccept"
-                  type="primary"
-                  :loading="actionLoading"
-                  @click="handleAcceptTask"
-                >
-                  接收任务
-                </ElButton>
-                <ElButton
-                  v-if="canClose"
-                  type="success"
-                  :loading="actionLoading"
-                  @click="handleCloseTask"
-                >
-                  评审关闭
-                </ElButton>
-              </div>
             </div>
 
             <div
@@ -615,6 +625,79 @@ watch(
                 />
               </ElSteps>
             </div>
+
+            <div
+              v-if="canAccept || canReassign || canSubmit || canClose"
+              class="mt-4 flex flex-col gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 xl:flex-row xl:items-center xl:justify-between"
+            >
+              <div class="min-w-0">
+                <div class="text-sm font-semibold text-gray-900">
+                  流程操作区
+                </div>
+                <div class="mt-1 text-xs text-gray-500">
+                  {{
+                    canClose
+                      ? '填写评审纪要并完成关闭。'
+                      : canSubmit
+                        ? '完成工作集确认后提交版本 SE 进入评审。'
+                        : canAccept
+                          ? '责任人接收任务后进入梳理工作台。'
+                          : '需要时可在这里改派责任人。'
+                  }}
+                </div>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2">
+                <template v-if="canReassign">
+                  <ElSelect
+                    v-model="reassignUserId"
+                    class="w-[168px]"
+                    filterable
+                    placeholder="选择责任人"
+                  >
+                    <ElOption
+                      v-for="item in assigneeOptions"
+                      :key="item.value"
+                      :label="item.label"
+                      :value="item.value"
+                    />
+                  </ElSelect>
+                  <ElButton
+                    plain
+                    type="warning"
+                    :loading="actionLoading"
+                    @click="handleReassignTask"
+                  >
+                    改派责任人
+                  </ElButton>
+                </template>
+
+                <ElButton
+                  v-if="canAccept"
+                  type="primary"
+                  :loading="actionLoading"
+                  @click="handleAcceptTask"
+                >
+                  接收任务
+                </ElButton>
+                <ElButton
+                  v-if="canSubmit"
+                  type="success"
+                  :loading="actionLoading"
+                  @click="handleSubmitTask"
+                >
+                  提交评审
+                </ElButton>
+                <ElButton
+                  v-if="canClose"
+                  type="success"
+                  :loading="actionLoading"
+                  @click="handleCloseTask"
+                >
+                  评审关闭
+                </ElButton>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -640,32 +723,6 @@ watch(
 
                   <template #toolbar-actions>
                     <div class="flex flex-1 flex-wrap items-center gap-2">
-                      <div class="flex-1"></div>
-
-                      <template v-if="canReassign">
-                        <ElSelect
-                          v-model="reassignUserId"
-                          class="w-[220px]"
-                          filterable
-                          placeholder="请选择新的特性SE"
-                        >
-                          <ElOption
-                            v-for="item in assigneeOptions"
-                            :key="item.value"
-                            :label="item.label"
-                            :value="item.value"
-                          />
-                        </ElSelect>
-                        <ElButton
-                          plain
-                          type="warning"
-                          :loading="actionLoading"
-                          @click="handleReassignTask"
-                        >
-                          改派责任人
-                        </ElButton>
-                      </template>
-
                       <ElButton
                         v-if="canManageBinding"
                         plain
@@ -689,14 +746,6 @@ watch(
                         @click="handleQuickCreateFailureMode"
                       >
                         快速新增故障模式
-                      </ElButton>
-                      <ElButton
-                        v-if="canSubmit"
-                        type="success"
-                        :loading="actionLoading"
-                        @click="handleSubmitTask"
-                      >
-                        提交评审
                       </ElButton>
                     </div>
                   </template>
@@ -783,75 +832,80 @@ watch(
               <div v-if="taskLogs.length === 0" class="py-12">
                 <ElEmpty description="暂无流程记录" />
               </div>
-              <div v-else class="flex-1 space-y-3 overflow-y-auto pb-2 pr-2">
-                <div
-                  v-for="item in taskLogs"
-                  :key="item.id"
-                  class="rounded-xl border bg-gray-50 p-4"
-                >
-                  <div
-                    class="flex flex-wrap items-center justify-between gap-2"
+              <div v-else class="flex-1 overflow-y-auto pr-2">
+                <ElTimeline class="failure-mode-task-detail__timeline">
+                  <ElTimelineItem
+                    v-for="item in taskLogs"
+                    :key="item.id"
+                    :color="getTaskLogColor(item)"
+                    :timestamp="item.sys_create_datetime || '-'"
+                    placement="top"
                   >
-                    <div class="font-medium text-gray-900">
-                      {{ item.note || item.action }}
+                    <div class="rounded-xl border bg-white p-4 shadow-sm">
+                      <div class="font-medium text-gray-900">
+                        {{ item.note || item.action }}
+                      </div>
+                      <div class="mt-2 text-sm text-gray-600">
+                        操作人：{{ formatUserName(item.operator_info) }}
+                      </div>
+                      <div class="mt-1 text-sm text-gray-600">
+                        状态：
+                        {{
+                          FM_TASK_STATUS_LABEL_MAP[item.from_status] ||
+                          item.from_status ||
+                          '-'
+                        }}
+                        ->
+                        {{
+                          FM_TASK_STATUS_LABEL_MAP[item.to_status] ||
+                          item.to_status ||
+                          '-'
+                        }}
+                      </div>
                     </div>
-                    <div class="text-sm text-gray-500">
-                      {{ item.sys_create_datetime || '-' }}
-                    </div>
-                  </div>
-                  <div class="mt-2 text-sm text-gray-600">
-                    操作人：{{ formatUserName(item.operator_info) }}
-                  </div>
-                  <div class="mt-1 text-sm text-gray-600">
-                    状态：
-                    {{
-                      FM_TASK_STATUS_LABEL_MAP[item.from_status] ||
-                      item.from_status ||
-                      '-'
-                    }}
-                    ->
-                    {{
-                      FM_TASK_STATUS_LABEL_MAP[item.to_status] ||
-                      item.to_status ||
-                      '-'
-                    }}
-                  </div>
-                </div>
+                  </ElTimelineItem>
+                </ElTimeline>
               </div>
             </div>
           </ElTabPane>
 
           <ElTabPane label="评审归档" name="review">
             <div class="flex h-full min-h-0 flex-col gap-4">
-              <div class="rounded-xl border border-gray-100 bg-gray-50/50 p-4">
-                <div class="mb-3 text-base font-semibold text-gray-800">
-                  评审纪要
-                </div>
-                <ElInput
-                  v-model="reviewForm.review_minutes_html"
-                  :autosize="{ minRows: 5, maxRows: 10 }"
-                  :disabled="isClosed"
-                  placeholder="请输入评审结论、会议纪要与基线说明"
-                  type="textarea"
-                />
-              </div>
-
               <div
-                class="shrink-0 rounded-xl border border-gray-100 bg-gray-50/50 p-4"
+                class="grid shrink-0 gap-4 xl:grid-cols-[minmax(0,1.1fr)_380px]"
               >
-                <div class="mb-3 text-base font-semibold text-gray-800">
-                  评审附件
-                </div>
                 <div
-                  class="max-h-[160px] overflow-y-auto rounded-lg bg-white p-2 shadow-sm"
+                  class="rounded-xl border border-gray-100 bg-gray-50/50 p-4"
                 >
-                  <FileSelector
-                    v-model="reviewForm.review_attachment_ids"
+                  <div class="mb-3 text-base font-semibold text-gray-800">
+                    评审纪要
+                  </div>
+                  <ElInput
+                    v-model="reviewForm.review_minutes_html"
+                    :autosize="{ minRows: 7, maxRows: 10 }"
                     :disabled="isClosed"
-                    display-mode="list"
-                    multiple
-                    placeholder="点击或拖拽上传评审附件"
+                    placeholder="请输入评审结论、会议纪要与基线说明"
+                    type="textarea"
                   />
+                </div>
+
+                <div
+                  class="rounded-xl border border-gray-100 bg-gray-50/50 p-4"
+                >
+                  <div class="mb-3 text-base font-semibold text-gray-800">
+                    评审附件
+                  </div>
+                  <div
+                    class="max-h-[220px] overflow-y-auto rounded-lg bg-white p-2 shadow-sm"
+                  >
+                    <FileSelector
+                      v-model="reviewForm.review_attachment_ids"
+                      :disabled="isClosed"
+                      display-mode="list"
+                      multiple
+                      placeholder="点击或拖拽上传评审附件"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -904,6 +958,15 @@ watch(
 
 :deep(.failure-mode-task-detail__tabs .el-tab-pane) {
   height: 100%;
+}
+
+:deep(.failure-mode-task-detail__timeline) {
+  padding-left: 8px;
+}
+
+:deep(.failure-mode-task-detail__timeline .el-timeline-item__wrapper) {
+  top: -4px;
+  padding-left: 20px;
 }
 
 :deep(.el-step__title) {

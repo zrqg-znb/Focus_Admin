@@ -45,6 +45,29 @@ const subsystems = ref<string[]>([]);
 const taskRows = ref<FailureModeTaskItem[]>([]);
 const taskCreateDrawerRef = ref<InstanceType<typeof TaskCreateDrawer>>();
 
+function getUserNames(
+  value?:
+    | FailureModeTaskItem['assignee_info']
+    | FailureModeTaskItem['creator_info'],
+) {
+  if (!value) {
+    return [];
+  }
+  const items = Array.isArray(value) ? value : [value];
+  return items
+    .map((item) => item?.name || item?.username || item?.id || '')
+    .filter(Boolean);
+}
+
+function formatUserNames(
+  value?:
+    | FailureModeTaskItem['assignee_info']
+    | FailureModeTaskItem['creator_info'],
+) {
+  const labels = getUserNames(value);
+  return labels.length > 0 ? labels.join(' / ') : '-';
+}
+
 const [TaskGrid, taskGridApi] = useZqTable<FailureModeTaskItem>({
   gridOptions: {
     border: true,
@@ -98,10 +121,8 @@ const [TaskGrid, taskGridApi] = useZqTable<FailureModeTaskItem>({
               item.name,
               item.product_name,
               item.subsystem,
-              item.creator_info?.name,
-              item.creator_info?.username,
-              item.assignee_info?.name,
-              item.assignee_info?.username,
+              ...getUserNames(item.creator_info),
+              ...getUserNames(item.assignee_info),
             ]
               .filter(Boolean)
               .some((value) =>
@@ -245,20 +266,10 @@ function handleOpenTask(row: FailureModeTaskItem) {
             </ElTag>
           </template>
           <template #cell-creator="{ row }">
-            <span>{{
-              row.creator_info?.name ||
-              row.creator_info?.username ||
-              row.creator_info?.id ||
-              '-'
-            }}</span>
+            <span>{{ formatUserNames(row.creator_info) }}</span>
           </template>
           <template #cell-assignee="{ row }">
-            <span>{{
-              row.assignee_info?.name ||
-              row.assignee_info?.username ||
-              row.assignee_info?.id ||
-              '-'
-            }}</span>
+            <span>{{ formatUserNames(row.assignee_info) }}</span>
           </template>
           <template #cell-actions="{ row }">
             <ElButton

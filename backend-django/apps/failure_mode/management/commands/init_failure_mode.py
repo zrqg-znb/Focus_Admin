@@ -113,13 +113,13 @@ MENU_SEEDS = [
     ),
     MenuSeed(
         key='failure_mode_workflow_task_detail',
-        parent_key='failure_mode_workflow_tasks',
+        parent_key='failure_mode',
         name='FailureModeTaskDetail',
         title='任务详情',
         path='/failure-mode/tasks/detail/:id',
         component='/failure-mode/tasks/detail',
         menu_type='menu',
-        order=1,
+        order=90,
         auth_code='failure-mode:workflow-tasks',
         active_path='/failure-mode/tasks',
         hide_in_menu=True,
@@ -157,13 +157,13 @@ MENU_SEEDS = [
     ),
     MenuSeed(
         key='failure_mode_roles_detail',
-        parent_key='failure_mode_roles',
+        parent_key='failure_mode',
         name='FailureModeRoleDetail',
         title='角色配置详情',
         path='/failure-mode/roles/detail/:id',
         component='/failure-mode/roles/detail',
         menu_type='menu',
-        order=1,
+        order=91,
         auth_code='failure-mode:roles',
         active_path='/failure-mode/roles',
         hide_in_menu=True,
@@ -236,10 +236,11 @@ class Command(BaseCommand):
             self.stdout.write(self.style.ERROR('未找到超级管理员，无法初始化菜单权限'))
             return
 
+        snapshots = self._snapshot_relations_before_reset()
+        self._reset_failure_mode_tree()
         menus = self._seed_menus(operator)
         permission_count = self._seed_permissions(menus, operator)
-        self._cleanup_obsolete_menus(menus)
-        self._cleanup_stale_legacy_permissions(menus)
+        self._restore_relations_after_reset(menus, snapshots)
         MenuCacheManager.invalidate_menu_cache()
         PermissionCacheManager.invalidate_permission_cache()
         PermissionCacheManager.invalidate_global_permissions()
@@ -248,6 +249,124 @@ class Command(BaseCommand):
                 f'故障管理模块初始化完成：菜单 {len(menus)} 项，权限 {permission_count} 项。',
             )
         )
+
+    def _seed_permission_rows(self):
+        for items in PERMISSION_SEEDS.values():
+            for item in items:
+                yield item
+
+    def _normalize_menu_path(self, path: str | None):
+        path = path or ''
+        if path in LEGACY_MENU_PATHS:
+            return '/failure-mode'
+        if path in OBSOLETE_MENU_REDIRECTS:
+            return OBSOLETE_MENU_REDIRECTS[path]
+        if path.startswith('/failure-mode/workflow/tasks'):
+            return '/failure-mode/tasks'
+        if path.startswith('/failure-mode/workflow/products'):
+            return '/failure-mode/products/baselines'
+        return path
+
+    def _normalize_permission_code(self, code: str | None):
+        code = (code or '').strip()
+        if not code:
+            return None
+        valid_codes = {item['code'] for item in self._seed_permission_rows()}
+        if code in valid_codes:
+            return code
+        if code.startswith('project_manager:api:failure-mode:statistics:'):
+            suffix = code.removeprefix('project_manager:api:failure-mode:statistics:')
+            normalized = f'failure-mode:statistics:api:{suffix}'
+            return normalized if normalized in valid_codes else None
+        if code.startswith('project_manager:failure-mode:statistics:'):
+            suffix = code.removeprefix('project_manager:failure-mode:statistics:')
+            normalized = f'failure-mode:statistics:{suffix}'
+            return normalized if normalized in valid_codes else None
+        if code.startswith('project_manager:api:failure-mode:'):
+            suffix = code.removeprefix('project_manager:api:failure-mode:')
+            normalized = f'failure-mode:api:{suffix}'
+            return normalized if normalized in valid_codes else None
+        if code.startswith('project_manager:failure-mode:'):
+            suffix = code.removeprefix('project_manager:failure-mode:')
+            normalized = f'failure-mode:{suffix}'
+            return normalized if normalized in valid_codes else None
+        return None
+
+    def _snapshot_relations_before_reset(self):
+        menu_role_map: dict[str, set[str]] = {}
+        permission_role_map: dict[str, set[str]] = {}
+
+        menu_queryset = Menu.objects.filter(
+            Q(path__icontains='failure-mode')
+            | Q(component__icontains='failure-mode')
+            | Q(authCode__startswith='failure-mode')
+            | Q(authCode__startswith='project_manager:failure-mode')
+        ).prefetch_related('core_roles')
+
+        for menu in menu_queryset:
+            normalized_path = self._normalize_menu_path(menu.path)
+            if not normalized_path:
+                continue
+            menu_role_map.setdefault(normalized_path, set()).update(
+                menu.core_roles.values_list('id', flat=True)
+            )
+
+        permission_queryset = Permission.objects.filter(
+            Q(menu__in=menu_queryset)
+            | Q(code__startswith='failure-mode')
+            | Q(code__startswith='project_manager:failure-mode')
+            | Q(code__startswith='project_manager:api:failure-mode')
+            | Q(api_path__startswith=TARGET_API_PREFIX)
+            | Q(api_path__startswith=LEGACY_API_PREFIX)
+        ).prefetch_related('roles')
+        for permission in permission_queryset:
+            normalized_code = self._normalize_permission_code(permission.code)
+            if not normalized_code:
+                continue
+            permission_role_map.setdefault(normalized_code, set()).update(
+                permission.roles.values_list('id', flat=True)
+            )
+
+        return {
+            'menu_roles': menu_role_map,
+            'permission_roles': permission_role_map,
+        }
+
+    def _reset_failure_mode_tree(self):
+        menu_queryset = Menu.objects.filter(
+            Q(path__icontains='failure-mode')
+            | Q(component__icontains='failure-mode')
+            | Q(authCode__startswith='failure-mode')
+            | Q(authCode__startswith='project_manager:failure-mode')
+        )
+        menu_ids = list(menu_queryset.values_list('id', flat=True))
+        Permission.objects.filter(
+            Q(menu_id__in=menu_ids)
+            | Q(code__startswith='failure-mode')
+            | Q(code__startswith='project_manager:failure-mode')
+            | Q(code__startswith='project_manager:api:failure-mode')
+            | Q(api_path__startswith=TARGET_API_PREFIX)
+            | Q(api_path__startswith=LEGACY_API_PREFIX)
+        ).delete()
+        menu_queryset.delete()
+
+    def _restore_relations_after_reset(self, menus: dict[str, Menu], snapshots: dict[str, dict[str, set[str]]]):
+        path_to_menu = {menu.path: menu for menu in menus.values()}
+        for path, role_ids in snapshots.get('menu_roles', {}).items():
+            menu = path_to_menu.get(path)
+            if menu and role_ids:
+                menu.core_roles.add(*role_ids)
+
+        seeded_permissions = {
+            permission.code: permission
+            for permission in Permission.objects.filter(
+                menu_id__in=[menu.id for menu in menus.values()]
+            )
+        }
+        for code, role_ids in snapshots.get('permission_roles', {}).items():
+            permission = seeded_permissions.get(code)
+            if permission and role_ids:
+                permission.roles.add(*role_ids)
 
     def _seed_menus(self, operator: User):
         created: dict[str, Menu] = {}

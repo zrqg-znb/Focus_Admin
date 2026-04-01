@@ -57,6 +57,8 @@ export interface ProductRoleAssignmentSaveItem {
   subsystem: string;
 }
 
+export type TaskUserInfo = UserBriefInfo | UserBriefInfo[];
+
 export interface FailureModeTaskItem {
   id: string;
   task_no: string;
@@ -67,9 +69,9 @@ export interface FailureModeTaskItem {
   product_name: string;
   subsystem: string;
   creator_id?: null | string;
-  creator_info?: null | UserBriefInfo;
+  creator_info?: null | TaskUserInfo;
   assignee_id?: null | string;
-  assignee_info?: null | UserBriefInfo;
+  assignee_info?: null | TaskUserInfo;
   review_result: string;
   review_minutes_html: string;
   review_attachment_ids: string[];
@@ -88,7 +90,7 @@ export interface FailureModeTaskLogItem {
   to_status: string;
   note: string;
   operator_id?: null | string;
-  operator_info?: null | UserBriefInfo;
+  operator_info?: null | TaskUserInfo;
   extra_data: Record<string, any>;
   sys_create_datetime?: null | string;
 }
