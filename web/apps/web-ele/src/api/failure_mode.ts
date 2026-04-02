@@ -206,6 +206,54 @@ export interface InterceptionInsight {
   product_rows: InterceptionInsightProductRow[];
 }
 
+export interface HandlingMeasureInsight {
+  id: string;
+  measure: string;
+  measure_category?: null | string;
+  related_test_case_count: number;
+  related_failure_mode_count: number;
+  landed_product_count: number;
+  total_product_count: number;
+  failure_mode_rows: InterceptionInsightFailureModeRow[];
+  product_rows: InterceptionInsightProductRow[];
+}
+
+export interface ObservationMethodInsight {
+  id: string;
+  display_name: string;
+  monitor_type?: null | string;
+  log_id?: null | string;
+  log_keyword?: null | string;
+  log_path?: null | string;
+  related_failure_mode_count: number;
+  landed_product_count: number;
+  total_product_count: number;
+  failure_mode_rows: InterceptionInsightFailureModeRow[];
+  product_rows: InterceptionInsightProductRow[];
+}
+
+export interface HuatuoDiagnosisInsight {
+  id: string;
+  description: string;
+  related_failure_mode_count: number;
+  landed_product_count: number;
+  total_product_count: number;
+  failure_mode_rows: InterceptionInsightFailureModeRow[];
+  product_rows: InterceptionInsightProductRow[];
+}
+
+export interface TestCaseInsight {
+  id: string;
+  brief: string;
+  cida_link?: null | string;
+  related_handling_measure_count: number;
+  related_failure_mode_count: number;
+  landed_product_count: number;
+  total_product_count: number;
+  failure_mode_rows: InterceptionInsightFailureModeRow[];
+  product_rows: InterceptionInsightProductRow[];
+}
+
 export interface InterceptionStrategyPayload {
   interception_item: string;
   version_detection_html?: string;
@@ -524,6 +572,12 @@ export async function getHandlingMeasureDetailApi(id: string) {
   );
 }
 
+export async function getHandlingMeasureInsightApi(id: string) {
+  return requestClient.get<HandlingMeasureInsight>(
+    `${base}/handling-measures/${id}/insight`,
+  );
+}
+
 export async function deleteHandlingMeasureApi(id: string) {
   return requestClient.delete<{ success: boolean }>(
     `${base}/handling-measures/${id}`,
@@ -559,6 +613,12 @@ export async function updateObservationMethodApi(
 export async function getObservationMethodDetailApi(id: string) {
   return requestClient.get<ObservationMethodItem>(
     `${base}/observation-methods/${id}`,
+  );
+}
+
+export async function getObservationMethodInsightApi(id: string) {
+  return requestClient.get<ObservationMethodInsight>(
+    `${base}/observation-methods/${id}/insight`,
   );
 }
 
@@ -598,6 +658,12 @@ export async function getHuatuoDiagnosisDetailApi(id: string) {
   );
 }
 
+export async function getHuatuoDiagnosisInsightApi(id: string) {
+  return requestClient.get<HuatuoDiagnosisInsight>(
+    `${base}/huatuo-diagnoses/${id}/insight`,
+  );
+}
+
 export async function deleteHuatuoDiagnosisApi(id: string) {
   return requestClient.delete<{ success: boolean }>(
     `${base}/huatuo-diagnoses/${id}`,
@@ -624,6 +690,10 @@ export async function updateTestCaseApi(
 
 export async function getTestCaseDetailApi(id: string) {
   return requestClient.get<TestCaseItem>(`${base}/test-cases/${id}`);
+}
+
+export async function getTestCaseInsightApi(id: string) {
+  return requestClient.get<TestCaseInsight>(`${base}/test-cases/${id}/insight`);
 }
 
 export async function deleteTestCaseApi(id: string) {

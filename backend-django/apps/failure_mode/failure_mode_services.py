@@ -623,17 +623,26 @@ def _build_failure_mode_insight_product_rows(failure_mode_id: str) -> list[dict[
     ]
 
 
-def _build_interception_insight_data(item_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    relations = list(
-        FailureModeInterceptionStrategyRel.objects.filter(
-            is_deleted=False,
-            interception_strategy_id=item_id,
-            failure_mode__is_deleted=False,
-        )
-        .select_related('failure_mode')
-        .order_by('order_index', 'sys_create_datetime')
-    )
-    failure_mode_ids = [str(item.failure_mode_id) for item in relations if item.failure_mode_id]
+def _dedupe_failure_modes(failure_modes: Iterable[FailureMode]) -> list[FailureMode]:
+    rows: list[FailureMode] = []
+    seen: set[str] = set()
+    for item in failure_modes:
+        item_id = str(item.id)
+        if item_id in seen:
+            continue
+        seen.add(item_id)
+        rows.append(item)
+    return rows
+
+
+def _build_resource_insight_rows(
+    failure_modes: Iterable[FailureMode],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    normalized_failure_modes = _dedupe_failure_modes(failure_modes)
+    failure_mode_ids = [str(item.id) for item in normalized_failure_modes]
+    if not failure_mode_ids:
+        return [], []
+
     bindings = list(
         ProductFailureMode.objects.filter(
             is_deleted=False,
@@ -643,7 +652,6 @@ def _build_interception_insight_data(item_id: str) -> tuple[list[dict[str, Any]]
         .select_related('product__owner', 'product__project', 'failure_mode')
         .order_by('product__project__name', 'subsystem', '-sys_create_datetime')
     )
-
     product_binding_map: dict[str, list[ProductFailureMode]] = defaultdict(list)
     for binding in bindings:
         product_binding_map[str(binding.failure_mode_id)].append(binding)
@@ -651,8 +659,7 @@ def _build_interception_insight_data(item_id: str) -> tuple[list[dict[str, Any]]
     failure_mode_rows: list[dict[str, Any]] = []
     product_rows_map: dict[str, dict[str, Any]] = {}
 
-    for relation in relations:
-        failure_mode = relation.failure_mode
+    for failure_mode in normalized_failure_modes:
         failure_mode_binding_rows = product_binding_map.get(str(failure_mode.id), [])
         product_names: list[str] = []
         product_name_seen: set[str] = set()
@@ -704,6 +711,23 @@ def _build_interception_insight_data(item_id: str) -> tuple[list[dict[str, Any]]
         )
     ]
     return failure_mode_rows, product_rows
+
+
+def _total_failure_mode_product_count() -> int:
+    return FailureModeProduct.objects.filter(is_deleted=False).count()
+
+
+def _build_interception_insight_data(item_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    relations = list(
+        FailureModeInterceptionStrategyRel.objects.filter(
+            is_deleted=False,
+            interception_strategy_id=item_id,
+            failure_mode__is_deleted=False,
+        )
+        .select_related('failure_mode')
+        .order_by('order_index', 'sys_create_datetime')
+    )
+    return _build_resource_insight_rows([item.failure_mode for item in relations])
 
 
 def _load_dict_grouped(field_names: Iterable[str] | None = None) -> dict[str, list[str]]:
@@ -1417,14 +1441,13 @@ def get_failure_mode_detail(failure_mode_id: str) -> dict[str, Any]:
 def get_failure_mode_insight(failure_mode_id: str) -> dict[str, Any]:
     instance = get_object_or_404(_failure_mode_queryset(), id=failure_mode_id)
     product_rows = _build_failure_mode_insight_product_rows(failure_mode_id)
-    total_product_count = FailureModeProduct.objects.filter(is_deleted=False).count()
     return {
         'id': str(instance.id),
         'brief': instance.brief,
         'subsystem': instance.subsystem,
         'status': instance.status,
         'landed_product_count': len(product_rows),
-        'total_product_count': total_product_count,
+        'total_product_count': _total_failure_mode_product_count(),
         'product_rows': product_rows,
     }
 
@@ -1500,14 +1523,13 @@ def get_interception_strategy_detail(item_id: str) -> dict[str, Any]:
 def get_interception_strategy_insight(item_id: str) -> dict[str, Any]:
     instance = get_object_or_404(_interception_strategy_queryset(), id=item_id)
     failure_mode_rows, product_rows = _build_interception_insight_data(item_id)
-    total_product_count = FailureModeProduct.objects.filter(is_deleted=False).count()
     return {
         'id': str(instance.id),
         'interception_item': instance.interception_item,
         'station': instance.station,
         'related_failure_mode_count': len(failure_mode_rows),
         'landed_product_count': len(product_rows),
-        'total_product_count': total_product_count,
+        'total_product_count': _total_failure_mode_product_count(),
         'failure_mode_rows': failure_mode_rows,
         'product_rows': product_rows,
     }
@@ -1605,6 +1627,33 @@ def get_handling_measure_detail(item_id: str) -> dict[str, Any]:
     return _serialize_handling_measure(instance)
 
 
+def get_handling_measure_insight(item_id: str) -> dict[str, Any]:
+    instance = get_object_or_404(_handling_measure_queryset(), id=item_id)
+    failure_mode_relations = list(
+        FailureModeHandlingMeasureRel.objects.filter(
+            is_deleted=False,
+            handling_measure_id=item_id,
+            failure_mode__is_deleted=False,
+        )
+        .select_related('failure_mode')
+        .order_by('order_index', 'sys_create_datetime')
+    )
+    failure_mode_rows, product_rows = _build_resource_insight_rows(
+        [item.failure_mode for item in failure_mode_relations],
+    )
+    return {
+        'id': str(instance.id),
+        'measure': instance.measure,
+        'measure_category': instance.measure_category,
+        'related_test_case_count': instance.test_case_relations.count(),
+        'related_failure_mode_count': len(failure_mode_rows),
+        'landed_product_count': len(product_rows),
+        'total_product_count': _total_failure_mode_product_count(),
+        'failure_mode_rows': failure_mode_rows,
+        'product_rows': product_rows,
+    }
+
+
 @transaction.atomic
 def delete_handling_measure(item_id: str) -> dict[str, bool]:
     instance = get_object_or_404(HandlingMeasure.objects.filter(is_deleted=False), id=item_id)
@@ -1666,6 +1715,39 @@ def get_observation_method_detail(item_id: str) -> dict[str, Any]:
     return _serialize_observation_method(instance)
 
 
+def get_observation_method_insight(item_id: str) -> dict[str, Any]:
+    instance = get_object_or_404(_observation_method_queryset(), id=item_id)
+    failure_mode_relations = list(
+        FailureModeObservationMethodRel.objects.filter(
+            is_deleted=False,
+            observation_method_id=item_id,
+            failure_mode__is_deleted=False,
+        )
+        .select_related('failure_mode')
+        .order_by('order_index', 'sys_create_datetime')
+    )
+    failure_mode_rows, product_rows = _build_resource_insight_rows(
+        [item.failure_mode for item in failure_mode_relations],
+    )
+    return {
+        'id': str(instance.id),
+        'display_name': instance.log_keyword
+        or instance.log_id
+        or instance.monitor_type
+        or instance.log_path
+        or '未命名维测项',
+        'monitor_type': instance.monitor_type,
+        'log_id': instance.log_id,
+        'log_keyword': instance.log_keyword,
+        'log_path': instance.log_path,
+        'related_failure_mode_count': len(failure_mode_rows),
+        'landed_product_count': len(product_rows),
+        'total_product_count': _total_failure_mode_product_count(),
+        'failure_mode_rows': failure_mode_rows,
+        'product_rows': product_rows,
+    }
+
+
 @transaction.atomic
 def delete_observation_method(item_id: str) -> dict[str, bool]:
     instance = get_object_or_404(ObservationMethod.objects.filter(is_deleted=False), id=item_id)
@@ -1721,6 +1803,31 @@ def update_huatuo_diagnosis(request, item_id: str, data) -> dict[str, Any]:
 def get_huatuo_diagnosis_detail(item_id: str) -> dict[str, Any]:
     instance = get_object_or_404(_huatuo_diagnosis_queryset(), id=item_id)
     return _serialize_huatuo_diagnosis(instance)
+
+
+def get_huatuo_diagnosis_insight(item_id: str) -> dict[str, Any]:
+    instance = get_object_or_404(_huatuo_diagnosis_queryset(), id=item_id)
+    failure_mode_relations = list(
+        FailureModeHuatuoDiagnosisRel.objects.filter(
+            is_deleted=False,
+            huatuo_diagnosis_id=item_id,
+            failure_mode__is_deleted=False,
+        )
+        .select_related('failure_mode')
+        .order_by('order_index', 'sys_create_datetime')
+    )
+    failure_mode_rows, product_rows = _build_resource_insight_rows(
+        [item.failure_mode for item in failure_mode_relations],
+    )
+    return {
+        'id': str(instance.id),
+        'description': instance.description,
+        'related_failure_mode_count': len(failure_mode_rows),
+        'landed_product_count': len(product_rows),
+        'total_product_count': _total_failure_mode_product_count(),
+        'failure_mode_rows': failure_mode_rows,
+        'product_rows': product_rows,
+    }
 
 
 @transaction.atomic
@@ -1787,6 +1894,43 @@ def update_test_case(request, item_id: str, data) -> dict[str, Any]:
 def get_test_case_detail(item_id: str) -> dict[str, Any]:
     instance = get_object_or_404(_test_case_queryset(), id=item_id)
     return _serialize_test_case(instance)
+
+
+def get_test_case_insight(item_id: str) -> dict[str, Any]:
+    instance = get_object_or_404(_test_case_queryset(), id=item_id)
+    handling_measure_relations = list(
+        HandlingMeasureTestCaseRel.objects.filter(
+            is_deleted=False,
+            test_case_id=item_id,
+            handling_measure__is_deleted=False,
+        )
+        .select_related('handling_measure')
+        .order_by('order_index', 'sys_create_datetime')
+    )
+    handling_measure_ids = [str(item.handling_measure_id) for item in handling_measure_relations]
+    failure_mode_relations = list(
+        FailureModeHandlingMeasureRel.objects.filter(
+            is_deleted=False,
+            handling_measure_id__in=handling_measure_ids,
+            failure_mode__is_deleted=False,
+        )
+        .select_related('failure_mode')
+        .order_by('handling_measure_id', 'order_index', 'sys_create_datetime')
+    )
+    failure_mode_rows, product_rows = _build_resource_insight_rows(
+        [item.failure_mode for item in failure_mode_relations],
+    )
+    return {
+        'id': str(instance.id),
+        'brief': instance.brief,
+        'cida_link': instance.cida_link,
+        'related_handling_measure_count': len({str(item.handling_measure_id) for item in handling_measure_relations}),
+        'related_failure_mode_count': len(failure_mode_rows),
+        'landed_product_count': len(product_rows),
+        'total_product_count': _total_failure_mode_product_count(),
+        'failure_mode_rows': failure_mode_rows,
+        'product_rows': product_rows,
+    }
 
 
 @transaction.atomic

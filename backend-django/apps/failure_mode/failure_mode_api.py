@@ -20,11 +20,13 @@ from .failure_mode_schemas import (
     FailureModeSubsystemConfigSearchSchema,
     FailureModeSubsystemConfigUpdateSchema,
     FailureModeUpdateSchema,
+    HandlingMeasureInsightOutSchema,
     HandlingMeasureCreateSchema,
     HandlingMeasureOutSchema,
     HandlingMeasurePageSchema,
     HandlingMeasureSearchSchema,
     HandlingMeasureUpdateSchema,
+    HuatuoDiagnosisInsightOutSchema,
     HuatuoDiagnosisCreateSchema,
     HuatuoDiagnosisOutSchema,
     HuatuoDiagnosisPageSchema,
@@ -36,11 +38,13 @@ from .failure_mode_schemas import (
     InterceptionStrategyUpdateSchema,
     KeywordSearchSchema,
     ObservationMethodCreateSchema,
+    ObservationMethodInsightOutSchema,
     ObservationMethodOutSchema,
     ObservationMethodPageSchema,
     ObservationMethodSearchSchema,
     ObservationMethodUpdateSchema,
     SaveSuccessSchema,
+    TestCaseInsightOutSchema,
     TestCaseCreateSchema,
     TestCaseOutSchema,
     TestCasePageSchema,
@@ -170,6 +174,11 @@ def get_handling_measure_detail(request, item_id: str):
     return failure_mode_services.get_handling_measure_detail(item_id)
 
 
+@router.get('/handling-measures/{item_id}/insight', response=HandlingMeasureInsightOutSchema, summary='获取故障处理措施关联洞察')
+def get_handling_measure_insight(request, item_id: str):
+    return failure_mode_services.get_handling_measure_insight(item_id)
+
+
 @router.put('/handling-measures/{item_id}', response=HandlingMeasureOutSchema, summary='更新故障处理措施')
 def update_handling_measure(request, item_id: str, data: HandlingMeasureUpdateSchema):
     return failure_mode_services.update_handling_measure(request, item_id, data)
@@ -193,6 +202,11 @@ def create_observation_method(request, data: ObservationMethodCreateSchema):
 @router.get('/observation-methods/{item_id}', response=ObservationMethodOutSchema, summary='获取维测手段详情')
 def get_observation_method_detail(request, item_id: str):
     return failure_mode_services.get_observation_method_detail(item_id)
+
+
+@router.get('/observation-methods/{item_id}/insight', response=ObservationMethodInsightOutSchema, summary='获取维测手段关联洞察')
+def get_observation_method_insight(request, item_id: str):
+    return failure_mode_services.get_observation_method_insight(item_id)
 
 
 @router.put('/observation-methods/{item_id}', response=ObservationMethodOutSchema, summary='更新维测手段')
@@ -220,6 +234,11 @@ def get_huatuo_diagnosis_detail(request, item_id: str):
     return failure_mode_services.get_huatuo_diagnosis_detail(item_id)
 
 
+@router.get('/huatuo-diagnoses/{item_id}/insight', response=HuatuoDiagnosisInsightOutSchema, summary='获取华佗诊断方案关联洞察')
+def get_huatuo_diagnosis_insight(request, item_id: str):
+    return failure_mode_services.get_huatuo_diagnosis_insight(item_id)
+
+
 @router.put('/huatuo-diagnoses/{item_id}', response=HuatuoDiagnosisOutSchema, summary='更新华佗诊断方案')
 def update_huatuo_diagnosis(request, item_id: str, data: HuatuoDiagnosisUpdateSchema):
     return failure_mode_services.update_huatuo_diagnosis(request, item_id, data)
@@ -243,6 +262,11 @@ def create_test_case(request, data: TestCaseCreateSchema):
 @router.get('/test-cases/{item_id}', response=TestCaseOutSchema, summary='获取测试用例详情')
 def get_test_case_detail(request, item_id: str):
     return failure_mode_services.get_test_case_detail(item_id)
+
+
+@router.get('/test-cases/{item_id}/insight', response=TestCaseInsightOutSchema, summary='获取测试用例关联洞察')
+def get_test_case_insight(request, item_id: str):
+    return failure_mode_services.get_test_case_insight(item_id)
 
 
 @router.put('/test-cases/{item_id}', response=TestCaseOutSchema, summary='更新测试用例')

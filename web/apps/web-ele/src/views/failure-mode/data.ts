@@ -443,7 +443,13 @@ export function useInterceptionColumns(): ZqTableGridOptions<InterceptionStrateg
 
 export function useHandlingMeasureColumns(): ZqTableGridOptions<HandlingMeasureItem>['columns'] {
   return withCenter<HandlingMeasureItem>([
-    { key: 'measure', dataKey: 'measure', title: '处理措施', width: 240 },
+    {
+      key: 'measure',
+      dataKey: 'measure',
+      title: '处理措施',
+      width: 240,
+      cellSlotName: 'cell-measure',
+    },
     {
       key: 'measure_category',
       dataKey: 'measure_category',
@@ -493,6 +499,7 @@ export function useObservationColumns(): ZqTableGridOptions<ObservationMethodIte
       dataKey: 'log_keyword',
       title: '日志关键词',
       width: 220,
+      cellSlotName: 'cell-log_keyword',
     },
     { key: 'log_path', dataKey: 'log_path', title: '日志获取路径', width: 260 },
     {
@@ -519,6 +526,7 @@ export function useHuatuoColumns(): ZqTableGridOptions<HuatuoDiagnosisItem>['col
       dataKey: 'description',
       title: '诊断方案描述',
       width: 420,
+      cellSlotName: 'cell-description',
       headerSlotName: 'header-huatuo-description',
     },
     {
@@ -551,6 +559,7 @@ export function useTestCaseColumns(): ZqTableGridOptions<TestCaseItem>['columns'
       dataKey: 'brief',
       title: '测试用例 brief',
       width: 240,
+      cellSlotName: 'cell-brief',
       headerSlotName: 'header-test-case-brief',
     },
     { key: 'cida_link', dataKey: 'cida_link', title: 'CIDA 链接', width: 260 },

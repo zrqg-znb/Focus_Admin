@@ -509,6 +509,33 @@ function handleOpenInterceptionInsight(row: InterceptionStrategyItem) {
   relationInsightDrawerRef.value?.openInterception(row.id);
 }
 
+function handleOpenHandlingMeasureInsight(row: HandlingMeasureItem) {
+  relationInsightDrawerRef.value?.openHandlingMeasure(row.id);
+}
+
+function handleOpenObservationMethodInsight(row: ObservationMethodItem) {
+  relationInsightDrawerRef.value?.openObservationMethod(row.id);
+}
+
+function handleOpenHuatuoDiagnosisInsight(row: HuatuoDiagnosisItem) {
+  relationInsightDrawerRef.value?.openHuatuoDiagnosis(row.id);
+}
+
+function handleOpenTestCaseInsight(row: TestCaseItem) {
+  relationInsightDrawerRef.value?.openTestCase(row.id);
+}
+
+function formatObservationInsightLabel(row: ObservationMethodItem) {
+  return (
+    row.log_keyword ||
+    row.log_id ||
+    row.monitor_type ||
+    row.log_path ||
+    row.display_name ||
+    '-'
+  );
+}
+
 watch(
   () => [...failureModeFilters.subsystem],
   () => {
@@ -955,6 +982,17 @@ onMounted(async () => {
                   <template #cell-test_case_items="{ row }">
                     {{ formatRelationLabels(row.test_case_items) || '-' }}
                   </template>
+                  <template #cell-measure="{ row }">
+                    <button
+                      class="failure-mode-link-cell"
+                      type="button"
+                      @click="handleOpenHandlingMeasureInsight(row)"
+                    >
+                      <span class="failure-mode-link-cell__text">
+                        {{ row.measure }}
+                      </span>
+                    </button>
+                  </template>
                   <template #cell-owner_info="{ row }">
                     {{ formatUserNames(row.owner_info) || '-' }}
                   </template>
@@ -1069,6 +1107,17 @@ onMounted(async () => {
                   <template #cell-owner_info="{ row }">
                     {{ formatUserNames(row.owner_info) || '-' }}
                   </template>
+                  <template #cell-log_keyword="{ row }">
+                    <button
+                      class="failure-mode-link-cell"
+                      type="button"
+                      @click="handleOpenObservationMethodInsight(row)"
+                    >
+                      <span class="failure-mode-link-cell__text">
+                        {{ formatObservationInsightLabel(row) }}
+                      </span>
+                    </button>
+                  </template>
                   <template #cell-actions="{ row }">
                     <div class="flex justify-center gap-1">
                       <ElTooltip content="编辑" placement="top">
@@ -1156,6 +1205,17 @@ onMounted(async () => {
                   <template #cell-owner_info="{ row }">
                     {{ formatUserNames(row.owner_info) || '-' }}
                   </template>
+                  <template #cell-description="{ row }">
+                    <button
+                      class="failure-mode-link-cell"
+                      type="button"
+                      @click="handleOpenHuatuoDiagnosisInsight(row)"
+                    >
+                      <span class="failure-mode-link-cell__text">
+                        {{ row.description }}
+                      </span>
+                    </button>
+                  </template>
                   <template #cell-actions="{ row }">
                     <div class="flex justify-center gap-1">
                       <ElTooltip content="编辑" placement="top">
@@ -1238,6 +1298,17 @@ onMounted(async () => {
 
                   <template #cell-owner_info="{ row }">
                     {{ formatUserNames(row.owner_info) || '-' }}
+                  </template>
+                  <template #cell-brief="{ row }">
+                    <button
+                      class="failure-mode-link-cell"
+                      type="button"
+                      @click="handleOpenTestCaseInsight(row)"
+                    >
+                      <span class="failure-mode-link-cell__text">
+                        {{ row.brief }}
+                      </span>
+                    </button>
                   </template>
                   <template #cell-actions="{ row }">
                     <div class="flex justify-center gap-1">

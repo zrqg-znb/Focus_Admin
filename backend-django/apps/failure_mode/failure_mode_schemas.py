@@ -377,6 +377,70 @@ class InterceptionInsightOutSchema(Schema):
     )
 
 
+class HandlingMeasureInsightOutSchema(Schema):
+    id: str
+    measure: str
+    measure_category: Optional[str] = None
+    related_test_case_count: int
+    related_failure_mode_count: int
+    landed_product_count: int
+    total_product_count: int
+    failure_mode_rows: list[InterceptionInsightFailureModeRowSchema] = Field(
+        default_factory=list,
+    )
+    product_rows: list[InterceptionInsightProductRowSchema] = Field(
+        default_factory=list,
+    )
+
+
+class ObservationMethodInsightOutSchema(Schema):
+    id: str
+    display_name: str
+    monitor_type: Optional[str] = None
+    log_id: Optional[str] = None
+    log_keyword: Optional[str] = None
+    log_path: Optional[str] = None
+    related_failure_mode_count: int
+    landed_product_count: int
+    total_product_count: int
+    failure_mode_rows: list[InterceptionInsightFailureModeRowSchema] = Field(
+        default_factory=list,
+    )
+    product_rows: list[InterceptionInsightProductRowSchema] = Field(
+        default_factory=list,
+    )
+
+
+class HuatuoDiagnosisInsightOutSchema(Schema):
+    id: str
+    description: str
+    related_failure_mode_count: int
+    landed_product_count: int
+    total_product_count: int
+    failure_mode_rows: list[InterceptionInsightFailureModeRowSchema] = Field(
+        default_factory=list,
+    )
+    product_rows: list[InterceptionInsightProductRowSchema] = Field(
+        default_factory=list,
+    )
+
+
+class TestCaseInsightOutSchema(Schema):
+    id: str
+    brief: str
+    cida_link: Optional[str] = None
+    related_handling_measure_count: int
+    related_failure_mode_count: int
+    landed_product_count: int
+    total_product_count: int
+    failure_mode_rows: list[InterceptionInsightFailureModeRowSchema] = Field(
+        default_factory=list,
+    )
+    product_rows: list[InterceptionInsightProductRowSchema] = Field(
+        default_factory=list,
+    )
+
+
 class HandlingMeasureCreateSchema(OwnerResourceCreateSchema):
     measure_category: Optional[str] = None
     measure: str
