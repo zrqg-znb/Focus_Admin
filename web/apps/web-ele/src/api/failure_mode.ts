@@ -112,6 +112,24 @@ export interface FailureModeItem {
   sys_update_datetime?: string;
 }
 
+export interface FailureModeInsightProductRow {
+  product_id: string;
+  product_name: string;
+  owner_info?: null | UserBriefInfo;
+  subsystems: string[];
+  landed_at?: null | string;
+}
+
+export interface FailureModeInsight {
+  id: string;
+  brief: string;
+  subsystem?: null | string;
+  status?: null | string;
+  landed_product_count: number;
+  total_product_count: number;
+  product_rows: FailureModeInsightProductRow[];
+}
+
 export interface FailureModePayload {
   brief: string;
   subsystem?: null | string;
@@ -159,6 +177,33 @@ export interface InterceptionStrategyItem {
   display_name: string;
   sys_create_datetime?: string;
   sys_update_datetime?: string;
+}
+
+export interface InterceptionInsightFailureModeRow {
+  failure_mode_id: string;
+  failure_mode_brief: string;
+  subsystem?: null | string;
+  status?: null | string;
+  product_names: string[];
+  landed_product_count: number;
+}
+
+export interface InterceptionInsightProductRow {
+  product_id: string;
+  product_name: string;
+  owner_info?: null | UserBriefInfo;
+  failure_mode_briefs: string[];
+}
+
+export interface InterceptionInsight {
+  id: string;
+  interception_item: string;
+  station?: null | string;
+  related_failure_mode_count: number;
+  landed_product_count: number;
+  total_product_count: number;
+  failure_mode_rows: InterceptionInsightFailureModeRow[];
+  product_rows: InterceptionInsightProductRow[];
 }
 
 export interface InterceptionStrategyPayload {
@@ -393,6 +438,12 @@ export async function getFailureModeDetailApi(id: string) {
   return requestClient.get<FailureModeItem>(`${base}/failure-modes/${id}`);
 }
 
+export async function getFailureModeInsightApi(id: string) {
+  return requestClient.get<FailureModeInsight>(
+    `${base}/failure-modes/${id}/insight`,
+  );
+}
+
 export async function deleteFailureModeApi(id: string) {
   return requestClient.delete<{ success: boolean }>(
     `${base}/failure-modes/${id}`,
@@ -428,6 +479,12 @@ export async function updateInterceptionStrategyApi(
 export async function getInterceptionStrategyDetailApi(id: string) {
   return requestClient.get<InterceptionStrategyItem>(
     `${base}/interception-strategies/${id}`,
+  );
+}
+
+export async function getInterceptionStrategyInsightApi(id: string) {
+  return requestClient.get<InterceptionInsight>(
+    `${base}/interception-strategies/${id}/insight`,
   );
 }
 

@@ -16,6 +16,7 @@ from .failure_mode_model import (
     FailureModeHandlingMeasureRel,
     FailureModeHuatuoDiagnosisRel,
     FailureModeInterceptionStrategyRel,
+    FailureModeProduct,
     FailureModeObservationMethodRel,
     FailureModeSubsystemConfig,
     HandlingMeasure,
@@ -23,6 +24,7 @@ from .failure_mode_model import (
     HuatuoDiagnosis,
     InterceptionStrategy,
     ObservationMethod,
+    ProductFailureMode,
     TestCase,
 )
 
@@ -566,6 +568,142 @@ def _serialize_paginated_queryset(queryset, serializer, pagination=None):
         'items': [serializer(item) for item in page_queryset],
         'total': queryset.count(),
     }
+
+
+def _build_failure_mode_insight_product_rows(failure_mode_id: str) -> list[dict[str, Any]]:
+    relations = list(
+        ProductFailureMode.objects.filter(
+            is_deleted=False,
+            failure_mode_id=failure_mode_id,
+            product__is_deleted=False,
+        )
+        .select_related('product__owner', 'product__project')
+        .order_by('product__project__name', 'subsystem', '-sys_create_datetime')
+    )
+    grouped: dict[str, dict[str, Any]] = {}
+    for relation in relations:
+        product = relation.product
+        product_id = str(product.id)
+        row = grouped.get(product_id)
+        if row is None:
+            row = {
+                'product_id': product_id,
+                'product_name': product.project.name if product.project else '',
+                'owner_info': _user_brief(product.owner),
+                'subsystems': [],
+                'landed_at': None,
+                '_landed_at_raw': None,
+                '_subsystem_seen': set(),
+            }
+            grouped[product_id] = row
+
+        subsystem_seen = row['_subsystem_seen']
+        subsystem = _normalize_optional_text(relation.subsystem)
+        if subsystem and subsystem not in subsystem_seen:
+            subsystem_seen.add(subsystem)
+            row['subsystems'].append(subsystem)
+
+        current_landed_at = row['_landed_at_raw']
+        if current_landed_at is None or (
+            relation.sys_create_datetime and relation.sys_create_datetime > current_landed_at
+        ):
+            row['_landed_at_raw'] = relation.sys_create_datetime
+            row['landed_at'] = _format_datetime(relation.sys_create_datetime)
+
+    return [
+        {
+            key: value
+            for key, value in row.items()
+            if not key.startswith('_')
+        }
+        for row in sorted(
+            grouped.values(),
+            key=lambda item: (item['product_name'], item['product_id']),
+        )
+    ]
+
+
+def _build_interception_insight_data(item_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    relations = list(
+        FailureModeInterceptionStrategyRel.objects.filter(
+            is_deleted=False,
+            interception_strategy_id=item_id,
+            failure_mode__is_deleted=False,
+        )
+        .select_related('failure_mode')
+        .order_by('order_index', 'sys_create_datetime')
+    )
+    failure_mode_ids = [str(item.failure_mode_id) for item in relations if item.failure_mode_id]
+    bindings = list(
+        ProductFailureMode.objects.filter(
+            is_deleted=False,
+            failure_mode_id__in=failure_mode_ids,
+            product__is_deleted=False,
+        )
+        .select_related('product__owner', 'product__project', 'failure_mode')
+        .order_by('product__project__name', 'subsystem', '-sys_create_datetime')
+    )
+
+    product_binding_map: dict[str, list[ProductFailureMode]] = defaultdict(list)
+    for binding in bindings:
+        product_binding_map[str(binding.failure_mode_id)].append(binding)
+
+    failure_mode_rows: list[dict[str, Any]] = []
+    product_rows_map: dict[str, dict[str, Any]] = {}
+
+    for relation in relations:
+        failure_mode = relation.failure_mode
+        failure_mode_binding_rows = product_binding_map.get(str(failure_mode.id), [])
+        product_names: list[str] = []
+        product_name_seen: set[str] = set()
+
+        for binding in failure_mode_binding_rows:
+            product = binding.product
+            product_name = product.project.name if product.project else ''
+            if product_name and product_name not in product_name_seen:
+                product_name_seen.add(product_name)
+                product_names.append(product_name)
+
+            product_id = str(product.id)
+            product_row = product_rows_map.get(product_id)
+            if product_row is None:
+                product_row = {
+                    'product_id': product_id,
+                    'product_name': product_name,
+                    'owner_info': _user_brief(product.owner),
+                    'failure_mode_briefs': [],
+                    '_failure_mode_seen': set(),
+                }
+                product_rows_map[product_id] = product_row
+
+            failure_mode_seen = product_row['_failure_mode_seen']
+            if failure_mode.brief not in failure_mode_seen:
+                failure_mode_seen.add(failure_mode.brief)
+                product_row['failure_mode_briefs'].append(failure_mode.brief)
+
+        failure_mode_rows.append(
+            {
+                'failure_mode_id': str(failure_mode.id),
+                'failure_mode_brief': failure_mode.brief,
+                'subsystem': failure_mode.subsystem,
+                'status': failure_mode.status,
+                'product_names': product_names,
+                'landed_product_count': len(product_names),
+            }
+        )
+
+    product_rows = [
+        {
+            key: value
+            for key, value in row.items()
+            if not key.startswith('_')
+        }
+        for row in sorted(
+            product_rows_map.values(),
+            key=lambda item: (item['product_name'], item['product_id']),
+        )
+    ]
+    return failure_mode_rows, product_rows
 
 
 def _load_dict_grouped(field_names: Iterable[str] | None = None) -> dict[str, list[str]]:
@@ -1276,6 +1414,21 @@ def get_failure_mode_detail(failure_mode_id: str) -> dict[str, Any]:
     return _serialize_failure_mode(instance)
 
 
+def get_failure_mode_insight(failure_mode_id: str) -> dict[str, Any]:
+    instance = get_object_or_404(_failure_mode_queryset(), id=failure_mode_id)
+    product_rows = _build_failure_mode_insight_product_rows(failure_mode_id)
+    total_product_count = FailureModeProduct.objects.filter(is_deleted=False).count()
+    return {
+        'id': str(instance.id),
+        'brief': instance.brief,
+        'subsystem': instance.subsystem,
+        'status': instance.status,
+        'landed_product_count': len(product_rows),
+        'total_product_count': total_product_count,
+        'product_rows': product_rows,
+    }
+
+
 @transaction.atomic
 def delete_failure_mode(failure_mode_id: str) -> dict[str, bool]:
     instance = get_object_or_404(FailureMode.objects.filter(is_deleted=False), id=failure_mode_id)
@@ -1342,6 +1495,22 @@ def update_interception_strategy(request, item_id: str, data) -> dict[str, Any]:
 def get_interception_strategy_detail(item_id: str) -> dict[str, Any]:
     instance = get_object_or_404(_interception_strategy_queryset(), id=item_id)
     return _serialize_interception_strategy(instance)
+
+
+def get_interception_strategy_insight(item_id: str) -> dict[str, Any]:
+    instance = get_object_or_404(_interception_strategy_queryset(), id=item_id)
+    failure_mode_rows, product_rows = _build_interception_insight_data(item_id)
+    total_product_count = FailureModeProduct.objects.filter(is_deleted=False).count()
+    return {
+        'id': str(instance.id),
+        'interception_item': instance.interception_item,
+        'station': instance.station,
+        'related_failure_mode_count': len(failure_mode_rows),
+        'landed_product_count': len(product_rows),
+        'total_product_count': total_product_count,
+        'failure_mode_rows': failure_mode_rows,
+        'product_rows': product_rows,
+    }
 
 
 @transaction.atomic

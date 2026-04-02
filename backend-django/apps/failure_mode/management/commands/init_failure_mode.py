@@ -213,10 +213,12 @@ PERMISSION_SEEDS = {
         {'name': '获取故障模式列表', 'code': 'failure-mode:api:list', 'permission_type': 1, 'api_path': '/api/failure-mode/failure-modes/search', 'http_method': 'POST'},
         {'name': '创建故障模式', 'code': 'failure-mode:api:create', 'permission_type': 1, 'api_path': '/api/failure-mode/failure-modes', 'http_method': 'POST'},
         {'name': '获取故障模式详情', 'code': 'failure-mode:api:detail', 'permission_type': 1, 'api_path': '/api/failure-mode/failure-modes/{failure_mode_id}', 'http_method': 'GET'},
+        {'name': '获取故障模式洞察', 'code': 'failure-mode:api:insight', 'permission_type': 1, 'api_path': '/api/failure-mode/failure-modes/{failure_mode_id}/insight', 'http_method': 'GET'},
         {'name': '更新故障模式', 'code': 'failure-mode:api:update', 'permission_type': 1, 'api_path': '/api/failure-mode/failure-modes/{failure_mode_id}', 'http_method': 'PUT'},
         {'name': '删除故障模式', 'code': 'failure-mode:api:delete', 'permission_type': 1, 'api_path': '/api/failure-mode/failure-modes/{failure_mode_id}', 'http_method': 'DELETE'},
         {'name': '获取产线拦截策略列表', 'code': 'failure-mode:api:interception:list', 'permission_type': 1, 'api_path': '/api/failure-mode/interception-strategies/search', 'http_method': 'POST'},
         {'name': '保存产线拦截策略', 'code': 'failure-mode:api:interception:save', 'permission_type': 1, 'api_path': '/api/failure-mode/interception-strategies', 'http_method': 'POST'},
+        {'name': '获取产线拦截策略洞察', 'code': 'failure-mode:api:interception:insight', 'permission_type': 1, 'api_path': '/api/failure-mode/interception-strategies/{item_id}/insight', 'http_method': 'GET'},
         {'name': '获取故障处理措施列表', 'code': 'failure-mode:api:measure:list', 'permission_type': 1, 'api_path': '/api/failure-mode/handling-measures/search', 'http_method': 'POST'},
         {'name': '保存故障处理措施', 'code': 'failure-mode:api:measure:save', 'permission_type': 1, 'api_path': '/api/failure-mode/handling-measures', 'http_method': 'POST'},
         {'name': '获取维测手段列表', 'code': 'failure-mode:api:observation:list', 'permission_type': 1, 'api_path': '/api/failure-mode/observation-methods/search', 'http_method': 'POST'},
@@ -462,6 +464,10 @@ class Command(BaseCommand):
                 permission.is_active = True
                 permission.sys_modifier = operator
                 permission.save()
+                if not permission.roles.exists():
+                    role_ids = list(menu.core_roles.values_list('id', flat=True))
+                    if role_ids:
+                        permission.roles.add(*role_ids)
                 total += 1
         return total
 

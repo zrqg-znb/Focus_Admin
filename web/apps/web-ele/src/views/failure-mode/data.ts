@@ -291,6 +291,7 @@ export function useFailureModeColumns(): ZqTableGridOptions<FailureModeItem>['co
       dataKey: 'brief',
       title: '故障模式 brief',
       width: 300,
+      cellSlotName: 'cell-brief',
       headerSlotName: 'header-brief',
     },
     {
@@ -332,7 +333,7 @@ export function useFailureModeColumns(): ZqTableGridOptions<FailureModeItem>['co
       dataKey: 'source_task_no',
       title: '来源',
       width: 180,
-      cellSlotName: 'cell-source-task-no',
+      cellSlotName: 'cell-source_task_no',
     },
     {
       key: 'author_info',
@@ -414,6 +415,7 @@ export function useInterceptionColumns(): ZqTableGridOptions<InterceptionStrateg
       dataKey: 'interception_item',
       title: '产线拦截项',
       width: 220,
+      cellSlotName: 'cell-interception_item',
     },
     { key: 'station', dataKey: 'station', title: '工位', width: 140 },
     {

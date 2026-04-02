@@ -272,6 +272,26 @@ class FailureModePageSchema(Schema):
     total: int
 
 
+class FailureModeInsightProductRowSchema(Schema):
+    product_id: str
+    product_name: str
+    owner_info: Optional[UserBriefSchema] = None
+    subsystems: list[str] = Field(default_factory=list)
+    landed_at: Optional[str] = None
+
+
+class FailureModeInsightOutSchema(Schema):
+    id: str
+    brief: str
+    subsystem: Optional[str] = None
+    status: Optional[str] = None
+    landed_product_count: int
+    total_product_count: int
+    product_rows: list[FailureModeInsightProductRowSchema] = Field(
+        default_factory=list,
+    )
+
+
 class OwnerResourceCreateSchema(ListTextSchemaMixin):
     owner_ids: list[str] = Field(default_factory=list)
 
@@ -324,6 +344,37 @@ class InterceptionStrategyOutSchema(Schema):
 class InterceptionStrategyPageSchema(Schema):
     items: list[InterceptionStrategyOutSchema] = Field(default_factory=list)
     total: int
+
+
+class InterceptionInsightFailureModeRowSchema(Schema):
+    failure_mode_id: str
+    failure_mode_brief: str
+    subsystem: Optional[str] = None
+    status: Optional[str] = None
+    product_names: list[str] = Field(default_factory=list)
+    landed_product_count: int
+
+
+class InterceptionInsightProductRowSchema(Schema):
+    product_id: str
+    product_name: str
+    owner_info: Optional[UserBriefSchema] = None
+    failure_mode_briefs: list[str] = Field(default_factory=list)
+
+
+class InterceptionInsightOutSchema(Schema):
+    id: str
+    interception_item: str
+    station: Optional[str] = None
+    related_failure_mode_count: int
+    landed_product_count: int
+    total_product_count: int
+    failure_mode_rows: list[InterceptionInsightFailureModeRowSchema] = Field(
+        default_factory=list,
+    )
+    product_rows: list[InterceptionInsightProductRowSchema] = Field(
+        default_factory=list,
+    )
 
 
 class HandlingMeasureCreateSchema(OwnerResourceCreateSchema):

@@ -49,6 +49,7 @@ import { useZqTable } from '#/components/zq-table';
 
 import FailureModeDrawer from './components/FailureModeDrawer.vue';
 import MasterDataDrawer from './components/MasterDataDrawer.vue';
+import RelationInsightDrawer from './components/RelationInsightDrawer.vue';
 import {
   createEmptyDictOptions,
   createEmptySubsystemConfigOptions,
@@ -100,6 +101,9 @@ const dictOptions = reactive(createEmptyDictOptions());
 const subsystemConfigOptions = reactive(createEmptySubsystemConfigOptions());
 const failureModeDrawerRef = ref<any>();
 const masterDrawerRef = ref<any>();
+const relationInsightDrawerRef = ref<InstanceType<
+  typeof RelationInsightDrawer
+> | null>(null);
 
 const failureModeFilters = reactive({
   author_keyword: '',
@@ -497,6 +501,14 @@ async function handleMasterSaved(payload: { kind: MasterResourceKind }) {
   await reloadMasterGrid(payload.kind);
 }
 
+function handleOpenFailureModeInsight(row: FailureModeItem) {
+  relationInsightDrawerRef.value?.openFailureMode(row.id);
+}
+
+function handleOpenInterceptionInsight(row: InterceptionStrategyItem) {
+  relationInsightDrawerRef.value?.openInterception(row.id);
+}
+
 watch(
   () => [...failureModeFilters.subsystem],
   () => {
@@ -546,6 +558,7 @@ onMounted(async () => {
       :dict-options="dictOptions"
       @success="handleMasterSaved"
     />
+    <RelationInsightDrawer ref="relationInsightDrawerRef" />
 
     <div class="flex h-full flex-col">
       <section
@@ -691,6 +704,17 @@ onMounted(async () => {
                   <template #cell-chips="{ row }">
                     {{ formatTextList(row.chips) || '-' }}
                   </template>
+                  <template #cell-brief="{ row }">
+                    <button
+                      class="failure-mode-link-cell"
+                      type="button"
+                      @click="handleOpenFailureModeInsight(row)"
+                    >
+                      <span class="failure-mode-link-cell__text">
+                        {{ row.brief }}
+                      </span>
+                    </button>
+                  </template>
                   <template #cell-fault_categories="{ row }">
                     {{ formatTextList(row.fault_categories) || '-' }}
                   </template>
@@ -804,6 +828,17 @@ onMounted(async () => {
 
                   <template #cell-owner_info="{ row }">
                     {{ formatUserNames(row.owner_info) || '-' }}
+                  </template>
+                  <template #cell-interception_item="{ row }">
+                    <button
+                      class="failure-mode-link-cell"
+                      type="button"
+                      @click="handleOpenInterceptionInsight(row)"
+                    >
+                      <span class="failure-mode-link-cell__text">
+                        {{ row.interception_item }}
+                      </span>
+                    </button>
                   </template>
                   <template #cell-actions="{ row }">
                     <div class="flex justify-center gap-1">
@@ -1274,5 +1309,30 @@ onMounted(async () => {
 .failure-mode-header-filter__select {
   width: 100%;
   min-width: 0;
+}
+
+.failure-mode-link-cell {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.failure-mode-link-cell__text {
+  width: 100%;
+  overflow: hidden;
+  color: var(--el-color-primary);
+  font-weight: 600;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.failure-mode-link-cell:hover .failure-mode-link-cell__text {
+  color: var(--el-color-primary-light-3);
 }
 </style>

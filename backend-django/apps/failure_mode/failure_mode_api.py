@@ -6,6 +6,7 @@ from . import failure_mode_services
 from .failure_mode_schemas import (
     FailureModeCreateSchema,
     FailureModeDictOptionsSchema,
+    FailureModeInsightOutSchema,
     FailureModeOutSchema,
     FailureModePageSchema,
     FailureModeSearchSchema,
@@ -28,6 +29,7 @@ from .failure_mode_schemas import (
     HuatuoDiagnosisOutSchema,
     HuatuoDiagnosisPageSchema,
     HuatuoDiagnosisUpdateSchema,
+    InterceptionInsightOutSchema,
     InterceptionStrategyCreateSchema,
     InterceptionStrategyOutSchema,
     InterceptionStrategyPageSchema,
@@ -108,6 +110,11 @@ def get_failure_mode_detail(request, failure_mode_id: str):
     return failure_mode_services.get_failure_mode_detail(failure_mode_id)
 
 
+@router.get('/failure-modes/{failure_mode_id}/insight', response=FailureModeInsightOutSchema, summary='获取故障模式关联洞察')
+def get_failure_mode_insight(request, failure_mode_id: str):
+    return failure_mode_services.get_failure_mode_insight(failure_mode_id)
+
+
 @router.put('/failure-modes/{failure_mode_id}', response=FailureModeOutSchema, summary='更新故障模式')
 def update_failure_mode(request, failure_mode_id: str, data: FailureModeUpdateSchema):
     return failure_mode_services.update_failure_mode(request, failure_mode_id, data)
@@ -131,6 +138,11 @@ def create_interception_strategy(request, data: InterceptionStrategyCreateSchema
 @router.get('/interception-strategies/{item_id}', response=InterceptionStrategyOutSchema, summary='获取产线拦截策略详情')
 def get_interception_strategy_detail(request, item_id: str):
     return failure_mode_services.get_interception_strategy_detail(item_id)
+
+
+@router.get('/interception-strategies/{item_id}/insight', response=InterceptionInsightOutSchema, summary='获取产线拦截策略关联洞察')
+def get_interception_strategy_insight(request, item_id: str):
+    return failure_mode_services.get_interception_strategy_insight(item_id)
 
 
 @router.put('/interception-strategies/{item_id}', response=InterceptionStrategyOutSchema, summary='更新产线拦截策略')
