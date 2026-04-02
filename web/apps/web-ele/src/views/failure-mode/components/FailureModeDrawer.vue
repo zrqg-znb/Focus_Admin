@@ -81,6 +81,15 @@ const huatuoDiagnosisIds = ref<string[]>([]);
 const huatuoDiagnosisItems = ref<RelationItem[]>([]);
 const relationSelectorRef = ref<any>();
 const masterDrawerRef = ref<any>();
+const formValueFallbacks = ref<{
+  chips: string[];
+  fault_categories: string[];
+  symptoms: string[];
+}>({
+  chips: [],
+  fault_categories: [],
+  symptoms: [],
+});
 
 const drawerTitle = computed(() =>
   mode.value === 'create' ? '新增故障模式' : '编辑故障模式',
@@ -159,6 +168,7 @@ const [Form, formApi] = useVbenForm({
     undefined,
     {
       hideStatusField: props.hideStatusField,
+      valueFallbacks: formValueFallbacks.value,
     },
   ),
   showDefaultActions: false,
@@ -176,6 +186,7 @@ function applySchema() {
       },
       {
         hideStatusField: props.hideStatusField,
+        valueFallbacks: formValueFallbacks.value,
       },
     ),
   });
@@ -328,6 +339,11 @@ async function openCreate() {
   mode.value = 'create';
   editingId.value = '';
   selectedSubsystem.value = undefined;
+  formValueFallbacks.value = {
+    chips: [],
+    fault_categories: [],
+    symptoms: [],
+  };
   relatedDtsNos.value = [];
   interceptionRequired.value = false;
   huatuoRequired.value = false;
@@ -357,16 +373,24 @@ async function openCreate() {
 }
 
 function applyFailureModeDetail(detail: FailureModeItem) {
+  const chips = normalizeStringList(detail.chips || []);
+  const faultCategories = normalizeStringList(detail.fault_categories || []);
+  const symptoms = normalizeStringList(detail.symptoms || []);
+  formValueFallbacks.value = {
+    chips,
+    fault_categories: faultCategories,
+    symptoms,
+  };
   selectedSubsystem.value = detail.subsystem || undefined;
   applySchema();
   formApi.setValues({
     author_ids: detail.author_ids || [],
     brief: detail.brief,
-    chips: detail.chips || [],
+    chips,
     detectability: detail.detectability || undefined,
     effect_html: detail.effect_html || '',
-    fault_categories: detail.fault_categories || [],
-    symptoms: detail.symptoms || [],
+    fault_categories: faultCategories,
+    symptoms,
     functional_safety_level: detail.functional_safety_level || undefined,
     module: detail.module || undefined,
     occurrence_frequency: detail.occurrence_frequency || undefined,

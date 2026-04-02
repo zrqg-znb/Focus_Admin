@@ -263,6 +263,8 @@ class FailureModeOutSchema(Schema):
     huatuo_diagnosis_items: list[RelationItemSchema] = Field(default_factory=list)
     task_change_type: Optional[str] = None
     has_task_draft: bool = False
+    editable_in_task: bool = False
+    task_edit_mode: Optional[str] = None
     sys_create_datetime: Optional[str] = None
     sys_update_datetime: Optional[str] = None
 

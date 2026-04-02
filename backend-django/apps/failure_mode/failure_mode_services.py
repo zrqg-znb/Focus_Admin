@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import json
 from types import SimpleNamespace
 from typing import Any, Iterable, Type
 
@@ -53,10 +54,33 @@ EMPTY_SUBSYSTEM_LABEL = '未配置子系统'
 def _normalize_text_list(values: Any) -> list[str]:
     if values is None:
         return []
+    if isinstance(values, str):
+        text = values.strip()
+        if text.startswith('[') and text.endswith(']'):
+            try:
+                decoded = json.loads(text)
+            except (TypeError, ValueError):
+                decoded = None
+            if isinstance(decoded, list):
+                values = decoded
     raw_values = values if isinstance(values, list) else [values]
     result: list[str] = []
     seen: set[str] = set()
     for item in raw_values:
+        if isinstance(item, str):
+            nested = item.strip()
+            if nested.startswith('[') and nested.endswith(']'):
+                try:
+                    decoded = json.loads(nested)
+                except (TypeError, ValueError):
+                    decoded = None
+                if isinstance(decoded, list):
+                    for nested_item in _normalize_text_list(decoded):
+                        if nested_item in seen:
+                            continue
+                        seen.add(nested_item)
+                        result.append(nested_item)
+                    continue
         text = str(item or '').strip()
         if not text or text in seen:
             continue
@@ -392,9 +416,9 @@ def _serialize_failure_mode(failure_mode: FailureMode) -> dict[str, Any]:
         'brief': failure_mode.brief,
         'subsystem': failure_mode.subsystem,
         'module': failure_mode.module_name,
-        'chips': failure_mode.chips or [],
-        'fault_categories': failure_mode.fault_categories or [],
-        'symptoms': failure_mode.symptoms or [],
+        'chips': _normalize_text_list(failure_mode.chips),
+        'fault_categories': _normalize_text_list(failure_mode.fault_categories),
+        'symptoms': _normalize_text_list(failure_mode.symptoms),
         'effect_html': failure_mode.effect_html or '',
         'root_cause_html': failure_mode.root_cause_html or '',
         'functional_safety_level': failure_mode.functional_safety_level,
@@ -403,7 +427,7 @@ def _serialize_failure_mode(failure_mode: FailureMode) -> dict[str, Any]:
         'severity': failure_mode.severity,
         'author_ids': [str(item.id) for item in authors],
         'author_info': _users_brief(authors),
-        'related_dts_nos': failure_mode.related_dts_nos or [],
+        'related_dts_nos': _normalize_text_list(failure_mode.related_dts_nos),
         'status': failure_mode.status,
         'source_type': failure_mode.source_type,
         'source_task_id': str(failure_mode.source_task_id) if failure_mode.source_task_id else None,
@@ -2310,6 +2334,24 @@ def get_failure_mode_statistics_summary() -> dict[str, Any]:
         config_subsystems,
     )
     return payload['summary']
+
+
+def list_failure_mode_statistics_subsystems(filters) -> dict[str, Any]:
+    rows = _build_failure_mode_statistics_rows()
+    keyword = _normalize_optional_text(getattr(filters, 'keyword', None))
+    if keyword:
+        rows = [
+            item for item in rows
+            if keyword in item['subsystem']
+        ]
+
+    page = max(getattr(filters, 'page', 1), 1)
+    page_size = max(getattr(filters, 'pageSize', 10), 1)
+    offset = page_size * (page - 1)
+    return {
+        'items': rows[offset: offset + page_size],
+        'total': len(rows),
+    }
 
 
 def _get_product_statistics_policy():

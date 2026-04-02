@@ -108,6 +108,8 @@ export interface FailureModeItem {
   huatuo_diagnosis_items: RelationItem[];
   task_change_type?: 'baseline' | 'delete_candidate' | 'edited' | 'new' | null;
   has_task_draft?: boolean;
+  editable_in_task?: boolean;
+  task_edit_mode?: 'direct_update' | 'draft' | null;
   sys_create_datetime?: string;
   sys_update_datetime?: string;
 }
@@ -394,6 +396,89 @@ export interface FailureModeStatisticsSubsystemQuery {
   pageSize?: number;
 }
 
+function normalizeStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    const result: string[] = [];
+    const seen = new Set<string>();
+    value.forEach((item) => {
+      if (typeof item === 'string') {
+        const nested = item.trim();
+        if (nested.startsWith('[') && nested.endsWith(']')) {
+          try {
+            const parsed = JSON.parse(nested);
+            if (Array.isArray(parsed)) {
+              normalizeStringArray(parsed).forEach((nestedItem) => {
+                if (!nestedItem || seen.has(nestedItem)) {
+                  return;
+                }
+                seen.add(nestedItem);
+                result.push(nestedItem);
+              });
+              return;
+            }
+          } catch {}
+        }
+      }
+      const text = String(item ?? '').trim();
+      if (!text || seen.has(text)) {
+        return;
+      }
+      seen.add(text);
+      result.push(text);
+    });
+    return result;
+  }
+
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) {
+      return [];
+    }
+    if (text.startsWith('[') && text.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed)) {
+          return normalizeStringArray(parsed);
+        }
+      } catch {}
+    }
+    return [text];
+  }
+
+  if (value === null || value === undefined) {
+    return [];
+  }
+
+  return normalizeStringArray([value]);
+}
+
+export function normalizeFailureModeItem(
+  item: FailureModeItem,
+): FailureModeItem {
+  return {
+    ...item,
+    chips: normalizeStringArray(item.chips),
+    fault_categories: normalizeStringArray(item.fault_categories),
+    symptoms: normalizeStringArray(item.symptoms),
+    related_dts_nos: normalizeStringArray(item.related_dts_nos),
+    required_handling_measure_categories: normalizeStringArray(
+      item.required_handling_measure_categories,
+    ),
+    required_observation_method_types: normalizeStringArray(
+      item.required_observation_method_types,
+    ),
+    interception_strategy_ids: normalizeStringArray(
+      item.interception_strategy_ids,
+    ),
+    handling_measure_ids: normalizeStringArray(item.handling_measure_ids),
+    observation_method_ids: normalizeStringArray(item.observation_method_ids),
+    huatuo_diagnosis_ids: normalizeStringArray(item.huatuo_diagnosis_ids),
+    has_task_draft: Boolean(item.has_task_draft),
+    editable_in_task: Boolean(item.editable_in_task),
+    task_edit_mode: item.task_edit_mode || null,
+  };
+}
+
 export interface FailureModeProductStatisticsOverviewItem {
   product_id: string;
   product_name: string;
@@ -512,28 +597,35 @@ export async function listFailureModeProductStatisticsSubsystemsApi(
 }
 
 export async function listFailureModesApi(data?: FailureModeQuery) {
-  return requestClient.post<PaginatedResponse<FailureModeItem>>(
-    `${base}/failure-modes/search`,
-    data ?? {},
-  );
+  return requestClient
+    .post<
+      PaginatedResponse<FailureModeItem>
+    >(`${base}/failure-modes/search`, data ?? {})
+    .then((page) => ({
+      ...page,
+      items: (page.items || []).map((item) => normalizeFailureModeItem(item)),
+    }));
 }
 
 export async function createFailureModeApi(data: FailureModePayload) {
-  return requestClient.post<FailureModeItem>(`${base}/failure-modes`, data);
+  return requestClient
+    .post<FailureModeItem>(`${base}/failure-modes`, data)
+    .then(normalizeFailureModeItem);
 }
 
 export async function updateFailureModeApi(
   id: string,
   data: Partial<FailureModePayload>,
 ) {
-  return requestClient.put<FailureModeItem>(
-    `${base}/failure-modes/${id}`,
-    data,
-  );
+  return requestClient
+    .put<FailureModeItem>(`${base}/failure-modes/${id}`, data)
+    .then(normalizeFailureModeItem);
 }
 
 export async function getFailureModeDetailApi(id: string) {
-  return requestClient.get<FailureModeItem>(`${base}/failure-modes/${id}`);
+  return requestClient
+    .get<FailureModeItem>(`${base}/failure-modes/${id}`)
+    .then(normalizeFailureModeItem);
 }
 
 export async function getFailureModeInsightApi(id: string) {

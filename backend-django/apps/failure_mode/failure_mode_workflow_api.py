@@ -104,6 +104,16 @@ def save_task_failure_mode_draft(request, task_id: str, failure_mode_id: str, da
     )
 
 
+@router.put('/tasks/{task_id}/failure-modes/{failure_mode_id}', response=FailureModeOutSchema, summary='编辑创建任务中的任务新增故障模式')
+def update_task_failure_mode(request, task_id: str, failure_mode_id: str, data: FailureModeUpdateSchema):
+    return TaskWorkflowService.update_task_created_failure_mode(
+        request.auth,
+        task_id,
+        failure_mode_id,
+        data.dict(exclude_unset=True),
+    )
+
+
 @router.delete('/tasks/{task_id}/failure-modes/{failure_mode_id}/draft', response=SaveSuccessSchema, summary='撤销修订任务中的故障模式草稿')
 def delete_task_failure_mode_draft(request, task_id: str, failure_mode_id: str):
     TaskWorkflowService.delete_failure_mode_draft(request.auth, task_id, failure_mode_id)

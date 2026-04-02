@@ -6,6 +6,8 @@ import type {
 
 import { requestClient } from '#/api/request';
 
+import { normalizeFailureModeItem } from './failure_mode';
+
 export interface FailureModeProductItem {
   id: string;
   project_id: string;
@@ -233,9 +235,11 @@ export function acceptTaskApi(taskId: string) {
 }
 
 export function getTaskFailureModesApi(taskId: string) {
-  return requestClient.get<FailureModeItem[]>(
-    `/api/failure-mode/workflow/tasks/${taskId}/failure-modes`,
-  );
+  return requestClient
+    .get<
+      FailureModeItem[]
+    >(`/api/failure-mode/workflow/tasks/${taskId}/failure-modes`)
+    .then((rows) => rows.map((item) => normalizeFailureModeItem(item)));
 }
 
 export function bindTaskFailureModesApi(
@@ -253,10 +257,25 @@ export function saveTaskFailureModeDraftApi(
   failureModeId: string,
   data: Partial<FailureModePayload>,
 ) {
-  return requestClient.post<FailureModeItem>(
-    `/api/failure-mode/workflow/tasks/${taskId}/failure-modes/${failureModeId}/draft`,
-    data,
-  );
+  return requestClient
+    .post<FailureModeItem>(
+      `/api/failure-mode/workflow/tasks/${taskId}/failure-modes/${failureModeId}/draft`,
+      data,
+    )
+    .then(normalizeFailureModeItem);
+}
+
+export function updateTaskFailureModeApi(
+  taskId: string,
+  failureModeId: string,
+  data: Partial<FailureModePayload>,
+) {
+  return requestClient
+    .put<FailureModeItem>(
+      `/api/failure-mode/workflow/tasks/${taskId}/failure-modes/${failureModeId}`,
+      data,
+    )
+    .then(normalizeFailureModeItem);
 }
 
 export function deleteTaskFailureModeDraftApi(
@@ -272,10 +291,12 @@ export function quickCreateTaskFailureModeApi(
   taskId: string,
   data: FailureModePayload,
 ) {
-  return requestClient.post<FailureModeItem>(
-    `/api/failure-mode/workflow/tasks/${taskId}/failure-modes/quick-create`,
-    data,
-  );
+  return requestClient
+    .post<FailureModeItem>(
+      `/api/failure-mode/workflow/tasks/${taskId}/failure-modes/quick-create`,
+      data,
+    )
+    .then(normalizeFailureModeItem);
 }
 
 export function submitTaskApi(taskId: string) {

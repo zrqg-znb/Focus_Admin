@@ -572,6 +572,7 @@ class FailureModeTaskLog(RootModel):
     ACTION_ACCEPT = 'accept'
     ACTION_BIND_FAILURE_MODES = 'bind_failure_modes'
     ACTION_QUICK_CREATE_FAILURE_MODE = 'quick_create_failure_mode'
+    ACTION_EDIT_FAILURE_MODE = 'edit_failure_mode'
     ACTION_SAVE_DRAFT = 'save_draft'
     ACTION_DELETE_DRAFT = 'delete_draft'
     ACTION_SUBMIT = 'submit'
@@ -584,6 +585,7 @@ class FailureModeTaskLog(RootModel):
         (ACTION_ACCEPT, '接收任务'),
         (ACTION_BIND_FAILURE_MODES, '绑定故障模式'),
         (ACTION_QUICK_CREATE_FAILURE_MODE, '快速新增故障模式'),
+        (ACTION_EDIT_FAILURE_MODE, '编辑任务内故障模式'),
         (ACTION_SAVE_DRAFT, '保存修订草稿'),
         (ACTION_DELETE_DRAFT, '撤销修订草稿'),
         (ACTION_SUBMIT, '提交评审'),

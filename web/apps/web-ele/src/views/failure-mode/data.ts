@@ -116,6 +116,24 @@ export function normalizeStringList(value: unknown): string[] {
     const result: string[] = [];
     const seen = new Set<string>();
     value.forEach((item) => {
+      if (typeof item === 'string') {
+        const nested = item.trim();
+        if (nested.startsWith('[') && nested.endsWith(']')) {
+          try {
+            const parsed = JSON.parse(nested);
+            if (Array.isArray(parsed)) {
+              normalizeStringList(parsed).forEach((nestedItem) => {
+                if (!nestedItem || seen.has(nestedItem)) {
+                  return;
+                }
+                seen.add(nestedItem);
+                result.push(nestedItem);
+              });
+              return;
+            }
+          } catch {}
+        }
+      }
       const text = String(item || '').trim();
       if (!text || seen.has(text)) {
         return;
@@ -124,6 +142,22 @@ export function normalizeStringList(value: unknown): string[] {
       result.push(text);
     });
     return result;
+  }
+
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) {
+      return [];
+    }
+    if (text.startsWith('[') && text.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed)) {
+          return normalizeStringList(parsed);
+        }
+      } catch {}
+    }
+    return [text];
   }
 
   const text = String(value || '').trim();
@@ -590,6 +624,25 @@ function mapDictOptions(options: DictOption[]) {
   return options.map((item) => ({ label: item.label, value: item.value }));
 }
 
+function mergeDictOptionsWithValues(
+  options: DictOption[] = [],
+  values: string[] = [],
+): DictOption[] {
+  const items = [...(options || [])];
+  const seen = new Set(items.map((item) => String(item.value || '').trim()));
+  normalizeStringList(values).forEach((value) => {
+    if (seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    items.push({
+      label: value,
+      value,
+    });
+  });
+  return items;
+}
+
 export function toDictOptions(values: string[]) {
   return normalizeStringList(values).map((item) => ({
     label: item,
@@ -656,6 +709,11 @@ export function useFailureModeFormSchema(
   onSubsystemChange?: (value?: string) => void,
   options?: {
     hideStatusField?: boolean;
+    valueFallbacks?: {
+      chips?: string[];
+      fault_categories?: string[];
+      symptoms?: string[];
+    };
   },
 ): VbenFormSchema[] {
   const scopedOptions = resolveSubsystemScopedOptions(
@@ -708,7 +766,12 @@ export function useFailureModeFormSchema(
         collapseTags: true,
         collapseTagsTooltip: true,
         filterable: true,
-        options: mapDictOptions(scopedOptions.chipOptions),
+        options: mapDictOptions(
+          mergeDictOptionsWithValues(
+            scopedOptions.chipOptions,
+            options?.valueFallbacks?.chips,
+          ),
+        ),
       },
       defaultValue: [],
     },
@@ -721,7 +784,12 @@ export function useFailureModeFormSchema(
         multiple: true,
         collapseTags: true,
         collapseTagsTooltip: true,
-        options: mapDictOptions(dictOptions.fault_category),
+        options: mapDictOptions(
+          mergeDictOptionsWithValues(
+            dictOptions.fault_category,
+            options?.valueFallbacks?.fault_categories,
+          ),
+        ),
       },
       defaultValue: [],
     },
@@ -734,7 +802,12 @@ export function useFailureModeFormSchema(
         multiple: true,
         collapseTags: true,
         collapseTagsTooltip: true,
-        options: mapDictOptions(dictOptions.symptom),
+        options: mapDictOptions(
+          mergeDictOptionsWithValues(
+            dictOptions.symptom,
+            options?.valueFallbacks?.symptoms,
+          ),
+        ),
       },
       defaultValue: [],
     },

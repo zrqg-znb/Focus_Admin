@@ -251,6 +251,37 @@ def _serialize_task_log(item: FailureModeTaskLog) -> dict[str, Any]:
     }
 
 
+def _resolve_task_failure_mode_edit_meta(
+    task: FailureModeTask,
+    failure_mode: FailureMode | None,
+) -> tuple[bool, str | None]:
+    if task.status != 'PROCESSING' or task.task_type == 'DELETE' or not failure_mode:
+        return False, None
+    if task.task_type == 'REVISE':
+        return True, 'draft'
+    if (
+        task.task_type == 'CREATE'
+        and failure_mode.source_type == FailureMode.SOURCE_TYPE_TASK_QUICK_CREATE
+        and str(failure_mode.source_task_id or '') == str(task.id)
+    ):
+        return True, 'direct_update'
+    return False, None
+
+
+def _attach_task_failure_mode_edit_meta(
+    task: FailureModeTask,
+    failure_mode: FailureMode | None,
+    item: dict[str, Any],
+) -> dict[str, Any]:
+    editable_in_task, task_edit_mode = _resolve_task_failure_mode_edit_meta(
+        task,
+        failure_mode,
+    )
+    item['editable_in_task'] = editable_in_task
+    item['task_edit_mode'] = task_edit_mode
+    return item
+
+
 class FailureModeAccessPolicy:
     def __init__(self, user: User):
         self.user = user
@@ -743,6 +774,7 @@ class TaskWorkflowService:
                     else 'baseline'
                 )
                 item['has_task_draft'] = False
+                _attach_task_failure_mode_edit_meta(task, relation.failure_mode, item)
                 rows.append(item)
             return rows
 
@@ -772,6 +804,7 @@ class TaskWorkflowService:
                 change_type = 'new'
             item['task_change_type'] = change_type
             item['has_task_draft'] = bool(draft)
+            _attach_task_failure_mode_edit_meta(task, failure_mode, item)
             rows.append(item)
         return rows
 
@@ -1029,6 +1062,63 @@ class TaskWorkflowService:
         item = failure_mode_services.merge_failure_mode_snapshot(failure_mode, draft_payload)
         item['task_change_type'] = 'edited'
         item['has_task_draft'] = True
+        _attach_task_failure_mode_edit_meta(task, failure_mode, item)
+        return item
+
+    @classmethod
+    @transaction.atomic
+    def update_task_created_failure_mode(
+        cls,
+        user: User,
+        task_id: str,
+        failure_mode_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        task = cls._get_task_or_404(task_id)
+        policy = FailureModeAccessPolicy(user)
+        if not policy.can_process_task(task):
+            raise HttpError(403, '只有当前任务责任人可以编辑任务内故障模式。')
+        if task.status != 'PROCESSING':
+            raise HttpError(422, '只有梳理/修订中的任务可以编辑故障模式。')
+        if task.task_type != 'CREATE':
+            raise HttpError(422, '只有创建任务支持直接编辑任务内新增故障模式。')
+        if not TaskFailureMode.objects.filter(task=task, failure_mode_id=failure_mode_id).exists():
+            raise HttpError(422, '当前故障模式未加入该任务工作集。')
+
+        failure_mode = get_object_or_404(
+            failure_mode_services._failure_mode_queryset(),
+            id=failure_mode_id,
+        )
+        editable_in_task, task_edit_mode = _resolve_task_failure_mode_edit_meta(
+            task,
+            failure_mode,
+        )
+        if not editable_in_task or task_edit_mode != 'direct_update':
+            raise HttpError(422, '当前故障模式不支持在创建任务中直接编辑。')
+
+        filtered_payload = {
+            key: value
+            for key, value in dict(payload or {}).items()
+            if key in failure_mode_services.FAILURE_MODE_TASK_DRAFT_ALLOWED_FIELDS
+        }
+        item = failure_mode_services.apply_failure_mode_snapshot(
+            failure_mode,
+            filtered_payload,
+            user,
+        )
+        item['task_change_type'] = 'new'
+        item['has_task_draft'] = False
+        _attach_task_failure_mode_edit_meta(task, failure_mode, item)
+
+        cls._log(
+            task=task,
+            operator=user,
+            action=FailureModeTaskLog.ACTION_EDIT_FAILURE_MODE,
+            from_status=task.status,
+            to_status=task.status,
+            note=f'编辑任务内故障模式: {item.get("brief") or failure_mode.brief}',
+            extra_data={'failure_mode_id': str(failure_mode.id)},
+        )
         return item
 
     @classmethod

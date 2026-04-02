@@ -55,6 +55,7 @@ import {
   rejectTaskApi,
   saveTaskFailureModeDraftApi,
   submitTaskApi,
+  updateTaskFailureModeApi,
 } from '#/api/failure_mode_workflow';
 import FileSelector from '#/components/zq-form/file-selector/file-selector.vue';
 import { useZqTable } from '#/components/zq-table';
@@ -99,6 +100,7 @@ const roleAssignments = ref<FailureModeRoleAssignmentItem[]>([]);
 const reassignUserId = ref('');
 const transferDialogRef = ref<InstanceType<typeof FailureModeTransferDialog>>();
 const failureModeDrawerRef = ref<InstanceType<typeof FailureModeDrawer>>();
+const editingFailureModeRow = ref<FailureModeItem | null>(null);
 const dictOptions = reactive<FailureModeDictOptions>(createEmptyDictOptions());
 const subsystemConfigOptions = reactive<FailureModeSubsystemConfigOptions>(
   createEmptySubsystemConfigOptions(),
@@ -138,7 +140,6 @@ const canQuickCreate = computed(
   () => availableActions.value.has('quick_create') && !isDeleteTask.value,
 );
 const canSelectDelete = computed(() => canEdit.value && isDeleteTask.value);
-const canEditDraft = computed(() => availableActions.value.has('edit_draft'));
 
 const selectedDeleteRows = computed(() =>
   boundFailureModes.value.filter(
@@ -277,6 +278,7 @@ const TASK_LOG_ACTION_LABEL_MAP: Record<string, string> = {
   close: '评审关闭',
   create: '创建任务',
   delete_draft: '撤销修订草稿',
+  edit_failure_mode: '编辑任务内故障模式',
   quick_create_failure_mode: '任务内快速新增故障模式',
   recall: '撤回评审',
   reassign: '改派责任人',
@@ -454,6 +456,7 @@ async function handleAcceptTask() {
 }
 
 function handleQuickCreateFailureMode() {
+  editingFailureModeRow.value = null;
   failureModeDrawerRef.value?.openCreate();
 }
 
@@ -464,15 +467,28 @@ function quickCreateHandler(payload: FailureModePayload) {
   return quickCreateTaskFailureModeApi(currentTask.value.id, payload);
 }
 
-function draftUpdateHandler(id: string, payload: FailureModePayload) {
+function taskFailureModeUpdateHandler(id: string, payload: FailureModePayload) {
   if (!currentTask.value) {
     return Promise.reject(new Error('当前任务不存在'));
   }
-  return saveTaskFailureModeDraftApi(currentTask.value.id, id, payload);
+  const taskEditMode = editingFailureModeRow.value?.task_edit_mode;
+  if (taskEditMode === 'draft') {
+    return saveTaskFailureModeDraftApi(currentTask.value.id, id, payload);
+  }
+  if (taskEditMode === 'direct_update') {
+    return updateTaskFailureModeApi(currentTask.value.id, id, payload);
+  }
+  return Promise.reject(new Error('当前故障模式不支持编辑'));
 }
 
 function handleEditFailureMode(row: FailureModeItem) {
+  editingFailureModeRow.value = row;
   failureModeDrawerRef.value?.openEdit(row);
+}
+
+async function handleFailureModeSaved() {
+  editingFailureModeRow.value = null;
+  await loadTaskContext();
 }
 
 async function handleDeleteDraft(row: FailureModeItem) {
@@ -969,7 +985,7 @@ watch(
 
                   <template #cell-actions="{ row }">
                     <div
-                      v-if="isReviseTask && canEditDraft"
+                      v-if="row.editable_in_task"
                       class="flex items-center justify-center gap-2"
                     >
                       <ElButton
@@ -980,7 +996,9 @@ watch(
                         编辑
                       </ElButton>
                       <ElButton
-                        v-if="row.has_task_draft"
+                        v-if="
+                          row.task_edit_mode === 'draft' && row.has_task_draft
+                        "
                         link
                         type="warning"
                         @click="handleDeleteDraft(row)"
@@ -1128,8 +1146,8 @@ watch(
       :dict-options="dictOptions"
       hide-status-field
       :subsystem-config-options="subsystemConfigOptions"
-      :update-handler="isReviseTask && canEdit ? draftUpdateHandler : undefined"
-      @success="loadTaskContext"
+      :update-handler="taskFailureModeUpdateHandler"
+      @success="handleFailureModeSaved"
     />
   </Page>
 </template>
