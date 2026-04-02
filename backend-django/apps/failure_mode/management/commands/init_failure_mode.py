@@ -99,6 +99,20 @@ MENU_SEEDS = [
         keep_alive=True,
     ),
     MenuSeed(
+        key='failure_mode_product_statistics',
+        parent_key='failure_mode',
+        name='FailureModeProductStatistics',
+        title='产品故障统计',
+        path='/failure-mode/product-statistics',
+        component='/failure-mode/product-statistics/index',
+        menu_type='menu',
+        order=3,
+        auth_code='failure-mode:product-statistics',
+        icon='lucide:chart-no-axes-combined',
+        hide_in_menu=False,
+        keep_alive=True,
+    ),
+    MenuSeed(
         key='failure_mode_workflow_tasks',
         parent_key='failure_mode',
         name='FailureModeTasks',
@@ -106,7 +120,7 @@ MENU_SEEDS = [
         path='/failure-mode/tasks',
         component='/failure-mode/tasks/index',
         menu_type='menu',
-        order=3,
+        order=4,
         auth_code='failure-mode:workflow-tasks',
         icon='lucide:list-todo',
         hide_in_menu=False,
@@ -136,7 +150,7 @@ MENU_SEEDS = [
         path='/failure-mode/products/baselines',
         component='/failure-mode/products/baselines/index',
         menu_type='menu',
-        order=4,
+        order=5,
         auth_code='failure-mode:workflow-products',
         icon='lucide:package-check',
         hide_in_menu=False,
@@ -150,7 +164,7 @@ MENU_SEEDS = [
         path='/failure-mode/config',
         component=None,
         menu_type='catalog',
-        order=5,
+        order=6,
         auth_code='failure-mode',
         icon='lucide:settings-2',
         hide_in_menu=False,
@@ -242,6 +256,12 @@ PERMISSION_SEEDS = {
         {'name': '查看故障管理统计页面', 'code': 'failure-mode:statistics:view', 'permission_type': 0},
         {'name': '获取故障管理统计摘要', 'code': 'failure-mode:statistics:api:summary', 'permission_type': 1, 'api_path': '/api/failure-mode/statistics/summary', 'http_method': 'POST'},
         {'name': '获取故障管理子系统统计表', 'code': 'failure-mode:statistics:api:subsystems', 'permission_type': 1, 'api_path': '/api/failure-mode/statistics/subsystems/search', 'http_method': 'POST'},
+    ],
+    'failure_mode_product_statistics': [
+        {'name': '查看产品故障统计页面', 'code': 'failure-mode:product-statistics:view', 'permission_type': 0},
+        {'name': '获取产品故障统计概览', 'code': 'failure-mode:api:product-statistics:overview', 'permission_type': 1, 'api_path': '/api/failure-mode/statistics/products/overview', 'http_method': 'POST'},
+        {'name': '获取产品故障统计摘要', 'code': 'failure-mode:api:product-statistics:summary', 'permission_type': 1, 'api_path': '/api/failure-mode/statistics/products/summary', 'http_method': 'POST'},
+        {'name': '获取产品故障统计子系统表', 'code': 'failure-mode:api:product-statistics:subsystems', 'permission_type': 1, 'api_path': '/api/failure-mode/statistics/products/subsystems/search', 'http_method': 'POST'},
     ],
     'failure_mode_workflow_tasks': [
         {'name': '查看故障工作流任务', 'code': 'failure-mode:workflow-tasks:view', 'permission_type': 0},
@@ -348,7 +368,7 @@ class Command(BaseCommand):
             if not normalized_path:
                 continue
             menu_role_map.setdefault(normalized_path, set()).update(
-                menu.core_roles.values_list('id', flat=True)
+                str(role.id) for role in menu.core_roles.all()
             )
 
         permission_queryset = Permission.objects.filter(
@@ -364,7 +384,7 @@ class Command(BaseCommand):
             if not normalized_code:
                 continue
             permission_role_map.setdefault(normalized_code, set()).update(
-                permission.roles.values_list('id', flat=True)
+                str(role.id) for role in permission.roles.all()
             )
 
         return {

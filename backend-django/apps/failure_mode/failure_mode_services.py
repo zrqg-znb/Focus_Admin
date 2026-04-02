@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from types import SimpleNamespace
 from typing import Any, Iterable, Type
 
 from django.db import transaction
@@ -1454,6 +1455,11 @@ def get_failure_mode_insight(failure_mode_id: str) -> dict[str, Any]:
 
 @transaction.atomic
 def delete_failure_mode(failure_mode_id: str) -> dict[str, bool]:
+    if ProductFailureMode.objects.filter(
+        failure_mode_id=failure_mode_id,
+        is_deleted=False,
+    ).exists():
+        raise HttpError(409, '该故障模式已关联产品基线，无法删除')
     instance = get_object_or_404(FailureMode.objects.filter(is_deleted=False), id=failure_mode_id)
     instance.delete()
     return {'success': True}
@@ -2040,15 +2046,43 @@ def _build_statistics_status_dataset(counter: dict[str, int]) -> list[dict[str, 
     ]
 
 
-def _build_failure_mode_statistics_rows() -> list[dict[str, Any]]:
-    failure_modes = list(_failure_mode_queryset().order_by('-sort', '-sys_create_datetime'))
-    config_subsystems = [
-        item.subsystem
-        for item in _subsystem_config_queryset().only('subsystem')
+def _resolve_statistics_light(pending_rate: float) -> str:
+    if pending_rate > 60:
+        return 'red'
+    if pending_rate > 20:
+        return 'yellow'
+    return 'green'
+
+
+def _make_statistics_source_rows_from_failure_modes(
+    failure_modes: Iterable[FailureMode],
+) -> list[SimpleNamespace]:
+    return [
+        SimpleNamespace(subsystem=item.subsystem, failure_mode=item)
+        for item in failure_modes
     ]
 
+
+def _make_statistics_source_rows_from_product_bindings(
+    bindings: Iterable[ProductFailureMode],
+) -> list[SimpleNamespace]:
+    rows: list[SimpleNamespace] = []
+    for item in bindings:
+        if not getattr(item, 'failure_mode', None):
+            continue
+        rows.append(
+            SimpleNamespace(subsystem=item.subsystem, failure_mode=item.failure_mode),
+        )
+    return rows
+
+
+def _build_statistics_payload_from_sources(
+    source_rows: Iterable[SimpleNamespace],
+    seed_subsystems: Iterable[str] | None = None,
+) -> dict[str, Any]:
     subsystem_keys: list[str] = []
     subsystem_seen: set[str] = set()
+    source_row_list = list(source_rows)
 
     def ensure_subsystem_key(subsystem: str):
         if subsystem in subsystem_seen:
@@ -2056,17 +2090,14 @@ def _build_failure_mode_statistics_rows() -> list[dict[str, Any]]:
         subsystem_seen.add(subsystem)
         subsystem_keys.append(subsystem)
 
-    for subsystem in config_subsystems:
-        text = _normalize_optional_text(subsystem)
-        if text:
-            ensure_subsystem_key(text)
-
-    for failure_mode in failure_modes:
-        subsystem = _normalize_optional_text(failure_mode.subsystem) or EMPTY_SUBSYSTEM_LABEL
-        ensure_subsystem_key(subsystem)
-
-    rows: dict[str, dict[str, Any]] = {
-        subsystem: {
+    def ensure_row(
+        rows: dict[str, dict[str, Any]],
+        subsystem: str,
+    ) -> dict[str, Any]:
+        row = rows.get(subsystem)
+        if row is not None:
+            return row
+        row = {
             'subsystem': subsystem,
             'failure_mode_count': 0,
             'interception_relation_count': 0,
@@ -2081,12 +2112,37 @@ def _build_failure_mode_statistics_rows() -> list[dict[str, Any]]:
             'pending_rate': 0.0,
             'status_light': 'green',
         }
-        for subsystem in subsystem_keys
+        rows[subsystem] = row
+        return row
+
+    for subsystem in seed_subsystems or []:
+        text = _normalize_optional_text(subsystem)
+        if text:
+            ensure_subsystem_key(text)
+
+    for source in source_row_list:
+        subsystem = _normalize_optional_text(source.subsystem) or EMPTY_SUBSYSTEM_LABEL
+        ensure_subsystem_key(subsystem)
+
+    rows: dict[str, dict[str, Any]] = {}
+    for subsystem in subsystem_keys:
+        ensure_row(rows, subsystem)
+
+    interception_counter = defaultdict(int)
+    huatuo_counter = defaultdict(int)
+    handling_counters = {
+        category: defaultdict(int)
+        for category in FIXED_HANDLING_MEASURE_CATEGORIES
+    }
+    observation_counters = {
+        monitor_type: defaultdict(int)
+        for monitor_type in FIXED_OBSERVATION_METHOD_TYPES
     }
 
-    for failure_mode in failure_modes:
-        subsystem = _normalize_optional_text(failure_mode.subsystem) or EMPTY_SUBSYSTEM_LABEL
-        row = rows[subsystem]
+    for source in source_row_list:
+        failure_mode = source.failure_mode
+        subsystem = _normalize_optional_text(source.subsystem) or EMPTY_SUBSYSTEM_LABEL
+        row = ensure_row(rows, subsystem)
         row['failure_mode_count'] += 1
 
         interception_relations = list(failure_mode.interception_relations.all())
@@ -2099,7 +2155,9 @@ def _build_failure_mode_statistics_rows() -> list[dict[str, Any]]:
 
         handling_counts = defaultdict(int)
         for relation in handling_relations:
-            category = _normalize_optional_text(relation.handling_measure.measure_category)
+            category = _normalize_optional_text(
+                relation.handling_measure.measure_category,
+            )
             if category:
                 handling_counts[category] += 1
         row['handling_detection_relation_count'] += handling_counts['检测']
@@ -2108,21 +2166,61 @@ def _build_failure_mode_statistics_rows() -> list[dict[str, Any]]:
 
         observation_counts = defaultdict(int)
         for relation in observation_relations:
-            monitor_type = _normalize_optional_text(relation.observation_method.monitor_type)
+            monitor_type = _normalize_optional_text(
+                relation.observation_method.monitor_type,
+            )
             if monitor_type:
                 observation_counts[monitor_type] += 1
         row['observation_pipeline_log_relation_count'] += observation_counts['流水日志']
         row['observation_dmd_relation_count'] += observation_counts['DMD 点位']
         row['observation_fmp_relation_count'] += observation_counts['FMP 点位']
 
-        required_handling_categories = _normalize_enum_list(
-            failure_mode.required_handling_measure_categories,
-            FIXED_HANDLING_MEASURE_CATEGORIES,
+        required_handling_categories = set(
+            _normalize_enum_list(
+                failure_mode.required_handling_measure_categories,
+                FIXED_HANDLING_MEASURE_CATEGORIES,
+            ),
         )
-        required_observation_types = _normalize_enum_list(
-            failure_mode.required_observation_method_types,
-            FIXED_OBSERVATION_METHOD_TYPES,
+        required_observation_types = set(
+            _normalize_enum_list(
+                failure_mode.required_observation_method_types,
+                FIXED_OBSERVATION_METHOD_TYPES,
+            ),
         )
+
+        interception_status = _resolve_statistics_status(
+            bool(failure_mode.interception_required),
+            len(interception_relations) > 0,
+        )
+        interception_counter[interception_status] += 1
+
+        huatuo_status = _resolve_statistics_status(
+            bool(failure_mode.huatuo_required),
+            len(huatuo_relations) > 0,
+        )
+        huatuo_counter[huatuo_status] += 1
+
+        handling_available = {
+            _normalize_optional_text(relation.handling_measure.measure_category)
+            for relation in handling_relations
+        }
+        for category in FIXED_HANDLING_MEASURE_CATEGORIES:
+            status = _resolve_statistics_status(
+                category in required_handling_categories,
+                category in handling_available,
+            )
+            handling_counters[category][status] += 1
+
+        observation_available = {
+            _normalize_optional_text(relation.observation_method.monitor_type)
+            for relation in observation_relations
+        }
+        for monitor_type in FIXED_OBSERVATION_METHOD_TYPES:
+            status = _resolve_statistics_status(
+                monitor_type in required_observation_types,
+                monitor_type in observation_available,
+            )
+            observation_counters[monitor_type][status] += 1
 
         pending = False
         if failure_mode.interception_required and not interception_relations:
@@ -2141,113 +2239,222 @@ def _build_failure_mode_statistics_rows() -> list[dict[str, Any]]:
         if pending:
             row['pending_failure_mode_count'] += 1
 
-    result: list[dict[str, Any]] = []
-    for subsystem, row in rows.items():
+    subsystem_rows: list[dict[str, Any]] = []
+    for subsystem in subsystem_keys:
+        row = ensure_row(rows, subsystem)
         total = row['failure_mode_count']
         pending_count = row['pending_failure_mode_count']
         pending_rate = round((pending_count / total) * 100, 2) if total > 0 else 0.0
-        status_light = 'green'
-        if pending_rate > 60:
-            status_light = 'red'
-        elif pending_rate > 20:
-            status_light = 'yellow'
         row['pending_rate'] = pending_rate
-        row['status_light'] = status_light
-        row['subsystem'] = subsystem
-        result.append(row)
+        row['status_light'] = _resolve_statistics_light(pending_rate)
+        subsystem_rows.append(row)
 
-    result.sort(key=lambda item: (-item['failure_mode_count'], item['subsystem']))
-    return result
+    subsystem_rows.sort(key=lambda item: (-item['failure_mode_count'], item['subsystem']))
 
-
-def get_failure_mode_statistics_summary() -> dict[str, Any]:
-    failure_modes = list(_failure_mode_queryset().order_by('-sort', '-sys_create_datetime'))
-    subsystem_counts = _build_failure_mode_statistics_rows()
-
-    interception_counter = defaultdict(int)
-    huatuo_counter = defaultdict(int)
-    handling_counters = {
-        category: defaultdict(int)
-        for category in FIXED_HANDLING_MEASURE_CATEGORIES
-    }
-    observation_counters = {
-        monitor_type: defaultdict(int)
-        for monitor_type in FIXED_OBSERVATION_METHOD_TYPES
-    }
-
-    for failure_mode in failure_modes:
-        interception_relations = list(failure_mode.interception_relations.all())
-        handling_relations = list(failure_mode.handling_measure_relations.all())
-        observation_relations = list(failure_mode.observation_method_relations.all())
-        huatuo_relations = list(failure_mode.huatuo_diagnosis_relations.all())
-
-        interception_status = _resolve_statistics_status(
-            bool(failure_mode.interception_required),
-            len(interception_relations) > 0,
-        )
-        interception_counter[interception_status] += 1
-
-        huatuo_status = _resolve_statistics_status(
-            bool(failure_mode.huatuo_required),
-            len(huatuo_relations) > 0,
-        )
-        huatuo_counter[huatuo_status] += 1
-
-        handling_available = {
-            _normalize_optional_text(relation.handling_measure.measure_category)
-            for relation in handling_relations
-        }
-        required_handling_categories = set(
-            _normalize_enum_list(
-                failure_mode.required_handling_measure_categories,
-                FIXED_HANDLING_MEASURE_CATEGORIES,
-            )
-        )
-        for category in FIXED_HANDLING_MEASURE_CATEGORIES:
-            status = _resolve_statistics_status(
-                category in required_handling_categories,
-                category in handling_available,
-            )
-            handling_counters[category][status] += 1
-
-        observation_available = {
-            _normalize_optional_text(relation.observation_method.monitor_type)
-            for relation in observation_relations
-        }
-        required_observation_types = set(
-            _normalize_enum_list(
-                failure_mode.required_observation_method_types,
-                FIXED_OBSERVATION_METHOD_TYPES,
-            )
-        )
-        for monitor_type in FIXED_OBSERVATION_METHOD_TYPES:
-            status = _resolve_statistics_status(
-                monitor_type in required_observation_types,
-                monitor_type in observation_available,
-            )
-            observation_counters[monitor_type][status] += 1
-
-    return {
+    summary = {
         'subsystem_counts': [
             {
                 'name': item['subsystem'],
                 'value': item['failure_mode_count'],
             }
-            for item in subsystem_counts
+            for item in subsystem_rows
         ],
         'interception_status': _build_statistics_status_dataset(interception_counter),
         'huatuo_status': _build_statistics_status_dataset(huatuo_counter),
-        'handling_detection_status': _build_statistics_status_dataset(handling_counters['检测']),
-        'handling_prevention_status': _build_statistics_status_dataset(handling_counters['预防']),
-        'handling_self_heal_status': _build_statistics_status_dataset(handling_counters['自愈']),
-        'observation_pipeline_log_status': _build_statistics_status_dataset(observation_counters['流水日志']),
-        'observation_dmd_status': _build_statistics_status_dataset(observation_counters['DMD 点位']),
-        'observation_fmp_status': _build_statistics_status_dataset(observation_counters['FMP 点位']),
+        'handling_detection_status': _build_statistics_status_dataset(
+            handling_counters['检测'],
+        ),
+        'handling_prevention_status': _build_statistics_status_dataset(
+            handling_counters['预防'],
+        ),
+        'handling_self_heal_status': _build_statistics_status_dataset(
+            handling_counters['自愈'],
+        ),
+        'observation_pipeline_log_status': _build_statistics_status_dataset(
+            observation_counters['流水日志'],
+        ),
+        'observation_dmd_status': _build_statistics_status_dataset(
+            observation_counters['DMD 点位'],
+        ),
+        'observation_fmp_status': _build_statistics_status_dataset(
+            observation_counters['FMP 点位'],
+        ),
+    }
+    return {
+        'rows': subsystem_rows,
+        'summary': summary,
     }
 
 
-def list_failure_mode_statistics_subsystems(filters) -> dict[str, Any]:
-    rows = _build_failure_mode_statistics_rows()
+def _build_failure_mode_statistics_rows() -> list[dict[str, Any]]:
+    failure_modes = list(_failure_mode_queryset().order_by('-sort', '-sys_create_datetime'))
+    config_subsystems = [
+        item.subsystem
+        for item in _subsystem_config_queryset().only('subsystem')
+    ]
+    payload = _build_statistics_payload_from_sources(
+        _make_statistics_source_rows_from_failure_modes(failure_modes),
+        config_subsystems,
+    )
+    return payload['rows']
+
+
+def get_failure_mode_statistics_summary() -> dict[str, Any]:
+    failure_modes = list(_failure_mode_queryset().order_by('-sort', '-sys_create_datetime'))
+    config_subsystems = [
+        item.subsystem
+        for item in _subsystem_config_queryset().only('subsystem')
+    ]
+    payload = _build_statistics_payload_from_sources(
+        _make_statistics_source_rows_from_failure_modes(failure_modes),
+        config_subsystems,
+    )
+    return payload['summary']
+
+
+def _get_product_statistics_policy():
+    from apps.failure_mode.failure_mode_workflow_services import (
+        FailureModeAccessPolicy,
+        ProductWorkflowService,
+    )
+
+    return FailureModeAccessPolicy, ProductWorkflowService
+
+
+def _get_visible_product_statistics_queryset(user: User):
+    FailureModeAccessPolicy, ProductWorkflowService = _get_product_statistics_policy()
+    ProductWorkflowService.sync_projects()
+    policy = FailureModeAccessPolicy(user)
+    queryset = FailureModeProduct.objects.filter(is_deleted=False).select_related(
+        'project',
+        'owner',
+    )
+    queryset = policy.filter_products(queryset)
+    return policy, queryset.order_by('project__name', '-sys_create_datetime')
+
+
+def _product_failure_mode_statistics_queryset():
+    return ProductFailureMode.objects.filter(
+        is_deleted=False,
+        product__is_deleted=False,
+        failure_mode__is_deleted=False,
+    ).select_related('product', 'product__project', 'product__owner', 'failure_mode').prefetch_related(
+        Prefetch(
+            'failure_mode__interception_relations',
+            queryset=FailureModeInterceptionStrategyRel.objects.select_related(
+                'interception_strategy',
+            ).order_by('order_index', 'sys_create_datetime'),
+        ),
+        Prefetch(
+            'failure_mode__handling_measure_relations',
+            queryset=FailureModeHandlingMeasureRel.objects.select_related(
+                'handling_measure',
+            ).order_by('order_index', 'sys_create_datetime'),
+        ),
+        Prefetch(
+            'failure_mode__observation_method_relations',
+            queryset=FailureModeObservationMethodRel.objects.select_related(
+                'observation_method',
+            ).order_by('order_index', 'sys_create_datetime'),
+        ),
+        Prefetch(
+            'failure_mode__huatuo_diagnosis_relations',
+            queryset=FailureModeHuatuoDiagnosisRel.objects.select_related(
+                'huatuo_diagnosis',
+            ).order_by('order_index', 'sys_create_datetime'),
+        ),
+    )
+
+
+def _get_visible_product_statistics_bindings(
+    policy,
+    product_id: str,
+    subsystem: str | None = None,
+) -> list[ProductFailureMode]:
+    queryset = _product_failure_mode_statistics_queryset().filter(product_id=product_id)
+    queryset = policy.filter_product_failure_modes(queryset)
+    if subsystem:
+        queryset = queryset.filter(subsystem=subsystem)
+    return list(queryset.order_by('subsystem', '-sys_create_datetime'))
+
+
+def list_failure_mode_product_statistics_overview(user: User) -> list[dict[str, Any]]:
+    policy, products = _get_visible_product_statistics_queryset(user)
+    product_list = list(products)
+    bindings = list(
+        policy.filter_product_failure_modes(_product_failure_mode_statistics_queryset()),
+    )
+    grouped_bindings: dict[str, list[ProductFailureMode]] = defaultdict(list)
+    for item in bindings:
+        grouped_bindings[str(item.product_id)].append(item)
+
+    rows: list[dict[str, Any]] = []
+    for product in product_list:
+        product_id = str(product.id)
+        product_bindings = grouped_bindings.get(product_id, [])
+        payload = _build_statistics_payload_from_sources(
+            _make_statistics_source_rows_from_product_bindings(product_bindings),
+        )
+        subsystem_rows = payload['rows']
+        baseline_count = len(product_bindings)
+        pending_count = sum(
+            int(item['pending_failure_mode_count'])
+            for item in subsystem_rows
+        )
+        pending_rate = round((pending_count / baseline_count) * 100, 2) if baseline_count > 0 else 0.0
+        rows.append(
+            {
+                'product_id': product_id,
+                'product_name': product.project.name if product.project else '',
+                'owner_info': _user_brief(product.owner),
+                'baseline_failure_mode_count': baseline_count,
+                'pending_failure_mode_count': pending_count,
+                'pending_rate': pending_rate,
+                'status_light': _resolve_statistics_light(pending_rate),
+            },
+        )
+
+    rows.sort(
+        key=lambda item: (
+            -item['pending_failure_mode_count'],
+            -item['pending_rate'],
+            item['product_name'],
+        ),
+    )
+    return rows
+
+
+def get_failure_mode_product_statistics_summary(user: User, filters) -> dict[str, Any]:
+    policy, queryset = _get_visible_product_statistics_queryset(user)
+    product = get_object_or_404(queryset, id=filters.product_id)
+    if not policy.can_view_product(product):
+        raise HttpError(403, '无权查看当前产品统计。')
+
+    bindings = _get_visible_product_statistics_bindings(
+        policy,
+        str(product.id),
+        _normalize_optional_text(getattr(filters, 'subsystem', None)),
+    )
+    payload = _build_statistics_payload_from_sources(
+        _make_statistics_source_rows_from_product_bindings(bindings),
+    )
+    return payload['summary']
+
+
+def list_failure_mode_product_statistics_subsystems(user: User, filters) -> dict[str, Any]:
+    policy, queryset = _get_visible_product_statistics_queryset(user)
+    product = get_object_or_404(queryset, id=filters.product_id)
+    if not policy.can_view_product(product):
+        raise HttpError(403, '无权查看当前产品统计。')
+
+    bindings = _get_visible_product_statistics_bindings(
+        policy,
+        str(product.id),
+        _normalize_optional_text(getattr(filters, 'subsystem', None)),
+    )
+    rows = _build_statistics_payload_from_sources(
+        _make_statistics_source_rows_from_product_bindings(bindings),
+    )['rows']
     keyword = _normalize_optional_text(getattr(filters, 'keyword', None))
     if keyword:
         rows = [

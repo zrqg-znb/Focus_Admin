@@ -9,6 +9,11 @@ from .failure_mode_schemas import (
     FailureModeInsightOutSchema,
     FailureModeOutSchema,
     FailureModePageSchema,
+    FailureModeProductStatisticsOverviewItemSchema,
+    FailureModeProductStatisticsSearchSchema,
+    FailureModeProductStatisticsSubsystemPageSchema,
+    FailureModeProductStatisticsSummarySchema,
+    FailureModeProductStatisticsSummarySearchSchema,
     FailureModeSearchSchema,
     FailureModeStatisticsSubsystemPageSchema,
     FailureModeStatisticsSubsystemSearchSchema,
@@ -67,6 +72,21 @@ def get_statistics_summary(request):
 @router.post('/statistics/subsystems/search', response=FailureModeStatisticsSubsystemPageSchema, summary='搜索故障管理子系统统计表')
 def search_statistics_subsystems(request, filters: FailureModeStatisticsSubsystemSearchSchema):
     return failure_mode_services.list_failure_mode_statistics_subsystems(filters)
+
+
+@router.post('/statistics/products/overview', response=list[FailureModeProductStatisticsOverviewItemSchema], summary='获取产品故障统计概览')
+def get_product_statistics_overview(request):
+    return failure_mode_services.list_failure_mode_product_statistics_overview(request.auth)
+
+
+@router.post('/statistics/products/summary', response=FailureModeProductStatisticsSummarySchema, summary='获取产品故障统计摘要')
+def get_product_statistics_summary(request, filters: FailureModeProductStatisticsSummarySearchSchema):
+    return failure_mode_services.get_failure_mode_product_statistics_summary(request.auth, filters)
+
+
+@router.post('/statistics/products/subsystems/search', response=FailureModeProductStatisticsSubsystemPageSchema, summary='搜索产品故障统计子系统表')
+def search_product_statistics_subsystems(request, filters: FailureModeProductStatisticsSearchSchema):
+    return failure_mode_services.list_failure_mode_product_statistics_subsystems(request.auth, filters)
 
 
 @router.post('/subsystem-configs/search', response=FailureModeSubsystemConfigPageSchema, summary='搜索故障模式子系统配置列表')

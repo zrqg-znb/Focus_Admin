@@ -394,6 +394,32 @@ export interface FailureModeStatisticsSubsystemQuery {
   pageSize?: number;
 }
 
+export interface FailureModeProductStatisticsOverviewItem {
+  product_id: string;
+  product_name: string;
+  owner_info?: null | UserBriefInfo;
+  baseline_failure_mode_count: number;
+  pending_failure_mode_count: number;
+  pending_rate: number;
+  status_light: 'green' | 'red' | 'yellow' | string;
+}
+
+export type FailureModeProductStatisticsSummary = FailureModeStatisticsSummary;
+
+export interface FailureModeProductStatisticsSummaryQuery {
+  product_id: string;
+  subsystem?: string;
+}
+
+export type FailureModeProductStatisticsSubsystemRow =
+  FailureModeStatisticsSubsystemRow;
+
+export interface FailureModeProductStatisticsSubsystemQuery
+  extends FailureModeStatisticsSubsystemQuery {
+  product_id: string;
+  subsystem?: string;
+}
+
 const base = '/api/failure-mode';
 
 export async function getFailureModeDictOptionsApi() {
@@ -459,6 +485,30 @@ export async function listFailureModeStatisticsSubsystemsApi(
   return requestClient.post<
     PaginatedResponse<FailureModeStatisticsSubsystemRow>
   >(`${base}/statistics/subsystems/search`, data ?? {});
+}
+
+export async function listFailureModeProductStatisticsOverviewApi() {
+  return requestClient.post<FailureModeProductStatisticsOverviewItem[]>(
+    `${base}/statistics/products/overview`,
+    {},
+  );
+}
+
+export async function getFailureModeProductStatisticsSummaryApi(
+  data: FailureModeProductStatisticsSummaryQuery,
+) {
+  return requestClient.post<FailureModeProductStatisticsSummary>(
+    `${base}/statistics/products/summary`,
+    data,
+  );
+}
+
+export async function listFailureModeProductStatisticsSubsystemsApi(
+  data: FailureModeProductStatisticsSubsystemQuery,
+) {
+  return requestClient.post<
+    PaginatedResponse<FailureModeProductStatisticsSubsystemRow>
+  >(`${base}/statistics/products/subsystems/search`, data);
 }
 
 export async function listFailureModesApi(data?: FailureModeQuery) {

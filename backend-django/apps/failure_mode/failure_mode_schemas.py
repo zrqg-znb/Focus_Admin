@@ -699,6 +699,60 @@ class FailureModeStatisticsSubsystemPageSchema(Schema):
     total: int
 
 
+class FailureModeProductStatisticsSummarySchema(FailureModeStatisticsSummarySchema):
+    pass
+
+
+class FailureModeProductStatisticsOverviewItemSchema(Schema):
+    product_id: str
+    product_name: str
+    owner_info: Optional[UserBriefSchema] = None
+    baseline_failure_mode_count: int
+    pending_failure_mode_count: int
+    pending_rate: float
+    status_light: str
+
+
+class FailureModeProductStatisticsSearchSchema(SearchPaginationSchema):
+    product_id: str
+    keyword: Optional[str] = None
+    subsystem: Optional[str] = None
+
+    @field_validator('product_id', 'keyword', 'subsystem', mode='before')
+    @classmethod
+    def normalize_product_statistics_text(cls, value: Any):
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+
+class FailureModeProductStatisticsSummarySearchSchema(Schema):
+    product_id: str
+    subsystem: Optional[str] = None
+
+    @field_validator('product_id', 'subsystem', mode='before')
+    @classmethod
+    def normalize_product_statistics_summary_text(cls, value: Any):
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+
+class FailureModeProductStatisticsSubsystemRowSchema(
+    FailureModeStatisticsSubsystemRowSchema,
+):
+    pass
+
+
+class FailureModeProductStatisticsSubsystemPageSchema(Schema):
+    items: list[FailureModeProductStatisticsSubsystemRowSchema] = Field(
+        default_factory=list,
+    )
+    total: int
+
+
 class SaveSuccessSchema(Schema):
     success: bool = True
 

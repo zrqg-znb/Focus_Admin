@@ -471,6 +471,10 @@ async function handleFailureModeAction(
   } catch (error) {
     if (error !== 'cancel') {
       console.error(error);
+      const hasApiResponse = Boolean((error as any)?.response);
+      if (!hasApiResponse) {
+        ElMessage.error((error as any)?.message || '删除失败');
+      }
     }
   }
 }
