@@ -49,6 +49,8 @@ TASK_STATUS_FAILURE_MODE_STATUS_MAP = {
     'CLOSED': '已基线',
 }
 
+PLATFORM_PROJECT_TYPE = '平台项目'
+
 
 def _normalize_text(value: Any) -> str:
     return str(value or '').strip()
@@ -68,6 +70,22 @@ def _normalize_id_list(values: Any) -> list[str]:
         seen.add(text)
         result.append(text)
     return result
+
+
+def _filter_product_queryset_by_project_type(queryset, project_type: str | None = None):
+    normalized_type = _normalize_text(project_type)
+    if not normalized_type:
+        return queryset
+    return queryset.filter(project__type=normalized_type)
+
+
+def _ensure_product_project_type(
+    product: FailureModeProduct,
+    project_type: str | None = None,
+):
+    normalized_type = _normalize_text(project_type)
+    if normalized_type and getattr(product.project, 'type', None) != normalized_type:
+        raise HttpError(404, '当前产品不在可配置范围内。')
 
 
 def _filter_visible_role_assignments(
@@ -481,13 +499,19 @@ class ProductWorkflowService:
             assignment.save(update_fields=['is_active', 'sys_update_datetime'])
 
     @classmethod
-    def list_products(cls, user: User, owner_id: str | None = None) -> list[dict[str, Any]]:
+    def list_products(
+        cls,
+        user: User,
+        owner_id: str | None = None,
+        project_type: str | None = None,
+    ) -> list[dict[str, Any]]:
         cls.sync_projects()
         policy = FailureModeAccessPolicy(user)
         queryset = FailureModeProduct.objects.select_related('project', 'owner').prefetch_related(
             Prefetch('role_assignments', queryset=FailureModeRoleAssignment.objects.filter(is_active=True).select_related('user'))
         )
         queryset = policy.filter_products(queryset)
+        queryset = _filter_product_queryset_by_project_type(queryset, project_type)
         if owner_id:
             queryset = queryset.filter(owner_id=owner_id)
         return [
@@ -503,6 +527,7 @@ class ProductWorkflowService:
             FailureModeProduct.objects.select_related('project', 'owner').prefetch_related('role_assignments'),
             id=product_id,
         )
+        _ensure_product_project_type(product, PLATFORM_PROJECT_TYPE)
         if not policy.can_manage_product_roles(product):
             raise HttpError(403, '只有管理员或当前产品主版本SE可以设置主版本SE。')
         product.owner = User.objects.get(id=owner_id) if owner_id else None
@@ -538,7 +563,8 @@ class ProductWorkflowService:
     def list_product_role_assignments(cls, user: User, product_id: str) -> list[dict[str, Any]]:
         cls.sync_projects()
         policy = FailureModeAccessPolicy(user)
-        product = get_object_or_404(FailureModeProduct.objects.select_related('owner'), id=product_id)
+        product = get_object_or_404(FailureModeProduct.objects.select_related('project', 'owner'), id=product_id)
+        _ensure_product_project_type(product, PLATFORM_PROJECT_TYPE)
         if not policy.can_view_product_roles(product):
             raise HttpError(403, '无权查看当前产品角色配置。')
 
@@ -567,7 +593,8 @@ class ProductWorkflowService:
     ) -> list[dict[str, Any]]:
         cls.sync_projects()
         policy = FailureModeAccessPolicy(user)
-        product = get_object_or_404(FailureModeProduct.objects.select_related('owner'), id=product_id)
+        product = get_object_or_404(FailureModeProduct.objects.select_related('project', 'owner'), id=product_id)
+        _ensure_product_project_type(product, PLATFORM_PROJECT_TYPE)
         if not policy.can_manage_product_roles(product):
             raise HttpError(403, '无权管理当前产品角色配置。')
 

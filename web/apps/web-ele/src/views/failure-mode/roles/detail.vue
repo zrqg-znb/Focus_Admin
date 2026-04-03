@@ -127,7 +127,7 @@ async function loadData() {
   }
   loading.value = true;
   try {
-    const products = await listProductsApi();
+    const products = await listProductsApi({ project_type: '平台项目' });
     currentProduct.value =
       products.find((item) => item.id === productId.value) || null;
     if (!currentProduct.value) {

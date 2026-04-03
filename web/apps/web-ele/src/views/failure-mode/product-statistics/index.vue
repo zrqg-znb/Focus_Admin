@@ -6,7 +6,6 @@ import type {
   FailureModeProductStatisticsSubsystemRow,
   FailureModeProductStatisticsSummary,
 } from '#/api/failure_mode';
-import type { VisibleSubsystemItem } from '#/api/failure_mode_workflow';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
 import { computed, nextTick, onMounted, ref } from 'vue';
@@ -27,9 +26,9 @@ import {
 import {
   getFailureModeProductStatisticsSummaryApi,
   listFailureModeProductStatisticsOverviewApi,
+  listFailureModeProductStatisticsSubsystemOptionsApi,
   listFailureModeProductStatisticsSubsystemsApi,
 } from '#/api/failure_mode';
-import { listVisibleSubsystemsApi } from '#/api/failure_mode_workflow';
 import { useZqTable } from '#/components/zq-table';
 
 import StatisticsBarChart from '../statistics/components/StatisticsBarChart.vue';
@@ -57,10 +56,10 @@ const pageScrollTop = ref(0);
 const overviewLoading = ref(false);
 const summaryLoading = ref(false);
 const subsystemOptionsLoading = ref(false);
-const selectedProductId = ref('');
-const selectedSubsystem = ref('');
+const selectedProductIds = ref<string[]>([]);
+const selectedSubsystems = ref<string[]>([]);
 const overviewItems = ref<FailureModeProductStatisticsOverviewItem[]>([]);
-const subsystemOptions = ref<VisibleSubsystemItem[]>([]);
+const subsystemOptions = ref<string[]>([]);
 const summary = ref<FailureModeProductStatisticsSummary>(
   createEmptyProductStatisticsSummary(),
 );
@@ -75,14 +74,11 @@ const [SubsystemTable, subsystemTableApi] =
         autoLoad: false,
         ajax: {
           query: async ({ page }: GridQueryContext) => {
-            if (!selectedProductId.value) {
-              return { items: [], total: 0 };
-            }
             return listFailureModeProductStatisticsSubsystemsApi({
               page: page.currentPage,
               pageSize: page.pageSize,
-              product_id: selectedProductId.value,
-              subsystem: selectedSubsystem.value || undefined,
+              product_ids: selectedProductIds.value,
+              subsystems: selectedSubsystems.value,
             });
           },
         },
@@ -103,30 +99,49 @@ const [SubsystemTable, subsystemTableApi] =
     },
   });
 
-const currentProduct = computed(() => {
-  return (
-    overviewItems.value.find(
-      (item) => item.product_id === selectedProductId.value,
-    ) || null
-  );
-});
-
 const visibleProductCount = computed(() => overviewItems.value.length);
 
-const productOwnerLabel = computed(() => {
-  return (
-    currentProduct.value?.owner_info?.name ||
-    currentProduct.value?.owner_info?.username ||
-    '未配置'
-  );
+const selectedProductItems = computed(() => {
+  if (selectedProductIds.value.length === 0) {
+    return overviewItems.value;
+  }
+  const selectedSet = new Set(selectedProductIds.value);
+  return overviewItems.value.filter((item) => selectedSet.has(item.product_id));
+});
+
+const selectedProductCount = computed(() => selectedProductItems.value.length);
+
+const selectionLabel = computed(() => {
+  if (selectedProductIds.value.length === 0) {
+    return '全部平台项目';
+  }
+  if (selectedProductIds.value.length === 1) {
+    return selectedProductItems.value[0]?.product_name || '全部平台项目';
+  }
+  return `已选 ${selectedProductIds.value.length} 个平台项目`;
 });
 
 const selectedBaselineCount = computed(() => {
-  return Number(currentProduct.value?.baseline_failure_mode_count || 0);
+  return selectedProductItems.value.reduce((sum, item) => {
+    return sum + Number(item.baseline_failure_mode_count || 0);
+  }, 0);
 });
 
 const selectedPendingCount = computed(() => {
-  return Number(currentProduct.value?.pending_failure_mode_count || 0);
+  return selectedProductItems.value.reduce((sum, item) => {
+    return sum + Number(item.pending_failure_mode_count || 0);
+  }, 0);
+});
+
+const selectedPendingRate = computed(() => {
+  if (selectedBaselineCount.value <= 0) {
+    return 0;
+  }
+  return Number(
+    ((selectedPendingCount.value / selectedBaselineCount.value) * 100).toFixed(
+      2,
+    ),
+  );
 });
 
 const totalSubsystemCount = computed(() => {
@@ -140,44 +155,59 @@ function handlePageScroll(event: Event) {
   pageScrollTop.value = Number(target?.scrollTop || 0);
 }
 
+function normalizeSelection(values: string[], allValues: string[]) {
+  const allValueSet = new Set(allValues);
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  values.forEach((item) => {
+    const text = String(item || '').trim();
+    if (!text || seen.has(text) || !allValueSet.has(text)) {
+      return;
+    }
+    seen.add(text);
+    normalized.push(text);
+  });
+  if (normalized.length === 0 || normalized.length === allValues.length) {
+    return [];
+  }
+  return normalized;
+}
+
 async function loadOverview() {
   overviewLoading.value = true;
   try {
     overviewItems.value = await listFailureModeProductStatisticsOverviewApi();
+    selectedProductIds.value = normalizeSelection(
+      selectedProductIds.value,
+      overviewItems.value.map((item) => item.product_id),
+    );
   } finally {
     overviewLoading.value = false;
   }
 }
 
-async function loadSubsystemOptions(productId: string) {
-  if (!productId) {
-    subsystemOptions.value = [];
-    return;
-  }
+async function loadSubsystemOptions() {
   subsystemOptionsLoading.value = true;
   try {
-    subsystemOptions.value = await listVisibleSubsystemsApi(productId);
-    const exists = subsystemOptions.value.some(
-      (item) => item.value === selectedSubsystem.value,
+    subsystemOptions.value =
+      await listFailureModeProductStatisticsSubsystemOptionsApi({
+        product_ids: selectedProductIds.value,
+      });
+    selectedSubsystems.value = normalizeSelection(
+      selectedSubsystems.value,
+      subsystemOptions.value,
     );
-    if (!exists) {
-      selectedSubsystem.value = '';
-    }
   } finally {
     subsystemOptionsLoading.value = false;
   }
 }
 
 async function loadSummary() {
-  if (!selectedProductId.value) {
-    summary.value = createEmptyProductStatisticsSummary();
-    return;
-  }
   summaryLoading.value = true;
   try {
     summary.value = await getFailureModeProductStatisticsSummaryApi({
-      product_id: selectedProductId.value,
-      subsystem: selectedSubsystem.value || undefined,
+      product_ids: selectedProductIds.value,
+      subsystems: selectedSubsystems.value,
     });
   } finally {
     summaryLoading.value = false;
@@ -185,49 +215,45 @@ async function loadSummary() {
 }
 
 async function reloadAnalysis() {
-  if (!selectedProductId.value) {
+  if (overviewItems.value.length === 0) {
     summary.value = createEmptyProductStatisticsSummary();
+    await subsystemTableApi.reload();
     return;
   }
   await Promise.all([loadSummary(), subsystemTableApi.reload()]);
 }
 
-async function syncCurrentProduct(nextProductId?: string) {
-  const productIds = new Set(
+async function handleProductSelectionChange(
+  nextProductIds = selectedProductIds.value,
+) {
+  selectedProductIds.value = normalizeSelection(
+    nextProductIds,
     overviewItems.value.map((item) => item.product_id),
   );
-  const previousProductId = selectedProductId.value;
-  let targetId = nextProductId || selectedProductId.value;
-  if (!targetId || !productIds.has(targetId)) {
-    targetId = overviewItems.value[0]?.product_id || '';
-  }
-
-  selectedProductId.value = targetId;
-  if (!targetId) {
-    selectedSubsystem.value = '';
-    subsystemOptions.value = [];
-    summary.value = createEmptyProductStatisticsSummary();
-    return;
-  }
-
-  if (targetId !== previousProductId) {
-    selectedSubsystem.value = '';
-  }
-  await loadSubsystemOptions(targetId);
-  await reloadAnalysis();
-}
-
-async function handleProductChange(productId: string) {
-  selectedSubsystem.value = '';
   try {
-    await syncCurrentProduct(productId);
+    await loadSubsystemOptions();
+    await reloadAnalysis();
   } catch (error) {
     console.error(error);
     ElMessage.error('切换产品统计失败');
   }
 }
 
-async function handleSubsystemChange() {
+async function handleSelectAllProducts() {
+  await handleProductSelectionChange([]);
+}
+
+async function handleProductRowClick(productId: string) {
+  await handleProductSelectionChange([productId]);
+}
+
+async function handleSubsystemChange(
+  nextSubsystems = selectedSubsystems.value,
+) {
+  selectedSubsystems.value = normalizeSelection(
+    nextSubsystems,
+    subsystemOptions.value,
+  );
   try {
     await reloadAnalysis();
   } catch (error) {
@@ -238,7 +264,8 @@ async function handleSubsystemChange() {
 
 async function initializePage() {
   await loadOverview();
-  await syncCurrentProduct();
+  await loadSubsystemOptions();
+  await reloadAnalysis();
 }
 
 onMounted(async () => {
@@ -268,13 +295,13 @@ onMounted(async () => {
               Product Failure Analytics
             </span>
             <span class="product-statistics-summary-bar__heading">
-              {{ currentProduct?.product_name || '产品故障统计' }}
+              {{ selectionLabel }}
             </span>
           </div>
           <div class="product-statistics-summary-bar__metrics">
             <div class="product-statistics-summary-pill">
-              <span>主版本SE</span>
-              <strong>{{ productOwnerLabel }}</strong>
+              <span>平台项目</span>
+              <strong>{{ selectedProductCount }}</strong>
             </div>
             <div class="product-statistics-summary-pill">
               <span>当前基线</span>
@@ -305,27 +332,27 @@ onMounted(async () => {
               {{ visibleProductCount }}
             </div>
             <div class="product-statistics-metric-card__hint">
-              当前权限范围内纳入统计的产品数量
+              当前权限范围内可见的平台项目数量
             </div>
           </div>
           <div class="product-statistics-metric-card">
             <div class="product-statistics-metric-card__label">
-              当前产品基线
+              当前选中项目
             </div>
             <div class="product-statistics-metric-card__value">
-              {{ selectedBaselineCount }}
+              {{ selectedProductCount }}
             </div>
             <div class="product-statistics-metric-card__hint">
-              仅统计已落到产品基线的故障模式
+              默认全量展示，也支持单选和多选平台项目
             </div>
           </div>
           <div class="product-statistics-metric-card warning">
-            <div class="product-statistics-metric-card__label">待开展故障</div>
+            <div class="product-statistics-metric-card__label">待开展率</div>
             <div class="product-statistics-metric-card__value">
-              {{ selectedPendingCount }}
+              {{ formatPercent(selectedPendingRate) }}
             </div>
             <div class="product-statistics-metric-card__hint">
-              任一必配能力存在缺口即计入待开展
+              按当前选中平台项目集合加权计算
             </div>
           </div>
         </div>
@@ -336,7 +363,7 @@ onMounted(async () => {
           <div>
             <div class="product-overview-panel__title">产品概览区</div>
             <div class="product-overview-panel__desc">
-              卡片固定展示产品整体概览，不受下方子系统筛选影响。
+              仅展示平台项目。默认按全部平台项目聚合分析，也可以单选或多选切换统计视角。
             </div>
           </div>
           <ElButton :loading="overviewLoading" @click="initializePage">
@@ -344,63 +371,90 @@ onMounted(async () => {
           </ElButton>
         </div>
 
+        <div class="product-overview-panel__controls">
+          <ElButton
+            plain
+            :disabled="selectedProductIds.length === 0"
+            @click="handleSelectAllProducts"
+          >
+            全选平台项目
+          </ElButton>
+          <ElSelect
+            v-model="selectedProductIds"
+            class="product-overview-panel__select"
+            collapse-tags
+            collapse-tags-tooltip
+            filterable
+            multiple
+            clearable
+            placeholder="全部平台项目"
+            @change="handleProductSelectionChange"
+            @clear="handleProductSelectionChange([])"
+          >
+            <ElOption
+              v-for="item in overviewItems"
+              :key="item.product_id"
+              :label="item.product_name"
+              :value="item.product_id"
+            />
+          </ElSelect>
+          <div class="product-overview-panel__summary">
+            当前视角：{{ selectionLabel }}
+          </div>
+        </div>
+
         <ElEmpty
           v-if="!overviewLoading && overviewItems.length === 0"
           description="当前权限范围内暂无产品统计数据"
         />
 
-        <div v-else class="product-overview-grid" v-loading="overviewLoading">
-          <button
-            v-for="item in overviewItems"
-            :key="item.product_id"
-            class="product-overview-card"
-            :class="{ 'is-active': item.product_id === selectedProductId }"
-            type="button"
-            @click="handleProductChange(item.product_id)"
-          >
-            <div class="product-overview-card__header">
-              <div>
-                <div class="product-overview-card__title">
-                  {{ item.product_name }}
-                </div>
-                <div class="product-overview-card__owner">
-                  主版本SE：
-                  {{
-                    item.owner_info?.name ||
-                    item.owner_info?.username ||
-                    '未配置'
-                  }}
-                </div>
-              </div>
-              <div class="product-overview-card__lamp">
-                <span
-                  class="product-overview-card__lamp-dot"
+        <div
+          v-else
+          v-loading="overviewLoading"
+          class="product-overview-table-wrap"
+        >
+          <div class="product-overview-table">
+            <div class="product-overview-table__head">
+              <span>产品</span>
+              <span>主版本SE</span>
+              <span>基线故障模式数</span>
+              <span>待开展故障数</span>
+              <span>待开展率</span>
+              <span>状态灯</span>
+            </div>
+            <button
+              v-for="item in overviewItems"
+              :key="item.product_id"
+              class="product-overview-table__row"
+              :class="{
+                'is-active': selectedProductIds.includes(item.product_id),
+              }"
+              type="button"
+              @click="handleProductRowClick(item.product_id)"
+            >
+              <span class="product-overview-table__product">
+                {{ item.product_name }}
+              </span>
+              <span>
+                {{
+                  item.owner_info?.name || item.owner_info?.username || '未配置'
+                }}
+              </span>
+              <span>{{ item.baseline_failure_mode_count }}</span>
+              <span>{{ item.pending_failure_mode_count }}</span>
+              <span>{{ formatPercent(item.pending_rate) }}</span>
+              <span class="product-overview-table__lamp">
+                <i
+                  class="product-overview-table__lamp-dot"
                   :style="{
                     backgroundColor: resolveStatusLightMeta(item.status_light)
                       .color,
                   }"
-                ></span>
-                <span>{{
-                  resolveStatusLightMeta(item.status_light).label
-                }}</span>
-              </div>
-            </div>
-
-            <div class="product-overview-card__metrics">
-              <div class="product-overview-card__metric">
-                <span>当前基线故障模式数</span>
-                <strong>{{ item.baseline_failure_mode_count }}</strong>
-              </div>
-              <div class="product-overview-card__metric warning">
-                <span>待开展故障数</span>
-                <strong>{{ item.pending_failure_mode_count }}</strong>
-              </div>
-              <div class="product-overview-card__metric">
-                <span>待开展率</span>
-                <strong>{{ formatPercent(item.pending_rate) }}</strong>
-              </div>
-            </div>
-          </button>
+                ></i>
+                {{ resolveStatusLightMeta(item.status_light).label }}
+              </span>
+            </button>
+          </div>
         </div>
       </section>
 
@@ -409,57 +463,50 @@ onMounted(async () => {
           <div>
             <div class="product-analysis-panel__title">产品分析区</div>
             <div class="product-analysis-panel__desc">
-              聚焦单个产品的当前基线，支持按子系统继续下钻。
+              图表与子系统表统一按当前选中的平台项目集合聚合，并支持对子系统再做单选或多选。
             </div>
           </div>
           <div class="product-analysis-panel__filters">
             <ElSelect
-              v-model="selectedProductId"
-              class="product-analysis-panel__select product-analysis-panel__select--product"
-              filterable
-              placeholder="请选择产品"
-              @change="handleProductChange"
-            >
-              <ElOption
-                v-for="item in overviewItems"
-                :key="item.product_id"
-                :label="item.product_name"
-                :value="item.product_id"
-              />
-            </ElSelect>
-            <ElSelect
-              v-model="selectedSubsystem"
+              v-model="selectedSubsystems"
               class="product-analysis-panel__select"
-              clearable
+              collapse-tags
+              collapse-tags-tooltip
               filterable
+              multiple
+              clearable
               :loading="subsystemOptionsLoading"
               placeholder="全部子系统"
               @change="handleSubsystemChange"
+              @clear="handleSubsystemChange([])"
             >
               <ElOption
                 v-for="item in subsystemOptions"
-                :key="item.value"
-                :label="item.label"
-                :value="item.value"
+                :key="item"
+                :label="item"
+                :value="item"
               />
             </ElSelect>
+            <ElButton plain @click="handleSubsystemChange([])">
+              全选子系统
+            </ElButton>
           </div>
         </div>
 
         <ElEmpty
-          v-if="!currentProduct"
-          description="请先选择一个可见产品后查看统计分析"
+          v-if="overviewItems.length === 0"
+          description="暂无可分析的平台项目数据"
         />
 
         <template v-else>
           <div class="product-analysis-summary">
             <div class="product-analysis-summary__item">
-              <span>产品</span>
-              <strong>{{ currentProduct.product_name }}</strong>
+              <span>分析视角</span>
+              <strong>{{ selectionLabel }}</strong>
             </div>
             <div class="product-analysis-summary__item">
-              <span>主版本SE</span>
-              <strong>{{ productOwnerLabel }}</strong>
+              <span>已选项目</span>
+              <strong>{{ selectedProductCount }}</strong>
             </div>
             <div class="product-analysis-summary__item">
               <span>当前基线故障模式数</span>
@@ -467,7 +514,7 @@ onMounted(async () => {
             </div>
             <div class="product-analysis-summary__item warning">
               <span>待开展率</span>
-              <strong>{{ formatPercent(currentProduct.pending_rate) }}</strong>
+              <strong>{{ formatPercent(selectedPendingRate) }}</strong>
             </div>
             <div class="product-analysis-summary__item">
               <span>子系统维度</span>
@@ -500,7 +547,7 @@ onMounted(async () => {
                             子系统故障模式数量
                           </div>
                           <div class="product-statistics-card-header__desc">
-                            当前产品基线内各子系统的故障模式分布。
+                            当前选中平台项目集合下，各子系统的故障模式分布。
                           </div>
                         </div>
                       </div>
@@ -520,7 +567,7 @@ onMounted(async () => {
                             看板说明
                           </div>
                           <div class="product-statistics-card-header__desc">
-                            三态规则完全沿用全局统计，只是统计对象收敛为当前产品的已生效基线。
+                            三态规则完全沿用全局统计，只是统计对象收敛为当前选中平台项目集合的已生效基线。
                           </div>
                         </div>
                       </div>
@@ -824,6 +871,29 @@ onMounted(async () => {
   gap: 16px;
 }
 
+.product-overview-panel__controls {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.product-overview-panel__select {
+  width: 100%;
+}
+
+.product-overview-panel__summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--el-color-primary-light-9) 72%, white);
+  padding: 0 14px;
+  color: #475569;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .product-overview-panel__title,
 .product-analysis-panel__title {
   color: #111827;
@@ -844,6 +914,74 @@ onMounted(async () => {
   gap: 14px;
   margin-top: 16px;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.product-overview-table-wrap {
+  margin-top: 16px;
+}
+
+.product-overview-table {
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.product-overview-table__head,
+.product-overview-table__row {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  grid-template-columns: minmax(180px, 1.4fr) 140px 140px 140px 120px 100px;
+}
+
+.product-overview-table__head {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(248, 250, 252, 0.88);
+  padding: 14px 18px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.product-overview-table__row {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  background: transparent;
+  padding: 14px 18px;
+  color: #334155;
+  font-size: 13px;
+  text-align: left;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.product-overview-table__row:last-child {
+  border-bottom: none;
+}
+
+.product-overview-table__row:hover,
+.product-overview-table__row.is-active {
+  background: color-mix(in srgb, var(--el-color-primary-light-9) 70%, white);
+}
+
+.product-overview-table__product {
+  color: #111827;
+  font-weight: 700;
+}
+
+.product-overview-table__lamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.product-overview-table__lamp-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
 }
 
 .product-overview-card {

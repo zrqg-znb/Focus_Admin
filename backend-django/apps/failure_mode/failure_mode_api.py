@@ -15,6 +15,7 @@ from .failure_mode_schemas import (
     FailureModeProductStatisticsSummarySchema,
     FailureModeProductStatisticsSummarySearchSchema,
     FailureModeSearchSchema,
+    FailureModeStatisticsSummarySearchSchema,
     FailureModeStatisticsSubsystemPageSchema,
     FailureModeStatisticsSubsystemSearchSchema,
     FailureModeStatisticsSummarySchema,
@@ -64,9 +65,14 @@ def get_dict_options(request):
     return failure_mode_services.get_failure_mode_dict_options()
 
 
+@router.get('/statistics/subsystems/options', response=list[str], summary='获取故障管理统计子系统选项')
+def get_statistics_subsystem_options(request):
+    return failure_mode_services.get_failure_mode_statistics_subsystem_options()
+
+
 @router.post('/statistics/summary', response=FailureModeStatisticsSummarySchema, summary='获取故障管理统计摘要')
-def get_statistics_summary(request):
-    return failure_mode_services.get_failure_mode_statistics_summary()
+def get_statistics_summary(request, filters: FailureModeStatisticsSummarySearchSchema):
+    return failure_mode_services.get_failure_mode_statistics_summary(filters)
 
 
 @router.post('/statistics/subsystems/search', response=FailureModeStatisticsSubsystemPageSchema, summary='搜索故障管理子系统统计表')
@@ -77,6 +83,14 @@ def search_statistics_subsystems(request, filters: FailureModeStatisticsSubsyste
 @router.post('/statistics/products/overview', response=list[FailureModeProductStatisticsOverviewItemSchema], summary='获取产品故障统计概览')
 def get_product_statistics_overview(request):
     return failure_mode_services.list_failure_mode_product_statistics_overview(request.auth)
+
+
+@router.post('/statistics/products/subsystems/options', response=list[str], summary='获取产品故障统计子系统选项')
+def get_product_statistics_subsystem_options(request, filters: FailureModeProductStatisticsSummarySearchSchema):
+    return failure_mode_services.list_failure_mode_product_statistics_subsystem_options(
+        request.auth,
+        filters,
+    )
 
 
 @router.post('/statistics/products/summary', response=FailureModeProductStatisticsSummarySchema, summary='获取产品故障统计摘要')

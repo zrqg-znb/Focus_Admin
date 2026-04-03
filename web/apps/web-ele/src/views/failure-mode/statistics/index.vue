@@ -13,6 +13,7 @@ import { ElCard, ElMessage, ElTabPane, ElTabs, ElTag } from 'element-plus';
 
 import {
   getFailureModeStatisticsSummaryApi,
+  listFailureModeStatisticsSubsystemOptionsApi,
   listFailureModeStatisticsSubsystemsApi,
 } from '#/api/failure_mode';
 import { useZqTable } from '#/components/zq-table';
@@ -42,6 +43,9 @@ interface GridQueryContext {
 const activeTab = ref<StatisticsTabKey>('charts');
 const pageScrollTop = ref(0);
 const summaryLoading = ref(false);
+const subsystemOptionsLoading = ref(false);
+const subsystemOptions = ref<string[]>([]);
+const selectedSubsystems = ref<string[]>([]);
 const summary = ref<FailureModeStatisticsSummary>(
   createEmptyStatisticsSummary(),
 );
@@ -59,6 +63,7 @@ const [SubsystemTable, subsystemTableApi] =
             return listFailureModeStatisticsSubsystemsApi({
               page: page.currentPage,
               pageSize: page.pageSize,
+              subsystems: selectedSubsystems.value,
             });
           },
         },
@@ -85,8 +90,21 @@ const totalFailureModeCount = computed(() => {
   }, 0);
 });
 
-const totalSubsystemCount = computed(() => {
-  return (summary.value.subsystem_counts || []).length;
+const selectedSubsystemCount = computed(() => {
+  if (selectedSubsystems.value.length === 0) {
+    return subsystemOptions.value.length;
+  }
+  return selectedSubsystems.value.length;
+});
+
+const subsystemScopeLabel = computed(() => {
+  if (selectedSubsystems.value.length === 0) {
+    return '全部子系统';
+  }
+  if (selectedSubsystems.value.length === 1) {
+    return selectedSubsystems.value[0] || '全部子系统';
+  }
+  return `已选 ${selectedSubsystems.value.length} 个子系统`;
 });
 
 const waitingInterceptionCount = computed(() => {
@@ -101,10 +119,48 @@ const showSummaryBar = computed(() => pageScrollTop.value > 72);
 async function loadSummary() {
   summaryLoading.value = true;
   try {
-    summary.value = await getFailureModeStatisticsSummaryApi();
+    summary.value = await getFailureModeStatisticsSummaryApi({
+      subsystems: selectedSubsystems.value,
+    });
   } finally {
     summaryLoading.value = false;
   }
+}
+
+async function loadSubsystemOptions() {
+  subsystemOptionsLoading.value = true;
+  try {
+    const rows = await listFailureModeStatisticsSubsystemOptionsApi();
+    subsystemOptions.value = rows || [];
+    if (selectedSubsystems.value.length === 0) {
+      return;
+    }
+    const optionSet = new Set(subsystemOptions.value);
+    const nextSelected = selectedSubsystems.value.filter((item) =>
+      optionSet.has(item),
+    );
+    selectedSubsystems.value = nextSelected.length > 0 ? nextSelected : [];
+  } finally {
+    subsystemOptionsLoading.value = false;
+  }
+}
+
+async function reloadAnalysis() {
+  await Promise.all([loadSummary(), subsystemTableApi.reload()]);
+}
+
+async function handleSubsystemFilterChange() {
+  try {
+    await reloadAnalysis();
+  } catch (error) {
+    console.error(error);
+    ElMessage.error('切换子系统统计失败');
+  }
+}
+
+async function resetSubsystemFilter() {
+  selectedSubsystems.value = [];
+  await handleSubsystemFilterChange();
 }
 
 function handlePageScroll(event: Event) {
@@ -114,7 +170,8 @@ function handlePageScroll(event: Event) {
 
 onMounted(async () => {
   try {
-    await Promise.all([loadSummary(), subsystemTableApi.reload()]);
+    await loadSubsystemOptions();
+    await reloadAnalysis();
   } catch (error) {
     console.error(error);
     ElMessage.error('加载故障管理统计失败');
@@ -144,8 +201,8 @@ onMounted(async () => {
           </div>
           <div class="failure-statistics-summary-bar__metrics">
             <div class="failure-statistics-summary-pill">
-              <span>子系统</span>
-              <strong>{{ totalSubsystemCount }}</strong>
+              <span>筛选范围</span>
+              <strong>{{ subsystemScopeLabel }}</strong>
             </div>
             <div class="failure-statistics-summary-pill">
               <span>故障模式</span>
@@ -171,12 +228,12 @@ onMounted(async () => {
         </div>
         <div class="failure-statistics-hero__metrics">
           <div class="failure-statistics-metric-card">
-            <div class="failure-statistics-metric-card__label">子系统维度</div>
+            <div class="failure-statistics-metric-card__label">统计子系统</div>
             <div class="failure-statistics-metric-card__value">
-              {{ totalSubsystemCount }}
+              {{ selectedSubsystemCount }}
             </div>
             <div class="failure-statistics-metric-card__hint">
-              已纳入统计的子系统数量
+              当前筛选范围内的子系统数量
             </div>
           </div>
           <div class="failure-statistics-metric-card">
@@ -198,6 +255,49 @@ onMounted(async () => {
             <div class="failure-statistics-metric-card__hint">
               必配但尚未配置产线拦截策略
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="failure-statistics-filter-panel">
+        <div class="failure-statistics-filter-panel__header">
+          <div>
+            <div class="failure-statistics-filter-panel__title">统计范围</div>
+            <div class="failure-statistics-filter-panel__desc">
+              默认统计全部子系统，也可以单选或多选后重新汇总图表与表格。
+            </div>
+          </div>
+          <ElButton
+            plain
+            :disabled="selectedSubsystems.length === 0"
+            @click="resetSubsystemFilter"
+          >
+            全选子系统
+          </ElButton>
+        </div>
+        <div class="failure-statistics-filter-panel__controls">
+          <ElSelect
+            v-model="selectedSubsystems"
+            class="failure-statistics-filter-panel__select"
+            collapse-tags
+            collapse-tags-tooltip
+            filterable
+            multiple
+            clearable
+            :loading="subsystemOptionsLoading"
+            placeholder="全部子系统"
+            @change="handleSubsystemFilterChange"
+            @clear="handleSubsystemFilterChange"
+          >
+            <ElOption
+              v-for="item in subsystemOptions"
+              :key="item"
+              :label="item"
+              :value="item"
+            />
+          </ElSelect>
+          <div class="failure-statistics-filter-panel__summary">
+            当前范围：{{ subsystemScopeLabel }}
           </div>
         </div>
       </section>
@@ -318,7 +418,7 @@ onMounted(async () => {
               <div class="failure-statistics-table-card">
                 <SubsystemTable class="h-full min-h-0 flex-1">
                   <template #toolbar-actions>
-                    <ElButton type="primary" @click="loadSummary">
+                    <ElButton type="primary" @click="reloadAnalysis">
                       刷新统计摘要
                     </ElButton>
                   </template>
@@ -364,6 +464,59 @@ onMounted(async () => {
 
 .failure-statistics-tabs {
   flex: none;
+}
+
+.failure-statistics-filter-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 18px 20px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+}
+
+.failure-statistics-filter-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.failure-statistics-filter-panel__title {
+  color: #111827;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.failure-statistics-filter-panel__desc {
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.failure-statistics-filter-panel__controls {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.failure-statistics-filter-panel__select {
+  width: 100%;
+}
+
+.failure-statistics-filter-panel__summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--el-color-primary-light-9) 72%, white);
+  padding: 0 14px;
+  color: #475569;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .failure-statistics-summary-anchor {

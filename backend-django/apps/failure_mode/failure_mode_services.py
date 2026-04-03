@@ -49,6 +49,7 @@ FIXED_HANDLING_MEASURE_CATEGORIES = ['检测', '预防', '自愈']
 FIXED_OBSERVATION_METHOD_TYPES = ['流水日志', 'DMD 点位', 'FMP 点位']
 STATISTICS_STATUS_ORDER = ['已配置', '待补充', '无需配置']
 EMPTY_SUBSYSTEM_LABEL = '未配置子系统'
+PLATFORM_PROJECT_TYPE = '平台项目'
 
 
 def _normalize_text_list(values: Any) -> list[str]:
@@ -2103,10 +2104,25 @@ def _make_statistics_source_rows_from_product_bindings(
 def _build_statistics_payload_from_sources(
     source_rows: Iterable[SimpleNamespace],
     seed_subsystems: Iterable[str] | None = None,
+    selected_subsystems: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     subsystem_keys: list[str] = []
     subsystem_seen: set[str] = set()
-    source_row_list = list(source_rows)
+    selected_subsystem_set = {
+        (_normalize_optional_text(item) or EMPTY_SUBSYSTEM_LABEL)
+        for item in _normalize_text_list(selected_subsystems)
+    }
+    source_row_list: list[SimpleNamespace] = []
+    for source in source_rows:
+        subsystem = _normalize_optional_text(source.subsystem) or EMPTY_SUBSYSTEM_LABEL
+        if selected_subsystem_set and subsystem not in selected_subsystem_set:
+            continue
+        source_row_list.append(
+            SimpleNamespace(
+                subsystem=subsystem,
+                failure_mode=source.failure_mode,
+            ),
+        )
 
     def ensure_subsystem_key(subsystem: str):
         if subsystem in subsystem_seen:
@@ -2140,13 +2156,14 @@ def _build_statistics_payload_from_sources(
         return row
 
     for subsystem in seed_subsystems or []:
-        text = _normalize_optional_text(subsystem)
+        text = _normalize_optional_text(subsystem) or EMPTY_SUBSYSTEM_LABEL
+        if selected_subsystem_set and text not in selected_subsystem_set:
+            continue
         if text:
             ensure_subsystem_key(text)
 
     for source in source_row_list:
-        subsystem = _normalize_optional_text(source.subsystem) or EMPTY_SUBSYSTEM_LABEL
-        ensure_subsystem_key(subsystem)
+        ensure_subsystem_key(source.subsystem)
 
     rows: dict[str, dict[str, Any]] = {}
     for subsystem in subsystem_keys:
@@ -2165,8 +2182,7 @@ def _build_statistics_payload_from_sources(
 
     for source in source_row_list:
         failure_mode = source.failure_mode
-        subsystem = _normalize_optional_text(source.subsystem) or EMPTY_SUBSYSTEM_LABEL
-        row = ensure_row(rows, subsystem)
+        row = ensure_row(rows, source.subsystem)
         row['failure_mode_count'] += 1
 
         interception_relations = list(failure_mode.interception_relations.all())
@@ -2310,34 +2326,37 @@ def _build_statistics_payload_from_sources(
     }
 
 
-def _build_failure_mode_statistics_rows() -> list[dict[str, Any]]:
+def _build_global_failure_mode_statistics_payload(
+    selected_subsystems: Iterable[str] | None = None,
+) -> dict[str, Any]:
     failure_modes = list(_failure_mode_queryset().order_by('-sort', '-sys_create_datetime'))
     config_subsystems = [
         item.subsystem
         for item in _subsystem_config_queryset().only('subsystem')
     ]
-    payload = _build_statistics_payload_from_sources(
+    return _build_statistics_payload_from_sources(
         _make_statistics_source_rows_from_failure_modes(failure_modes),
         config_subsystems,
+        selected_subsystems=selected_subsystems,
     )
-    return payload['rows']
 
 
-def get_failure_mode_statistics_summary() -> dict[str, Any]:
-    failure_modes = list(_failure_mode_queryset().order_by('-sort', '-sys_create_datetime'))
-    config_subsystems = [
-        item.subsystem
-        for item in _subsystem_config_queryset().only('subsystem')
-    ]
-    payload = _build_statistics_payload_from_sources(
-        _make_statistics_source_rows_from_failure_modes(failure_modes),
-        config_subsystems,
+def get_failure_mode_statistics_subsystem_options() -> list[str]:
+    payload = _build_global_failure_mode_statistics_payload()
+    return [str(item['subsystem']) for item in payload['rows']]
+
+
+def get_failure_mode_statistics_summary(filters=None) -> dict[str, Any]:
+    payload = _build_global_failure_mode_statistics_payload(
+        getattr(filters, 'subsystems', None),
     )
     return payload['summary']
 
 
 def list_failure_mode_statistics_subsystems(filters) -> dict[str, Any]:
-    rows = _build_failure_mode_statistics_rows()
+    rows = _build_global_failure_mode_statistics_payload(
+        getattr(filters, 'subsystems', None),
+    )['rows']
     keyword = _normalize_optional_text(getattr(filters, 'keyword', None))
     if keyword:
         rows = [
@@ -2372,6 +2391,7 @@ def _get_visible_product_statistics_queryset(user: User):
         'owner',
     )
     queryset = policy.filter_products(queryset)
+    queryset = queryset.filter(project__type=PLATFORM_PROJECT_TYPE)
     return policy, queryset.order_by('project__name', '-sys_create_datetime')
 
 
@@ -2379,6 +2399,7 @@ def _product_failure_mode_statistics_queryset():
     return ProductFailureMode.objects.filter(
         is_deleted=False,
         product__is_deleted=False,
+        product__project__type=PLATFORM_PROJECT_TYPE,
         failure_mode__is_deleted=False,
     ).select_related('product', 'product__project', 'product__owner', 'failure_mode').prefetch_related(
         Prefetch(
@@ -2408,23 +2429,40 @@ def _product_failure_mode_statistics_queryset():
     )
 
 
+def _resolve_visible_product_statistics_products(
+    user: User,
+    product_ids: Iterable[str] | None = None,
+):
+    policy, queryset = _get_visible_product_statistics_queryset(user)
+    selected_product_ids = _normalize_text_list(product_ids)
+    if selected_product_ids:
+        queryset = queryset.filter(id__in=selected_product_ids)
+    products = list(queryset)
+    return policy, products
+
+
 def _get_visible_product_statistics_bindings(
     policy,
-    product_id: str,
-    subsystem: str | None = None,
+    product_ids: Iterable[str] | None = None,
+    subsystems: Iterable[str] | None = None,
 ) -> list[ProductFailureMode]:
-    queryset = _product_failure_mode_statistics_queryset().filter(product_id=product_id)
+    queryset = _product_failure_mode_statistics_queryset()
     queryset = policy.filter_product_failure_modes(queryset)
-    if subsystem:
-        queryset = queryset.filter(subsystem=subsystem)
+    normalized_product_ids = _normalize_text_list(product_ids)
+    if normalized_product_ids:
+        queryset = queryset.filter(product_id__in=normalized_product_ids)
+    normalized_subsystems = _normalize_text_list(subsystems)
+    if normalized_subsystems:
+        queryset = queryset.filter(subsystem__in=normalized_subsystems)
     return list(queryset.order_by('subsystem', '-sys_create_datetime'))
 
 
 def list_failure_mode_product_statistics_overview(user: User) -> list[dict[str, Any]]:
     policy, products = _get_visible_product_statistics_queryset(user)
     product_list = list(products)
+    product_ids = [str(item.id) for item in product_list]
     bindings = list(
-        policy.filter_product_failure_modes(_product_failure_mode_statistics_queryset()),
+        _get_visible_product_statistics_bindings(policy, product_ids),
     )
     grouped_bindings: dict[str, list[ProductFailureMode]] = defaultdict(list)
     for item in bindings:
@@ -2467,15 +2505,15 @@ def list_failure_mode_product_statistics_overview(user: User) -> list[dict[str, 
 
 
 def get_failure_mode_product_statistics_summary(user: User, filters) -> dict[str, Any]:
-    policy, queryset = _get_visible_product_statistics_queryset(user)
-    product = get_object_or_404(queryset, id=filters.product_id)
-    if not policy.can_view_product(product):
-        raise HttpError(403, '无权查看当前产品统计。')
-
+    policy, products = _resolve_visible_product_statistics_products(
+        user,
+        getattr(filters, 'product_ids', None),
+    )
+    product_ids = [str(item.id) for item in products]
     bindings = _get_visible_product_statistics_bindings(
         policy,
-        str(product.id),
-        _normalize_optional_text(getattr(filters, 'subsystem', None)),
+        product_ids,
+        getattr(filters, 'subsystems', None),
     )
     payload = _build_statistics_payload_from_sources(
         _make_statistics_source_rows_from_product_bindings(bindings),
@@ -2483,16 +2521,34 @@ def get_failure_mode_product_statistics_summary(user: User, filters) -> dict[str
     return payload['summary']
 
 
-def list_failure_mode_product_statistics_subsystems(user: User, filters) -> dict[str, Any]:
-    policy, queryset = _get_visible_product_statistics_queryset(user)
-    product = get_object_or_404(queryset, id=filters.product_id)
-    if not policy.can_view_product(product):
-        raise HttpError(403, '无权查看当前产品统计。')
+def list_failure_mode_product_statistics_subsystem_options(user: User, filters) -> list[str]:
+    policy, products = _resolve_visible_product_statistics_products(
+        user,
+        getattr(filters, 'product_ids', None),
+    )
+    product_ids = [str(item.id) for item in products]
+    bindings = _get_visible_product_statistics_bindings(policy, product_ids)
+    seen: set[str] = set()
+    options: list[str] = []
+    for item in bindings:
+        subsystem = _normalize_optional_text(item.subsystem) or EMPTY_SUBSYSTEM_LABEL
+        if subsystem in seen:
+            continue
+        seen.add(subsystem)
+        options.append(subsystem)
+    return sorted(options)
 
+
+def list_failure_mode_product_statistics_subsystems(user: User, filters) -> dict[str, Any]:
+    policy, products = _resolve_visible_product_statistics_products(
+        user,
+        getattr(filters, 'product_ids', None),
+    )
+    product_ids = [str(item.id) for item in products]
     bindings = _get_visible_product_statistics_bindings(
         policy,
-        str(product.id),
-        _normalize_optional_text(getattr(filters, 'subsystem', None)),
+        product_ids,
+        getattr(filters, 'subsystems', None),
     )
     rows = _build_statistics_payload_from_sources(
         _make_statistics_source_rows_from_product_bindings(bindings),

@@ -374,6 +374,10 @@ export interface FailureModeStatisticsSummary {
   observation_fmp_status: FailureModeStatisticsChartDatum[];
 }
 
+export interface FailureModeStatisticsSummaryQuery {
+  subsystems?: string[];
+}
+
 export interface FailureModeStatisticsSubsystemRow {
   subsystem: string;
   failure_mode_count: number;
@@ -392,6 +396,7 @@ export interface FailureModeStatisticsSubsystemRow {
 
 export interface FailureModeStatisticsSubsystemQuery {
   keyword?: string;
+  subsystems?: string[];
   page?: number;
   pageSize?: number;
 }
@@ -492,8 +497,8 @@ export interface FailureModeProductStatisticsOverviewItem {
 export type FailureModeProductStatisticsSummary = FailureModeStatisticsSummary;
 
 export interface FailureModeProductStatisticsSummaryQuery {
-  product_id: string;
-  subsystem?: string;
+  product_ids?: string[];
+  subsystems?: string[];
 }
 
 export type FailureModeProductStatisticsSubsystemRow =
@@ -501,8 +506,7 @@ export type FailureModeProductStatisticsSubsystemRow =
 
 export interface FailureModeProductStatisticsSubsystemQuery
   extends FailureModeStatisticsSubsystemQuery {
-  product_id: string;
-  subsystem?: string;
+  product_ids?: string[];
 }
 
 const base = '/api/failure-mode';
@@ -557,10 +561,16 @@ export async function deleteFailureModeSubsystemConfigApi(id: string) {
   );
 }
 
-export async function getFailureModeStatisticsSummaryApi() {
+export async function listFailureModeStatisticsSubsystemOptionsApi() {
+  return requestClient.get<string[]>(`${base}/statistics/subsystems/options`);
+}
+
+export async function getFailureModeStatisticsSummaryApi(
+  data?: FailureModeStatisticsSummaryQuery,
+) {
   return requestClient.post<FailureModeStatisticsSummary>(
     `${base}/statistics/summary`,
-    {},
+    data ?? {},
   );
 }
 
@@ -576,6 +586,15 @@ export async function listFailureModeProductStatisticsOverviewApi() {
   return requestClient.post<FailureModeProductStatisticsOverviewItem[]>(
     `${base}/statistics/products/overview`,
     {},
+  );
+}
+
+export async function listFailureModeProductStatisticsSubsystemOptionsApi(
+  data?: FailureModeProductStatisticsSummaryQuery,
+) {
+  return requestClient.post<string[]>(
+    `${base}/statistics/products/subsystems/options`,
+    data ?? {},
   );
 }
 

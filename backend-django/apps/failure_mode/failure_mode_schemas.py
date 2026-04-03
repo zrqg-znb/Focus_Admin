@@ -660,7 +660,21 @@ class FailureModeSubsystemConfigOptionsSchema(Schema):
 
 
 class FailureModeStatisticsSubsystemSearchSchema(KeywordSearchSchema):
-    pass
+    subsystems: list[str] = Field(default_factory=list)
+
+    @field_validator('subsystems', mode='before')
+    @classmethod
+    def normalize_statistics_subsystems(cls, value: Any):
+        return _normalize_query_list(value)
+
+
+class FailureModeStatisticsSummarySearchSchema(Schema):
+    subsystems: list[str] = Field(default_factory=list)
+
+    @field_validator('subsystems', mode='before')
+    @classmethod
+    def normalize_statistics_summary_subsystems(cls, value: Any):
+        return _normalize_query_list(value)
 
 
 class FailureModeStatisticsChartDatumSchema(Schema):
@@ -716,11 +730,11 @@ class FailureModeProductStatisticsOverviewItemSchema(Schema):
 
 
 class FailureModeProductStatisticsSearchSchema(SearchPaginationSchema):
-    product_id: str
+    product_ids: list[str] = Field(default_factory=list)
     keyword: Optional[str] = None
-    subsystem: Optional[str] = None
+    subsystems: list[str] = Field(default_factory=list)
 
-    @field_validator('product_id', 'keyword', 'subsystem', mode='before')
+    @field_validator('keyword', mode='before')
     @classmethod
     def normalize_product_statistics_text(cls, value: Any):
         if value is None:
@@ -728,18 +742,20 @@ class FailureModeProductStatisticsSearchSchema(SearchPaginationSchema):
         text = str(value).strip()
         return text or None
 
+    @field_validator('product_ids', 'subsystems', mode='before')
+    @classmethod
+    def normalize_product_statistics_lists(cls, value: Any):
+        return _normalize_query_list(value)
+
 
 class FailureModeProductStatisticsSummarySearchSchema(Schema):
-    product_id: str
-    subsystem: Optional[str] = None
+    product_ids: list[str] = Field(default_factory=list)
+    subsystems: list[str] = Field(default_factory=list)
 
-    @field_validator('product_id', 'subsystem', mode='before')
+    @field_validator('product_ids', 'subsystems', mode='before')
     @classmethod
-    def normalize_product_statistics_summary_text(cls, value: Any):
-        if value is None:
-            return None
-        text = str(value).strip()
-        return text or None
+    def normalize_product_statistics_summary_lists(cls, value: Any):
+        return _normalize_query_list(value)
 
 
 class FailureModeProductStatisticsSubsystemRowSchema(

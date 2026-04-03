@@ -159,7 +159,10 @@ function normalizeTaskLogItem(
   };
 }
 
-export function listProductsApi(params?: { owner_id?: string }) {
+export function listProductsApi(params?: {
+  owner_id?: string;
+  project_type?: string;
+}) {
   return requestClient.get<FailureModeProductItem[]>(
     '/api/failure-mode/workflow/products',
     { params },

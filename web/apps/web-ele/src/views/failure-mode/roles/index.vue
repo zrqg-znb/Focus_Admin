@@ -51,7 +51,7 @@ function formatUserNames(
 async function loadProducts() {
   loading.value = true;
   try {
-    const rows = await listProductsApi();
+    const rows = await listProductsApi({ project_type: '平台项目' });
     products.value = rows;
     if (!selectedProductId.value && rows.length > 0) {
       selectedProductId.value = rows[0]!.id;
