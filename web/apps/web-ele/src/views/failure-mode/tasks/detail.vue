@@ -13,7 +13,7 @@ import type {
 } from '#/api/failure_mode_workflow';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, nextTick, reactive, shallowRef, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
@@ -66,6 +66,7 @@ import {
   createEmptySubsystemConfigOptions,
   formatFailureModeSourceHint,
   formatFailureModeSourceLabel,
+  formatTextList,
   useFailureModeColumns,
 } from '../data';
 import FailureModeTransferDialog from '../workflow/tasks/components/FailureModeTransferDialog.vue';
@@ -93,8 +94,8 @@ const actionLoading = ref(false);
 const activeTab = ref('workbench');
 
 const currentTask = ref<FailureModeTaskItem | null>(null);
-const boundFailureModes = ref<FailureModeItem[]>([]);
-const baselineFailureModes = ref<ProductFailureModeItem[]>([]);
+const boundFailureModes = shallowRef<FailureModeItem[]>([]);
+const baselineFailureModes = shallowRef<ProductFailureModeItem[]>([]);
 const taskLogs = ref<FailureModeTaskLogItem[]>([]);
 const roleAssignments = ref<FailureModeRoleAssignmentItem[]>([]);
 const reassignUserId = ref('');
@@ -193,11 +194,51 @@ const latestReviewFeedback = computed(() => {
   return record.extra_data?.reason || record.note || '-';
 });
 
-const workbenchColumns = useFailureModeColumns().map((column) =>
-  column.key === 'actions'
+const workbenchColumns = ((useFailureModeColumns() || []).map((column) =>
+  column?.key === 'actions'
     ? { ...column, cellSlotName: 'cell-actions', width: 180 }
     : column,
-) as ZqTableGridOptions<FailureModeItem>['columns'];
+) || []) as ZqTableGridOptions<FailureModeItem>['columns'];
+
+function cloneFailureModeRows(items: FailureModeItem[]) {
+  return items.map((item) => ({
+    ...item,
+    chips: [...(item.chips || [])],
+    fault_categories: [...(item.fault_categories || [])],
+    symptoms: [...(item.symptoms || [])],
+    author_ids: [...(item.author_ids || [])],
+    author_info: [...(item.author_info || [])],
+    related_dts_nos: [...(item.related_dts_nos || [])],
+    required_handling_measure_categories: [
+      ...(item.required_handling_measure_categories || []),
+    ],
+    required_observation_method_types: [
+      ...(item.required_observation_method_types || []),
+    ],
+    interception_strategy_ids: [...(item.interception_strategy_ids || [])],
+    interception_strategy_items: [...(item.interception_strategy_items || [])],
+    handling_measure_ids: [...(item.handling_measure_ids || [])],
+    handling_measure_items: [...(item.handling_measure_items || [])],
+    observation_method_ids: [...(item.observation_method_ids || [])],
+    observation_method_items: [...(item.observation_method_items || [])],
+    huatuo_diagnosis_ids: [...(item.huatuo_diagnosis_ids || [])],
+    huatuo_diagnosis_items: [...(item.huatuo_diagnosis_items || [])],
+  }));
+}
+
+function cloneBaselineRows(items: ProductFailureModeItem[]) {
+  return items.map((item) => ({ ...item }));
+}
+
+function paginateRows<T extends Record<string, any>>(
+  rows: T[],
+  page?: { currentPage?: number; pageSize?: number },
+) {
+  const currentPage = Math.max(1, Number(page?.currentPage || 1));
+  const pageSize = Math.max(1, Number(page?.pageSize || 20));
+  const start = (currentPage - 1) * pageSize;
+  return rows.slice(start, start + pageSize);
+}
 
 const [FailureModeGrid, failureModeGridApi] = useZqTable<FailureModeItem>({
   gridOptions: {
@@ -206,10 +247,17 @@ const [FailureModeGrid, failureModeGridApi] = useZqTable<FailureModeItem>({
     proxyConfig: {
       autoLoad: false,
       ajax: {
-        query: async () => ({
-          items: boundFailureModes.value,
-          total: boundFailureModes.value.length,
-        }),
+        query: async ({
+          page,
+        }: {
+          page?: { currentPage?: number; pageSize?: number };
+        }) => {
+          const rows = cloneFailureModeRows(boundFailureModes.value);
+          return {
+            items: paginateRows(rows, page),
+            total: rows.length,
+          };
+        },
       },
     },
     rowKey: 'id',
@@ -255,10 +303,17 @@ const [BaselineGrid, baselineGridApi] = useZqTable<ProductFailureModeItem>({
     proxyConfig: {
       autoLoad: false,
       ajax: {
-        query: async () => ({
-          items: baselineFailureModes.value,
-          total: baselineFailureModes.value.length,
-        }),
+        query: async ({
+          page,
+        }: {
+          page?: { currentPage?: number; pageSize?: number };
+        }) => {
+          const rows = cloneBaselineRows(baselineFailureModes.value);
+          return {
+            items: paginateRows(rows, page),
+            total: rows.length,
+          };
+        },
       },
     },
     rowKey: 'id',
@@ -382,6 +437,7 @@ async function loadTaskContext() {
     reviewForm.review_attachment_ids = [
       ...(detail.review_attachment_ids || []),
     ];
+    await nextTick();
     await failureModeGridApi.query();
     await baselineGridApi.query();
   } finally {
@@ -958,10 +1014,28 @@ watch(
                     </div>
                   </template>
 
+                  <template #cell-chips="{ row }">
+                    {{ formatTextList(row.chips) || '-' }}
+                  </template>
+
+                  <template #cell-fault_categories="{ row }">
+                    {{ formatTextList(row.fault_categories) || '-' }}
+                  </template>
+
+                  <template #cell-symptoms="{ row }">
+                    {{ formatTextList(row.symptoms) || '-' }}
+                  </template>
+
+                  <template #cell-related_dts_nos="{ row }">
+                    {{ formatTextList(row.related_dts_nos) || '-' }}
+                  </template>
+
                   <template #cell-author_info="{ row }">
                     <span>{{
                       row.author_info
-                        ?.map((item) => formatUserName(item))
+                        ?.map((item: FailureModeItem['author_info'][number]) =>
+                          formatUserName(item),
+                        )
                         .join(' / ') || '-'
                     }}</span>
                   </template>
