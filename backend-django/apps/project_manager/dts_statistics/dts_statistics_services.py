@@ -9,7 +9,6 @@ import os
 import random
 import time
 from collections import Counter, defaultdict
-from dataclasses import dataclass
 from typing import Any, Iterable
 
 import openpyxl
@@ -22,11 +21,9 @@ from django.utils import timezone
 from ninja.errors import HttpError
 
 from common.fu_cache import CacheManager
-
-from apps.project_manager.project.project_model import Project
 from core.dict_item.dict_item_model import DictItem
 
-from .dts_statistics_model import DtsDefectProjectLink, DtsExtension
+from .dts_statistics_model import DtsExtension
 from .dts_statistics_schemas import (
     DtsExtensionSaveSchema,
     DtsStatisticsExportSchema,
@@ -35,21 +32,48 @@ from .dts_statistics_schemas import (
 
 logger = logging.getLogger(__name__)
 
-_DATA_TYPE = "today"
-_EXCLUDE_INVALID = False
+_SOURCE_CACHE_KEY_PREFIX = "cache:dts_statistics:source:v2:"
+_LOCK_KEY_PREFIX = "cache:dts_statistics:lock:v2:"
 
-_PAGE_CACHE_KEY_PREFIX = "cache:dts_statistics:page:"
-_SCAN_CACHE_KEY_PREFIX = "cache:dts_statistics:scan:"
-_LOCK_KEY_PREFIX = "cache:dts_statistics:lock:"
-
-_DEFAULT_PAGE_CACHE_TTL_SECONDS = 120
-_DEFAULT_SCAN_CACHE_TTL_SECONDS = 180
+_DEFAULT_SOURCE_CACHE_TTL_SECONDS = 180
 _DEFAULT_LOCK_TTL_SECONDS = 30
 
-_DEFAULT_SCAN_PAGE_SIZE = 500
-_DEFAULT_MAX_SCAN_PAGES = 200
+_DATA_LAKE_PAGE_SIZE = 500
+_MAX_TIME_SPAN_MS_PER_CHUNK = 3 * 24 * 60 * 60 * 1000
+_MAX_SCAN_PAGES_PER_CHUNK = 2000
 
-_UTC = datetime.timezone.utc
+_PRODUCT_ID_TO_NAME = {
+    "250539396": "座舱",
+    "250539397": "车控",
+}
+
+_DEFAULT_FIELDS = [
+    "dtsBizNo",
+    "briefDesc",
+    "dtsStatus",
+    "dtsStatusName",
+    "serverityNoname",
+    "serverityNoName",
+    "serverityNo",
+    "parentNo",
+    "createAt",
+    "dCkiseTime",
+    "dCloseTime",
+    "sDeptOneNoName",
+    "flowState",
+    "currentHandler",
+    "creator",
+    "sSubmitUserName",
+    "sSubmitsystemNoName",
+    "sTestorTestReport",
+]
+
+_SEVERITY_NAME_TO_CODE = {
+    "提示": "Suggestion",
+    "一般": "Minor",
+    "严重": "Major",
+    "关键": "Critical",
+}
 
 _EXPORT_SHEET_TITLE = "DTS统计"
 _EXPORT_HEADERS = (
@@ -133,22 +157,12 @@ def _parse_datetime(value: Any) -> datetime.datetime | None:
     if not text:
         return None
 
-    def normalize(dt: datetime.datetime) -> datetime.datetime:
-        # Normalize to timezone-aware UTC datetime so comparisons/sorting won't
-        # crash when mixing naive/aware timestamps from upstream.
-        if dt.tzinfo is None:
-            try:
-                dt = timezone.make_aware(dt, timezone.get_current_timezone())
-            except Exception:
-                dt = dt.replace(tzinfo=_UTC)
-        try:
-            return dt.astimezone(_UTC)
-        except Exception:
-            return dt.replace(tzinfo=_UTC)
-
-    candidate = text.replace("Z", "+00:00")
+    normalized_text = text.replace("Z", "+00:00")
     try:
-        return normalize(datetime.datetime.fromisoformat(candidate))
+        dt = datetime.datetime.fromisoformat(normalized_text)
+        if dt.tzinfo is None:
+            dt = timezone.make_aware(dt, timezone.get_current_timezone())
+        return dt
     except Exception:
         pass
 
@@ -159,10 +173,11 @@ def _parse_datetime(value: Any) -> datetime.datetime | None:
         "%Y/%m/%d",
     ):
         try:
-            return normalize(datetime.datetime.strptime(text, fmt))
+            dt = datetime.datetime.strptime(text, fmt)
+            dt = timezone.make_aware(dt, timezone.get_current_timezone())
+            return dt
         except Exception:
             continue
-
     return None
 
 
@@ -184,172 +199,50 @@ def _resolve_cache_ttl(setting_name: str, default: int) -> int:
     return max(value, 1)
 
 
-def _resolve_scan_page_size() -> int:
-    raw_value = _get_setting("DTS_STATISTICS_SCAN_PAGE_SIZE", _DEFAULT_SCAN_PAGE_SIZE)
-    try:
-        value = int(raw_value)
-    except Exception:
-        value = _DEFAULT_SCAN_PAGE_SIZE
-    value = max(value, 1)
-    return min(value, 1000)
-
-
 def _resolve_max_scan_pages() -> int:
-    raw_value = _get_setting("DTS_STATISTICS_SCAN_MAX_PAGES", _DEFAULT_MAX_SCAN_PAGES)
+    raw_value = _get_setting(
+        "DTS_STATISTICS_SCAN_MAX_PAGES_PER_CHUNK",
+        _MAX_SCAN_PAGES_PER_CHUNK,
+    )
     try:
         value = int(raw_value)
     except Exception:
-        value = _DEFAULT_MAX_SCAN_PAGES
+        value = _MAX_SCAN_PAGES_PER_CHUNK
     return max(value, 1)
 
 
-@dataclass(frozen=True)
-class _VersionGroup:
-    version: str
-    team_name_list: str
-    team_to_project_ids: dict[str, list[str]]
-    project_id_to_name: dict[str, str]
+def _resolve_time_window_ms(
+    update_time_begin: int,
+    update_time_end: int,
+) -> tuple[int, int]:
+    now = timezone.now()
+    default_end = int(now.timestamp() * 1000)
+    default_begin = int((now - datetime.timedelta(days=30)).timestamp() * 1000)
 
-    @property
-    def project_ids(self) -> set[str]:
-        return set(self.project_id_to_name.keys())
+    begin = int(update_time_begin or 0)
+    end = int(update_time_end or 0)
+    if begin <= 0:
+        begin = default_begin
+    if end <= 0:
+        end = default_end
 
-
-def _group_projects(project_ids: list[str]) -> list[_VersionGroup]:
-    # In normal mode, we strictly require enable_dts + version_c + di_teams.
-    # In local UI debugging, users may want mock data without touching project
-    # configs; allow relaxing the filter explicitly.
-    relax_filter = _to_bool(
-        _get_setting("DTS_STATISTICS_MOCK_RELAX_PROJECT_FILTER", False),
-        False,
-    )
-
-    projects = (
-        Project.objects.filter(id__in=project_ids, enable_dts=True)
-        .only("id", "name", "code", "version_c", "di_teams", "enable_dts")
-        .all()
-    )
-    version_to_group: dict[str, dict[str, Any]] = {}
-
-    for project in projects:
-        version = _clean_text(project.version_c)
-        teams = _normalize_text_list(project.di_teams)
-        if (not version or not teams) and relax_filter:
-            if not version:
-                version = _clean_text(_get_setting("DTS_STATISTICS_MOCK_VERSION", "MOCK")) or "MOCK"
-            if not teams:
-                suffix = _clean_text(getattr(project, "code", "")) or _clean_text(project.id)[-6:] or "X"
-                teams = [f"MockTeam-{suffix}"]
-
-        if not version or not teams:
-            # Strict mode: project must have both version and teams configured.
-            continue
-
-        group = version_to_group.setdefault(
-            version,
-            {
-                "team_set": set(),
-                "team_to_project_ids": defaultdict(list),
-                "project_id_to_name": {},
-            },
-        )
-        group["project_id_to_name"][project.id] = project.name
-        for team in teams:
-            group["team_set"].add(team)
-            group["team_to_project_ids"][team].append(project.id)
-
-    result: list[_VersionGroup] = []
-    for version, group in version_to_group.items():
-        teams_sorted = sorted(group["team_set"])
-        team_name_list = ",".join(teams_sorted)
-        team_to_project_ids: dict[str, list[str]] = {}
-        for team, project_ids in group["team_to_project_ids"].items():
-            unique_ids = list(dict.fromkeys(project_ids))
-            unique_ids.sort(
-                key=lambda pid: (
-                    group["project_id_to_name"].get(pid, "") or "",
-                    pid,
-                )
-            )
-            team_to_project_ids[team] = unique_ids
-        result.append(
-            _VersionGroup(
-                version=version,
-                team_name_list=team_name_list,
-                team_to_project_ids=team_to_project_ids,
-                project_id_to_name=dict(group["project_id_to_name"]),
-            )
-        )
-    return result
+    if begin > end:
+        begin, end = end, begin
+    return begin, end
 
 
-def _extract_team_name(defect: dict[str, Any]) -> str:
-    return _clean_text(defect.get("submitTeam") or defect.get("currentTeam") or "")
-
-
-def _resolve_effective_team_names(
-    group: _VersionGroup,
-    selected_team_names: list[str],
-) -> list[str]:
-    """
-    Resolve the effective team filter for a version group.
-
-    - No team filter: keep all teams for the group (already sorted).
-    - With team filter: intersect with group teams and keep deterministic sort.
-    """
-
-    if not selected_team_names:
-        # group.team_name_list is a sorted comma-separated string.
-        return [item for item in group.team_name_list.split(",") if item]
-
-    allowed = set(group.team_to_project_ids.keys())
-    matched = [item for item in selected_team_names if item in allowed]
-    matched.sort()
-    return matched
-
-
-def _resolve_effective_project_ids(
-    group: _VersionGroup,
-    *,
-    team_names: list[str],
-) -> set[str]:
-    """
-    Only keep projects that are reachable via the effective team filter.
-
-    This prevents leaking historical links from unrelated teams/projects when
-    loading link_map for response rendering.
-    """
-
-    project_ids: set[str] = set()
-    for team_name in team_names:
-        project_ids.update(group.team_to_project_ids.get(team_name) or [])
-    return project_ids
-
-
-def _build_upstream_payload(
-    *,
-    version: str,
-    team_name_list: str,
-    column_type: str,
-    start_time: str,
-    end_time: str,
-    page_no: int,
-    page_size: int,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "version": version,
-        "teamNameList": team_name_list,
-        "dataType": _DATA_TYPE,
-        "columnType": column_type,
-        "excludeInvalid": _EXCLUDE_INVALID,
-        "pageInfo": {"pageNo": page_no, "pageSize": page_size},
-    }
-    safe_start_time = _clean_text(start_time)
-    safe_end_time = _clean_text(end_time)
-    if safe_start_time and safe_end_time:
-        payload["startTime"] = safe_start_time
-        payload["endTime"] = safe_end_time
-    return payload
+def _iter_time_chunks(
+    begin_ms: int,
+    end_ms: int,
+    chunk_span_ms: int = _MAX_TIME_SPAN_MS_PER_CHUNK,
+):
+    if begin_ms > end_ms:
+        return
+    current_begin = begin_ms
+    while current_begin <= end_ms:
+        current_end = min(current_begin + chunk_span_ms - 1, end_ms)
+        yield current_begin, current_end
+        current_begin = current_end + 1
 
 
 def _build_request_headers() -> dict[str, str]:
@@ -374,66 +267,99 @@ def _build_request_headers() -> dict[str, str]:
     return headers
 
 
+def _build_data_lake_payload(
+    *,
+    page_index: int,
+    page_size: int,
+    product_id: str,
+    update_time_begin: int,
+    update_time_end: int,
+    flow_states: list[str] | None = None,
+    severity_nos: list[str] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "pageIndex": max(int(page_index or 1), 1),
+        "pageSize": max(min(int(page_size or _DATA_LAKE_PAGE_SIZE), _DATA_LAKE_PAGE_SIZE), 1),
+        "productId": _clean_text(product_id),
+        "updateTimeBegin": int(update_time_begin or 0),
+        "updateTimeEnd": int(update_time_end or 0),
+        "fields": list(_DEFAULT_FIELDS),
+    }
+    safe_flow_states = _normalize_text_list(flow_states)
+    if safe_flow_states:
+        payload["flowStates"] = safe_flow_states
+    safe_severity_nos = _normalize_text_list(severity_nos)
+    if safe_severity_nos:
+        payload["severityNos"] = safe_severity_nos
+    return payload
+
+
 def _mock_fetch_page(payload: dict[str, Any]) -> dict[str, Any]:
-    base_payload = {k: v for k, v in payload.items() if k != "pageInfo"}
-    digest = hashlib.md5(
-        json.dumps(base_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    ).hexdigest()
-    rng = random.Random(digest)
+    seed_text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    rng = random.Random(hashlib.md5(seed_text.encode("utf-8")).hexdigest())
 
-    team_names = [item for item in _clean_text(payload.get("teamNameList")).split(",") if item]
-    if not team_names:
-        team_names = ["MockTeam"]
-
-    raw_total = _get_setting("DTS_STATISTICS_MOCK_TOTAL", 1234)
-    try:
-        total = int(raw_total)
-    except Exception:
-        total = 1234
-    total = max(min(total, 50_000), 0)
-    page_info = payload.get("pageInfo") or {}
-    page_no = int(page_info.get("pageNo") or 1)
-    page_size = int(page_info.get("pageSize") or 20)
-    page_size = max(min(page_size, 500), 1)
-    start = max(page_no - 1, 0) * page_size
+    page_index = max(int(payload.get("pageIndex") or 1), 1)
+    page_size = max(min(int(payload.get("pageSize") or _DATA_LAKE_PAGE_SIZE), _DATA_LAKE_PAGE_SIZE), 1)
+    total = max(int(_get_setting("DTS_STATISTICS_MOCK_TOTAL", 1200) or 0), 0)
+    start = (page_index - 1) * page_size
     end = min(start + page_size, total)
 
-    base_time = _parse_datetime(payload.get("endTime")) or datetime.datetime(
-        2026, 3, 15, 12, 0, 0, tzinfo=_UTC
-    )
-    severities = ["关键", "严重", "一般", "提示"]
-    statuses = ["开发修复", "测试审核", "待定位", "已关闭"]
+    severity_codes = ["Suggestion", "Minor", "Major", "Critical"]
+    severity_names = ["提示", "一般", "严重", "关键"]
+    flow_codes = ["DTS010", "FS99", "DTS004", "DTS012"]
+    flow_names = {
+        "DTS010": "审核人员审核修改",
+        "FS99": "关闭",
+        "DTS004": "开发人员定位",
+        "DTS012": "测试经理组织测试",
+    }
+    product_id = _clean_text(payload.get("productId")) or "250539396"
 
-    items: list[dict[str, Any]] = []
-    for idx in range(start, end):
-        submit_time = base_time - datetime.timedelta(minutes=idx)
-        team_name = rng.choice(team_names)
-        items.append(
+    base_dt = timezone.now()
+    rows: list[dict[str, Any]] = []
+    for index in range(start, end):
+        flow_state = rng.choice(flow_codes)
+        severity_pos = rng.randint(0, len(severity_codes) - 1)
+        create_dt = base_dt - datetime.timedelta(hours=index % (24 * 30))
+        close_dt = (
+            create_dt + datetime.timedelta(hours=rng.randint(4, 72))
+            if flow_state == "FS99"
+            else None
+        )
+        rows.append(
             {
-                "defectNo": f"DTS{20260000000000 + idx}",
-                "brief": f"Mock defect {idx + 1}",
-                "severity": rng.choice(severities),
-                "submitTime": submit_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "submitTeam": team_name,
-                "currentTeam": team_name,
-                "currentStatus": rng.choice(statuses),
-                "currentHandler": f"user{rng.randint(1, 20)}",
-                "process_days": str(rng.randint(0, 30)),
+                "data": {
+                    "dtsBizNo": f"DTS{product_id[-4:]}{index + 1000000}",
+                    "briefDesc": f"Mock defect {index + 1}",
+                    "dtsStatus": flow_state,
+                    "dtsStatusName": flow_names.get(flow_state) or flow_state,
+                    "serverityNo": severity_codes[severity_pos],
+                    "serverityNoName": severity_names[severity_pos],
+                    "parentNo": f"DTSP{index % 2000:04d}",
+                    "createAt": create_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                    "dCloseTime": close_dt.strftime("%Y-%m-%d %H:%M:%S")
+                    if close_dt
+                    else None,
+                    "sDeptOneNoName": f"研发{(index % 5) + 1}部",
+                    "flowState": flow_state,
+                    "currentHandler": f"user{(index % 15) + 1}",
+                    "creator": f"creator{(index % 10) + 1}",
+                    "sSubmitUserName": f"提交人{(index % 10) + 1}",
+                    "sSubmitsystemNoName": f"子系统{(index % 6) + 1}",
+                    "sTestorTestReport": f"<p>mock report {index + 1}</p>",
+                }
             }
         )
 
     return {
-        "pageResult": {
+        "result": {
             "total": total,
-            "pageNo": page_no,
-            "pageSize": page_size,
-            "pageSum": math.ceil(total / page_size) if page_size else 0,
-        },
-        "dataList": items,
+            "dataList": rows,
+        }
     }
 
 
-def _fetch_upstream_page(payload: dict[str, Any]) -> dict[str, Any]:
+def _fetch_data_lake_page(payload: dict[str, Any]) -> dict[str, Any]:
     if _to_bool(_get_setting("DTS_STATISTICS_FORCE_MOCK", False), False):
         logger.info("DtsStatistics upstream mock forced payload=%s", payload)
         return _mock_fetch_page(payload)
@@ -471,19 +397,31 @@ def _fetch_upstream_page(payload: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def _extract_page_result(raw: dict[str, Any]) -> tuple[int, list[dict[str, Any]], dict[str, Any]]:
-    page_result = raw.get("pageResult") or {}
-    if not isinstance(page_result, dict):
-        page_result = {}
-    data_list = raw.get("dataList") or []
+def _extract_page_result(raw: dict[str, Any]) -> tuple[int, list[dict[str, Any]]]:
+    result = raw.get("result") or {}
+    if not isinstance(result, dict):
+        result = {}
+
+    raw_total = result.get("total")
+    try:
+        total = int(raw_total)
+    except Exception:
+        total = 0
+
+    data_list = result.get("dataList") or []
     if not isinstance(data_list, list):
         data_list = []
-    total = page_result.get("total")
-    try:
-        total_int = int(total)
-    except Exception:
-        total_int = len(data_list)
-    return total_int, [item for item in data_list if isinstance(item, dict)], page_result
+
+    rows: list[dict[str, Any]] = []
+    for item in data_list:
+        if not isinstance(item, dict):
+            continue
+        node = item.get("data") if isinstance(item.get("data"), dict) else item
+        if isinstance(node, dict):
+            rows.append(node)
+    if total <= 0:
+        total = len(rows)
+    return total, rows
 
 
 def _wait_for_cache(key: str, *, max_wait_seconds: float = 3.0) -> Any:
@@ -498,296 +436,275 @@ def _wait_for_cache(key: str, *, max_wait_seconds: float = 3.0) -> Any:
     return None
 
 
-def _bulk_upsert_links(
-    *,
-    group: _VersionGroup,
-    defects: Iterable[dict[str, Any]],
-) -> None:
-    now = timezone.now()
-    objs: list[DtsDefectProjectLink] = []
-    seen: set[tuple[str, str]] = set()
+def _is_empty_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    if isinstance(value, (list, dict)) and not value:
+        return True
+    return False
 
-    for defect in defects:
-        defect_no = _clean_text(defect.get("defectNo"))
+
+def _merge_duplicate_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        defect_no = _clean_text(row.get("dtsBizNo") or row.get("defectNo"))
         if not defect_no:
             continue
-        team_name = _extract_team_name(defect)
-        if not team_name:
+        existing = merged.get(defect_no)
+        if existing is None:
+            current = dict(row)
+            current["dtsBizNo"] = defect_no
+            merged[defect_no] = current
             continue
-        project_ids = group.team_to_project_ids.get(team_name) or []
-        for project_id in project_ids:
-            key = (defect_no, project_id)
-            if key in seen:
-                continue
-            seen.add(key)
-            objs.append(
-                DtsDefectProjectLink(
-                    defect_no=defect_no,
-                    project_id=project_id,
-                    team_name=team_name,
-                    version_c=group.version,
-                    last_seen_at=now,
-                )
-            )
 
-    if not objs:
-        return
+        existing_dt = _parse_datetime(existing.get("createAt"))
+        incoming_dt = _parse_datetime(row.get("createAt"))
+        if incoming_dt and (not existing_dt or incoming_dt > existing_dt):
+            existing["createAt"] = row.get("createAt")
 
-    DtsDefectProjectLink.objects.bulk_create(
-        objs,
-        batch_size=500,
-        update_conflicts=True,
-        update_fields=["team_name", "version_c", "last_seen_at"],
-    )
+        for key, value in row.items():
+            if key not in existing or (_is_empty_value(existing.get(key)) and not _is_empty_value(value)):
+                existing[key] = value
+
+    return list(merged.values())
 
 
-def _bulk_upsert_links_for_sources(
+def _fetch_rows_for_time_chunk(
     *,
-    group_map: dict[str, _VersionGroup],
-    defect_sources: dict[str, set[str]],
-    defects: Iterable[dict[str, Any]],
-) -> None:
-    if not group_map:
-        return
-
-    now = timezone.now()
-    objs: list[DtsDefectProjectLink] = []
-    seen: set[tuple[str, str]] = set()
-
-    for defect in defects:
-        defect_no = _clean_text(defect.get("defectNo"))
-        if not defect_no:
-            continue
-        team_name = _extract_team_name(defect)
-        if not team_name:
-            continue
-        versions = defect_sources.get(defect_no) or set()
-        for version in versions:
-            group = group_map.get(version)
-            if not group:
-                continue
-            project_ids = group.team_to_project_ids.get(team_name) or []
-            for project_id in project_ids:
-                key = (defect_no, project_id)
-                if key in seen:
-                    continue
-                seen.add(key)
-                objs.append(
-                    DtsDefectProjectLink(
-                        defect_no=defect_no,
-                        project_id=project_id,
-                        team_name=team_name,
-                        version_c=version,
-                        last_seen_at=now,
-                    )
-                )
-
-    if not objs:
-        return
-
-    DtsDefectProjectLink.objects.bulk_create(
-        objs,
-        batch_size=500,
-        update_conflicts=True,
-        update_fields=["team_name", "version_c", "last_seen_at"],
-    )
-
-
-def _load_page_cached(
-    *,
-    group: _VersionGroup,
-    team_name_list: str,
-    column_type: str,
-    start_time: str,
-    end_time: str,
-    page_no: int,
-    page_size: int,
-) -> tuple[int, list[dict[str, Any]]]:
-    cache_payload = {
-        "version": group.version,
-        "teamNameList": team_name_list,
-        "columnType": column_type,
-        "startTime": start_time,
-        "endTime": end_time,
-        "pageNo": page_no,
-        "pageSize": page_size,
-        "dataType": _DATA_TYPE,
-        "excludeInvalid": _EXCLUDE_INVALID,
-    }
-    cache_key, _ = _cache_key(_PAGE_CACHE_KEY_PREFIX, cache_payload)
-    cached = CacheManager.get(cache_key)
-    if isinstance(cached, dict) and isinstance(cached.get("dataList"), list):
-        total, defects, _ = _extract_page_result(cached)
-        return total, defects
-
-    payload = _build_upstream_payload(
-        version=group.version,
-        team_name_list=team_name_list,
-        column_type=column_type,
-        start_time=start_time,
-        end_time=end_time,
-        page_no=page_no,
-        page_size=page_size,
-    )
-    raw = _fetch_upstream_page(payload)
-    total, defects, page_result = _extract_page_result(raw)
-    ttl = _resolve_cache_ttl(
-        "DTS_STATISTICS_PAGE_CACHE_TTL_SECONDS",
-        _DEFAULT_PAGE_CACHE_TTL_SECONDS,
-    )
-    CacheManager.set(
-        cache_key,
-        {"pageResult": page_result, "dataList": defects},
-        ttl,
-    )
-    return total, defects
-
-
-def _scan_all_cached(
-    *,
-    group: _VersionGroup,
-    team_name_list: str,
-    column_type: str,
-    start_time: str,
-    end_time: str,
+    product_id: str,
+    update_time_begin: int,
+    update_time_end: int,
 ) -> list[dict[str, Any]]:
-    scan_page_size = _resolve_scan_page_size()
+    rows: list[dict[str, Any]] = []
+    fetched = 0
+    max_pages = _resolve_max_scan_pages()
+
+    for page_index in range(1, max_pages + 1):
+        payload = _build_data_lake_payload(
+            page_index=page_index,
+            page_size=_DATA_LAKE_PAGE_SIZE,
+            product_id=product_id,
+            update_time_begin=update_time_begin,
+            update_time_end=update_time_end,
+            flow_states=[],
+            severity_nos=[],
+        )
+        raw = _fetch_data_lake_page(payload)
+        total, page_rows = _extract_page_result(raw)
+        rows.extend(page_rows)
+        fetched += len(page_rows)
+
+        if not page_rows:
+            break
+        if len(page_rows) < _DATA_LAKE_PAGE_SIZE:
+            break
+        if total > 0 and fetched >= total:
+            break
+    else:
+        raise HttpError(422, "DTS 扫描页数过多，请缩小筛选范围")
+
+    return rows
+
+
+def _load_source_rows_cached(
+    *,
+    product_id: str,
+    update_time_begin: int,
+    update_time_end: int,
+) -> list[dict[str, Any]]:
     cache_payload = {
-        "version": group.version,
-        "teamNameList": team_name_list,
-        "columnType": column_type,
-        "startTime": start_time,
-        "endTime": end_time,
-        "dataType": _DATA_TYPE,
-        "excludeInvalid": _EXCLUDE_INVALID,
-        "scanPageSize": scan_page_size,
+        "productId": _clean_text(product_id),
+        "updateTimeBegin": int(update_time_begin),
+        "updateTimeEnd": int(update_time_end),
+        "fields": list(_DEFAULT_FIELDS),
     }
-    cache_key, digest = _cache_key(_SCAN_CACHE_KEY_PREFIX, cache_payload)
+    cache_key, digest = _cache_key(_SOURCE_CACHE_KEY_PREFIX, cache_payload)
     cached = CacheManager.get(cache_key)
     if isinstance(cached, list):
         return [item for item in cached if isinstance(item, dict)]
 
     lock_key = f"{_LOCK_KEY_PREFIX}{digest}"
-    lock_ttl = _resolve_cache_ttl("DTS_STATISTICS_SCAN_LOCK_TTL_SECONDS", _DEFAULT_LOCK_TTL_SECONDS)
+    lock_ttl = _resolve_cache_ttl(
+        "DTS_STATISTICS_SOURCE_LOCK_TTL_SECONDS",
+        _DEFAULT_LOCK_TTL_SECONDS,
+    )
     lock_acquired = cache.add(lock_key, "1", lock_ttl)
     if not lock_acquired:
         waiting = _wait_for_cache(cache_key)
         if isinstance(waiting, list):
             return [item for item in waiting if isinstance(item, dict)]
 
-        # 没拿到锁且缓存仍为空，允许降级扫描一次，避免一直空结果
-        lock_acquired = False
-
     ttl = _resolve_cache_ttl(
-        "DTS_STATISTICS_SCAN_CACHE_TTL_SECONDS",
-        _DEFAULT_SCAN_CACHE_TTL_SECONDS,
+        "DTS_STATISTICS_SOURCE_CACHE_TTL_SECONDS",
+        _DEFAULT_SOURCE_CACHE_TTL_SECONDS,
     )
-    max_pages = _resolve_max_scan_pages()
-    defects: list[dict[str, Any]] = []
-    fetched_total = 0
-
     try:
-        stop_reason: str | None = None
-        for page_no in range(1, max_pages + 1):
-            payload = _build_upstream_payload(
-                version=group.version,
-                team_name_list=team_name_list,
-                column_type=column_type,
-                start_time=start_time,
-                end_time=end_time,
-                page_no=page_no,
-                page_size=scan_page_size,
+        scanned: list[dict[str, Any]] = []
+        for chunk_begin, chunk_end in _iter_time_chunks(
+            update_time_begin,
+            update_time_end,
+            _MAX_TIME_SPAN_MS_PER_CHUNK,
+        ):
+            scanned.extend(
+                _fetch_rows_for_time_chunk(
+                    product_id=product_id,
+                    update_time_begin=chunk_begin,
+                    update_time_end=chunk_end,
+                )
             )
-            raw = _fetch_upstream_page(payload)
-            total, page_defects, page_result = _extract_page_result(raw)
-            defects.extend(page_defects)
-            fetched_total += len(page_defects)
-            _bulk_upsert_links(group=group, defects=page_defects)
-
-            if not page_defects:
-                stop_reason = "empty"
-                break
-            if len(page_defects) < scan_page_size:
-                stop_reason = "partial_page"
-                break
-
-            page_sum = page_result.get("pageSum")
-            try:
-                page_sum_int = int(page_sum)
-            except Exception:
-                page_sum_int = 0
-
-            if total and fetched_total >= total:
-                stop_reason = "total"
-                break
-            if page_sum_int and page_no >= page_sum_int:
-                stop_reason = "page_sum"
-                break
-        else:
-            stop_reason = None
-
-        if stop_reason is None and max_pages > 0:
-            raise HttpError(422, "DTS 扫描页数过多，请缩小筛选范围")
-
-        CacheManager.set(cache_key, defects, ttl)
-        return defects
+        merged = _merge_duplicate_rows(scanned)
+        CacheManager.set(cache_key, merged, ttl)
+        return merged
     finally:
         if lock_acquired:
             cache.delete(lock_key)
 
 
-def _merge_duplicate_defects(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    merged: dict[str, dict[str, Any]] = {}
-    for item in items:
-        if not isinstance(item, dict):
+def _resolve_severity_code(row: dict[str, Any]) -> str:
+    code = _clean_text(
+        row.get("serverityNo")
+        or row.get("severityNo")
+        or row.get("severity_no")
+    )
+    if code:
+        return code
+
+    name = _clean_text(
+        row.get("serverityNoName")
+        or row.get("serverityNoname")
+        or row.get("severity")
+    )
+    if not name:
+        return ""
+    return _SEVERITY_NAME_TO_CODE.get(name, name)
+
+
+def _compute_process_days(create_at: Any, close_time: Any) -> str | None:
+    create_dt = _parse_datetime(create_at)
+    close_dt = _parse_datetime(close_time)
+    if not create_dt or not close_dt:
+        return None
+    delta = close_dt - create_dt
+    if delta.total_seconds() < 0:
+        return None
+    return f"{delta.total_seconds() / 86400:.2f}"
+
+
+def _normalize_source_row(
+    row: dict[str, Any],
+    *,
+    product_id: str,
+) -> dict[str, Any] | None:
+    defect_no = _clean_text(row.get("dtsBizNo") or row.get("defectNo"))
+    if not defect_no:
+        return None
+
+    product_name = _PRODUCT_ID_TO_NAME.get(product_id) or product_id
+    brief_desc = _clean_text(row.get("briefDesc") or row.get("brief"))
+    status_name = _clean_text(row.get("dtsStatusName") or row.get("currentStatus"))
+    flow_state = _clean_text(row.get("flowState") or row.get("dtsStatus"))
+    severity_name = _clean_text(
+        row.get("serverityNoName")
+        or row.get("serverityNoname")
+        or row.get("severity")
+    )
+    severity_code = _resolve_severity_code(row)
+    create_at = _clean_text(row.get("createAt") or row.get("submitTime"))
+    close_time = _clean_text(row.get("dCloseTime") or row.get("dCkiseTime"))
+    team_name = _clean_text(
+        row.get("sDeptOneNoName")
+        or row.get("submitTeam")
+        or row.get("currentTeam")
+    )
+
+    process_days = _clean_text(row.get("process_days"))
+    if not process_days:
+        process_days = _clean_text(_compute_process_days(create_at, close_time))
+
+    close_type = "关闭" if flow_state == "FS99" else ""
+    normalized = {
+        # compatibility fields
+        "defectNo": defect_no,
+        "brief": brief_desc,
+        "severity": severity_name or severity_code,
+        "submitTime": create_at or None,
+        "currentStatus": status_name or None,
+        "currentHandler": _clean_text(row.get("currentHandler")) or None,
+        "currentTeam": team_name or None,
+        "currentStage": flow_state or None,
+        "closeType": close_type or None,
+        "process_days": process_days or None,
+        "project_ids": [product_id],
+        "project_names": [product_name],
+        "team_names": [team_name] if team_name else [],
+        "project_name": product_name,
+        "team_name": team_name or None,
+        # raw data-lake fields
+        "dtsBizNo": defect_no,
+        "briefDesc": brief_desc or None,
+        "dtsStatus": _clean_text(row.get("dtsStatus")) or None,
+        "dtsStatusName": status_name or None,
+        "serverityNo": severity_code or None,
+        "serverityNoName": severity_name or None,
+        "parentNo": _clean_text(row.get("parentNo")) or None,
+        "createAt": create_at or None,
+        "dCloseTime": close_time or None,
+        "sDeptOneNoName": team_name or None,
+        "flowState": flow_state or None,
+        "creator": _clean_text(row.get("creator")) or None,
+        "sSubmitUserName": _clean_text(row.get("sSubmitUserName")) or None,
+        "sSubmitsystemNoName": _clean_text(row.get("sSubmitsystemNoName")) or None,
+        "sTestorTestReport": _clean_text(row.get("sTestorTestReport")) or None,
+        "productId": product_id,
+        "productName": product_name,
+    }
+    return normalized
+
+
+def _apply_source_filters(
+    rows: list[dict[str, Any]],
+    *,
+    flow_states: list[str],
+    severity_nos: list[str],
+) -> list[dict[str, Any]]:
+    flow_set = {item.upper() for item in _normalize_text_list(flow_states)}
+    severity_set = {item.lower() for item in _normalize_text_list(severity_nos)}
+    if not flow_set and not severity_set:
+        return rows
+
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        row_flow = _clean_text(row.get("flowState")).upper()
+        if flow_set and row_flow not in flow_set:
             continue
-        defect_no = _clean_text(item.get("defectNo"))
-        if not defect_no:
+
+        row_severity_code = _clean_text(_resolve_severity_code(row)).lower()
+        if severity_set and row_severity_code not in severity_set:
             continue
-        existing = merged.get(defect_no)
-        if existing is None:
-            merged[defect_no] = dict(item)
-            continue
-
-        existing_dt = _parse_datetime(existing.get("submitTime"))
-        incoming_dt = _parse_datetime(item.get("submitTime"))
-
-        def is_empty(value: Any) -> bool:
-            if value is None:
-                return True
-            if isinstance(value, str) and not value.strip():
-                return True
-            if isinstance(value, (list, dict)) and not value:
-                return True
-            return False
-
-        # submitTime: keep the latest if possible.
-        if incoming_dt and (not existing_dt or incoming_dt > existing_dt):
-            existing["submitTime"] = item.get("submitTime")
-
-        # Prefer non-empty fields.
-        for key, value in item.items():
-            if key not in existing or is_empty(existing.get(key)) and not is_empty(value):
-                existing[key] = value
-    return list(merged.values())
+        result.append(row)
+    return result
 
 
 def _sort_defects(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     def sort_key(item: dict[str, Any]):
-        dt = _parse_datetime(item.get("submitTime"))
-        safe_dt = dt or datetime.datetime.min.replace(tzinfo=_UTC)
-        defect_no = _clean_text(item.get("defectNo"))
+        dt = _parse_datetime(item.get("submitTime") or item.get("createAt"))
+        safe_dt = dt or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+        defect_no = _clean_text(item.get("defectNo") or item.get("dtsBizNo"))
         return safe_dt, defect_no
 
     return sorted(items, key=sort_key, reverse=True)
 
 
-def _paginate(items: list[dict[str, Any]], page_no: int, page_size: int) -> tuple[int, list[dict[str, Any]]]:
-    safe_page_no = max(int(page_no or 1), 1)
+def _paginate(items: list[dict[str, Any]], page_index: int, page_size: int) -> tuple[int, list[dict[str, Any]]]:
+    safe_page_index = max(int(page_index or 1), 1)
     safe_page_size = max(int(page_size or 20), 1)
     safe_page_size = min(safe_page_size, 500)
     total = len(items)
-    start = max(safe_page_no - 1, 0) * safe_page_size
+    start = max(safe_page_index - 1, 0) * safe_page_size
     end = start + safe_page_size
     return total, items[start:end]
 
@@ -803,54 +720,15 @@ def _load_extensions(defect_nos: list[str]) -> dict[str, DtsExtension]:
     return {item.defect_no: item for item in qs}
 
 
-def _load_link_map(
-    *,
-    defect_nos: list[str],
-    project_ids: set[str],
-) -> dict[str, dict[str, Any]]:
-    if not defect_nos or not project_ids:
-        return {}
-
-    links = (
-        DtsDefectProjectLink.objects.filter(defect_no__in=defect_nos, project_id__in=project_ids)
-        .select_related("project")
-        .all()
-    )
-    mapping: dict[str, dict[str, Any]] = {}
-    for link in links:
-        bucket = mapping.setdefault(
-            link.defect_no,
-            {"project_ids": [], "project_names": [], "team_names": []},
-        )
-        if link.project_id and link.project_id not in bucket["project_ids"]:
-            bucket["project_ids"].append(link.project_id)
-        if link.project and link.project.name and link.project.name not in bucket["project_names"]:
-            bucket["project_names"].append(link.project.name)
-        team_name = _clean_text(link.team_name)
-        if team_name and team_name not in bucket["team_names"]:
-            bucket["team_names"].append(team_name)
-    return mapping
-
-
 def _merge_defect_with_extension(
     defect: dict[str, Any],
     *,
     extension: DtsExtension | None,
-    link_info: dict[str, Any] | None,
 ) -> dict[str, Any]:
     merged = dict(defect)
-    defect_no = _clean_text(defect.get("defectNo"))
-
-    link_bucket = link_info or {}
-    merged["project_ids"] = list(link_bucket.get("project_ids") or [])
-    project_names = [str(item) for item in (link_bucket.get("project_names") or []) if _clean_text(item)]
-    team_names = [str(item) for item in (link_bucket.get("team_names") or []) if _clean_text(item)]
-    project_names.sort()
-    team_names.sort()
-    merged["project_names"] = project_names
-    merged["team_names"] = team_names
-    merged["project_name"] = project_names[0] if project_names else None
-    merged["team_name"] = _extract_team_name(defect) or (team_names[0] if team_names else None)
+    defect_no = _clean_text(merged.get("defectNo") or merged.get("dtsBizNo"))
+    merged["defectNo"] = defect_no
+    merged["dtsBizNo"] = defect_no
 
     if extension is None:
         merged.update(
@@ -925,99 +803,61 @@ def _merge_defect_with_extension(
     merged["test_non_test_desc"] = extension.test_non_test_desc
     merged["test_asset_link"] = extension.test_asset_link
     merged["test_status"] = extension.test_status
-
-    # ensure defectNo is kept for response consumers
-    merged["defectNo"] = defect_no or merged.get("defectNo")
     return merged
 
 
-def get_dts_statistics_list(query: DtsStatisticsQuerySchema) -> dict[str, Any]:
-    groups = _group_projects(query.project_ids)
-    if not groups:
-        return {"total": 0, "items": []}
-
-    selected_team_names = _normalize_text_list(query.team_names)
-    effective_groups: list[tuple[_VersionGroup, str, set[str]]] = []
-    for group in groups:
-        team_names = _resolve_effective_team_names(group, selected_team_names)
-        if not team_names:
-            continue
-        team_name_list = ",".join(team_names)
-        project_ids = _resolve_effective_project_ids(group, team_names=team_names)
-        if not team_name_list or not project_ids:
-            continue
-        effective_groups.append((group, team_name_list, project_ids))
-
-    if not effective_groups:
-        return {"total": 0, "items": []}
-
-    column_type = query.column_type
-    start_time = query.start_time
-    end_time = query.end_time
-    selected_project_ids: set[str] = set()
-    for _, _, project_ids in effective_groups:
-        selected_project_ids.update(project_ids)
-
-    # One group: use upstream paging + page cache for fast list response.
-    if len(effective_groups) == 1:
-        group, team_name_list, _ = effective_groups[0]
-        total, defects = _load_page_cached(
-            group=group,
-            team_name_list=team_name_list,
-            column_type=column_type,
-            start_time=start_time,
-            end_time=end_time,
-            page_no=query.page_no,
-            page_size=query.page_size,
-        )
-        _bulk_upsert_links(group=group, defects=defects)
-        defect_nos = [_clean_text(item.get("defectNo")) for item in defects if _clean_text(item.get("defectNo"))]
-        extensions = _load_extensions(defect_nos)
-        link_map = _load_link_map(defect_nos=defect_nos, project_ids=selected_project_ids)
-        items = [
-            _merge_defect_with_extension(
-                defect,
-                extension=extensions.get(_clean_text(defect.get("defectNo"))),
-                link_info=link_map.get(_clean_text(defect.get("defectNo"))),
-            )
-            for defect in defects
-        ]
-        return {"total": total, "items": items}
-
-    # Multiple groups: scan caches -> merge + local paging.
-    group_map = {group.version: group for group, _, _ in effective_groups}
-    defect_sources: dict[str, set[str]] = defaultdict(set)
-    scanned: list[dict[str, Any]] = []
-    for group, team_name_list, _ in effective_groups:
-        group_defects = (
-            _scan_all_cached(
-                group=group,
-                team_name_list=team_name_list,
-                column_type=column_type,
-                start_time=start_time,
-                end_time=end_time,
-            )
-        )
-        scanned.extend(group_defects)
-        for defect in group_defects:
-            defect_no = _clean_text(defect.get("defectNo"))
-            if defect_no:
-                defect_sources[defect_no].add(group.version)
-    merged = _sort_defects(_merge_duplicate_defects(scanned))
-    total, page_items = _paginate(merged, query.page_no, query.page_size)
-    _bulk_upsert_links_for_sources(
-        group_map=group_map,
-        defect_sources=defect_sources,
-        defects=page_items,
+def _resolve_runtime_filters(
+    query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
+) -> tuple[str, list[str], list[str], int, int]:
+    product_id = _clean_text(getattr(query, "productId", "")) or "250539396"
+    flow_states = _normalize_text_list(getattr(query, "flowStates", []))
+    severity_nos = _normalize_text_list(getattr(query, "severityNos", []))
+    update_time_begin, update_time_end = _resolve_time_window_ms(
+        int(getattr(query, "updateTimeBegin", 0) or 0),
+        int(getattr(query, "updateTimeEnd", 0) or 0),
     )
-    defect_nos = [_clean_text(item.get("defectNo")) for item in page_items if _clean_text(item.get("defectNo"))]
+    return product_id, flow_states, severity_nos, update_time_begin, update_time_end
+
+
+def _load_filtered_defects(
+    query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
+) -> list[dict[str, Any]]:
+    product_id, flow_states, severity_nos, update_time_begin, update_time_end = (
+        _resolve_runtime_filters(query)
+    )
+    source_rows = _load_source_rows_cached(
+        product_id=product_id,
+        update_time_begin=update_time_begin,
+        update_time_end=update_time_end,
+    )
+
+    normalized_rows: list[dict[str, Any]] = []
+    for row in source_rows:
+        normalized = _normalize_source_row(row, product_id=product_id)
+        if normalized:
+            normalized_rows.append(normalized)
+
+    filtered_rows = _apply_source_filters(
+        normalized_rows,
+        flow_states=flow_states,
+        severity_nos=severity_nos,
+    )
+    return _sort_defects(filtered_rows)
+
+
+def get_dts_statistics_list(query: DtsStatisticsQuerySchema) -> dict[str, Any]:
+    defects = _load_filtered_defects(query)
+    total, page_items = _paginate(defects, query.pageIndex, query.pageSize)
+    defect_nos = [
+        _clean_text(item.get("defectNo"))
+        for item in page_items
+        if _clean_text(item.get("defectNo"))
+    ]
     extensions = _load_extensions(defect_nos)
-    link_map = _load_link_map(defect_nos=defect_nos, project_ids=selected_project_ids)
     items = [
         _merge_defect_with_extension(
             defect,
             extension=extensions.get(_clean_text(defect.get("defectNo"))),
-            link_info=link_map.get(_clean_text(defect.get("defectNo"))),
         )
         for defect in page_items
     ]
@@ -1054,8 +894,8 @@ def _join_lines(value: Any) -> str:
 def _build_export_row(item: dict[str, Any]) -> list[Any]:
     return [
         _clean_text(item.get("defectNo")),
-        _clean_text(item.get("project_name")),
-        _clean_text(item.get("team_name")),
+        _clean_text(item.get("project_name") or item.get("productName")),
+        _clean_text(item.get("team_name") or item.get("sDeptOneNoName")),
         _clean_text(item.get("severity")),
         _clean_text(item.get("currentStatus")),
         _clean_text(item.get("currentHandler")),
@@ -1105,47 +945,12 @@ def _build_export_response(workbook: openpyxl.Workbook) -> HttpResponse:
 
 
 def export_dts_statistics(query: DtsStatisticsExportSchema) -> HttpResponse:
-    groups = _group_projects(query.project_ids)
-    if not groups:
-        raise HttpError(422, "无可查询项目，请检查项目 DTS 配置(enable_dts/version_c/di_teams)")
-
-    selected_team_names = _normalize_text_list(query.team_names)
-    effective_groups: list[tuple[_VersionGroup, str, set[str]]] = []
-    for group in groups:
-        team_names = _resolve_effective_team_names(group, selected_team_names)
-        if not team_names:
-            continue
-        team_name_list = ",".join(team_names)
-        project_ids = _resolve_effective_project_ids(group, team_names=team_names)
-        if not team_name_list or not project_ids:
-            continue
-        effective_groups.append((group, team_name_list, project_ids))
-
-    if not effective_groups:
-        raise HttpError(422, "当前筛选团队无可查询数据，请检查团队选择")
-
-    scanned: list[dict[str, Any]] = []
-    for group, team_name_list, _ in effective_groups:
-        scanned.extend(
-            _scan_all_cached(
-                group=group,
-                team_name_list=team_name_list,
-                column_type=query.column_type,
-                start_time=query.start_time,
-                end_time=query.end_time,
-            )
-        )
-
-    defects = _sort_defects(_merge_duplicate_defects(scanned))
+    defects = _load_filtered_defects(query)
     defect_nos = [
         _clean_text(item.get("defectNo"))
         for item in defects
         if _clean_text(item.get("defectNo"))
     ]
-
-    selected_project_ids: set[str] = set()
-    for _, _, project_ids in effective_groups:
-        selected_project_ids.update(project_ids)
 
     extensions_map: dict[str, DtsExtension] = {}
     if defect_nos:
@@ -1158,13 +963,6 @@ def export_dts_statistics(query: DtsStatisticsExportSchema) -> HttpResponse:
             for item in items:
                 extensions_map[item.defect_no] = item
 
-    link_map: dict[str, dict[str, Any]] = {}
-    if defect_nos and selected_project_ids:
-        for chunk in _iter_chunks(defect_nos):
-            link_map.update(
-                _load_link_map(defect_nos=chunk, project_ids=selected_project_ids)
-            )
-
     workbook = openpyxl.Workbook(write_only=True)
     worksheet = workbook.create_sheet(title=_EXPORT_SHEET_TITLE)
     worksheet.append(list(_EXPORT_HEADERS))
@@ -1174,100 +972,25 @@ def export_dts_statistics(query: DtsStatisticsExportSchema) -> HttpResponse:
         merged = _merge_defect_with_extension(
             defect,
             extension=extensions_map.get(defect_no),
-            link_info=link_map.get(defect_no),
         )
         worksheet.append(_build_export_row(merged))
 
     return _build_export_response(workbook)
 
 
+def _is_closed(defect: dict[str, Any]) -> bool:
+    flow_state = _clean_text(defect.get("flowState")).upper()
+    if flow_state == "FS99":
+        return True
+    status = _clean_text(defect.get("currentStatus"))
+    if "关闭" in status:
+        return True
+    normalized = status.lower()
+    return normalized in {"close", "closed", "done"}
+
+
 def get_dts_statistics_summary(query: DtsStatisticsQuerySchema) -> dict[str, Any]:
-    groups = _group_projects(query.project_ids)
-    if not groups:
-        return {
-            "total_count": 0,
-            "open_count": 0,
-            "closed_count": 0,
-            "avg_process_days": 0.0,
-            "qa_filled_count": 0,
-            "qa_completion_rate": 0.0,
-            "dev_analyzed_count": 0,
-            "dev_analysis_completion_rate": 0.0,
-            "test_analyzed_count": 0,
-            "test_analysis_completion_rate": 0.0,
-            "severity_dist": [],
-            "status_dist": [],
-            "team_dist": [],
-            "stage_dist": [],
-            "close_type_dist": [],
-            "handler_dist": [],
-            "qa_category_dist": [],
-            "dev_sub_category_dist": [],
-            "test_miss_reason_dist": [],
-            "pl_group_dist": [],
-            "project_dist": [],
-            "action_status_dist": [],
-        }
-
-    selected_team_names = _normalize_text_list(query.team_names)
-    effective_groups: list[tuple[_VersionGroup, str]] = []
-    for group in groups:
-        team_names = _resolve_effective_team_names(group, selected_team_names)
-        if not team_names:
-            continue
-        team_name_list = ",".join(team_names)
-        if team_name_list:
-            effective_groups.append((group, team_name_list))
-
-    if not effective_groups:
-        return {
-            "total_count": 0,
-            "open_count": 0,
-            "closed_count": 0,
-            "avg_process_days": 0.0,
-            "qa_filled_count": 0,
-            "qa_completion_rate": 0.0,
-            "dev_analyzed_count": 0,
-            "dev_analysis_completion_rate": 0.0,
-            "test_analyzed_count": 0,
-            "test_analysis_completion_rate": 0.0,
-            "severity_dist": [],
-            "status_dist": [],
-            "team_dist": [],
-            "stage_dist": [],
-            "close_type_dist": [],
-            "handler_dist": [],
-            "qa_category_dist": [],
-            "dev_sub_category_dist": [],
-            "test_miss_reason_dist": [],
-            "pl_group_dist": [],
-            "project_dist": [],
-            "action_status_dist": [],
-        }
-
-    column_type = query.column_type
-    start_time = query.start_time
-    end_time = query.end_time
-
-    group_map = {group.version: group for group, _ in effective_groups}
-    defect_sources: dict[str, set[str]] = defaultdict(set)
-    scanned: list[dict[str, Any]] = []
-    for group, team_name_list in effective_groups:
-        group_defects = (
-            _scan_all_cached(
-                group=group,
-                team_name_list=team_name_list,
-                column_type=column_type,
-                start_time=start_time,
-                end_time=end_time,
-            )
-        )
-        scanned.extend(group_defects)
-        for defect in group_defects:
-            defect_no = _clean_text(defect.get("defectNo"))
-            if defect_no:
-                defect_sources[defect_no].add(group.version)
-    defects = _merge_duplicate_defects(scanned)
+    defects = _load_filtered_defects(query)
     total_count = len(defects)
 
     severity_counter: Counter[str] = Counter()
@@ -1276,28 +999,23 @@ def get_dts_statistics_summary(query: DtsStatisticsQuerySchema) -> dict[str, Any
     stage_counter: Counter[str] = Counter()
     close_type_counter: Counter[str] = Counter()
     handler_counter: Counter[str] = Counter()
+    project_counter: Counter[str] = Counter()
+
     open_count = 0
     closed_count = 0
     process_days_sum = 0.0
     process_days_count = 0
 
-    def is_closed(defect: dict[str, Any]) -> bool:
-        if column_type == "openDefects":
-            return False
-        if column_type == "closeDefects":
-            return True
-        status = _clean_text(defect.get("currentStatus"))
-        close_type = _clean_text(defect.get("closeType"))
-        return bool(close_type) or ("关闭" in status) or status.lower() in {"closed", "close", "done"}
-
     for defect in defects:
         severity_counter[_clean_text(defect.get("severity"))] += 1
         status_counter[_clean_text(defect.get("currentStatus"))] += 1
-        team_counter[_extract_team_name(defect)] += 1
-        stage_counter[_clean_text(defect.get("currentStage"))] += 1
+        team_counter[_clean_text(defect.get("team_name") or defect.get("sDeptOneNoName"))] += 1
+        stage_counter[_clean_text(defect.get("flowState") or defect.get("currentStage"))] += 1
         close_type_counter[_clean_text(defect.get("closeType"))] += 1
         handler_counter[_clean_text(defect.get("currentHandler"))] += 1
-        if is_closed(defect):
+        project_counter[_clean_text(defect.get("project_name") or defect.get("productName"))] += 1
+
+        if _is_closed(defect):
             closed_count += 1
         else:
             open_count += 1
@@ -1376,33 +1094,6 @@ def get_dts_statistics_summary(query: DtsStatisticsQuerySchema) -> dict[str, Any
         round(test_analyzed_count / total_count, 4) if total_count else 0.0
     )
 
-    project_counter: Counter[str] = Counter()
-    if defect_nos and group_map:
-        for defect in defects:
-            defect_no = _clean_text(defect.get("defectNo"))
-            if not defect_no:
-                continue
-            team_name = _extract_team_name(defect)
-            if not team_name:
-                continue
-            versions = defect_sources.get(defect_no) or set()
-            if not versions:
-                continue
-
-            # One defect belongs to one project; pick the first deterministically.
-            for version in sorted(versions):
-                group = group_map.get(version)
-                if not group:
-                    continue
-                project_ids = group.team_to_project_ids.get(team_name) or []
-                if not project_ids:
-                    continue
-                project_id = project_ids[0]
-                name = group.project_id_to_name.get(project_id) or ""
-                if name:
-                    project_counter[name] += 1
-                    break
-
     return {
         "total_count": total_count,
         "open_count": open_count,
@@ -1435,8 +1126,6 @@ def save_dts_extension(defect_no: str, data: DtsExtensionSaveSchema) -> dict[str
     if not safe_defect_no:
         raise HttpError(422, "defect_no 不能为空")
 
-    # Partial update: only update fields provided by the client, so saving QA
-    # won't accidentally wipe Dev/Test fields (and vice-versa).
     payload = data.dict(exclude_unset=True)
     payload.pop("project_ids", None)
     if payload:
@@ -1463,7 +1152,6 @@ def get_dts_statistics_dict_options() -> dict[str, Any]:
         "action_status": "dts_action_status",
     }
 
-    # One SQL to pull all dict items then group by dict.code.
     rows = (
         DictItem.objects.select_related("dict")
         .filter(
@@ -1489,7 +1177,6 @@ def get_dts_statistics_dict_options() -> dict[str, Any]:
         if not label:
             continue
 
-        # Store label into DB so list/export/summary remain human-readable.
         value = label
         if value in seen[dict_code]:
             continue

@@ -5,17 +5,39 @@ from pydantic import field_validator
 
 
 class DtsStatisticsQuerySchema(Schema):
-    project_ids: list[str] = Field(default_factory=list)
-    team_names: list[str] = Field(default_factory=list)
-    column_type: str = Field("openDefects", description="openDefects/closeDefects/totalDefects")
-    start_time: str = ""
-    end_time: str = ""
-    page_no: int = 1
-    page_size: int = 20
+    productId: str = "250539396"
+    flowStates: list[str] = Field(default_factory=lambda: ["FS99"])
+    severityNos: list[str] = Field(default_factory=list)
+    updateTimeBegin: int = 0
+    updateTimeEnd: int = 0
+    pageIndex: int = 1
+    pageSize: int = 20
 
-    @field_validator("project_ids", mode="before")
+    @field_validator("productId", mode="before")
     @classmethod
-    def normalize_project_ids(cls, value: Any):
+    def normalize_product_id(cls, value: Any):
+        text = str(value or "").strip()
+        return text or "250539396"
+
+    @field_validator("flowStates", mode="before")
+    @classmethod
+    def normalize_flow_states(cls, value: Any):
+        if value is None:
+            return ["FS99"]
+        values = value if isinstance(value, list) else [value]
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in values:
+            text = str(item or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        return normalized
+
+    @field_validator("severityNos", mode="before")
+    @classmethod
+    def normalize_severity_nos(cls, value: Any):
         if value is None:
             return []
         values = value if isinstance(value, list) else [value]
@@ -29,44 +51,21 @@ class DtsStatisticsQuerySchema(Schema):
             normalized.append(text)
         return normalized
 
-    @field_validator("team_names", mode="before")
+    @field_validator("updateTimeBegin", "updateTimeEnd", mode="before")
     @classmethod
-    def normalize_team_names(cls, value: Any):
-        if value is None:
-            return []
-        values = value if isinstance(value, list) else [value]
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for item in values:
-            text = str(item or "").strip()
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            normalized.append(text)
-        return normalized
+    def normalize_timestamp(cls, value: Any):
+        try:
+            parsed = int(value or 0)
+        except Exception:
+            parsed = 0
+        return max(parsed, 0)
 
-    @field_validator("column_type")
+    @field_validator("pageIndex")
     @classmethod
-    def validate_column_type(cls, value: str):
-        value = (value or "").strip() or "openDefects"
-        allowed = {"openDefects", "closeDefects", "totalDefects"}
-        if value not in allowed:
-            raise ValueError("column_type 不合法")
-        return value
-
-    @field_validator("start_time", "end_time", mode="before")
-    @classmethod
-    def normalize_time_range(cls, value: Any):
-        if value is None:
-            return ""
-        return str(value).strip()
-
-    @field_validator("page_no")
-    @classmethod
-    def validate_page_no(cls, value: int):
+    def validate_page_index(cls, value: int):
         return max(int(value or 1), 1)
 
-    @field_validator("page_size")
+    @field_validator("pageSize")
     @classmethod
     def validate_page_size(cls, value: int):
         value = max(int(value or 20), 1)
@@ -173,6 +172,25 @@ class DataLakeDefectSchema(Schema):
     closeType: Optional[str] = None
     process_days: Optional[str] = None
 
+    # Data Lake raw fields (read-only baseline tab).
+    dtsBizNo: Optional[str] = None
+    briefDesc: Optional[str] = None
+    dtsStatus: Optional[str] = None
+    dtsStatusName: Optional[str] = None
+    serverityNo: Optional[str] = None
+    serverityNoName: Optional[str] = None
+    parentNo: Optional[str] = None
+    createAt: Optional[str] = None
+    dCloseTime: Optional[str] = None
+    sDeptOneNoName: Optional[str] = None
+    flowState: Optional[str] = None
+    creator: Optional[str] = None
+    sSubmitUserName: Optional[str] = None
+    sSubmitsystemNoName: Optional[str] = None
+    sTestorTestReport: Optional[str] = None
+    productId: Optional[str] = None
+    productName: Optional[str] = None
+
 
 class DtsMergedDefectSchema(DataLakeDefectSchema):
     project_ids: list[str] = Field(default_factory=list)
@@ -260,15 +278,37 @@ class DtsStatisticsExportSchema(Schema):
     to avoid accidental coupling on page_no/page_size on the frontend.
     """
 
-    project_ids: list[str] = Field(default_factory=list)
-    team_names: list[str] = Field(default_factory=list)
-    column_type: str = Field("openDefects", description="openDefects/closeDefects/totalDefects")
-    start_time: str = ""
-    end_time: str = ""
+    productId: str = "250539396"
+    flowStates: list[str] = Field(default_factory=lambda: ["FS99"])
+    severityNos: list[str] = Field(default_factory=list)
+    updateTimeBegin: int = 0
+    updateTimeEnd: int = 0
 
-    @field_validator("project_ids", mode="before")
+    @field_validator("productId", mode="before")
     @classmethod
-    def normalize_project_ids(cls, value: Any):
+    def normalize_product_id(cls, value: Any):
+        text = str(value or "").strip()
+        return text or "250539396"
+
+    @field_validator("flowStates", mode="before")
+    @classmethod
+    def normalize_flow_states(cls, value: Any):
+        if value is None:
+            return ["FS99"]
+        values = value if isinstance(value, list) else [value]
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in values:
+            text = str(item or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        return normalized
+
+    @field_validator("severityNos", mode="before")
+    @classmethod
+    def normalize_severity_nos(cls, value: Any):
         if value is None:
             return []
         values = value if isinstance(value, list) else [value]
@@ -282,37 +322,14 @@ class DtsStatisticsExportSchema(Schema):
             normalized.append(text)
         return normalized
 
-    @field_validator("team_names", mode="before")
+    @field_validator("updateTimeBegin", "updateTimeEnd", mode="before")
     @classmethod
-    def normalize_team_names(cls, value: Any):
-        if value is None:
-            return []
-        values = value if isinstance(value, list) else [value]
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for item in values:
-            text = str(item or "").strip()
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            normalized.append(text)
-        return normalized
-
-    @field_validator("column_type")
-    @classmethod
-    def validate_column_type(cls, value: str):
-        value = (value or "").strip() or "openDefects"
-        allowed = {"openDefects", "closeDefects", "totalDefects"}
-        if value not in allowed:
-            raise ValueError("column_type 不合法")
-        return value
-
-    @field_validator("start_time", "end_time", mode="before")
-    @classmethod
-    def normalize_time_range(cls, value: Any):
-        if value is None:
-            return ""
-        return str(value).strip()
+    def normalize_timestamp(cls, value: Any):
+        try:
+            parsed = int(value or 0)
+        except Exception:
+            parsed = 0
+        return max(parsed, 0)
 
 
 class DtsDictOptionSchema(Schema):
