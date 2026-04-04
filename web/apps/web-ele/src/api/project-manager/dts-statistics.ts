@@ -14,42 +14,38 @@ export interface DtsStatisticsQuery extends DtsStatisticsFilters {
 }
 
 export interface DtsMergedDefect {
-  defectNo: string;
-  dtsBizNo?: null | string;
-  brief?: string;
+  dtsBizNo: string;
   briefDesc?: null | string;
-  severity?: string;
-  serverityNo?: null | string;
+  dtsStatusName?: null | string;
   serverityNoName?: null | string;
-  weight?: null | string;
-  submitTime?: null | string;
+  parentNo?: null | string;
   createAt?: null | string;
   dCloseTime?: null | string;
-  submitterId?: null | string;
-  submitTeam?: null | string;
-  currentHandler?: null | string;
-  currentTeam?: null | string;
-  currentStatus?: null | string;
-  dtsStatus?: null | string;
-  dtsStatusName?: null | string;
-  flowState?: null | string;
-  currentStage?: null | string;
-  closeType?: null | string;
-  process_days?: null | string;
-  parentNo?: null | string;
   sDeptOneNoName?: null | string;
+  currentHandler?: null | string;
   creator?: null | string;
   sSubmitUserName?: null | string;
   sSubmitsystemNoName?: null | string;
+  sProdFamilyNoName?: null | string;
+  sProdXtdNoName?: null | string;
+  iTestBackCount?: null | string;
+  sSuggestByReviewer?: null | string;
+  sTestReport?: null | string;
+  sTestSuggest?: null | string;
+  sModifyDocument?: null | string;
   sTestorTestReport?: null | string;
+  last_dts009_handler?: null | string;
+  last_dts010_handler?: null | string;
+  last_dts013_handler?: null | string;
+  iNumOfCloseDays?: null | string;
+  iNumOfFirmDays?: null | string;
+  iNumOfLocateDays?: null | string;
+  iNumofModifyDays?: null | string;
+  iNumofTestDays?: null | string;
+  dts009ReasonAnalysis?: null | string;
+  serverityNo?: null | string;
   productId?: null | string;
   productName?: null | string;
-
-  project_ids: string[];
-  project_names: string[];
-  team_names: string[];
-  project_name?: null | string;
-  team_name?: null | string;
 
   qa_category?: null | string;
   pl_group_id?: null | string;
@@ -89,7 +85,6 @@ export interface DtsListResponse {
 }
 
 export interface DtsExtensionSavePayload {
-  project_ids?: string[];
   qa_category?: null | string;
   pl_group_id?: null | string;
   is_downstream?: null | string;
@@ -177,11 +172,11 @@ export async function getDtsList(data: DtsStatisticsQuery) {
 }
 
 export async function saveDtsExtension(
-  defectNo: string,
+  dtsBizNo: string,
   data: DtsExtensionSavePayload,
 ) {
   return requestClient.post<DtsSaveResponse>(
-    `${base}/save-extension/${defectNo}`,
+    `${base}/save-extension/${dtsBizNo}`,
     data,
   );
 }

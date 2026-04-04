@@ -73,7 +73,6 @@ class DtsStatisticsQuerySchema(Schema):
 
 
 class DtsExtensionSaveSchema(Schema):
-    project_ids: list[str] = Field(default_factory=list)
     qa_category: Optional[str] = None
     pl_group_id: Optional[str] = None
     is_downstream: Optional[str] = None
@@ -103,7 +102,6 @@ class DtsExtensionSaveSchema(Schema):
     test_status: Optional[str] = None
 
     @field_validator(
-        "project_ids",
         "dev_sub_category",
         "dev_non_base_desc",
         "dev_improvements",
@@ -158,47 +156,43 @@ class DtsExtensionSaveSchema(Schema):
 
 
 class DataLakeDefectSchema(Schema):
-    defectNo: str
-    brief: str = ""
-    severity: str = ""
-    weight: Optional[str] = None
-    submitTime: Optional[str] = None
-    submitterId: Optional[str] = None
-    submitTeam: Optional[str] = None
-    currentHandler: Optional[str] = None
-    currentTeam: Optional[str] = None
-    currentStatus: Optional[str] = None
-    currentStage: Optional[str] = None
-    closeType: Optional[str] = None
-    process_days: Optional[str] = None
-
-    # Data Lake raw fields (read-only baseline tab).
-    dtsBizNo: Optional[str] = None
+    dtsBizNo: str
     briefDesc: Optional[str] = None
-    dtsStatus: Optional[str] = None
     dtsStatusName: Optional[str] = None
-    serverityNo: Optional[str] = None
     serverityNoName: Optional[str] = None
     parentNo: Optional[str] = None
     createAt: Optional[str] = None
     dCloseTime: Optional[str] = None
     sDeptOneNoName: Optional[str] = None
-    flowState: Optional[str] = None
+    currentHandler: Optional[str] = None
     creator: Optional[str] = None
     sSubmitUserName: Optional[str] = None
     sSubmitsystemNoName: Optional[str] = None
+    sProdFamilyNoName: Optional[str] = None
+    sProdXtdNoName: Optional[str] = None
+    iTestBackCount: Optional[str] = None
+    sSuggestByReviewer: Optional[str] = None
+    sTestReport: Optional[str] = None
+    sTestSuggest: Optional[str] = None
+    sModifyDocument: Optional[str] = None
     sTestorTestReport: Optional[str] = None
+    last_dts009_handler: Optional[str] = None
+    last_dts010_handler: Optional[str] = None
+    last_dts013_handler: Optional[str] = None
+    iNumOfCloseDays: Optional[str] = None
+    iNumOfFirmDays: Optional[str] = None
+    iNumOfLocateDays: Optional[str] = None
+    iNumofModifyDays: Optional[str] = None
+    iNumofTestDays: Optional[str] = None
+    dts009ReasonAnalysis: Optional[str] = None
+
+    # Helper fields used by cache/signature and summary/export rendering.
+    serverityNo: Optional[str] = None
     productId: Optional[str] = None
     productName: Optional[str] = None
 
 
 class DtsMergedDefectSchema(DataLakeDefectSchema):
-    project_ids: list[str] = Field(default_factory=list)
-    project_names: list[str] = Field(default_factory=list)
-    team_names: list[str] = Field(default_factory=list)
-    project_name: Optional[str] = None
-    team_name: Optional[str] = None
-
     qa_category: Optional[str] = None
     pl_group_id: Optional[str] = None
     pl_group_name: Optional[str] = None

@@ -79,9 +79,9 @@ const [TestForm, testFormApi] = useVbenForm({
 });
 
 const drawerTitle = computed(() => {
-  const defectNo = props.row?.defectNo || '';
+  const dtsBizNo = props.row?.dtsBizNo || '';
   const prefix = '问题单填报';
-  return defectNo ? `${prefix} - ${defectNo}` : prefix;
+  return dtsBizNo ? `${prefix} - ${dtsBizNo}` : prefix;
 });
 
 function sanitizeHtmlLike(input: unknown) {
@@ -130,47 +130,55 @@ function normalizeDisplay(value: unknown) {
 const baselineItems = computed(() => {
   const row = props.row;
   return [
-    {
-      label: 'DTS单号',
-      value: normalizeDisplay(row?.dtsBizNo || row?.defectNo),
-    },
-    {
-      label: '状态',
-      value: normalizeDisplay(row?.dtsStatusName || row?.currentStatus),
-    },
-    {
-      label: '状态编码',
-      value: normalizeDisplay(row?.flowState || row?.dtsStatus),
-    },
-    {
-      label: '严重程度',
-      value: normalizeDisplay(row?.serverityNoName || row?.severity),
-    },
-    { label: '严重程度编码', value: normalizeDisplay(row?.serverityNo) },
-    { label: '父问题单', value: normalizeDisplay(row?.parentNo) },
-    {
-      label: '问题描述',
-      value: normalizeDisplay(row?.briefDesc || row?.brief),
-    },
-    {
-      label: '创建时间',
-      value: normalizeDisplay(row?.createAt || row?.submitTime),
-    },
+    { label: '问题单号', value: normalizeDisplay(row?.dtsBizNo) },
+    { label: '简要描述', value: normalizeDisplay(row?.briefDesc) },
+    { label: '当前状态', value: normalizeDisplay(row?.dtsStatusName) },
+    { label: '严重程度', value: normalizeDisplay(row?.serverityNoName) },
+    { label: '父单单号', value: normalizeDisplay(row?.parentNo) },
+    { label: '提单时间', value: normalizeDisplay(row?.createAt) },
     { label: '关闭时间', value: normalizeDisplay(row?.dCloseTime) },
-    {
-      label: '所属部门',
-      value: normalizeDisplay(row?.sDeptOneNoName || row?.team_name),
-    },
+    { label: '提出方部门', value: normalizeDisplay(row?.sDeptOneNoName) },
     { label: '当前处理人', value: normalizeDisplay(row?.currentHandler) },
-    { label: '创建人', value: normalizeDisplay(row?.creator) },
-    { label: '提交人', value: normalizeDisplay(row?.sSubmitUserName) },
-    { label: '提交子系统', value: normalizeDisplay(row?.sSubmitsystemNoName) },
+    { label: '提单人工号', value: normalizeDisplay(row?.creator) },
+    { label: '提单人姓名', value: normalizeDisplay(row?.sSubmitUserName) },
+    { label: '子系统', value: normalizeDisplay(row?.sSubmitsystemNoName) },
+    { label: '产品族名称', value: normalizeDisplay(row?.sProdFamilyNoName) },
+    { label: '产品名称', value: normalizeDisplay(row?.sProdXtdNoName) },
+    { label: '测试返回次数', value: normalizeDisplay(row?.iTestBackCount) },
+    {
+      label: '最后开发修改人',
+      value: normalizeDisplay(row?.last_dts009_handler),
+    },
+    {
+      label: '最后审核修改人',
+      value: normalizeDisplay(row?.last_dts010_handler),
+    },
+    {
+      label: '最后测试回归人',
+      value: normalizeDisplay(row?.last_dts013_handler),
+    },
+    { label: '关闭周期', value: normalizeDisplay(row?.iNumOfCloseDays) },
+    { label: '确认周期', value: normalizeDisplay(row?.iNumOfFirmDays) },
+    { label: '定位周期', value: normalizeDisplay(row?.iNumOfLocateDays) },
+    { label: '修改周期', value: normalizeDisplay(row?.iNumofModifyDays) },
+    { label: '回归测试周期', value: normalizeDisplay(row?.iNumofTestDays) },
   ];
 });
 
-const sanitizedTestReport = computed(() =>
-  sanitizeHtmlLike(props.row?.sTestorTestReport),
-);
+const richTextItems = computed(() => {
+  const row = props.row;
+  return [
+    { field: 'sSuggestByReviewer', label: '审核人员具体意见' },
+    { field: 'sTestReport', label: '开发人员测试报告' },
+    { field: 'sTestSuggest', label: '测试建议' },
+    { field: 'sModifyDocument', label: '修改文件清单' },
+    { field: 'sTestorTestReport', label: '测试报告' },
+    { field: 'dts009ReasonAnalysis', label: '实施修改环节最后原因分析' },
+  ].map((item) => {
+    const html = sanitizeHtmlLike(row?.[item.field as keyof DtsMergedDefect]);
+    return { ...item, html };
+  });
+});
 
 function normalizeStringList(value: unknown): string[] {
   if (Array.isArray(value)) {
@@ -277,9 +285,9 @@ async function validateAllForms() {
 }
 
 async function handleConfirm() {
-  const defectNo = props.row?.defectNo;
-  if (!defectNo) {
-    ElMessage.warning('未获取到 defectNo，无法保存');
+  const dtsBizNo = props.row?.dtsBizNo;
+  if (!dtsBizNo) {
+    ElMessage.warning('未获取到 dtsBizNo，无法保存');
     return;
   }
 
@@ -305,7 +313,7 @@ async function handleConfirm() {
       test_improvements: normalizeStringList(testValues.test_improvements),
     };
 
-    await saveDtsExtension(defectNo, payload);
+    await saveDtsExtension(dtsBizNo, payload);
     ElMessage.success('保存成功');
     visible.value = false;
     emit('success');
@@ -339,13 +347,17 @@ async function handleConfirm() {
               </ElDescriptionsItem>
             </ElDescriptions>
 
-            <div class="dts-base-info__report">
-              <div class="dts-base-info__title">测试报告（只读）</div>
+            <div
+              v-for="item in richTextItems"
+              :key="item.field"
+              class="dts-base-info__report"
+            >
+              <div class="dts-base-info__title">{{ item.label }}（只读）</div>
               <!-- eslint-disable-next-line vue/no-v-html -->
               <div
-                v-if="sanitizedTestReport"
+                v-if="item.html"
                 class="dts-base-info__content"
-                v-html="sanitizedTestReport"
+                v-html="item.html"
               ></div>
               <div v-else class="dts-base-info__empty">-</div>
             </div>

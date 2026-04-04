@@ -50,22 +50,33 @@ _PRODUCT_ID_TO_NAME = {
 _DEFAULT_FIELDS = [
     "dtsBizNo",
     "briefDesc",
-    "dtsStatus",
     "dtsStatusName",
-    "serverityNoname",
     "serverityNoName",
-    "serverityNo",
     "parentNo",
     "createAt",
-    "dCkiseTime",
     "dCloseTime",
     "sDeptOneNoName",
-    "flowState",
     "currentHandler",
     "creator",
     "sSubmitUserName",
     "sSubmitsystemNoName",
+    "sProdFamilyNoName",
+    "sProdXtdNoName",
+    "iTestBackCount",
+    "sSuggestByReviewer",
+    "sTestReport",
+    "sTestSuggest",
+    "sModifyDocument",
     "sTestorTestReport",
+    "last_dts009_handler",
+    "last_dts010_handler",
+    "last_dts013_handler",
+    "iNumOfCloseDays",
+    "iNumOfFirmDays",
+    "iNumOfLocateDays",
+    "iNumofModifyDays",
+    "iNumofTestDays",
+    "dts009ReasonAnalysis",
 ]
 
 _SEVERITY_NAME_TO_CODE = {
@@ -74,6 +85,32 @@ _SEVERITY_NAME_TO_CODE = {
     "严重": "Major",
     "关键": "Critical",
 }
+
+_FLOW_STATE_CODE_TO_NAME = {
+    "DTS001": "问题提交人填写",
+    "DTS002": "测试(项目)经理审核",
+    "DTS003": "项目经理审核",
+    "DTS004": "开发人员定位",
+    "DTS005": "项目经理审核定位",
+    "DTS006": "开发人员方案审计",
+    "DTS007": "CCB方案审核",
+    "DTS008": "评审专家在线评审",
+    "DTS009": "开发人员审核修改",
+    "DTS010": "审核人员审核修改",
+    "DTS011": "CMO归档",
+    "DTS012": "测试经理组织测试",
+    "DTS013": "测试人员回归测试",
+    "DTS014": "确认问题单",
+    "DTS015": "制定修补计划",
+    "FS99": "关闭",
+    "FS01": "撤销",
+}
+
+_FLOW_STATE_NAME_TO_CODES: dict[str, set[str]] = {}
+for _code, _name in _FLOW_STATE_CODE_TO_NAME.items():
+    if not _name:
+        continue
+    _FLOW_STATE_NAME_TO_CODES.setdefault(_name, set()).add(_code)
 
 _EXPORT_SHEET_TITLE = "DTS统计"
 _EXPORT_HEADERS = (
@@ -331,9 +368,7 @@ def _mock_fetch_page(payload: dict[str, Any]) -> dict[str, Any]:
                 "data": {
                     "dtsBizNo": f"DTS{product_id[-4:]}{index + 1000000}",
                     "briefDesc": f"Mock defect {index + 1}",
-                    "dtsStatus": flow_state,
                     "dtsStatusName": flow_names.get(flow_state) or flow_state,
-                    "serverityNo": severity_codes[severity_pos],
                     "serverityNoName": severity_names[severity_pos],
                     "parentNo": f"DTSP{index % 2000:04d}",
                     "createAt": create_dt.strftime("%Y-%m-%d %H:%M:%S"),
@@ -341,12 +376,27 @@ def _mock_fetch_page(payload: dict[str, Any]) -> dict[str, Any]:
                     if close_dt
                     else None,
                     "sDeptOneNoName": f"研发{(index % 5) + 1}部",
-                    "flowState": flow_state,
                     "currentHandler": f"user{(index % 15) + 1}",
                     "creator": f"creator{(index % 10) + 1}",
                     "sSubmitUserName": f"提交人{(index % 10) + 1}",
                     "sSubmitsystemNoName": f"子系统{(index % 6) + 1}",
+                    "sProdFamilyNoName": f"产品族{(index % 4) + 1}",
+                    "sProdXtdNoName": f"产品{(index % 8) + 1}",
+                    "iTestBackCount": str(index % 6),
+                    "sSuggestByReviewer": f"<p>审核意见 {index + 1}</p>",
+                    "sTestReport": f"<p>开发测试报告 {index + 1}</p>",
+                    "sTestSuggest": f"<p>测试建议 {index + 1}</p>",
+                    "sModifyDocument": f"<ul><li>doc-{index + 1}.md</li></ul>",
                     "sTestorTestReport": f"<p>mock report {index + 1}</p>",
+                    "last_dts009_handler": f"dev_user{(index % 10) + 1}",
+                    "last_dts010_handler": f"review_user{(index % 10) + 1}",
+                    "last_dts013_handler": f"test_user{(index % 10) + 1}",
+                    "iNumOfCloseDays": f"{(index % 20) + 1}",
+                    "iNumOfFirmDays": f"{(index % 8) + 1}",
+                    "iNumOfLocateDays": f"{(index % 6) + 1}",
+                    "iNumofModifyDays": f"{(index % 10) + 1}",
+                    "iNumofTestDays": f"{(index % 7) + 1}",
+                    "dts009ReasonAnalysis": f"<p>原因分析 {index + 1}</p>",
                 }
             }
         )
@@ -451,7 +501,7 @@ def _merge_duplicate_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]
     for row in rows:
         if not isinstance(row, dict):
             continue
-        defect_no = _clean_text(row.get("dtsBizNo") or row.get("defectNo"))
+        defect_no = _clean_text(row.get("dtsBizNo"))
         if not defect_no:
             continue
         existing = merged.get(defect_no)
@@ -568,15 +618,12 @@ def _resolve_severity_code(row: dict[str, Any]) -> str:
     code = _clean_text(
         row.get("serverityNo")
         or row.get("severityNo")
-        or row.get("severity_no")
     )
     if code:
         return code
 
     name = _clean_text(
         row.get("serverityNoName")
-        or row.get("serverityNoname")
-        or row.get("severity")
     )
     if not name:
         return ""
@@ -599,66 +646,57 @@ def _normalize_source_row(
     *,
     product_id: str,
 ) -> dict[str, Any] | None:
-    defect_no = _clean_text(row.get("dtsBizNo") or row.get("defectNo"))
+    defect_no = _clean_text(row.get("dtsBizNo"))
     if not defect_no:
         return None
 
     product_name = _PRODUCT_ID_TO_NAME.get(product_id) or product_id
-    brief_desc = _clean_text(row.get("briefDesc") or row.get("brief"))
-    status_name = _clean_text(row.get("dtsStatusName") or row.get("currentStatus"))
-    flow_state = _clean_text(row.get("flowState") or row.get("dtsStatus"))
-    severity_name = _clean_text(
-        row.get("serverityNoName")
-        or row.get("serverityNoname")
-        or row.get("severity")
-    )
-    severity_code = _resolve_severity_code(row)
-    create_at = _clean_text(row.get("createAt") or row.get("submitTime"))
-    close_time = _clean_text(row.get("dCloseTime") or row.get("dCkiseTime"))
-    team_name = _clean_text(
-        row.get("sDeptOneNoName")
-        or row.get("submitTeam")
-        or row.get("currentTeam")
-    )
+    brief_desc = _clean_text(row.get("briefDesc"))
+    status_name = _clean_text(row.get("dtsStatusName"))
+    severity_name = _clean_text(row.get("serverityNoName"))
+    create_at = _clean_text(row.get("createAt"))
+    close_time = _clean_text(row.get("dCloseTime"))
+    team_name = _clean_text(row.get("sDeptOneNoName"))
+    close_days = _clean_text(row.get("iNumOfCloseDays"))
+    if not close_days:
+        close_days = _clean_text(_compute_process_days(create_at, close_time))
 
-    process_days = _clean_text(row.get("process_days"))
-    if not process_days:
-        process_days = _clean_text(_compute_process_days(create_at, close_time))
-
-    close_type = "关闭" if flow_state == "FS99" else ""
     normalized = {
-        # compatibility fields
-        "defectNo": defect_no,
-        "brief": brief_desc,
-        "severity": severity_name or severity_code,
-        "submitTime": create_at or None,
-        "currentStatus": status_name or None,
-        "currentHandler": _clean_text(row.get("currentHandler")) or None,
-        "currentTeam": team_name or None,
-        "currentStage": flow_state or None,
-        "closeType": close_type or None,
-        "process_days": process_days or None,
-        "project_ids": [product_id],
-        "project_names": [product_name],
-        "team_names": [team_name] if team_name else [],
-        "project_name": product_name,
-        "team_name": team_name or None,
-        # raw data-lake fields
         "dtsBizNo": defect_no,
         "briefDesc": brief_desc or None,
-        "dtsStatus": _clean_text(row.get("dtsStatus")) or None,
         "dtsStatusName": status_name or None,
-        "serverityNo": severity_code or None,
         "serverityNoName": severity_name or None,
         "parentNo": _clean_text(row.get("parentNo")) or None,
         "createAt": create_at or None,
         "dCloseTime": close_time or None,
         "sDeptOneNoName": team_name or None,
-        "flowState": flow_state or None,
+        "currentHandler": _clean_text(row.get("currentHandler")) or None,
         "creator": _clean_text(row.get("creator")) or None,
         "sSubmitUserName": _clean_text(row.get("sSubmitUserName")) or None,
         "sSubmitsystemNoName": _clean_text(row.get("sSubmitsystemNoName")) or None,
+        "sProdFamilyNoName": _clean_text(row.get("sProdFamilyNoName")) or None,
+        "sProdXtdNoName": _clean_text(row.get("sProdXtdNoName")) or None,
+        "iTestBackCount": _clean_text(row.get("iTestBackCount")) or None,
+        "sSuggestByReviewer": _clean_text(row.get("sSuggestByReviewer")) or None,
+        "sTestReport": _clean_text(row.get("sTestReport")) or None,
+        "sTestSuggest": _clean_text(row.get("sTestSuggest")) or None,
+        "sModifyDocument": _clean_text(row.get("sModifyDocument")) or None,
         "sTestorTestReport": _clean_text(row.get("sTestorTestReport")) or None,
+        "last_dts009_handler": _clean_text(row.get("last_dts009_handler")) or None,
+        "last_dts010_handler": _clean_text(row.get("last_dts010_handler")) or None,
+        "last_dts013_handler": _clean_text(row.get("last_dts013_handler")) or None,
+        "iNumOfCloseDays": close_days or None,
+        "iNumOfFirmDays": _clean_text(row.get("iNumOfFirmDays")) or None,
+        "iNumOfLocateDays": _clean_text(
+            row.get("iNumOfLocateDays") or row.get("iNumofLocateDays")
+        )
+        or None,
+        "iNumofModifyDays": _clean_text(row.get("iNumofModifyDays")) or None,
+        "iNumofTestDays": _clean_text(row.get("iNumofTestDays")) or None,
+        "dts009ReasonAnalysis": _clean_text(row.get("dts009ReasonAnalysis"))
+        or None,
+        # helper fields
+        "serverityNo": _resolve_severity_code(row) or None,
         "productId": product_id,
         "productName": product_name,
     }
@@ -678,8 +716,15 @@ def _apply_source_filters(
 
     result: list[dict[str, Any]] = []
     for row in rows:
-        row_flow = _clean_text(row.get("flowState")).upper()
-        if flow_set and row_flow not in flow_set:
+        flow_codes: set[str] = set()
+        status_name = _clean_text(row.get("dtsStatusName"))
+        if status_name in _FLOW_STATE_NAME_TO_CODES:
+            flow_codes.update(_FLOW_STATE_NAME_TO_CODES[status_name])
+        upper_status = status_name.upper()
+        if upper_status:
+            flow_codes.add(upper_status)
+
+        if flow_set and not flow_codes.intersection(flow_set):
             continue
 
         row_severity_code = _clean_text(_resolve_severity_code(row)).lower()
@@ -691,9 +736,9 @@ def _apply_source_filters(
 
 def _sort_defects(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     def sort_key(item: dict[str, Any]):
-        dt = _parse_datetime(item.get("submitTime") or item.get("createAt"))
+        dt = _parse_datetime(item.get("createAt"))
         safe_dt = dt or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
-        defect_no = _clean_text(item.get("defectNo") or item.get("dtsBizNo"))
+        defect_no = _clean_text(item.get("dtsBizNo"))
         return safe_dt, defect_no
 
     return sorted(items, key=sort_key, reverse=True)
@@ -726,8 +771,7 @@ def _merge_defect_with_extension(
     extension: DtsExtension | None,
 ) -> dict[str, Any]:
     merged = dict(defect)
-    defect_no = _clean_text(merged.get("defectNo") or merged.get("dtsBizNo"))
-    merged["defectNo"] = defect_no
+    defect_no = _clean_text(merged.get("dtsBizNo"))
     merged["dtsBizNo"] = defect_no
 
     if extension is None:
@@ -849,15 +893,15 @@ def get_dts_statistics_list(query: DtsStatisticsQuerySchema) -> dict[str, Any]:
     defects = _load_filtered_defects(query)
     total, page_items = _paginate(defects, query.pageIndex, query.pageSize)
     defect_nos = [
-        _clean_text(item.get("defectNo"))
+        _clean_text(item.get("dtsBizNo"))
         for item in page_items
-        if _clean_text(item.get("defectNo"))
+        if _clean_text(item.get("dtsBizNo"))
     ]
     extensions = _load_extensions(defect_nos)
     items = [
         _merge_defect_with_extension(
             defect,
-            extension=extensions.get(_clean_text(defect.get("defectNo"))),
+            extension=extensions.get(_clean_text(defect.get("dtsBizNo"))),
         )
         for defect in page_items
     ]
@@ -892,18 +936,19 @@ def _join_lines(value: Any) -> str:
 
 
 def _build_export_row(item: dict[str, Any]) -> list[Any]:
+    close_type = "关闭" if _is_closed(item) else "未关闭"
     return [
-        _clean_text(item.get("defectNo")),
-        _clean_text(item.get("project_name") or item.get("productName")),
-        _clean_text(item.get("team_name") or item.get("sDeptOneNoName")),
-        _clean_text(item.get("severity")),
-        _clean_text(item.get("currentStatus")),
+        _clean_text(item.get("dtsBizNo")),
+        _clean_text(item.get("sProdXtdNoName") or item.get("productName")),
+        _clean_text(item.get("sDeptOneNoName")),
+        _clean_text(item.get("serverityNoName")),
+        _clean_text(item.get("dtsStatusName")),
         _clean_text(item.get("currentHandler")),
-        _clean_text(item.get("submitTime")),
-        _clean_text(item.get("process_days")),
-        _clean_text(item.get("brief")),
-        _clean_text(item.get("currentStage")),
-        _clean_text(item.get("closeType")),
+        _clean_text(item.get("createAt")),
+        _clean_text(item.get("iNumOfCloseDays")),
+        _clean_text(item.get("briefDesc")),
+        _clean_text(item.get("dtsStatusName")),
+        close_type,
         _clean_text(item.get("qa_category")),
         _clean_text(item.get("pl_group_name")),
         _clean_text(item.get("is_downstream")),
@@ -947,9 +992,9 @@ def _build_export_response(workbook: openpyxl.Workbook) -> HttpResponse:
 def export_dts_statistics(query: DtsStatisticsExportSchema) -> HttpResponse:
     defects = _load_filtered_defects(query)
     defect_nos = [
-        _clean_text(item.get("defectNo"))
+        _clean_text(item.get("dtsBizNo"))
         for item in defects
-        if _clean_text(item.get("defectNo"))
+        if _clean_text(item.get("dtsBizNo"))
     ]
 
     extensions_map: dict[str, DtsExtension] = {}
@@ -968,7 +1013,7 @@ def export_dts_statistics(query: DtsStatisticsExportSchema) -> HttpResponse:
     worksheet.append(list(_EXPORT_HEADERS))
 
     for defect in defects:
-        defect_no = _clean_text(defect.get("defectNo"))
+        defect_no = _clean_text(defect.get("dtsBizNo"))
         merged = _merge_defect_with_extension(
             defect,
             extension=extensions_map.get(defect_no),
@@ -979,14 +1024,10 @@ def export_dts_statistics(query: DtsStatisticsExportSchema) -> HttpResponse:
 
 
 def _is_closed(defect: dict[str, Any]) -> bool:
-    flow_state = _clean_text(defect.get("flowState")).upper()
-    if flow_state == "FS99":
+    status = _clean_text(defect.get("dtsStatusName"))
+    if "关闭" in status or status in {"FS99", "closed", "close"}:
         return True
-    status = _clean_text(defect.get("currentStatus"))
-    if "关闭" in status:
-        return True
-    normalized = status.lower()
-    return normalized in {"close", "closed", "done"}
+    return bool(_clean_text(defect.get("dCloseTime")))
 
 
 def get_dts_statistics_summary(query: DtsStatisticsQuerySchema) -> dict[str, Any]:
@@ -1007,20 +1048,20 @@ def get_dts_statistics_summary(query: DtsStatisticsQuerySchema) -> dict[str, Any
     process_days_count = 0
 
     for defect in defects:
-        severity_counter[_clean_text(defect.get("severity"))] += 1
-        status_counter[_clean_text(defect.get("currentStatus"))] += 1
-        team_counter[_clean_text(defect.get("team_name") or defect.get("sDeptOneNoName"))] += 1
-        stage_counter[_clean_text(defect.get("flowState") or defect.get("currentStage"))] += 1
-        close_type_counter[_clean_text(defect.get("closeType"))] += 1
+        severity_counter[_clean_text(defect.get("serverityNoName"))] += 1
+        status_counter[_clean_text(defect.get("dtsStatusName"))] += 1
+        team_counter[_clean_text(defect.get("sDeptOneNoName"))] += 1
+        stage_counter[_clean_text(defect.get("dtsStatusName"))] += 1
+        close_type_counter["关闭" if _is_closed(defect) else "未关闭"] += 1
         handler_counter[_clean_text(defect.get("currentHandler"))] += 1
-        project_counter[_clean_text(defect.get("project_name") or defect.get("productName"))] += 1
+        project_counter[_clean_text(defect.get("sProdXtdNoName") or defect.get("productName"))] += 1
 
         if _is_closed(defect):
             closed_count += 1
         else:
             open_count += 1
 
-        raw_days = defect.get("process_days")
+        raw_days = defect.get("iNumOfCloseDays")
         try:
             days = float(str(raw_days).strip()) if raw_days is not None else None
         except Exception:
@@ -1032,9 +1073,9 @@ def get_dts_statistics_summary(query: DtsStatisticsQuerySchema) -> dict[str, Any
     avg_process_days = round(process_days_sum / process_days_count, 2) if process_days_count else 0.0
 
     defect_nos = [
-        _clean_text(item.get("defectNo"))
+        _clean_text(item.get("dtsBizNo"))
         for item in defects
-        if _clean_text(item.get("defectNo"))
+        if _clean_text(item.get("dtsBizNo"))
     ]
 
     qa_filled_count = 0
@@ -1127,7 +1168,6 @@ def save_dts_extension(defect_no: str, data: DtsExtensionSaveSchema) -> dict[str
         raise HttpError(422, "defect_no 不能为空")
 
     payload = data.dict(exclude_unset=True)
-    payload.pop("project_ids", None)
     if payload:
         DtsExtension.objects.update_or_create(defect_no=safe_defect_no, defaults=payload)
     return {"success": True}

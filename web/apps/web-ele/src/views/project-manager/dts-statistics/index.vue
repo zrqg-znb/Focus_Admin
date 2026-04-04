@@ -275,7 +275,7 @@ const [Grid, gridApi] = useZqTable({
     columns: useColumns(),
     border: true,
     stripe: true,
-    rowKey: 'defectNo',
+    rowKey: 'dtsBizNo',
     proxyConfig: {
       autoLoad: false,
       ajax: {
@@ -950,7 +950,7 @@ onUnmounted(() => {
                     </div>
                   </template>
 
-                  <template #header-currentStatus>
+                  <template #header-dtsStatusName>
                     <div class="dts-header-filter" @click.stop>
                       <span class="dts-header-filter__label">状态</span>
                       <ElPopover
@@ -1014,7 +1014,7 @@ onUnmounted(() => {
                     </div>
                   </template>
 
-                  <template #header-severity>
+                  <template #header-serverityNoName>
                     <div class="dts-header-filter" @click.stop>
                       <span class="dts-header-filter__label">严重程度</span>
                       <ElPopover
@@ -1078,42 +1078,16 @@ onUnmounted(() => {
                     </div>
                   </template>
 
-                  <template #cell-project_name="{ row }">
+                  <template #cell-serverityNoName="{ row }">
                     <ElTooltip
-                      v-if="(row.project_names || []).length > 1"
-                      :content="(row.project_names || []).join(', ')"
-                      placement="top-start"
-                    >
-                      <span class="cursor-help">{{
-                        row.project_name || '-'
-                      }}</span>
-                    </ElTooltip>
-                    <span v-else>{{ row.project_name || '-' }}</span>
-                  </template>
-
-                  <template #cell-team_name="{ row }">
-                    <ElTooltip
-                      v-if="(row.team_names || []).length > 1"
-                      :content="(row.team_names || []).join(', ')"
-                      placement="top-start"
-                    >
-                      <span class="cursor-help">{{
-                        row.team_name || '-'
-                      }}</span>
-                    </ElTooltip>
-                    <span v-else>{{ row.team_name || '-' }}</span>
-                  </template>
-
-                  <template #cell-severity="{ row }">
-                    <ElTooltip
-                      :content="resolveSeverityMeta(row.severity).tip"
+                      :content="resolveSeverityMeta(row.serverityNoName).tip"
                       placement="top"
                     >
                       <ElTag
-                        :type="resolveSeverityMeta(row.severity).type"
+                        :type="resolveSeverityMeta(row.serverityNoName).type"
                         effect="light"
                       >
-                        {{ resolveSeverityMeta(row.severity).label }}
+                        {{ resolveSeverityMeta(row.serverityNoName).label }}
                       </ElTag>
                     </ElTooltip>
                   </template>
