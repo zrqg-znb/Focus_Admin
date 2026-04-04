@@ -7,20 +7,23 @@ import type {
   DtsStatisticsFilters,
   DtsSummary,
 } from '#/api/project-manager/dts-statistics';
-import type { ProjectOut } from '#/api/project-manager/project';
 
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import { Page } from '@vben/common-ui';
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
+import { Filter } from '@element-plus/icons-vue';
 import {
   ElButton,
   ElCard,
+  ElCheckbox,
+  ElCheckboxGroup,
   ElDatePicker,
   ElEmpty,
   ElMessage,
   ElOption,
+  ElPopover,
   ElProgress,
   ElSelect,
   ElTabPane,
@@ -34,15 +37,10 @@ import {
   getDtsList,
   getDtsSummary,
 } from '#/api/project-manager/dts-statistics';
-import { listProjectsApi } from '#/api/project-manager/project';
 import { useZqTable } from '#/components/zq-table';
 
-import ProjectSelectorDialog from './components/project-selector-dialog.vue';
-import TeamSelectorDialog from './components/team-selector-dialog.vue';
 import {
   fetchDtsDictOptionsCached,
-  formatDateTime,
-  normalizeProjectOptions,
   resolveDtsGovernanceTagMeta,
   resolveSeverityMeta,
   useColumns,
@@ -53,26 +51,58 @@ defineOptions({ name: 'DtsStatistics' });
 
 type TabKey = 'dashboard' | 'list';
 
-interface DtsStatisticsProjectOption {
-  id: string;
-  name: string;
-  code: string;
-  domain?: null | string;
-  type?: null | string;
-  enable_dts: boolean;
-  version_c?: null | string;
-  di_teams?: string[];
-  config_complete: boolean;
-  reason?: string;
+const PRODUCT_OPTIONS = [
+  { label: '座舱', value: '250539396', disabled: false },
+  { label: '车控', value: '250539397', disabled: false },
+  { label: '全部（暂不支持）', value: 'ALL', disabled: true },
+];
+
+const FLOW_STATE_OPTIONS: Array<{ label: string; value: string }> = [
+  { value: 'DTS001', label: '问题提交人填写' },
+  { value: 'DTS002', label: '测试(项目)经理审核' },
+  { value: 'DTS003', label: '项目经理审核' },
+  { value: 'DTS004', label: '开发人员定位' },
+  { value: 'DTS005', label: '项目经理审核定位' },
+  { value: 'DTS006', label: '开发人员方案审计' },
+  { value: 'DTS007', label: 'CCB方案审核' },
+  { value: 'DTS008', label: '评审专家在线评审' },
+  { value: 'DTS009', label: '开发人员审核修改' },
+  { value: 'DTS010', label: '审核人员审核修改' },
+  { value: 'DTS011', label: 'CMO归档' },
+  { value: 'DTS012', label: '测试经理组织测试' },
+  { value: 'DTS013', label: '测试人员回归测试' },
+  { value: 'DTS014', label: '确认问题单' },
+  { value: 'DTS015', label: '制定修补计划' },
+  { value: 'FS99', label: '关闭' },
+  { value: 'FS01', label: '撤销' },
+];
+
+const SEVERITY_OPTIONS: Array<{ label: string; value: string }> = [
+  { value: 'Suggestion', label: '提示' },
+  { value: 'Minor', label: '一般' },
+  { value: 'Major', label: '严重' },
+  { value: 'Critical', label: '关键' },
+];
+
+function createDefaultDateRange(): [Date, Date] {
+  const end = new Date();
+  const start = new Date(end);
+  start.setMonth(start.getMonth() - 1);
+  return [start, end];
+}
+
+function toTimestampMs(date: Date) {
+  return Math.max(Math.floor(date.getTime()), 0);
 }
 
 function createDefaultFilters(): DtsStatisticsFilters {
+  const [start, end] = createDefaultDateRange();
   return {
-    project_ids: [],
-    team_names: [],
-    column_type: 'openDefects',
-    start_time: '',
-    end_time: '',
+    productId: '250539396',
+    flowStates: ['FS99'],
+    severityNos: [],
+    updateTimeBegin: toTimestampMs(start),
+    updateTimeEnd: toTimestampMs(end),
   };
 }
 
@@ -81,12 +111,7 @@ const activeTab = ref<TabKey>('list');
 const editVisible = ref(false);
 const editingRow = ref<DtsMergedDefect | null>(null);
 
-const projectSelectorVisible = ref(false);
-const teamSelectorVisible = ref(false);
-const optionsLoading = ref(false);
-const projectOptions = ref<DtsStatisticsProjectOption[]>([]);
-
-const dateRange = ref<[Date, Date] | null>(null);
+const dateRange = ref<[Date, Date] | null>(createDefaultDateRange());
 const filters = ref<DtsStatisticsFilters>(createDefaultFilters());
 
 const appliedFilters = ref<DtsStatisticsFilters | null>(null);
@@ -143,12 +168,19 @@ function normalizeStringArray(values?: string[]) {
 }
 
 function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
+  let begin = Number(source.updateTimeBegin || 0);
+  let end = Number(source.updateTimeEnd || 0);
+  if (begin > end) {
+    const temp = begin;
+    begin = end;
+    end = temp;
+  }
   return {
-    project_ids: normalizeStringArray(source.project_ids),
-    team_names: normalizeStringArray(source.team_names),
-    column_type: source.column_type || 'openDefects',
-    start_time: source.start_time || '',
-    end_time: source.end_time || '',
+    productId: String(source.productId || '250539396'),
+    flowStates: normalizeStringArray(source.flowStates),
+    severityNos: normalizeStringArray(source.severityNos),
+    updateTimeBegin: Math.max(begin, 0),
+    updateTimeEnd: Math.max(end, 0),
   };
 }
 
@@ -157,49 +189,12 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
     return '';
   }
   return JSON.stringify({
-    project_ids: [...(payload.project_ids || [])].sort(),
-    team_names: [...(payload.team_names || [])].sort(),
-    column_type: payload.column_type || '',
-    start_time: payload.start_time || '',
-    end_time: payload.end_time || '',
+    productId: payload.productId || '',
+    flowStates: [...(payload.flowStates || [])].sort(),
+    severityNos: [...(payload.severityNos || [])].sort(),
+    updateTimeBegin: payload.updateTimeBegin || 0,
+    updateTimeEnd: payload.updateTimeEnd || 0,
   });
-}
-
-function buildDtsProjectOption(
-  project: ProjectOut,
-): DtsStatisticsProjectOption {
-  const enable_dts = Boolean(project.enable_dts);
-  const version_c = String(project.version_c || '').trim();
-  const di_teams = Array.isArray(project.di_teams)
-    ? project.di_teams.map((item) => String(item || '').trim()).filter(Boolean)
-    : [];
-
-  const reasons: string[] = [];
-  if (!enable_dts) {
-    reasons.push('未开启问题单统计');
-  }
-  if (!version_c) {
-    reasons.push('未配置 version_c');
-  }
-  if (di_teams.length === 0) {
-    reasons.push('未配置责任团队(di_teams)');
-  }
-
-  const config_complete =
-    enable_dts && Boolean(version_c) && di_teams.length > 0;
-
-  return {
-    id: project.id,
-    name: project.name,
-    code: project.code,
-    domain: project.domain,
-    type: project.type,
-    enable_dts,
-    version_c: version_c || null,
-    di_teams,
-    config_complete,
-    reason: reasons.join(' / '),
-  };
 }
 
 async function loadDictOptions() {
@@ -211,100 +206,22 @@ async function loadDictOptions() {
   }
 }
 
-async function loadProjects() {
-  optionsLoading.value = true;
-  try {
-    const res = await listProjectsApi({ pageSize: 1000 });
-    const items = normalizeProjectOptions(res.items || []);
-    projectOptions.value = items.map((item) => buildDtsProjectOption(item));
-  } catch (error) {
-    console.error(error);
-    ElMessage.error('加载项目列表失败');
-  } finally {
-    optionsLoading.value = false;
-  }
-}
-
 watch(
   dateRange,
   (value) => {
     if (value && value.length === 2) {
-      filters.value.start_time = formatDateTime(value[0]);
-      filters.value.end_time = formatDateTime(value[1]);
+      filters.value.updateTimeBegin = toTimestampMs(value[0]);
+      filters.value.updateTimeEnd = toTimestampMs(value[1]);
       return;
     }
-    filters.value.start_time = '';
-    filters.value.end_time = '';
+    const [start, end] = createDefaultDateRange();
+    filters.value.updateTimeBegin = toTimestampMs(start);
+    filters.value.updateTimeEnd = toTimestampMs(end);
   },
   { immediate: true },
 );
 
-const selectableProjectCount = computed(
-  () => projectOptions.value.filter((item) => item.config_complete).length,
-);
-
-const selectedProjects = computed(() => {
-  const projectMap = new Map(
-    projectOptions.value.map((item) => [item.id, item]),
-  );
-  return normalizeStringArray(filters.value.project_ids)
-    .map((item) => projectMap.get(item))
-    .filter(Boolean);
-});
-
-const teamOptions = computed(() => {
-  const seen = new Set<string>();
-  const result: Array<{ label: string; value: string }> = [];
-  selectedProjects.value.forEach((project) => {
-    (project?.di_teams || []).forEach((team) => {
-      const text = String(team || '').trim();
-      if (!text || seen.has(text)) {
-        return;
-      }
-      seen.add(text);
-      result.push({ label: text, value: text });
-    });
-  });
-  return result.sort((left, right) =>
-    left.label.localeCompare(right.label, 'zh-CN'),
-  );
-});
-
-const projectSelectorButtonLabel = computed(() =>
-  filters.value.project_ids.length > 0
-    ? `已选项目（${filters.value.project_ids.length}）`
-    : '选择项目',
-);
-const projectSelectorButtonType = computed(() =>
-  filters.value.project_ids.length > 0 ? 'success' : 'primary',
-);
-
-const teamSelectorButtonLabel = computed(() =>
-  filters.value.team_names.length > 0
-    ? `已选团队（${filters.value.team_names.length}）`
-    : '选择团队',
-);
-const teamSelectorButtonType = computed(() =>
-  filters.value.team_names.length > 0 ? 'success' : 'primary',
-);
-const isTeamSelectorDisabled = computed(
-  () => selectedProjects.value.length === 0,
-);
-
 const hasAppliedFilters = computed(() => Boolean(appliedFilters.value));
-
-const defaultFilterFingerprint = buildFingerprint(createDefaultFilters());
-const editingFilterFingerprint = computed(() =>
-  buildFingerprint(cloneFilters(filters.value)),
-);
-const hasPendingFilterChanges = computed(() => {
-  if (appliedFilters.value) {
-    return (
-      editingFilterFingerprint.value !== buildFingerprint(appliedFilters.value)
-    );
-  }
-  return editingFilterFingerprint.value !== defaultFilterFingerprint;
-});
 
 async function fetchSummary(force = false) {
   if (!appliedFilters.value) {
@@ -372,8 +289,8 @@ const [Grid, gridApi] = useZqTable({
           }
           const response = await getDtsList({
             ...appliedFilters.value,
-            page_no: page.currentPage,
-            page_size: page.pageSize,
+            pageIndex: page.currentPage,
+            pageSize: page.pageSize,
           });
           return { items: response.items || [], total: response.total || 0 };
         },
@@ -400,6 +317,33 @@ const canExport = computed(
     dataResultCount.value > 0 &&
     !exportLoading.value,
 );
+const selectedFlowStateLabel = computed(() => {
+  const count = filters.value.flowStates.length;
+  if (count === 0) {
+    return '全部状态';
+  }
+  return `状态（${count}）`;
+});
+const selectedSeverityLabel = computed(() => {
+  const count = filters.value.severityNos.length;
+  if (count === 0) {
+    return '全部级别';
+  }
+  return `级别（${count}）`;
+});
+const selectedProductLabel = computed(() => {
+  return (
+    PRODUCT_OPTIONS.find((item) => item.value === filters.value.productId)
+      ?.label || '座舱'
+  );
+});
+
+const flowFilterVisible = ref(false);
+const severityFilterVisible = ref(false);
+const draftFlowStates = ref<string[]>([]);
+const draftSeverityNos = ref<string[]>([]);
+
+let autoReloadTimer: null | number = null;
 
 watch(
   () => gridApi.tableData.value.length,
@@ -441,15 +385,46 @@ function handleResize() {
   }, 120);
 }
 
+function scheduleAutoReload() {
+  if (autoReloadTimer) {
+    window.clearTimeout(autoReloadTimer);
+  }
+  autoReloadTimer = window.setTimeout(() => {
+    void handleSearch(true);
+  }, 260);
+}
+
 watch(
-  () => filters.value.project_ids,
+  () => ({
+    productId: filters.value.productId,
+    updateTimeBegin: filters.value.updateTimeBegin,
+    updateTimeEnd: filters.value.updateTimeEnd,
+  }),
   () => {
-    const available = new Set(teamOptions.value.map((item) => item.value));
-    filters.value.team_names = normalizeStringArray(
-      filters.value.team_names,
-    ).filter((item) => available.has(item));
+    if (!filters.value.productId || filters.value.productId === 'ALL') {
+      return;
+    }
+    scheduleAutoReload();
   },
   { deep: true },
+);
+
+watch(
+  () => flowFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftFlowStates.value = [...filters.value.flowStates];
+    }
+  },
+);
+
+watch(
+  () => severityFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftSeverityNos.value = [...filters.value.severityNos];
+    }
+  },
 );
 
 watch(
@@ -462,63 +437,18 @@ watch(
   },
 );
 
-function clearGridData() {
-  gridApi.tableData.value = [];
-  gridApi.total.value = 0;
-  gridApi.pagination.total = 0;
-}
-
-function handleProjectSelectorConfirm(projectIds: string[]) {
-  filters.value.project_ids = normalizeStringArray(projectIds);
-}
-
-function clearSelectedProjects() {
-  filters.value.project_ids = [];
-}
-
-function handleTeamSelectorConfirm(teamValues: string[]) {
-  filters.value.team_names = normalizeStringArray(teamValues);
-}
-
-function clearSelectedTeams() {
-  filters.value.team_names = [];
-}
-
-async function handleSearch() {
+async function handleSearch(resetPage = true) {
+  if (autoReloadTimer) {
+    window.clearTimeout(autoReloadTimer);
+    autoReloadTimer = null;
+  }
   const payload = cloneFilters(filters.value);
-  if (payload.project_ids.length === 0) {
-    ElMessage.warning('请至少选择一个项目');
-    return;
-  }
-
-  // Remove projects that are not queryable to avoid confusing "empty list".
-  const selectableSet = new Set(
-    projectOptions.value
-      .filter((item) => item.config_complete)
-      .map((item) => item.id),
-  );
-  payload.project_ids = payload.project_ids.filter((id) =>
-    selectableSet.has(id),
-  );
-  if (payload.project_ids.length === 0) {
-    ElMessage.warning('当前已选项目均不可查询，请先完善项目 DTS 配置');
-    return;
-  }
-
-  if (payload.team_names.length > 0) {
-    const availableTeams = new Set(
-      projectOptions.value
-        .filter((item) => payload.project_ids.includes(item.id))
-        .flatMap((item) => item.di_teams || []),
-    );
-    payload.team_names = payload.team_names.filter((item) =>
-      availableTeams.has(item),
-    );
-  }
 
   appliedFilters.value = payload;
   summaryFingerprint.value = '';
-  gridApi.pagination.currentPage = 1;
+  if (resetPage) {
+    gridApi.pagination.currentPage = 1;
+  }
   await nextTick();
   await gridApi.reload();
   await nextTick();
@@ -529,15 +459,37 @@ async function handleSearch() {
 }
 
 async function handleReset() {
+  if (autoReloadTimer) {
+    window.clearTimeout(autoReloadTimer);
+    autoReloadTimer = null;
+  }
+  const nextFilters = createDefaultFilters();
   filters.value = createDefaultFilters();
-  dateRange.value = null;
-  projectSelectorVisible.value = false;
-  teamSelectorVisible.value = false;
-  appliedFilters.value = null;
-  summaryFingerprint.value = '';
-  gridApi.pagination.currentPage = 1;
-  dataGridHeight.value = null;
-  clearGridData();
+  dateRange.value = [
+    new Date(nextFilters.updateTimeBegin),
+    new Date(nextFilters.updateTimeEnd),
+  ];
+  await handleSearch(true);
+}
+
+async function confirmFlowFilter() {
+  filters.value.flowStates = normalizeStringArray(draftFlowStates.value);
+  flowFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetFlowFilterDraft() {
+  draftFlowStates.value = [];
+}
+
+async function confirmSeverityFilter() {
+  filters.value.severityNos = normalizeStringArray(draftSeverityNos.value);
+  severityFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetSeverityFilterDraft() {
+  draftSeverityNos.value = [];
 }
 
 function buildExportFilename() {
@@ -874,7 +826,7 @@ watch(
 
 onMounted(() => {
   void loadDictOptions();
-  void loadProjects();
+  void handleSearch(true);
   updateDataGridHeight();
   window.addEventListener('resize', handleResize);
 });
@@ -883,6 +835,9 @@ onUnmounted(() => {
   window.removeEventListener('resize', handleResize);
   if (resizeTimer) {
     window.clearTimeout(resizeTimer);
+  }
+  if (autoReloadTimer) {
+    window.clearTimeout(autoReloadTimer);
   }
 });
 </script>
@@ -937,17 +892,20 @@ onUnmounted(() => {
                     <div class="dts-table-title">
                       <div class="dts-table-title__filters">
                         <div class="dts-table-title__field">
-                          <span class="dts-table-title__label">单据范围</span>
+                          <span class="dts-table-title__label">产品线</span>
                           <ElSelect
-                            v-model="filters.column_type"
-                            clearable
+                            v-model="filters.productId"
                             size="small"
                             class="dts-table-title__select"
-                            placeholder="默认未关闭"
+                            placeholder="选择产品线"
                           >
-                            <ElOption label="未关闭" value="openDefects" />
-                            <ElOption label="已关闭" value="closeDefects" />
-                            <ElOption label="全部" value="totalDefects" />
+                            <ElOption
+                              v-for="item in PRODUCT_OPTIONS"
+                              :key="item.value"
+                              :label="item.label"
+                              :value="item.value"
+                              :disabled="item.disabled"
+                            />
                           </ElSelect>
                         </div>
                         <div class="dts-table-title__field">
@@ -969,73 +927,154 @@ onUnmounted(() => {
                             type="primary"
                             size="small"
                             :loading="listLoading"
-                            @click="handleSearch"
+                            @click="handleSearch(true)"
                           >
-                            查询
+                            立即刷新
                           </ElButton>
                           <ElButton size="small" @click="handleReset">
                             重置
                           </ElButton>
                         </div>
                       </div>
-                      <ElTag
-                        v-if="hasPendingFilterChanges"
-                        type="warning"
-                        effect="light"
-                        class="dts-table-title__pending-tag"
+                      <div class="dts-table-title__meta">
+                        <ElTag type="info" effect="plain">
+                          当前产品：{{ selectedProductLabel }}
+                        </ElTag>
+                        <ElTag type="success" effect="plain">
+                          状态：{{ selectedFlowStateLabel }}
+                        </ElTag>
+                        <ElTag type="warning" effect="plain">
+                          严重程度：{{ selectedSeverityLabel }}
+                        </ElTag>
+                      </div>
+                    </div>
+                  </template>
+
+                  <template #header-currentStatus>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">状态</span>
+                      <ElPopover
+                        v-model:visible="flowFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="280"
+                        popper-class="dts-header-filter-popper"
                       >
-                        有未应用筛选
-                      </ElTag>
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': filters.flowStates.length > 0,
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{
+                                filters.flowStates.length > 0
+                                  ? `${filters.flowStates.length} 项`
+                                  : '全部'
+                              }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElCheckboxGroup
+                              v-model="draftFlowStates"
+                              class="dts-header-filter-check-group"
+                            >
+                              <ElCheckbox
+                                v-for="item in FLOW_STATE_OPTIONS"
+                                :key="item.value"
+                                :label="item.value"
+                                :value="item.value"
+                              >
+                                {{ item.label }}
+                              </ElCheckbox>
+                            </ElCheckboxGroup>
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetFlowFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmFlowFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
                     </div>
                   </template>
 
-                  <template #header-project_name>
+                  <template #header-severity>
                     <div class="dts-header-filter" @click.stop>
-                      <span class="dts-header-filter__label">项目</span>
-                      <div class="dts-header-filter__actions">
-                        <ElButton
-                          :loading="optionsLoading"
-                          :type="projectSelectorButtonType"
-                          plain
-                          size="small"
-                          @click.stop="projectSelectorVisible = true"
-                        >
-                          {{ projectSelectorButtonLabel }}
-                        </ElButton>
-                        <ElButton
-                          link
-                          size="small"
-                          :disabled="filters.project_ids.length === 0"
-                          @click.stop="clearSelectedProjects"
-                        >
-                          清空
-                        </ElButton>
-                      </div>
-                    </div>
-                  </template>
-
-                  <template #header-team_name>
-                    <div class="dts-header-filter" @click.stop>
-                      <span class="dts-header-filter__label">团队</span>
-                      <div class="dts-header-filter__actions">
-                        <ElButton
-                          :disabled="isTeamSelectorDisabled"
-                          :type="teamSelectorButtonType"
-                          plain
-                          size="small"
-                          @click.stop="teamSelectorVisible = true"
-                        >
-                          {{ teamSelectorButtonLabel }}
-                        </ElButton>
-                        <ElButton
-                          link
-                          size="small"
-                          :disabled="filters.team_names.length === 0"
-                          @click.stop="clearSelectedTeams"
-                        >
-                          清空
-                        </ElButton>
-                      </div>
+                      <span class="dts-header-filter__label">严重程度</span>
+                      <ElPopover
+                        v-model:visible="severityFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="240"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': filters.severityNos.length > 0,
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{
+                                filters.severityNos.length > 0
+                                  ? `${filters.severityNos.length} 项`
+                                  : '全部'
+                              }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElCheckboxGroup
+                              v-model="draftSeverityNos"
+                              class="dts-header-filter-check-group"
+                            >
+                              <ElCheckbox
+                                v-for="item in SEVERITY_OPTIONS"
+                                :key="item.value"
+                                :label="item.value"
+                                :value="item.value"
+                              >
+                                {{ item.label }}
+                              </ElCheckbox>
+                            </ElCheckboxGroup>
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetSeverityFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmSeverityFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
                     </div>
                   </template>
 
@@ -1437,16 +1476,13 @@ onUnmounted(() => {
                       <div class="dts-data-guide__panel">
                         <div class="dts-data-guide__title">先设置筛选条件</div>
                         <div class="dts-data-guide__desc">
-                          选择项目后点击查询，结果会同步到明细、导出和统计看板。
-                        </div>
-                        <div class="dts-data-guide__meta">
-                          当前可查询项目 {{ selectableProjectCount }} 个
+                          默认已按最近一个月和关闭状态自动查询，可继续通过产品线、状态和严重程度收窄范围。
                         </div>
                         <div class="dts-data-guide__actions">
                           <ElButton
                             type="primary"
                             size="small"
-                            @click="handleSearch"
+                            @click="handleSearch(true)"
                           >
                             开始查询明细
                           </ElButton>
@@ -1470,7 +1506,7 @@ onUnmounted(() => {
           >
             <ElEmpty
               v-if="!hasAppliedFilters"
-              description="请先到数据明细表设置表头筛选并点击查询"
+              description="正在准备默认筛选数据..."
             />
             <ElEmpty
               v-else-if="summary.total_count === 0"
@@ -1872,21 +1908,6 @@ onUnmounted(() => {
         </ElTabPane>
       </ElTabs>
 
-      <ProjectSelectorDialog
-        v-model="projectSelectorVisible"
-        :loading="optionsLoading"
-        :projects="projectOptions"
-        :selected-project-ids="filters.project_ids"
-        @confirm="handleProjectSelectorConfirm"
-      />
-
-      <TeamSelectorDialog
-        v-model="teamSelectorVisible"
-        :teams="teamOptions"
-        :selected-team-values="filters.team_names"
-        @confirm="handleTeamSelectorConfirm"
-      />
-
       <DtsEditDrawer
         v-model="editVisible"
         :row="editingRow"
@@ -2088,24 +2109,86 @@ onUnmounted(() => {
   flex-wrap: wrap;
 }
 
-.dts-table-title__pending-tag {
-  flex-shrink: 0;
-  margin-top: 1px;
+.dts-table-title__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .dts-header-filter {
-  display: flex;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
+}
+
+.dts-header-filter-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #606266;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 8px;
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.dts-header-filter-trigger:hover {
+  border-color: #c0c4cc;
+}
+
+.dts-header-filter-trigger.is-active {
+  color: #409eff;
+  border-color: #a0cfff;
+  background: #ecf5ff;
+}
+
+.dts-header-filter-trigger__icon {
+  width: 12px;
+  height: 12px;
+}
+
+.dts-header-filter-trigger__text {
+  white-space: nowrap;
+}
+
+.dts-header-filter-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dts-header-filter-panel__body {
+  max-height: 260px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.dts-header-filter-check-group {
+  display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.dts-header-filter__actions {
+.dts-header-filter-panel__actions {
   display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid #ebeef5;
+  padding-top: 10px;
+}
+
+:deep(.dts-header-filter-popper.el-popper) {
+  padding: 10px 12px;
 }
 
 .dts-data-grid :deep(.flex.items-center.justify-between.px-4.pb-4.pt-2) {

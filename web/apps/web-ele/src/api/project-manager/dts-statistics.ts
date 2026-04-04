@@ -1,37 +1,49 @@
 import { requestClient } from '#/api/request';
 
-export type DtsStatisticsColumnType =
-  | 'closeDefects'
-  | 'openDefects'
-  | 'totalDefects';
-
 export interface DtsStatisticsFilters {
-  project_ids: string[];
-  team_names: string[];
-  column_type: DtsStatisticsColumnType;
-  start_time: string;
-  end_time: string;
+  productId: string;
+  flowStates: string[];
+  severityNos: string[];
+  updateTimeBegin: number;
+  updateTimeEnd: number;
 }
 
 export interface DtsStatisticsQuery extends DtsStatisticsFilters {
-  page_no: number;
-  page_size: number;
+  pageIndex: number;
+  pageSize: number;
 }
 
 export interface DtsMergedDefect {
   defectNo: string;
+  dtsBizNo?: null | string;
   brief?: string;
+  briefDesc?: null | string;
   severity?: string;
+  serverityNo?: null | string;
+  serverityNoName?: null | string;
   weight?: null | string;
   submitTime?: null | string;
+  createAt?: null | string;
+  dCloseTime?: null | string;
   submitterId?: null | string;
   submitTeam?: null | string;
   currentHandler?: null | string;
   currentTeam?: null | string;
   currentStatus?: null | string;
+  dtsStatus?: null | string;
+  dtsStatusName?: null | string;
+  flowState?: null | string;
   currentStage?: null | string;
   closeType?: null | string;
   process_days?: null | string;
+  parentNo?: null | string;
+  sDeptOneNoName?: null | string;
+  creator?: null | string;
+  sSubmitUserName?: null | string;
+  sSubmitsystemNoName?: null | string;
+  sTestorTestReport?: null | string;
+  productId?: null | string;
+  productName?: null | string;
 
   project_ids: string[];
   project_names: string[];
