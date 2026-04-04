@@ -96,3 +96,96 @@ class DtsDefectProjectLink(RootModel):
             models.Index(fields=["defect_no"]),
             models.Index(fields=["project", "last_seen_at"]),
         ]
+
+
+class DtsStatisticsQueryTask(RootModel):
+    STATUS_PENDING = "pending"
+    STATUS_RUNNING = "running"
+    STATUS_SUCCESS = "success"
+    STATUS_FAILED = "failed"
+    STATUS_CHOICES = (
+        (STATUS_PENDING, "待执行"),
+        (STATUS_RUNNING, "执行中"),
+        (STATUS_SUCCESS, "成功"),
+        (STATUS_FAILED, "失败"),
+    )
+
+    user = models.ForeignKey(
+        "core.User",
+        on_delete=models.CASCADE,
+        related_name="dts_statistics_query_tasks",
+        verbose_name="用户",
+    )
+    fingerprint = models.CharField(max_length=64, db_index=True, verbose_name="查询指纹")
+    payload = models.JSONField(default=dict, blank=True, verbose_name="筛选条件")
+    status = models.CharField(
+        max_length=16,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        db_index=True,
+        verbose_name="状态",
+    )
+    message = models.CharField(max_length=255, blank=True, default="", verbose_name="任务提示")
+    error_message = models.TextField(blank=True, default="", verbose_name="错误信息")
+    progress = models.IntegerField(default=0, verbose_name="进度")
+    scanned_pages = models.IntegerField(default=0, verbose_name="已扫描页数")
+    total_pages = models.IntegerField(default=0, verbose_name="总页数")
+    matched_count = models.IntegerField(default=0, verbose_name="匹配问题单数")
+    result_cache_key = models.CharField(max_length=255, blank=True, default="", verbose_name="结果缓存键")
+    started_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name="开始时间")
+    finished_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name="结束时间")
+
+    class Meta:
+        db_table = "pm_dts_statistics_query_task"
+        verbose_name = "DTS统计查询准备任务"
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=["user", "fingerprint", "status"]),
+            models.Index(fields=["user", "sys_create_datetime"]),
+        ]
+
+
+class DtsStatisticsExportTask(RootModel):
+    STATUS_PENDING = "pending"
+    STATUS_RUNNING = "running"
+    STATUS_SUCCESS = "success"
+    STATUS_FAILED = "failed"
+    STATUS_CHOICES = (
+        (STATUS_PENDING, "待执行"),
+        (STATUS_RUNNING, "执行中"),
+        (STATUS_SUCCESS, "成功"),
+        (STATUS_FAILED, "失败"),
+    )
+
+    user = models.ForeignKey(
+        "core.User",
+        on_delete=models.CASCADE,
+        related_name="dts_statistics_export_tasks",
+        verbose_name="用户",
+    )
+    fingerprint = models.CharField(max_length=64, db_index=True, verbose_name="导出指纹")
+    payload = models.JSONField(default=dict, blank=True, verbose_name="筛选条件")
+    status = models.CharField(
+        max_length=16,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        db_index=True,
+        verbose_name="状态",
+    )
+    message = models.CharField(max_length=255, blank=True, default="", verbose_name="任务提示")
+    error_message = models.TextField(blank=True, default="", verbose_name="错误信息")
+    progress = models.IntegerField(default=0, verbose_name="进度")
+    file_path = models.CharField(max_length=500, blank=True, default="", verbose_name="导出文件路径")
+    file_name = models.CharField(max_length=255, blank=True, default="", verbose_name="导出文件名")
+    file_size = models.BigIntegerField(default=0, verbose_name="导出文件大小(字节)")
+    started_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name="开始时间")
+    finished_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name="结束时间")
+
+    class Meta:
+        db_table = "pm_dts_statistics_export_task"
+        verbose_name = "DTS统计导出任务"
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=["user", "fingerprint", "status"]),
+            models.Index(fields=["user", "sys_create_datetime"]),
+        ]

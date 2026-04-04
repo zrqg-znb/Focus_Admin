@@ -31,6 +31,8 @@ from apps.project_manager.code_quality.code_quality_model import (
 from apps.project_manager.dts_statistics.dts_statistics_model import (
     DtsDefectProjectLink,
     DtsExtension,
+    DtsStatisticsExportTask,
+    DtsStatisticsQueryTask,
 )
 from apps.project_manager.requirement_workspace.requirement_workspace_model import (
     RequirementWorkspaceSnapshot,

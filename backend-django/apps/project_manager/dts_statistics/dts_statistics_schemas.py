@@ -326,6 +326,43 @@ class DtsStatisticsExportSchema(Schema):
         return max(parsed, 0)
 
 
+class DtsQueryTaskSchema(Schema):
+    id: str
+    fingerprint: str = ""
+    status: str = ""
+    message: str = ""
+    error_message: str = ""
+    progress: int = 0
+    scanned_pages: int = 0
+    total_pages: int = 0
+    matched_count: int = 0
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+
+
+class DtsQueryPrepareResponseSchema(Schema):
+    mode: str
+    task: Optional[DtsQueryTaskSchema] = None
+
+
+class DtsExportTaskSchema(Schema):
+    id: str
+    fingerprint: str = ""
+    status: str = ""
+    message: str = ""
+    error_message: str = ""
+    progress: int = 0
+    file_name: Optional[str] = None
+    file_size: int = 0
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+
+
+class DtsExportPrepareResponseSchema(Schema):
+    mode: str
+    task: Optional[DtsExportTaskSchema] = None
+
+
 class DtsDictOptionSchema(Schema):
     label: str
     value: str

@@ -7,23 +7,30 @@ import logging
 import math
 import os
 import random
+import tempfile
+import threading
 import time
 from collections import Counter, defaultdict
-from typing import Any, Iterable
+from pathlib import Path
+from typing import Any, Callable, Iterable
 
 import openpyxl
 import requests
 from django.conf import settings
 from django.core.cache import cache
-from django.db import transaction
-from django.http import HttpResponse
+from django.db import close_old_connections, connection, transaction
+from django.http import FileResponse, HttpResponse
 from django.utils import timezone
 from ninja.errors import HttpError
 
 from common.fu_cache import CacheManager
 from core.dict_item.dict_item_model import DictItem
 
-from .dts_statistics_model import DtsExtension
+from .dts_statistics_model import (
+    DtsExtension,
+    DtsStatisticsExportTask,
+    DtsStatisticsQueryTask,
+)
 from .dts_statistics_schemas import (
     DtsExtensionSaveSchema,
     DtsStatisticsExportSchema,
@@ -33,14 +40,26 @@ from .dts_statistics_schemas import (
 logger = logging.getLogger(__name__)
 
 _SOURCE_CACHE_KEY_PREFIX = "cache:dts_statistics:source:v2:"
+_PREPARED_CACHE_KEY_PREFIX = "cache:dts_statistics:prepared:v1:"
 _LOCK_KEY_PREFIX = "cache:dts_statistics:lock:v2:"
 
 _DEFAULT_SOURCE_CACHE_TTL_SECONDS = 180
 _DEFAULT_LOCK_TTL_SECONDS = 30
+_DEFAULT_PREPARED_CACHE_TTL_SECONDS = 10 * 60
+_DEFAULT_EXPORT_FILE_TTL_SECONDS = 24 * 60 * 60
 
 _DATA_LAKE_PAGE_SIZE = 500
 _MAX_TIME_SPAN_MS_PER_CHUNK = 3 * 24 * 60 * 60 * 1000
 _MAX_SCAN_PAGES_PER_CHUNK = 2000
+
+_QUERY_TASK_ACTIVE_STATUSES = {
+    DtsStatisticsQueryTask.STATUS_PENDING,
+    DtsStatisticsQueryTask.STATUS_RUNNING,
+}
+_EXPORT_TASK_ACTIVE_STATUSES = {
+    DtsStatisticsExportTask.STATUS_PENDING,
+    DtsStatisticsExportTask.STATUS_RUNNING,
+}
 
 _PRODUCT_ID_TO_NAME = {
     "250539396": "座舱",
@@ -225,6 +244,86 @@ def _cache_key(prefix: str, payload: dict[str, Any]) -> tuple[str, str]:
         )
     ).hexdigest()
     return f"{prefix}{digest}", digest
+
+
+def _fingerprint_payload(payload: dict[str, Any]) -> str:
+    return hashlib.md5(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+
+def _get_user_cache_scope(user: Any) -> str:
+    user_id = getattr(user, "id", None)
+    return str(user_id) if user_id else "anonymous"
+
+
+def _get_prepared_cache_key(fingerprint: str, *, user: Any = None) -> str:
+    return f"{_PREPARED_CACHE_KEY_PREFIX}{_get_user_cache_scope(user)}:{fingerprint}"
+
+
+def _resolve_prepared_cache_ttl_seconds() -> int:
+    return _resolve_cache_ttl(
+        "DTS_STATISTICS_PREPARED_CACHE_TTL_SECONDS",
+        _DEFAULT_PREPARED_CACHE_TTL_SECONDS,
+    )
+
+
+def _resolve_export_file_ttl_seconds() -> int:
+    return _resolve_cache_ttl(
+        "DTS_STATISTICS_EXPORT_FILE_TTL_SECONDS",
+        _DEFAULT_EXPORT_FILE_TTL_SECONDS,
+    )
+
+
+def _resolve_export_temp_dir() -> Path:
+    configured = _clean_text(_get_setting("DTS_STATISTICS_EXPORT_TEMP_DIR", ""))
+    if configured:
+        path = Path(configured)
+    else:
+        path = Path(tempfile.gettempdir()) / "focus-admin" / "dts-statistics-export"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _serialize_query_task(
+    task: DtsStatisticsQueryTask | None,
+) -> dict[str, Any] | None:
+    if task is None:
+        return None
+    return {
+        "id": str(task.id),
+        "fingerprint": _clean_text(task.fingerprint),
+        "status": _clean_text(task.status),
+        "message": _clean_text(task.message),
+        "error_message": _clean_text(task.error_message),
+        "progress": max(int(task.progress or 0), 0),
+        "scanned_pages": max(int(task.scanned_pages or 0), 0),
+        "total_pages": max(int(task.total_pages or 0), 0),
+        "matched_count": max(int(task.matched_count or 0), 0),
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "finished_at": task.finished_at.isoformat() if task.finished_at else None,
+    }
+
+
+def _serialize_export_task(
+    task: DtsStatisticsExportTask | None,
+) -> dict[str, Any] | None:
+    if task is None:
+        return None
+    return {
+        "id": str(task.id),
+        "fingerprint": _clean_text(task.fingerprint),
+        "status": _clean_text(task.status),
+        "message": _clean_text(task.message),
+        "error_message": _clean_text(task.error_message),
+        "progress": max(int(task.progress or 0), 0),
+        "file_name": _clean_text(task.file_name) or None,
+        "file_size": max(int(task.file_size or 0), 0),
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "finished_at": task.finished_at.isoformat() if task.finished_at else None,
+    }
 
 
 def _resolve_cache_ttl(setting_name: str, default: int) -> int:
@@ -528,9 +627,12 @@ def _fetch_rows_for_time_chunk(
     product_id: str,
     update_time_begin: int,
     update_time_end: int,
-) -> list[dict[str, Any]]:
+    page_observer: Callable[[int, int, int], None] | None = None,
+) -> tuple[list[dict[str, Any]], int, int]:
     rows: list[dict[str, Any]] = []
     fetched = 0
+    scanned_pages = 0
+    total_pages = 0
     max_pages = _resolve_max_scan_pages()
 
     for page_index in range(1, max_pages + 1):
@@ -547,6 +649,13 @@ def _fetch_rows_for_time_chunk(
         total, page_rows = _extract_page_result(raw)
         rows.extend(page_rows)
         fetched += len(page_rows)
+        scanned_pages = page_index
+        if total > 0:
+            total_pages = max(total_pages, math.ceil(total / _DATA_LAKE_PAGE_SIZE))
+        else:
+            total_pages = max(total_pages, page_index)
+        if page_observer:
+            page_observer(scanned_pages, total_pages, fetched)
 
         if not page_rows:
             break
@@ -557,7 +666,7 @@ def _fetch_rows_for_time_chunk(
     else:
         raise HttpError(422, "DTS 扫描页数过多，请缩小筛选范围")
 
-    return rows
+    return rows, scanned_pages, total_pages
 
 
 def _load_source_rows_cached(
@@ -565,6 +674,7 @@ def _load_source_rows_cached(
     product_id: str,
     update_time_begin: int,
     update_time_end: int,
+    progress_callback: Callable[[str, int, int, int], None] | None = None,
 ) -> list[dict[str, Any]]:
     cache_payload = {
         "productId": _clean_text(product_id),
@@ -575,6 +685,8 @@ def _load_source_rows_cached(
     cache_key, digest = _cache_key(_SOURCE_CACHE_KEY_PREFIX, cache_payload)
     cached = CacheManager.get(cache_key)
     if isinstance(cached, list):
+        if progress_callback:
+            progress_callback("命中源数据缓存", 70, 0, 0)
         return [item for item in cached if isinstance(item, dict)]
 
     lock_key = f"{_LOCK_KEY_PREFIX}{digest}"
@@ -586,6 +698,8 @@ def _load_source_rows_cached(
     if not lock_acquired:
         waiting = _wait_for_cache(cache_key)
         if isinstance(waiting, list):
+            if progress_callback:
+                progress_callback("命中源数据缓存", 70, 0, 0)
             return [item for item in waiting if isinstance(item, dict)]
 
     ttl = _resolve_cache_ttl(
@@ -594,19 +708,76 @@ def _load_source_rows_cached(
     )
     try:
         scanned: list[dict[str, Any]] = []
-        for chunk_begin, chunk_end in _iter_time_chunks(
-            update_time_begin,
-            update_time_end,
-            _MAX_TIME_SPAN_MS_PER_CHUNK,
-        ):
-            scanned.extend(
-                _fetch_rows_for_time_chunk(
-                    product_id=product_id,
-                    update_time_begin=chunk_begin,
-                    update_time_end=chunk_end,
-                )
+        chunks = list(
+            _iter_time_chunks(
+                update_time_begin,
+                update_time_end,
+                _MAX_TIME_SPAN_MS_PER_CHUNK,
             )
+        )
+        total_chunks = max(len(chunks), 1)
+        total_scanned_pages = 0
+        total_pages = total_chunks
+
+        for chunk_index, (chunk_begin, chunk_end) in enumerate(chunks, start=1):
+
+            def _observe_chunk_page(
+                chunk_scanned_pages: int,
+                chunk_total_pages: int,
+                _chunk_fetched: int,
+            ) -> None:
+                if not progress_callback:
+                    return
+                scanned_pages = total_scanned_pages + max(chunk_scanned_pages, 0)
+                known_total_pages = total_scanned_pages + max(
+                    chunk_total_pages,
+                    chunk_scanned_pages,
+                )
+                remaining_chunks = max(total_chunks - chunk_index, 0)
+                estimated_total_pages = max(
+                    known_total_pages + remaining_chunks,
+                    scanned_pages,
+                )
+                phase_ratio = (
+                    ((chunk_index - 1) / total_chunks)
+                    + (
+                        min(
+                            chunk_scanned_pages / max(chunk_total_pages, 1),
+                            1.0,
+                        )
+                        / total_chunks
+                    )
+                )
+                progress = min(70, 5 + int(phase_ratio * 65))
+                progress_callback(
+                    "正在从数据湖拉取数据",
+                    progress,
+                    scanned_pages,
+                    estimated_total_pages,
+                )
+
+            chunk_rows, chunk_scanned_pages, chunk_total_pages = _fetch_rows_for_time_chunk(
+                product_id=product_id,
+                update_time_begin=chunk_begin,
+                update_time_end=chunk_end,
+                page_observer=_observe_chunk_page,
+            )
+            scanned.extend(chunk_rows)
+            total_scanned_pages += max(chunk_scanned_pages, 0)
+            total_pages = max(
+                total_pages,
+                total_scanned_pages + max(total_chunks - chunk_index, 0),
+                total_scanned_pages + max(chunk_total_pages - chunk_scanned_pages, 0),
+            )
+
         merged = _merge_duplicate_rows(scanned)
+        if progress_callback:
+            progress_callback(
+                "数据湖数据拉取完成",
+                75,
+                total_scanned_pages,
+                max(total_pages, total_scanned_pages),
+            )
         CacheManager.set(cache_key, merged, ttl)
         return merged
     finally:
@@ -863,34 +1034,416 @@ def _resolve_runtime_filters(
     return product_id, flow_states, severity_nos, update_time_begin, update_time_end
 
 
+def _to_export_query_schema(
+    data: DtsStatisticsQuerySchema | DtsStatisticsExportSchema | dict[str, Any],
+) -> DtsStatisticsExportSchema:
+    if isinstance(data, DtsStatisticsExportSchema):
+        return data
+    if isinstance(data, DtsStatisticsQuerySchema):
+        return DtsStatisticsExportSchema(**data.dict())
+    payload = data.dict() if hasattr(data, "dict") else dict(data or {})
+    return DtsStatisticsExportSchema(**payload)
+
+
+def _build_runtime_filter_payload(
+    query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
+) -> dict[str, Any]:
+    product_id, flow_states, severity_nos, update_time_begin, update_time_end = (
+        _resolve_runtime_filters(query)
+    )
+    return {
+        "productId": product_id,
+        "flowStates": flow_states,
+        "severityNos": severity_nos,
+        "updateTimeBegin": update_time_begin,
+        "updateTimeEnd": update_time_end,
+        "fields": list(_DEFAULT_FIELDS),
+    }
+
+
+def _resolve_prepared_cache_identity(
+    query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
+    *,
+    user: Any = None,
+) -> tuple[dict[str, Any], str, str]:
+    payload = _build_runtime_filter_payload(query)
+    fingerprint = _fingerprint_payload(payload)
+    cache_key = _get_prepared_cache_key(fingerprint, user=user)
+    return payload, fingerprint, cache_key
+
+
+def _get_prepared_defects_by_cache_key(cache_key: str) -> list[dict[str, Any]] | None:
+    cached = CacheManager.get(cache_key)
+    if isinstance(cached, dict) and isinstance(cached.get("defects"), list):
+        return [item for item in cached["defects"] if isinstance(item, dict)]
+    if isinstance(cached, list):
+        return [item for item in cached if isinstance(item, dict)]
+    return None
+
+
+def _get_prepared_defects(
+    query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
+    *,
+    user: Any = None,
+) -> list[dict[str, Any]] | None:
+    if not user or not getattr(user, "id", None):
+        return None
+    _, _, cache_key = _resolve_prepared_cache_identity(query, user=user)
+    return _get_prepared_defects_by_cache_key(cache_key)
+
+
+def _set_prepared_defects(cache_key: str, defects: list[dict[str, Any]]) -> None:
+    CacheManager.set(
+        cache_key,
+        {
+            "defects": defects,
+        },
+        _resolve_prepared_cache_ttl_seconds(),
+    )
+
+
+def _get_active_query_task(
+    user: Any,
+    fingerprint: str,
+) -> DtsStatisticsQueryTask | None:
+    if not user or not getattr(user, "id", None):
+        return None
+    return (
+        DtsStatisticsQueryTask.objects.filter(
+            user=user,
+            fingerprint=fingerprint,
+            status__in=_QUERY_TASK_ACTIVE_STATUSES,
+            is_deleted=False,
+        )
+        .order_by("-sys_create_datetime")
+        .first()
+    )
+
+
+def _get_active_export_task(
+    user: Any,
+    fingerprint: str,
+) -> DtsStatisticsExportTask | None:
+    if not user or not getattr(user, "id", None):
+        return None
+    return (
+        DtsStatisticsExportTask.objects.filter(
+            user=user,
+            fingerprint=fingerprint,
+            status__in=_EXPORT_TASK_ACTIVE_STATUSES,
+            is_deleted=False,
+        )
+        .order_by("-sys_create_datetime")
+        .first()
+    )
+
+
+def _is_export_task_expired(task: DtsStatisticsExportTask) -> bool:
+    finished_at = task.finished_at
+    if finished_at is None:
+        return False
+    expire_at = finished_at + datetime.timedelta(
+        seconds=_resolve_export_file_ttl_seconds()
+    )
+    return timezone.now() > expire_at
+
+
+def _is_export_task_downloadable(task: DtsStatisticsExportTask) -> bool:
+    if task.status != DtsStatisticsExportTask.STATUS_SUCCESS:
+        return False
+    file_path = _clean_text(task.file_path)
+    if not file_path:
+        return False
+    if _is_export_task_expired(task):
+        return False
+    return Path(file_path).is_file()
+
+
+def _cleanup_expired_export_files(limit: int = 100) -> None:
+    ttl_seconds = _resolve_export_file_ttl_seconds()
+    expire_before = timezone.now() - datetime.timedelta(seconds=ttl_seconds)
+    stale_tasks = (
+        DtsStatisticsExportTask.objects.filter(
+            status=DtsStatisticsExportTask.STATUS_SUCCESS,
+            is_deleted=False,
+            finished_at__lt=expire_before,
+        )
+        .order_by("finished_at")[: max(int(limit or 0), 1)]
+    )
+
+    for task in stale_tasks:
+        file_path = _clean_text(task.file_path)
+        if file_path:
+            try:
+                path = Path(file_path)
+                if path.exists():
+                    path.unlink()
+            except Exception:
+                logger.warning(
+                    "DtsStatistics cleanup export file failed task_id=%s file=%s",
+                    task.id,
+                    file_path,
+                    exc_info=True,
+                )
+        DtsStatisticsExportTask.objects.filter(id=task.id).update(
+            file_path="",
+            file_name="",
+            file_size=0,
+        )
+
+
+def _get_reusable_export_task(
+    user: Any,
+    fingerprint: str,
+) -> DtsStatisticsExportTask | None:
+    if not user or not getattr(user, "id", None):
+        return None
+    task = (
+        DtsStatisticsExportTask.objects.filter(
+            user=user,
+            fingerprint=fingerprint,
+            status=DtsStatisticsExportTask.STATUS_SUCCESS,
+            is_deleted=False,
+        )
+        .order_by("-finished_at", "-sys_create_datetime")
+        .first()
+    )
+    if task is None:
+        return None
+    if not _is_export_task_downloadable(task):
+        return None
+    return task
+
+
 def _load_filtered_defects(
     query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
+    *,
+    progress_callback: Callable[[str, int, int, int], None] | None = None,
 ) -> list[dict[str, Any]]:
     product_id, flow_states, severity_nos, update_time_begin, update_time_end = (
         _resolve_runtime_filters(query)
     )
+    if progress_callback:
+        progress_callback("正在准备源数据", 2, 0, 0)
     source_rows = _load_source_rows_cached(
         product_id=product_id,
         update_time_begin=update_time_begin,
         update_time_end=update_time_end,
+        progress_callback=progress_callback,
     )
 
+    if progress_callback:
+        progress_callback("正在标准化数据", 80, 0, 0)
     normalized_rows: list[dict[str, Any]] = []
     for row in source_rows:
         normalized = _normalize_source_row(row, product_id=product_id)
         if normalized:
             normalized_rows.append(normalized)
 
+    if progress_callback:
+        progress_callback("正在应用筛选条件", 90, 0, 0)
     filtered_rows = _apply_source_filters(
         normalized_rows,
         flow_states=flow_states,
         severity_nos=severity_nos,
     )
-    return _sort_defects(filtered_rows)
+    sorted_rows = _sort_defects(filtered_rows)
+    if progress_callback:
+        progress_callback("查询数据准备完成", 98, 0, 0)
+    return sorted_rows
 
 
-def get_dts_statistics_list(query: DtsStatisticsQuerySchema) -> dict[str, Any]:
-    defects = _load_filtered_defects(query)
+def _resolve_runtime_defects(
+    query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
+    *,
+    user: Any = None,
+) -> list[dict[str, Any]]:
+    prepared = _get_prepared_defects(query, user=user)
+    if prepared is not None:
+        return prepared
+    return _load_filtered_defects(query)
+
+
+def _load_extensions_map_for_defects(
+    defects: list[dict[str, Any]],
+) -> dict[str, DtsExtension]:
+    defect_nos = [
+        _clean_text(item.get("dtsBizNo"))
+        for item in defects
+        if _clean_text(item.get("dtsBizNo"))
+    ]
+
+    extensions_map: dict[str, DtsExtension] = {}
+    if not defect_nos:
+        return extensions_map
+
+    for chunk in _iter_chunks(defect_nos):
+        items = (
+            DtsExtension.objects.filter(defect_no__in=chunk)
+            .select_related("pl_group", "dev_owner", "test_owner")
+            .all()
+        )
+        for item in items:
+            extensions_map[item.defect_no] = item
+    return extensions_map
+
+
+def _update_query_task_progress(
+    task_id: str,
+    *,
+    message: str,
+    progress: int,
+    scanned_pages: int = 0,
+    total_pages: int = 0,
+    matched_count: int = 0,
+) -> None:
+    DtsStatisticsQueryTask.objects.filter(id=task_id).update(
+        message=message,
+        progress=max(0, min(int(progress or 0), 99)),
+        scanned_pages=max(int(scanned_pages or 0), 0),
+        total_pages=max(int(total_pages or 0), 0),
+        matched_count=max(int(matched_count or 0), 0),
+    )
+
+
+def _run_dts_statistics_query_task(task_id: str) -> None:
+    close_old_connections()
+    try:
+        task = DtsStatisticsQueryTask.objects.filter(
+            id=task_id,
+            is_deleted=False,
+        ).first()
+        if task is None:
+            return
+
+        DtsStatisticsQueryTask.objects.filter(id=task_id).update(
+            status=DtsStatisticsQueryTask.STATUS_RUNNING,
+            message="正在准备查询数据",
+            error_message="",
+            progress=3,
+            started_at=timezone.now(),
+            finished_at=None,
+        )
+
+        query = _to_export_query_schema(task.payload or {})
+        progress_state = {
+            "progress": -1,
+            "scanned_pages": -1,
+            "total_pages": -1,
+            "last_ts": 0.0,
+        }
+
+        def _on_progress(
+            message: str,
+            progress: int,
+            scanned_pages: int,
+            total_pages: int,
+        ) -> None:
+            now_ts = time.time()
+            if (
+                progress == progress_state["progress"]
+                and scanned_pages == progress_state["scanned_pages"]
+                and total_pages == progress_state["total_pages"]
+                and now_ts - progress_state["last_ts"] < 0.8
+            ):
+                return
+            progress_state["progress"] = progress
+            progress_state["scanned_pages"] = scanned_pages
+            progress_state["total_pages"] = total_pages
+            progress_state["last_ts"] = now_ts
+            _update_query_task_progress(
+                task_id,
+                message=message,
+                progress=progress,
+                scanned_pages=scanned_pages,
+                total_pages=total_pages,
+            )
+
+        defects = _load_filtered_defects(
+            query,
+            progress_callback=_on_progress,
+        )
+        _, _, cache_key = _resolve_prepared_cache_identity(query, user=task.user)
+        _set_prepared_defects(cache_key, defects)
+        DtsStatisticsQueryTask.objects.filter(id=task_id).update(
+            status=DtsStatisticsQueryTask.STATUS_SUCCESS,
+            message="查询数据准备完成",
+            error_message="",
+            progress=100,
+            matched_count=len(defects),
+            result_cache_key=cache_key,
+            finished_at=timezone.now(),
+        )
+    except Exception as exc:
+        logger.exception("Dts statistics query task failed: task_id=%s", task_id)
+        DtsStatisticsQueryTask.objects.filter(id=task_id).update(
+            status=DtsStatisticsQueryTask.STATUS_FAILED,
+            message="查询数据准备失败",
+            error_message=str(exc),
+            finished_at=timezone.now(),
+        )
+    finally:
+        connection.close()
+
+
+def _start_dts_statistics_query_task_thread(task_id: str) -> None:
+    thread = threading.Thread(
+        target=_run_dts_statistics_query_task,
+        args=(task_id,),
+        daemon=True,
+    )
+    thread.start()
+
+
+def prepare_dts_statistics_query(
+    user: Any,
+    data: DtsStatisticsExportSchema | dict[str, Any],
+) -> dict[str, Any]:
+    if not user or not getattr(user, "id", None):
+        raise HttpError(401, "用户未登录")
+
+    query = _to_export_query_schema(data)
+    payload, fingerprint, cache_key = _resolve_prepared_cache_identity(query, user=user)
+    prepared = _get_prepared_defects_by_cache_key(cache_key)
+    if prepared is not None:
+        return {"mode": "ready", "task": None}
+
+    active_task = _get_active_query_task(user, fingerprint)
+    if active_task is not None:
+        return {"mode": "async", "task": _serialize_query_task(active_task)}
+
+    task = DtsStatisticsQueryTask.objects.create(
+        user=user,
+        sys_creator=user,
+        fingerprint=fingerprint,
+        payload=payload,
+        status=DtsStatisticsQueryTask.STATUS_PENDING,
+        message="查询任务已提交，正在排队执行",
+        result_cache_key=cache_key,
+    )
+    _start_dts_statistics_query_task_thread(str(task.id))
+    return {"mode": "async", "task": _serialize_query_task(task)}
+
+
+def get_dts_statistics_query_task(user: Any, task_id: str) -> dict[str, Any]:
+    if not user or not getattr(user, "id", None):
+        raise HttpError(401, "用户未登录")
+    task = DtsStatisticsQueryTask.objects.filter(
+        id=task_id,
+        user=user,
+        is_deleted=False,
+    ).first()
+    if task is None:
+        raise HttpError(404, "查询任务不存在")
+    return _serialize_query_task(task) or {}
+
+
+def get_dts_statistics_list(
+    query: DtsStatisticsQuerySchema,
+    *,
+    user: Any = None,
+) -> dict[str, Any]:
+    defects = _resolve_runtime_defects(query, user=user)
     total, page_items = _paginate(defects, query.pageIndex, query.pageSize)
     defect_nos = [
         _clean_text(item.get("dtsBizNo"))
@@ -989,37 +1542,250 @@ def _build_export_response(workbook: openpyxl.Workbook) -> HttpResponse:
     return response
 
 
-def export_dts_statistics(query: DtsStatisticsExportSchema) -> HttpResponse:
-    defects = _load_filtered_defects(query)
-    defect_nos = [
-        _clean_text(item.get("dtsBizNo"))
-        for item in defects
-        if _clean_text(item.get("dtsBizNo"))
-    ]
-
-    extensions_map: dict[str, DtsExtension] = {}
-    if defect_nos:
-        for chunk in _iter_chunks(defect_nos):
-            items = (
-                DtsExtension.objects.filter(defect_no__in=chunk)
-                .select_related("pl_group", "dev_owner", "test_owner")
-                .all()
-            )
-            for item in items:
-                extensions_map[item.defect_no] = item
-
+def _build_export_workbook(
+    defects: list[dict[str, Any]],
+    *,
+    progress_callback: Callable[[str, int], None] | None = None,
+) -> openpyxl.Workbook:
+    extensions_map = _load_extensions_map_for_defects(defects)
     workbook = openpyxl.Workbook(write_only=True)
     worksheet = workbook.create_sheet(title=_EXPORT_SHEET_TITLE)
     worksheet.append(list(_EXPORT_HEADERS))
 
-    for defect in defects:
+    total = len(defects)
+    for index, defect in enumerate(defects, start=1):
         defect_no = _clean_text(defect.get("dtsBizNo"))
         merged = _merge_defect_with_extension(
             defect,
             extension=extensions_map.get(defect_no),
         )
         worksheet.append(_build_export_row(merged))
+        if progress_callback and (
+            index == 1 or index == total or index % 200 == 0
+        ):
+            progress_callback(
+                "正在生成导出文件",
+                min(95, 70 + int((index / max(total, 1)) * 25)),
+            )
+    return workbook
 
+
+def _update_export_task_progress(
+    task_id: str,
+    *,
+    message: str,
+    progress: int,
+) -> None:
+    DtsStatisticsExportTask.objects.filter(id=task_id).update(
+        message=message,
+        progress=max(0, min(int(progress or 0), 99)),
+    )
+
+
+def _run_dts_statistics_export_task(task_id: str) -> None:
+    close_old_connections()
+    generated_file_path: Path | None = None
+    try:
+        task = DtsStatisticsExportTask.objects.filter(
+            id=task_id,
+            is_deleted=False,
+        ).first()
+        if task is None:
+            return
+
+        DtsStatisticsExportTask.objects.filter(id=task_id).update(
+            status=DtsStatisticsExportTask.STATUS_RUNNING,
+            message="正在准备导出数据",
+            error_message="",
+            progress=3,
+            started_at=timezone.now(),
+            finished_at=None,
+            file_path="",
+            file_name="",
+            file_size=0,
+        )
+
+        query = _to_export_query_schema(task.payload or {})
+        _, _, prepared_cache_key = _resolve_prepared_cache_identity(query, user=task.user)
+        defects = _get_prepared_defects_by_cache_key(prepared_cache_key)
+
+        if defects is None:
+            progress_state = {
+                "progress": -1,
+                "last_ts": 0.0,
+            }
+
+            def _on_prepare_progress(
+                message: str,
+                progress: int,
+                _scanned_pages: int,
+                _total_pages: int,
+            ) -> None:
+                mapped_progress = min(65, 5 + int(progress * 0.6))
+                now_ts = time.time()
+                if (
+                    mapped_progress == progress_state["progress"]
+                    and now_ts - progress_state["last_ts"] < 0.8
+                ):
+                    return
+                progress_state["progress"] = mapped_progress
+                progress_state["last_ts"] = now_ts
+                _update_export_task_progress(
+                    task_id,
+                    message=message or "正在准备导出数据",
+                    progress=mapped_progress,
+                )
+
+            defects = _load_filtered_defects(query, progress_callback=_on_prepare_progress)
+            _set_prepared_defects(prepared_cache_key, defects)
+        else:
+            _update_export_task_progress(
+                task_id,
+                message="命中查询缓存，正在生成导出文件",
+                progress=65,
+            )
+
+        workbook = _build_export_workbook(
+            defects,
+            progress_callback=lambda message, progress: _update_export_task_progress(
+                task_id,
+                message=message,
+                progress=progress,
+            ),
+        )
+
+        timestamp = timezone.now().strftime("%Y%m%d-%H%M%S")
+        file_name = f"dts-statistics-{timestamp}-{str(task.id)[:8]}.xlsx"
+        file_path = _resolve_export_temp_dir() / file_name
+        generated_file_path = file_path
+        workbook.save(str(file_path))
+        file_size = file_path.stat().st_size if file_path.exists() else 0
+
+        DtsStatisticsExportTask.objects.filter(id=task_id).update(
+            status=DtsStatisticsExportTask.STATUS_SUCCESS,
+            message="导出文件生成完成",
+            error_message="",
+            progress=100,
+            file_path=str(file_path),
+            file_name=file_name,
+            file_size=file_size,
+            finished_at=timezone.now(),
+        )
+    except Exception as exc:
+        if generated_file_path and generated_file_path.exists():
+            try:
+                generated_file_path.unlink()
+            except Exception:
+                logger.warning(
+                    "DtsStatistics remove export temp file failed task_id=%s file=%s",
+                    task_id,
+                    generated_file_path,
+                    exc_info=True,
+                )
+        logger.exception("Dts statistics export task failed: task_id=%s", task_id)
+        DtsStatisticsExportTask.objects.filter(id=task_id).update(
+            status=DtsStatisticsExportTask.STATUS_FAILED,
+            message="导出任务失败",
+            error_message=str(exc),
+            finished_at=timezone.now(),
+        )
+    finally:
+        connection.close()
+
+
+def _start_dts_statistics_export_task_thread(task_id: str) -> None:
+    thread = threading.Thread(
+        target=_run_dts_statistics_export_task,
+        args=(task_id,),
+        daemon=True,
+    )
+    thread.start()
+
+
+def prepare_dts_statistics_export(
+    user: Any,
+    data: DtsStatisticsExportSchema | dict[str, Any],
+) -> dict[str, Any]:
+    if not user or not getattr(user, "id", None):
+        raise HttpError(401, "用户未登录")
+
+    _cleanup_expired_export_files(limit=200)
+    query = _to_export_query_schema(data)
+    payload, fingerprint, _ = _resolve_prepared_cache_identity(query, user=user)
+
+    active_task = _get_active_export_task(user, fingerprint)
+    if active_task is not None:
+        return {"mode": "async", "task": _serialize_export_task(active_task)}
+
+    reusable_task = _get_reusable_export_task(user, fingerprint)
+    if reusable_task is not None:
+        return {"mode": "ready", "task": _serialize_export_task(reusable_task)}
+
+    task = DtsStatisticsExportTask.objects.create(
+        user=user,
+        sys_creator=user,
+        fingerprint=fingerprint,
+        payload=payload,
+        status=DtsStatisticsExportTask.STATUS_PENDING,
+        message="导出任务已提交，正在排队执行",
+    )
+    _start_dts_statistics_export_task_thread(str(task.id))
+    return {"mode": "async", "task": _serialize_export_task(task)}
+
+
+def get_dts_statistics_export_task(user: Any, task_id: str) -> dict[str, Any]:
+    if not user or not getattr(user, "id", None):
+        raise HttpError(401, "用户未登录")
+    task = DtsStatisticsExportTask.objects.filter(
+        id=task_id,
+        user=user,
+        is_deleted=False,
+    ).first()
+    if task is None:
+        raise HttpError(404, "导出任务不存在")
+    return _serialize_export_task(task) or {}
+
+
+def download_dts_statistics_export_file(user: Any, task_id: str) -> FileResponse:
+    if not user or not getattr(user, "id", None):
+        raise HttpError(401, "用户未登录")
+
+    _cleanup_expired_export_files(limit=200)
+    task = DtsStatisticsExportTask.objects.filter(
+        id=task_id,
+        user=user,
+        is_deleted=False,
+    ).first()
+    if task is None:
+        raise HttpError(404, "导出任务不存在")
+    if task.status != DtsStatisticsExportTask.STATUS_SUCCESS:
+        raise HttpError(409, "导出任务尚未完成")
+    if _is_export_task_expired(task):
+        raise HttpError(410, "导出文件已过期，请重新导出")
+
+    file_path = _clean_text(task.file_path)
+    if not file_path:
+        raise HttpError(404, "导出文件不存在")
+    path = Path(file_path)
+    if not path.is_file():
+        raise HttpError(404, "导出文件不存在")
+
+    filename = _clean_text(task.file_name) or path.name
+    return FileResponse(
+        path.open("rb"),
+        as_attachment=True,
+        filename=filename,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+def export_dts_statistics(
+    query: DtsStatisticsExportSchema,
+    *,
+    user: Any = None,
+) -> HttpResponse:
+    defects = _resolve_runtime_defects(query, user=user)
+    workbook = _build_export_workbook(defects)
     return _build_export_response(workbook)
 
 
@@ -1030,8 +1796,12 @@ def _is_closed(defect: dict[str, Any]) -> bool:
     return bool(_clean_text(defect.get("dCloseTime")))
 
 
-def get_dts_statistics_summary(query: DtsStatisticsQuerySchema) -> dict[str, Any]:
-    defects = _load_filtered_defects(query)
+def get_dts_statistics_summary(
+    query: DtsStatisticsQuerySchema,
+    *,
+    user: Any = None,
+) -> dict[str, Any]:
+    defects = _resolve_runtime_defects(query, user=user)
     total_count = len(defects)
 
     severity_counter: Counter[str] = Counter()

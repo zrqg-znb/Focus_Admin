@@ -150,6 +150,45 @@ export interface DtsSummary {
   action_status_dist: DtsDistributionItem[];
 }
 
+export type DtsTaskStatus = 'failed' | 'pending' | 'running' | 'success';
+
+export interface DtsQueryTask {
+  id: string;
+  fingerprint: string;
+  status: DtsTaskStatus;
+  message: string;
+  error_message: string;
+  progress: number;
+  scanned_pages: number;
+  total_pages: number;
+  matched_count: number;
+  started_at?: null | string;
+  finished_at?: null | string;
+}
+
+export interface DtsQueryPrepareResponse {
+  mode: 'async' | 'ready';
+  task: DtsQueryTask | null;
+}
+
+export interface DtsExportTask {
+  id: string;
+  fingerprint: string;
+  status: DtsTaskStatus;
+  message: string;
+  error_message: string;
+  progress: number;
+  file_name?: null | string;
+  file_size: number;
+  started_at?: null | string;
+  finished_at?: null | string;
+}
+
+export interface DtsExportPrepareResponse {
+  mode: 'async' | 'ready';
+  task: DtsExportTask | null;
+}
+
 export interface DtsDictOption {
   label: string;
   value: string;
@@ -185,9 +224,38 @@ export async function getDtsSummary(data: DtsStatisticsFilters) {
   return requestClient.post<DtsSummary>(`${base}/summary`, data);
 }
 
+export async function prepareDtsQuery(data: DtsStatisticsFilters) {
+  return requestClient.post<DtsQueryPrepareResponse>(
+    `${base}/query-prepare`,
+    data,
+  );
+}
+
+export async function getDtsQueryTask(taskId: string) {
+  return requestClient.get<DtsQueryTask>(`${base}/query-task/${taskId}`);
+}
+
 export async function exportDtsStatistics(data: DtsStatisticsFilters) {
   return requestClient.post<Blob>(`${base}/export`, data, {
     responseType: 'blob',
+  });
+}
+
+export async function prepareDtsExport(data: DtsStatisticsFilters) {
+  return requestClient.post<DtsExportPrepareResponse>(
+    `${base}/export-prepare`,
+    data,
+  );
+}
+
+export async function getDtsExportTask(taskId: string) {
+  return requestClient.get<DtsExportTask>(`${base}/export-task/${taskId}`);
+}
+
+export async function downloadDtsExportTask(taskId: string) {
+  return requestClient.get<Blob>(`${base}/export-task/${taskId}/download`, {
+    responseType: 'blob',
+    timeout: 3 * 60 * 1000,
   });
 }
 
