@@ -535,6 +535,7 @@ function startQueryPreparePolling(
       stopQueryPreparePolling();
       queryPreparing.value = false;
       queryPrepareTask.value = null;
+      gridApi.setLoading(false);
       ElMessage.error('查询准备超时，请缩小时间范围后重试');
       return;
     }
@@ -547,9 +548,9 @@ function startQueryPreparePolling(
       queryPrepareTask.value = task;
       if (task.status === 'success') {
         stopQueryPreparePolling();
+        await finalizePreparedQuery(payload, { resetPage });
         queryPreparing.value = false;
         queryPrepareTask.value = null;
-        await finalizePreparedQuery(payload, { resetPage });
         ElMessage.success('查询数据准备完成');
         return;
       }
@@ -557,6 +558,7 @@ function startQueryPreparePolling(
         stopQueryPreparePolling();
         queryPreparing.value = false;
         queryPrepareTask.value = null;
+        gridApi.setLoading(false);
         ElMessage.error(
           task.error_message || task.message || '查询数据准备失败',
         );
@@ -566,6 +568,7 @@ function startQueryPreparePolling(
       stopQueryPreparePolling();
       queryPreparing.value = false;
       queryPrepareTask.value = null;
+      gridApi.setLoading(false);
       ElMessage.error('查询任务状态获取失败');
     } finally {
       polling = false;
@@ -585,12 +588,13 @@ async function applySearchPayload(
   stopQueryPreparePolling();
   queryPreparing.value = true;
   queryPrepareTask.value = null;
+  gridApi.setLoading(true);
   try {
     const prepareResponse = await prepareDtsQuery(payload);
     if (prepareResponse.mode === 'ready') {
+      await finalizePreparedQuery(payload, { resetPage });
       queryPreparing.value = false;
       queryPrepareTask.value = null;
-      await finalizePreparedQuery(payload, { resetPage });
       return;
     }
     queryPrepareTask.value = prepareResponse.task;
@@ -605,6 +609,7 @@ async function applySearchPayload(
     console.error(error);
     queryPreparing.value = false;
     queryPrepareTask.value = null;
+    gridApi.setLoading(false);
     ElMessage.error('查询任务提交失败');
   }
 }
@@ -617,6 +622,7 @@ async function handleReset() {
   stopQueryPreparePolling();
   queryPreparing.value = false;
   queryPrepareTask.value = null;
+  gridApi.setLoading(false);
   stopExportPreparePolling();
   exportPreparing.value = false;
   exportPrepareTask.value = null;
