@@ -4,12 +4,66 @@ from ninja import Field, Schema
 from pydantic import field_validator
 
 
+def _normalize_text_list(value: Any, default: list[str] | None = None) -> list[str]:
+    if value is None:
+        return list(default or [])
+    values = value if isinstance(value, list) else [value]
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
+    return normalized
+
+
+def _normalize_timestamp(value: Any) -> int:
+    try:
+        parsed = int(value or 0)
+    except Exception:
+        parsed = 0
+    return max(parsed, 0)
+
+
+class DtsLocalFilterSchema(Schema):
+    createAtBegin: int = 0
+    createAtEnd: int = 0
+    dCloseTimeBegin: int = 0
+    dCloseTimeEnd: int = 0
+    sDeptOneNoNames: list[str] = Field(default_factory=list)
+    sSubmitsystemNoNames: list[str] = Field(default_factory=list)
+
+    @field_validator(
+        "createAtBegin",
+        "createAtEnd",
+        "dCloseTimeBegin",
+        "dCloseTimeEnd",
+        mode="before",
+    )
+    @classmethod
+    def normalize_local_timestamp(cls, value: Any):
+        return _normalize_timestamp(value)
+
+    @field_validator("sDeptOneNoNames", "sSubmitsystemNoNames", mode="before")
+    @classmethod
+    def normalize_local_text_list(cls, value: Any):
+        return _normalize_text_list(value)
+
+
 class DtsStatisticsQuerySchema(Schema):
     productId: str = "250539396"
     flowStates: list[str] = Field(default_factory=lambda: ["FS99"])
     severityNos: list[str] = Field(default_factory=list)
     updateTimeBegin: int = 0
     updateTimeEnd: int = 0
+    createAtBegin: int = 0
+    createAtEnd: int = 0
+    dCloseTimeBegin: int = 0
+    dCloseTimeEnd: int = 0
+    sDeptOneNoNames: list[str] = Field(default_factory=list)
+    sSubmitsystemNoNames: list[str] = Field(default_factory=list)
     pageIndex: int = 1
     pageSize: int = 20
 
@@ -22,43 +76,30 @@ class DtsStatisticsQuerySchema(Schema):
     @field_validator("flowStates", mode="before")
     @classmethod
     def normalize_flow_states(cls, value: Any):
-        if value is None:
-            return ["FS99"]
-        values = value if isinstance(value, list) else [value]
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for item in values:
-            text = str(item or "").strip()
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            normalized.append(text)
-        return normalized
+        return _normalize_text_list(value, default=["FS99"])
 
     @field_validator("severityNos", mode="before")
     @classmethod
     def normalize_severity_nos(cls, value: Any):
-        if value is None:
-            return []
-        values = value if isinstance(value, list) else [value]
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for item in values:
-            text = str(item or "").strip()
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            normalized.append(text)
-        return normalized
+        return _normalize_text_list(value)
 
-    @field_validator("updateTimeBegin", "updateTimeEnd", mode="before")
+    @field_validator(
+        "updateTimeBegin",
+        "updateTimeEnd",
+        "createAtBegin",
+        "createAtEnd",
+        "dCloseTimeBegin",
+        "dCloseTimeEnd",
+        mode="before",
+    )
     @classmethod
     def normalize_timestamp(cls, value: Any):
-        try:
-            parsed = int(value or 0)
-        except Exception:
-            parsed = 0
-        return max(parsed, 0)
+        return _normalize_timestamp(value)
+
+    @field_validator("sDeptOneNoNames", "sSubmitsystemNoNames", mode="before")
+    @classmethod
+    def normalize_local_filter_list(cls, value: Any):
+        return _normalize_text_list(value)
 
     @field_validator("pageIndex")
     @classmethod
@@ -277,6 +318,12 @@ class DtsStatisticsExportSchema(Schema):
     severityNos: list[str] = Field(default_factory=list)
     updateTimeBegin: int = 0
     updateTimeEnd: int = 0
+    createAtBegin: int = 0
+    createAtEnd: int = 0
+    dCloseTimeBegin: int = 0
+    dCloseTimeEnd: int = 0
+    sDeptOneNoNames: list[str] = Field(default_factory=list)
+    sSubmitsystemNoNames: list[str] = Field(default_factory=list)
 
     @field_validator("productId", mode="before")
     @classmethod
@@ -287,43 +334,43 @@ class DtsStatisticsExportSchema(Schema):
     @field_validator("flowStates", mode="before")
     @classmethod
     def normalize_flow_states(cls, value: Any):
-        if value is None:
-            return ["FS99"]
-        values = value if isinstance(value, list) else [value]
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for item in values:
-            text = str(item or "").strip()
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            normalized.append(text)
-        return normalized
+        return _normalize_text_list(value, default=["FS99"])
 
     @field_validator("severityNos", mode="before")
     @classmethod
     def normalize_severity_nos(cls, value: Any):
-        if value is None:
-            return []
-        values = value if isinstance(value, list) else [value]
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for item in values:
-            text = str(item or "").strip()
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            normalized.append(text)
-        return normalized
+        return _normalize_text_list(value)
 
-    @field_validator("updateTimeBegin", "updateTimeEnd", mode="before")
+    @field_validator(
+        "updateTimeBegin",
+        "updateTimeEnd",
+        "createAtBegin",
+        "createAtEnd",
+        "dCloseTimeBegin",
+        "dCloseTimeEnd",
+        mode="before",
+    )
     @classmethod
     def normalize_timestamp(cls, value: Any):
-        try:
-            parsed = int(value or 0)
-        except Exception:
-            parsed = 0
-        return max(parsed, 0)
+        return _normalize_timestamp(value)
+
+    @field_validator("sDeptOneNoNames", "sSubmitsystemNoNames", mode="before")
+    @classmethod
+    def normalize_local_filter_list(cls, value: Any):
+        return _normalize_text_list(value)
+
+
+class DtsFieldSetRequestSchema(DtsStatisticsExportSchema):
+    fields: list[str] = Field(default_factory=list)
+
+    @field_validator("fields", mode="before")
+    @classmethod
+    def normalize_fields(cls, value: Any):
+        return _normalize_text_list(value)
+
+
+class DtsFieldSetResponseSchema(Schema):
+    fieldSets: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class DtsQueryTaskSchema(Schema):

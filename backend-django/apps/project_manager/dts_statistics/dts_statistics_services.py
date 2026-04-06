@@ -33,6 +33,7 @@ from .dts_statistics_model import (
 )
 from .dts_statistics_schemas import (
     DtsExtensionSaveSchema,
+    DtsFieldSetRequestSchema,
     DtsStatisticsExportSchema,
     DtsStatisticsQuerySchema,
 )
@@ -97,6 +98,11 @@ _DEFAULT_FIELDS = [
     "iNumofTestDays",
     "dts009ReasonAnalysis",
 ]
+
+_FIELD_SET_SUPPORTED_FIELDS = {
+    "sDeptOneNoName",
+    "sSubmitsystemNoName",
+}
 
 _SEVERITY_NAME_TO_CODE = {
     "提示": "Suggestion",
@@ -1021,7 +1027,15 @@ def _merge_defect_with_extension(
     return merged
 
 
-def _resolve_runtime_filters(
+def _normalize_optional_time_range(begin: int, end: int) -> tuple[int, int]:
+    safe_begin = max(int(begin or 0), 0)
+    safe_end = max(int(end or 0), 0)
+    if safe_begin and safe_end and safe_begin > safe_end:
+        return safe_end, safe_begin
+    return safe_begin, safe_end
+
+
+def _resolve_base_runtime_filters(
     query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
 ) -> tuple[str, list[str], list[str], int, int]:
     product_id = _clean_text(getattr(query, "productId", "")) or "250539396"
@@ -1032,6 +1046,29 @@ def _resolve_runtime_filters(
         int(getattr(query, "updateTimeEnd", 0) or 0),
     )
     return product_id, flow_states, severity_nos, update_time_begin, update_time_end
+
+
+def _resolve_local_runtime_filters(
+    query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
+) -> dict[str, Any]:
+    create_at_begin, create_at_end = _normalize_optional_time_range(
+        int(getattr(query, "createAtBegin", 0) or 0),
+        int(getattr(query, "createAtEnd", 0) or 0),
+    )
+    close_time_begin, close_time_end = _normalize_optional_time_range(
+        int(getattr(query, "dCloseTimeBegin", 0) or 0),
+        int(getattr(query, "dCloseTimeEnd", 0) or 0),
+    )
+    return {
+        "createAtBegin": create_at_begin,
+        "createAtEnd": create_at_end,
+        "dCloseTimeBegin": close_time_begin,
+        "dCloseTimeEnd": close_time_end,
+        "sDeptOneNoNames": _normalize_text_list(getattr(query, "sDeptOneNoNames", [])),
+        "sSubmitsystemNoNames": _normalize_text_list(
+            getattr(query, "sSubmitsystemNoNames", [])
+        ),
+    }
 
 
 def _to_export_query_schema(
@@ -1045,11 +1082,11 @@ def _to_export_query_schema(
     return DtsStatisticsExportSchema(**payload)
 
 
-def _build_runtime_filter_payload(
+def _build_base_filter_payload(
     query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
 ) -> dict[str, Any]:
     product_id, flow_states, severity_nos, update_time_begin, update_time_end = (
-        _resolve_runtime_filters(query)
+        _resolve_base_runtime_filters(query)
     )
     return {
         "productId": product_id,
@@ -1061,12 +1098,16 @@ def _build_runtime_filter_payload(
     }
 
 
+def _build_export_task_payload(query: DtsStatisticsExportSchema) -> dict[str, Any]:
+    return query.dict()
+
+
 def _resolve_prepared_cache_identity(
     query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
     *,
     user: Any = None,
 ) -> tuple[dict[str, Any], str, str]:
-    payload = _build_runtime_filter_payload(query)
+    payload = _build_base_filter_payload(query)
     fingerprint = _fingerprint_payload(payload)
     cache_key = _get_prepared_cache_key(fingerprint, user=user)
     return payload, fingerprint, cache_key
@@ -1221,7 +1262,7 @@ def _load_filtered_defects(
     progress_callback: Callable[[str, int, int, int], None] | None = None,
 ) -> list[dict[str, Any]]:
     product_id, flow_states, severity_nos, update_time_begin, update_time_end = (
-        _resolve_runtime_filters(query)
+        _resolve_base_runtime_filters(query)
     )
     if progress_callback:
         progress_callback("正在准备源数据", 2, 0, 0)
@@ -1253,15 +1294,131 @@ def _load_filtered_defects(
     return sorted_rows
 
 
+def _match_time_range(value: Any, begin: int, end: int) -> bool:
+    if begin <= 0 and end <= 0:
+        return True
+    dt = _parse_datetime(value)
+    if dt is None:
+        return False
+    ts = int(dt.timestamp() * 1000)
+    if begin > 0 and ts < begin:
+        return False
+    if end > 0 and ts > end:
+        return False
+    return True
+
+
+def _apply_local_filters(
+    rows: list[dict[str, Any]],
+    query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
+    *,
+    ignored_fields: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    ignored = ignored_fields or set()
+    local_filters = _resolve_local_runtime_filters(query)
+    create_at_begin = (
+        0 if "createAt" in ignored else int(local_filters["createAtBegin"] or 0)
+    )
+    create_at_end = (
+        0 if "createAt" in ignored else int(local_filters["createAtEnd"] or 0)
+    )
+    close_time_begin = (
+        0 if "dCloseTime" in ignored else int(local_filters["dCloseTimeBegin"] or 0)
+    )
+    close_time_end = (
+        0 if "dCloseTime" in ignored else int(local_filters["dCloseTimeEnd"] or 0)
+    )
+    dept_values = set() if "sDeptOneNoName" in ignored else {
+        item for item in _normalize_text_list(local_filters["sDeptOneNoNames"]) if item
+    }
+    subsystem_values = set() if "sSubmitsystemNoName" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["sSubmitsystemNoNames"])
+        if item
+    }
+
+    if (
+        create_at_begin <= 0
+        and create_at_end <= 0
+        and close_time_begin <= 0
+        and close_time_end <= 0
+        and not dept_values
+        and not subsystem_values
+    ):
+        return rows
+
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        if not _match_time_range(row.get("createAt"), create_at_begin, create_at_end):
+            continue
+        if not _match_time_range(
+            row.get("dCloseTime"),
+            close_time_begin,
+            close_time_end,
+        ):
+            continue
+        if dept_values and _clean_text(row.get("sDeptOneNoName")) not in dept_values:
+            continue
+        if (
+            subsystem_values
+            and _clean_text(row.get("sSubmitsystemNoName")) not in subsystem_values
+        ):
+            continue
+        result.append(row)
+    return result
+
+
 def _resolve_runtime_defects(
     query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
     *,
     user: Any = None,
 ) -> list[dict[str, Any]]:
     prepared = _get_prepared_defects(query, user=user)
-    if prepared is not None:
-        return prepared
-    return _load_filtered_defects(query)
+    base_defects = prepared if prepared is not None else _load_filtered_defects(query)
+    return _apply_local_filters(base_defects, query)
+
+
+def _collect_field_set_values(
+    defects: list[dict[str, Any]],
+    field: str,
+) -> list[str]:
+    values = sorted(
+        {
+            _clean_text(item.get(field))
+            for item in defects
+            if _clean_text(item.get(field))
+        }
+    )
+    return values
+
+
+def get_dts_statistics_field_sets(
+    data: DtsFieldSetRequestSchema,
+    *,
+    user: Any = None,
+) -> dict[str, Any]:
+    requested_fields = _normalize_text_list(getattr(data, "fields", []))
+    if not requested_fields:
+        return {"fieldSets": {}}
+
+    unsupported_fields = [
+        field for field in requested_fields if field not in _FIELD_SET_SUPPORTED_FIELDS
+    ]
+    if unsupported_fields:
+        raise HttpError(422, f"暂不支持的字段集合请求: {', '.join(unsupported_fields)}")
+
+    prepared = _get_prepared_defects(data, user=user)
+    base_defects = prepared if prepared is not None else _load_filtered_defects(data)
+
+    field_sets: dict[str, list[str]] = {}
+    for field in requested_fields:
+        scoped_defects = _apply_local_filters(
+            base_defects,
+            data,
+            ignored_fields={field},
+        )
+        field_sets[field] = _collect_field_set_values(scoped_defects, field)
+    return {"fieldSets": field_sets}
 
 
 def _load_extensions_map_for_defects(
@@ -1645,6 +1802,7 @@ def _run_dts_statistics_export_task(task_id: str) -> None:
                 progress=65,
             )
 
+        defects = _apply_local_filters(defects, query)
         workbook = _build_export_workbook(
             defects,
             progress_callback=lambda message, progress: _update_export_task_progress(
@@ -1711,7 +1869,8 @@ def prepare_dts_statistics_export(
 
     _cleanup_expired_export_files(limit=200)
     query = _to_export_query_schema(data)
-    payload, fingerprint, _ = _resolve_prepared_cache_identity(query, user=user)
+    task_payload = _build_export_task_payload(query)
+    fingerprint = _fingerprint_payload(task_payload)
 
     active_task = _get_active_export_task(user, fingerprint)
     if active_task is not None:
@@ -1725,7 +1884,7 @@ def prepare_dts_statistics_export(
         user=user,
         sys_creator=user,
         fingerprint=fingerprint,
-        payload=payload,
+        payload=task_payload,
         status=DtsStatisticsExportTask.STATUS_PENDING,
         message="导出任务已提交，正在排队执行",
     )

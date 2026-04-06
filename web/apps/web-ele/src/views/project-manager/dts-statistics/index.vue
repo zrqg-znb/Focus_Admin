@@ -23,6 +23,7 @@ import {
   ElCheckboxGroup,
   ElDatePicker,
   ElEmpty,
+  ElInput,
   ElMessage,
   ElOption,
   ElPopover,
@@ -37,6 +38,7 @@ import {
 import {
   downloadDtsExportTask,
   getDtsExportTask,
+  getDtsFieldSets,
   getDtsList,
   getDtsQueryTask,
   getDtsSummary,
@@ -109,6 +111,12 @@ function createDefaultFilters(): DtsStatisticsFilters {
     severityNos: [],
     updateTimeBegin: toTimestampMs(start),
     updateTimeEnd: toTimestampMs(end),
+    createAtBegin: 0,
+    createAtEnd: 0,
+    dCloseTimeBegin: 0,
+    dCloseTimeEnd: 0,
+    sDeptOneNoNames: [],
+    sSubmitsystemNoNames: [],
   };
 }
 
@@ -176,9 +184,26 @@ function normalizeStringArray(values?: string[]) {
   return result;
 }
 
+function normalizeTimestampPair(left?: number, right?: number) {
+  const begin = Math.max(Number(left || 0), 0);
+  const end = Math.max(Number(right || 0), 0);
+  if (begin > 0 && end > 0 && begin > end) {
+    return { begin: end, end: begin };
+  }
+  return { begin, end };
+}
+
 function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
   let begin = Number(source.updateTimeBegin || 0);
   let end = Number(source.updateTimeEnd || 0);
+  const createAtPair = normalizeTimestampPair(
+    source.createAtBegin,
+    source.createAtEnd,
+  );
+  const closeTimePair = normalizeTimestampPair(
+    source.dCloseTimeBegin,
+    source.dCloseTimeEnd,
+  );
   if (begin > end) {
     const temp = begin;
     begin = end;
@@ -190,6 +215,12 @@ function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
     severityNos: normalizeStringArray(source.severityNos),
     updateTimeBegin: Math.max(begin, 0),
     updateTimeEnd: Math.max(end, 0),
+    createAtBegin: createAtPair.begin,
+    createAtEnd: createAtPair.end,
+    dCloseTimeBegin: closeTimePair.begin,
+    dCloseTimeEnd: closeTimePair.end,
+    sDeptOneNoNames: normalizeStringArray(source.sDeptOneNoNames),
+    sSubmitsystemNoNames: normalizeStringArray(source.sSubmitsystemNoNames),
   };
 }
 
@@ -203,6 +234,12 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
     severityNos: [...(payload.severityNos || [])].sort(),
     updateTimeBegin: payload.updateTimeBegin || 0,
     updateTimeEnd: payload.updateTimeEnd || 0,
+    createAtBegin: payload.createAtBegin || 0,
+    createAtEnd: payload.createAtEnd || 0,
+    dCloseTimeBegin: payload.dCloseTimeBegin || 0,
+    dCloseTimeEnd: payload.dCloseTimeEnd || 0,
+    sDeptOneNoNames: [...(payload.sDeptOneNoNames || [])].sort(),
+    sSubmitsystemNoNames: [...(payload.sSubmitsystemNoNames || [])].sort(),
   });
 }
 
@@ -212,6 +249,51 @@ async function loadDictOptions() {
   } catch (error) {
     console.error(error);
     dictOptions.value = null;
+  }
+}
+
+function restoreDateRange(begin: number, end: number): [Date, Date] | null {
+  const normalized = normalizeTimestampPair(begin, end);
+  if (normalized.begin <= 0 && normalized.end <= 0) {
+    return null;
+  }
+  const resolvedBegin =
+    normalized.begin > 0 ? normalized.begin : normalized.end;
+  const resolvedEnd = normalized.end > 0 ? normalized.end : normalized.begin;
+  if (resolvedBegin <= 0 || resolvedEnd <= 0) {
+    return null;
+  }
+  return [new Date(resolvedBegin), new Date(resolvedEnd)];
+}
+
+async function loadFieldSetOptions(fields: string[]) {
+  if (!appliedFilters.value || queryPreparing.value) {
+    return;
+  }
+  const requestPayload = {
+    ...cloneFilters(filters.value),
+    fields,
+  };
+  for (const field of fields) {
+    fieldSetLoading.value[field] = true;
+  }
+  fieldSetLoading.value = { ...fieldSetLoading.value };
+  try {
+    const response = await getDtsFieldSets(requestPayload);
+    const nextOptions = { ...fieldSetOptions.value };
+    for (const field of fields) {
+      nextOptions[field] = [...(response.fieldSets?.[field] || [])];
+    }
+    fieldSetOptions.value = nextOptions;
+  } catch (error) {
+    console.error(error);
+    ElMessage.error('加载筛选候选值失败');
+  } finally {
+    const nextLoading = { ...fieldSetLoading.value };
+    for (const field of fields) {
+      nextLoading[field] = false;
+    }
+    fieldSetLoading.value = nextLoading;
   }
 }
 
@@ -358,6 +440,51 @@ const selectedSeverityLabel = computed(() => {
   }
   return `级别（${count}）`;
 });
+function hasTimeRange(begin: number, end: number) {
+  return Number(begin || 0) > 0 || Number(end || 0) > 0;
+}
+function buildTimeFilterButtonText(begin: number, end: number) {
+  if (!hasTimeRange(begin, end)) {
+    return '全部';
+  }
+  if (Number(begin || 0) > 0 && Number(end || 0) > 0) {
+    return '已设定';
+  }
+  return '部分';
+}
+const selectedCreateAtLabel = computed(() =>
+  buildTimeFilterButtonText(
+    filters.value.createAtBegin,
+    filters.value.createAtEnd,
+  ),
+);
+const selectedCloseTimeLabel = computed(() =>
+  buildTimeFilterButtonText(
+    filters.value.dCloseTimeBegin,
+    filters.value.dCloseTimeEnd,
+  ),
+);
+const selectedDeptLabel = computed(() => {
+  const count = filters.value.sDeptOneNoNames.length;
+  return count > 0 ? `${count} 项` : '全部';
+});
+const selectedSubsystemLabel = computed(() => {
+  const count = filters.value.sSubmitsystemNoNames.length;
+  return count > 0 ? `${count} 项` : '全部';
+});
+function filterFieldOptions(options: string[], keyword: string) {
+  const normalizedKeyword = String(keyword || '')
+    .trim()
+    .toLowerCase();
+  if (!normalizedKeyword) {
+    return options;
+  }
+  return options.filter((item) =>
+    String(item || '')
+      .toLowerCase()
+      .includes(normalizedKeyword),
+  );
+}
 const selectedProductLabel = computed(() => {
   return (
     PRODUCT_OPTIONS.find((item) => item.value === filters.value.productId)
@@ -367,8 +494,38 @@ const selectedProductLabel = computed(() => {
 
 const flowFilterVisible = ref(false);
 const severityFilterVisible = ref(false);
+const createAtFilterVisible = ref(false);
+const closeTimeFilterVisible = ref(false);
+const deptFilterVisible = ref(false);
+const subsystemFilterVisible = ref(false);
 const draftFlowStates = ref<string[]>([]);
 const draftSeverityNos = ref<string[]>([]);
+const draftCreateAtRange = ref<[Date, Date] | null>(null);
+const draftCloseTimeRange = ref<[Date, Date] | null>(null);
+const draftDeptNames = ref<string[]>([]);
+const draftSubsystemNames = ref<string[]>([]);
+const draftDeptKeyword = ref('');
+const draftSubsystemKeyword = ref('');
+const fieldSetOptions = ref<Record<string, string[]>>({
+  sDeptOneNoName: [],
+  sSubmitsystemNoName: [],
+});
+const fieldSetLoading = ref<Record<string, boolean>>({
+  sDeptOneNoName: false,
+  sSubmitsystemNoName: false,
+});
+const filteredDeptOptions = computed(() =>
+  filterFieldOptions(
+    fieldSetOptions.value.sDeptOneNoName || [],
+    draftDeptKeyword.value,
+  ),
+);
+const filteredSubsystemOptions = computed(() =>
+  filterFieldOptions(
+    fieldSetOptions.value.sSubmitsystemNoName || [],
+    draftSubsystemKeyword.value,
+  ),
+);
 
 let autoReloadTimer: null | number = null;
 let queryPrepareTimer: null | number = null;
@@ -455,6 +612,62 @@ watch(
   (visible) => {
     if (visible) {
       draftSeverityNos.value = [...filters.value.severityNos];
+    }
+  },
+);
+
+watch(
+  () => createAtFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftCreateAtRange.value = restoreDateRange(
+        filters.value.createAtBegin,
+        filters.value.createAtEnd,
+      );
+    }
+  },
+);
+
+watch(
+  () => closeTimeFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftCloseTimeRange.value = restoreDateRange(
+        filters.value.dCloseTimeBegin,
+        filters.value.dCloseTimeEnd,
+      );
+    }
+  },
+);
+
+watch(
+  () => deptFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      if (!appliedFilters.value || queryPreparing.value) {
+        deptFilterVisible.value = false;
+        ElMessage.warning('请先完成当前查询，再打开候选值筛选');
+        return;
+      }
+      draftDeptNames.value = [...filters.value.sDeptOneNoNames];
+      draftDeptKeyword.value = '';
+      void loadFieldSetOptions(['sDeptOneNoName']);
+    }
+  },
+);
+
+watch(
+  () => subsystemFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      if (!appliedFilters.value || queryPreparing.value) {
+        subsystemFilterVisible.value = false;
+        ElMessage.warning('请先完成当前查询，再打开候选值筛选');
+        return;
+      }
+      draftSubsystemNames.value = [...filters.value.sSubmitsystemNoNames];
+      draftSubsystemKeyword.value = '';
+      void loadFieldSetOptions(['sSubmitsystemNoName']);
     }
   },
 );
@@ -653,6 +866,54 @@ async function confirmSeverityFilter() {
 
 function resetSeverityFilterDraft() {
   draftSeverityNos.value = [];
+}
+
+async function confirmCreateAtFilter() {
+  const value = draftCreateAtRange.value;
+  filters.value.createAtBegin = value?.[0] ? toTimestampMs(value[0]) : 0;
+  filters.value.createAtEnd = value?.[1] ? toTimestampMs(value[1]) : 0;
+  createAtFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetCreateAtFilterDraft() {
+  draftCreateAtRange.value = null;
+}
+
+async function confirmCloseTimeFilter() {
+  const value = draftCloseTimeRange.value;
+  filters.value.dCloseTimeBegin = value?.[0] ? toTimestampMs(value[0]) : 0;
+  filters.value.dCloseTimeEnd = value?.[1] ? toTimestampMs(value[1]) : 0;
+  closeTimeFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetCloseTimeFilterDraft() {
+  draftCloseTimeRange.value = null;
+}
+
+async function confirmDeptFilter() {
+  filters.value.sDeptOneNoNames = normalizeStringArray(draftDeptNames.value);
+  deptFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetDeptFilterDraft() {
+  draftDeptNames.value = [];
+  draftDeptKeyword.value = '';
+}
+
+async function confirmSubsystemFilter() {
+  filters.value.sSubmitsystemNoNames = normalizeStringArray(
+    draftSubsystemNames.value,
+  );
+  subsystemFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetSubsystemFilterDraft() {
+  draftSubsystemNames.value = [];
+  draftSubsystemKeyword.value = '';
 }
 
 function buildExportFilename() {
@@ -1362,6 +1623,303 @@ onUnmounted(() => {
                         {{ resolveSeverityMeta(row.serverityNoName).label }}
                       </ElTag>
                     </ElTooltip>
+                  </template>
+
+                  <template #header-createAt>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">提单时间</span>
+                      <ElPopover
+                        v-model:visible="createAtFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="360"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': hasTimeRange(
+                                filters.createAtBegin,
+                                filters.createAtEnd,
+                              ),
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedCreateAtLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElDatePicker
+                              v-model="draftCreateAtRange"
+                              type="datetimerange"
+                              unlink-panels
+                              size="small"
+                              class="dts-header-filter-panel__date"
+                              start-placeholder="开始时间"
+                              end-placeholder="结束时间"
+                              range-separator="-"
+                              format="YYYY-MM-DD HH:mm:ss"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetCreateAtFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmCreateAtFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-dCloseTime>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">关闭时间</span>
+                      <ElPopover
+                        v-model:visible="closeTimeFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="360"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': hasTimeRange(
+                                filters.dCloseTimeBegin,
+                                filters.dCloseTimeEnd,
+                              ),
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedCloseTimeLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElDatePicker
+                              v-model="draftCloseTimeRange"
+                              type="datetimerange"
+                              unlink-panels
+                              size="small"
+                              class="dts-header-filter-panel__date"
+                              start-placeholder="开始时间"
+                              end-placeholder="结束时间"
+                              range-separator="-"
+                              format="YYYY-MM-DD HH:mm:ss"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetCloseTimeFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmCloseTimeFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-sDeptOneNoName>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">提出方部门</span>
+                      <ElPopover
+                        v-model:visible="deptFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="260"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': filters.sDeptOneNoNames.length > 0,
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedDeptLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-if="!fieldSetLoading.sDeptOneNoName"
+                              v-model="draftDeptKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词筛选部门"
+                            />
+                            <div
+                              v-if="fieldSetLoading.sDeptOneNoName"
+                              class="dts-header-filter-panel__tip"
+                            >
+                              正在加载候选值...
+                            </div>
+                            <ElEmpty
+                              v-else-if="
+                                fieldSetOptions.sDeptOneNoName.length === 0
+                              "
+                              :image-size="56"
+                              description="暂无候选值"
+                            />
+                            <ElEmpty
+                              v-else-if="filteredDeptOptions.length === 0"
+                              :image-size="56"
+                              description="暂无匹配项"
+                            />
+                            <ElCheckboxGroup
+                              v-else
+                              v-model="draftDeptNames"
+                              class="dts-header-filter-check-group"
+                            >
+                              <ElCheckbox
+                                v-for="item in filteredDeptOptions"
+                                :key="item"
+                                :label="item"
+                                :value="item"
+                              >
+                                {{ item }}
+                              </ElCheckbox>
+                            </ElCheckboxGroup>
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetDeptFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmDeptFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-sSubmitsystemNoName>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">子系统</span>
+                      <ElPopover
+                        v-model:visible="subsystemFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="260"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active':
+                                filters.sSubmitsystemNoNames.length > 0,
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedSubsystemLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-if="!fieldSetLoading.sSubmitsystemNoName"
+                              v-model="draftSubsystemKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词筛选子系统"
+                            />
+                            <div
+                              v-if="fieldSetLoading.sSubmitsystemNoName"
+                              class="dts-header-filter-panel__tip"
+                            >
+                              正在加载候选值...
+                            </div>
+                            <ElEmpty
+                              v-else-if="
+                                fieldSetOptions.sSubmitsystemNoName.length === 0
+                              "
+                              :image-size="56"
+                              description="暂无候选值"
+                            />
+                            <ElEmpty
+                              v-else-if="filteredSubsystemOptions.length === 0"
+                              :image-size="56"
+                              description="暂无匹配项"
+                            />
+                            <ElCheckboxGroup
+                              v-else
+                              v-model="draftSubsystemNames"
+                              class="dts-header-filter-check-group"
+                            >
+                              <ElCheckbox
+                                v-for="item in filteredSubsystemOptions"
+                                :key="item"
+                                :label="item"
+                                :value="item"
+                              >
+                                {{ item }}
+                              </ElCheckbox>
+                            </ElCheckboxGroup>
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetSubsystemFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmSubsystemFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
                   </template>
 
                   <template #cell-qa_category="{ row }">
@@ -2414,15 +2972,37 @@ onUnmounted(() => {
 }
 
 .dts-header-filter-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   max-height: 260px;
   overflow: auto;
   padding-right: 4px;
+}
+
+.dts-header-filter-panel__search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #ffffff;
+  padding-bottom: 2px;
+}
+
+.dts-header-filter-panel__date {
+  width: 100%;
 }
 
 .dts-header-filter-check-group {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.dts-header-filter-panel__tip {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 8px 2px;
 }
 
 .dts-header-filter-panel__actions {

@@ -6,6 +6,12 @@ export interface DtsStatisticsFilters {
   severityNos: string[];
   updateTimeBegin: number;
   updateTimeEnd: number;
+  createAtBegin: number;
+  createAtEnd: number;
+  dCloseTimeBegin: number;
+  dCloseTimeEnd: number;
+  sDeptOneNoNames: string[];
+  sSubmitsystemNoNames: string[];
 }
 
 export interface DtsStatisticsQuery extends DtsStatisticsFilters {
@@ -204,6 +210,14 @@ export interface DtsDictOptions {
   action_status: DtsDictOption[];
 }
 
+export interface DtsFieldSetRequest extends DtsStatisticsFilters {
+  fields: string[];
+}
+
+export interface DtsFieldSetResponse {
+  fieldSets: Record<string, string[]>;
+}
+
 const base = '/api/project-manager/dts-statistics';
 
 export async function getDtsList(data: DtsStatisticsQuery) {
@@ -222,6 +236,10 @@ export async function saveDtsExtension(
 
 export async function getDtsSummary(data: DtsStatisticsFilters) {
   return requestClient.post<DtsSummary>(`${base}/summary`, data);
+}
+
+export async function getDtsFieldSets(data: DtsFieldSetRequest) {
+  return requestClient.post<DtsFieldSetResponse>(`${base}/field-sets`, data);
 }
 
 export async function prepareDtsQuery(data: DtsStatisticsFilters) {

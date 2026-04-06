@@ -7,6 +7,8 @@ from .dts_statistics_schemas import (
     DtsExtensionSaveSchema,
     DtsExportPrepareResponseSchema,
     DtsExportTaskSchema,
+    DtsFieldSetRequestSchema,
+    DtsFieldSetResponseSchema,
     DtsListResponseSchema,
     DtsQueryPrepareResponseSchema,
     DtsQueryTaskSchema,
@@ -55,6 +57,18 @@ def get_summary(request, query: DtsStatisticsQuerySchema):
 @router.get("/dict-options", response=DtsDictOptionsSchema, summary="获取 DTS 模块字典选项")
 def get_dict_options(request):
     return dts_statistics_services.get_dts_statistics_dict_options()
+
+
+@router.post(
+    "/field-sets",
+    response=DtsFieldSetResponseSchema,
+    summary="获取 DTS 字段候选值集合",
+)
+def get_field_sets(request, data: DtsFieldSetRequestSchema):
+    return dts_statistics_services.get_dts_statistics_field_sets(
+        data,
+        user=request.auth,
+    )
 
 
 @router.post("/export", summary="导出 DTS 统计明细")
