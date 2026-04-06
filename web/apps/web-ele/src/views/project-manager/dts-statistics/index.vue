@@ -252,18 +252,12 @@ async function loadDictOptions() {
   }
 }
 
-function restoreDateRange(begin: number, end: number): [Date, Date] | null {
-  const normalized = normalizeTimestampPair(begin, end);
-  if (normalized.begin <= 0 && normalized.end <= 0) {
+function restoreDateValue(value?: number) {
+  const normalized = Math.max(Number(value || 0), 0);
+  if (normalized <= 0) {
     return null;
   }
-  const resolvedBegin =
-    normalized.begin > 0 ? normalized.begin : normalized.end;
-  const resolvedEnd = normalized.end > 0 ? normalized.end : normalized.begin;
-  if (resolvedBegin <= 0 || resolvedEnd <= 0) {
-    return null;
-  }
-  return [new Date(resolvedBegin), new Date(resolvedEnd)];
+  return new Date(normalized);
 }
 
 async function loadFieldSetOptions(fields: string[]) {
@@ -500,8 +494,10 @@ const deptFilterVisible = ref(false);
 const subsystemFilterVisible = ref(false);
 const draftFlowStates = ref<string[]>([]);
 const draftSeverityNos = ref<string[]>([]);
-const draftCreateAtRange = ref<[Date, Date] | null>(null);
-const draftCloseTimeRange = ref<[Date, Date] | null>(null);
+const draftCreateAtBegin = ref<Date | null>(null);
+const draftCreateAtEnd = ref<Date | null>(null);
+const draftCloseTimeBegin = ref<Date | null>(null);
+const draftCloseTimeEnd = ref<Date | null>(null);
 const draftDeptNames = ref<string[]>([]);
 const draftSubsystemNames = ref<string[]>([]);
 const draftDeptKeyword = ref('');
@@ -620,10 +616,8 @@ watch(
   () => createAtFilterVisible.value,
   (visible) => {
     if (visible) {
-      draftCreateAtRange.value = restoreDateRange(
-        filters.value.createAtBegin,
-        filters.value.createAtEnd,
-      );
+      draftCreateAtBegin.value = restoreDateValue(filters.value.createAtBegin);
+      draftCreateAtEnd.value = restoreDateValue(filters.value.createAtEnd);
     }
   },
 );
@@ -632,10 +626,10 @@ watch(
   () => closeTimeFilterVisible.value,
   (visible) => {
     if (visible) {
-      draftCloseTimeRange.value = restoreDateRange(
+      draftCloseTimeBegin.value = restoreDateValue(
         filters.value.dCloseTimeBegin,
-        filters.value.dCloseTimeEnd,
       );
+      draftCloseTimeEnd.value = restoreDateValue(filters.value.dCloseTimeEnd);
     }
   },
 );
@@ -869,27 +863,35 @@ function resetSeverityFilterDraft() {
 }
 
 async function confirmCreateAtFilter() {
-  const value = draftCreateAtRange.value;
-  filters.value.createAtBegin = value?.[0] ? toTimestampMs(value[0]) : 0;
-  filters.value.createAtEnd = value?.[1] ? toTimestampMs(value[1]) : 0;
+  const normalized = normalizeTimestampPair(
+    draftCreateAtBegin.value ? toTimestampMs(draftCreateAtBegin.value) : 0,
+    draftCreateAtEnd.value ? toTimestampMs(draftCreateAtEnd.value) : 0,
+  );
+  filters.value.createAtBegin = normalized.begin;
+  filters.value.createAtEnd = normalized.end;
   createAtFilterVisible.value = false;
   await handleSearch(true);
 }
 
 function resetCreateAtFilterDraft() {
-  draftCreateAtRange.value = null;
+  draftCreateAtBegin.value = null;
+  draftCreateAtEnd.value = null;
 }
 
 async function confirmCloseTimeFilter() {
-  const value = draftCloseTimeRange.value;
-  filters.value.dCloseTimeBegin = value?.[0] ? toTimestampMs(value[0]) : 0;
-  filters.value.dCloseTimeEnd = value?.[1] ? toTimestampMs(value[1]) : 0;
+  const normalized = normalizeTimestampPair(
+    draftCloseTimeBegin.value ? toTimestampMs(draftCloseTimeBegin.value) : 0,
+    draftCloseTimeEnd.value ? toTimestampMs(draftCloseTimeEnd.value) : 0,
+  );
+  filters.value.dCloseTimeBegin = normalized.begin;
+  filters.value.dCloseTimeEnd = normalized.end;
   closeTimeFilterVisible.value = false;
   await handleSearch(true);
 }
 
 function resetCloseTimeFilterDraft() {
-  draftCloseTimeRange.value = null;
+  draftCloseTimeBegin.value = null;
+  draftCloseTimeEnd.value = null;
 }
 
 async function confirmDeptFilter() {
@@ -1654,17 +1656,42 @@ onUnmounted(() => {
                         </template>
                         <div class="dts-header-filter-panel" @click.stop>
                           <div class="dts-header-filter-panel__body">
-                            <ElDatePicker
-                              v-model="draftCreateAtRange"
-                              type="datetimerange"
-                              unlink-panels
-                              size="small"
-                              class="dts-header-filter-panel__date"
-                              start-placeholder="开始时间"
-                              end-placeholder="结束时间"
-                              range-separator="-"
-                              format="YYYY-MM-DD HH:mm:ss"
-                            />
+                            <div class="dts-header-filter-panel__time-stack">
+                              <div class="dts-header-filter-panel__time-field">
+                                <div
+                                  class="dts-header-filter-panel__time-label"
+                                >
+                                  开始时间
+                                </div>
+                                <ElDatePicker
+                                  v-model="draftCreateAtBegin"
+                                  type="datetime"
+                                  size="small"
+                                  clearable
+                                  :teleported="false"
+                                  class="dts-header-filter-panel__date"
+                                  placeholder="选择开始时间"
+                                  format="YYYY-MM-DD HH:mm:ss"
+                                />
+                              </div>
+                              <div class="dts-header-filter-panel__time-field">
+                                <div
+                                  class="dts-header-filter-panel__time-label"
+                                >
+                                  结束时间
+                                </div>
+                                <ElDatePicker
+                                  v-model="draftCreateAtEnd"
+                                  type="datetime"
+                                  size="small"
+                                  clearable
+                                  :teleported="false"
+                                  class="dts-header-filter-panel__date"
+                                  placeholder="选择结束时间"
+                                  format="YYYY-MM-DD HH:mm:ss"
+                                />
+                              </div>
+                            </div>
                           </div>
                           <div class="dts-header-filter-panel__actions">
                             <ElButton
@@ -1715,17 +1742,42 @@ onUnmounted(() => {
                         </template>
                         <div class="dts-header-filter-panel" @click.stop>
                           <div class="dts-header-filter-panel__body">
-                            <ElDatePicker
-                              v-model="draftCloseTimeRange"
-                              type="datetimerange"
-                              unlink-panels
-                              size="small"
-                              class="dts-header-filter-panel__date"
-                              start-placeholder="开始时间"
-                              end-placeholder="结束时间"
-                              range-separator="-"
-                              format="YYYY-MM-DD HH:mm:ss"
-                            />
+                            <div class="dts-header-filter-panel__time-stack">
+                              <div class="dts-header-filter-panel__time-field">
+                                <div
+                                  class="dts-header-filter-panel__time-label"
+                                >
+                                  开始时间
+                                </div>
+                                <ElDatePicker
+                                  v-model="draftCloseTimeBegin"
+                                  type="datetime"
+                                  size="small"
+                                  clearable
+                                  :teleported="false"
+                                  class="dts-header-filter-panel__date"
+                                  placeholder="选择开始时间"
+                                  format="YYYY-MM-DD HH:mm:ss"
+                                />
+                              </div>
+                              <div class="dts-header-filter-panel__time-field">
+                                <div
+                                  class="dts-header-filter-panel__time-label"
+                                >
+                                  结束时间
+                                </div>
+                                <ElDatePicker
+                                  v-model="draftCloseTimeEnd"
+                                  type="datetime"
+                                  size="small"
+                                  clearable
+                                  :teleported="false"
+                                  class="dts-header-filter-panel__date"
+                                  placeholder="选择结束时间"
+                                  format="YYYY-MM-DD HH:mm:ss"
+                                />
+                              </div>
+                            </div>
                           </div>
                           <div class="dts-header-filter-panel__actions">
                             <ElButton
@@ -2990,6 +3042,25 @@ onUnmounted(() => {
 
 .dts-header-filter-panel__date {
   width: 100%;
+}
+
+.dts-header-filter-panel__time-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dts-header-filter-panel__time-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dts-header-filter-panel__time-label {
+  color: #606266;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
 .dts-header-filter-check-group {
