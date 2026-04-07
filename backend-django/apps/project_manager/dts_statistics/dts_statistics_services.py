@@ -86,7 +86,7 @@ _DEFAULT_FIELDS = [
     "briefDesc",
     "dtsStatusName",
     "serverityNoName",
-    "updateTime",
+    "updateAt",
     "parentNo",
     "createAt",
     "dCloseTime",
@@ -565,7 +565,7 @@ def _mock_fetch_page(payload: dict[str, Any]) -> dict[str, Any]:
                     "briefDesc": f"Mock defect {index + 1}",
                     "dtsStatusName": flow_names.get(flow_state) or flow_state,
                     "serverityNoName": severity_names[severity_pos],
-                    "updateTime": update_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                    "updateAt": update_dt.strftime("%Y-%m-%d %H:%M:%S"),
                     "parentNo": f"DTSP{index % 2000:04d}",
                     "createAt": create_dt.strftime("%Y-%m-%d %H:%M:%S"),
                     "dCloseTime": close_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -707,8 +707,8 @@ def _merge_duplicate_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]
             merged[defect_no] = current
             continue
 
-        existing_update_dt = _parse_datetime(existing.get("updateTime"))
-        incoming_update_dt = _parse_datetime(row.get("updateTime"))
+        existing_update_dt = _parse_datetime(existing.get("updateAt"))
+        incoming_update_dt = _parse_datetime(row.get("updateAt"))
         existing_create_dt = _parse_datetime(existing.get("createAt"))
         incoming_create_dt = _parse_datetime(row.get("createAt"))
         should_overlay_primary_fields = False
@@ -724,7 +724,7 @@ def _merge_duplicate_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]
             should_overlay_primary_fields = True
 
         if should_overlay_primary_fields:
-            for key in ("updateTime", "createAt", "dCloseTime", "dtsStatusName"):
+            for key in ("updateAt", "createAt", "dCloseTime", "dtsStatusName"):
                 if not _is_empty_value(row.get(key)):
                     existing[key] = row.get(key)
 
@@ -940,7 +940,7 @@ def _normalize_source_row(
     brief_desc = _clean_text(row.get("briefDesc"))
     status_name = _clean_text(row.get("dtsStatusName"))
     severity_name = _clean_text(row.get("serverityNoName"))
-    update_time = _clean_text(row.get("updateTime"))
+    update_time = _clean_text(row.get("updateAt"))
     create_at = _clean_text(row.get("createAt"))
     close_time = _clean_text(row.get("dCloseTime"))
     team_name = _clean_text(row.get("sDeptOneNoName"))
@@ -953,7 +953,7 @@ def _normalize_source_row(
         "briefDesc": brief_desc or None,
         "dtsStatusName": status_name or None,
         "serverityNoName": severity_name or None,
-        "updateTime": update_time or None,
+        "updateAt": update_time or None,
         "parentNo": _clean_text(row.get("parentNo")) or None,
         "createAt": create_at or None,
         "dCloseTime": close_time or None,
@@ -1637,7 +1637,7 @@ def _build_filtered_result_payload(
         flow_states = []
     if "severityNos" in ignored:
         severity_nos = []
-    if "updateTime" in ignored:
+    if "updateAt" in ignored:
         update_time_begin = 0
         update_time_end = 0
     if "createAt" in ignored:
@@ -1680,11 +1680,11 @@ def _apply_snapshot_filters(
         _resolve_base_runtime_filters(query)
     )
     filtered = rows
-    if "updateTime" not in ignored and (update_time_begin > 0 or update_time_end > 0):
+    if "updateAt" not in ignored and (update_time_begin > 0 or update_time_end > 0):
         filtered = [
             row
             for row in filtered
-            if _match_time_range(row.get("updateTime"), update_time_begin, update_time_end)
+            if _match_time_range(row.get("updateAt"), update_time_begin, update_time_end)
         ]
     filtered = _apply_source_filters(
         filtered,

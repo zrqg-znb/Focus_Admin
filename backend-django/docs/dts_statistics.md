@@ -47,6 +47,7 @@ flowchart TD
 
 - 快照窗口固定为最近 2 个月 `updateTime` 数据。
 - 标题栏时间筛选仍然表示 `updateTime`，不是提单时间。
+- 数据湖快照行中的隐藏更新时间字段使用 `updateAt`，对应查询入参 `updateTimeBegin/updateTimeEnd`。
 - `createAt`、`dCloseTime`、`sDeptOneNoName`、`sSubmitsystemNoName` 均为快照结果上的本地过滤。
 - 快照不存在时，不再回退实时慢查数据湖，而是直接提示“数据准备中/请先执行同步任务”。
 - 导出与页面明细使用同一套缓存筛选结果口径。

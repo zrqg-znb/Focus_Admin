@@ -24,7 +24,7 @@ export interface DtsMergedDefect {
   briefDesc?: null | string;
   dtsStatusName?: null | string;
   serverityNoName?: null | string;
-  updateTime?: null | string;
+  updateAt?: null | string;
   parentNo?: null | string;
   createAt?: null | string;
   dCloseTime?: null | string;

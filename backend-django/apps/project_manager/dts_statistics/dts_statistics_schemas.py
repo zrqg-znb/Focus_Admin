@@ -201,7 +201,7 @@ class DataLakeDefectSchema(Schema):
     briefDesc: Optional[str] = None
     dtsStatusName: Optional[str] = None
     serverityNoName: Optional[str] = None
-    updateTime: Optional[str] = None
+    updateAt: Optional[str] = None
     parentNo: Optional[str] = None
     createAt: Optional[str] = None
     dCloseTime: Optional[str] = None
