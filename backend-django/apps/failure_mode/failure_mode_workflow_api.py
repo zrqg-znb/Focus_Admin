@@ -108,6 +108,11 @@ def save_task_failure_mode_draft(request, task_id: str, failure_mode_id: str, da
     )
 
 
+@router.post('/tasks/{task_id}/failure-modes/quick-create', response=FailureModeOutSchema, summary='在任务中快速新增并绑定故障模式')
+def quick_create_task_failure_mode(request, task_id: str, data: FailureModeCreateSchema):
+    return TaskWorkflowService.quick_create_failure_mode(request, task_id, data)
+
+
 @router.put('/tasks/{task_id}/failure-modes/{failure_mode_id}', response=FailureModeOutSchema, summary='编辑创建任务中的任务新增故障模式')
 def update_task_failure_mode(request, task_id: str, failure_mode_id: str, data: FailureModeUpdateSchema):
     return TaskWorkflowService.update_task_created_failure_mode(
@@ -122,11 +127,6 @@ def update_task_failure_mode(request, task_id: str, failure_mode_id: str, data: 
 def delete_task_failure_mode_draft(request, task_id: str, failure_mode_id: str):
     TaskWorkflowService.delete_failure_mode_draft(request.auth, task_id, failure_mode_id)
     return {'success': True}
-
-
-@router.post('/tasks/{task_id}/failure-modes/quick-create', response=FailureModeOutSchema, summary='在任务中快速新增并绑定故障模式')
-def quick_create_task_failure_mode(request, task_id: str, data: FailureModeCreateSchema):
-    return TaskWorkflowService.quick_create_failure_mode(request, task_id, data)
 
 
 @router.post('/tasks/{task_id}/submit', response=FailureModeTaskOutSchema, summary='提交任务评审')
