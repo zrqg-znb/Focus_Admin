@@ -201,6 +201,7 @@ class DataLakeDefectSchema(Schema):
     briefDesc: Optional[str] = None
     dtsStatusName: Optional[str] = None
     serverityNoName: Optional[str] = None
+    updateTime: Optional[str] = None
     parentNo: Optional[str] = None
     createAt: Optional[str] = None
     dCloseTime: Optional[str] = None
@@ -266,9 +267,21 @@ class DtsMergedDefectSchema(DataLakeDefectSchema):
     test_status: Optional[str] = None
 
 
+class DtsSnapshotMetaSchema(Schema):
+    productId: str = ""
+    productName: str = ""
+    version: str = ""
+    generatedAt: Optional[str] = None
+    windowBegin: int = 0
+    windowEnd: int = 0
+    rowCount: int = 0
+    isStale: bool = False
+
+
 class DtsListResponseSchema(Schema):
     total: int
     items: list[DtsMergedDefectSchema]
+    snapshot: Optional[DtsSnapshotMetaSchema] = None
 
 
 class DtsSaveResponseSchema(Schema):
@@ -305,6 +318,7 @@ class DtsSummarySchema(Schema):
     pl_group_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     project_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     action_status_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
+    snapshot: Optional[DtsSnapshotMetaSchema] = None
 
 
 class DtsStatisticsExportSchema(Schema):

@@ -5,7 +5,7 @@ import type {
   DtsDictOptions,
   DtsExportTask,
   DtsMergedDefect,
-  DtsQueryTask,
+  DtsSnapshotMeta,
   DtsStatisticsFilters,
   DtsSummary,
 } from '#/api/project-manager/dts-statistics';
@@ -40,15 +40,14 @@ import {
   getDtsExportTask,
   getDtsFieldSets,
   getDtsList,
-  getDtsQueryTask,
   getDtsSummary,
   prepareDtsExport,
-  prepareDtsQuery,
 } from '#/api/project-manager/dts-statistics';
 import { useZqTable } from '#/components/zq-table';
 
 import {
   fetchDtsDictOptionsCached,
+  formatCycleIntegerDisplay,
   resolveDtsGovernanceTagMeta,
   resolveSeverityMeta,
   useColumns,
@@ -91,6 +90,13 @@ const SEVERITY_OPTIONS: Array<{ label: string; value: string }> = [
   { value: 'Major', label: '严重' },
   { value: 'Critical', label: '关键' },
 ];
+
+function createRecentTwoMonthRange(): [Date, Date] {
+  const end = new Date();
+  const start = new Date(end);
+  start.setMonth(start.getMonth() - 2);
+  return [start, end];
+}
 
 function createDefaultDateRange(): [Date, Date] {
   const end = new Date();
@@ -153,13 +159,14 @@ const summary = ref<DtsSummary>({
   pl_group_dist: [],
   project_dist: [],
   action_status_dist: [],
+  snapshot: null,
 });
 const summaryLoading = ref(false);
-const queryPreparing = ref(false);
-const queryPrepareTask = ref<DtsQueryTask | null>(null);
+const queryLoading = ref(false);
 const exportPreparing = ref(false);
 const exportPrepareTask = ref<DtsExportTask | null>(null);
 const dictOptions = ref<DtsDictOptions | null>(null);
+const snapshotMeta = ref<DtsSnapshotMeta | null>(null);
 
 function resolveGovTag(field: any, raw: unknown) {
   return resolveDtsGovernanceTagMeta(dictOptions.value, field, raw);
@@ -260,8 +267,41 @@ function restoreDateValue(value?: number) {
   return new Date(normalized);
 }
 
+function syncSnapshotMeta(next?: DtsSnapshotMeta | null) {
+  if (!next) {
+    return;
+  }
+  snapshotMeta.value = { ...next };
+}
+
+function resolveAllowedUpdateWindowBegin() {
+  const snapshotBegin = Number(snapshotMeta.value?.windowBegin || 0);
+  if (snapshotBegin > 0) {
+    return snapshotBegin;
+  }
+  const [start] = createRecentTwoMonthRange();
+  return toTimestampMs(start);
+}
+
+function validateUpdateTimeRange(payload: DtsStatisticsFilters) {
+  const begin = Math.max(Number(payload.updateTimeBegin || 0), 0);
+  const end = Math.max(Number(payload.updateTimeEnd || 0), 0);
+  const allowedBegin = resolveAllowedUpdateWindowBegin();
+  if (begin > 0 && begin < allowedBegin) {
+    return '当前仅支持最近 2 个月更新时间数据';
+  }
+  if (end > 0 && end < allowedBegin) {
+    return '当前筛选时间早于缓存窗口，请调整到最近 2 个月内';
+  }
+  return '';
+}
+
+function disableOutOfWindowDate(date: Date) {
+  return toTimestampMs(date) < resolveAllowedUpdateWindowBegin();
+}
+
 async function loadFieldSetOptions(fields: string[]) {
-  if (!appliedFilters.value || queryPreparing.value) {
+  if (!appliedFilters.value || queryLoading.value) {
     return;
   }
   const requestPayload = {
@@ -281,7 +321,7 @@ async function loadFieldSetOptions(fields: string[]) {
     fieldSetOptions.value = nextOptions;
   } catch (error) {
     console.error(error);
-    ElMessage.error('加载筛选候选值失败');
+    ElMessage.error(resolveErrorMessage(error, '加载筛选候选值失败'));
   } finally {
     const nextLoading = { ...fieldSetLoading.value };
     for (const field of fields) {
@@ -334,8 +374,10 @@ async function fetchSummary(force = false) {
       pl_group_dist: [],
       project_dist: [],
       action_status_dist: [],
+      snapshot: null,
     };
     summaryFingerprint.value = '';
+    snapshotMeta.value = null;
     return;
   }
 
@@ -346,10 +388,11 @@ async function fetchSummary(force = false) {
   summaryLoading.value = true;
   try {
     summary.value = await getDtsSummary(appliedFilters.value);
+    syncSnapshotMeta(summary.value.snapshot || null);
     summaryFingerprint.value = currentFingerprint;
   } catch (error) {
     console.error(error);
-    ElMessage.error('加载总结看板失败');
+    ElMessage.error(resolveErrorMessage(error, '加载总结看板失败'));
   } finally {
     summaryLoading.value = false;
   }
@@ -377,6 +420,7 @@ const [Grid, gridApi] = useZqTable({
             pageIndex: page.currentPage,
             pageSize: page.pageSize,
           });
+          syncSnapshotMeta(response.snapshot || null);
           return { items: response.items || [], total: response.total || 0 };
         },
       },
@@ -399,18 +443,12 @@ const canExport = computed(
   () =>
     hasAppliedFilters.value &&
     dataResultCount.value > 0 &&
-    !queryPreparing.value &&
+    !queryLoading.value &&
     !exportPreparing.value,
 );
-const queryPrepareStatusText = computed(() => {
-  if (!queryPreparing.value && !queryPrepareTask.value) {
-    return '';
-  }
-  const task = queryPrepareTask.value;
-  const progress = Number(task?.progress || 0);
-  const baseMessage = task?.message || '查询准备中';
-  return progress > 0 ? `${baseMessage}（${progress}%）` : baseMessage;
-});
+const queryStatusText = computed(() =>
+  queryLoading.value ? '正在从 DTS 快照缓存加载数据' : '',
+);
 const exportPrepareStatusText = computed(() => {
   if (!exportPreparing.value && !exportPrepareTask.value) {
     return '';
@@ -479,11 +517,51 @@ function filterFieldOptions(options: string[], keyword: string) {
       .includes(normalizedKeyword),
   );
 }
+
+function resolveErrorMessage(error: any, fallback: string) {
+  const candidates = [
+    error?.response?.data?.detail,
+    error?.response?.data?.message,
+    error?.response?._data?.detail,
+    error?.response?._data?.message,
+    error?.message,
+  ];
+  const matched = candidates.find(
+    (item) => typeof item === 'string' && item.trim().length > 0,
+  );
+  return matched || fallback;
+}
+
 const selectedProductLabel = computed(() => {
   return (
     PRODUCT_OPTIONS.find((item) => item.value === filters.value.productId)
       ?.label || '座舱'
   );
+});
+const snapshotGeneratedAtLabel = computed(() => {
+  const text = String(snapshotMeta.value?.generatedAt || '').trim();
+  if (!text) {
+    return '未同步';
+  }
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) {
+    return text;
+  }
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+});
+const snapshotWindowLabel = computed(() => {
+  const begin = Number(snapshotMeta.value?.windowBegin || 0);
+  const end = Number(snapshotMeta.value?.windowEnd || 0);
+  if (!begin || !end) {
+    return '最近 2 个月';
+  }
+  const format = (timestamp: number) => {
+    const date = new Date(timestamp);
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  };
+  return `${format(begin)} ~ ${format(end)}`;
 });
 
 const flowFilterVisible = ref(false);
@@ -524,10 +602,9 @@ const filteredSubsystemOptions = computed(() =>
 );
 
 let autoReloadTimer: null | number = null;
-let queryPrepareTimer: null | number = null;
 let exportPrepareTimer: null | number = null;
-let queryPollingSerial = 0;
 let exportPollingSerial = 0;
+let suspendAutoReload = false;
 const pollMaxWaitMs = 10 * 60 * 1000;
 
 watch(
@@ -586,7 +663,11 @@ watch(
     updateTimeEnd: filters.value.updateTimeEnd,
   }),
   () => {
-    if (!filters.value.productId || filters.value.productId === 'ALL') {
+    if (
+      suspendAutoReload ||
+      !filters.value.productId ||
+      filters.value.productId === 'ALL'
+    ) {
       return;
     }
     scheduleAutoReload();
@@ -638,7 +719,7 @@ watch(
   () => deptFilterVisible.value,
   (visible) => {
     if (visible) {
-      if (!appliedFilters.value || queryPreparing.value) {
+      if (!appliedFilters.value || queryLoading.value) {
         deptFilterVisible.value = false;
         ElMessage.warning('请先完成当前查询，再打开候选值筛选');
         return;
@@ -654,7 +735,7 @@ watch(
   () => subsystemFilterVisible.value,
   (visible) => {
     if (visible) {
-      if (!appliedFilters.value || queryPreparing.value) {
+      if (!appliedFilters.value || queryLoading.value) {
         subsystemFilterVisible.value = false;
         ElMessage.warning('请先完成当前查询，再打开候选值筛选');
         return;
@@ -677,20 +758,15 @@ watch(
 );
 
 async function handleSearch(resetPage = true) {
+  if (queryLoading.value) {
+    return;
+  }
   if (autoReloadTimer) {
     window.clearTimeout(autoReloadTimer);
     autoReloadTimer = null;
   }
   const payload = cloneFilters(filters.value);
-  await applySearchPayload(payload, { resetPage });
-}
-
-function stopQueryPreparePolling() {
-  queryPollingSerial += 1;
-  if (queryPrepareTimer) {
-    window.clearInterval(queryPrepareTimer);
-    queryPrepareTimer = null;
-  }
+  await runSearch(payload, { resetPage });
 }
 
 function stopExportPreparePolling() {
@@ -701,89 +777,7 @@ function stopExportPreparePolling() {
   }
 }
 
-async function finalizePreparedQuery(
-  payload: DtsStatisticsFilters,
-  { resetPage = true }: { resetPage?: boolean } = {},
-) {
-  appliedFilters.value = cloneFilters(payload);
-  summaryFingerprint.value = '';
-  if (resetPage) {
-    gridApi.pagination.currentPage = 1;
-  }
-  await nextTick();
-  await gridApi.reload();
-  await nextTick();
-  updateDataGridHeight();
-  if (activeTab.value === 'dashboard') {
-    await fetchSummary(true);
-  }
-}
-
-function startQueryPreparePolling(
-  taskId: string,
-  payload: DtsStatisticsFilters,
-  { resetPage = true }: { resetPage?: boolean } = {},
-) {
-  stopQueryPreparePolling();
-  queryPreparing.value = true;
-  const pollingSerial = queryPollingSerial + 1;
-  queryPollingSerial = pollingSerial;
-  let polling = false;
-  const startedAt = Date.now();
-
-  queryPrepareTimer = window.setInterval(async () => {
-    if (pollingSerial !== queryPollingSerial) {
-      return;
-    }
-    if (polling) {
-      return;
-    }
-    if (Date.now() - startedAt > pollMaxWaitMs) {
-      stopQueryPreparePolling();
-      queryPreparing.value = false;
-      queryPrepareTask.value = null;
-      gridApi.setLoading(false);
-      ElMessage.error('查询准备超时，请缩小时间范围后重试');
-      return;
-    }
-    polling = true;
-    try {
-      const task = await getDtsQueryTask(taskId);
-      if (pollingSerial !== queryPollingSerial) {
-        return;
-      }
-      queryPrepareTask.value = task;
-      if (task.status === 'success') {
-        stopQueryPreparePolling();
-        await finalizePreparedQuery(payload, { resetPage });
-        queryPreparing.value = false;
-        queryPrepareTask.value = null;
-        ElMessage.success('查询数据准备完成');
-        return;
-      }
-      if (task.status === 'failed') {
-        stopQueryPreparePolling();
-        queryPreparing.value = false;
-        queryPrepareTask.value = null;
-        gridApi.setLoading(false);
-        ElMessage.error(
-          task.error_message || task.message || '查询数据准备失败',
-        );
-      }
-    } catch (error) {
-      console.error(error);
-      stopQueryPreparePolling();
-      queryPreparing.value = false;
-      queryPrepareTask.value = null;
-      gridApi.setLoading(false);
-      ElMessage.error('查询任务状态获取失败');
-    } finally {
-      polling = false;
-    }
-  }, 1000);
-}
-
-async function applySearchPayload(
+async function runSearch(
   payload: DtsStatisticsFilters,
   { resetPage = true }: { resetPage?: boolean } = {},
 ) {
@@ -791,33 +785,41 @@ async function applySearchPayload(
     ElMessage.warning('“全部”产品暂不支持查询，请选择座舱或车控');
     return;
   }
-
-  stopQueryPreparePolling();
-  queryPreparing.value = true;
-  queryPrepareTask.value = null;
+  const invalidMessage = validateUpdateTimeRange(payload);
+  if (invalidMessage) {
+    ElMessage.warning(invalidMessage);
+    return;
+  }
+  const previousApplied = appliedFilters.value
+    ? cloneFilters(appliedFilters.value)
+    : null;
+  const previousFingerprint = summaryFingerprint.value;
+  const previousSummary = { ...summary.value };
+  const previousSnapshot = snapshotMeta.value
+    ? { ...snapshotMeta.value }
+    : null;
+  queryLoading.value = true;
+  appliedFilters.value = cloneFilters(payload);
+  summaryFingerprint.value = '';
   gridApi.setLoading(true);
   try {
-    const prepareResponse = await prepareDtsQuery(payload);
-    if (prepareResponse.mode === 'ready') {
-      await finalizePreparedQuery(payload, { resetPage });
-      queryPreparing.value = false;
-      queryPrepareTask.value = null;
-      return;
+    if (resetPage) {
+      gridApi.pagination.currentPage = 1;
     }
-    queryPrepareTask.value = prepareResponse.task;
-    if (!prepareResponse.task?.id) {
-      queryPreparing.value = false;
-      queryPrepareTask.value = null;
-      ElMessage.error('查询任务创建失败');
-      return;
-    }
-    startQueryPreparePolling(prepareResponse.task.id, payload, { resetPage });
+    await nextTick();
+    await Promise.all([gridApi.reload(), fetchSummary(true)]);
+    await nextTick();
+    updateDataGridHeight();
   } catch (error) {
     console.error(error);
-    queryPreparing.value = false;
-    queryPrepareTask.value = null;
+    appliedFilters.value = previousApplied;
+    summaryFingerprint.value = previousFingerprint;
+    summary.value = previousSummary;
+    snapshotMeta.value = previousSnapshot;
+    ElMessage.error(resolveErrorMessage(error, '查询失败，请稍后重试'));
+  } finally {
+    queryLoading.value = false;
     gridApi.setLoading(false);
-    ElMessage.error('查询任务提交失败');
   }
 }
 
@@ -826,19 +828,19 @@ async function handleReset() {
     window.clearTimeout(autoReloadTimer);
     autoReloadTimer = null;
   }
-  stopQueryPreparePolling();
-  queryPreparing.value = false;
-  queryPrepareTask.value = null;
+  queryLoading.value = false;
   gridApi.setLoading(false);
   stopExportPreparePolling();
   exportPreparing.value = false;
   exportPrepareTask.value = null;
   const nextFilters = createDefaultFilters();
-  filters.value = createDefaultFilters();
+  suspendAutoReload = true;
+  filters.value = nextFilters;
   dateRange.value = [
     new Date(nextFilters.updateTimeBegin),
     new Date(nextFilters.updateTimeEnd),
   ];
+  suspendAutoReload = false;
   await handleSearch(true);
 }
 
@@ -994,7 +996,7 @@ function startExportPreparePolling(taskId: string) {
       stopExportPreparePolling();
       exportPreparing.value = false;
       exportPrepareTask.value = null;
-      ElMessage.error('导出任务状态获取失败');
+      ElMessage.error(resolveErrorMessage(error, '导出任务状态获取失败'));
     } finally {
       polling = false;
     }
@@ -1038,15 +1040,15 @@ async function handleExport() {
     console.error(error);
     exportPreparing.value = false;
     exportPrepareTask.value = null;
-    ElMessage.error('导出失败，请检查筛选条件后重试');
+    ElMessage.error(
+      resolveErrorMessage(error, '导出失败，请检查筛选条件后重试'),
+    );
   }
 }
 
 function handleSaved() {
   gridApi.reload();
-  if (activeTab.value === 'dashboard') {
-    void fetchSummary(true);
-  }
+  void fetchSummary(true);
 }
 
 function formatArrayCell(value: unknown) {
@@ -1349,7 +1351,6 @@ onUnmounted(() => {
   if (autoReloadTimer) {
     window.clearTimeout(autoReloadTimer);
   }
-  stopQueryPreparePolling();
   stopExportPreparePolling();
 });
 </script>
@@ -1357,6 +1358,20 @@ onUnmounted(() => {
 <template>
   <Page auto-content-height>
     <div class="dts-statistics-shell flex flex-col gap-4">
+      <div class="dts-snapshot-banner">
+        <ElTag type="info" effect="plain">
+          当前产品：{{ selectedProductLabel }}
+        </ElTag>
+        <ElTag type="primary" effect="plain">
+          最近同步：{{ snapshotGeneratedAtLabel }}
+        </ElTag>
+        <ElTag type="success" effect="plain">
+          缓存窗口：{{ snapshotWindowLabel }}
+        </ElTag>
+        <ElTag v-if="snapshotMeta?.isStale" type="danger" effect="light">
+          快照已过期，当前使用最近一次成功同步结果
+        </ElTag>
+      </div>
       <ElTabs v-model="activeTab" class="dts-statistics-tabs flex flex-col">
         <ElTabPane label="数据明细" name="list">
           <ElCard shadow="never" class="dts-data-card">
@@ -1390,12 +1405,12 @@ onUnmounted(() => {
                     }}
                   </ElTag>
                   <ElTag
-                    v-if="queryPreparing"
+                    v-if="queryLoading"
                     class="dts-data-card__status"
                     type="warning"
                     effect="light"
                   >
-                    {{ queryPrepareStatusText }}
+                    {{ queryStatusText }}
                   </ElTag>
                   <ElTag
                     v-if="exportPreparing"
@@ -1426,7 +1441,7 @@ onUnmounted(() => {
                             size="small"
                             class="dts-table-title__select"
                             placeholder="选择产品线"
-                            :disabled="queryPreparing || exportPreparing"
+                            :disabled="queryLoading || exportPreparing"
                           >
                             <ElOption
                               v-for="item in PRODUCT_OPTIONS"
@@ -1449,22 +1464,23 @@ onUnmounted(() => {
                             end-placeholder="结束时间"
                             range-separator="-"
                             format="YYYY-MM-DD HH:mm:ss"
-                            :disabled="queryPreparing || exportPreparing"
+                            :disabled="queryLoading || exportPreparing"
+                            :disabled-date="disableOutOfWindowDate"
                           />
                         </div>
                         <div class="dts-table-title__actions">
                           <ElButton
                             type="primary"
                             size="small"
-                            :loading="queryPreparing"
+                            :loading="queryLoading"
                             :disabled="exportPreparing"
                             @click="handleSearch(true)"
                           >
-                            {{ queryPreparing ? '查询准备中' : '立即刷新' }}
+                            {{ queryLoading ? '查询中' : '立即刷新' }}
                           </ElButton>
                           <ElButton
                             size="small"
-                            :disabled="queryPreparing || exportPreparing"
+                            :disabled="queryLoading || exportPreparing"
                             @click="handleReset"
                           >
                             重置
@@ -1625,6 +1641,26 @@ onUnmounted(() => {
                         {{ resolveSeverityMeta(row.serverityNoName).label }}
                       </ElTag>
                     </ElTooltip>
+                  </template>
+
+                  <template #cell-iNumOfCloseDays="{ row }">
+                    {{ formatCycleIntegerDisplay(row.iNumOfCloseDays) }}
+                  </template>
+
+                  <template #cell-iNumOfFirmDays="{ row }">
+                    {{ formatCycleIntegerDisplay(row.iNumOfFirmDays) }}
+                  </template>
+
+                  <template #cell-iNumOfLocateDays="{ row }">
+                    {{ formatCycleIntegerDisplay(row.iNumOfLocateDays) }}
+                  </template>
+
+                  <template #cell-iNumofModifyDays="{ row }">
+                    {{ formatCycleIntegerDisplay(row.iNumofModifyDays) }}
+                  </template>
+
+                  <template #cell-iNumofTestDays="{ row }">
+                    {{ formatCycleIntegerDisplay(row.iNumofTestDays) }}
                   </template>
 
                   <template #header-createAt>
@@ -2362,7 +2398,7 @@ onUnmounted(() => {
           >
             <ElEmpty
               v-if="!hasAppliedFilters"
-              description="正在准备默认筛选数据..."
+              description="正在加载默认筛选数据..."
             />
             <ElEmpty
               v-else-if="summary.total_count === 0"
@@ -2776,6 +2812,12 @@ onUnmounted(() => {
 <style scoped>
 .dts-statistics-shell {
   min-height: 0;
+}
+
+.dts-snapshot-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .dts-statistics-tabs {

@@ -320,6 +320,18 @@ export function formatDateTime(date: Date) {
   )}`;
 }
 
+export function formatCycleIntegerDisplay(value: unknown) {
+  const text = String(value ?? '').trim();
+  if (!text) {
+    return '-';
+  }
+  const numeric = Number(text);
+  if (Number.isFinite(numeric)) {
+    return String(Math.round(numeric));
+  }
+  return text;
+}
+
 export function getTodayDateRange(): [Date, Date] {
   const now = new Date();
   const start = new Date(now);

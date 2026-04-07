@@ -18,7 +18,12 @@ import { useVbenForm } from '#/adapter/form';
 import { saveDtsExtension } from '#/api/project-manager/dts-statistics';
 import { ZqDrawer } from '#/components/zq-drawer';
 
-import { useDevFormSchema, useQaFormSchema, useTestFormSchema } from './data';
+import {
+  formatCycleIntegerDisplay,
+  useDevFormSchema,
+  useQaFormSchema,
+  useTestFormSchema,
+} from './data';
 
 type EditTab = 'base' | 'dev' | 'qa' | 'test';
 
@@ -157,11 +162,26 @@ const baselineItems = computed(() => {
       label: '最后测试回归人',
       value: normalizeDisplay(row?.last_dts013_handler),
     },
-    { label: '关闭周期', value: normalizeDisplay(row?.iNumOfCloseDays) },
-    { label: '确认周期', value: normalizeDisplay(row?.iNumOfFirmDays) },
-    { label: '定位周期', value: normalizeDisplay(row?.iNumOfLocateDays) },
-    { label: '修改周期', value: normalizeDisplay(row?.iNumofModifyDays) },
-    { label: '回归测试周期', value: normalizeDisplay(row?.iNumofTestDays) },
+    {
+      label: '关闭周期',
+      value: formatCycleIntegerDisplay(row?.iNumOfCloseDays),
+    },
+    {
+      label: '确认周期',
+      value: formatCycleIntegerDisplay(row?.iNumOfFirmDays),
+    },
+    {
+      label: '定位周期',
+      value: formatCycleIntegerDisplay(row?.iNumOfLocateDays),
+    },
+    {
+      label: '修改周期',
+      value: formatCycleIntegerDisplay(row?.iNumofModifyDays),
+    },
+    {
+      label: '回归测试周期',
+      value: formatCycleIntegerDisplay(row?.iNumofTestDays),
+    },
   ];
 });
 

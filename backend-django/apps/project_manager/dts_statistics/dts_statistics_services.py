@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 import datetime
 import hashlib
 import json
@@ -11,6 +12,7 @@ import tempfile
 import threading
 import time
 from collections import Counter, defaultdict
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -25,6 +27,7 @@ from ninja.errors import HttpError
 
 from common.fu_cache import CacheManager
 from core.dict_item.dict_item_model import DictItem
+from scheduler.module.executor import scheduler_task
 
 from .dts_statistics_model import (
     DtsExtension,
@@ -43,11 +46,21 @@ logger = logging.getLogger(__name__)
 _SOURCE_CACHE_KEY_PREFIX = "cache:dts_statistics:source:v2:"
 _PREPARED_CACHE_KEY_PREFIX = "cache:dts_statistics:prepared:v1:"
 _LOCK_KEY_PREFIX = "cache:dts_statistics:lock:v2:"
+_SNAPSHOT_META_KEY_PREFIX = "cache:dts_statistics:snapshot:meta:v1:"
+_SNAPSHOT_CHUNK_KEY_PREFIX = "cache:dts_statistics:snapshot:chunk:v1:"
+_SNAPSHOT_FIELD_SET_KEY_PREFIX = "cache:dts_statistics:snapshot:field-set:v1:"
+_SNAPSHOT_LOCK_KEY_PREFIX = "cache:dts_statistics:snapshot:lock:v1:"
+_FILTERED_RESULT_CACHE_KEY_PREFIX = "cache:dts_statistics:filtered:v1:"
 
 _DEFAULT_SOURCE_CACHE_TTL_SECONDS = 180
 _DEFAULT_LOCK_TTL_SECONDS = 30
 _DEFAULT_PREPARED_CACHE_TTL_SECONDS = 10 * 60
 _DEFAULT_EXPORT_FILE_TTL_SECONDS = 24 * 60 * 60
+_DEFAULT_SNAPSHOT_CACHE_TTL_SECONDS = 72 * 60 * 60
+_DEFAULT_FILTERED_RESULT_CACHE_TTL_SECONDS = 10 * 60
+_DEFAULT_SNAPSHOT_CHUNK_SIZE = 1000
+_DEFAULT_SNAPSHOT_STALE_AFTER_SECONDS = 4 * 60 * 60
+_SNAPSHOT_WINDOW_MONTHS = 2
 
 _DATA_LAKE_PAGE_SIZE = 500
 _MAX_TIME_SPAN_MS_PER_CHUNK = 3 * 24 * 60 * 60 * 1000
@@ -66,12 +79,14 @@ _PRODUCT_ID_TO_NAME = {
     "250539396": "座舱",
     "250539397": "车控",
 }
+_SUPPORTED_PRODUCT_IDS = tuple(_PRODUCT_ID_TO_NAME.keys())
 
 _DEFAULT_FIELDS = [
     "dtsBizNo",
     "briefDesc",
     "dtsStatusName",
     "serverityNoName",
+    "updateTime",
     "parentNo",
     "createAt",
     "dCloseTime",
@@ -138,44 +153,6 @@ for _code, _name in _FLOW_STATE_CODE_TO_NAME.items():
     _FLOW_STATE_NAME_TO_CODES.setdefault(_name, set()).add(_code)
 
 _EXPORT_SHEET_TITLE = "DTS统计"
-_EXPORT_HEADERS = (
-    "DTS单号",
-    "项目",
-    "团队",
-    "级别",
-    "状态",
-    "处理人",
-    "提交时间",
-    "处理天数",
-    "描述",
-    "阶段",
-    "关闭类型",
-    "QA大类",
-    "责任PL组",
-    "是否下游",
-    "过程质量分类",
-    "需开发分析",
-    "需测试分析",
-    "开发责任人",
-    "测试责任人",
-    "开发分析完成",
-    "测试分析完成",
-    "QA备注",
-    "问题小类(开发)",
-    "问题原因(开发)",
-    "引入原因(开发)",
-    "改进措施(开发)",
-    "非底软说明(开发)",
-    "落地资产链接(开发)",
-    "改进状态(开发)",
-    "特效/功能(测试)",
-    "漏测原因(测试)",
-    "规范问题描述(测试)",
-    "改进措施(测试)",
-    "非测试说明(测试)",
-    "落地资产链接(测试)",
-    "改进状态(测试)",
-)
 
 
 def _get_setting(name: str, default: Any = None) -> Any:
@@ -214,6 +191,25 @@ def _normalize_text_list(values: Any) -> list[str]:
     return result
 
 
+def _normalize_runtime_datetime(
+    dt: datetime.datetime | None,
+) -> datetime.datetime | None:
+    if dt is None:
+        return None
+    current_tz = timezone.get_current_timezone()
+    if settings.USE_TZ:
+        if timezone.is_naive(dt):
+            return timezone.make_aware(dt, current_tz)
+        return timezone.localtime(dt, current_tz)
+    if timezone.is_aware(dt):
+        return timezone.make_naive(dt, current_tz)
+    return dt
+
+
+def _runtime_min_datetime() -> datetime.datetime:
+    return _normalize_runtime_datetime(datetime.datetime.min) or datetime.datetime.min
+
+
 def _parse_datetime(value: Any) -> datetime.datetime | None:
     text = _clean_text(value)
     if not text:
@@ -222,9 +218,7 @@ def _parse_datetime(value: Any) -> datetime.datetime | None:
     normalized_text = text.replace("Z", "+00:00")
     try:
         dt = datetime.datetime.fromisoformat(normalized_text)
-        if dt.tzinfo is None:
-            dt = timezone.make_aware(dt, timezone.get_current_timezone())
-        return dt
+        return _normalize_runtime_datetime(dt)
     except Exception:
         pass
 
@@ -236,8 +230,7 @@ def _parse_datetime(value: Any) -> datetime.datetime | None:
     ):
         try:
             dt = datetime.datetime.strptime(text, fmt)
-            dt = timezone.make_aware(dt, timezone.get_current_timezone())
-            return dt
+            return _normalize_runtime_datetime(dt)
         except Exception:
             continue
     return None
@@ -291,6 +284,50 @@ def _resolve_export_temp_dir() -> Path:
         path = Path(tempfile.gettempdir()) / "focus-admin" / "dts-statistics-export"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _snapshot_meta_key(product_id: str) -> str:
+    return f"{_SNAPSHOT_META_KEY_PREFIX}{_clean_text(product_id)}"
+
+
+def _snapshot_chunk_key(product_id: str, version: str, chunk_index: int) -> str:
+    return (
+        f"{_SNAPSHOT_CHUNK_KEY_PREFIX}{_clean_text(product_id)}:"
+        f"{_clean_text(version)}:{max(int(chunk_index or 0), 0)}"
+    )
+
+
+def _snapshot_field_set_key(product_id: str, version: str) -> str:
+    return f"{_SNAPSHOT_FIELD_SET_KEY_PREFIX}{_clean_text(product_id)}:{_clean_text(version)}"
+
+
+def _snapshot_lock_key(product_id: str) -> str:
+    return f"{_SNAPSHOT_LOCK_KEY_PREFIX}{_clean_text(product_id)}"
+
+
+def _serialize_snapshot_meta(meta: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(meta, dict):
+        return None
+    product_id = _clean_text(meta.get("productId"))
+    generated_at = _clean_text(meta.get("generatedAt"))
+    is_stale = bool(meta.get("isStale"))
+    generated_dt = _parse_datetime(generated_at)
+    if generated_dt is not None:
+        is_stale = is_stale or (
+            timezone.now() - generated_dt
+            > datetime.timedelta(seconds=_resolve_snapshot_stale_after_seconds())
+        )
+    return {
+        "productId": product_id,
+        "productName": _clean_text(meta.get("productName"))
+        or (_PRODUCT_ID_TO_NAME.get(product_id) or product_id),
+        "version": _clean_text(meta.get("version")),
+        "generatedAt": generated_at or None,
+        "windowBegin": max(int(meta.get("windowBegin") or 0), 0),
+        "windowEnd": max(int(meta.get("windowEnd") or 0), 0),
+        "rowCount": max(int(meta.get("rowCount") or 0), 0),
+        "isStale": is_stale,
+    }
 
 
 def _serialize_query_task(
@@ -351,6 +388,58 @@ def _resolve_max_scan_pages() -> int:
     except Exception:
         value = _MAX_SCAN_PAGES_PER_CHUNK
     return max(value, 1)
+
+
+def _resolve_snapshot_cache_ttl_seconds() -> int:
+    return _resolve_cache_ttl(
+        "DTS_STATISTICS_SNAPSHOT_CACHE_TTL_SECONDS",
+        _DEFAULT_SNAPSHOT_CACHE_TTL_SECONDS,
+    )
+
+
+def _resolve_filtered_result_cache_ttl_seconds() -> int:
+    return _resolve_cache_ttl(
+        "DTS_STATISTICS_FILTERED_RESULT_CACHE_TTL_SECONDS",
+        _DEFAULT_FILTERED_RESULT_CACHE_TTL_SECONDS,
+    )
+
+
+def _resolve_snapshot_chunk_size() -> int:
+    raw_value = _get_setting(
+        "DTS_STATISTICS_SNAPSHOT_CHUNK_SIZE",
+        _DEFAULT_SNAPSHOT_CHUNK_SIZE,
+    )
+    try:
+        value = int(raw_value)
+    except Exception:
+        value = _DEFAULT_SNAPSHOT_CHUNK_SIZE
+    return max(value, 100)
+
+
+def _resolve_snapshot_stale_after_seconds() -> int:
+    return _resolve_cache_ttl(
+        "DTS_STATISTICS_SNAPSHOT_STALE_AFTER_SECONDS",
+        _DEFAULT_SNAPSHOT_STALE_AFTER_SECONDS,
+    )
+
+
+def _subtract_months(dt: datetime.datetime, months: int) -> datetime.datetime:
+    safe_months = max(int(months or 0), 0)
+    if safe_months <= 0:
+        return dt
+    month_index = (dt.month - 1) - safe_months
+    year = dt.year + (month_index // 12)
+    month = (month_index % 12) + 1
+    day = min(dt.day, calendar.monthrange(year, month)[1])
+    return dt.replace(year=year, month=month, day=day)
+
+
+def _resolve_snapshot_window(
+    reference_dt: datetime.datetime | None = None,
+) -> tuple[int, int]:
+    end_dt = reference_dt or timezone.now()
+    begin_dt = _subtract_months(end_dt, _SNAPSHOT_WINDOW_MONTHS)
+    return int(begin_dt.timestamp() * 1000), int(end_dt.timestamp() * 1000)
 
 
 def _resolve_time_window_ms(
@@ -463,6 +552,7 @@ def _mock_fetch_page(payload: dict[str, Any]) -> dict[str, Any]:
         flow_state = rng.choice(flow_codes)
         severity_pos = rng.randint(0, len(severity_codes) - 1)
         create_dt = base_dt - datetime.timedelta(hours=index % (24 * 30))
+        update_dt = create_dt + datetime.timedelta(hours=rng.randint(1, 96))
         close_dt = (
             create_dt + datetime.timedelta(hours=rng.randint(4, 72))
             if flow_state == "FS99"
@@ -475,6 +565,7 @@ def _mock_fetch_page(payload: dict[str, Any]) -> dict[str, Any]:
                     "briefDesc": f"Mock defect {index + 1}",
                     "dtsStatusName": flow_names.get(flow_state) or flow_state,
                     "serverityNoName": severity_names[severity_pos],
+                    "updateTime": update_dt.strftime("%Y-%m-%d %H:%M:%S"),
                     "parentNo": f"DTSP{index % 2000:04d}",
                     "createAt": create_dt.strftime("%Y-%m-%d %H:%M:%S"),
                     "dCloseTime": close_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -616,13 +707,31 @@ def _merge_duplicate_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]
             merged[defect_no] = current
             continue
 
-        existing_dt = _parse_datetime(existing.get("createAt"))
-        incoming_dt = _parse_datetime(row.get("createAt"))
-        if incoming_dt and (not existing_dt or incoming_dt > existing_dt):
-            existing["createAt"] = row.get("createAt")
+        existing_update_dt = _parse_datetime(existing.get("updateTime"))
+        incoming_update_dt = _parse_datetime(row.get("updateTime"))
+        existing_create_dt = _parse_datetime(existing.get("createAt"))
+        incoming_create_dt = _parse_datetime(row.get("createAt"))
+        should_overlay_primary_fields = False
+        if incoming_update_dt and (
+            not existing_update_dt or incoming_update_dt > existing_update_dt
+        ):
+            should_overlay_primary_fields = True
+        elif (
+            incoming_update_dt == existing_update_dt
+            and incoming_create_dt
+            and (not existing_create_dt or incoming_create_dt > existing_create_dt)
+        ):
+            should_overlay_primary_fields = True
+
+        if should_overlay_primary_fields:
+            for key in ("updateTime", "createAt", "dCloseTime", "dtsStatusName"):
+                if not _is_empty_value(row.get(key)):
+                    existing[key] = row.get(key)
 
         for key, value in row.items():
-            if key not in existing or (_is_empty_value(existing.get(key)) and not _is_empty_value(value)):
+            if key not in existing or (
+                _is_empty_value(existing.get(key)) and not _is_empty_value(value)
+            ):
                 existing[key] = value
 
     return list(merged.values())
@@ -831,6 +940,7 @@ def _normalize_source_row(
     brief_desc = _clean_text(row.get("briefDesc"))
     status_name = _clean_text(row.get("dtsStatusName"))
     severity_name = _clean_text(row.get("serverityNoName"))
+    update_time = _clean_text(row.get("updateTime"))
     create_at = _clean_text(row.get("createAt"))
     close_time = _clean_text(row.get("dCloseTime"))
     team_name = _clean_text(row.get("sDeptOneNoName"))
@@ -843,6 +953,7 @@ def _normalize_source_row(
         "briefDesc": brief_desc or None,
         "dtsStatusName": status_name or None,
         "serverityNoName": severity_name or None,
+        "updateTime": update_time or None,
         "parentNo": _clean_text(row.get("parentNo")) or None,
         "createAt": create_at or None,
         "dCloseTime": close_time or None,
@@ -914,7 +1025,7 @@ def _apply_source_filters(
 def _sort_defects(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     def sort_key(item: dict[str, Any]):
         dt = _parse_datetime(item.get("createAt"))
-        safe_dt = dt or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+        safe_dt = dt or _runtime_min_datetime()
         defect_no = _clean_text(item.get("dtsBizNo"))
         return safe_dt, defect_no
 
@@ -1368,14 +1479,268 @@ def _apply_local_filters(
     return result
 
 
+def _ensure_supported_product_id(product_id: str) -> str:
+    safe_product_id = _clean_text(product_id) or "250539396"
+    if safe_product_id not in _SUPPORTED_PRODUCT_IDS:
+        raise HttpError(422, "“全部”产品暂不支持查询，请选择座舱或车控")
+    return safe_product_id
+
+
+def _get_snapshot_meta(product_id: str) -> dict[str, Any] | None:
+    cached = CacheManager.get(_snapshot_meta_key(product_id))
+    if isinstance(cached, dict):
+        return cached
+    return None
+
+
+def _cleanup_snapshot_version(meta: dict[str, Any] | None) -> None:
+    if not isinstance(meta, dict):
+        return
+    product_id = _clean_text(meta.get("productId"))
+    version = _clean_text(meta.get("version"))
+    chunk_count = max(int(meta.get("chunkCount") or 0), 0)
+    if not product_id or not version:
+        return
+    for chunk_index in range(chunk_count):
+        CacheManager.delete(_snapshot_chunk_key(product_id, version, chunk_index))
+    CacheManager.delete(_snapshot_field_set_key(product_id, version))
+
+
+def _build_snapshot_field_sets(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
+    return {
+        field: sorted(
+            {
+                _clean_text(item.get(field))
+                for item in rows
+                if _clean_text(item.get(field))
+            }
+        )
+        for field in _FIELD_SET_SUPPORTED_FIELDS
+    }
+
+
+def _write_snapshot_payload(
+    *,
+    product_id: str,
+    rows: list[dict[str, Any]],
+    generated_at: datetime.datetime,
+    window_begin: int,
+    window_end: int,
+) -> dict[str, Any]:
+    ttl = _resolve_snapshot_cache_ttl_seconds()
+    chunk_size = _resolve_snapshot_chunk_size()
+    version_seed = f"{product_id}:{generated_at.isoformat()}:{len(rows)}"
+    version = (
+        f"{generated_at.strftime('%Y%m%d%H%M%S')}-"
+        f"{hashlib.md5(version_seed.encode('utf-8')).hexdigest()[:8]}"
+    )
+    field_set_key = _snapshot_field_set_key(product_id, version)
+    created_chunk_indexes: list[int] = []
+    try:
+        for chunk_index, chunk in enumerate(_iter_chunks(rows, chunk_size)):
+            CacheManager.set(
+                _snapshot_chunk_key(product_id, version, chunk_index),
+                chunk,
+                ttl,
+            )
+            created_chunk_indexes.append(chunk_index)
+        CacheManager.set(field_set_key, _build_snapshot_field_sets(rows), ttl)
+        meta = {
+            "productId": product_id,
+            "productName": _PRODUCT_ID_TO_NAME.get(product_id) or product_id,
+            "version": version,
+            "generatedAt": generated_at.isoformat(),
+            "windowBegin": int(window_begin or 0),
+            "windowEnd": int(window_end or 0),
+            "rowCount": len(rows),
+            "chunkCount": len(created_chunk_indexes),
+            "isStale": False,
+        }
+        previous_meta = _get_snapshot_meta(product_id)
+        CacheManager.set(_snapshot_meta_key(product_id), meta, ttl)
+        if previous_meta and _clean_text(previous_meta.get("version")) != version:
+            _cleanup_snapshot_version(previous_meta)
+        return meta
+    except Exception:
+        for chunk_index in created_chunk_indexes:
+            CacheManager.delete(_snapshot_chunk_key(product_id, version, chunk_index))
+        CacheManager.delete(field_set_key)
+        raise
+
+
+def _mark_snapshot_stale(product_id: str) -> None:
+    meta = _get_snapshot_meta(product_id)
+    serialized = _serialize_snapshot_meta(meta)
+    if meta is None or serialized is None:
+        return
+    next_meta = {
+        **meta,
+        "isStale": True,
+        "generatedAt": serialized.get("generatedAt"),
+        "windowBegin": serialized.get("windowBegin"),
+        "windowEnd": serialized.get("windowEnd"),
+        "rowCount": serialized.get("rowCount"),
+    }
+    CacheManager.set(
+        _snapshot_meta_key(product_id),
+        next_meta,
+        _resolve_snapshot_cache_ttl_seconds(),
+    )
+
+
+def _load_snapshot_rows(meta: dict[str, Any]) -> list[dict[str, Any]]:
+    product_id = _clean_text(meta.get("productId"))
+    version = _clean_text(meta.get("version"))
+    chunk_count = max(int(meta.get("chunkCount") or 0), 0)
+    if not product_id or not version:
+        raise HttpError(503, "DTS 快照元数据异常，请重新执行同步任务")
+    rows: list[dict[str, Any]] = []
+    for chunk_index in range(chunk_count):
+        chunk = CacheManager.get(_snapshot_chunk_key(product_id, version, chunk_index))
+        if chunk is None:
+            raise HttpError(503, "DTS 快照数据缺失，请重新执行同步任务")
+        if not isinstance(chunk, list):
+            continue
+        rows.extend(item for item in chunk if isinstance(item, dict))
+    return rows
+
+
+def _validate_snapshot_query_window(
+    query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
+    snapshot: dict[str, Any],
+) -> None:
+    _, _, _, update_time_begin, update_time_end = _resolve_base_runtime_filters(query)
+    window_begin = max(int(snapshot.get("windowBegin") or 0), 0)
+    window_end = max(int(snapshot.get("windowEnd") or 0), 0)
+    if window_begin <= 0 or window_end <= 0:
+        raise HttpError(503, "DTS 快照时间窗口异常，请重新执行同步任务")
+    if update_time_begin > 0 and update_time_begin < window_begin:
+        raise HttpError(422, "当前仅支持最近 2 个月更新时间数据")
+    if update_time_end > 0 and update_time_end < window_begin:
+        raise HttpError(422, "当前筛选时间早于缓存窗口，请调整到最近 2 个月内")
+    if update_time_begin > 0 and update_time_begin > window_end:
+        raise HttpError(422, "当前筛选时间晚于最近一次同步快照，请稍后重试")
+
+
+def _build_filtered_result_payload(
+    query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
+    *,
+    snapshot_version: str,
+    ignored_fields: set[str] | None = None,
+) -> dict[str, Any]:
+    ignored = ignored_fields or set()
+    product_id, flow_states, severity_nos, update_time_begin, update_time_end = (
+        _resolve_base_runtime_filters(query)
+    )
+    local_filters = _resolve_local_runtime_filters(query)
+    if "flowStates" in ignored:
+        flow_states = []
+    if "severityNos" in ignored:
+        severity_nos = []
+    if "updateTime" in ignored:
+        update_time_begin = 0
+        update_time_end = 0
+    if "createAt" in ignored:
+        local_filters["createAtBegin"] = 0
+        local_filters["createAtEnd"] = 0
+    if "dCloseTime" in ignored:
+        local_filters["dCloseTimeBegin"] = 0
+        local_filters["dCloseTimeEnd"] = 0
+    if "sDeptOneNoName" in ignored:
+        local_filters["sDeptOneNoNames"] = []
+    if "sSubmitsystemNoName" in ignored:
+        local_filters["sSubmitsystemNoNames"] = []
+    return {
+        "snapshotVersion": _clean_text(snapshot_version),
+        "productId": product_id,
+        "flowStates": flow_states,
+        "severityNos": severity_nos,
+        "updateTimeBegin": update_time_begin,
+        "updateTimeEnd": update_time_end,
+        "createAtBegin": int(local_filters.get("createAtBegin") or 0),
+        "createAtEnd": int(local_filters.get("createAtEnd") or 0),
+        "dCloseTimeBegin": int(local_filters.get("dCloseTimeBegin") or 0),
+        "dCloseTimeEnd": int(local_filters.get("dCloseTimeEnd") or 0),
+        "sDeptOneNoNames": _normalize_text_list(local_filters.get("sDeptOneNoNames")),
+        "sSubmitsystemNoNames": _normalize_text_list(
+            local_filters.get("sSubmitsystemNoNames")
+        ),
+        "ignoredFields": sorted(ignored),
+    }
+
+
+def _apply_snapshot_filters(
+    rows: list[dict[str, Any]],
+    query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
+    *,
+    ignored_fields: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    ignored = ignored_fields or set()
+    _, flow_states, severity_nos, update_time_begin, update_time_end = (
+        _resolve_base_runtime_filters(query)
+    )
+    filtered = rows
+    if "updateTime" not in ignored and (update_time_begin > 0 or update_time_end > 0):
+        filtered = [
+            row
+            for row in filtered
+            if _match_time_range(row.get("updateTime"), update_time_begin, update_time_end)
+        ]
+    filtered = _apply_source_filters(
+        filtered,
+        flow_states=[] if "flowStates" in ignored else flow_states,
+        severity_nos=[] if "severityNos" in ignored else severity_nos,
+    )
+    filtered = _apply_local_filters(filtered, query, ignored_fields=ignored)
+    return _sort_defects(filtered)
+
+
+def _get_snapshot_rows_for_query(
+    query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    product_id = _ensure_supported_product_id(getattr(query, "productId", ""))
+    raw_meta = _get_snapshot_meta(product_id)
+    if raw_meta is None:
+        raise HttpError(409, "DTS 快照数据准备中，请先执行同步任务")
+    snapshot = _serialize_snapshot_meta(raw_meta)
+    if snapshot is None:
+        raise HttpError(503, "DTS 快照元数据异常，请重新执行同步任务")
+    _validate_snapshot_query_window(query, snapshot)
+    return raw_meta, snapshot
+
+
+def _get_filtered_snapshot_rows(
+    query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
+    *,
+    ignored_fields: set[str] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    raw_meta, snapshot = _get_snapshot_rows_for_query(query)
+    payload = _build_filtered_result_payload(
+        query,
+        snapshot_version=_clean_text(snapshot.get("version")),
+        ignored_fields=ignored_fields,
+    )
+    cache_key, _ = _cache_key(_FILTERED_RESULT_CACHE_KEY_PREFIX, payload)
+    cached = CacheManager.get(cache_key)
+    if isinstance(cached, list):
+        return [item for item in cached if isinstance(item, dict)], snapshot
+    rows = _load_snapshot_rows(raw_meta)
+    filtered = _apply_snapshot_filters(rows, query, ignored_fields=ignored_fields)
+    CacheManager.set(
+        cache_key,
+        filtered,
+        _resolve_filtered_result_cache_ttl_seconds(),
+    )
+    return filtered, snapshot
+
+
 def _resolve_runtime_defects(
     query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
     *,
     user: Any = None,
-) -> list[dict[str, Any]]:
-    prepared = _get_prepared_defects(query, user=user)
-    base_defects = prepared if prepared is not None else _load_filtered_defects(query)
-    return _apply_local_filters(base_defects, query)
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    del user
+    return _get_filtered_snapshot_rows(query)
 
 
 def _collect_field_set_values(
@@ -1397,6 +1762,7 @@ def get_dts_statistics_field_sets(
     *,
     user: Any = None,
 ) -> dict[str, Any]:
+    del user
     requested_fields = _normalize_text_list(getattr(data, "fields", []))
     if not requested_fields:
         return {"fieldSets": {}}
@@ -1407,13 +1773,9 @@ def get_dts_statistics_field_sets(
     if unsupported_fields:
         raise HttpError(422, f"暂不支持的字段集合请求: {', '.join(unsupported_fields)}")
 
-    prepared = _get_prepared_defects(data, user=user)
-    base_defects = prepared if prepared is not None else _load_filtered_defects(data)
-
     field_sets: dict[str, list[str]] = {}
     for field in requested_fields:
-        scoped_defects = _apply_local_filters(
-            base_defects,
+        scoped_defects, _snapshot = _get_filtered_snapshot_rows(
             data,
             ignored_fields={field},
         )
@@ -1443,6 +1805,115 @@ def _load_extensions_map_for_defects(
         for item in items:
             extensions_map[item.defect_no] = item
     return extensions_map
+
+
+def _refresh_snapshot_for_product(product_id: str) -> dict[str, Any]:
+    safe_product_id = _ensure_supported_product_id(product_id)
+    lock_key = _snapshot_lock_key(safe_product_id)
+    lock_ttl = _resolve_cache_ttl(
+        "DTS_STATISTICS_SNAPSHOT_LOCK_TTL_SECONDS",
+        30 * 60,
+    )
+    if not cache.add(lock_key, "1", lock_ttl):
+        current_meta = _serialize_snapshot_meta(_get_snapshot_meta(safe_product_id))
+        if current_meta is not None:
+            logger.info(
+                "DtsStatistics snapshot refresh skipped because lock exists product_id=%s",
+                safe_product_id,
+            )
+            return current_meta
+        raise HttpError(409, "DTS 快照刷新任务正在执行中")
+
+    try:
+        window_begin, window_end = _resolve_snapshot_window()
+        logger.info(
+            "DtsStatistics snapshot refresh start product_id=%s window=[%s,%s]",
+            safe_product_id,
+            window_begin,
+            window_end,
+        )
+        scanned_rows: list[dict[str, Any]] = []
+        total_chunks = 0
+        total_pages = 0
+        for chunk_begin, chunk_end in _iter_time_chunks(
+            window_begin,
+            window_end,
+            _MAX_TIME_SPAN_MS_PER_CHUNK,
+        ):
+            total_chunks += 1
+            chunk_rows, scanned_pages, chunk_total_pages = _fetch_rows_for_time_chunk(
+                product_id=safe_product_id,
+                update_time_begin=chunk_begin,
+                update_time_end=chunk_end,
+            )
+            scanned_rows.extend(chunk_rows)
+            total_pages += max(chunk_total_pages, scanned_pages)
+
+        merged_rows = _merge_duplicate_rows(scanned_rows)
+        normalized_rows: list[dict[str, Any]] = []
+        for row in merged_rows:
+            normalized = _normalize_source_row(row, product_id=safe_product_id)
+            if normalized is not None:
+                normalized_rows.append(normalized)
+        normalized_rows = _sort_defects(normalized_rows)
+        meta = _write_snapshot_payload(
+            product_id=safe_product_id,
+            rows=normalized_rows,
+            generated_at=timezone.now(),
+            window_begin=window_begin,
+            window_end=window_end,
+        )
+        snapshot = _serialize_snapshot_meta(meta) or {}
+        logger.info(
+            "DtsStatistics snapshot refresh success product_id=%s row_count=%s chunk_count=%s scanned_pages=%s scan_chunks=%s",
+            safe_product_id,
+            snapshot.get("rowCount"),
+            meta.get("chunkCount"),
+            total_pages,
+            total_chunks,
+        )
+        return snapshot
+    finally:
+        cache.delete(lock_key)
+
+
+@scheduler_task
+def run_dts_statistics_snapshot_job(**kwargs) -> dict[str, Any]:
+    del kwargs
+    close_old_connections()
+    results: list[dict[str, Any]] = []
+    try:
+        for product_id in _SUPPORTED_PRODUCT_IDS:
+            try:
+                snapshot = _refresh_snapshot_for_product(product_id)
+                results.append(
+                    {
+                        "productId": product_id,
+                        "productName": _PRODUCT_ID_TO_NAME.get(product_id) or product_id,
+                        "status": "success",
+                        "snapshot": snapshot,
+                    }
+                )
+            except Exception as exc:
+                logger.exception(
+                    "DtsStatistics snapshot refresh failed product_id=%s",
+                    product_id,
+                )
+                _mark_snapshot_stale(product_id)
+                results.append(
+                    {
+                        "productId": product_id,
+                        "productName": _PRODUCT_ID_TO_NAME.get(product_id) or product_id,
+                        "status": "failed",
+                        "error": str(exc),
+                        "snapshot": _serialize_snapshot_meta(
+                            _get_snapshot_meta(product_id)
+                        ),
+                    }
+                )
+        return {"items": results}
+    finally:
+        connection.close()
 
 
 def _update_query_task_progress(
@@ -1560,26 +2031,12 @@ def prepare_dts_statistics_query(
         raise HttpError(401, "用户未登录")
 
     query = _to_export_query_schema(data)
-    payload, fingerprint, cache_key = _resolve_prepared_cache_identity(query, user=user)
-    prepared = _get_prepared_defects_by_cache_key(cache_key)
-    if prepared is not None:
-        return {"mode": "ready", "task": None}
-
-    active_task = _get_active_query_task(user, fingerprint)
-    if active_task is not None:
-        return {"mode": "async", "task": _serialize_query_task(active_task)}
-
-    task = DtsStatisticsQueryTask.objects.create(
-        user=user,
-        sys_creator=user,
-        fingerprint=fingerprint,
-        payload=payload,
-        status=DtsStatisticsQueryTask.STATUS_PENDING,
-        message="查询任务已提交，正在排队执行",
-        result_cache_key=cache_key,
-    )
-    _start_dts_statistics_query_task_thread(str(task.id))
-    return {"mode": "async", "task": _serialize_query_task(task)}
+    product_id = _ensure_supported_product_id(getattr(query, "productId", ""))
+    snapshot = _serialize_snapshot_meta(_get_snapshot_meta(product_id))
+    if snapshot is None:
+        raise HttpError(409, "DTS 快照数据准备中，请先执行同步任务")
+    _validate_snapshot_query_window(query, snapshot)
+    return {"mode": "ready", "task": None}
 
 
 def get_dts_statistics_query_task(user: Any, task_id: str) -> dict[str, Any]:
@@ -1600,7 +2057,7 @@ def get_dts_statistics_list(
     *,
     user: Any = None,
 ) -> dict[str, Any]:
-    defects = _resolve_runtime_defects(query, user=user)
+    defects, snapshot = _resolve_runtime_defects(query, user=user)
     total, page_items = _paginate(defects, query.pageIndex, query.pageSize)
     defect_nos = [
         _clean_text(item.get("dtsBizNo"))
@@ -1615,7 +2072,7 @@ def get_dts_statistics_list(
         )
         for defect in page_items
     ]
-    return {"total": total, "items": items}
+    return {"total": total, "items": items, "snapshot": snapshot}
 
 
 def _distribution(counter: Counter[str], *, top_n: int | None = None) -> list[dict[str, Any]]:
@@ -1645,46 +2102,77 @@ def _join_lines(value: Any) -> str:
     return _clean_text(value)
 
 
+def _format_cycle_integer_value(value: Any) -> str:
+    text = _clean_text(value)
+    if not text:
+        return "-"
+    try:
+        decimal_value = Decimal(text)
+    except (InvalidOperation, TypeError, ValueError):
+        return text
+    rounded = decimal_value.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return str(int(rounded))
+
+
+_EXPORT_COLUMN_SPECS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
+    ("问题单号", lambda item: _clean_text(item.get("dtsBizNo"))),
+    ("简要描述", lambda item: _clean_text(item.get("briefDesc"))),
+    ("当前状态", lambda item: _clean_text(item.get("dtsStatusName"))),
+    ("严重程度", lambda item: _clean_text(item.get("serverityNoName"))),
+    ("父单单号", lambda item: _clean_text(item.get("parentNo"))),
+    ("提单时间", lambda item: _clean_text(item.get("createAt"))),
+    ("关闭时间", lambda item: _clean_text(item.get("dCloseTime"))),
+    ("提出方部门", lambda item: _clean_text(item.get("sDeptOneNoName"))),
+    ("当前处理人", lambda item: _clean_text(item.get("currentHandler"))),
+    ("提单人工号", lambda item: _clean_text(item.get("creator"))),
+    ("提单人姓名", lambda item: _clean_text(item.get("sSubmitUserName"))),
+    ("子系统", lambda item: _clean_text(item.get("sSubmitsystemNoName"))),
+    ("产品族名称", lambda item: _clean_text(item.get("sProdFamilyNoName"))),
+    ("产品名称", lambda item: _clean_text(item.get("sProdXtdNoName"))),
+    ("测试返回次数", lambda item: _clean_text(item.get("iTestBackCount"))),
+    ("最后开发修改人", lambda item: _clean_text(item.get("last_dts009_handler"))),
+    ("最后审核修改人", lambda item: _clean_text(item.get("last_dts010_handler"))),
+    ("最后测试回归人", lambda item: _clean_text(item.get("last_dts013_handler"))),
+    ("关闭周期", lambda item: _format_cycle_integer_value(item.get("iNumOfCloseDays"))),
+    ("确认周期", lambda item: _format_cycle_integer_value(item.get("iNumOfFirmDays"))),
+    ("定位周期", lambda item: _format_cycle_integer_value(item.get("iNumOfLocateDays"))),
+    ("修改周期", lambda item: _format_cycle_integer_value(item.get("iNumofModifyDays"))),
+    ("回归测试周期", lambda item: _format_cycle_integer_value(item.get("iNumofTestDays"))),
+    ("QA大类", lambda item: _clean_text(item.get("qa_category"))),
+    ("责任PL组", lambda item: _clean_text(item.get("pl_group_name"))),
+    ("是否下游", lambda item: _clean_text(item.get("is_downstream"))),
+    ("过程质量分类", lambda item: _clean_text(item.get("process_quality_type"))),
+    ("需开发分析", lambda item: _clean_text(item.get("need_dev_analyze"))),
+    ("需测试分析", lambda item: _clean_text(item.get("need_test_analyze"))),
+    ("开发责任人", lambda item: _clean_text(item.get("dev_owner_name"))),
+    ("测试责任人", lambda item: _clean_text(item.get("test_owner_name"))),
+    ("开发分析完成", lambda item: _clean_text(item.get("is_dev_analyzed"))),
+    ("测试分析完成", lambda item: _clean_text(item.get("is_test_analyzed"))),
+    ("QA备注", lambda item: _clean_text(item.get("qa_remark"))),
+    ("问题小类", lambda item: _join_lines(item.get("dev_sub_category"))),
+    ("问题原因", lambda item: _clean_text(item.get("dev_reason"))),
+    ("引入原因", lambda item: _clean_text(item.get("dev_intro_reason"))),
+    ("开发填报-改进措施", lambda item: _join_lines(item.get("dev_improvements"))),
+    ("非底软说明", lambda item: _join_lines(item.get("dev_non_base_desc"))),
+    ("开发填报-落地资产链接", lambda item: _clean_text(item.get("dev_asset_link"))),
+    ("开发填报-改进状态", lambda item: _clean_text(item.get("dev_status"))),
+    ("特效/功能", lambda item: _clean_text(item.get("test_feature"))),
+    ("漏测原因", lambda item: _join_lines(item.get("test_miss_reason"))),
+    (
+        "规范问题描述",
+        lambda item: _clean_text(item.get("test_standard_desc")),
+    ),
+    ("测试填报-改进措施", lambda item: _join_lines(item.get("test_improvements"))),
+    ("非测试说明", lambda item: _clean_text(item.get("test_non_test_desc"))),
+    ("测试填报-落地资产链接", lambda item: _clean_text(item.get("test_asset_link"))),
+    ("测试填报-改进状态", lambda item: _clean_text(item.get("test_status"))),
+]
+
+_EXPORT_HEADERS = tuple(title for title, _ in _EXPORT_COLUMN_SPECS)
+
+
 def _build_export_row(item: dict[str, Any]) -> list[Any]:
-    close_type = "关闭" if _is_closed(item) else "未关闭"
-    return [
-        _clean_text(item.get("dtsBizNo")),
-        _clean_text(item.get("sProdXtdNoName") or item.get("productName")),
-        _clean_text(item.get("sDeptOneNoName")),
-        _clean_text(item.get("serverityNoName")),
-        _clean_text(item.get("dtsStatusName")),
-        _clean_text(item.get("currentHandler")),
-        _clean_text(item.get("createAt")),
-        _clean_text(item.get("iNumOfCloseDays")),
-        _clean_text(item.get("briefDesc")),
-        _clean_text(item.get("dtsStatusName")),
-        close_type,
-        _clean_text(item.get("qa_category")),
-        _clean_text(item.get("pl_group_name")),
-        _clean_text(item.get("is_downstream")),
-        _clean_text(item.get("process_quality_type")),
-        _clean_text(item.get("need_dev_analyze")),
-        _clean_text(item.get("need_test_analyze")),
-        _clean_text(item.get("dev_owner_name")),
-        _clean_text(item.get("test_owner_name")),
-        _clean_text(item.get("is_dev_analyzed")),
-        _clean_text(item.get("is_test_analyzed")),
-        _clean_text(item.get("qa_remark")),
-        _join_lines(item.get("dev_sub_category")),
-        _clean_text(item.get("dev_reason")),
-        _clean_text(item.get("dev_intro_reason")),
-        _join_lines(item.get("dev_improvements")),
-        _join_lines(item.get("dev_non_base_desc")),
-        _clean_text(item.get("dev_asset_link")),
-        _clean_text(item.get("dev_status")),
-        _clean_text(item.get("test_feature")),
-        _join_lines(item.get("test_miss_reason")),
-        _clean_text(item.get("test_standard_desc")),
-        _join_lines(item.get("test_improvements")),
-        _clean_text(item.get("test_non_test_desc")),
-        _clean_text(item.get("test_asset_link")),
-        _clean_text(item.get("test_status")),
-    ]
+    return [resolver(item) for _, resolver in _EXPORT_COLUMN_SPECS]
 
 
 def _build_export_response(workbook: openpyxl.Workbook) -> HttpResponse:
@@ -1763,46 +2251,17 @@ def _run_dts_statistics_export_task(task_id: str) -> None:
         )
 
         query = _to_export_query_schema(task.payload or {})
-        _, _, prepared_cache_key = _resolve_prepared_cache_identity(query, user=task.user)
-        defects = _get_prepared_defects_by_cache_key(prepared_cache_key)
-
-        if defects is None:
-            progress_state = {
-                "progress": -1,
-                "last_ts": 0.0,
-            }
-
-            def _on_prepare_progress(
-                message: str,
-                progress: int,
-                _scanned_pages: int,
-                _total_pages: int,
-            ) -> None:
-                mapped_progress = min(65, 5 + int(progress * 0.6))
-                now_ts = time.time()
-                if (
-                    mapped_progress == progress_state["progress"]
-                    and now_ts - progress_state["last_ts"] < 0.8
-                ):
-                    return
-                progress_state["progress"] = mapped_progress
-                progress_state["last_ts"] = now_ts
-                _update_export_task_progress(
-                    task_id,
-                    message=message or "正在准备导出数据",
-                    progress=mapped_progress,
-                )
-
-            defects = _load_filtered_defects(query, progress_callback=_on_prepare_progress)
-            _set_prepared_defects(prepared_cache_key, defects)
-        else:
-            _update_export_task_progress(
-                task_id,
-                message="命中查询缓存，正在生成导出文件",
-                progress=65,
-            )
-
-        defects = _apply_local_filters(defects, query)
+        _update_export_task_progress(
+            task_id,
+            message="正在读取快照缓存",
+            progress=18,
+        )
+        defects, _snapshot = _get_filtered_snapshot_rows(query)
+        _update_export_task_progress(
+            task_id,
+            message="快照筛选完成，正在生成导出文件",
+            progress=65,
+        )
         workbook = _build_export_workbook(
             defects,
             progress_callback=lambda message, progress: _update_export_task_progress(
@@ -1869,7 +2328,15 @@ def prepare_dts_statistics_export(
 
     _cleanup_expired_export_files(limit=200)
     query = _to_export_query_schema(data)
-    task_payload = _build_export_task_payload(query)
+    product_id = _ensure_supported_product_id(getattr(query, "productId", ""))
+    snapshot = _serialize_snapshot_meta(_get_snapshot_meta(product_id))
+    if snapshot is None:
+        raise HttpError(409, "DTS 快照数据准备中，请先执行同步任务")
+    _validate_snapshot_query_window(query, snapshot)
+    task_payload = {
+        **_build_export_task_payload(query),
+        "snapshotVersion": _clean_text(snapshot.get("version")),
+    }
     fingerprint = _fingerprint_payload(task_payload)
 
     active_task = _get_active_export_task(user, fingerprint)
@@ -1943,7 +2410,7 @@ def export_dts_statistics(
     *,
     user: Any = None,
 ) -> HttpResponse:
-    defects = _resolve_runtime_defects(query, user=user)
+    defects, _snapshot = _resolve_runtime_defects(query, user=user)
     workbook = _build_export_workbook(defects)
     return _build_export_response(workbook)
 
@@ -1960,7 +2427,7 @@ def get_dts_statistics_summary(
     *,
     user: Any = None,
 ) -> dict[str, Any]:
-    defects = _resolve_runtime_defects(query, user=user)
+    defects, snapshot = _resolve_runtime_defects(query, user=user)
     total_count = len(defects)
 
     severity_counter: Counter[str] = Counter()
@@ -2087,6 +2554,7 @@ def get_dts_statistics_summary(
         "pl_group_dist": _distribution(pl_group_counter),
         "project_dist": _distribution(project_counter),
         "action_status_dist": _distribution(action_status_counter),
+        "snapshot": snapshot,
     }
 
 

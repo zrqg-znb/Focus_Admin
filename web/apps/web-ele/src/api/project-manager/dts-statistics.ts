@@ -24,6 +24,7 @@ export interface DtsMergedDefect {
   briefDesc?: null | string;
   dtsStatusName?: null | string;
   serverityNoName?: null | string;
+  updateTime?: null | string;
   parentNo?: null | string;
   createAt?: null | string;
   dCloseTime?: null | string;
@@ -85,9 +86,21 @@ export interface DtsMergedDefect {
   test_status?: null | string;
 }
 
+export interface DtsSnapshotMeta {
+  productId: string;
+  productName: string;
+  version: string;
+  generatedAt?: null | string;
+  windowBegin: number;
+  windowEnd: number;
+  rowCount: number;
+  isStale: boolean;
+}
+
 export interface DtsListResponse {
   total: number;
   items: DtsMergedDefect[];
+  snapshot?: DtsSnapshotMeta | null;
 }
 
 export interface DtsExtensionSavePayload {
@@ -154,6 +167,7 @@ export interface DtsSummary {
   pl_group_dist: DtsDistributionItem[];
   project_dist: DtsDistributionItem[];
   action_status_dist: DtsDistributionItem[];
+  snapshot?: DtsSnapshotMeta | null;
 }
 
 export type DtsTaskStatus = 'failed' | 'pending' | 'running' | 'success';
