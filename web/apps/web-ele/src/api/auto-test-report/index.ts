@@ -228,6 +228,7 @@ export async function importTestCasesExcelApi(vehicle_id: string, file: File) {
   return requestClient.post<ImportResult>(
     `${base}/test-cases/import-excel`,
     formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
   );
 }
 

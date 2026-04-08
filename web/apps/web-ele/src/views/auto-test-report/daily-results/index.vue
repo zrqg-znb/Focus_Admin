@@ -239,7 +239,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page auto-content-height>
+  <Page auto-content-height content-class="flex flex-col">
     <div class="flex h-full min-h-0 flex-col gap-4">
       <div class="shrink-0 rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm">
         <ElForm

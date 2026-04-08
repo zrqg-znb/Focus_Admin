@@ -255,18 +255,18 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page auto-content-height>
+  <Page auto-content-height content-class="flex flex-col">
     <div class="flex h-full min-h-0 gap-4">
       <div
-        class="w-[320px] shrink-0 rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm"
+        class="w-[320px] shrink-0 flex flex-col rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm min-h-0"
       >
-        <div class="mb-3 flex items-center justify-between">
+        <div class="mb-3 flex shrink-0 items-center justify-between">
           <div class="text-base font-semibold">MCU平台</div>
           <ElButton type="primary" @click="openPlatformCreate">
             新增平台
           </ElButton>
         </div>
-        <div class="space-y-2">
+        <div class="space-y-2 overflow-y-auto flex-1 min-h-0 pr-2">
           <div
             v-for="item in platformList"
             :key="item.id"

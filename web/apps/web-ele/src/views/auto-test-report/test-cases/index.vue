@@ -23,6 +23,8 @@ import {
   ElMessageBox,
   ElSwitch,
   ElTooltip,
+  ElSelect,
+  ElOption,
 } from 'element-plus';
 
 import {
@@ -153,8 +155,13 @@ async function refreshGrid() {
 
 function openCreate() {
   caseDialogMode.value = 'create';
+  
+  // Try to find the platform_id for the currentVehicleId to pre-fill the cascader
+  const matchedVehicle = vehicleOptions.value.find(v => v.id === currentVehicleId.value);
+  const initialPath = matchedVehicle ? [matchedVehicle.platform_id, matchedVehicle.id] : [];
+  
   caseForm.value = {
-    vehicle_id: currentVehicleId.value,
+    vehicle_id: initialPath as any, // Temporary store the array here, will extract id on submit
     case_no: '',
     case_name: '',
     sort: 0,
@@ -165,9 +172,14 @@ function openCreate() {
 
 function openEdit(row: TestCaseItem) {
   caseDialogMode.value = 'edit';
+  
+  // Find the platform_id to pre-fill the cascader
+  const matchedVehicle = vehicleOptions.value.find(v => v.id === row.vehicle_id);
+  const initialPath = matchedVehicle ? [matchedVehicle.platform_id, matchedVehicle.id] : [];
+  
   caseForm.value = {
     id: row.id,
-    vehicle_id: row.vehicle_id,
+    vehicle_id: initialPath as any, // Temporary store the array here, will extract id on submit
     case_no: row.case_no,
     case_name: row.case_name,
     sort: row.sort,
@@ -180,11 +192,25 @@ async function submitCase() {
   await caseFormRef.value?.validate();
   caseDialogSaving.value = true;
   try {
+    // Extract the actual vehicle_id from the cascader path array
+    const cascaderValue = caseForm.value.vehicle_id as unknown as string[];
+    const actualVehicleId = Array.isArray(cascaderValue) ? cascaderValue[cascaderValue.length - 1] : cascaderValue;
+    
+    if (!actualVehicleId) {
+      ElMessage.warning('请选择归属车型');
+      return;
+    }
+    
+    const payload = {
+      ...caseForm.value,
+      vehicle_id: actualVehicleId
+    };
+
     if (caseDialogMode.value === 'create') {
-      await createTestCaseApi(caseForm.value);
+      await createTestCaseApi(payload);
       ElMessage.success('用例创建成功');
     } else {
-      await updateTestCaseApi(caseForm.value.id!, caseForm.value);
+      await updateTestCaseApi(payload.id!, payload);
       ElMessage.success('用例更新成功');
     }
     caseDialogVisible.value = false;
@@ -318,7 +344,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page auto-content-height>
+  <Page auto-content-height content-class="flex flex-col">
     <div class="mb-4 shrink-0 rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm">
       <ElForm
         :inline="true"
@@ -365,8 +391,9 @@ onMounted(async () => {
       </ElForm>
     </div>
 
-    <Grid class="h-full" @selection-change="handleSelectionChange">
-      <template #toolbar-actions>
+    <div class="min-h-0 flex-1">
+      <Grid class="h-full" @selection-change="handleSelectionChange">
+        <template #toolbar-actions>
         <div class="flex items-center gap-2">
           <ElButton type="primary" @click="openCreate">新增用例</ElButton>
           <ElButton type="danger" @click="removeSelected">批量删除</ElButton>
@@ -382,7 +409,7 @@ onMounted(async () => {
             type="file"
             accept=".xlsx,.xls"
             @change="
-              (event: any) => onImportFile(event.target.files?.[0] || null)
+              (event) => onImportFile(event.target.files?.[0] || null)
             "
           />
           <ElButton :loading="exportLoading" @click="exportCases">
@@ -411,8 +438,9 @@ onMounted(async () => {
             </ElButton>
           </ElTooltip>
         </div>
-      </template>
-    </Grid>
+        </template>
+      </Grid>
+    </div>
 
     <ElDialog
       v-model="caseDialogVisible"
@@ -421,14 +449,15 @@ onMounted(async () => {
     >
       <ElForm ref="caseFormRef" :model="caseForm" label-width="110px">
         <ElFormItem label="归属车型" prop="vehicle_id" required>
-          <el-select v-model="caseForm.vehicle_id" class="w-full" filterable>
-            <el-option
-              v-for="item in vehicleOptions"
-              :key="item.id"
-              :label="`${item.platform_name} / ${item.name}`"
-              :value="item.id"
-            />
-          </el-select>
+          <ElCascader
+            v-model="caseForm.vehicle_id"
+            class="w-full"
+            clearable
+            filterable
+            placeholder="选择 MCU 平台 / 车型"
+            :options="cascaderOptions"
+            :props="{ emitPath: true }"
+          />
         </ElFormItem>
         <ElFormItem label="用例编号" prop="case_no" required>
           <ElInput v-model="caseForm.case_no" />
