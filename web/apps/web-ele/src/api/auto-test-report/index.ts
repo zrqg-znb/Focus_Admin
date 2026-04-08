@@ -64,9 +64,9 @@ export interface TestCaseItem {
   platform_name: string;
   case_no: string;
   case_name: string;
-  latest_execute_time?: string;
   sort: number;
   is_active: boolean;
+  latest_execute_time?: string;
   sys_create_datetime?: string;
   sys_update_datetime?: string;
 }
@@ -231,19 +231,17 @@ export async function importTestCasesExcelApi(vehicle_id: string, file: File) {
   );
 }
 
-export function downloadTestCaseTemplateUrl() {
-  return `${base}/test-cases/template`;
+export async function downloadTestCaseTemplateApi() {
+  return requestClient.get(`${base}/test-cases/template`, {
+    responseType: 'blob',
+  });
 }
 
-export function downloadTestCaseExportUrl(params?: Record<string, any>) {
-  const search = new URLSearchParams();
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value === undefined || value === null || value === '') {
-      return;
-    }
-    search.append(key, String(value));
+export async function downloadTestCaseExportApi(params?: Record<string, any>) {
+  return requestClient.get(`${base}/test-cases/export`, {
+    params,
+    responseType: 'blob',
   });
-  return `${base}/test-cases/export${search.toString() ? `?${search.toString()}` : ''}`;
 }
 
 export async function getDailySummaryApi(

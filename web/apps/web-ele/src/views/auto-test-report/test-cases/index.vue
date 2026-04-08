@@ -29,8 +29,8 @@ import {
   batchDeleteTestCasesApi,
   createTestCaseApi,
   deleteTestCaseApi,
-  downloadTestCaseExportUrl,
-  downloadTestCaseTemplateUrl,
+  downloadTestCaseExportApi,
+  downloadTestCaseTemplateApi,
   importTestCasesExcelApi,
   listTestCasesApi,
   listVehicleOptionsApi,
@@ -63,6 +63,8 @@ const caseForm = ref<TestCasePayload & { id?: string }>({
 });
 
 const importLoading = ref(false);
+const exportLoading = ref(false);
+const templateLoading = ref(false);
 const historyVisible = ref(false);
 const historyTitle = ref('');
 const currentCaseId = ref('');
@@ -108,14 +110,11 @@ const [Grid, gridApi] = useZqTable({
             }
             return true;
           });
-          const currentPage = Math.max(Number(page?.currentPage || 1), 1);
-          const pageSize = Math.max(Number(page?.pageSize || 20), 1);
-          const start = (currentPage - 1) * pageSize;
-          const end = start + pageSize;
-          return {
-            items: filtered.slice(start, end),
-            total: filtered.length,
-          };
+          const total = filtered.length;
+          const start = (page.currentPage - 1) * page.pageSize;
+          const end = start + page.pageSize;
+          const pagedItems = filtered.slice(start, end);
+          return { items: pagedItems, total };
         },
       },
     },
@@ -263,21 +262,48 @@ function openHistory(row: TestCaseItem) {
   historyVisible.value = true;
 }
 
-function downloadTemplate() {
-  window.open(downloadTestCaseTemplateUrl(), '_blank');
+function downloadBlob(data: any, fileName: string) {
+  const blob = data instanceof Blob ? data : new Blob([data]);
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
 }
 
-function exportCases() {
-  window.open(
-    downloadTestCaseExportUrl({
+async function downloadTemplate() {
+  templateLoading.value = true;
+  try {
+    const res = await downloadTestCaseTemplateApi();
+    downloadBlob(res, 'auto_test_case_template.xlsx');
+  } catch (error) {
+    ElMessage.error('下载模板失败');
+    console.error(error);
+  } finally {
+    templateLoading.value = false;
+  }
+}
+
+async function exportCases() {
+  exportLoading.value = true;
+  try {
+    const res = await downloadTestCaseExportApi({
       keyword: keyword.value || undefined,
       vehicle_id:
         selectedVehicleIds.value.length === 1
           ? selectedVehicleIds.value[0]
           : undefined,
-    }),
-    '_blank',
-  );
+    });
+    downloadBlob(res, 'auto_test_cases.xlsx');
+  } catch (error) {
+    ElMessage.error('导出失败');
+    console.error(error);
+  } finally {
+    exportLoading.value = false;
+  }
 }
 
 onMounted(async () => {
@@ -293,106 +319,100 @@ onMounted(async () => {
 
 <template>
   <Page auto-content-height>
-    <div class="flex h-full min-h-0 flex-col">
-      <div
-        class="mb-4 shrink-0 rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm"
+    <div class="mb-4 shrink-0 rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm">
+      <ElForm
+        :inline="true"
+        class="flex flex-wrap items-center gap-4"
+        @submit.prevent
       >
-        <ElForm
-          :inline="true"
-          class="flex flex-wrap items-center gap-4"
-          @submit.prevent
-        >
-          <ElFormItem label="MCU 平台 / 车型" class="!mb-0">
-            <ElCascader
-              v-model="selectedVehiclePaths"
-              class="w-[320px]"
-              clearable
-              collapse-tags
-              collapse-tags-tooltip
-              filterable
-              multiple
-              placeholder="选择 MCU 平台 / 车型（支持多选）"
-              :max-collapse-tags="1"
-              :options="cascaderOptions"
-              :props="{ multiple: true, emitPath: true, checkStrictly: false }"
-              @change="refreshGrid"
-            />
-          </ElFormItem>
-          <ElFormItem label="车型关键词" class="!mb-0">
-            <ElInput
-              v-model="vehicleKeyword"
-              class="w-[200px]"
-              clearable
-              placeholder="按车型关键词筛选"
-              @change="refreshGrid"
-            />
-          </ElFormItem>
-          <ElFormItem label="用例搜索" class="!mb-0">
-            <ElInput
-              v-model="keyword"
-              class="w-[200px]"
-              clearable
-              placeholder="按用例编号/名称筛选"
-              @change="refreshGrid"
-            />
-          </ElFormItem>
-        </ElForm>
-      </div>
-
-      <div class="min-h-0 flex-1">
-        <Grid class="h-full" @selection-change="handleSelectionChange">
-          <template #toolbar-actions>
-            <div class="flex items-center gap-2">
-              <ElButton type="primary" @click="openCreate">新增用例</ElButton>
-              <ElButton type="danger" @click="removeSelected">
-                批量删除
-              </ElButton>
-              <ElButton @click="downloadTemplate">导出模板</ElButton>
-              <ElButton @click="exportCases">导出用例</ElButton>
-              <ElButton
-                :loading="importLoading"
-                @click="$refs.excelInput?.click()"
-              >
-                导入Excel
-              </ElButton>
-              <input
-                ref="excelInput"
-                class="hidden"
-                type="file"
-                accept=".xlsx,.xls"
-                @change="
-                  (event) => onImportFile(event.target.files?.[0] || null)
-                "
-              />
-            </div>
-          </template>
-
-          <template #cell-latest_execute_time="{ row }">
-            {{ row.latest_execute_time || '-' }}
-          </template>
-
-          <template #cell-actions="{ row }">
-            <div class="flex items-center justify-center gap-1">
-              <ElTooltip content="历史执行记录">
-                <ElButton link type="success" @click="openHistory(row)">
-                  历史
-                </ElButton>
-              </ElTooltip>
-              <ElTooltip content="编辑">
-                <ElButton link type="primary" @click="openEdit(row)">
-                  编辑
-                </ElButton>
-              </ElTooltip>
-              <ElTooltip content="删除">
-                <ElButton link type="danger" @click="removeCase(row)">
-                  删除
-                </ElButton>
-              </ElTooltip>
-            </div>
-          </template>
-        </Grid>
-      </div>
+        <ElFormItem label="MCU 平台 / 车型" class="!mb-0">
+          <ElCascader
+            v-model="selectedVehiclePaths"
+            class="w-[420px]"
+            clearable
+            collapse-tags
+            collapse-tags-tooltip
+            filterable
+            multiple
+            placeholder="选择 MCU 平台 / 车型（支持多选）"
+            :max-collapse-tags="1"
+            :options="cascaderOptions"
+            :props="{ multiple: true, emitPath: true, checkStrictly: false }"
+            @change="refreshGrid"
+          />
+        </ElFormItem>
+        <ElFormItem label="车型关键词" class="!mb-0">
+          <ElInput
+            v-model="vehicleKeyword"
+            class="w-[220px]"
+            clearable
+            placeholder="按关键词筛选"
+            @change="refreshGrid"
+          />
+        </ElFormItem>
+        <ElFormItem label="用例关键词" class="!mb-0">
+          <ElInput
+            v-model="keyword"
+            class="w-[220px]"
+            clearable
+            placeholder="按用例编号/名称"
+            @change="refreshGrid"
+          />
+        </ElFormItem>
+        <ElFormItem class="!mb-0">
+          <ElButton type="primary" @click="refreshGrid">查询</ElButton>
+        </ElFormItem>
+      </ElForm>
     </div>
+
+    <Grid class="h-full" @selection-change="handleSelectionChange">
+      <template #toolbar-actions>
+        <div class="flex items-center gap-2">
+          <ElButton type="primary" @click="openCreate">新增用例</ElButton>
+          <ElButton type="danger" @click="removeSelected">批量删除</ElButton>
+          <ElButton :loading="templateLoading" @click="downloadTemplate">
+            下载模板
+          </ElButton>
+          <ElButton :loading="importLoading" @click="$refs.excelInput?.click()">
+            导入 Excel
+          </ElButton>
+          <input
+            ref="excelInput"
+            class="hidden"
+            type="file"
+            accept=".xlsx,.xls"
+            @change="
+              (event: any) => onImportFile(event.target.files?.[0] || null)
+            "
+          />
+          <ElButton :loading="exportLoading" @click="exportCases">
+            导出用例
+          </ElButton>
+        </div>
+      </template>
+
+      <template #cell-latest_execute_time="{ row }">
+        {{ row.latest_execute_time || '-' }}
+      </template>
+
+      <template #cell-actions="{ row }">
+        <div class="flex items-center justify-center gap-1">
+          <ElTooltip content="历史执行记录">
+            <ElButton link type="success" @click="openHistory(row)">
+              历史
+            </ElButton>
+          </ElTooltip>
+          <ElTooltip content="编辑">
+            <ElButton link type="primary" @click="openEdit(row)">编辑</ElButton>
+          </ElTooltip>
+          <ElTooltip content="删除">
+            <ElButton link type="danger" @click="removeCase(row)">
+              删除
+            </ElButton>
+          </ElTooltip>
+        </div>
+      </template>
+    </Grid>
 
     <ElDialog
       v-model="caseDialogVisible"
