@@ -94,7 +94,7 @@ _DEFAULT_FIELDS = [
     "currentHandler",
     "creator",
     "sSubmitUserName",
-    "sSubmitsystemNoName",
+    "sSubsystemNoName",
     "sProdFamilyNoName",
     "sProdXtdNoName",
     "iTestBackCount",
@@ -117,6 +117,7 @@ _DEFAULT_FIELDS = [
 _FIELD_SET_SUPPORTED_FIELDS = {
     "sDeptOneNoName",
     "sSubmitsystemNoName",
+    "sSubsystemNoName",
 }
 
 _SEVERITY_NAME_TO_CODE = {
@@ -575,7 +576,7 @@ def _mock_fetch_page(payload: dict[str, Any]) -> dict[str, Any]:
                     "currentHandler": f"user{(index % 15) + 1}",
                     "creator": f"creator{(index % 10) + 1}",
                     "sSubmitUserName": f"提交人{(index % 10) + 1}",
-                    "sSubmitsystemNoName": f"子系统{(index % 6) + 1}",
+                    "sSubsystemNoName": f"子系统{(index % 6) + 1}",
                     "sProdFamilyNoName": f"产品族{(index % 4) + 1}",
                     "sProdXtdNoName": f"产品{(index % 8) + 1}",
                     "iTestBackCount": str(index % 6),
@@ -944,6 +945,9 @@ def _normalize_source_row(
     create_at = _clean_text(row.get("createAt"))
     close_time = _clean_text(row.get("dCloseTime"))
     team_name = _clean_text(row.get("sDeptOneNoName"))
+    subsystem_name = _clean_text(
+        row.get("sSubsystemNoName") or row.get("sSubmitsystemNoName")
+    )
     close_days = _clean_text(row.get("iNumOfCloseDays"))
     if not close_days:
         close_days = _clean_text(_compute_process_days(create_at, close_time))
@@ -961,7 +965,8 @@ def _normalize_source_row(
         "currentHandler": _clean_text(row.get("currentHandler")) or None,
         "creator": _clean_text(row.get("creator")) or None,
         "sSubmitUserName": _clean_text(row.get("sSubmitUserName")) or None,
-        "sSubmitsystemNoName": _clean_text(row.get("sSubmitsystemNoName")) or None,
+        "sSubsystemNoName": subsystem_name or None,
+        "sSubmitsystemNoName": subsystem_name or None,
         "sProdFamilyNoName": _clean_text(row.get("sProdFamilyNoName")) or None,
         "sProdXtdNoName": _clean_text(row.get("sProdXtdNoName")) or None,
         "iTestBackCount": _clean_text(row.get("iTestBackCount")) or None,
@@ -1442,7 +1447,9 @@ def _apply_local_filters(
     dept_values = set() if "sDeptOneNoName" in ignored else {
         item for item in _normalize_text_list(local_filters["sDeptOneNoNames"]) if item
     }
-    subsystem_values = set() if "sSubmitsystemNoName" in ignored else {
+    subsystem_values = set() if (
+        "sSubmitsystemNoName" in ignored or "sSubsystemNoName" in ignored
+    ) else {
         item
         for item in _normalize_text_list(local_filters["sSubmitsystemNoNames"])
         if item
@@ -1472,7 +1479,10 @@ def _apply_local_filters(
             continue
         if (
             subsystem_values
-            and _clean_text(row.get("sSubmitsystemNoName")) not in subsystem_values
+            and _clean_text(
+                row.get("sSubsystemNoName") or row.get("sSubmitsystemNoName")
+            )
+            not in subsystem_values
         ):
             continue
         result.append(row)
@@ -1648,7 +1658,7 @@ def _build_filtered_result_payload(
         local_filters["dCloseTimeEnd"] = 0
     if "sDeptOneNoName" in ignored:
         local_filters["sDeptOneNoNames"] = []
-    if "sSubmitsystemNoName" in ignored:
+    if "sSubmitsystemNoName" in ignored or "sSubsystemNoName" in ignored:
         local_filters["sSubmitsystemNoNames"] = []
     return {
         "snapshotVersion": _clean_text(snapshot_version),
@@ -2126,7 +2136,12 @@ _EXPORT_COLUMN_SPECS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
     ("当前处理人", lambda item: _clean_text(item.get("currentHandler"))),
     ("提单人工号", lambda item: _clean_text(item.get("creator"))),
     ("提单人姓名", lambda item: _clean_text(item.get("sSubmitUserName"))),
-    ("子系统", lambda item: _clean_text(item.get("sSubmitsystemNoName"))),
+    (
+        "子系统",
+        lambda item: _clean_text(
+            item.get("sSubsystemNoName") or item.get("sSubmitsystemNoName")
+        ),
+    ),
     ("产品族名称", lambda item: _clean_text(item.get("sProdFamilyNoName"))),
     ("产品名称", lambda item: _clean_text(item.get("sProdXtdNoName"))),
     ("测试返回次数", lambda item: _clean_text(item.get("iTestBackCount"))),

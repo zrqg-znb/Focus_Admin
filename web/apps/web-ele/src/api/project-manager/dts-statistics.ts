@@ -32,6 +32,7 @@ export interface DtsMergedDefect {
   currentHandler?: null | string;
   creator?: null | string;
   sSubmitUserName?: null | string;
+  sSubsystemNoName?: null | string;
   sSubmitsystemNoName?: null | string;
   sProdFamilyNoName?: null | string;
   sProdXtdNoName?: null | string;

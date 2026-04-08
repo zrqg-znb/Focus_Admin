@@ -209,6 +209,7 @@ class DataLakeDefectSchema(Schema):
     currentHandler: Optional[str] = None
     creator: Optional[str] = None
     sSubmitUserName: Optional[str] = None
+    sSubsystemNoName: Optional[str] = None
     sSubmitsystemNoName: Optional[str] = None
     sProdFamilyNoName: Optional[str] = None
     sProdXtdNoName: Optional[str] = None
