@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     'apps.project_manager',
     'apps.requirement_center',
     'apps.integration_report',
+    'apps.auto_test_report',
     'apps.code_compliance',
     'apps.delivery_matrix',
     'apps.code_scan',
