@@ -146,7 +146,10 @@ const baselineItems = computed(() => {
     { label: '当前处理人', value: normalizeDisplay(row?.currentHandler) },
     { label: '提单人工号', value: normalizeDisplay(row?.creator) },
     { label: '提单人姓名', value: normalizeDisplay(row?.sSubmitUserName) },
-    { label: '子系统', value: normalizeDisplay(row?.sSubmitsystemNoName) },
+    {
+      label: '子系统',
+      value: normalizeDisplay(row?.sSubsystemNoName),
+    },
     { label: '产品族名称', value: normalizeDisplay(row?.sProdFamilyNoName) },
     { label: '产品名称', value: normalizeDisplay(row?.sProdXtdNoName) },
     { label: '测试返回次数', value: normalizeDisplay(row?.iTestBackCount) },

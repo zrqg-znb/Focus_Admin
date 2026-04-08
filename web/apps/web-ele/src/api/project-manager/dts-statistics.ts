@@ -11,7 +11,7 @@ export interface DtsStatisticsFilters {
   dCloseTimeBegin: number;
   dCloseTimeEnd: number;
   sDeptOneNoNames: string[];
-  sSubmitsystemNoNames: string[];
+  sSubsystemNoNames: string[];
 }
 
 export interface DtsStatisticsQuery extends DtsStatisticsFilters {
@@ -33,7 +33,6 @@ export interface DtsMergedDefect {
   creator?: null | string;
   sSubmitUserName?: null | string;
   sSubsystemNoName?: null | string;
-  sSubmitsystemNoName?: null | string;
   sProdFamilyNoName?: null | string;
   sProdXtdNoName?: null | string;
   iTestBackCount?: null | string;

@@ -122,7 +122,7 @@ function createDefaultFilters(): DtsStatisticsFilters {
     dCloseTimeBegin: 0,
     dCloseTimeEnd: 0,
     sDeptOneNoNames: [],
-    sSubmitsystemNoNames: [],
+    sSubsystemNoNames: [],
   };
 }
 
@@ -227,7 +227,7 @@ function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
     dCloseTimeBegin: closeTimePair.begin,
     dCloseTimeEnd: closeTimePair.end,
     sDeptOneNoNames: normalizeStringArray(source.sDeptOneNoNames),
-    sSubmitsystemNoNames: normalizeStringArray(source.sSubmitsystemNoNames),
+    sSubsystemNoNames: normalizeStringArray(source.sSubsystemNoNames),
   };
 }
 
@@ -246,7 +246,7 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
     dCloseTimeBegin: payload.dCloseTimeBegin || 0,
     dCloseTimeEnd: payload.dCloseTimeEnd || 0,
     sDeptOneNoNames: [...(payload.sDeptOneNoNames || [])].sort(),
-    sSubmitsystemNoNames: [...(payload.sSubmitsystemNoNames || [])].sort(),
+    sSubsystemNoNames: [...(payload.sSubsystemNoNames || [])].sort(),
   });
 }
 
@@ -501,7 +501,7 @@ const selectedDeptLabel = computed(() => {
   return count > 0 ? `${count} 项` : '全部';
 });
 const selectedSubsystemLabel = computed(() => {
-  const count = filters.value.sSubmitsystemNoNames.length;
+  const count = filters.value.sSubsystemNoNames.length;
   return count > 0 ? `${count} 项` : '全部';
 });
 function filterFieldOptions(options: string[], keyword: string) {
@@ -582,11 +582,11 @@ const draftDeptKeyword = ref('');
 const draftSubsystemKeyword = ref('');
 const fieldSetOptions = ref<Record<string, string[]>>({
   sDeptOneNoName: [],
-  sSubmitsystemNoName: [],
+  sSubsystemNoName: [],
 });
 const fieldSetLoading = ref<Record<string, boolean>>({
   sDeptOneNoName: false,
-  sSubmitsystemNoName: false,
+  sSubsystemNoName: false,
 });
 const filteredDeptOptions = computed(() =>
   filterFieldOptions(
@@ -596,7 +596,7 @@ const filteredDeptOptions = computed(() =>
 );
 const filteredSubsystemOptions = computed(() =>
   filterFieldOptions(
-    fieldSetOptions.value.sSubmitsystemNoName || [],
+    fieldSetOptions.value.sSubsystemNoName || [],
     draftSubsystemKeyword.value,
   ),
 );
@@ -740,9 +740,9 @@ watch(
         ElMessage.warning('请先完成当前查询，再打开候选值筛选');
         return;
       }
-      draftSubsystemNames.value = [...filters.value.sSubmitsystemNoNames];
+      draftSubsystemNames.value = [...filters.value.sSubsystemNoNames];
       draftSubsystemKeyword.value = '';
-      void loadFieldSetOptions(['sSubmitsystemNoName']);
+      void loadFieldSetOptions(['sSubsystemNoName']);
     }
   },
 );
@@ -908,7 +908,7 @@ function resetDeptFilterDraft() {
 }
 
 async function confirmSubsystemFilter() {
-  filters.value.sSubmitsystemNoNames = normalizeStringArray(
+  filters.value.sSubsystemNoNames = normalizeStringArray(
     draftSubsystemNames.value,
   );
   subsystemFilterVisible.value = false;
@@ -1922,7 +1922,7 @@ onUnmounted(() => {
                     </div>
                   </template>
 
-                  <template #header-sSubmitsystemNoName>
+                  <template #header-sSubsystemNoName>
                     <div class="dts-header-filter" @click.stop>
                       <span class="dts-header-filter__label">子系统</span>
                       <ElPopover
@@ -1937,8 +1937,7 @@ onUnmounted(() => {
                             type="button"
                             class="dts-header-filter-trigger"
                             :class="{
-                              'is-active':
-                                filters.sSubmitsystemNoNames.length > 0,
+                              'is-active': filters.sSubsystemNoNames.length > 0,
                             }"
                           >
                             <Filter class="dts-header-filter-trigger__icon" />
@@ -1950,7 +1949,7 @@ onUnmounted(() => {
                         <div class="dts-header-filter-panel" @click.stop>
                           <div class="dts-header-filter-panel__body">
                             <ElInput
-                              v-if="!fieldSetLoading.sSubmitsystemNoName"
+                              v-if="!fieldSetLoading.sSubsystemNoName"
                               v-model="draftSubsystemKeyword"
                               size="small"
                               clearable
@@ -1958,14 +1957,14 @@ onUnmounted(() => {
                               placeholder="输入关键词筛选子系统"
                             />
                             <div
-                              v-if="fieldSetLoading.sSubmitsystemNoName"
+                              v-if="fieldSetLoading.sSubsystemNoName"
                               class="dts-header-filter-panel__tip"
                             >
                               正在加载候选值...
                             </div>
                             <ElEmpty
                               v-else-if="
-                                fieldSetOptions.sSubmitsystemNoName.length === 0
+                                fieldSetOptions.sSubsystemNoName.length === 0
                               "
                               :image-size="56"
                               description="暂无候选值"

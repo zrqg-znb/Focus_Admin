@@ -116,7 +116,6 @@ _DEFAULT_FIELDS = [
 
 _FIELD_SET_SUPPORTED_FIELDS = {
     "sDeptOneNoName",
-    "sSubmitsystemNoName",
     "sSubsystemNoName",
 }
 
@@ -945,9 +944,7 @@ def _normalize_source_row(
     create_at = _clean_text(row.get("createAt"))
     close_time = _clean_text(row.get("dCloseTime"))
     team_name = _clean_text(row.get("sDeptOneNoName"))
-    subsystem_name = _clean_text(
-        row.get("sSubsystemNoName") or row.get("sSubmitsystemNoName")
-    )
+    subsystem_name = _clean_text(row.get("sSubsystemNoName"))
     close_days = _clean_text(row.get("iNumOfCloseDays"))
     if not close_days:
         close_days = _clean_text(_compute_process_days(create_at, close_time))
@@ -966,7 +963,6 @@ def _normalize_source_row(
         "creator": _clean_text(row.get("creator")) or None,
         "sSubmitUserName": _clean_text(row.get("sSubmitUserName")) or None,
         "sSubsystemNoName": subsystem_name or None,
-        "sSubmitsystemNoName": subsystem_name or None,
         "sProdFamilyNoName": _clean_text(row.get("sProdFamilyNoName")) or None,
         "sProdXtdNoName": _clean_text(row.get("sProdXtdNoName")) or None,
         "iTestBackCount": _clean_text(row.get("iTestBackCount")) or None,
@@ -1181,8 +1177,8 @@ def _resolve_local_runtime_filters(
         "dCloseTimeBegin": close_time_begin,
         "dCloseTimeEnd": close_time_end,
         "sDeptOneNoNames": _normalize_text_list(getattr(query, "sDeptOneNoNames", [])),
-        "sSubmitsystemNoNames": _normalize_text_list(
-            getattr(query, "sSubmitsystemNoNames", [])
+        "sSubsystemNoNames": _normalize_text_list(
+            getattr(query, "sSubsystemNoNames", [])
         ),
     }
 
@@ -1447,11 +1443,9 @@ def _apply_local_filters(
     dept_values = set() if "sDeptOneNoName" in ignored else {
         item for item in _normalize_text_list(local_filters["sDeptOneNoNames"]) if item
     }
-    subsystem_values = set() if (
-        "sSubmitsystemNoName" in ignored or "sSubsystemNoName" in ignored
-    ) else {
+    subsystem_values = set() if "sSubsystemNoName" in ignored else {
         item
-        for item in _normalize_text_list(local_filters["sSubmitsystemNoNames"])
+        for item in _normalize_text_list(local_filters["sSubsystemNoNames"])
         if item
     }
 
@@ -1477,13 +1471,7 @@ def _apply_local_filters(
             continue
         if dept_values and _clean_text(row.get("sDeptOneNoName")) not in dept_values:
             continue
-        if (
-            subsystem_values
-            and _clean_text(
-                row.get("sSubsystemNoName") or row.get("sSubmitsystemNoName")
-            )
-            not in subsystem_values
-        ):
+        if subsystem_values and _clean_text(row.get("sSubsystemNoName")) not in subsystem_values:
             continue
         result.append(row)
     return result
@@ -1658,8 +1646,8 @@ def _build_filtered_result_payload(
         local_filters["dCloseTimeEnd"] = 0
     if "sDeptOneNoName" in ignored:
         local_filters["sDeptOneNoNames"] = []
-    if "sSubmitsystemNoName" in ignored or "sSubsystemNoName" in ignored:
-        local_filters["sSubmitsystemNoNames"] = []
+    if "sSubsystemNoName" in ignored:
+        local_filters["sSubsystemNoNames"] = []
     return {
         "snapshotVersion": _clean_text(snapshot_version),
         "productId": product_id,
@@ -1672,8 +1660,8 @@ def _build_filtered_result_payload(
         "dCloseTimeBegin": int(local_filters.get("dCloseTimeBegin") or 0),
         "dCloseTimeEnd": int(local_filters.get("dCloseTimeEnd") or 0),
         "sDeptOneNoNames": _normalize_text_list(local_filters.get("sDeptOneNoNames")),
-        "sSubmitsystemNoNames": _normalize_text_list(
-            local_filters.get("sSubmitsystemNoNames")
+        "sSubsystemNoNames": _normalize_text_list(
+            local_filters.get("sSubsystemNoNames")
         ),
         "ignoredFields": sorted(ignored),
     }
@@ -2138,9 +2126,7 @@ _EXPORT_COLUMN_SPECS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
     ("提单人姓名", lambda item: _clean_text(item.get("sSubmitUserName"))),
     (
         "子系统",
-        lambda item: _clean_text(
-            item.get("sSubsystemNoName") or item.get("sSubmitsystemNoName")
-        ),
+        lambda item: _clean_text(item.get("sSubsystemNoName")),
     ),
     ("产品族名称", lambda item: _clean_text(item.get("sProdFamilyNoName"))),
     ("产品名称", lambda item: _clean_text(item.get("sProdXtdNoName"))),

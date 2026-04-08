@@ -33,7 +33,7 @@ class DtsLocalFilterSchema(Schema):
     dCloseTimeBegin: int = 0
     dCloseTimeEnd: int = 0
     sDeptOneNoNames: list[str] = Field(default_factory=list)
-    sSubmitsystemNoNames: list[str] = Field(default_factory=list)
+    sSubsystemNoNames: list[str] = Field(default_factory=list)
 
     @field_validator(
         "createAtBegin",
@@ -46,7 +46,11 @@ class DtsLocalFilterSchema(Schema):
     def normalize_local_timestamp(cls, value: Any):
         return _normalize_timestamp(value)
 
-    @field_validator("sDeptOneNoNames", "sSubmitsystemNoNames", mode="before")
+    @field_validator(
+        "sDeptOneNoNames",
+        "sSubsystemNoNames",
+        mode="before",
+    )
     @classmethod
     def normalize_local_text_list(cls, value: Any):
         return _normalize_text_list(value)
@@ -63,7 +67,7 @@ class DtsStatisticsQuerySchema(Schema):
     dCloseTimeBegin: int = 0
     dCloseTimeEnd: int = 0
     sDeptOneNoNames: list[str] = Field(default_factory=list)
-    sSubmitsystemNoNames: list[str] = Field(default_factory=list)
+    sSubsystemNoNames: list[str] = Field(default_factory=list)
     pageIndex: int = 1
     pageSize: int = 20
 
@@ -96,7 +100,11 @@ class DtsStatisticsQuerySchema(Schema):
     def normalize_timestamp(cls, value: Any):
         return _normalize_timestamp(value)
 
-    @field_validator("sDeptOneNoNames", "sSubmitsystemNoNames", mode="before")
+    @field_validator(
+        "sDeptOneNoNames",
+        "sSubsystemNoNames",
+        mode="before",
+    )
     @classmethod
     def normalize_local_filter_list(cls, value: Any):
         return _normalize_text_list(value)
@@ -210,7 +218,6 @@ class DataLakeDefectSchema(Schema):
     creator: Optional[str] = None
     sSubmitUserName: Optional[str] = None
     sSubsystemNoName: Optional[str] = None
-    sSubmitsystemNoName: Optional[str] = None
     sProdFamilyNoName: Optional[str] = None
     sProdXtdNoName: Optional[str] = None
     iTestBackCount: Optional[str] = None
@@ -338,7 +345,7 @@ class DtsStatisticsExportSchema(Schema):
     dCloseTimeBegin: int = 0
     dCloseTimeEnd: int = 0
     sDeptOneNoNames: list[str] = Field(default_factory=list)
-    sSubmitsystemNoNames: list[str] = Field(default_factory=list)
+    sSubsystemNoNames: list[str] = Field(default_factory=list)
 
     @field_validator("productId", mode="before")
     @classmethod
@@ -369,7 +376,11 @@ class DtsStatisticsExportSchema(Schema):
     def normalize_timestamp(cls, value: Any):
         return _normalize_timestamp(value)
 
-    @field_validator("sDeptOneNoNames", "sSubmitsystemNoNames", mode="before")
+    @field_validator(
+        "sDeptOneNoNames",
+        "sSubsystemNoNames",
+        mode="before",
+    )
     @classmethod
     def normalize_local_filter_list(cls, value: Any):
         return _normalize_text_list(value)

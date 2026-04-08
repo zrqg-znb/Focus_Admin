@@ -414,8 +414,8 @@ export function useColumns(): Columns {
       width: 130,
     },
     {
-      key: 'sSubmitsystemNoName',
-      dataKey: 'sSubmitsystemNoName',
+      key: 'sSubsystemNoName',
+      dataKey: 'sSubsystemNoName',
       title: '子系统',
       width: 140,
     },
