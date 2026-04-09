@@ -27,6 +27,9 @@ from ninja.errors import HttpError
 
 from common.fu_cache import CacheManager
 from core.dict_item.dict_item_model import DictItem
+from core.dept.dept_model import Dept
+from core.pl.pl_model import PlGroup
+from core.user.user_model import User
 from scheduler.module.executor import scheduler_task
 
 from .dts_statistics_model import (
@@ -153,6 +156,18 @@ for _code, _name in _FLOW_STATE_CODE_TO_NAME.items():
     if not _name:
         continue
     _FLOW_STATE_NAME_TO_CODES.setdefault(_name, set()).add(_code)
+
+_BRIEF_DESC_EXCLUDED_KEYWORDS = (
+    "【自动提单】",
+    "【漏洞】",
+    "【三方件】",
+)
+_BASE_SOFT_DEPT_NAME = "底软开发部"
+_BASE_SOFT_TEST_KEYWORD = "【底软测试】"
+_AUTO_SOURCE_EXTERNAL = "外领域自提单"
+_AUTO_SOURCE_TEST = "测试自提单"
+_AUTO_SOURCE_DEV = "底软开发自提单"
+_AUTO_PL_GROUP_UNKNOWN = "未识别"
 
 _EXPORT_SHEET_TITLE = "DTS统计"
 
@@ -699,48 +714,68 @@ def _is_empty_value(value: Any) -> bool:
     return False
 
 
+def _parse_dept_path_ids(path: Any) -> list[str]:
+    text = _clean_text(path)
+    if not text:
+        return []
+    return [segment.strip() for segment in text.split("/") if segment.strip()]
+
+
+def _contains_any_keyword(text: Any, keywords: tuple[str, ...]) -> bool:
+    content = _clean_text(text)
+    if not content:
+        return False
+    return any(keyword in content for keyword in keywords)
+
+
+def _merge_duplicate_row_into(
+    merged: dict[str, dict[str, Any]],
+    row: dict[str, Any],
+) -> None:
+    if not isinstance(row, dict):
+        return
+    defect_no = _clean_text(row.get("dtsBizNo"))
+    if not defect_no:
+        return
+    existing = merged.get(defect_no)
+    if existing is None:
+        current = dict(row)
+        current["dtsBizNo"] = defect_no
+        merged[defect_no] = current
+        return
+
+    existing_update_dt = _parse_datetime(existing.get("updateAt"))
+    incoming_update_dt = _parse_datetime(row.get("updateAt"))
+    existing_create_dt = _parse_datetime(existing.get("createAt"))
+    incoming_create_dt = _parse_datetime(row.get("createAt"))
+    should_overlay_primary_fields = False
+    if incoming_update_dt and (
+        not existing_update_dt or incoming_update_dt > existing_update_dt
+    ):
+        should_overlay_primary_fields = True
+    elif (
+        incoming_update_dt == existing_update_dt
+        and incoming_create_dt
+        and (not existing_create_dt or incoming_create_dt > existing_create_dt)
+    ):
+        should_overlay_primary_fields = True
+
+    if should_overlay_primary_fields:
+        for key, value in row.items():
+            if not _is_empty_value(value):
+                existing[key] = value
+
+    for key, value in row.items():
+        if key not in existing or (
+            _is_empty_value(existing.get(key)) and not _is_empty_value(value)
+        ):
+            existing[key] = value
+
+
 def _merge_duplicate_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     merged: dict[str, dict[str, Any]] = {}
     for row in rows:
-        if not isinstance(row, dict):
-            continue
-        defect_no = _clean_text(row.get("dtsBizNo"))
-        if not defect_no:
-            continue
-        existing = merged.get(defect_no)
-        if existing is None:
-            current = dict(row)
-            current["dtsBizNo"] = defect_no
-            merged[defect_no] = current
-            continue
-
-        existing_update_dt = _parse_datetime(existing.get("updateAt"))
-        incoming_update_dt = _parse_datetime(row.get("updateAt"))
-        existing_create_dt = _parse_datetime(existing.get("createAt"))
-        incoming_create_dt = _parse_datetime(row.get("createAt"))
-        should_overlay_primary_fields = False
-        if incoming_update_dt and (
-            not existing_update_dt or incoming_update_dt > existing_update_dt
-        ):
-            should_overlay_primary_fields = True
-        elif (
-            incoming_update_dt == existing_update_dt
-            and incoming_create_dt
-            and (not existing_create_dt or incoming_create_dt > existing_create_dt)
-        ):
-            should_overlay_primary_fields = True
-
-        if should_overlay_primary_fields:
-            for key in ("updateAt", "createAt", "dCloseTime", "dtsStatusName"):
-                if not _is_empty_value(row.get(key)):
-                    existing[key] = row.get(key)
-
-        for key, value in row.items():
-            if key not in existing or (
-                _is_empty_value(existing.get(key)) and not _is_empty_value(value)
-            ):
-                existing[key] = value
-
+        _merge_duplicate_row_into(merged, row)
     return list(merged.values())
 
 
@@ -997,8 +1032,185 @@ def _normalize_source_row(
         "serverityNo": _resolve_severity_code(row) or None,
         "productId": product_id,
         "productName": product_name,
+        "auto_source_type": None,
+        "auto_pl_group_id": None,
+        "auto_pl_group_name": None,
     }
     return normalized
+
+
+def _load_users_by_username(usernames: Iterable[str]) -> dict[str, User]:
+    unique_usernames = _normalize_text_list(list(usernames))
+    if not unique_usernames:
+        return {}
+    users = (
+        User.objects.filter(username__in=unique_usernames)
+        .select_related("dept")
+        .only(
+            "id",
+            "username",
+            "name",
+            "dept_id",
+            "dept__id",
+            "dept__name",
+            "dept__path",
+            "dept__parent_id",
+        )
+        .all()
+    )
+    return {_clean_text(item.username): item for item in users if _clean_text(item.username)}
+
+
+def _load_dept_map_for_users(users: Iterable[User]) -> dict[str, Dept]:
+    pending_ids = {
+        str(item.dept_id)
+        for item in users
+        if getattr(item, "dept_id", None)
+    }
+    dept_map: dict[str, Dept] = {}
+    while pending_ids:
+        batch_ids = {dept_id for dept_id in pending_ids if dept_id not in dept_map}
+        if not batch_ids:
+            break
+        current_items = list(
+            Dept.objects.filter(id__in=batch_ids)
+            .only("id", "name", "path", "parent_id")
+            .all()
+        )
+        pending_ids = set()
+        for item in current_items:
+            dept_map[str(item.id)] = item
+        for item in current_items:
+            if item.parent_id and str(item.parent_id) not in dept_map:
+                pending_ids.add(str(item.parent_id))
+            for ancestor_id in _parse_dept_path_ids(item.path):
+                if ancestor_id not in dept_map:
+                    pending_ids.add(ancestor_id)
+    return dept_map
+
+
+def _build_dept_base_soft_flag_map(
+    users_by_username: dict[str, User],
+) -> dict[str, bool]:
+    dept_map = _load_dept_map_for_users(users_by_username.values())
+    memo: dict[str, bool] = {}
+
+    def _match_dept(dept_id: str | None) -> bool:
+        safe_dept_id = _clean_text(dept_id)
+        if not safe_dept_id:
+            return False
+        cached = memo.get(safe_dept_id)
+        if cached is not None:
+            return cached
+        dept = dept_map.get(safe_dept_id)
+        if dept is None:
+            memo[safe_dept_id] = False
+            return False
+        if _clean_text(dept.name) == _BASE_SOFT_DEPT_NAME:
+            memo[safe_dept_id] = True
+            return True
+
+        related_ids = []
+        if dept.parent_id:
+            related_ids.append(str(dept.parent_id))
+        related_ids.extend(_parse_dept_path_ids(dept.path))
+        for related_id in related_ids:
+            if related_id == safe_dept_id:
+                continue
+            if _match_dept(related_id):
+                memo[safe_dept_id] = True
+                return True
+        memo[safe_dept_id] = False
+        return False
+
+    return {
+        username: _match_dept(str(user.dept_id) if user.dept_id else "")
+        for username, user in users_by_username.items()
+    }
+
+
+def _load_auto_pl_group_by_username(
+    usernames: Iterable[str],
+) -> dict[str, tuple[str | None, str]]:
+    unique_usernames = _normalize_text_list(list(usernames))
+    if not unique_usernames:
+        return {}
+
+    rows = (
+        PlGroup.objects.filter(status=True, members__username__in=unique_usernames)
+        .values("id", "name", "sort", "members__username")
+        .order_by("-sort", "name", "id")
+    )
+
+    mapping: dict[str, tuple[str | None, str]] = {}
+    for row in rows:
+        username = _clean_text(row.get("members__username"))
+        if not username or username in mapping:
+            continue
+        mapping[username] = (
+            str(row.get("id")) if row.get("id") is not None else None,
+            _clean_text(row.get("name")) or _AUTO_PL_GROUP_UNKNOWN,
+        )
+    return mapping
+
+
+def _resolve_auto_source_type(row: dict[str, Any]) -> str:
+    team_name = _clean_text(row.get("sDeptOneNoName"))
+    brief_desc = _clean_text(row.get("briefDesc"))
+    if team_name != _BASE_SOFT_DEPT_NAME:
+        return _AUTO_SOURCE_EXTERNAL
+    if _BASE_SOFT_TEST_KEYWORD in brief_desc:
+        return _AUTO_SOURCE_TEST
+    return _AUTO_SOURCE_DEV
+
+
+def _filter_and_enrich_snapshot_rows(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    usernames = [
+        _clean_text(item.get("last_dts009_handler"))
+        for item in rows
+        if _clean_text(item.get("last_dts009_handler"))
+    ]
+    users_by_username = _load_users_by_username(usernames)
+    dept_flag_by_username = _build_dept_base_soft_flag_map(users_by_username)
+    auto_pl_group_by_username = _load_auto_pl_group_by_username(usernames)
+
+    counters = {
+        "merged_total": len(rows),
+        "brief_filtered": 0,
+        "dept_filtered": 0,
+        "final_total": 0,
+    }
+    result: list[dict[str, Any]] = []
+
+    for row in rows:
+        if _contains_any_keyword(row.get("briefDesc"), _BRIEF_DESC_EXCLUDED_KEYWORDS):
+            counters["brief_filtered"] += 1
+            continue
+
+        handler_username = _clean_text(row.get("last_dts009_handler"))
+        matched_user = users_by_username.get(handler_username)
+        if matched_user is not None and not dept_flag_by_username.get(handler_username, False):
+            counters["dept_filtered"] += 1
+            continue
+
+        auto_pl_group_id = None
+        auto_pl_group_name = _AUTO_PL_GROUP_UNKNOWN
+        if handler_username:
+            auto_pl_group_id, auto_pl_group_name = auto_pl_group_by_username.get(
+                handler_username,
+                (None, _AUTO_PL_GROUP_UNKNOWN),
+            )
+
+        enriched = dict(row)
+        enriched["auto_source_type"] = _resolve_auto_source_type(row)
+        enriched["auto_pl_group_id"] = auto_pl_group_id
+        enriched["auto_pl_group_name"] = auto_pl_group_name
+        result.append(enriched)
+
+    counters["final_total"] = len(result)
+    return result, counters
 
 
 def _apply_source_filters(
@@ -1855,7 +2067,7 @@ def _refresh_snapshot_for_product(product_id: str) -> dict[str, Any]:
             window_begin,
             window_end,
         )
-        scanned_rows: list[dict[str, Any]] = []
+        merged_by_defect: dict[str, dict[str, Any]] = {}
         total_chunks = 0
         total_pages = 0
         for chunk_begin, chunk_end in _iter_time_chunks(
@@ -1869,15 +2081,17 @@ def _refresh_snapshot_for_product(product_id: str) -> dict[str, Any]:
                 update_time_begin=chunk_begin,
                 update_time_end=chunk_end,
             )
-            scanned_rows.extend(chunk_rows)
+            for row in chunk_rows:
+                _merge_duplicate_row_into(merged_by_defect, row)
             total_pages += max(chunk_total_pages, scanned_pages)
 
-        merged_rows = _merge_duplicate_rows(scanned_rows)
+        merged_rows = list(merged_by_defect.values())
         normalized_rows: list[dict[str, Any]] = []
         for row in merged_rows:
             normalized = _normalize_source_row(row, product_id=safe_product_id)
             if normalized is not None:
                 normalized_rows.append(normalized)
+        normalized_rows, filter_stats = _filter_and_enrich_snapshot_rows(normalized_rows)
         normalized_rows = _sort_defects(normalized_rows)
         meta = _write_snapshot_payload(
             product_id=safe_product_id,
@@ -1888,12 +2102,20 @@ def _refresh_snapshot_for_product(product_id: str) -> dict[str, Any]:
         )
         snapshot = _serialize_snapshot_meta(meta) or {}
         logger.info(
-            "DtsStatistics snapshot refresh success product_id=%s row_count=%s chunk_count=%s scanned_pages=%s scan_chunks=%s",
+            (
+                "DtsStatistics snapshot refresh success product_id=%s row_count=%s "
+                "chunk_count=%s scanned_pages=%s scan_chunks=%s merged_total=%s "
+                "brief_filtered=%s dept_filtered=%s final_total=%s"
+            ),
             safe_product_id,
             snapshot.get("rowCount"),
             meta.get("chunkCount"),
             total_pages,
             total_chunks,
+            filter_stats.get("merged_total"),
+            filter_stats.get("brief_filtered"),
+            filter_stats.get("dept_filtered"),
+            filter_stats.get("final_total"),
         )
         return snapshot
     finally:
@@ -2147,6 +2369,7 @@ _EXPORT_COLUMN_SPECS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
     ("关闭时间", lambda item: _clean_text(item.get("dCloseTime"))),
     ("关闭类型", lambda item: _clean_text(item.get("uQbiCloseTypeName"))),
     ("提出方部门", lambda item: _clean_text(item.get("sDeptOneNoName"))),
+    ("提单来源", lambda item: _clean_text(item.get("auto_source_type"))),
     ("当前处理人", lambda item: _clean_text(item.get("currentHandler"))),
     ("提单人工号", lambda item: _clean_text(item.get("creator"))),
     ("提单人姓名", lambda item: _clean_text(item.get("sSubmitUserName"))),
@@ -2158,6 +2381,7 @@ _EXPORT_COLUMN_SPECS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
     ("产品名称", lambda item: _clean_text(item.get("sProdXtdNoName"))),
     ("测试返回次数", lambda item: _clean_text(item.get("iTestBackCount"))),
     ("最后开发修改人", lambda item: _clean_text(item.get("last_dts009_handler"))),
+    ("自动责任PL组", lambda item: _clean_text(item.get("auto_pl_group_name"))),
     ("最后审核修改人", lambda item: _clean_text(item.get("last_dts010_handler"))),
     ("最后测试回归人", lambda item: _clean_text(item.get("last_dts013_handler"))),
     ("关闭周期", lambda item: _format_cycle_integer_value(item.get("iNumOfCloseDays"))),
@@ -2462,6 +2686,8 @@ def get_dts_statistics_summary(
     team_counter: Counter[str] = Counter()
     stage_counter: Counter[str] = Counter()
     close_type_counter: Counter[str] = Counter()
+    source_counter: Counter[str] = Counter()
+    auto_pl_group_counter: Counter[str] = Counter()
     handler_counter: Counter[str] = Counter()
     project_counter: Counter[str] = Counter()
 
@@ -2482,6 +2708,8 @@ def get_dts_statistics_summary(
             close_type_counter["未填写"] += 1
         else:
             close_type_counter["未关闭"] += 1
+        source_counter[_clean_text(defect.get("auto_source_type"))] += 1
+        auto_pl_group_counter[_clean_text(defect.get("auto_pl_group_name"))] += 1
         handler_counter[_clean_text(defect.get("currentHandler"))] += 1
         project_counter[_clean_text(defect.get("sProdXtdNoName") or defect.get("productName"))] += 1
 
@@ -2580,6 +2808,8 @@ def get_dts_statistics_summary(
         "team_dist": _distribution(team_counter, top_n=30),
         "stage_dist": _distribution(stage_counter),
         "close_type_dist": _distribution(close_type_counter),
+        "source_dist": _distribution(source_counter),
+        "auto_pl_group_dist": _distribution(auto_pl_group_counter, top_n=20),
         "handler_dist": _distribution(handler_counter, top_n=20),
         "qa_category_dist": _distribution(qa_category_counter),
         "dev_sub_category_dist": _distribution(dev_sub_category_counter, top_n=20),

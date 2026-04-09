@@ -402,6 +402,12 @@ export function useColumns(): Columns {
       width: 140,
     },
     {
+      key: 'auto_source_type',
+      dataKey: 'auto_source_type',
+      title: '提单来源',
+      width: 140,
+    },
+    {
       key: 'currentHandler',
       dataKey: 'currentHandler',
       title: '当前处理人',
@@ -448,6 +454,12 @@ export function useColumns(): Columns {
       dataKey: 'last_dts009_handler',
       title: '最后开发修改人',
       width: 140,
+    },
+    {
+      key: 'auto_pl_group_name',
+      dataKey: 'auto_pl_group_name',
+      title: '自动责任PL组',
+      width: 150,
     },
     {
       key: 'last_dts010_handler',

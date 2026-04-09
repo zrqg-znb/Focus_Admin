@@ -153,6 +153,8 @@ const summary = ref<DtsSummary>({
   team_dist: [],
   stage_dist: [],
   close_type_dist: [],
+  source_dist: [],
+  auto_pl_group_dist: [],
   handler_dist: [],
   qa_category_dist: [],
   dev_sub_category_dist: [],
@@ -370,6 +372,8 @@ async function fetchSummary(force = false) {
       team_dist: [],
       stage_dist: [],
       close_type_dist: [],
+      source_dist: [],
+      auto_pl_group_dist: [],
       handler_dist: [],
       qa_category_dist: [],
       dev_sub_category_dist: [],
@@ -1130,6 +1134,11 @@ const stageChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderStageChart } = useEcharts(stageChartRef);
 const closeTypeChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderCloseTypeChart } = useEcharts(closeTypeChartRef);
+const sourceChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderSourceChart } = useEcharts(sourceChartRef);
+const autoPlGroupChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderAutoPlGroupChart } =
+  useEcharts(autoPlGroupChartRef);
 const handlerChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderHandlerChart } = useEcharts(handlerChartRef);
 const qaCategoryChartRef = ref<EchartsUIType>();
@@ -1272,6 +1281,57 @@ function renderDistBar(
   });
 }
 
+function renderDistPie(
+  render: (options: Record<string, any>) => void,
+  rows: Array<{ label: string; value: number }>,
+  title: string,
+) {
+  if (!rows || rows.length === 0) {
+    renderEmptyChart(render, `暂无${title}`);
+    return;
+  }
+  render({
+    tooltip: {
+      trigger: 'item',
+      formatter: (params: any) => {
+        const name = String(params?.name ?? '');
+        const value = Number(params?.value ?? 0);
+        const percent = Number(params?.percent ?? 0);
+        return `${name}<br/>${value} (${percent.toFixed(1)}%)`;
+      },
+    },
+    legend: {
+      bottom: 0,
+      icon: 'circle',
+      itemWidth: 8,
+      itemHeight: 8,
+      textStyle: { color: '#64748b', fontSize: 11 },
+    },
+    series: [
+      {
+        type: 'pie',
+        radius: ['38%', '68%'],
+        center: ['50%', '44%'],
+        avoidLabelOverlap: true,
+        label: {
+          show: true,
+          color: '#475569',
+          formatter: '{b}\n{c} ({d}%)',
+          fontSize: 11,
+        },
+        labelLine: {
+          length: 10,
+          length2: 12,
+        },
+        data: rows.map((item) => ({
+          name: item.label,
+          value: item.value,
+        })),
+      },
+    ],
+  });
+}
+
 const canRenderCharts = computed(
   () =>
     activeTab.value === 'dashboard' &&
@@ -1308,6 +1368,22 @@ watch(
   ([ready, rows]) => {
     if (!ready) return;
     renderDistBar(renderCloseTypeChart, rows, '关闭类型分布', '#f97316');
+  },
+  { deep: true, immediate: true },
+);
+watch(
+  [canRenderCharts, () => summary.value.source_dist] as const,
+  ([ready, rows]) => {
+    if (!ready) return;
+    renderDistPie(renderSourceChart, rows, '提单来源分布');
+  },
+  { deep: true, immediate: true },
+);
+watch(
+  [canRenderCharts, () => summary.value.auto_pl_group_dist] as const,
+  ([ready, rows]) => {
+    if (!ready) return;
+    renderDistBar(renderAutoPlGroupChart, rows, '自动责任PL组分布', '#14b8a6');
   },
   { deep: true, immediate: true },
 );
@@ -2838,6 +2914,57 @@ onUnmounted(() => {
                       </div>
                     </template>
                     <EchartsUI ref="handlerChartRef" height="340px" />
+                  </ElCard>
+                </div>
+              </ElCard>
+
+              <ElCard shadow="never" class="summary-section-card">
+                <template #header>
+                  <div class="summary-section-card__header">
+                    <div>
+                      <div class="summary-section-card__title">自动识别</div>
+                      <div class="summary-section-card__desc">
+                        基于过滤后的 DTS 快照，自动识别提单来源与责任 PL
+                        组，辅助快速观察问题归属。
+                      </div>
+                    </div>
+                    <ElTag
+                      class="summary-section-card__tag"
+                      type="warning"
+                      effect="plain"
+                    >
+                      {{ summary.source_dist.length }} 类来源
+                    </ElTag>
+                  </div>
+                </template>
+                <div class="dts-charts-grid">
+                  <ElCard shadow="never" class="dts-chart-card">
+                    <template #header>
+                      <div class="dts-chart-card__header">
+                        <div class="dts-chart-card__title">提单来源分布</div>
+                        <ElTag type="warning" effect="plain">
+                          {{ summary.source_dist.length }} 类
+                        </ElTag>
+                      </div>
+                    </template>
+                    <EchartsUI ref="sourceChartRef" height="320px" />
+                  </ElCard>
+
+                  <ElCard
+                    shadow="never"
+                    class="dts-chart-card dts-chart-card--wide"
+                  >
+                    <template #header>
+                      <div class="dts-chart-card__header">
+                        <div class="dts-chart-card__title">
+                          自动责任PL组分布
+                        </div>
+                        <ElTag type="success" effect="plain">
+                          {{ summary.auto_pl_group_dist.length }} 组
+                        </ElTag>
+                      </div>
+                    </template>
+                    <EchartsUI ref="autoPlGroupChartRef" height="340px" />
                   </ElCard>
                 </div>
               </ElCard>

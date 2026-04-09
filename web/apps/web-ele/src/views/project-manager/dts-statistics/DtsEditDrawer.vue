@@ -144,6 +144,7 @@ const baselineItems = computed(() => {
     { label: '关闭时间', value: normalizeDisplay(row?.dCloseTime) },
     { label: '关闭类型', value: normalizeDisplay(row?.uQbiCloseTypeName) },
     { label: '提出方部门', value: normalizeDisplay(row?.sDeptOneNoName) },
+    { label: '提单来源', value: normalizeDisplay(row?.auto_source_type) },
     { label: '当前处理人', value: normalizeDisplay(row?.currentHandler) },
     { label: '提单人工号', value: normalizeDisplay(row?.creator) },
     { label: '提单人姓名', value: normalizeDisplay(row?.sSubmitUserName) },
@@ -157,6 +158,10 @@ const baselineItems = computed(() => {
     {
       label: '最后开发修改人',
       value: normalizeDisplay(row?.last_dts009_handler),
+    },
+    {
+      label: '自动责任PL组',
+      value: normalizeDisplay(row?.auto_pl_group_name),
     },
     {
       label: '最后审核修改人',

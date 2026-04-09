@@ -55,6 +55,9 @@ export interface DtsMergedDefect {
   serverityNo?: null | string;
   productId?: null | string;
   productName?: null | string;
+  auto_source_type?: null | string;
+  auto_pl_group_id?: null | string;
+  auto_pl_group_name?: null | string;
 
   qa_category?: null | string;
   pl_group_id?: null | string;
@@ -162,6 +165,8 @@ export interface DtsSummary {
   team_dist: DtsDistributionItem[];
   stage_dist: DtsDistributionItem[];
   close_type_dist: DtsDistributionItem[];
+  source_dist: DtsDistributionItem[];
+  auto_pl_group_dist: DtsDistributionItem[];
   handler_dist: DtsDistributionItem[];
   qa_category_dist: DtsDistributionItem[];
   dev_sub_category_dist: DtsDistributionItem[];

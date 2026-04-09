@@ -245,6 +245,9 @@ class DataLakeDefectSchema(Schema):
     serverityNo: Optional[str] = None
     productId: Optional[str] = None
     productName: Optional[str] = None
+    auto_source_type: Optional[str] = None
+    auto_pl_group_id: Optional[str] = None
+    auto_pl_group_name: Optional[str] = None
 
 
 class DtsMergedDefectSchema(DataLakeDefectSchema):
@@ -324,6 +327,8 @@ class DtsSummarySchema(Schema):
     team_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     stage_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     close_type_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
+    source_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
+    auto_pl_group_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     handler_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     qa_category_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     dev_sub_category_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
