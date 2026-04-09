@@ -45,6 +45,7 @@ import {
   closeTaskApi,
   deleteTaskFailureModeDraftApi,
   getTaskApi,
+  getTaskFailureModeLandingApi,
   getTaskFailureModesApi,
   listProductFailureModesApi,
   listProductRoleAssignmentsApi,
@@ -54,6 +55,7 @@ import {
   recallTaskApi,
   rejectTaskApi,
   saveTaskFailureModeDraftApi,
+  saveTaskFailureModeLandingApi,
   submitTaskApi,
   updateTaskFailureModeApi,
 } from '#/api/failure_mode_workflow';
@@ -70,6 +72,7 @@ import {
   useFailureModeColumns,
 } from '../data';
 import FailureModeTransferDialog from '../workflow/tasks/components/FailureModeTransferDialog.vue';
+import LandingConfigDrawer from '../workflow/tasks/components/LandingConfigDrawer.vue';
 import {
   FM_TASK_STATUS_LABEL_MAP,
   FM_TASK_TYPE_LABEL_MAP,
@@ -101,6 +104,7 @@ const roleAssignments = ref<FailureModeRoleAssignmentItem[]>([]);
 const reassignUserId = ref('');
 const transferDialogRef = ref<InstanceType<typeof FailureModeTransferDialog>>();
 const failureModeDrawerRef = ref<InstanceType<typeof FailureModeDrawer>>();
+const landingConfigDrawerRef = ref<InstanceType<typeof LandingConfigDrawer>>();
 const editingFailureModeRow = ref<FailureModeItem | null>(null);
 const dictOptions = reactive<FailureModeDictOptions>(createEmptyDictOptions());
 const subsystemConfigOptions = reactive<FailureModeSubsystemConfigOptions>(
@@ -141,6 +145,12 @@ const canQuickCreate = computed(
   () => availableActions.value.has('quick_create') && !isDeleteTask.value,
 );
 const canSelectDelete = computed(() => canEdit.value && isDeleteTask.value);
+const canMaintainLanding = computed(
+  () =>
+    canEdit.value &&
+    currentTask.value?.status === 'PROCESSING' &&
+    !isDeleteTask.value,
+);
 
 const selectedDeleteRows = computed(() =>
   boundFailureModes.value.filter(
@@ -196,7 +206,7 @@ const latestReviewFeedback = computed(() => {
 
 const workbenchColumns = ((useFailureModeColumns() || []).map((column) =>
   column?.key === 'actions'
-    ? { ...column, cellSlotName: 'cell-actions', width: 240 }
+    ? { ...column, cellSlotName: 'cell-actions', width: 320 }
     : column,
 ) || []) as ZqTableGridOptions<FailureModeItem>['columns'];
 
@@ -338,6 +348,7 @@ const TASK_LOG_ACTION_LABEL_MAP: Record<string, string> = {
   recall: '撤回评审',
   reassign: '改派责任人',
   reject: '评审驳回',
+  save_landing: '保存落地配置',
   save_draft: '保存修订草稿',
   submit: '提交评审',
 };
@@ -550,6 +561,43 @@ function handleViewFailureMode(row: FailureModeItem) {
 async function handleFailureModeSaved() {
   editingFailureModeRow.value = null;
   await loadTaskContext();
+}
+
+function handleOpenLandingConfig(row: FailureModeItem) {
+  if (!currentTask.value) {
+    return;
+  }
+  landingConfigDrawerRef.value?.open({
+    taskId: currentTask.value.id,
+    failureModeId: row.id,
+    failureModeBrief: row.brief,
+    productName: currentTask.value.product_name,
+    subsystem: currentTask.value.subsystem,
+    taskType:
+      FM_TASK_TYPE_LABEL_MAP[currentTask.value.task_type] ||
+      currentTask.value.task_type,
+    taskStatus:
+      FM_TASK_STATUS_LABEL_MAP[currentTask.value.status] ||
+      currentTask.value.status,
+  });
+}
+
+function loadTaskFailureModeLanding(taskId: string, failureModeId: string) {
+  return getTaskFailureModeLandingApi(taskId, failureModeId);
+}
+
+async function saveTaskFailureModeLanding(
+  taskId: string,
+  failureModeId: string,
+  payload: Record<string, any>,
+) {
+  const result = await saveTaskFailureModeLandingApi(
+    taskId,
+    failureModeId,
+    payload,
+  );
+  await loadTaskContext();
+  return result;
 }
 
 async function handleDeleteDraft(row: FailureModeItem) {
@@ -1005,6 +1053,21 @@ watch(
                     >
                       {{ getTaskChangeLabel(row) }}
                     </div>
+                    <div
+                      v-if="!isDeleteTask"
+                      class="mt-1 text-xs"
+                      :class="
+                        row.landing_completed
+                          ? 'text-emerald-600'
+                          : 'text-amber-600'
+                      "
+                    >
+                      {{
+                        row.landing_completed
+                          ? `落地已补齐 · ${row.landing_resource_landed_count}/${row.landing_resource_total}`
+                          : `落地待补齐 · ${row.landing_resource_landed_count}/${row.landing_resource_total}`
+                      }}
+                    </div>
                   </template>
 
                   <template #cell-source_task_no="{ row }">
@@ -1070,6 +1133,14 @@ watch(
                         @click="handleViewFailureMode(row)"
                       >
                         查看
+                      </ElButton>
+                      <ElButton
+                        v-if="canMaintainLanding"
+                        link
+                        type="success"
+                        @click="handleOpenLandingConfig(row)"
+                      >
+                        落地配置
                       </ElButton>
                       <ElButton
                         v-if="row.editable_in_task"
@@ -1231,6 +1302,11 @@ watch(
       :subsystem-config-options="subsystemConfigOptions"
       :update-handler="taskFailureModeUpdateHandler"
       @success="handleFailureModeSaved"
+    />
+    <LandingConfigDrawer
+      ref="landingConfigDrawerRef"
+      :load-handler="loadTaskFailureModeLanding"
+      :save-handler="saveTaskFailureModeLanding"
     />
   </Page>
 </template>

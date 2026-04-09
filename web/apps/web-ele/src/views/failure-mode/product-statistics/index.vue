@@ -127,6 +127,12 @@ const selectedBaselineCount = computed(() => {
   }, 0);
 });
 
+const selectedLandedCount = computed(() => {
+  return selectedProductItems.value.reduce((sum, item) => {
+    return sum + Number(item.landed_failure_mode_count || 0);
+  }, 0);
+});
+
 const selectedPendingCount = computed(() => {
   return selectedProductItems.value.reduce((sum, item) => {
     return sum + Number(item.pending_failure_mode_count || 0);
@@ -307,6 +313,10 @@ onMounted(async () => {
               <span>当前基线</span>
               <strong>{{ selectedBaselineCount }}</strong>
             </div>
+            <div class="product-statistics-summary-pill">
+              <span>已落地故障</span>
+              <strong>{{ selectedLandedCount }}</strong>
+            </div>
             <div class="product-statistics-summary-pill warning">
               <span>待开展故障</span>
               <strong>{{ selectedPendingCount }}</strong>
@@ -322,7 +332,7 @@ onMounted(async () => {
           </div>
           <h1 class="product-statistics-hero__title">产品故障统计</h1>
           <p class="product-statistics-hero__desc">
-            从产品视角追踪当前生效基线的落地成熟度，先看全产品概览，再下钻到单产品与子系统的配置缺口。
+            从产品视角追踪当前生效基线的显式落地成熟度，先看全产品概览，再下钻到子系统维度的待开展缺口。
           </p>
         </div>
         <div class="product-statistics-hero__metrics">
@@ -352,7 +362,7 @@ onMounted(async () => {
               {{ formatPercent(selectedPendingRate) }}
             </div>
             <div class="product-statistics-metric-card__hint">
-              按当前选中平台项目集合加权计算
+              按当前选中平台项目集合的基线故障模式加权计算
             </div>
           </div>
         </div>
@@ -363,7 +373,7 @@ onMounted(async () => {
           <div>
             <div class="product-overview-panel__title">产品概览区</div>
             <div class="product-overview-panel__desc">
-              仅展示平台项目。默认按全部平台项目聚合分析，也可以单选或多选切换统计视角。
+              仅展示平台项目。默认按全部平台项目聚合分析，也可以单选或多选切换到不同产品集合视角。
             </div>
           </div>
           <ElButton :loading="overviewLoading" @click="initializePage">
@@ -418,6 +428,7 @@ onMounted(async () => {
               <span>产品</span>
               <span>主版本SE</span>
               <span>基线故障模式数</span>
+              <span>已落地故障数</span>
               <span>待开展故障数</span>
               <span>待开展率</span>
               <span>状态灯</span>
@@ -441,6 +452,7 @@ onMounted(async () => {
                 }}
               </span>
               <span>{{ item.baseline_failure_mode_count }}</span>
+              <span>{{ item.landed_failure_mode_count }}</span>
               <span>{{ item.pending_failure_mode_count }}</span>
               <span>{{ formatPercent(item.pending_rate) }}</span>
               <span class="product-overview-table__lamp">
@@ -512,6 +524,10 @@ onMounted(async () => {
               <span>当前基线故障模式数</span>
               <strong>{{ selectedBaselineCount }}</strong>
             </div>
+            <div class="product-analysis-summary__item">
+              <span>已落地故障数</span>
+              <strong>{{ selectedLandedCount }}</strong>
+            </div>
             <div class="product-analysis-summary__item warning">
               <span>待开展率</span>
               <strong>{{ formatPercent(selectedPendingRate) }}</strong>
@@ -547,13 +563,13 @@ onMounted(async () => {
                             子系统故障模式数量
                           </div>
                           <div class="product-statistics-card-header__desc">
-                            当前选中平台项目集合下，各子系统的故障模式分布。
+                            当前选中平台项目集合下，各子系统的基线故障模式数量分布。
                           </div>
                         </div>
                       </div>
                       <StatisticsBarChart
                         :data="summary.subsystem_counts"
-                        title="故障模式数量"
+                        title="基线故障模式数"
                       />
                     </ElCard>
 
@@ -567,7 +583,8 @@ onMounted(async () => {
                             看板说明
                           </div>
                           <div class="product-statistics-card-header__desc">
-                            三态规则完全沿用全局统计，只是统计对象收敛为当前选中平台项目集合的已生效基线。
+                            当前页面只看产品级显式落地结果。故障模式本身是二态，其余能力按“已落地
+                            / 待开展 / 不涉及”三态推导。
                           </div>
                         </div>
                       </div>
@@ -577,7 +594,7 @@ onMounted(async () => {
                           <div>
                             <div class="title">已落地</div>
                             <div class="desc">
-                              当前维度为必配且至少存在 1 条匹配关联。
+                              当前维度为必配，且当前绑定的全部资源都显式标记为已落地。
                             </div>
                           </div>
                         </div>
@@ -586,7 +603,7 @@ onMounted(async () => {
                           <div>
                             <div class="title">待开展</div>
                             <div class="desc">
-                              当前维度为必配，但尚未补齐对应关联关系。
+                              当前维度为必配，但存在未落地资源，或当前还没有补齐对应资源。
                             </div>
                           </div>
                         </div>
@@ -595,7 +612,7 @@ onMounted(async () => {
                           <div>
                             <div class="title">不涉及</div>
                             <div class="desc">
-                              当前维度未勾选必配，不纳入待开展统计。
+                              当前维度未勾选必配，因此不纳入待开展统计。
                             </div>
                           </div>
                         </div>
@@ -656,7 +673,7 @@ onMounted(async () => {
                             </div>
                             <div class="product-statistics-status-hint">
                               待开展 {{ row.pending_failure_mode_count }} /
-                              {{ row.failure_mode_count }} ·
+                              {{ row.baseline_failure_mode_count }} ·
                               {{ formatPercent(row.pending_rate) }}
                             </div>
                           </div>
@@ -932,7 +949,9 @@ onMounted(async () => {
   display: grid;
   align-items: center;
   gap: 12px;
-  grid-template-columns: minmax(180px, 1.4fr) 140px 140px 140px 120px 100px;
+  grid-template-columns:
+    minmax(180px, 1.4fr)
+    140px 140px 140px 140px 120px 100px;
 }
 
 .product-overview-table__head {

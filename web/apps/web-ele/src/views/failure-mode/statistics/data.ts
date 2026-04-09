@@ -77,6 +77,7 @@ export function createEmptyStatisticsSummary(): FailureModeStatisticsSummary {
   const empty: FailureModeStatisticsChartDatum[] = [];
   return {
     subsystem_counts: empty,
+    failure_mode_landing_status: empty,
     interception_status: empty,
     huatuo_status: empty,
     handling_detection_status: empty,

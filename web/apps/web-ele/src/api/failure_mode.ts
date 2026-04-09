@@ -110,6 +110,10 @@ export interface FailureModeItem {
   has_task_draft?: boolean;
   editable_in_task?: boolean;
   task_edit_mode?: 'direct_update' | 'draft' | null;
+  landing_completed?: boolean;
+  failure_mode_is_landed?: boolean | null;
+  landing_resource_total?: number;
+  landing_resource_landed_count?: number;
   sys_create_datetime?: string;
   sys_update_datetime?: string;
 }
@@ -364,6 +368,7 @@ export interface FailureModeStatisticsChartDatum {
 
 export interface FailureModeStatisticsSummary {
   subsystem_counts: FailureModeStatisticsChartDatum[];
+  failure_mode_landing_status: FailureModeStatisticsChartDatum[];
   interception_status: FailureModeStatisticsChartDatum[];
   huatuo_status: FailureModeStatisticsChartDatum[];
   handling_detection_status: FailureModeStatisticsChartDatum[];
@@ -481,7 +486,36 @@ export function normalizeFailureModeItem(
     has_task_draft: Boolean(item.has_task_draft),
     editable_in_task: Boolean(item.editable_in_task),
     task_edit_mode: item.task_edit_mode || null,
+    landing_completed: Boolean(item.landing_completed),
+    failure_mode_is_landed:
+      typeof item.failure_mode_is_landed === 'boolean'
+        ? item.failure_mode_is_landed
+        : null,
+    landing_resource_total: Number(item.landing_resource_total || 0),
+    landing_resource_landed_count: Number(
+      item.landing_resource_landed_count || 0,
+    ),
   };
+}
+
+export interface TaskFailureModeLandingRow {
+  resource_id: string;
+  label: string;
+  subtitle?: null | string;
+  group_key: string;
+  is_landed?: boolean | null;
+}
+
+export interface TaskFailureModeLandingDetail {
+  task_id: string;
+  failure_mode_id: string;
+  failure_mode_brief: string;
+  failure_mode_is_landed?: boolean | null;
+  landing_completed: boolean;
+  interception_rows: TaskFailureModeLandingRow[];
+  handling_rows: TaskFailureModeLandingRow[];
+  observation_rows: TaskFailureModeLandingRow[];
+  huatuo_rows: TaskFailureModeLandingRow[];
 }
 
 export interface FailureModeProductStatisticsOverviewItem {
@@ -489,6 +523,7 @@ export interface FailureModeProductStatisticsOverviewItem {
   product_name: string;
   owner_info?: null | UserBriefInfo;
   baseline_failure_mode_count: number;
+  landed_failure_mode_count: number;
   pending_failure_mode_count: number;
   pending_rate: number;
   status_light: 'green' | 'red' | 'yellow' | string;
@@ -501,8 +536,14 @@ export interface FailureModeProductStatisticsSummaryQuery {
   subsystems?: string[];
 }
 
-export type FailureModeProductStatisticsSubsystemRow =
-  FailureModeStatisticsSubsystemRow;
+export interface FailureModeProductStatisticsSubsystemRow {
+  subsystem: string;
+  baseline_failure_mode_count: number;
+  landed_failure_mode_count: number;
+  pending_failure_mode_count: number;
+  pending_rate: number;
+  status_light: 'green' | 'red' | 'yellow' | string;
+}
 
 export interface FailureModeProductStatisticsSubsystemQuery
   extends FailureModeStatisticsSubsystemQuery {

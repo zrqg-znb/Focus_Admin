@@ -1,6 +1,7 @@
 import type {
   FailureModeItem,
   FailureModePayload,
+  TaskFailureModeLandingDetail,
   UserBriefInfo,
 } from './failure_mode';
 
@@ -33,6 +34,7 @@ export interface ProductFailureModeItem {
   subsystem: string;
   failure_mode_id: string;
   failure_mode_brief: string;
+  is_landed: boolean;
   sys_create_datetime?: null | string;
 }
 
@@ -252,6 +254,26 @@ export function bindTaskFailureModesApi(
   return requestClient.post<{ success: boolean }>(
     `/api/failure-mode/workflow/tasks/${taskId}/failure-modes/bind`,
     { failure_mode_ids },
+  );
+}
+
+export function getTaskFailureModeLandingApi(
+  taskId: string,
+  failureModeId: string,
+) {
+  return requestClient.get<TaskFailureModeLandingDetail>(
+    `/api/failure-mode/workflow/tasks/${taskId}/failure-modes/${failureModeId}/landing`,
+  );
+}
+
+export function saveTaskFailureModeLandingApi(
+  taskId: string,
+  failureModeId: string,
+  data: Partial<TaskFailureModeLandingDetail>,
+) {
+  return requestClient.put<TaskFailureModeLandingDetail>(
+    `/api/failure-mode/workflow/tasks/${taskId}/failure-modes/${failureModeId}/landing`,
+    data,
   );
 }
 
