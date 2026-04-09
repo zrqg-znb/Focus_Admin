@@ -13,7 +13,7 @@ import type {
 } from '#/api/failure_mode_workflow';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
-import { computed, nextTick, reactive, shallowRef, ref, watch } from 'vue';
+import { computed, nextTick, reactive, ref, shallowRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
@@ -196,7 +196,7 @@ const latestReviewFeedback = computed(() => {
 
 const workbenchColumns = ((useFailureModeColumns() || []).map((column) =>
   column?.key === 'actions'
-    ? { ...column, cellSlotName: 'cell-actions', width: 180 }
+    ? { ...column, cellSlotName: 'cell-actions', width: 240 }
     : column,
 ) || []) as ZqTableGridOptions<FailureModeItem>['columns'];
 
@@ -540,6 +540,11 @@ function taskFailureModeUpdateHandler(id: string, payload: FailureModePayload) {
 function handleEditFailureMode(row: FailureModeItem) {
   editingFailureModeRow.value = row;
   failureModeDrawerRef.value?.openEdit(row);
+}
+
+function handleViewFailureMode(row: FailureModeItem) {
+  editingFailureModeRow.value = null;
+  failureModeDrawerRef.value?.openView(row);
 }
 
 async function handleFailureModeSaved() {
@@ -1058,11 +1063,16 @@ watch(
                   </template>
 
                   <template #cell-actions="{ row }">
-                    <div
-                      v-if="row.editable_in_task"
-                      class="flex items-center justify-center gap-2"
-                    >
+                    <div class="flex items-center justify-center gap-2">
                       <ElButton
+                        link
+                        type="primary"
+                        @click="handleViewFailureMode(row)"
+                      >
+                        查看
+                      </ElButton>
+                      <ElButton
+                        v-if="row.editable_in_task"
                         link
                         type="primary"
                         @click="handleEditFailureMode(row)"
@@ -1080,7 +1090,6 @@ watch(
                         撤销修订
                       </ElButton>
                     </div>
-                    <span v-else class="text-gray-400">-</span>
                   </template>
                 </FailureModeGrid>
               </div>

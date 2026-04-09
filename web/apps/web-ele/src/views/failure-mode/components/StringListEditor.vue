@@ -17,6 +17,7 @@ const props = withDefaults(
     addText?: string;
     bodyMaxHeight?: string;
     description?: string;
+    disabled?: boolean;
     itemLabel?: string;
     label: string;
     modelValue?: string[];
@@ -28,6 +29,7 @@ const props = withDefaults(
     addButtonPlacement: 'header',
     bodyMaxHeight: '',
     description: '',
+    disabled: false,
     itemLabel: '条目',
     modelValue: () => [],
     placeholder: '请输入内容',
@@ -73,10 +75,16 @@ function emitValue() {
 }
 
 function handleAdd() {
+  if (props.disabled) {
+    return;
+  }
   draftItems.value.push(createDraft());
 }
 
 function handleRemove(index: number) {
+  if (props.disabled) {
+    return;
+  }
   if (draftItems.value.length === 1) {
     draftItems.value[0] = createDraft('');
   } else {
@@ -145,7 +153,10 @@ const bodyStyle = computed(() => {
           </div>
         </div>
       </div>
-      <div v-if="showHeaderAdd" class="mt-3 flex justify-end">
+      <div
+        v-if="showHeaderAdd && !props.disabled"
+        class="mt-3 flex justify-end"
+      >
         <ElButton :icon="Plus" link type="primary" @click="handleAdd">
           {{ addText }}
         </ElButton>
@@ -169,12 +180,14 @@ const bodyStyle = computed(() => {
           </div>
           <ElInput
             v-model="item.value"
+            :clearable="!props.disabled"
+            :disabled="props.disabled"
             :placeholder="placeholder"
-            clearable
             @change="emitValue"
             @input="emitValue"
           />
           <ElButton
+            v-if="!props.disabled"
             :icon="Delete"
             circle
             link
@@ -190,7 +203,7 @@ const bodyStyle = computed(() => {
     </div>
 
     <div
-      v-if="showFooterAdd"
+      v-if="showFooterAdd && !props.disabled"
       class="mt-4 border-t border-[var(--el-border-color-lighter)] pt-4"
     >
       <ElButton

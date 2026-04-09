@@ -63,7 +63,7 @@ const OBSERVATION_TYPES = ['流水日志', 'DMD 点位', 'FMP 点位'];
 const visible = ref(false);
 const loading = ref(false);
 const confirmLoading = ref(false);
-const mode = ref<'create' | 'edit'>('create');
+const mode = ref<'create' | 'edit' | 'view'>('create');
 const editingId = ref('');
 const selectedSubsystem = ref<string>();
 const relatedDtsNos = ref<string[]>([]);
@@ -91,9 +91,26 @@ const formValueFallbacks = ref<{
   symptoms: [],
 });
 
-const drawerTitle = computed(() =>
-  mode.value === 'create' ? '新增故障模式' : '编辑故障模式',
-);
+const drawerTitle = computed(() => {
+  if (mode.value === 'create') {
+    return '新增故障模式';
+  }
+  if (mode.value === 'view') {
+    return '故障模式详情';
+  }
+  return '编辑故障模式';
+});
+const isReadonly = computed(() => mode.value === 'view');
+
+function getFormCommonConfig() {
+  return {
+    colon: true,
+    componentProps: { class: 'w-full' },
+    disabled: isReadonly.value,
+    labelClass: 'whitespace-nowrap',
+    labelWidth: 156,
+  };
+}
 
 const handlingCategoryOptions = computed(() => {
   const allowSet = new Set(HANDLING_CATEGORIES);
@@ -155,12 +172,7 @@ const relationCardConfigs = computed(() => [
 ]);
 
 const [Form, formApi] = useVbenForm({
-  commonConfig: {
-    colon: true,
-    componentProps: { class: 'w-full' },
-    labelClass: 'whitespace-nowrap',
-    labelWidth: 156,
-  },
+  commonConfig: getFormCommonConfig(),
   schema: useFailureModeFormSchema(
     props.dictOptions,
     props.subsystemConfigOptions,
@@ -177,6 +189,7 @@ const [Form, formApi] = useVbenForm({
 
 function applySchema() {
   formApi.setState({
+    commonConfig: getFormCommonConfig(),
     schema: useFailureModeFormSchema(
       props.dictOptions,
       props.subsystemConfigOptions,
@@ -457,7 +470,29 @@ async function openEdit(record: FailureModeItem | string | { id: string }) {
   }
 }
 
+async function openView(record: FailureModeItem | string | { id: string }) {
+  mode.value = 'view';
+  editingId.value = typeof record === 'string' ? record : record.id;
+  visible.value = true;
+  await nextTick();
+  loading.value = true;
+  resetRelations();
+  try {
+    await formApi.resetForm();
+    const detail =
+      typeof record === 'object' && 'brief' in record
+        ? record
+        : await getFailureModeDetailApi(editingId.value);
+    applyFailureModeDetail(detail as FailureModeItem);
+  } finally {
+    loading.value = false;
+  }
+}
+
 function openRelationSelector(kind: MasterResourceKind) {
+  if (isReadonly.value) {
+    return;
+  }
   if (!isRelationKindEnabled(kind)) {
     const tips = {
       huatuo: '请先开启华佗诊断必配开关。',
@@ -479,6 +514,9 @@ function openRelationSelector(kind: MasterResourceKind) {
 }
 
 function removeRelationSelection(kind: MasterResourceKind, id: string) {
+  if (isReadonly.value) {
+    return;
+  }
   const relationState = getRelationState(kind);
   relationState.ids.value = relationState.ids.value.filter(
     (item) => item !== id,
@@ -519,10 +557,16 @@ function handleRelationConfirm(payload: {
 }
 
 function handleQuickCreate(kind: MasterResourceKind) {
+  if (isReadonly.value) {
+    return;
+  }
   masterDrawerRef.value?.openCreate(kind);
 }
 
 function handleQuickEdit(payload: { id: string; kind: MasterResourceKind }) {
+  if (isReadonly.value) {
+    return;
+  }
   masterDrawerRef.value?.openEdit(payload.kind, payload.id);
 }
 
@@ -648,14 +692,17 @@ watch(
 defineExpose({
   openCreate,
   openEdit,
+  openView,
 });
 </script>
 
 <template>
   <ZqDrawer
     v-model="visible"
+    :cancel-text="isReadonly ? '关闭' : '取消'"
     :confirm-loading="confirmLoading"
     :loading="loading"
+    :show-confirm-button="!isReadonly"
     :title="drawerTitle"
     size="78%"
     @confirm="handleConfirm"
@@ -698,7 +745,7 @@ defineExpose({
                   关闭时自动清空当前关联，并统计为“无需配置”。
                 </div>
               </div>
-              <ElSwitch v-model="interceptionRequired" />
+              <ElSwitch v-model="interceptionRequired" :disabled="isReadonly" />
             </div>
             <div class="failure-mode-switch-card">
               <div>
@@ -707,7 +754,7 @@ defineExpose({
                   关闭时自动清空当前关联，并统计为“无需配置”。
                 </div>
               </div>
-              <ElSwitch v-model="huatuoRequired" />
+              <ElSwitch v-model="huatuoRequired" :disabled="isReadonly" />
             </div>
           </div>
 
@@ -722,6 +769,7 @@ defineExpose({
               <ElCheckboxGroup
                 v-model="requiredHandlingMeasureCategories"
                 class="mt-3 flex flex-wrap gap-3"
+                :disabled="isReadonly"
               >
                 <ElCheckbox
                   v-for="item in handlingCategoryOptions"
@@ -742,6 +790,7 @@ defineExpose({
               <ElCheckboxGroup
                 v-model="requiredObservationMethodTypes"
                 class="mt-3 flex flex-wrap gap-3"
+                :disabled="isReadonly"
               >
                 <ElCheckbox
                   v-for="item in observationTypeOptions"
@@ -763,6 +812,7 @@ defineExpose({
           add-button-placement="footer"
           class="xl:h-full xl:min-h-0"
           description="顶部固定展示当前问题单数量，中间区域独立滚动维护，底部统一新增，避免表单随内容无限增高。"
+          :disabled="isReadonly"
           item-label="问题单号"
           label="关联问题单"
           placeholder="请输入 dts_no"
@@ -815,6 +865,7 @@ defineExpose({
                 </div>
               </div>
               <ElButton
+                v-if="!isReadonly"
                 :icon="Link"
                 plain
                 type="primary"
@@ -828,7 +879,7 @@ defineExpose({
               <ElTag
                 v-for="item in card.items"
                 :key="item.id"
-                closable
+                :closable="!isReadonly"
                 effect="light"
                 type="info"
                 @close="removeRelationSelection(card.kind, item.id)"
