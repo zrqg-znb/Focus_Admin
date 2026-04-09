@@ -20,6 +20,10 @@ from apps.project_manager.failure_mode.failure_mode_model import (
     FailureModeTaskDraft,
     FailureModeTaskLog,
     ProductFailureMode,
+    ProductFailureModeHandlingLanding,
+    ProductFailureModeHuatuoLanding,
+    ProductFailureModeInterceptionLanding,
+    ProductFailureModeObservationLanding,
     TaskFailureMode,
 )
 from apps.project_manager.project.project_model import Project
@@ -50,6 +54,12 @@ TASK_STATUS_FAILURE_MODE_STATUS_MAP = {
 }
 
 PLATFORM_PROJECT_TYPE = '平台项目'
+LANDING_SECTION_KEYS = (
+    'interception_rows',
+    'handling_rows',
+    'observation_rows',
+    'huatuo_rows',
+)
 
 
 def _normalize_text(value: Any) -> str:
@@ -70,6 +80,23 @@ def _normalize_id_list(values: Any) -> list[str]:
         seen.add(text)
         result.append(text)
     return result
+
+
+def _normalize_optional_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if not text or text in {'null', 'none'}:
+        return None
+    if text in {'1', 'true', 'yes', 'on'}:
+        return True
+    if text in {'0', 'false', 'no', 'off'}:
+        return False
+    return None
 
 
 def _filter_product_queryset_by_project_type(queryset, project_type: str | None = None):
@@ -198,6 +225,7 @@ def _serialize_product_failure_mode(item: ProductFailureMode) -> dict[str, Any]:
         'subsystem': item.subsystem,
         'failure_mode_id': str(item.failure_mode_id),
         'failure_mode_brief': item.failure_mode.brief if item.failure_mode else '',
+        'is_landed': bool(getattr(item, 'is_landed', False)),
         'sys_create_datetime': _format_datetime(item.sys_create_datetime),
     }
 
@@ -266,6 +294,195 @@ def _serialize_task_log(item: FailureModeTaskLog) -> dict[str, Any]:
         'operator_info': _format_user(item.operator),
         'extra_data': item.extra_data or {},
         'sys_create_datetime': _format_datetime(item.sys_create_datetime),
+    }
+
+
+def _build_task_landing_row(
+    *,
+    resource_id: str,
+    label: str,
+    subtitle: str | None = None,
+    group_key: str = '',
+    is_landed: bool | None = None,
+) -> dict[str, Any]:
+    return {
+        'resource_id': resource_id,
+        'label': label,
+        'subtitle': subtitle or None,
+        'group_key': group_key,
+        'is_landed': is_landed,
+    }
+
+
+def _extract_task_landing_status_map(rows: Any) -> dict[str, bool | None]:
+    result: dict[str, bool | None] = {}
+    for item in rows or []:
+        if not isinstance(item, dict):
+            continue
+        resource_id = _normalize_text(item.get('resource_id') or item.get('id'))
+        if not resource_id:
+            continue
+        result[resource_id] = _normalize_optional_bool(item.get('is_landed'))
+    return result
+
+
+def _normalize_task_landing_rows(
+    relation_items: list[dict[str, Any]] | None,
+    payload_rows: Any,
+    *,
+    fallback_status_map: dict[str, bool | None] | None = None,
+    default_group_key: str = '',
+    use_subtitle_group_key: bool = False,
+) -> list[dict[str, Any]]:
+    payload_status_map = _extract_task_landing_status_map(payload_rows)
+    rows: list[dict[str, Any]] = []
+    for relation_item in relation_items or []:
+        resource_id = _normalize_text(relation_item.get('id'))
+        if not resource_id:
+            continue
+        subtitle = _normalize_text(relation_item.get('subtitle')) or None
+        group_key = subtitle if use_subtitle_group_key and subtitle else default_group_key
+        is_landed = payload_status_map.get(resource_id)
+        if resource_id not in payload_status_map:
+            is_landed = (fallback_status_map or {}).get(resource_id)
+        rows.append(
+            _build_task_landing_row(
+                resource_id=resource_id,
+                label=_normalize_text(relation_item.get('label')) or resource_id,
+                subtitle=subtitle,
+                group_key=group_key,
+                is_landed=is_landed,
+            ),
+        )
+    return rows
+
+
+def _build_product_failure_mode_landing_maps(
+    product_failure_mode: ProductFailureMode | None,
+) -> dict[str, Any]:
+    if not product_failure_mode:
+        return {
+            'failure_mode_is_landed': None,
+            'interception_status_map': {},
+            'handling_status_map': {},
+            'observation_status_map': {},
+            'huatuo_status_map': {},
+        }
+    return {
+        'failure_mode_is_landed': bool(product_failure_mode.is_landed),
+        'interception_status_map': {
+            str(item.interception_strategy_id): bool(item.is_landed)
+            for item in getattr(product_failure_mode, 'interception_landings', []).all()
+        }
+        if hasattr(getattr(product_failure_mode, 'interception_landings', None), 'all')
+        else {},
+        'handling_status_map': {
+            str(item.handling_measure_id): bool(item.is_landed)
+            for item in getattr(product_failure_mode, 'handling_landings', []).all()
+        }
+        if hasattr(getattr(product_failure_mode, 'handling_landings', None), 'all')
+        else {},
+        'observation_status_map': {
+            str(item.observation_method_id): bool(item.is_landed)
+            for item in getattr(product_failure_mode, 'observation_landings', []).all()
+        }
+        if hasattr(getattr(product_failure_mode, 'observation_landings', None), 'all')
+        else {},
+        'huatuo_status_map': {
+            str(item.huatuo_diagnosis_id): bool(item.is_landed)
+            for item in getattr(product_failure_mode, 'huatuo_landings', []).all()
+        }
+        if hasattr(getattr(product_failure_mode, 'huatuo_landings', None), 'all')
+        else {},
+    }
+
+
+def _normalize_task_landing_payload_for_item(
+    item: dict[str, Any],
+    *,
+    existing_payload: dict[str, Any] | None = None,
+    fallback_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = dict(existing_payload or {})
+    fallback_payload = dict(fallback_payload or {})
+    failure_mode_is_landed = _normalize_optional_bool(
+        payload.get('failure_mode_is_landed'),
+    )
+    if 'failure_mode_is_landed' not in payload:
+        failure_mode_is_landed = _normalize_optional_bool(
+            fallback_payload.get('failure_mode_is_landed'),
+        )
+    return {
+        'failure_mode_is_landed': failure_mode_is_landed,
+        'interception_rows': _normalize_task_landing_rows(
+            item.get('interception_strategy_items') or [],
+            payload.get('interception_rows'),
+            fallback_status_map=fallback_payload.get('interception_status_map') or {},
+            default_group_key='interception',
+        ),
+        'handling_rows': _normalize_task_landing_rows(
+            item.get('handling_measure_items') or [],
+            payload.get('handling_rows'),
+            fallback_status_map=fallback_payload.get('handling_status_map') or {},
+            default_group_key='handling',
+            use_subtitle_group_key=True,
+        ),
+        'observation_rows': _normalize_task_landing_rows(
+            item.get('observation_method_items') or [],
+            payload.get('observation_rows'),
+            fallback_status_map=fallback_payload.get('observation_status_map') or {},
+            default_group_key='observation',
+            use_subtitle_group_key=True,
+        ),
+        'huatuo_rows': _normalize_task_landing_rows(
+            item.get('huatuo_diagnosis_items') or [],
+            payload.get('huatuo_rows'),
+            fallback_status_map=fallback_payload.get('huatuo_status_map') or {},
+            default_group_key='huatuo',
+        ),
+    }
+
+
+def _merge_task_landing_payload(
+    existing_payload: dict[str, Any] | None,
+    incoming_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    merged = dict(existing_payload or {})
+    incoming_payload = dict(incoming_payload or {})
+    if 'failure_mode_is_landed' in incoming_payload:
+        merged['failure_mode_is_landed'] = incoming_payload.get(
+            'failure_mode_is_landed',
+        )
+    for key in LANDING_SECTION_KEYS:
+        if key in incoming_payload:
+            merged[key] = incoming_payload.get(key) or []
+    return merged
+
+
+def _summarize_task_landing_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+    payload = dict(payload or {})
+    resource_rows = [
+        *list(payload.get('interception_rows') or []),
+        *list(payload.get('handling_rows') or []),
+        *list(payload.get('observation_rows') or []),
+        *list(payload.get('huatuo_rows') or []),
+    ]
+    resource_total = len(resource_rows)
+    landed_count = sum(
+        1 for item in resource_rows if _normalize_optional_bool(item.get('is_landed')) is True
+    )
+    landing_completed = _normalize_optional_bool(
+        payload.get('failure_mode_is_landed'),
+    ) is not None and all(
+        _normalize_optional_bool(item.get('is_landed')) is not None for item in resource_rows
+    )
+    return {
+        'landing_completed': landing_completed,
+        'failure_mode_is_landed': _normalize_optional_bool(
+            payload.get('failure_mode_is_landed'),
+        ),
+        'landing_resource_total': resource_total,
+        'landing_resource_landed_count': landed_count,
     }
 
 
@@ -743,6 +960,229 @@ class TaskWorkflowService:
         ]
 
     @classmethod
+    def _product_failure_mode_queryset(cls):
+        return ProductFailureMode.objects.select_related(
+            'failure_mode',
+            'product__project',
+            'product__owner',
+        ).prefetch_related(
+            'interception_landings',
+            'handling_landings',
+            'observation_landings',
+            'huatuo_landings',
+        )
+
+    @classmethod
+    def _get_product_failure_mode_binding(
+        cls,
+        task: FailureModeTask,
+        failure_mode_id: str,
+    ) -> ProductFailureMode | None:
+        return cls._product_failure_mode_queryset().filter(
+            product=task.product,
+            subsystem=task.subsystem,
+            failure_mode_id=failure_mode_id,
+        ).first()
+
+    @classmethod
+    def _get_task_failure_mode_binding_or_404(
+        cls,
+        task: FailureModeTask,
+        failure_mode_id: str,
+    ) -> TaskFailureMode:
+        return get_object_or_404(
+            TaskFailureMode.objects.select_related('failure_mode'),
+            task=task,
+            failure_mode_id=failure_mode_id,
+        )
+
+    @classmethod
+    def _serialize_task_failure_mode_landing(
+        cls,
+        task: FailureModeTask,
+        failure_mode: FailureMode,
+        *,
+        item: dict[str, Any] | None = None,
+        existing_payload: dict[str, Any] | None = None,
+        product_failure_mode: ProductFailureMode | None = None,
+    ) -> dict[str, Any]:
+        current_item = item or failure_mode_services._serialize_failure_mode(failure_mode)
+        normalized_payload = _normalize_task_landing_payload_for_item(
+            current_item,
+            existing_payload=existing_payload,
+            fallback_payload=_build_product_failure_mode_landing_maps(
+                product_failure_mode,
+            ),
+        )
+        summary = _summarize_task_landing_payload(normalized_payload)
+        return {
+            'task_id': str(task.id),
+            'failure_mode_id': str(failure_mode.id),
+            'failure_mode_brief': current_item.get('brief') or failure_mode.brief,
+            'failure_mode_is_landed': normalized_payload['failure_mode_is_landed'],
+            'landing_completed': summary['landing_completed'],
+            'interception_rows': normalized_payload['interception_rows'],
+            'handling_rows': normalized_payload['handling_rows'],
+            'observation_rows': normalized_payload['observation_rows'],
+            'huatuo_rows': normalized_payload['huatuo_rows'],
+        }
+
+    @classmethod
+    def _attach_task_landing_summary(
+        cls,
+        item: dict[str, Any],
+        landing_payload: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        item.update(_summarize_task_landing_payload(landing_payload))
+        return item
+
+    @classmethod
+    def _build_task_landing_payload_for_binding(
+        cls,
+        task: FailureModeTask,
+        failure_mode: FailureMode | dict[str, Any],
+        *,
+        existing_payload: dict[str, Any] | None = None,
+        product_failure_mode: ProductFailureMode | None = None,
+    ) -> dict[str, Any]:
+        current_item = (
+            failure_mode
+            if isinstance(failure_mode, dict)
+            else failure_mode_services._serialize_failure_mode(failure_mode)
+        )
+        return _normalize_task_landing_payload_for_item(
+            current_item,
+            existing_payload=existing_payload,
+            fallback_payload=_build_product_failure_mode_landing_maps(
+                product_failure_mode,
+            ),
+        )
+
+    @classmethod
+    def _validate_task_landing_payloads(
+        cls,
+        task: FailureModeTask,
+    ) -> tuple[list[str], dict[str, dict[str, Any]]]:
+        active_drafts = {
+            str(item.failure_mode_id): item
+            for item in FailureModeTaskDraft.objects.filter(task=task, is_active=True)
+        }
+        normalized_payloads: dict[str, dict[str, Any]] = {}
+        incomplete_briefs: list[str] = []
+        for binding in (
+            TaskFailureMode.objects.filter(task=task)
+            .select_related('failure_mode')
+            .order_by('sys_create_datetime', 'id')
+        ):
+            failure_mode = binding.failure_mode
+            draft = active_drafts.get(str(binding.failure_mode_id))
+            item = (
+                failure_mode_services.merge_failure_mode_snapshot(
+                    failure_mode,
+                    draft.draft_payload_json,
+                )
+                if draft
+                else failure_mode_services._serialize_failure_mode(failure_mode)
+            )
+            normalized_payload = _normalize_task_landing_payload_for_item(
+                item,
+                existing_payload=binding.landing_payload_json,
+            )
+            normalized_payloads[str(binding.failure_mode_id)] = normalized_payload
+            if not _summarize_task_landing_payload(normalized_payload)['landing_completed']:
+                incomplete_briefs.append(failure_mode.brief)
+        return incomplete_briefs, normalized_payloads
+
+    @classmethod
+    def _sync_product_failure_mode_landings(
+        cls,
+        product_failure_mode: ProductFailureMode,
+        landing_payload: dict[str, Any],
+        operator: User,
+    ):
+        ProductFailureModeInterceptionLanding.objects.filter(
+            product_failure_mode=product_failure_mode,
+        ).delete()
+        ProductFailureModeHandlingLanding.objects.filter(
+            product_failure_mode=product_failure_mode,
+        ).delete()
+        ProductFailureModeObservationLanding.objects.filter(
+            product_failure_mode=product_failure_mode,
+        ).delete()
+        ProductFailureModeHuatuoLanding.objects.filter(
+            product_failure_mode=product_failure_mode,
+        ).delete()
+
+        interception_rows = [
+            ProductFailureModeInterceptionLanding(
+                product_failure_mode=product_failure_mode,
+                interception_strategy_id=item['resource_id'],
+                is_landed=bool(item['is_landed']),
+                sys_creator=operator,
+                sys_modifier=operator,
+            )
+            for item in landing_payload.get('interception_rows') or []
+        ]
+        handling_rows = [
+            ProductFailureModeHandlingLanding(
+                product_failure_mode=product_failure_mode,
+                handling_measure_id=item['resource_id'],
+                is_landed=bool(item['is_landed']),
+                sys_creator=operator,
+                sys_modifier=operator,
+            )
+            for item in landing_payload.get('handling_rows') or []
+        ]
+        observation_rows = [
+            ProductFailureModeObservationLanding(
+                product_failure_mode=product_failure_mode,
+                observation_method_id=item['resource_id'],
+                is_landed=bool(item['is_landed']),
+                sys_creator=operator,
+                sys_modifier=operator,
+            )
+            for item in landing_payload.get('observation_rows') or []
+        ]
+        huatuo_rows = [
+            ProductFailureModeHuatuoLanding(
+                product_failure_mode=product_failure_mode,
+                huatuo_diagnosis_id=item['resource_id'],
+                is_landed=bool(item['is_landed']),
+                sys_creator=operator,
+                sys_modifier=operator,
+            )
+            for item in landing_payload.get('huatuo_rows') or []
+        ]
+        if interception_rows:
+            ProductFailureModeInterceptionLanding.objects.bulk_create(
+                interception_rows,
+            )
+        if handling_rows:
+            ProductFailureModeHandlingLanding.objects.bulk_create(handling_rows)
+        if observation_rows:
+            ProductFailureModeObservationLanding.objects.bulk_create(
+                observation_rows,
+            )
+        if huatuo_rows:
+            ProductFailureModeHuatuoLanding.objects.bulk_create(huatuo_rows)
+
+    @classmethod
+    def _persist_binding_landing_payload(
+        cls,
+        task: FailureModeTask,
+        failure_mode_id: str,
+        normalized_payload: dict[str, Any],
+        operator: User,
+    ):
+        TaskFailureMode.objects.filter(
+            task=task,
+            failure_mode_id=failure_mode_id,
+        ).update(
+            landing_payload_json=normalized_payload,
+            sys_modifier_id=operator.id,
+        )
+
+    @classmethod
     def _ensure_revise_task_initialized(
         cls,
         task: FailureModeTask,
@@ -762,15 +1202,31 @@ class TaskWorkflowService:
         if operator:
             task.sys_modifier = operator
         task.save()
+        product_failure_mode_map = {
+            str(item.failure_mode_id): item
+            for item in cls._product_failure_mode_queryset().filter(
+                product=task.product,
+                subsystem=task.subsystem,
+                failure_mode_id__in=baseline_ids,
+            )
+        }
         TaskFailureMode.objects.bulk_create(
             [
                 TaskFailureMode(
                     task=task,
                     failure_mode_id=failure_mode_id,
+                    landing_payload_json=cls._build_task_landing_payload_for_binding(
+                        task,
+                        product_failure_mode_map[str(failure_mode_id)].failure_mode,
+                        product_failure_mode=product_failure_mode_map.get(
+                            str(failure_mode_id),
+                        ),
+                    ),
                     sys_creator=operator or task.creator or task.sys_creator,
                     sys_modifier=operator or task.creator or task.sys_creator,
                 )
                 for failure_mode_id in baseline_ids
+                if str(failure_mode_id) in product_failure_mode_map
             ]
         )
         return cls._get_task_or_404(str(task.id))
@@ -786,8 +1242,8 @@ class TaskWorkflowService:
 
         if task.task_type == 'DELETE':
             baseline_relations = (
-                ProductFailureMode.objects.filter(product=task.product, subsystem=task.subsystem)
-                .select_related('failure_mode')
+                cls._product_failure_mode_queryset()
+                .filter(product=task.product, subsystem=task.subsystem)
                 .order_by('sys_create_datetime', 'id')
             )
             rows: list[dict[str, Any]] = []
@@ -801,6 +1257,14 @@ class TaskWorkflowService:
                     else 'baseline'
                 )
                 item['has_task_draft'] = False
+                cls._attach_task_landing_summary(
+                    item,
+                    cls._build_task_landing_payload_for_binding(
+                        task,
+                        relation.failure_mode,
+                        product_failure_mode=relation,
+                    ),
+                )
                 _attach_task_failure_mode_edit_meta(task, relation.failure_mode, item)
                 rows.append(item)
             return rows
@@ -829,8 +1293,13 @@ class TaskWorkflowService:
                 change_type = 'baseline'
             else:
                 change_type = 'new'
+            landing_payload = _normalize_task_landing_payload_for_item(
+                item,
+                existing_payload=binding.landing_payload_json,
+            )
             item['task_change_type'] = change_type
             item['has_task_draft'] = bool(draft)
+            cls._attach_task_landing_summary(item, landing_payload)
             _attach_task_failure_mode_edit_meta(task, failure_mode, item)
             rows.append(item)
         return rows
@@ -910,15 +1379,31 @@ class TaskWorkflowService:
             sys_modifier=user,
         )
         if task_type == 'REVISE' and baseline_ids:
+            product_failure_mode_map = {
+                str(item.failure_mode_id): item
+                for item in cls._product_failure_mode_queryset().filter(
+                    product=product,
+                    subsystem=subsystem,
+                    failure_mode_id__in=baseline_ids,
+                )
+            }
             TaskFailureMode.objects.bulk_create(
                 [
                     TaskFailureMode(
                         task=task,
                         failure_mode_id=failure_mode_id,
+                        landing_payload_json=cls._build_task_landing_payload_for_binding(
+                            task,
+                            product_failure_mode_map[str(failure_mode_id)].failure_mode,
+                            product_failure_mode=product_failure_mode_map.get(
+                                str(failure_mode_id),
+                            ),
+                        ),
                         sys_creator=user,
                         sys_modifier=user,
                     )
                     for failure_mode_id in baseline_ids
+                    if str(failure_mode_id) in product_failure_mode_map
                 ]
             )
         cls._log(
@@ -944,6 +1429,115 @@ class TaskWorkflowService:
             raise HttpError(403, '无权查看当前任务。')
         task = cls._ensure_revise_task_initialized(task, user)
         return cls._build_task_failure_mode_rows(task)
+
+    @classmethod
+    def get_task_failure_mode_landing(
+        cls,
+        user: User,
+        task_id: str,
+        failure_mode_id: str,
+    ) -> dict[str, Any]:
+        task = cls._get_task_or_404(task_id)
+        task = cls._ensure_revise_task_initialized(task, user)
+        policy = FailureModeAccessPolicy(user)
+        if not policy.can_view_task(task):
+            raise HttpError(403, '无权查看当前任务。')
+        binding = cls._get_task_failure_mode_binding_or_404(task, failure_mode_id)
+        product_failure_mode = cls._get_product_failure_mode_binding(task, failure_mode_id)
+        draft = FailureModeTaskDraft.objects.filter(
+            task=task,
+            failure_mode_id=failure_mode_id,
+            is_active=True,
+        ).first()
+        current_item = (
+            failure_mode_services.merge_failure_mode_snapshot(
+                binding.failure_mode,
+                draft.draft_payload_json,
+            )
+            if draft
+            else None
+        )
+        landing = cls._serialize_task_failure_mode_landing(
+            task,
+            binding.failure_mode,
+            item=current_item,
+            existing_payload=binding.landing_payload_json,
+            product_failure_mode=product_failure_mode,
+        )
+        return landing
+
+    @classmethod
+    @transaction.atomic
+    def save_task_failure_mode_landing(
+        cls,
+        user: User,
+        task_id: str,
+        failure_mode_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        task = cls._get_task_or_404(task_id)
+        task = cls._ensure_revise_task_initialized(task, user)
+        policy = FailureModeAccessPolicy(user)
+        if not policy.can_process_task(task):
+            raise HttpError(403, '只有当前任务责任人可以保存落地配置。')
+        if task.status != 'PROCESSING':
+            raise HttpError(422, '只有梳理/修订中的任务可以保存落地配置。')
+        if task.task_type == 'DELETE':
+            raise HttpError(422, '删除任务不支持维护落地配置。')
+
+        binding = cls._get_task_failure_mode_binding_or_404(task, failure_mode_id)
+        draft = FailureModeTaskDraft.objects.filter(
+            task=task,
+            failure_mode_id=failure_mode_id,
+            is_active=True,
+        ).first()
+        current_item = (
+            failure_mode_services.merge_failure_mode_snapshot(
+                binding.failure_mode,
+                draft.draft_payload_json,
+            )
+            if draft
+            else binding.failure_mode
+        )
+        merged_payload = _merge_task_landing_payload(
+            binding.landing_payload_json,
+            payload,
+        )
+        normalized_payload = cls._build_task_landing_payload_for_binding(
+            task,
+            current_item,
+            existing_payload=merged_payload,
+            product_failure_mode=cls._get_product_failure_mode_binding(
+                task,
+                failure_mode_id,
+            ),
+        )
+        cls._persist_binding_landing_payload(
+            task,
+            failure_mode_id,
+            normalized_payload,
+            user,
+        )
+        cls._log(
+            task=task,
+            operator=user,
+            action=FailureModeTaskLog.ACTION_SAVE_LANDING,
+            from_status=task.status,
+            to_status=task.status,
+            note=f'保存落地配置: {binding.failure_mode.brief}',
+            extra_data={'failure_mode_id': str(binding.failure_mode_id)},
+        )
+        return {
+            'task_id': str(task.id),
+            'failure_mode_id': str(binding.failure_mode_id),
+            'failure_mode_brief': binding.failure_mode.brief,
+            'failure_mode_is_landed': normalized_payload['failure_mode_is_landed'],
+            'landing_completed': _summarize_task_landing_payload(normalized_payload)['landing_completed'],
+            'interception_rows': normalized_payload['interception_rows'],
+            'handling_rows': normalized_payload['handling_rows'],
+            'observation_rows': normalized_payload['observation_rows'],
+            'huatuo_rows': normalized_payload['huatuo_rows'],
+        }
 
     @classmethod
     @transaction.atomic
@@ -994,6 +1588,24 @@ class TaskWorkflowService:
             if invalid_ids:
                 raise HttpError(422, '删除任务只能选择当前产品子系统已生效基线中的故障模式。')
 
+        existing_binding_map = {
+            str(item.failure_mode_id): item.landing_payload_json or {}
+            for item in TaskFailureMode.objects.filter(task=task)
+        }
+        product_failure_mode_map = {
+            str(item.failure_mode_id): item
+            for item in cls._product_failure_mode_queryset().filter(
+                product=task.product,
+                subsystem=task.subsystem,
+                failure_mode_id__in=normalized_ids,
+            )
+        }
+        failure_mode_map = {
+            str(item.id): item
+            for item in failure_mode_services._failure_mode_queryset().filter(
+                id__in=normalized_ids,
+            )
+        }
         TaskFailureMode.objects.filter(task=task).delete()
         if normalized_ids:
             TaskFailureMode.objects.bulk_create(
@@ -1001,10 +1613,23 @@ class TaskWorkflowService:
                     TaskFailureMode(
                         task=task,
                         failure_mode_id=item_id,
+                        landing_payload_json=(
+                            cls._build_task_landing_payload_for_binding(
+                                task,
+                                failure_mode_map[item_id],
+                                existing_payload=existing_binding_map.get(item_id),
+                                product_failure_mode=product_failure_mode_map.get(
+                                    item_id,
+                                ),
+                            )
+                            if task.task_type != 'DELETE'
+                            else {}
+                        ),
                         sys_creator=user,
                         sys_modifier=user,
                     )
                     for item_id in normalized_ids
+                    if item_id in failure_mode_map
                 ]
             )
 
@@ -1087,8 +1712,20 @@ class TaskWorkflowService:
         )
 
         item = failure_mode_services.merge_failure_mode_snapshot(failure_mode, draft_payload)
+        landing_payload = _normalize_task_landing_payload_for_item(
+            item,
+            existing_payload=TaskFailureMode.objects.filter(
+                task=task,
+                failure_mode_id=failure_mode_id,
+            )
+            .values_list('landing_payload_json', flat=True)
+            .first()
+            or {},
+        )
+        cls._persist_binding_landing_payload(task, failure_mode_id, landing_payload, user)
         item['task_change_type'] = 'edited'
         item['has_task_draft'] = True
+        cls._attach_task_landing_summary(item, landing_payload)
         _attach_task_failure_mode_edit_meta(task, failure_mode, item)
         return item
 
@@ -1133,8 +1770,20 @@ class TaskWorkflowService:
             filtered_payload,
             user,
         )
+        landing_payload = _normalize_task_landing_payload_for_item(
+            item,
+            existing_payload=TaskFailureMode.objects.filter(
+                task=task,
+                failure_mode_id=failure_mode_id,
+            )
+            .values_list('landing_payload_json', flat=True)
+            .first()
+            or {},
+        )
+        cls._persist_binding_landing_payload(task, failure_mode_id, landing_payload, user)
         item['task_change_type'] = 'new'
         item['has_task_draft'] = False
+        cls._attach_task_landing_summary(item, landing_payload)
         _attach_task_failure_mode_edit_meta(task, failure_mode, item)
 
         cls._log(
@@ -1202,7 +1851,17 @@ class TaskWorkflowService:
         TaskFailureMode.objects.get_or_create(
             task=task,
             failure_mode_id=created_item['id'],
-            defaults={'sys_creator': request.auth, 'sys_modifier': request.auth},
+            defaults={
+                'landing_payload_json': _normalize_task_landing_payload_for_item(
+                    created_item,
+                ),
+                'sys_creator': request.auth,
+                'sys_modifier': request.auth,
+            },
+        )
+        cls._attach_task_landing_summary(
+            created_item,
+            _normalize_task_landing_payload_for_item(created_item),
         )
         cls._log(
             task=task,
@@ -1224,6 +1883,15 @@ class TaskWorkflowService:
             raise HttpError(403, '只有当前任务责任人可以提交评审。')
         if task.status != 'PROCESSING':
             raise HttpError(422, '只有梳理/修订中的任务可以提交评审。')
+        if task.task_type in {'CREATE', 'REVISE'}:
+            incomplete_briefs, normalized_payloads = cls._validate_task_landing_payloads(task)
+            if incomplete_briefs:
+                raise HttpError(
+                    422,
+                    f'以下故障模式的落地情况尚未补齐: {"、".join(incomplete_briefs[:5])}',
+                )
+            for failure_mode_id, landing_payload in normalized_payloads.items():
+                cls._persist_binding_landing_payload(task, failure_mode_id, landing_payload, user)
         from_status = task.status
         task.status = 'REVIEWING'
         task.submitted_at = timezone.now()
@@ -1341,6 +2009,14 @@ class TaskWorkflowService:
             raise HttpError(422, '评审纪要不能为空。')
         if review_result and review_result != 'approved':
             raise HttpError(422, '当前版本仅支持评审通过后关闭任务。')
+        normalized_landing_payloads: dict[str, dict[str, Any]] = {}
+        if task.task_type in {'CREATE', 'REVISE'}:
+            incomplete_briefs, normalized_landing_payloads = cls._validate_task_landing_payloads(task)
+            if incomplete_briefs:
+                raise HttpError(
+                    422,
+                    f'以下故障模式的落地情况尚未补齐: {"、".join(incomplete_briefs[:5])}',
+                )
 
         from_status = task.status
         task.status = 'CLOSED'
@@ -1362,11 +2038,27 @@ class TaskWorkflowService:
         }
         if task.task_type == 'CREATE':
             for failure_mode_id in task_failure_modes:
-                ProductFailureMode.objects.get_or_create(
+                landing_payload = normalized_landing_payloads.get(failure_mode_id) or {}
+                product_failure_mode, created = ProductFailureMode.objects.get_or_create(
                     product=task.product,
                     subsystem=task.subsystem,
                     failure_mode_id=failure_mode_id,
-                    defaults={'sys_creator': user, 'sys_modifier': user},
+                    defaults={
+                        'is_landed': bool(landing_payload.get('failure_mode_is_landed')),
+                        'sys_creator': user,
+                        'sys_modifier': user,
+                    },
+                )
+                if not created:
+                    product_failure_mode.is_landed = bool(
+                        landing_payload.get('failure_mode_is_landed'),
+                    )
+                    product_failure_mode.sys_modifier = user
+                    product_failure_mode.save(update_fields=['is_landed', 'sys_modifier', 'sys_update_datetime'])
+                cls._sync_product_failure_mode_landings(
+                    product_failure_mode,
+                    landing_payload,
+                    user,
                 )
             baseline_sync_result['added_failure_mode_ids'] = task_failure_modes
         elif task.task_type == 'REVISE':
@@ -1384,12 +2076,38 @@ class TaskWorkflowService:
                 if failure_mode_id not in current_failure_mode_set
             ]
 
-            for failure_mode_id in add_ids:
-                ProductFailureMode.objects.get_or_create(
+            failure_mode_map = {
+                str(item.id): item
+                for item in failure_mode_services._failure_mode_queryset().filter(
+                    id__in=task_failure_modes,
+                )
+            }
+            for failure_mode_id in current_failure_mode_set:
+                landing_payload = cls._build_task_landing_payload_for_binding(
+                    task,
+                    failure_mode_map[failure_mode_id],
+                    existing_payload=normalized_landing_payloads.get(failure_mode_id),
+                )
+                product_failure_mode, created = ProductFailureMode.objects.get_or_create(
                     product=task.product,
                     subsystem=task.subsystem,
                     failure_mode_id=failure_mode_id,
-                    defaults={'sys_creator': user, 'sys_modifier': user},
+                    defaults={
+                        'is_landed': bool(landing_payload.get('failure_mode_is_landed')),
+                        'sys_creator': user,
+                        'sys_modifier': user,
+                    },
+                )
+                if not created:
+                    product_failure_mode.is_landed = bool(
+                        landing_payload.get('failure_mode_is_landed'),
+                    )
+                    product_failure_mode.sys_modifier = user
+                    product_failure_mode.save(update_fields=['is_landed', 'sys_modifier', 'sys_update_datetime'])
+                cls._sync_product_failure_mode_landings(
+                    product_failure_mode,
+                    landing_payload,
+                    user,
                 )
             if remove_ids:
                 ProductFailureMode.objects.filter(

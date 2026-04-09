@@ -19,6 +19,8 @@ from apps.failure_mode.failure_mode_schemas import (
     SaveSuccessSchema,
     TaskCloseSchema,
     TaskFailureModeBindSchema,
+    TaskFailureModeLandingOutSchema,
+    TaskFailureModeLandingSaveSchema,
     TaskRecallSchema,
     TaskReassignSchema,
     TaskRejectSchema,
@@ -96,6 +98,38 @@ def get_task_failure_modes(request, task_id: str):
 def bind_task_failure_modes(request, task_id: str, data: TaskFailureModeBindSchema):
     TaskWorkflowService.bind_failure_modes(request.auth, task_id, data.failure_mode_ids)
     return {'success': True}
+
+
+@router.get(
+    '/tasks/{task_id}/failure-modes/{failure_mode_id}/landing',
+    response=TaskFailureModeLandingOutSchema,
+    summary='获取任务内故障模式落地配置',
+)
+def get_task_failure_mode_landing(request, task_id: str, failure_mode_id: str):
+    return TaskWorkflowService.get_task_failure_mode_landing(
+        request.auth,
+        task_id,
+        failure_mode_id,
+    )
+
+
+@router.put(
+    '/tasks/{task_id}/failure-modes/{failure_mode_id}/landing',
+    response=TaskFailureModeLandingOutSchema,
+    summary='保存任务内故障模式落地配置',
+)
+def save_task_failure_mode_landing(
+    request,
+    task_id: str,
+    failure_mode_id: str,
+    data: TaskFailureModeLandingSaveSchema,
+):
+    return TaskWorkflowService.save_task_failure_mode_landing(
+        request.auth,
+        task_id,
+        failure_mode_id,
+        data.dict(),
+    )
 
 
 @router.post('/tasks/{task_id}/failure-modes/{failure_mode_id}/draft', response=FailureModeOutSchema, summary='保存修订任务中的故障模式草稿')

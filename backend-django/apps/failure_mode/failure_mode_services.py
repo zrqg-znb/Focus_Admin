@@ -27,6 +27,10 @@ from .failure_mode_model import (
     InterceptionStrategy,
     ObservationMethod,
     ProductFailureMode,
+    ProductFailureModeHandlingLanding,
+    ProductFailureModeHuatuoLanding,
+    ProductFailureModeInterceptionLanding,
+    ProductFailureModeObservationLanding,
     TestCase,
 )
 
@@ -48,6 +52,8 @@ DICT_CODE_MAP = {
 FIXED_HANDLING_MEASURE_CATEGORIES = ['检测', '预防', '自愈']
 FIXED_OBSERVATION_METHOD_TYPES = ['流水日志', 'DMD 点位', 'FMP 点位']
 STATISTICS_STATUS_ORDER = ['已配置', '待补充', '无需配置']
+PRODUCT_STATISTICS_STATUS_ORDER = ['已落地', '待开展', '不涉及']
+FAILURE_MODE_LANDING_STATUS_ORDER = ['已落地', '未落地']
 EMPTY_SUBSYSTEM_LABEL = '未配置子系统'
 PLATFORM_PROJECT_TYPE = '平台项目'
 
@@ -600,11 +606,12 @@ def _build_failure_mode_insight_product_rows(failure_mode_id: str) -> list[dict[
     relations = list(
         ProductFailureMode.objects.filter(
             is_deleted=False,
+            is_landed=True,
             failure_mode_id=failure_mode_id,
             product__is_deleted=False,
         )
         .select_related('product__owner', 'product__project')
-        .order_by('product__project__name', 'subsystem', '-sys_create_datetime')
+        .order_by('product__project__name', 'subsystem', '-sys_update_datetime')
     )
     grouped: dict[str, dict[str, Any]] = {}
     for relation in relations:
@@ -631,10 +638,10 @@ def _build_failure_mode_insight_product_rows(failure_mode_id: str) -> list[dict[
 
         current_landed_at = row['_landed_at_raw']
         if current_landed_at is None or (
-            relation.sys_create_datetime and relation.sys_create_datetime > current_landed_at
+            relation.sys_update_datetime and relation.sys_update_datetime > current_landed_at
         ):
-            row['_landed_at_raw'] = relation.sys_create_datetime
-            row['landed_at'] = _format_datetime(relation.sys_create_datetime)
+            row['_landed_at_raw'] = relation.sys_update_datetime
+            row['landed_at'] = _format_datetime(relation.sys_update_datetime)
 
     return [
         {
@@ -688,16 +695,16 @@ def _build_resource_insight_rows(
     for failure_mode in normalized_failure_modes:
         failure_mode_binding_rows = product_binding_map.get(str(failure_mode.id), [])
         product_names: list[str] = []
-        product_name_seen: set[str] = set()
+        product_id_seen: set[str] = set()
 
         for binding in failure_mode_binding_rows:
             product = binding.product
+            product_id = str(product.id)
             product_name = product.project.name if product.project else ''
-            if product_name and product_name not in product_name_seen:
-                product_name_seen.add(product_name)
+            if product_id not in product_id_seen:
+                product_id_seen.add(product_id)
                 product_names.append(product_name)
 
-            product_id = str(product.id)
             product_row = product_rows_map.get(product_id)
             if product_row is None:
                 product_row = {
@@ -743,6 +750,108 @@ def _total_failure_mode_product_count() -> int:
     return FailureModeProduct.objects.filter(is_deleted=False).count()
 
 
+def _build_resource_insight_rows_by_product_landings(
+    failure_modes: Iterable[FailureMode],
+    *,
+    landing_model,
+    resource_field_name: str,
+    resource_ids: Iterable[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    normalized_failure_modes = _dedupe_failure_modes(failure_modes)
+    failure_mode_ids = [str(item.id) for item in normalized_failure_modes]
+    normalized_resource_ids = _normalize_text_list(list(resource_ids))
+    failure_mode_rows: list[dict[str, Any]] = [
+        {
+            'failure_mode_id': str(item.id),
+            'failure_mode_brief': item.brief,
+            'subsystem': item.subsystem,
+            'status': item.status,
+            'product_names': [],
+            'landed_product_count': 0,
+        }
+        for item in normalized_failure_modes
+    ]
+    if not failure_mode_ids or not normalized_resource_ids:
+        return failure_mode_rows, []
+
+    landed_rows = list(
+        landing_model.objects.filter(
+            is_deleted=False,
+            is_landed=True,
+            product_failure_mode__is_deleted=False,
+            product_failure_mode__product__is_deleted=False,
+            product_failure_mode__failure_mode_id__in=failure_mode_ids,
+            **{f'{resource_field_name}__in': normalized_resource_ids},
+        )
+        .select_related(
+            'product_failure_mode__product__owner',
+            'product_failure_mode__product__project',
+            'product_failure_mode__failure_mode',
+        )
+        .order_by(
+            'product_failure_mode__product__project__name',
+            'product_failure_mode__subsystem',
+            '-product_failure_mode__sys_update_datetime',
+        )
+    )
+
+    failure_mode_product_names: dict[str, list[str]] = defaultdict(list)
+    failure_mode_product_seen: dict[str, set[str]] = defaultdict(set)
+    product_rows_map: dict[str, dict[str, Any]] = {}
+
+    for landed_row in landed_rows:
+        product_failure_mode = landed_row.product_failure_mode
+        product = product_failure_mode.product
+        if not product:
+            continue
+        product_id = str(product.id)
+        product_name = product.project.name if product.project else ''
+        failure_mode_id = str(product_failure_mode.failure_mode_id)
+        if product_id not in failure_mode_product_seen[failure_mode_id]:
+            failure_mode_product_seen[failure_mode_id].add(product_id)
+            failure_mode_product_names[failure_mode_id].append(product_name)
+
+        product_row = product_rows_map.get(product_id)
+        if product_row is None:
+            product_row = {
+                'product_id': product_id,
+                'product_name': product_name,
+                'owner_info': _user_brief(product.owner),
+                'failure_mode_briefs': [],
+                '_failure_mode_seen': set(),
+            }
+            product_rows_map[product_id] = product_row
+        if (
+            product_failure_mode.failure_mode
+            and product_failure_mode.failure_mode.brief
+            and product_failure_mode.failure_mode.brief not in product_row['_failure_mode_seen']
+        ):
+            product_row['_failure_mode_seen'].add(
+                product_failure_mode.failure_mode.brief,
+            )
+            product_row['failure_mode_briefs'].append(
+                product_failure_mode.failure_mode.brief,
+            )
+
+    for row in failure_mode_rows:
+        product_names = failure_mode_product_names.get(row['failure_mode_id'], [])
+        row['product_names'] = product_names
+        row['landed_product_count'] = len(product_names)
+
+    product_rows = [
+        {
+            key: value
+            for key, value in row.items()
+            if not key.startswith('_')
+        }
+        for row in sorted(
+            product_rows_map.values(),
+            key=lambda item: (item['product_name'], item['product_id']),
+        )
+    ]
+    return failure_mode_rows, product_rows
+
+
 def _build_interception_insight_data(item_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     relations = list(
         FailureModeInterceptionStrategyRel.objects.filter(
@@ -753,7 +862,12 @@ def _build_interception_insight_data(item_id: str) -> tuple[list[dict[str, Any]]
         .select_related('failure_mode')
         .order_by('order_index', 'sys_create_datetime')
     )
-    return _build_resource_insight_rows([item.failure_mode for item in relations])
+    return _build_resource_insight_rows_by_product_landings(
+        [item.failure_mode for item in relations],
+        landing_model=ProductFailureModeInterceptionLanding,
+        resource_field_name='interception_strategy_id',
+        resource_ids=[item_id],
+    )
 
 
 def _load_dict_grouped(field_names: Iterable[str] | None = None) -> dict[str, list[str]]:
@@ -1669,8 +1783,11 @@ def get_handling_measure_insight(item_id: str) -> dict[str, Any]:
         .select_related('failure_mode')
         .order_by('order_index', 'sys_create_datetime')
     )
-    failure_mode_rows, product_rows = _build_resource_insight_rows(
+    failure_mode_rows, product_rows = _build_resource_insight_rows_by_product_landings(
         [item.failure_mode for item in failure_mode_relations],
+        landing_model=ProductFailureModeHandlingLanding,
+        resource_field_name='handling_measure_id',
+        resource_ids=[item_id],
     )
     return {
         'id': str(instance.id),
@@ -1757,8 +1874,11 @@ def get_observation_method_insight(item_id: str) -> dict[str, Any]:
         .select_related('failure_mode')
         .order_by('order_index', 'sys_create_datetime')
     )
-    failure_mode_rows, product_rows = _build_resource_insight_rows(
+    failure_mode_rows, product_rows = _build_resource_insight_rows_by_product_landings(
         [item.failure_mode for item in failure_mode_relations],
+        landing_model=ProductFailureModeObservationLanding,
+        resource_field_name='observation_method_id',
+        resource_ids=[item_id],
     )
     return {
         'id': str(instance.id),
@@ -1847,8 +1967,11 @@ def get_huatuo_diagnosis_insight(item_id: str) -> dict[str, Any]:
         .select_related('failure_mode')
         .order_by('order_index', 'sys_create_datetime')
     )
-    failure_mode_rows, product_rows = _build_resource_insight_rows(
+    failure_mode_rows, product_rows = _build_resource_insight_rows_by_product_landings(
         [item.failure_mode for item in failure_mode_relations],
+        landing_model=ProductFailureModeHuatuoLanding,
+        resource_field_name='huatuo_diagnosis_id',
+        resource_ids=[item_id],
     )
     return {
         'id': str(instance.id),
@@ -1948,8 +2071,11 @@ def get_test_case_insight(item_id: str) -> dict[str, Any]:
         .select_related('failure_mode')
         .order_by('handling_measure_id', 'order_index', 'sys_create_datetime')
     )
-    failure_mode_rows, product_rows = _build_resource_insight_rows(
+    failure_mode_rows, product_rows = _build_resource_insight_rows_by_product_landings(
         [item.failure_mode for item in failure_mode_relations],
+        landing_model=ProductFailureModeHandlingLanding,
+        resource_field_name='handling_measure_id',
+        resource_ids=handling_measure_ids,
     )
     return {
         'id': str(instance.id),
@@ -2064,10 +2190,13 @@ def _resolve_statistics_status(required: bool, configured: bool) -> str:
     return '已配置' if configured else '待补充'
 
 
-def _build_statistics_status_dataset(counter: dict[str, int]) -> list[dict[str, int | str]]:
+def _build_statistics_status_dataset(
+    counter: dict[str, int],
+    status_order: list[str] | None = None,
+) -> list[dict[str, int | str]]:
     return [
         {'name': status, 'value': int(counter.get(status, 0))}
-        for status in STATISTICS_STATUS_ORDER
+        for status in (status_order or STATISTICS_STATUS_ORDER)
     ]
 
 
@@ -2403,6 +2532,30 @@ def _product_failure_mode_statistics_queryset():
         failure_mode__is_deleted=False,
     ).select_related('product', 'product__project', 'product__owner', 'failure_mode').prefetch_related(
         Prefetch(
+            'interception_landings',
+            queryset=ProductFailureModeInterceptionLanding.objects.select_related(
+                'interception_strategy',
+            ),
+        ),
+        Prefetch(
+            'handling_landings',
+            queryset=ProductFailureModeHandlingLanding.objects.select_related(
+                'handling_measure',
+            ),
+        ),
+        Prefetch(
+            'observation_landings',
+            queryset=ProductFailureModeObservationLanding.objects.select_related(
+                'observation_method',
+            ),
+        ),
+        Prefetch(
+            'huatuo_landings',
+            queryset=ProductFailureModeHuatuoLanding.objects.select_related(
+                'huatuo_diagnosis',
+            ),
+        ),
+        Prefetch(
             'failure_mode__interception_relations',
             queryset=FailureModeInterceptionStrategyRel.objects.select_related(
                 'interception_strategy',
@@ -2457,6 +2610,210 @@ def _get_visible_product_statistics_bindings(
     return list(queryset.order_by('subsystem', '-sys_create_datetime'))
 
 
+def _resolve_product_landing_status(required: bool, landed_flags: list[bool]) -> str:
+    if not required:
+        return '不涉及'
+    if not landed_flags:
+        return '待开展'
+    return '已落地' if all(landed_flags) else '待开展'
+
+
+def _build_product_statistics_payload_from_bindings(
+    bindings: Iterable[ProductFailureMode],
+) -> dict[str, Any]:
+    grouped_rows: dict[str, dict[str, Any]] = {}
+    subsystem_keys: list[str] = []
+    subsystem_seen: set[str] = set()
+
+    def ensure_row(subsystem: str) -> dict[str, Any]:
+        row = grouped_rows.get(subsystem)
+        if row is not None:
+            return row
+        if subsystem not in subsystem_seen:
+            subsystem_seen.add(subsystem)
+            subsystem_keys.append(subsystem)
+        row = {
+            'subsystem': subsystem,
+            'baseline_failure_mode_count': 0,
+            'landed_failure_mode_count': 0,
+            'pending_failure_mode_count': 0,
+            'pending_rate': 0.0,
+            'status_light': 'green',
+        }
+        grouped_rows[subsystem] = row
+        return row
+
+    failure_mode_landing_counter = defaultdict(int)
+    interception_counter = defaultdict(int)
+    huatuo_counter = defaultdict(int)
+    handling_counters = {
+        category: defaultdict(int)
+        for category in FIXED_HANDLING_MEASURE_CATEGORIES
+    }
+    observation_counters = {
+        monitor_type: defaultdict(int)
+        for monitor_type in FIXED_OBSERVATION_METHOD_TYPES
+    }
+
+    binding_list = list(bindings)
+    for binding in binding_list:
+        failure_mode = binding.failure_mode
+        if not failure_mode:
+            continue
+        subsystem = _normalize_optional_text(binding.subsystem) or EMPTY_SUBSYSTEM_LABEL
+        row = ensure_row(subsystem)
+        row['baseline_failure_mode_count'] += 1
+
+        if bool(binding.is_landed):
+            row['landed_failure_mode_count'] += 1
+            failure_mode_landing_counter['已落地'] += 1
+        else:
+            failure_mode_landing_counter['未落地'] += 1
+
+        interception_flags = [
+            bool(item.is_landed)
+            for item in binding.interception_landings.all()
+            if not item.is_deleted
+        ]
+        interception_status = _resolve_product_landing_status(
+            bool(failure_mode.interception_required),
+            interception_flags,
+        )
+        interception_counter[interception_status] += 1
+
+        huatuo_flags = [
+            bool(item.is_landed)
+            for item in binding.huatuo_landings.all()
+            if not item.is_deleted
+        ]
+        huatuo_status = _resolve_product_landing_status(
+            bool(failure_mode.huatuo_required),
+            huatuo_flags,
+        )
+        huatuo_counter[huatuo_status] += 1
+
+        required_handling_categories = set(
+            _normalize_enum_list(
+                failure_mode.required_handling_measure_categories,
+                FIXED_HANDLING_MEASURE_CATEGORIES,
+            ),
+        )
+        handling_flags_map: dict[str, list[bool]] = defaultdict(list)
+        for landing in binding.handling_landings.all():
+            if landing.is_deleted or not landing.handling_measure:
+                continue
+            category = _normalize_optional_text(landing.handling_measure.measure_category)
+            if category:
+                handling_flags_map[category].append(bool(landing.is_landed))
+        for category in FIXED_HANDLING_MEASURE_CATEGORIES:
+            status = _resolve_product_landing_status(
+                category in required_handling_categories,
+                handling_flags_map.get(category, []),
+            )
+            handling_counters[category][status] += 1
+
+        required_observation_types = set(
+            _normalize_enum_list(
+                failure_mode.required_observation_method_types,
+                FIXED_OBSERVATION_METHOD_TYPES,
+            ),
+        )
+        observation_flags_map: dict[str, list[bool]] = defaultdict(list)
+        for landing in binding.observation_landings.all():
+            if landing.is_deleted or not landing.observation_method:
+                continue
+            monitor_type = _normalize_optional_text(landing.observation_method.monitor_type)
+            if monitor_type:
+                observation_flags_map[monitor_type].append(bool(landing.is_landed))
+        for monitor_type in FIXED_OBSERVATION_METHOD_TYPES:
+            status = _resolve_product_landing_status(
+                monitor_type in required_observation_types,
+                observation_flags_map.get(monitor_type, []),
+            )
+            observation_counters[monitor_type][status] += 1
+
+        pending = not bool(binding.is_landed)
+        if not pending and interception_status == '待开展':
+            pending = True
+        if not pending and huatuo_status == '待开展':
+            pending = True
+        if not pending:
+            pending = any(
+                handling_counters[category] is not None
+                and _resolve_product_landing_status(
+                    category in required_handling_categories,
+                    handling_flags_map.get(category, []),
+                )
+                == '待开展'
+                for category in FIXED_HANDLING_MEASURE_CATEGORIES
+            )
+        if not pending:
+            pending = any(
+                _resolve_product_landing_status(
+                    monitor_type in required_observation_types,
+                    observation_flags_map.get(monitor_type, []),
+                )
+                == '待开展'
+                for monitor_type in FIXED_OBSERVATION_METHOD_TYPES
+            )
+        if pending:
+            row['pending_failure_mode_count'] += 1
+
+    rows: list[dict[str, Any]] = []
+    for subsystem in subsystem_keys:
+        row = ensure_row(subsystem)
+        total = row['baseline_failure_mode_count']
+        pending_count = row['pending_failure_mode_count']
+        row['pending_rate'] = round((pending_count / total) * 100, 2) if total > 0 else 0.0
+        row['status_light'] = _resolve_statistics_light(row['pending_rate'])
+        rows.append(row)
+
+    rows.sort(key=lambda item: (-item['baseline_failure_mode_count'], item['subsystem']))
+    summary = {
+        'subsystem_counts': [
+            {'name': item['subsystem'], 'value': item['baseline_failure_mode_count']}
+            for item in rows
+        ],
+        'failure_mode_landing_status': _build_statistics_status_dataset(
+            failure_mode_landing_counter,
+            FAILURE_MODE_LANDING_STATUS_ORDER,
+        ),
+        'interception_status': _build_statistics_status_dataset(
+            interception_counter,
+            PRODUCT_STATISTICS_STATUS_ORDER,
+        ),
+        'huatuo_status': _build_statistics_status_dataset(
+            huatuo_counter,
+            PRODUCT_STATISTICS_STATUS_ORDER,
+        ),
+        'handling_detection_status': _build_statistics_status_dataset(
+            handling_counters['检测'],
+            PRODUCT_STATISTICS_STATUS_ORDER,
+        ),
+        'handling_prevention_status': _build_statistics_status_dataset(
+            handling_counters['预防'],
+            PRODUCT_STATISTICS_STATUS_ORDER,
+        ),
+        'handling_self_heal_status': _build_statistics_status_dataset(
+            handling_counters['自愈'],
+            PRODUCT_STATISTICS_STATUS_ORDER,
+        ),
+        'observation_pipeline_log_status': _build_statistics_status_dataset(
+            observation_counters['流水日志'],
+            PRODUCT_STATISTICS_STATUS_ORDER,
+        ),
+        'observation_dmd_status': _build_statistics_status_dataset(
+            observation_counters['DMD 点位'],
+            PRODUCT_STATISTICS_STATUS_ORDER,
+        ),
+        'observation_fmp_status': _build_statistics_status_dataset(
+            observation_counters['FMP 点位'],
+            PRODUCT_STATISTICS_STATUS_ORDER,
+        ),
+    }
+    return {'rows': rows, 'summary': summary}
+
+
 def list_failure_mode_product_statistics_overview(user: User) -> list[dict[str, Any]]:
     policy, products = _get_visible_product_statistics_queryset(user)
     product_list = list(products)
@@ -2472,11 +2829,12 @@ def list_failure_mode_product_statistics_overview(user: User) -> list[dict[str, 
     for product in product_list:
         product_id = str(product.id)
         product_bindings = grouped_bindings.get(product_id, [])
-        payload = _build_statistics_payload_from_sources(
-            _make_statistics_source_rows_from_product_bindings(product_bindings),
-        )
+        payload = _build_product_statistics_payload_from_bindings(product_bindings)
         subsystem_rows = payload['rows']
         baseline_count = len(product_bindings)
+        landed_count = sum(
+            1 for item in product_bindings if bool(getattr(item, 'is_landed', False))
+        )
         pending_count = sum(
             int(item['pending_failure_mode_count'])
             for item in subsystem_rows
@@ -2488,6 +2846,7 @@ def list_failure_mode_product_statistics_overview(user: User) -> list[dict[str, 
                 'product_name': product.project.name if product.project else '',
                 'owner_info': _user_brief(product.owner),
                 'baseline_failure_mode_count': baseline_count,
+                'landed_failure_mode_count': landed_count,
                 'pending_failure_mode_count': pending_count,
                 'pending_rate': pending_rate,
                 'status_light': _resolve_statistics_light(pending_rate),
@@ -2515,9 +2874,7 @@ def get_failure_mode_product_statistics_summary(user: User, filters) -> dict[str
         product_ids,
         getattr(filters, 'subsystems', None),
     )
-    payload = _build_statistics_payload_from_sources(
-        _make_statistics_source_rows_from_product_bindings(bindings),
-    )
+    payload = _build_product_statistics_payload_from_bindings(bindings)
     return payload['summary']
 
 
@@ -2550,9 +2907,7 @@ def list_failure_mode_product_statistics_subsystems(user: User, filters) -> dict
         product_ids,
         getattr(filters, 'subsystems', None),
     )
-    rows = _build_statistics_payload_from_sources(
-        _make_statistics_source_rows_from_product_bindings(bindings),
-    )['rows']
+    rows = _build_product_statistics_payload_from_bindings(bindings)['rows']
     keyword = _normalize_optional_text(getattr(filters, 'keyword', None))
     if keyword:
         rows = [

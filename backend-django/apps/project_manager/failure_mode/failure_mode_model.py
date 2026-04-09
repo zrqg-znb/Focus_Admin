@@ -367,6 +367,7 @@ class ProductFailureMode(RootModel):
         related_name='product_bindings',
         verbose_name='故障模式'
     )
+    is_landed = models.BooleanField(default=False, verbose_name='故障模式是否已落地')
 
     class Meta:
         db_table = 'pm_product_failure_mode'
@@ -380,6 +381,154 @@ class ProductFailureMode(RootModel):
         ]
         indexes = [
             models.Index(fields=['product', 'subsystem'], name='idx_pm_prod_fm_subsys')
+        ]
+
+
+class ProductFailureModeInterceptionLanding(RootModel):
+    product_failure_mode = models.ForeignKey(
+        ProductFailureMode,
+        on_delete=models.CASCADE,
+        related_name='interception_landings',
+        verbose_name='产品故障模式基线',
+    )
+    interception_strategy = models.ForeignKey(
+        InterceptionStrategy,
+        on_delete=models.CASCADE,
+        related_name='product_failure_mode_landings',
+        verbose_name='产线拦截策略',
+    )
+    is_landed = models.BooleanField(default=False, verbose_name='是否已落地')
+
+    class Meta:
+        db_table = 'pm_product_fm_interception_landing'
+        verbose_name = '产品故障模式-产线拦截策略落地'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product_failure_mode', 'interception_strategy'],
+                name='uniq_pm_prod_fm_inter_landing',
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=['product_failure_mode'],
+                name='idx_pfmil_pfm',
+            ),
+            models.Index(
+                fields=['interception_strategy'],
+                name='idx_pfmil_item',
+            ),
+        ]
+
+
+class ProductFailureModeHandlingLanding(RootModel):
+    product_failure_mode = models.ForeignKey(
+        ProductFailureMode,
+        on_delete=models.CASCADE,
+        related_name='handling_landings',
+        verbose_name='产品故障模式基线',
+    )
+    handling_measure = models.ForeignKey(
+        HandlingMeasure,
+        on_delete=models.CASCADE,
+        related_name='product_failure_mode_landings',
+        verbose_name='故障处理措施',
+    )
+    is_landed = models.BooleanField(default=False, verbose_name='是否已落地')
+
+    class Meta:
+        db_table = 'pm_product_fm_handling_landing'
+        verbose_name = '产品故障模式-故障处理措施落地'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product_failure_mode', 'handling_measure'],
+                name='uniq_pm_prod_fm_handling_landing',
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=['product_failure_mode'],
+                name='idx_pfmhl_pfm',
+            ),
+            models.Index(
+                fields=['handling_measure'],
+                name='idx_pfmhl_item',
+            ),
+        ]
+
+
+class ProductFailureModeObservationLanding(RootModel):
+    product_failure_mode = models.ForeignKey(
+        ProductFailureMode,
+        on_delete=models.CASCADE,
+        related_name='observation_landings',
+        verbose_name='产品故障模式基线',
+    )
+    observation_method = models.ForeignKey(
+        ObservationMethod,
+        on_delete=models.CASCADE,
+        related_name='product_failure_mode_landings',
+        verbose_name='维测手段',
+    )
+    is_landed = models.BooleanField(default=False, verbose_name='是否已落地')
+
+    class Meta:
+        db_table = 'pm_product_fm_observation_landing'
+        verbose_name = '产品故障模式-维测手段落地'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product_failure_mode', 'observation_method'],
+                name='uniq_pm_prod_fm_observation_landing',
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=['product_failure_mode'],
+                name='idx_pfmol_pfm',
+            ),
+            models.Index(
+                fields=['observation_method'],
+                name='idx_pfmol_item',
+            ),
+        ]
+
+
+class ProductFailureModeHuatuoLanding(RootModel):
+    product_failure_mode = models.ForeignKey(
+        ProductFailureMode,
+        on_delete=models.CASCADE,
+        related_name='huatuo_landings',
+        verbose_name='产品故障模式基线',
+    )
+    huatuo_diagnosis = models.ForeignKey(
+        HuatuoDiagnosis,
+        on_delete=models.CASCADE,
+        related_name='product_failure_mode_landings',
+        verbose_name='华佗诊断方案',
+    )
+    is_landed = models.BooleanField(default=False, verbose_name='是否已落地')
+
+    class Meta:
+        db_table = 'pm_product_fm_huatuo_landing'
+        verbose_name = '产品故障模式-华佗诊断方案落地'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product_failure_mode', 'huatuo_diagnosis'],
+                name='uniq_pm_prod_fm_huatuo_landing',
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=['product_failure_mode'],
+                name='idx_pfmul_pfm',
+            ),
+            models.Index(
+                fields=['huatuo_diagnosis'],
+                name='idx_pfmul_item',
+            ),
         ]
 
 
@@ -476,6 +625,7 @@ class TaskFailureMode(RootModel):
         related_name='task_bindings',
         verbose_name='故障模式'
     )
+    landing_payload_json = models.JSONField(default=dict, blank=True, verbose_name='任务内落地草稿')
 
     class Meta:
         db_table = 'pm_task_failure_mode'
@@ -573,6 +723,7 @@ class FailureModeTaskLog(RootModel):
     ACTION_BIND_FAILURE_MODES = 'bind_failure_modes'
     ACTION_QUICK_CREATE_FAILURE_MODE = 'quick_create_failure_mode'
     ACTION_EDIT_FAILURE_MODE = 'edit_failure_mode'
+    ACTION_SAVE_LANDING = 'save_landing'
     ACTION_SAVE_DRAFT = 'save_draft'
     ACTION_DELETE_DRAFT = 'delete_draft'
     ACTION_SUBMIT = 'submit'
@@ -586,6 +737,7 @@ class FailureModeTaskLog(RootModel):
         (ACTION_BIND_FAILURE_MODES, '绑定故障模式'),
         (ACTION_QUICK_CREATE_FAILURE_MODE, '快速新增故障模式'),
         (ACTION_EDIT_FAILURE_MODE, '编辑任务内故障模式'),
+        (ACTION_SAVE_LANDING, '保存落地配置'),
         (ACTION_SAVE_DRAFT, '保存修订草稿'),
         (ACTION_DELETE_DRAFT, '撤销修订草稿'),
         (ACTION_SUBMIT, '提交评审'),

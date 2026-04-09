@@ -254,12 +254,14 @@ PERMISSION_SEEDS = {
     ],
     'failure_mode_statistics': [
         {'name': '查看故障管理统计页面', 'code': 'failure-mode:statistics:view', 'permission_type': 0},
+        {'name': '获取故障管理统计子系统选项', 'code': 'failure-mode:statistics:api:subsystems:options', 'permission_type': 1, 'api_path': '/api/failure-mode/statistics/subsystems/options', 'http_method': 'GET'},
         {'name': '获取故障管理统计摘要', 'code': 'failure-mode:statistics:api:summary', 'permission_type': 1, 'api_path': '/api/failure-mode/statistics/summary', 'http_method': 'POST'},
         {'name': '获取故障管理子系统统计表', 'code': 'failure-mode:statistics:api:subsystems', 'permission_type': 1, 'api_path': '/api/failure-mode/statistics/subsystems/search', 'http_method': 'POST'},
     ],
     'failure_mode_product_statistics': [
         {'name': '查看产品故障统计页面', 'code': 'failure-mode:product-statistics:view', 'permission_type': 0},
         {'name': '获取产品故障统计概览', 'code': 'failure-mode:api:product-statistics:overview', 'permission_type': 1, 'api_path': '/api/failure-mode/statistics/products/overview', 'http_method': 'POST'},
+        {'name': '获取产品故障统计子系统选项', 'code': 'failure-mode:api:product-statistics:subsystems:options', 'permission_type': 1, 'api_path': '/api/failure-mode/statistics/products/subsystems/options', 'http_method': 'POST'},
         {'name': '获取产品故障统计摘要', 'code': 'failure-mode:api:product-statistics:summary', 'permission_type': 1, 'api_path': '/api/failure-mode/statistics/products/summary', 'http_method': 'POST'},
         {'name': '获取产品故障统计子系统表', 'code': 'failure-mode:api:product-statistics:subsystems', 'permission_type': 1, 'api_path': '/api/failure-mode/statistics/products/subsystems/search', 'http_method': 'POST'},
     ],
