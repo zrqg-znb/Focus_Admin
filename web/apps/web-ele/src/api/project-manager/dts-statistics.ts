@@ -10,6 +10,7 @@ export interface DtsStatisticsFilters {
   createAtEnd: number;
   dCloseTimeBegin: number;
   dCloseTimeEnd: number;
+  uQbiCloseTypeNames: string[];
   sDeptOneNoNames: string[];
   sSubsystemNoNames: string[];
 }
@@ -28,6 +29,7 @@ export interface DtsMergedDefect {
   parentNo?: null | string;
   createAt?: null | string;
   dCloseTime?: null | string;
+  uQbiCloseTypeName?: null | string;
   sDeptOneNoName?: null | string;
   currentHandler?: null | string;
   creator?: null | string;

@@ -121,6 +121,7 @@ function createDefaultFilters(): DtsStatisticsFilters {
     createAtEnd: 0,
     dCloseTimeBegin: 0,
     dCloseTimeEnd: 0,
+    uQbiCloseTypeNames: [],
     sDeptOneNoNames: [],
     sSubsystemNoNames: [],
   };
@@ -226,6 +227,7 @@ function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
     createAtEnd: createAtPair.end,
     dCloseTimeBegin: closeTimePair.begin,
     dCloseTimeEnd: closeTimePair.end,
+    uQbiCloseTypeNames: normalizeStringArray(source.uQbiCloseTypeNames),
     sDeptOneNoNames: normalizeStringArray(source.sDeptOneNoNames),
     sSubsystemNoNames: normalizeStringArray(source.sSubsystemNoNames),
   };
@@ -245,6 +247,7 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
     createAtEnd: payload.createAtEnd || 0,
     dCloseTimeBegin: payload.dCloseTimeBegin || 0,
     dCloseTimeEnd: payload.dCloseTimeEnd || 0,
+    uQbiCloseTypeNames: [...(payload.uQbiCloseTypeNames || [])].sort(),
     sDeptOneNoNames: [...(payload.sDeptOneNoNames || [])].sort(),
     sSubsystemNoNames: [...(payload.sSubsystemNoNames || [])].sort(),
   });
@@ -496,6 +499,10 @@ const selectedCloseTimeLabel = computed(() =>
     filters.value.dCloseTimeEnd,
   ),
 );
+const selectedCloseTypeLabel = computed(() => {
+  const count = filters.value.uQbiCloseTypeNames.length;
+  return count > 0 ? `${count} 项` : '全部';
+});
 const selectedDeptLabel = computed(() => {
   const count = filters.value.sDeptOneNoNames.length;
   return count > 0 ? `${count} 项` : '全部';
@@ -568,6 +575,7 @@ const flowFilterVisible = ref(false);
 const severityFilterVisible = ref(false);
 const createAtFilterVisible = ref(false);
 const closeTimeFilterVisible = ref(false);
+const closeTypeFilterVisible = ref(false);
 const deptFilterVisible = ref(false);
 const subsystemFilterVisible = ref(false);
 const draftFlowStates = ref<string[]>([]);
@@ -576,18 +584,28 @@ const draftCreateAtBegin = ref<Date | null>(null);
 const draftCreateAtEnd = ref<Date | null>(null);
 const draftCloseTimeBegin = ref<Date | null>(null);
 const draftCloseTimeEnd = ref<Date | null>(null);
+const draftCloseTypeNames = ref<string[]>([]);
 const draftDeptNames = ref<string[]>([]);
 const draftSubsystemNames = ref<string[]>([]);
+const draftCloseTypeKeyword = ref('');
 const draftDeptKeyword = ref('');
 const draftSubsystemKeyword = ref('');
 const fieldSetOptions = ref<Record<string, string[]>>({
+  uQbiCloseTypeName: [],
   sDeptOneNoName: [],
   sSubsystemNoName: [],
 });
 const fieldSetLoading = ref<Record<string, boolean>>({
+  uQbiCloseTypeName: false,
   sDeptOneNoName: false,
   sSubsystemNoName: false,
 });
+const filteredCloseTypeOptions = computed(() =>
+  filterFieldOptions(
+    fieldSetOptions.value.uQbiCloseTypeName || [],
+    draftCloseTypeKeyword.value,
+  ),
+);
 const filteredDeptOptions = computed(() =>
   filterFieldOptions(
     fieldSetOptions.value.sDeptOneNoName || [],
@@ -711,6 +729,22 @@ watch(
         filters.value.dCloseTimeBegin,
       );
       draftCloseTimeEnd.value = restoreDateValue(filters.value.dCloseTimeEnd);
+    }
+  },
+);
+
+watch(
+  () => closeTypeFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      if (!appliedFilters.value || queryLoading.value) {
+        closeTypeFilterVisible.value = false;
+        ElMessage.warning('请先完成当前查询，再打开候选值筛选');
+        return;
+      }
+      draftCloseTypeNames.value = [...filters.value.uQbiCloseTypeNames];
+      draftCloseTypeKeyword.value = '';
+      void loadFieldSetOptions(['uQbiCloseTypeName']);
     }
   },
 );
@@ -894,6 +928,19 @@ async function confirmCloseTimeFilter() {
 function resetCloseTimeFilterDraft() {
   draftCloseTimeBegin.value = null;
   draftCloseTimeEnd.value = null;
+}
+
+async function confirmCloseTypeFilter() {
+  filters.value.uQbiCloseTypeNames = normalizeStringArray(
+    draftCloseTypeNames.value,
+  );
+  closeTypeFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetCloseTypeFilterDraft() {
+  draftCloseTypeNames.value = [];
+  draftCloseTypeKeyword.value = '';
 }
 
 async function confirmDeptFilter() {
@@ -1826,6 +1873,94 @@ onUnmounted(() => {
                               type="primary"
                               size="small"
                               @click="confirmCloseTimeFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-uQbiCloseTypeName>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">关闭类型</span>
+                      <ElPopover
+                        v-model:visible="closeTypeFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="260"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active':
+                                filters.uQbiCloseTypeNames.length > 0,
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedCloseTypeLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-if="!fieldSetLoading.uQbiCloseTypeName"
+                              v-model="draftCloseTypeKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词筛选关闭类型"
+                            />
+                            <div
+                              v-if="fieldSetLoading.uQbiCloseTypeName"
+                              class="dts-header-filter-panel__tip"
+                            >
+                              正在加载候选值...
+                            </div>
+                            <ElEmpty
+                              v-else-if="
+                                fieldSetOptions.uQbiCloseTypeName.length === 0
+                              "
+                              :image-size="56"
+                              description="暂无候选值"
+                            />
+                            <ElEmpty
+                              v-else-if="filteredCloseTypeOptions.length === 0"
+                              :image-size="56"
+                              description="暂无匹配项"
+                            />
+                            <ElCheckboxGroup
+                              v-else
+                              v-model="draftCloseTypeNames"
+                              class="dts-header-filter-check-group"
+                            >
+                              <ElCheckbox
+                                v-for="item in filteredCloseTypeOptions"
+                                :key="item"
+                                :label="item"
+                                :value="item"
+                              >
+                                {{ item }}
+                              </ElCheckbox>
+                            </ElCheckboxGroup>
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetCloseTypeFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmCloseTypeFilter"
                             >
                               确认
                             </ElButton>

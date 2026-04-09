@@ -34,6 +34,7 @@ class DtsLocalFilterSchema(Schema):
     dCloseTimeEnd: int = 0
     sDeptOneNoNames: list[str] = Field(default_factory=list)
     sSubsystemNoNames: list[str] = Field(default_factory=list)
+    uQbiCloseTypeNames: list[str] = Field(default_factory=list)
 
     @field_validator(
         "createAtBegin",
@@ -49,6 +50,7 @@ class DtsLocalFilterSchema(Schema):
     @field_validator(
         "sDeptOneNoNames",
         "sSubsystemNoNames",
+        "uQbiCloseTypeNames",
         mode="before",
     )
     @classmethod
@@ -68,6 +70,7 @@ class DtsStatisticsQuerySchema(Schema):
     dCloseTimeEnd: int = 0
     sDeptOneNoNames: list[str] = Field(default_factory=list)
     sSubsystemNoNames: list[str] = Field(default_factory=list)
+    uQbiCloseTypeNames: list[str] = Field(default_factory=list)
     pageIndex: int = 1
     pageSize: int = 20
 
@@ -103,6 +106,7 @@ class DtsStatisticsQuerySchema(Schema):
     @field_validator(
         "sDeptOneNoNames",
         "sSubsystemNoNames",
+        "uQbiCloseTypeNames",
         mode="before",
     )
     @classmethod
@@ -218,6 +222,7 @@ class DataLakeDefectSchema(Schema):
     creator: Optional[str] = None
     sSubmitUserName: Optional[str] = None
     sSubsystemNoName: Optional[str] = None
+    uQbiCloseTypeName: Optional[str] = None
     sProdFamilyNoName: Optional[str] = None
     sProdXtdNoName: Optional[str] = None
     iTestBackCount: Optional[str] = None
@@ -346,6 +351,7 @@ class DtsStatisticsExportSchema(Schema):
     dCloseTimeEnd: int = 0
     sDeptOneNoNames: list[str] = Field(default_factory=list)
     sSubsystemNoNames: list[str] = Field(default_factory=list)
+    uQbiCloseTypeNames: list[str] = Field(default_factory=list)
 
     @field_validator("productId", mode="before")
     @classmethod
@@ -379,6 +385,7 @@ class DtsStatisticsExportSchema(Schema):
     @field_validator(
         "sDeptOneNoNames",
         "sSubsystemNoNames",
+        "uQbiCloseTypeNames",
         mode="before",
     )
     @classmethod

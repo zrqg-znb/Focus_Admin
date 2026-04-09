@@ -142,6 +142,7 @@ const baselineItems = computed(() => {
     { label: '父单单号', value: normalizeDisplay(row?.parentNo) },
     { label: '提单时间', value: normalizeDisplay(row?.createAt) },
     { label: '关闭时间', value: normalizeDisplay(row?.dCloseTime) },
+    { label: '关闭类型', value: normalizeDisplay(row?.uQbiCloseTypeName) },
     { label: '提出方部门', value: normalizeDisplay(row?.sDeptOneNoName) },
     { label: '当前处理人', value: normalizeDisplay(row?.currentHandler) },
     { label: '提单人工号', value: normalizeDisplay(row?.creator) },

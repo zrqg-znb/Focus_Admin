@@ -390,6 +390,12 @@ export function useColumns(): Columns {
       width: 170,
     },
     {
+      key: 'uQbiCloseTypeName',
+      dataKey: 'uQbiCloseTypeName',
+      title: '关闭类型',
+      width: 140,
+    },
+    {
       key: 'sDeptOneNoName',
       dataKey: 'sDeptOneNoName',
       title: '提出方部门',

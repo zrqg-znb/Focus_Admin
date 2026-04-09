@@ -90,6 +90,7 @@ _DEFAULT_FIELDS = [
     "parentNo",
     "createAt",
     "dCloseTime",
+    "uQbiCloseTypeName",
     "sDeptOneNoName",
     "currentHandler",
     "creator",
@@ -117,6 +118,7 @@ _DEFAULT_FIELDS = [
 _FIELD_SET_SUPPORTED_FIELDS = {
     "sDeptOneNoName",
     "sSubsystemNoName",
+    "uQbiCloseTypeName",
 }
 
 _SEVERITY_NAME_TO_CODE = {
@@ -571,6 +573,11 @@ def _mock_fetch_page(payload: dict[str, Any]) -> dict[str, Any]:
                     "dCloseTime": close_dt.strftime("%Y-%m-%d %H:%M:%S")
                     if close_dt
                     else None,
+                    "uQbiCloseTypeName": (
+                        rng.choice(["修复关闭", "重复关闭", "无效关闭", "延期关闭"])
+                        if close_dt
+                        else None
+                    ),
                     "sDeptOneNoName": f"研发{(index % 5) + 1}部",
                     "currentHandler": f"user{(index % 15) + 1}",
                     "creator": f"creator{(index % 10) + 1}",
@@ -943,6 +950,7 @@ def _normalize_source_row(
     update_time = _clean_text(row.get("updateAt"))
     create_at = _clean_text(row.get("createAt"))
     close_time = _clean_text(row.get("dCloseTime"))
+    close_type_name = _clean_text(row.get("uQbiCloseTypeName"))
     team_name = _clean_text(row.get("sDeptOneNoName"))
     subsystem_name = _clean_text(row.get("sSubsystemNoName"))
     close_days = _clean_text(row.get("iNumOfCloseDays"))
@@ -958,6 +966,7 @@ def _normalize_source_row(
         "parentNo": _clean_text(row.get("parentNo")) or None,
         "createAt": create_at or None,
         "dCloseTime": close_time or None,
+        "uQbiCloseTypeName": close_type_name or None,
         "sDeptOneNoName": team_name or None,
         "currentHandler": _clean_text(row.get("currentHandler")) or None,
         "creator": _clean_text(row.get("creator")) or None,
@@ -1179,6 +1188,9 @@ def _resolve_local_runtime_filters(
         "sDeptOneNoNames": _normalize_text_list(getattr(query, "sDeptOneNoNames", [])),
         "sSubsystemNoNames": _normalize_text_list(
             getattr(query, "sSubsystemNoNames", [])
+        ),
+        "uQbiCloseTypeNames": _normalize_text_list(
+            getattr(query, "uQbiCloseTypeNames", [])
         ),
     }
 
@@ -1448,6 +1460,11 @@ def _apply_local_filters(
         for item in _normalize_text_list(local_filters["sSubsystemNoNames"])
         if item
     }
+    close_type_values = set() if "uQbiCloseTypeName" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["uQbiCloseTypeNames"])
+        if item
+    }
 
     if (
         create_at_begin <= 0
@@ -1456,6 +1473,7 @@ def _apply_local_filters(
         and close_time_end <= 0
         and not dept_values
         and not subsystem_values
+        and not close_type_values
     ):
         return rows
 
@@ -1472,6 +1490,8 @@ def _apply_local_filters(
         if dept_values and _clean_text(row.get("sDeptOneNoName")) not in dept_values:
             continue
         if subsystem_values and _clean_text(row.get("sSubsystemNoName")) not in subsystem_values:
+            continue
+        if close_type_values and _clean_text(row.get("uQbiCloseTypeName")) not in close_type_values:
             continue
         result.append(row)
     return result
@@ -1648,6 +1668,8 @@ def _build_filtered_result_payload(
         local_filters["sDeptOneNoNames"] = []
     if "sSubsystemNoName" in ignored:
         local_filters["sSubsystemNoNames"] = []
+    if "uQbiCloseTypeName" in ignored:
+        local_filters["uQbiCloseTypeNames"] = []
     return {
         "snapshotVersion": _clean_text(snapshot_version),
         "productId": product_id,
@@ -1662,6 +1684,9 @@ def _build_filtered_result_payload(
         "sDeptOneNoNames": _normalize_text_list(local_filters.get("sDeptOneNoNames")),
         "sSubsystemNoNames": _normalize_text_list(
             local_filters.get("sSubsystemNoNames")
+        ),
+        "uQbiCloseTypeNames": _normalize_text_list(
+            local_filters.get("uQbiCloseTypeNames")
         ),
         "ignoredFields": sorted(ignored),
     }
@@ -2120,6 +2145,7 @@ _EXPORT_COLUMN_SPECS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
     ("父单单号", lambda item: _clean_text(item.get("parentNo"))),
     ("提单时间", lambda item: _clean_text(item.get("createAt"))),
     ("关闭时间", lambda item: _clean_text(item.get("dCloseTime"))),
+    ("关闭类型", lambda item: _clean_text(item.get("uQbiCloseTypeName"))),
     ("提出方部门", lambda item: _clean_text(item.get("sDeptOneNoName"))),
     ("当前处理人", lambda item: _clean_text(item.get("currentHandler"))),
     ("提单人工号", lambda item: _clean_text(item.get("creator"))),
@@ -2449,7 +2475,13 @@ def get_dts_statistics_summary(
         status_counter[_clean_text(defect.get("dtsStatusName"))] += 1
         team_counter[_clean_text(defect.get("sDeptOneNoName"))] += 1
         stage_counter[_clean_text(defect.get("dtsStatusName"))] += 1
-        close_type_counter["关闭" if _is_closed(defect) else "未关闭"] += 1
+        close_type_label = _clean_text(defect.get("uQbiCloseTypeName"))
+        if close_type_label:
+            close_type_counter[close_type_label] += 1
+        elif _is_closed(defect):
+            close_type_counter["未填写"] += 1
+        else:
+            close_type_counter["未关闭"] += 1
         handler_counter[_clean_text(defect.get("currentHandler"))] += 1
         project_counter[_clean_text(defect.get("sProdXtdNoName") or defect.get("productName"))] += 1
 
