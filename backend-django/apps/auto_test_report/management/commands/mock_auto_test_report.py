@@ -64,6 +64,14 @@ class Command(BaseCommand):
                     },
                 )
                 created_vehicle_count += int(created)
+                target_dates = [
+                    date.today() - timedelta(days=day_offset)
+                    for day_offset in range(days)
+                ]
+                DailyExecutionResult.objects.filter(
+                    vehicle=vehicle,
+                    execute_date__in=target_dates,
+                ).delete()
 
                 cases = []
                 for case_index in range(1, 11):
@@ -93,18 +101,16 @@ class Command(BaseCommand):
                         )
                         duration = random.randint(10, 1800)
                         status = random.choices(results, weights=[0.75, 0.18, 0.07], k=1)[0]
-                        DailyExecutionResult.objects.update_or_create(
+                        DailyExecutionResult.objects.create(
                             vehicle=vehicle,
                             execute_date=execute_date,
                             test_case=case,
-                            defaults={
-                                'start_time': start_at,
-                                'duration_seconds': duration,
-                                'result': status,
-                                'log_url': f'https://mock.example.com/logs/{vehicle.vehicle_code}/{case.case_no}/{execute_date.isoformat()}',
-                                'sys_creator': operator,
-                                'sys_modifier': operator,
-                            },
+                            start_time=start_at,
+                            duration_seconds=duration,
+                            result=status,
+                            log_url=f'https://mock.example.com/logs/{vehicle.vehicle_code}/{case.case_no}/{execute_date.isoformat()}',
+                            sys_creator=operator,
+                            sys_modifier=operator,
                         )
                     recalculate_daily_batch(vehicle.id, execute_date, datetime.now())
 

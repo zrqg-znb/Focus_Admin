@@ -127,9 +127,24 @@ class DailyExecutionResult(RootModel):
         db_table = 'atr_daily_execution_result'
         verbose_name = '每日执行结果'
         verbose_name_plural = verbose_name
-        constraints = [
-            models.UniqueConstraint(
+        indexes = [
+            models.Index(
                 fields=['vehicle', 'execute_date', 'test_case'],
-                name='uniq_atr_vehicle_date_case',
+                name='idx_atr_res_vehicle_date_case',
+            ),
+            models.Index(
+                fields=['test_case', 'vehicle', 'execute_date'],
+                name='idx_atr_res_case_vehicle_date',
+            ),
+            models.Index(
+                fields=[
+                    'vehicle',
+                    'execute_date',
+                    'test_case',
+                    'start_time',
+                    'reported_at',
+                    'sys_create_datetime',
+                ],
+                name='idx_atr_res_latest_lookup',
             ),
         ]

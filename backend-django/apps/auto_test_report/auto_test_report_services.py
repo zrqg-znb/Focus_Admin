@@ -4,9 +4,10 @@ from datetime import datetime
 from typing import Optional
 
 import openpyxl
-from django.http import HttpResponse
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import F, OuterRef, Q, Subquery, Window
+from django.db.models.functions import RowNumber
+from django.http import HttpResponse
 from ninja.errors import HttpError
 
 from .auto_test_report_model import (
@@ -37,6 +38,43 @@ RESULT_LABELS = {
     RESULT_TIMEOUT: '超时',
     RESULT_SKIP: '跳过',
 }
+
+
+def _get_latest_result_order_by():
+    return [
+        F('start_time').desc(),
+        F('reported_at').desc(),
+        F('sys_create_datetime').desc(),
+    ]
+
+
+def build_latest_daily_results_queryset(
+    *,
+    execute_date=None,
+    test_case_id: Optional[str] = None,
+    vehicle: Optional[VehicleModel] = None,
+    vehicle_id: Optional[str] = None,
+):
+    queryset = DailyExecutionResult.objects.filter(
+        is_deleted=False,
+        test_case__is_deleted=False,
+        vehicle__is_deleted=False,
+    )
+    if vehicle is not None:
+        queryset = queryset.filter(vehicle=vehicle)
+    if vehicle_id:
+        queryset = queryset.filter(vehicle_id=vehicle_id)
+    if execute_date is not None:
+        queryset = queryset.filter(execute_date=execute_date)
+    if test_case_id:
+        queryset = queryset.filter(test_case_id=test_case_id)
+    return queryset.annotate(
+        latest_rank=Window(
+            expression=RowNumber(),
+            partition_by=[F('vehicle_id'), F('execute_date'), F('test_case_id')],
+            order_by=_get_latest_result_order_by(),
+        ),
+    ).filter(latest_rank=1)
 
 
 def _apply_audit_fields(instance, user, *, is_create: bool = False):
@@ -205,7 +243,24 @@ def get_vehicle(vehicle_id: str) -> VehicleModel:
 
 
 def list_test_cases(filters):
-    queryset = TestCase.objects.select_related('vehicle', 'vehicle__platform').filter(is_deleted=False, vehicle__is_deleted=False)
+    latest_execute_time_subquery = (
+        DailyExecutionResult.objects.filter(
+            test_case_id=OuterRef('pk'),
+            is_deleted=False,
+        )
+        .order_by(
+            '-execute_date',
+            '-start_time',
+            '-reported_at',
+            '-sys_create_datetime',
+        )
+        .values('start_time')[:1]
+    )
+    queryset = (
+        TestCase.objects.select_related('vehicle', 'vehicle__platform')
+        .filter(is_deleted=False, vehicle__is_deleted=False)
+        .annotate(latest_execute_time=Subquery(latest_execute_time_subquery))
+    )
     if filters.platform_id:
         queryset = queryset.filter(vehicle__platform_id=filters.platform_id)
     if filters.vehicle_id:
@@ -220,7 +275,19 @@ def list_test_cases(filters):
 
 
 def serialize_test_case(item: TestCase):
-    latest_result = item.daily_results.order_by('-execute_date', '-start_time').first()
+    latest_execute_time = getattr(item, 'latest_execute_time', None)
+    if latest_execute_time is None:
+        latest_result = (
+            item.daily_results.filter(is_deleted=False)
+            .order_by(
+                '-execute_date',
+                '-start_time',
+                '-reported_at',
+                '-sys_create_datetime',
+            )
+            .first()
+        )
+        latest_execute_time = latest_result.start_time if latest_result else None
     return {
         'id': str(item.id),
         'vehicle_id': str(item.vehicle_id),
@@ -231,7 +298,7 @@ def serialize_test_case(item: TestCase):
         'case_name': item.case_name,
         'sort': item.sort,
         'is_active': item.is_active,
-        'latest_execute_time': latest_result.start_time if latest_result else None,
+        'latest_execute_time': latest_execute_time,
         'sys_create_datetime': item.sys_create_datetime,
         'sys_update_datetime': item.sys_update_datetime,
     }
@@ -435,44 +502,37 @@ def report_daily_results(payload):
     if not active_cases:
         raise HttpError(400, '该车型下未配置有效测试用例')
 
-    updated_count = 0
+    created_count = 0
     now = datetime.now()
     for item in payload.results:
         case_no = (item.case_no or '').strip()
         test_case = active_cases.get(case_no)
         if not test_case:
             raise HttpError(400, f'未找到用例编号: {case_no}')
-        result, _ = DailyExecutionResult.objects.update_or_create(
+        DailyExecutionResult.objects.create(
             vehicle=vehicle,
             execute_date=payload.execute_date,
             test_case=test_case,
-            defaults={
-                'start_time': item.start_time,
-                'duration_seconds': max(int(item.duration_seconds or 0), 0),
-                'result': item.result,
-                'log_url': (item.log_url or '').strip() or None,
-            },
+            start_time=item.start_time,
+            duration_seconds=max(int(item.duration_seconds or 0), 0),
+            result=item.result,
+            log_url=(item.log_url or '').strip() or None,
         )
-        updated_count += 1
+        created_count += 1
 
     recalculate_daily_batch(vehicle.id, payload.execute_date, now)
     return {
         'vehicle_id': str(vehicle.id),
         'execute_date': payload.execute_date,
-        'updated_count': updated_count,
+        'created_count': created_count,
+        'updated_count': created_count,
     }
 
 
 def recalculate_daily_batch(vehicle_id: str, execute_date, last_report_at=None):
     vehicle = get_vehicle(vehicle_id)
     all_case_count = TestCase.objects.filter(vehicle=vehicle, is_deleted=False, is_active=True).count()
-    results = list(
-        DailyExecutionResult.objects.filter(
-            vehicle=vehicle,
-            execute_date=execute_date,
-            test_case__is_deleted=False,
-        )
-    )
+    results = list(build_latest_daily_results_queryset(vehicle=vehicle, execute_date=execute_date))
     counter = Counter(item.result for item in results)
     total_duration_seconds = sum(max(item.duration_seconds or 0, 0) for item in results)
     skip_count = max(all_case_count - len(results), 0)
@@ -487,7 +547,8 @@ def recalculate_daily_batch(vehicle_id: str, execute_date, last_report_at=None):
     batch.timeout_count = counter.get(RESULT_TIMEOUT, 0)
     batch.skip_count = skip_count
     batch.total_duration_seconds = total_duration_seconds
-    batch.last_report_at = last_report_at
+    if last_report_at is not None:
+        batch.last_report_at = last_report_at
     batch.save()
     return batch
 
@@ -529,10 +590,9 @@ def list_daily_results(vehicle_id: str, execute_date):
     )
     result_map = {
         item.test_case_id: item
-        for item in DailyExecutionResult.objects.filter(
+        for item in build_latest_daily_results_queryset(
             vehicle=vehicle,
             execute_date=execute_date,
-            test_case__is_deleted=False,
         ).select_related('test_case')
     }
     items = []
@@ -558,11 +618,18 @@ def get_test_case_history(case_id: str, page: int = 1, page_size: int = 10) -> D
     queryset = DailyExecutionResult.objects.filter(
         test_case=test_case,
         vehicle_id=test_case.vehicle_id,
-    ).order_by('-execute_date', '-start_time')
+        is_deleted=False,
+    ).order_by(
+        '-execute_date',
+        '-start_time',
+        '-reported_at',
+        '-sys_create_datetime',
+    )
     total = queryset.count()
     start = max(page - 1, 0) * page_size
     rows = [
         DailyHistoryRow(
+            id=str(item.id),
             execute_date=item.execute_date,
             status=item.result,
             start_time=item.start_time,

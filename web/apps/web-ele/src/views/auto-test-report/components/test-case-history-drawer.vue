@@ -66,7 +66,7 @@ watch(
       <div v-if="rows.length === 0"><ElEmpty description="暂无历史记录" /></div>
       <div
         v-for="item in rows"
-        :key="`${item.execute_date}-${item.reported_at}`"
+        :key="item.id"
         class="rounded-lg border border-[var(--el-border-color-light)] bg-[var(--el-bg-color)] p-4 shadow-sm transition-shadow hover:shadow-md"
       >
         <div class="mb-2 flex items-center justify-between">

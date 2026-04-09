@@ -126,6 +126,7 @@ class DailySummaryOut(Schema):
 
 
 class DailyHistoryRow(Schema):
+    id: str
     execute_date: date
     status: str
     start_time: Optional[datetime] = None
@@ -158,6 +159,7 @@ class ReportDailyResultsIn(Schema):
 class ReportDailyResultsOut(Schema):
     vehicle_id: str
     execute_date: date
+    created_count: int
     updated_count: int
 
 

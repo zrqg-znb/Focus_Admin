@@ -130,6 +130,7 @@ export interface DailyResultItem {
 }
 
 export interface TestCaseHistoryRow {
+  id: string;
   execute_date: string;
   status: ResultStatus;
   start_time?: string;
