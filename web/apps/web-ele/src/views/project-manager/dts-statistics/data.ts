@@ -396,6 +396,12 @@ export function useColumns(): Columns {
       width: 140,
     },
     {
+      key: 'sConfigFlowType',
+      dataKey: 'sConfigFlowType',
+      title: '流程类型',
+      width: 120,
+    },
+    {
       key: 'sDeptOneNoName',
       dataKey: 'sDeptOneNoName',
       title: '提出方部门',

@@ -124,6 +124,7 @@ function createDefaultFilters(): DtsStatisticsFilters {
     uQbiCloseTypeNames: [],
     sDeptOneNoNames: [],
     sSubsystemNoNames: [],
+    sConfigFlowTypes: [],
   };
 }
 
@@ -232,6 +233,7 @@ function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
     uQbiCloseTypeNames: normalizeStringArray(source.uQbiCloseTypeNames),
     sDeptOneNoNames: normalizeStringArray(source.sDeptOneNoNames),
     sSubsystemNoNames: normalizeStringArray(source.sSubsystemNoNames),
+    sConfigFlowTypes: normalizeStringArray(source.sConfigFlowTypes),
   };
 }
 
@@ -252,6 +254,7 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
     uQbiCloseTypeNames: [...(payload.uQbiCloseTypeNames || [])].sort(),
     sDeptOneNoNames: [...(payload.sDeptOneNoNames || [])].sort(),
     sSubsystemNoNames: [...(payload.sSubsystemNoNames || [])].sort(),
+    sConfigFlowTypes: [...(payload.sConfigFlowTypes || [])].sort(),
   });
 }
 
@@ -507,6 +510,10 @@ const selectedCloseTypeLabel = computed(() => {
   const count = filters.value.uQbiCloseTypeNames.length;
   return count > 0 ? `${count} 项` : '全部';
 });
+const selectedConfigFlowTypeLabel = computed(() => {
+  const count = filters.value.sConfigFlowTypes.length;
+  return count > 0 ? `${count} 项` : '全部';
+});
 const selectedDeptLabel = computed(() => {
   const count = filters.value.sDeptOneNoNames.length;
   return count > 0 ? `${count} 项` : '全部';
@@ -580,6 +587,7 @@ const severityFilterVisible = ref(false);
 const createAtFilterVisible = ref(false);
 const closeTimeFilterVisible = ref(false);
 const closeTypeFilterVisible = ref(false);
+const configFlowTypeFilterVisible = ref(false);
 const deptFilterVisible = ref(false);
 const subsystemFilterVisible = ref(false);
 const draftFlowStates = ref<string[]>([]);
@@ -589,18 +597,22 @@ const draftCreateAtEnd = ref<Date | null>(null);
 const draftCloseTimeBegin = ref<Date | null>(null);
 const draftCloseTimeEnd = ref<Date | null>(null);
 const draftCloseTypeNames = ref<string[]>([]);
+const draftConfigFlowTypes = ref<string[]>([]);
 const draftDeptNames = ref<string[]>([]);
 const draftSubsystemNames = ref<string[]>([]);
 const draftCloseTypeKeyword = ref('');
+const draftConfigFlowTypeKeyword = ref('');
 const draftDeptKeyword = ref('');
 const draftSubsystemKeyword = ref('');
 const fieldSetOptions = ref<Record<string, string[]>>({
   uQbiCloseTypeName: [],
+  sConfigFlowType: [],
   sDeptOneNoName: [],
   sSubsystemNoName: [],
 });
 const fieldSetLoading = ref<Record<string, boolean>>({
   uQbiCloseTypeName: false,
+  sConfigFlowType: false,
   sDeptOneNoName: false,
   sSubsystemNoName: false,
 });
@@ -608,6 +620,12 @@ const filteredCloseTypeOptions = computed(() =>
   filterFieldOptions(
     fieldSetOptions.value.uQbiCloseTypeName || [],
     draftCloseTypeKeyword.value,
+  ),
+);
+const filteredConfigFlowTypeOptions = computed(() =>
+  filterFieldOptions(
+    fieldSetOptions.value.sConfigFlowType || [],
+    draftConfigFlowTypeKeyword.value,
   ),
 );
 const filteredDeptOptions = computed(() =>
@@ -749,6 +767,22 @@ watch(
       draftCloseTypeNames.value = [...filters.value.uQbiCloseTypeNames];
       draftCloseTypeKeyword.value = '';
       void loadFieldSetOptions(['uQbiCloseTypeName']);
+    }
+  },
+);
+
+watch(
+  () => configFlowTypeFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      if (!appliedFilters.value || queryLoading.value) {
+        configFlowTypeFilterVisible.value = false;
+        ElMessage.warning('请先完成当前查询，再打开候选值筛选');
+        return;
+      }
+      draftConfigFlowTypes.value = [...filters.value.sConfigFlowTypes];
+      draftConfigFlowTypeKeyword.value = '';
+      void loadFieldSetOptions(['sConfigFlowType']);
     }
   },
 );
@@ -945,6 +979,19 @@ async function confirmCloseTypeFilter() {
 function resetCloseTypeFilterDraft() {
   draftCloseTypeNames.value = [];
   draftCloseTypeKeyword.value = '';
+}
+
+async function confirmConfigFlowTypeFilter() {
+  filters.value.sConfigFlowTypes = normalizeStringArray(
+    draftConfigFlowTypes.value,
+  );
+  configFlowTypeFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetConfigFlowTypeFilterDraft() {
+  draftConfigFlowTypes.value = [];
+  draftConfigFlowTypeKeyword.value = '';
 }
 
 async function confirmDeptFilter() {
@@ -2037,6 +2084,95 @@ onUnmounted(() => {
                               type="primary"
                               size="small"
                               @click="confirmCloseTypeFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-sConfigFlowType>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">流程类型</span>
+                      <ElPopover
+                        v-model:visible="configFlowTypeFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="260"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': filters.sConfigFlowTypes.length > 0,
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedConfigFlowTypeLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-if="!fieldSetLoading.sConfigFlowType"
+                              v-model="draftConfigFlowTypeKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词筛选流程类型"
+                            />
+                            <div
+                              v-if="fieldSetLoading.sConfigFlowType"
+                              class="dts-header-filter-panel__tip"
+                            >
+                              正在加载候选值...
+                            </div>
+                            <ElEmpty
+                              v-else-if="
+                                fieldSetOptions.sConfigFlowType.length === 0
+                              "
+                              :image-size="56"
+                              description="暂无候选值"
+                            />
+                            <ElEmpty
+                              v-else-if="
+                                filteredConfigFlowTypeOptions.length === 0
+                              "
+                              :image-size="56"
+                              description="暂无匹配项"
+                            />
+                            <ElCheckboxGroup
+                              v-else
+                              v-model="draftConfigFlowTypes"
+                              class="dts-header-filter-check-group"
+                            >
+                              <ElCheckbox
+                                v-for="item in filteredConfigFlowTypeOptions"
+                                :key="item"
+                                :label="item"
+                                :value="item"
+                              >
+                                {{ item }}
+                              </ElCheckbox>
+                            </ElCheckboxGroup>
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetConfigFlowTypeFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmConfigFlowTypeFilter"
                             >
                               确认
                             </ElButton>

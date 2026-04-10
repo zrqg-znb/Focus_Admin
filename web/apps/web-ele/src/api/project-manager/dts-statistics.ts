@@ -13,6 +13,7 @@ export interface DtsStatisticsFilters {
   uQbiCloseTypeNames: string[];
   sDeptOneNoNames: string[];
   sSubsystemNoNames: string[];
+  sConfigFlowTypes: string[];
 }
 
 export interface DtsStatisticsQuery extends DtsStatisticsFilters {
@@ -35,6 +36,7 @@ export interface DtsMergedDefect {
   creator?: null | string;
   sSubmitUserName?: null | string;
   sSubsystemNoName?: null | string;
+  sConfigFlowType?: null | string;
   sProdFamilyNoName?: null | string;
   sProdXtdNoName?: null | string;
   iTestBackCount?: null | string;

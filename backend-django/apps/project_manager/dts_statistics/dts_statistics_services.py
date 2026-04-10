@@ -99,6 +99,7 @@ _DEFAULT_FIELDS = [
     "creator",
     "sSubmitUserName",
     "sSubsystemNoName",
+    "sConfigFlowType",
     "sProdFamilyNoName",
     "sProdXtdNoName",
     "iTestBackCount",
@@ -121,6 +122,7 @@ _DEFAULT_FIELDS = [
 _FIELD_SET_SUPPORTED_FIELDS = {
     "sDeptOneNoName",
     "sSubsystemNoName",
+    "sConfigFlowType",
     "uQbiCloseTypeName",
 }
 
@@ -168,6 +170,7 @@ _AUTO_SOURCE_EXTERNAL = "外领域自提单"
 _AUTO_SOURCE_TEST = "测试自提单"
 _AUTO_SOURCE_DEV = "底软开发自提单"
 _AUTO_PL_GROUP_UNKNOWN = "未识别"
+_ALLOWED_CONFIG_FLOW_TYPES = {"简易", "标准"}
 
 _EXPORT_SHEET_TITLE = "DTS统计"
 
@@ -598,6 +601,7 @@ def _mock_fetch_page(payload: dict[str, Any]) -> dict[str, Any]:
                     "creator": f"creator{(index % 10) + 1}",
                     "sSubmitUserName": f"提交人{(index % 10) + 1}",
                     "sSubsystemNoName": f"子系统{(index % 6) + 1}",
+                    "sConfigFlowType": rng.choice(["简易", "标准", "复杂"]),
                     "sProdFamilyNoName": f"产品族{(index % 4) + 1}",
                     "sProdXtdNoName": f"产品{(index % 8) + 1}",
                     "iTestBackCount": str(index % 6),
@@ -988,6 +992,7 @@ def _normalize_source_row(
     close_type_name = _clean_text(row.get("uQbiCloseTypeName"))
     team_name = _clean_text(row.get("sDeptOneNoName"))
     subsystem_name = _clean_text(row.get("sSubsystemNoName"))
+    config_flow_type = _clean_text(row.get("sConfigFlowType"))
     close_days = _clean_text(row.get("iNumOfCloseDays"))
     if not close_days:
         close_days = _clean_text(_compute_process_days(create_at, close_time))
@@ -1007,6 +1012,7 @@ def _normalize_source_row(
         "creator": _clean_text(row.get("creator")) or None,
         "sSubmitUserName": _clean_text(row.get("sSubmitUserName")) or None,
         "sSubsystemNoName": subsystem_name or None,
+        "sConfigFlowType": config_flow_type or None,
         "sProdFamilyNoName": _clean_text(row.get("sProdFamilyNoName")) or None,
         "sProdXtdNoName": _clean_text(row.get("sProdXtdNoName")) or None,
         "iTestBackCount": _clean_text(row.get("iTestBackCount")) or None,
@@ -1401,6 +1407,9 @@ def _resolve_local_runtime_filters(
         "sSubsystemNoNames": _normalize_text_list(
             getattr(query, "sSubsystemNoNames", [])
         ),
+        "sConfigFlowTypes": _normalize_text_list(
+            getattr(query, "sConfigFlowTypes", [])
+        ),
         "uQbiCloseTypeNames": _normalize_text_list(
             getattr(query, "uQbiCloseTypeNames", [])
         ),
@@ -1672,25 +1681,27 @@ def _apply_local_filters(
         for item in _normalize_text_list(local_filters["sSubsystemNoNames"])
         if item
     }
+    config_flow_type_values = set() if "sConfigFlowType" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["sConfigFlowTypes"])
+        if item and item in _ALLOWED_CONFIG_FLOW_TYPES
+    }
     close_type_values = set() if "uQbiCloseTypeName" in ignored else {
         item
         for item in _normalize_text_list(local_filters["uQbiCloseTypeNames"])
         if item
     }
 
-    if (
-        create_at_begin <= 0
-        and create_at_end <= 0
-        and close_time_begin <= 0
-        and close_time_end <= 0
-        and not dept_values
-        and not subsystem_values
-        and not close_type_values
-    ):
-        return rows
-
     result: list[dict[str, Any]] = []
     for row in rows:
+        config_flow_type = _clean_text(row.get("sConfigFlowType"))
+        if config_flow_type not in _ALLOWED_CONFIG_FLOW_TYPES:
+            continue
+        if (
+            config_flow_type_values
+            and config_flow_type not in config_flow_type_values
+        ):
+            continue
         if not _match_time_range(row.get("createAt"), create_at_begin, create_at_end):
             continue
         if not _match_time_range(
@@ -1737,16 +1748,19 @@ def _cleanup_snapshot_version(meta: dict[str, Any] | None) -> None:
 
 
 def _build_snapshot_field_sets(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
-    return {
-        field: sorted(
-            {
-                _clean_text(item.get(field))
-                for item in rows
-                if _clean_text(item.get(field))
+    field_sets: dict[str, list[str]] = {}
+    for field in _FIELD_SET_SUPPORTED_FIELDS:
+        values = {
+            _clean_text(item.get(field))
+            for item in rows
+            if _clean_text(item.get(field))
+        }
+        if field == "sConfigFlowType":
+            values = {
+                value for value in values if value in _ALLOWED_CONFIG_FLOW_TYPES
             }
-        )
-        for field in _FIELD_SET_SUPPORTED_FIELDS
-    }
+        field_sets[field] = sorted(values)
+    return field_sets
 
 
 def _write_snapshot_payload(
@@ -1880,6 +1894,8 @@ def _build_filtered_result_payload(
         local_filters["sDeptOneNoNames"] = []
     if "sSubsystemNoName" in ignored:
         local_filters["sSubsystemNoNames"] = []
+    if "sConfigFlowType" in ignored:
+        local_filters["sConfigFlowTypes"] = []
     if "uQbiCloseTypeName" in ignored:
         local_filters["uQbiCloseTypeNames"] = []
     return {
@@ -1896,6 +1912,9 @@ def _build_filtered_result_payload(
         "sDeptOneNoNames": _normalize_text_list(local_filters.get("sDeptOneNoNames")),
         "sSubsystemNoNames": _normalize_text_list(
             local_filters.get("sSubsystemNoNames")
+        ),
+        "sConfigFlowTypes": _normalize_text_list(
+            local_filters.get("sConfigFlowTypes")
         ),
         "uQbiCloseTypeNames": _normalize_text_list(
             local_filters.get("uQbiCloseTypeNames")
@@ -2368,6 +2387,7 @@ _EXPORT_COLUMN_SPECS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
     ("提单时间", lambda item: _clean_text(item.get("createAt"))),
     ("关闭时间", lambda item: _clean_text(item.get("dCloseTime"))),
     ("关闭类型", lambda item: _clean_text(item.get("uQbiCloseTypeName"))),
+    ("流程类型", lambda item: _clean_text(item.get("sConfigFlowType"))),
     ("提出方部门", lambda item: _clean_text(item.get("sDeptOneNoName"))),
     ("提单来源", lambda item: _clean_text(item.get("auto_source_type"))),
     ("当前处理人", lambda item: _clean_text(item.get("currentHandler"))),
