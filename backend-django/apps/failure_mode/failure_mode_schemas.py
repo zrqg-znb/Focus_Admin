@@ -278,11 +278,23 @@ class FailureModePageSchema(Schema):
     total: int
 
 
+class FailureModeInsightLandingRowSchema(Schema):
+    id: str
+    label: str
+    subtitle: Optional[str] = None
+    status: str = '未落地'
+
+
 class FailureModeInsightProductRowSchema(Schema):
     product_id: str
     product_name: str
     owner_info: Optional[UserBriefSchema] = None
     subsystems: list[str] = Field(default_factory=list)
+    failure_mode_status: str = '未落地'
+    interception_rows: list[FailureModeInsightLandingRowSchema] = Field(default_factory=list)
+    handling_rows: list[FailureModeInsightLandingRowSchema] = Field(default_factory=list)
+    observation_rows: list[FailureModeInsightLandingRowSchema] = Field(default_factory=list)
+    huatuo_rows: list[FailureModeInsightLandingRowSchema] = Field(default_factory=list)
     landed_at: Optional[str] = None
 
 
@@ -292,6 +304,7 @@ class FailureModeInsightOutSchema(Schema):
     subsystem: Optional[str] = None
     status: Optional[str] = None
     landed_product_count: int
+    related_product_count: int = 0
     total_product_count: int
     product_rows: list[FailureModeInsightProductRowSchema] = Field(
         default_factory=list,

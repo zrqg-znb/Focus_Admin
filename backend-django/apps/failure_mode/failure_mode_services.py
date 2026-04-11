@@ -602,15 +602,67 @@ def _serialize_paginated_queryset(queryset, serializer, pagination=None):
     }
 
 
-def _build_failure_mode_insight_product_rows(failure_mode_id: str) -> list[dict[str, Any]]:
+def _resolve_insight_landing_status(flags: list[bool]) -> str:
+    if not flags:
+        return '未落地'
+    if all(flags):
+        return '已落地'
+    if any(flags):
+        return '部分落地'
+    return '未落地'
+
+
+def _build_failure_mode_insight_landing_row(
+    *,
+    item_id: str,
+    label: str,
+    flags: list[bool],
+    subtitle: str | None = None,
+) -> dict[str, Any]:
+    return {
+        'id': item_id,
+        'label': label,
+        'subtitle': subtitle,
+        'status': _resolve_insight_landing_status(flags),
+    }
+
+
+def _build_failure_mode_insight_product_payload(
+    failure_mode_id: str,
+) -> dict[str, Any]:
     relations = list(
         ProductFailureMode.objects.filter(
             is_deleted=False,
-            is_landed=True,
             failure_mode_id=failure_mode_id,
             product__is_deleted=False,
         )
         .select_related('product__owner', 'product__project')
+        .prefetch_related(
+            Prefetch(
+                'interception_landings',
+                queryset=ProductFailureModeInterceptionLanding.objects.filter(
+                    is_deleted=False,
+                ).select_related('interception_strategy'),
+            ),
+            Prefetch(
+                'handling_landings',
+                queryset=ProductFailureModeHandlingLanding.objects.filter(
+                    is_deleted=False,
+                ).select_related('handling_measure'),
+            ),
+            Prefetch(
+                'observation_landings',
+                queryset=ProductFailureModeObservationLanding.objects.filter(
+                    is_deleted=False,
+                ).select_related('observation_method'),
+            ),
+            Prefetch(
+                'huatuo_landings',
+                queryset=ProductFailureModeHuatuoLanding.objects.filter(
+                    is_deleted=False,
+                ).select_related('huatuo_diagnosis'),
+            ),
+        )
         .order_by('product__project__name', 'subsystem', '-sys_update_datetime')
     )
     grouped: dict[str, dict[str, Any]] = {}
@@ -624,9 +676,19 @@ def _build_failure_mode_insight_product_rows(failure_mode_id: str) -> list[dict[
                 'product_name': product.project.name if product.project else '',
                 'owner_info': _user_brief(product.owner),
                 'subsystems': [],
+                'failure_mode_status': '未落地',
+                'interception_rows': [],
+                'handling_rows': [],
+                'observation_rows': [],
+                'huatuo_rows': [],
                 'landed_at': None,
                 '_landed_at_raw': None,
                 '_subsystem_seen': set(),
+                '_failure_mode_flags': [],
+                '_interception_items': {},
+                '_handling_items': {},
+                '_observation_items': {},
+                '_huatuo_items': {},
             }
             grouped[product_id] = row
 
@@ -636,24 +698,156 @@ def _build_failure_mode_insight_product_rows(failure_mode_id: str) -> list[dict[
             subsystem_seen.add(subsystem)
             row['subsystems'].append(subsystem)
 
+        row['_failure_mode_flags'].append(bool(relation.is_landed))
         current_landed_at = row['_landed_at_raw']
-        if current_landed_at is None or (
-            relation.sys_update_datetime and relation.sys_update_datetime > current_landed_at
+        if bool(relation.is_landed) and (
+            current_landed_at is None
+            or (
+                relation.sys_update_datetime
+                and relation.sys_update_datetime > current_landed_at
+            )
         ):
             row['_landed_at_raw'] = relation.sys_update_datetime
             row['landed_at'] = _format_datetime(relation.sys_update_datetime)
 
-    return [
-        {
-            key: value
-            for key, value in row.items()
-            if not key.startswith('_')
-        }
-        for row in sorted(
-            grouped.values(),
-            key=lambda item: (item['product_name'], item['product_id']),
+        for landing in relation.interception_landings.all():
+            if not landing.interception_strategy:
+                continue
+            cache = row['_interception_items'].setdefault(
+                str(landing.interception_strategy_id),
+                {
+                    'id': str(landing.interception_strategy_id),
+                    'label': landing.interception_strategy.interception_item,
+                    'subtitle': None,
+                    'flags': [],
+                },
+            )
+            cache['flags'].append(bool(landing.is_landed))
+
+        for landing in relation.handling_landings.all():
+            if not landing.handling_measure:
+                continue
+            cache = row['_handling_items'].setdefault(
+                str(landing.handling_measure_id),
+                {
+                    'id': str(landing.handling_measure_id),
+                    'label': landing.handling_measure.measure,
+                    'subtitle': _normalize_optional_text(
+                        landing.handling_measure.measure_category,
+                    ),
+                    'flags': [],
+                },
+            )
+            cache['flags'].append(bool(landing.is_landed))
+
+        for landing in relation.observation_landings.all():
+            if not landing.observation_method:
+                continue
+            cache = row['_observation_items'].setdefault(
+                str(landing.observation_method_id),
+                {
+                    'id': str(landing.observation_method_id),
+                    'label': (
+                        landing.observation_method.log_keyword
+                        or landing.observation_method.log_id
+                        or landing.observation_method.monitor_type
+                        or landing.observation_method.log_path
+                        or '未命名维测项'
+                    ),
+                    'subtitle': _normalize_optional_text(
+                        landing.observation_method.monitor_type,
+                    ),
+                    'flags': [],
+                },
+            )
+            cache['flags'].append(bool(landing.is_landed))
+
+        for landing in relation.huatuo_landings.all():
+            if not landing.huatuo_diagnosis:
+                continue
+            cache = row['_huatuo_items'].setdefault(
+                str(landing.huatuo_diagnosis_id),
+                {
+                    'id': str(landing.huatuo_diagnosis_id),
+                    'label': landing.huatuo_diagnosis.description,
+                    'subtitle': None,
+                    'flags': [],
+                },
+            )
+            cache['flags'].append(bool(landing.is_landed))
+
+    rows: list[dict[str, Any]] = []
+    landed_product_count = 0
+    for row in sorted(
+        grouped.values(),
+        key=lambda item: (item['product_name'], item['product_id']),
+    ):
+        row['failure_mode_status'] = _resolve_insight_landing_status(
+            row['_failure_mode_flags'],
         )
-    ]
+        if row['failure_mode_status'] == '已落地':
+            landed_product_count += 1
+        row['interception_rows'] = [
+            _build_failure_mode_insight_landing_row(
+                item_id=item['id'],
+                label=item['label'],
+                subtitle=item['subtitle'],
+                flags=item['flags'],
+            )
+            for item in sorted(
+                row['_interception_items'].values(),
+                key=lambda item: (item['label'], item['id']),
+            )
+        ]
+        row['handling_rows'] = [
+            _build_failure_mode_insight_landing_row(
+                item_id=item['id'],
+                label=item['label'],
+                subtitle=item['subtitle'],
+                flags=item['flags'],
+            )
+            for item in sorted(
+                row['_handling_items'].values(),
+                key=lambda item: (item['subtitle'] or '', item['label'], item['id']),
+            )
+        ]
+        row['observation_rows'] = [
+            _build_failure_mode_insight_landing_row(
+                item_id=item['id'],
+                label=item['label'],
+                subtitle=item['subtitle'],
+                flags=item['flags'],
+            )
+            for item in sorted(
+                row['_observation_items'].values(),
+                key=lambda item: (item['subtitle'] or '', item['label'], item['id']),
+            )
+        ]
+        row['huatuo_rows'] = [
+            _build_failure_mode_insight_landing_row(
+                item_id=item['id'],
+                label=item['label'],
+                subtitle=item['subtitle'],
+                flags=item['flags'],
+            )
+            for item in sorted(
+                row['_huatuo_items'].values(),
+                key=lambda item: (item['label'], item['id']),
+            )
+        ]
+        rows.append(
+            {
+                key: value
+                for key, value in row.items()
+                if not key.startswith('_')
+            },
+        )
+
+    return {
+        'landed_product_count': landed_product_count,
+        'product_rows': rows,
+        'related_product_count': len(rows),
+    }
 
 
 def _dedupe_failure_modes(failure_modes: Iterable[FailureMode]) -> list[FailureMode]:
@@ -1580,15 +1774,16 @@ def get_failure_mode_detail(failure_mode_id: str) -> dict[str, Any]:
 
 def get_failure_mode_insight(failure_mode_id: str) -> dict[str, Any]:
     instance = get_object_or_404(_failure_mode_queryset(), id=failure_mode_id)
-    product_rows = _build_failure_mode_insight_product_rows(failure_mode_id)
+    product_payload = _build_failure_mode_insight_product_payload(failure_mode_id)
     return {
         'id': str(instance.id),
         'brief': instance.brief,
         'subsystem': instance.subsystem,
         'status': instance.status,
-        'landed_product_count': len(product_rows),
+        'landed_product_count': product_payload['landed_product_count'],
+        'related_product_count': product_payload['related_product_count'],
         'total_product_count': _total_failure_mode_product_count(),
-        'product_rows': product_rows,
+        'product_rows': product_payload['product_rows'],
     }
 
 

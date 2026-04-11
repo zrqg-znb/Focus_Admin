@@ -206,7 +206,7 @@ const latestReviewFeedback = computed(() => {
 
 const workbenchColumns = ((useFailureModeColumns() || []).map((column) =>
   column?.key === 'actions'
-    ? { ...column, cellSlotName: 'cell-actions', width: 320 }
+    ? { ...column, cellSlotName: 'cell-actions', width: 420 }
     : column,
 ) || []) as ZqTableGridOptions<FailureModeItem>['columns'];
 
@@ -563,6 +563,32 @@ async function handleFailureModeSaved() {
   await loadTaskContext();
 }
 
+function getLandingStatusLabel(row: FailureModeItem) {
+  if (!row.landing_completed) {
+    return '待补齐';
+  }
+  if (row.failure_mode_is_landed === true) {
+    return '已落地';
+  }
+  if (row.failure_mode_is_landed === false) {
+    return '未落地';
+  }
+  return '待确认';
+}
+
+function getLandingStatusTagType(row: FailureModeItem) {
+  if (!row.landing_completed) {
+    return 'warning';
+  }
+  if (row.failure_mode_is_landed === true) {
+    return 'success';
+  }
+  if (row.failure_mode_is_landed === false) {
+    return 'info';
+  }
+  return 'warning';
+}
+
 function handleOpenLandingConfig(row: FailureModeItem) {
   if (!currentTask.value) {
     return;
@@ -572,6 +598,7 @@ function handleOpenLandingConfig(row: FailureModeItem) {
     failureModeId: row.id,
     failureModeBrief: row.brief,
     productName: currentTask.value.product_name,
+    readonly: !canMaintainLanding.value,
     subsystem: currentTask.value.subsystem,
     taskType:
       FM_TASK_TYPE_LABEL_MAP[currentTask.value.task_type] ||
@@ -1127,6 +1154,13 @@ watch(
 
                   <template #cell-actions="{ row }">
                     <div class="flex items-center justify-center gap-2">
+                      <ElTag
+                        :type="getLandingStatusTagType(row)"
+                        effect="light"
+                        size="small"
+                      >
+                        {{ getLandingStatusLabel(row) }}
+                      </ElTag>
                       <ElButton
                         link
                         type="primary"
@@ -1135,12 +1169,11 @@ watch(
                         查看
                       </ElButton>
                       <ElButton
-                        v-if="canMaintainLanding"
                         link
                         type="success"
                         @click="handleOpenLandingConfig(row)"
                       >
-                        落地配置
+                        落地情况
                       </ElButton>
                       <ElButton
                         v-if="row.editable_in_task"

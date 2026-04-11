@@ -1442,8 +1442,18 @@ class TaskWorkflowService:
         policy = FailureModeAccessPolicy(user)
         if not policy.can_view_task(task):
             raise HttpError(403, '无权查看当前任务。')
-        binding = cls._get_task_failure_mode_binding_or_404(task, failure_mode_id)
         product_failure_mode = cls._get_product_failure_mode_binding(task, failure_mode_id)
+        if task.task_type == 'DELETE':
+            if not product_failure_mode or not product_failure_mode.failure_mode:
+                raise HttpError(404, '当前故障模式不存在于产品基线中。')
+            return cls._serialize_task_failure_mode_landing(
+                task,
+                product_failure_mode.failure_mode,
+                existing_payload=None,
+                product_failure_mode=product_failure_mode,
+            )
+
+        binding = cls._get_task_failure_mode_binding_or_404(task, failure_mode_id)
         draft = FailureModeTaskDraft.objects.filter(
             task=task,
             failure_mode_id=failure_mode_id,

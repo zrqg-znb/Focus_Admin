@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import type {
   FailureModeInsight,
+  FailureModeInsightResourceRow,
   HandlingMeasureInsight,
   HuatuoDiagnosisInsight,
   InterceptionInsight,
@@ -13,7 +14,13 @@ import type {
 
 import { computed, ref } from 'vue';
 
-import { ElEmpty, ElMessage, ElTable, ElTableColumn } from 'element-plus';
+import {
+  ElEmpty,
+  ElMessage,
+  ElTable,
+  ElTableColumn,
+  ElTag,
+} from 'element-plus';
 
 import {
   getFailureModeInsightApi,
@@ -111,7 +118,7 @@ const currentRate = computed(() => {
       : currentResourceInsight.value?.landed_product_count || 0;
   const denominator =
     mode.value === 'failure_mode'
-      ? failureModeInsight.value?.total_product_count || 0
+      ? failureModeInsight.value?.related_product_count || 0
       : currentResourceInsight.value?.total_product_count || 0;
   return formatRate(numerator, denominator);
 });
@@ -179,8 +186,8 @@ const summaryMetrics = computed<SummaryMetric[]>(() => {
           value: failureModeInsight.value?.landed_product_count || 0,
         },
         {
-          label: '已纳管产品总数',
-          value: failureModeInsight.value?.total_product_count || 0,
+          label: '关联产品数',
+          value: failureModeInsight.value?.related_product_count || 0,
         },
         { label: '落地率', value: currentRate.value },
       ];
@@ -342,6 +349,27 @@ function formatTextList(items?: null | string[]) {
   return (items || []).filter(Boolean).join('、') || '-';
 }
 
+function getLandingStatusTagType(status?: null | string) {
+  if (status === '已落地') {
+    return 'success';
+  }
+  if (status === '部分落地') {
+    return 'warning';
+  }
+  return 'info';
+}
+
+function getFailureModeProductResourceRows(
+  row: FailureModeInsight['product_rows'][number],
+  key:
+    | 'handling_rows'
+    | 'huatuo_rows'
+    | 'interception_rows'
+    | 'observation_rows',
+) {
+  return (row?.[key] || []) as FailureModeInsightResourceRow[];
+}
+
 async function openInsight(
   nextMode: InsightMode,
   loader: () => Promise<void>,
@@ -477,9 +505,128 @@ defineExpose({
               {{ formatUserName(row.owner_info) }}
             </template>
           </ElTableColumn>
+          <ElTableColumn label="故障模式落地" min-width="150">
+            <template #default="{ row }">
+              <ElTag
+                :type="getLandingStatusTagType(row.failure_mode_status)"
+                effect="light"
+                round
+              >
+                {{ row.failure_mode_status || '-' }}
+              </ElTag>
+            </template>
+          </ElTableColumn>
           <ElTableColumn label="落地子系统" min-width="220">
             <template #default="{ row }">
               {{ formatTextList(row.subsystems) }}
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="产线拦截策略" min-width="260">
+            <template #default="{ row }">
+              <div
+                v-if="
+                  getFailureModeProductResourceRows(row, 'interception_rows')
+                    .length > 0
+                "
+                class="fm-relation-insight__tag-list"
+              >
+                <ElTag
+                  v-for="item in getFailureModeProductResourceRows(
+                    row,
+                    'interception_rows',
+                  )"
+                  :key="item.id"
+                  :type="getLandingStatusTagType(item.status)"
+                  effect="light"
+                  size="small"
+                >
+                  {{ item.label }}
+                  <span v-if="item.subtitle"> · {{ item.subtitle }}</span>
+                  <span> · {{ item.status }}</span>
+                </ElTag>
+              </div>
+              <span v-else class="text-gray-400">未关联</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="故障处理措施" min-width="280">
+            <template #default="{ row }">
+              <div
+                v-if="
+                  getFailureModeProductResourceRows(row, 'handling_rows')
+                    .length > 0
+                "
+                class="fm-relation-insight__tag-list"
+              >
+                <ElTag
+                  v-for="item in getFailureModeProductResourceRows(
+                    row,
+                    'handling_rows',
+                  )"
+                  :key="item.id"
+                  :type="getLandingStatusTagType(item.status)"
+                  effect="light"
+                  size="small"
+                >
+                  {{ item.label }}
+                  <span v-if="item.subtitle"> · {{ item.subtitle }}</span>
+                  <span> · {{ item.status }}</span>
+                </ElTag>
+              </div>
+              <span v-else class="text-gray-400">未关联</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="维测手段" min-width="280">
+            <template #default="{ row }">
+              <div
+                v-if="
+                  getFailureModeProductResourceRows(row, 'observation_rows')
+                    .length > 0
+                "
+                class="fm-relation-insight__tag-list"
+              >
+                <ElTag
+                  v-for="item in getFailureModeProductResourceRows(
+                    row,
+                    'observation_rows',
+                  )"
+                  :key="item.id"
+                  :type="getLandingStatusTagType(item.status)"
+                  effect="light"
+                  size="small"
+                >
+                  {{ item.label }}
+                  <span v-if="item.subtitle"> · {{ item.subtitle }}</span>
+                  <span> · {{ item.status }}</span>
+                </ElTag>
+              </div>
+              <span v-else class="text-gray-400">未关联</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="华佗诊断方案" min-width="260">
+            <template #default="{ row }">
+              <div
+                v-if="
+                  getFailureModeProductResourceRows(row, 'huatuo_rows').length >
+                  0
+                "
+                class="fm-relation-insight__tag-list"
+              >
+                <ElTag
+                  v-for="item in getFailureModeProductResourceRows(
+                    row,
+                    'huatuo_rows',
+                  )"
+                  :key="item.id"
+                  :type="getLandingStatusTagType(item.status)"
+                  effect="light"
+                  size="small"
+                >
+                  {{ item.label }}
+                  <span v-if="item.subtitle"> · {{ item.subtitle }}</span>
+                  <span> · {{ item.status }}</span>
+                </ElTag>
+              </div>
+              <span v-else class="text-gray-400">未关联</span>
             </template>
           </ElTableColumn>
           <ElTableColumn
@@ -613,5 +760,11 @@ defineExpose({
   color: #0f172a;
   font-size: 15px;
   font-weight: 700;
+}
+
+.fm-relation-insight__tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 </style>

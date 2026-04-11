@@ -35,6 +35,7 @@ interface DrawerContext {
   failureModeId: string;
   failureModeBrief: string;
   productName: string;
+  readonly: boolean;
   subsystem: string;
   taskType: string;
   taskStatus: string;
@@ -55,6 +56,7 @@ const loading = ref(false);
 const confirmLoading = ref(false);
 const context = ref<DrawerContext | null>(null);
 const detail = ref<null | TaskFailureModeLandingDetail>(null);
+const readonly = computed(() => Boolean(context.value?.readonly));
 
 const landingSections = computed<LandingSection[]>(() => {
   return [
@@ -115,7 +117,7 @@ async function open(nextContext: DrawerContext) {
 }
 
 async function handleConfirm() {
-  if (!context.value || !detail.value) {
+  if (!context.value || !detail.value || readonly.value) {
     return;
   }
   confirmLoading.value = true;
@@ -147,7 +149,8 @@ defineExpose({ open });
     confirm-text="保存落地配置"
     :loading="loading"
     :size="1080"
-    title="落地配置"
+    :show-footer="!readonly"
+    :title="readonly ? '落地情况' : '落地配置'"
     @confirm="handleConfirm"
   >
     <div class="fm-landing-drawer flex flex-col gap-4 pb-2">
@@ -171,13 +174,25 @@ defineExpose({ open });
             <small>/ {{ totalResourceCount }}</small>
           </div>
           <div class="fm-landing-drawer__summary-card">
-            <span>填写状态</span>
+            <span>{{ readonly ? '查看模式' : '填写状态' }}</span>
             <ElTag
-              :type="detail?.landing_completed ? 'success' : 'warning'"
+              :type="
+                readonly
+                  ? 'info'
+                  : detail?.landing_completed
+                    ? 'success'
+                    : 'warning'
+              "
               effect="light"
               round
             >
-              {{ detail?.landing_completed ? '已补齐' : '待补齐' }}
+              {{
+                readonly
+                  ? '只读查看'
+                  : detail?.landing_completed
+                    ? '已补齐'
+                    : '待补齐'
+              }}
             </ElTag>
           </div>
         </div>
@@ -197,7 +212,7 @@ defineExpose({ open });
             <span class="fm-landing-drawer__mode-label">落地状态</span>
             <ElRadioGroup
               v-model="detail.failure_mode_is_landed"
-              :disabled="loading || confirmLoading"
+              :disabled="loading || confirmLoading || readonly"
             >
               <ElRadioButton :label="true">已落地</ElRadioButton>
               <ElRadioButton :label="false">未落地</ElRadioButton>
@@ -246,7 +261,7 @@ defineExpose({ open });
               </div>
               <ElRadioGroup
                 v-model="row.is_landed"
-                :disabled="loading || confirmLoading"
+                :disabled="loading || confirmLoading || readonly"
               >
                 <ElRadioButton :label="true">已落地</ElRadioButton>
                 <ElRadioButton :label="false">未落地</ElRadioButton>

@@ -123,7 +123,19 @@ export interface FailureModeInsightProductRow {
   product_name: string;
   owner_info?: null | UserBriefInfo;
   subsystems: string[];
+  failure_mode_status: string;
+  interception_rows: FailureModeInsightResourceRow[];
+  handling_rows: FailureModeInsightResourceRow[];
+  observation_rows: FailureModeInsightResourceRow[];
+  huatuo_rows: FailureModeInsightResourceRow[];
   landed_at?: null | string;
+}
+
+export interface FailureModeInsightResourceRow {
+  id: string;
+  label: string;
+  subtitle?: null | string;
+  status: string;
 }
 
 export interface FailureModeInsight {
@@ -132,6 +144,7 @@ export interface FailureModeInsight {
   subsystem?: null | string;
   status?: null | string;
   landed_product_count: number;
+  related_product_count: number;
   total_product_count: number;
   product_rows: FailureModeInsightProductRow[];
 }
