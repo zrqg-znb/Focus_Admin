@@ -35,6 +35,7 @@ class DtsLocalFilterSchema(Schema):
     sDeptOneNoNames: list[str] = Field(default_factory=list)
     sSubsystemNoNames: list[str] = Field(default_factory=list)
     sConfigFlowTypes: list[str] = Field(default_factory=list)
+    auto_pl_group_names: list[str] = Field(default_factory=list)
     uQbiCloseTypeNames: list[str] = Field(default_factory=list)
 
     @field_validator(
@@ -52,6 +53,7 @@ class DtsLocalFilterSchema(Schema):
         "sDeptOneNoNames",
         "sSubsystemNoNames",
         "sConfigFlowTypes",
+        "auto_pl_group_names",
         "uQbiCloseTypeNames",
         mode="before",
     )
@@ -73,6 +75,7 @@ class DtsStatisticsQuerySchema(Schema):
     sDeptOneNoNames: list[str] = Field(default_factory=list)
     sSubsystemNoNames: list[str] = Field(default_factory=list)
     sConfigFlowTypes: list[str] = Field(default_factory=list)
+    auto_pl_group_names: list[str] = Field(default_factory=list)
     uQbiCloseTypeNames: list[str] = Field(default_factory=list)
     pageIndex: int = 1
     pageSize: int = 20
@@ -110,6 +113,7 @@ class DtsStatisticsQuerySchema(Schema):
         "sDeptOneNoNames",
         "sSubsystemNoNames",
         "sConfigFlowTypes",
+        "auto_pl_group_names",
         "uQbiCloseTypeNames",
         mode="before",
     )
@@ -362,6 +366,7 @@ class DtsStatisticsExportSchema(Schema):
     sDeptOneNoNames: list[str] = Field(default_factory=list)
     sSubsystemNoNames: list[str] = Field(default_factory=list)
     sConfigFlowTypes: list[str] = Field(default_factory=list)
+    auto_pl_group_names: list[str] = Field(default_factory=list)
     uQbiCloseTypeNames: list[str] = Field(default_factory=list)
 
     @field_validator("productId", mode="before")
@@ -397,6 +402,7 @@ class DtsStatisticsExportSchema(Schema):
         "sDeptOneNoNames",
         "sSubsystemNoNames",
         "sConfigFlowTypes",
+        "auto_pl_group_names",
         "uQbiCloseTypeNames",
         mode="before",
     )

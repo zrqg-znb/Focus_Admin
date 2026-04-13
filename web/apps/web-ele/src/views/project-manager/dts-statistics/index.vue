@@ -125,6 +125,7 @@ function createDefaultFilters(): DtsStatisticsFilters {
     sDeptOneNoNames: [],
     sSubsystemNoNames: [],
     sConfigFlowTypes: [],
+    auto_pl_group_names: [],
   };
 }
 
@@ -234,6 +235,7 @@ function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
     sDeptOneNoNames: normalizeStringArray(source.sDeptOneNoNames),
     sSubsystemNoNames: normalizeStringArray(source.sSubsystemNoNames),
     sConfigFlowTypes: normalizeStringArray(source.sConfigFlowTypes),
+    auto_pl_group_names: normalizeStringArray(source.auto_pl_group_names),
   };
 }
 
@@ -255,6 +257,7 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
     sDeptOneNoNames: [...(payload.sDeptOneNoNames || [])].sort(),
     sSubsystemNoNames: [...(payload.sSubsystemNoNames || [])].sort(),
     sConfigFlowTypes: [...(payload.sConfigFlowTypes || [])].sort(),
+    auto_pl_group_names: [...(payload.auto_pl_group_names || [])].sort(),
   });
 }
 
@@ -522,6 +525,10 @@ const selectedSubsystemLabel = computed(() => {
   const count = filters.value.sSubsystemNoNames.length;
   return count > 0 ? `${count} 项` : '全部';
 });
+const selectedAutoPlGroupLabel = computed(() => {
+  const count = filters.value.auto_pl_group_names.length;
+  return count > 0 ? `${count} 项` : '全部';
+});
 function filterFieldOptions(options: string[], keyword: string) {
   const normalizedKeyword = String(keyword || '')
     .trim()
@@ -590,6 +597,7 @@ const closeTypeFilterVisible = ref(false);
 const configFlowTypeFilterVisible = ref(false);
 const deptFilterVisible = ref(false);
 const subsystemFilterVisible = ref(false);
+const autoPlGroupFilterVisible = ref(false);
 const draftFlowStates = ref<string[]>([]);
 const draftSeverityNos = ref<string[]>([]);
 const draftCreateAtBegin = ref<Date | null>(null);
@@ -600,21 +608,25 @@ const draftCloseTypeNames = ref<string[]>([]);
 const draftConfigFlowTypes = ref<string[]>([]);
 const draftDeptNames = ref<string[]>([]);
 const draftSubsystemNames = ref<string[]>([]);
+const draftAutoPlGroupNames = ref<string[]>([]);
 const draftCloseTypeKeyword = ref('');
 const draftConfigFlowTypeKeyword = ref('');
 const draftDeptKeyword = ref('');
 const draftSubsystemKeyword = ref('');
+const draftAutoPlGroupKeyword = ref('');
 const fieldSetOptions = ref<Record<string, string[]>>({
   uQbiCloseTypeName: [],
   sConfigFlowType: [],
   sDeptOneNoName: [],
   sSubsystemNoName: [],
+  auto_pl_group_name: [],
 });
 const fieldSetLoading = ref<Record<string, boolean>>({
   uQbiCloseTypeName: false,
   sConfigFlowType: false,
   sDeptOneNoName: false,
   sSubsystemNoName: false,
+  auto_pl_group_name: false,
 });
 const filteredCloseTypeOptions = computed(() =>
   filterFieldOptions(
@@ -638,6 +650,12 @@ const filteredSubsystemOptions = computed(() =>
   filterFieldOptions(
     fieldSetOptions.value.sSubsystemNoName || [],
     draftSubsystemKeyword.value,
+  ),
+);
+const filteredAutoPlGroupOptions = computed(() =>
+  filterFieldOptions(
+    fieldSetOptions.value.auto_pl_group_name || [],
+    draftAutoPlGroupKeyword.value,
   ),
 );
 
@@ -815,6 +833,22 @@ watch(
       draftSubsystemNames.value = [...filters.value.sSubsystemNoNames];
       draftSubsystemKeyword.value = '';
       void loadFieldSetOptions(['sSubsystemNoName']);
+    }
+  },
+);
+
+watch(
+  () => autoPlGroupFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      if (!appliedFilters.value || queryLoading.value) {
+        autoPlGroupFilterVisible.value = false;
+        ElMessage.warning('请先完成当前查询，再打开候选值筛选');
+        return;
+      }
+      draftAutoPlGroupNames.value = [...filters.value.auto_pl_group_names];
+      draftAutoPlGroupKeyword.value = '';
+      void loadFieldSetOptions(['auto_pl_group_name']);
     }
   },
 );
@@ -1016,6 +1050,19 @@ async function confirmSubsystemFilter() {
 function resetSubsystemFilterDraft() {
   draftSubsystemNames.value = [];
   draftSubsystemKeyword.value = '';
+}
+
+async function confirmAutoPlGroupFilter() {
+  filters.value.auto_pl_group_names = normalizeStringArray(
+    draftAutoPlGroupNames.value,
+  );
+  autoPlGroupFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetAutoPlGroupFilterDraft() {
+  draftAutoPlGroupNames.value = [];
+  draftAutoPlGroupKeyword.value = '';
 }
 
 function buildExportFilename() {
@@ -2347,6 +2394,96 @@ onUnmounted(() => {
                               type="primary"
                               size="small"
                               @click="confirmSubsystemFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-auto_pl_group_name>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">自动责任PL组</span>
+                      <ElPopover
+                        v-model:visible="autoPlGroupFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="260"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active':
+                                filters.auto_pl_group_names.length > 0,
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedAutoPlGroupLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-if="!fieldSetLoading.auto_pl_group_name"
+                              v-model="draftAutoPlGroupKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词筛选自动责任PL组"
+                            />
+                            <div
+                              v-if="fieldSetLoading.auto_pl_group_name"
+                              class="dts-header-filter-panel__tip"
+                            >
+                              正在加载候选值...
+                            </div>
+                            <ElEmpty
+                              v-else-if="
+                                fieldSetOptions.auto_pl_group_name.length === 0
+                              "
+                              :image-size="56"
+                              description="暂无候选值"
+                            />
+                            <ElEmpty
+                              v-else-if="
+                                filteredAutoPlGroupOptions.length === 0
+                              "
+                              :image-size="56"
+                              description="暂无匹配项"
+                            />
+                            <ElCheckboxGroup
+                              v-else
+                              v-model="draftAutoPlGroupNames"
+                              class="dts-header-filter-check-group"
+                            >
+                              <ElCheckbox
+                                v-for="item in filteredAutoPlGroupOptions"
+                                :key="item"
+                                :label="item"
+                                :value="item"
+                              >
+                                {{ item }}
+                              </ElCheckbox>
+                            </ElCheckboxGroup>
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetAutoPlGroupFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmAutoPlGroupFilter"
                             >
                               确认
                             </ElButton>

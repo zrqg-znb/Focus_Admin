@@ -14,6 +14,7 @@ export interface DtsStatisticsFilters {
   sDeptOneNoNames: string[];
   sSubsystemNoNames: string[];
   sConfigFlowTypes: string[];
+  auto_pl_group_names: string[];
 }
 
 export interface DtsStatisticsQuery extends DtsStatisticsFilters {

@@ -123,6 +123,7 @@ _FIELD_SET_SUPPORTED_FIELDS = {
     "sDeptOneNoName",
     "sSubsystemNoName",
     "sConfigFlowType",
+    "auto_pl_group_name",
     "uQbiCloseTypeName",
 }
 
@@ -1410,6 +1411,9 @@ def _resolve_local_runtime_filters(
         "sConfigFlowTypes": _normalize_text_list(
             getattr(query, "sConfigFlowTypes", [])
         ),
+        "auto_pl_group_names": _normalize_text_list(
+            getattr(query, "auto_pl_group_names", [])
+        ),
         "uQbiCloseTypeNames": _normalize_text_list(
             getattr(query, "uQbiCloseTypeNames", [])
         ),
@@ -1686,6 +1690,11 @@ def _apply_local_filters(
         for item in _normalize_text_list(local_filters["sConfigFlowTypes"])
         if item and item in _ALLOWED_CONFIG_FLOW_TYPES
     }
+    auto_pl_group_values = set() if "auto_pl_group_name" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["auto_pl_group_names"])
+        if item
+    }
     close_type_values = set() if "uQbiCloseTypeName" in ignored else {
         item
         for item in _normalize_text_list(local_filters["uQbiCloseTypeNames"])
@@ -1713,6 +1722,11 @@ def _apply_local_filters(
         if dept_values and _clean_text(row.get("sDeptOneNoName")) not in dept_values:
             continue
         if subsystem_values and _clean_text(row.get("sSubsystemNoName")) not in subsystem_values:
+            continue
+        if (
+            auto_pl_group_values
+            and _clean_text(row.get("auto_pl_group_name")) not in auto_pl_group_values
+        ):
             continue
         if close_type_values and _clean_text(row.get("uQbiCloseTypeName")) not in close_type_values:
             continue
@@ -1896,6 +1910,8 @@ def _build_filtered_result_payload(
         local_filters["sSubsystemNoNames"] = []
     if "sConfigFlowType" in ignored:
         local_filters["sConfigFlowTypes"] = []
+    if "auto_pl_group_name" in ignored:
+        local_filters["auto_pl_group_names"] = []
     if "uQbiCloseTypeName" in ignored:
         local_filters["uQbiCloseTypeNames"] = []
     return {
@@ -1915,6 +1931,9 @@ def _build_filtered_result_payload(
         ),
         "sConfigFlowTypes": _normalize_text_list(
             local_filters.get("sConfigFlowTypes")
+        ),
+        "auto_pl_group_names": _normalize_text_list(
+            local_filters.get("auto_pl_group_names")
         ),
         "uQbiCloseTypeNames": _normalize_text_list(
             local_filters.get("uQbiCloseTypeNames")
