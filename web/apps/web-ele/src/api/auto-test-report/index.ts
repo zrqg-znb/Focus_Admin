@@ -118,6 +118,41 @@ export interface DailySummary {
   last_report_at?: string;
 }
 
+export interface DailyOverviewRow {
+  vehicle_id: string;
+  vehicle_name: string;
+  vehicle_code: string;
+  platform_id: string;
+  platform_name: string;
+  total_count: number;
+  success_count: number;
+  failed_count: number;
+  timeout_count: number;
+  skip_count: number;
+  total_duration_seconds: number;
+  last_report_at?: string;
+  is_abnormal: boolean;
+}
+
+export interface DailyOverviewSummary {
+  execute_date: string;
+  vehicle_count: number;
+  abnormal_vehicle_count: number;
+  total_case_count: number;
+  success_count: number;
+  failed_count: number;
+  timeout_count: number;
+  skip_count: number;
+  total_duration_seconds: number;
+  stats: SummaryStat[];
+  last_report_at?: string;
+}
+
+export interface DailyOverviewResponse {
+  items: DailyOverviewRow[];
+  summary: DailyOverviewSummary;
+}
+
 export interface DailyResultItem {
   case_id: string;
   case_no: string;
@@ -130,7 +165,6 @@ export interface DailyResultItem {
 }
 
 export interface TestCaseHistoryRow {
-  id: string;
   execute_date: string;
   status: ResultStatus;
   start_time?: string;
@@ -253,6 +287,19 @@ export async function getDailySummaryApi(
   return requestClient.get<DailySummary>(`${base}/daily-results/summary`, {
     params: { vehicle_id, execute_date },
   });
+}
+
+export async function getDailyOverviewApi(params: {
+  abnormal_only?: boolean;
+  execute_date: string;
+  platform_id?: string;
+}) {
+  return requestClient.get<DailyOverviewResponse>(
+    `${base}/daily-results/overview`,
+    {
+      params,
+    },
+  );
 }
 
 export async function listDailyResultsApi(

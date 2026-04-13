@@ -1,4 +1,4 @@
-import type { DailyResultItem } from '#/api/auto-test-report';
+import type { DailyOverviewRow, DailyResultItem } from '#/api/auto-test-report';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
 export const RESULT_LABEL_MAP: Record<string, string> = {
@@ -88,6 +88,108 @@ export function useResultColumns(): ZqTableGridOptions<DailyResultItem>['columns
       dataKey: 'actions',
       title: '操作',
       width: 100,
+      align: 'center',
+      headerAlign: 'center',
+      showOverflowTooltip: false,
+    },
+  ];
+}
+
+export function useOverviewColumns(): ZqTableGridOptions<DailyOverviewRow>['columns'] {
+  return [
+    {
+      key: 'platform_name',
+      dataKey: 'platform_name',
+      title: 'MCU平台',
+      width: 140,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'vehicle_name',
+      dataKey: 'vehicle_name',
+      title: '车型',
+      width: 180,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'vehicle_code',
+      dataKey: 'vehicle_code',
+      title: '车型编号',
+      width: 160,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'total_count',
+      dataKey: 'total_count',
+      title: '总用例',
+      width: 100,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'success_count',
+      dataKey: 'success_count',
+      title: '成功',
+      width: 90,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'failed_count',
+      dataKey: 'failed_count',
+      title: '失败',
+      width: 90,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'timeout_count',
+      dataKey: 'timeout_count',
+      title: '超时',
+      width: 90,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'skip_count',
+      dataKey: 'skip_count',
+      title: '跳过',
+      width: 90,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'is_abnormal',
+      dataKey: 'is_abnormal',
+      title: '状态',
+      width: 100,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'total_duration_seconds',
+      dataKey: 'total_duration_seconds',
+      title: '总时长',
+      width: 120,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'last_report_at',
+      dataKey: 'last_report_at',
+      title: '最近上报',
+      width: 180,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'actions',
+      dataKey: 'actions',
+      title: '操作',
+      width: 120,
       align: 'center',
       headerAlign: 'center',
       showOverflowTooltip: false,

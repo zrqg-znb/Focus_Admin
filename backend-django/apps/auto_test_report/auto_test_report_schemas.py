@@ -166,3 +166,44 @@ class ReportDailyResultsOut(Schema):
 class DailyResultQuery(Schema):
     vehicle_id: str
     execute_date: date
+
+
+class DailyOverviewQuery(Schema):
+    execute_date: date
+    platform_id: Optional[str] = None
+    abnormal_only: bool = False
+
+
+class DailyOverviewRow(Schema):
+    vehicle_id: str
+    vehicle_name: str
+    vehicle_code: str
+    platform_id: str
+    platform_name: str
+    total_count: int
+    success_count: int
+    failed_count: int
+    timeout_count: int
+    skip_count: int
+    total_duration_seconds: int
+    last_report_at: Optional[datetime] = None
+    is_abnormal: bool
+
+
+class DailyOverviewSummary(Schema):
+    execute_date: date
+    vehicle_count: int
+    abnormal_vehicle_count: int
+    total_case_count: int
+    success_count: int
+    failed_count: int
+    timeout_count: int
+    skip_count: int
+    total_duration_seconds: int
+    stats: List[SummaryStat]
+    last_report_at: Optional[datetime] = None
+
+
+class DailyOverviewResponse(Schema):
+    items: List[DailyOverviewRow]
+    summary: DailyOverviewSummary

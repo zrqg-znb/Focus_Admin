@@ -7,6 +7,8 @@ from common.fu_auth import BearerAuth as GlobalAuth
 
 from .auto_test_report_schemas import (
     DailyHistoryPage,
+    DailyOverviewQuery,
+    DailyOverviewResponse,
     DailyResultItemOut,
     DailyResultQuery,
     DailySummaryOut,
@@ -138,6 +140,11 @@ def delete_test_case(request, case_id: str):
 @router.get('/daily-results/summary', response=DailySummaryOut, summary='每日执行汇总')
 def get_daily_summary(request, query: DailyResultQuery = Query(...)):
     return services.get_daily_summary(query.vehicle_id, query.execute_date)
+
+
+@router.get('/daily-results/overview', response=DailyOverviewResponse, summary='全量每日执行概览')
+def get_daily_overview(request, query: DailyOverviewQuery = Query(...)):
+    return services.get_daily_overview(query)
 
 
 @router.get('/daily-results/list', response=List[DailyResultItemOut], summary='每日执行结果列表')

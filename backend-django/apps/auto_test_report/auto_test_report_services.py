@@ -23,6 +23,9 @@ from .auto_test_report_model import (
 )
 from .auto_test_report_schemas import (
     DailyHistoryPage,
+    DailyOverviewResponse,
+    DailyOverviewRow,
+    DailyOverviewSummary,
     DailyHistoryRow,
     DailyResultItemOut,
     DailySummaryOut,
@@ -581,6 +584,96 @@ def get_daily_summary(vehicle_id: str, execute_date) -> DailySummaryOut:
         ],
         last_report_at=batch.last_report_at,
     )
+
+
+def get_daily_overview(query) -> DailyOverviewResponse:
+    vehicles = VehicleModel.objects.select_related('platform').filter(
+        is_deleted=False,
+        is_active=True,
+        platform__is_deleted=False,
+        platform__is_active=True,
+    )
+    if query.platform_id:
+        vehicles = vehicles.filter(platform_id=query.platform_id)
+
+    rows: list[DailyOverviewRow] = []
+    total_case_count = 0
+    success_count = 0
+    failed_count = 0
+    timeout_count = 0
+    skip_count = 0
+    total_duration_seconds = 0
+    abnormal_vehicle_count = 0
+    latest_report_at = None
+
+    for vehicle in vehicles:
+        batch = recalculate_daily_batch(vehicle.id, query.execute_date)
+        is_abnormal = batch.failed_count > 0 or batch.timeout_count > 0
+        if query.abnormal_only and not is_abnormal:
+            continue
+
+        row = DailyOverviewRow(
+            vehicle_id=str(vehicle.id),
+            vehicle_name=vehicle.name,
+            vehicle_code=vehicle.vehicle_code,
+            platform_id=str(vehicle.platform_id),
+            platform_name=vehicle.platform.name,
+            total_count=batch.total_count,
+            success_count=batch.success_count,
+            failed_count=batch.failed_count,
+            timeout_count=batch.timeout_count,
+            skip_count=batch.skip_count,
+            total_duration_seconds=batch.total_duration_seconds,
+            last_report_at=batch.last_report_at,
+            is_abnormal=is_abnormal,
+        )
+        rows.append(row)
+        total_case_count += batch.total_count
+        success_count += batch.success_count
+        failed_count += batch.failed_count
+        timeout_count += batch.timeout_count
+        skip_count += batch.skip_count
+        total_duration_seconds += batch.total_duration_seconds
+        abnormal_vehicle_count += int(is_abnormal)
+        if batch.last_report_at and (
+            latest_report_at is None or batch.last_report_at > latest_report_at
+        ):
+            latest_report_at = batch.last_report_at
+
+    rows.sort(
+        key=lambda item: (
+            0 if item.is_abnormal else 1,
+            -item.failed_count,
+            -item.timeout_count,
+            item.vehicle_name,
+        )
+    )
+
+    visible_vehicle_count = len(rows)
+
+    def stat(key, count):
+        ratio = round((count / total_case_count), 4) if total_case_count else 0
+        return SummaryStat(key=key, label=RESULT_LABELS[key], count=count, ratio=ratio)
+
+    summary = DailyOverviewSummary(
+        execute_date=query.execute_date,
+        vehicle_count=visible_vehicle_count,
+        abnormal_vehicle_count=abnormal_vehicle_count,
+        total_case_count=total_case_count,
+        success_count=success_count,
+        failed_count=failed_count,
+        timeout_count=timeout_count,
+        skip_count=skip_count,
+        total_duration_seconds=total_duration_seconds,
+        stats=[
+            stat(RESULT_SUCCESS, success_count),
+            stat(RESULT_FAILED, failed_count),
+            stat(RESULT_TIMEOUT, timeout_count),
+            stat(RESULT_SKIP, skip_count),
+        ],
+        last_report_at=latest_report_at,
+    )
+    return DailyOverviewResponse(items=rows, summary=summary)
 
 
 def list_daily_results(vehicle_id: str, execute_date):

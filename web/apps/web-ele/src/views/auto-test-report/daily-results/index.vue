@@ -2,6 +2,8 @@
 import type { EchartsUIType } from '@vben/plugins/echarts';
 
 import type {
+  DailyOverviewResponse,
+  DailyOverviewRow,
   DailyResultItem,
   DailySummary,
   VehicleOption,
@@ -28,10 +30,16 @@ import {
   ElInput,
   ElLink,
   ElPopover,
+  ElSelect,
+  ElOption,
+  ElSwitch,
+  ElTabPane,
+  ElTabs,
   ElTag,
 } from 'element-plus';
 
 import {
+  getDailyOverviewApi,
   getDailySummaryApi,
   listDailyResultsApi,
   listVehicleOptionsApi,
@@ -43,41 +51,86 @@ import {
   formatDuration,
   RESULT_LABEL_MAP,
   RESULT_TAG_MAP,
+  useOverviewColumns,
   useResultColumns,
 } from './data';
 
 defineOptions({ name: 'AutoTestDailyResults' });
 
 const route = useRoute();
-const chartRef = ref<EchartsUIType>();
-const { renderEcharts } = useEcharts(chartRef);
+const overviewChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderOverviewChart } = useEcharts(overviewChartRef);
 
+const vehicleChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderVehicleChart } = useEcharts(vehicleChartRef);
+
+const activeView = ref<'overview' | 'vehicle'>('overview');
 const vehicleOptions = ref<VehicleOption[]>([]);
 const cascaderOptions = ref<any[]>([]);
 const selectedVehiclePaths = ref<string[]>([]);
-const vehicleKeyword = ref('');
 const selectedDate = ref(new Date().toISOString().slice(0, 10));
+const vehicleKeyword = ref('');
+const selectedPlatformId = ref('');
+const abnormalOnly = ref(false);
 
 const selectedStatus = ref<string[]>([]);
 const draftStatus = ref<string[]>([]);
 const statusPopoverVisible = ref(false);
-
+const overviewLoading = ref(false);
+const detailLoading = ref(false);
+const overviewData = ref<DailyOverviewResponse | null>(null);
 const summary = ref<DailySummary | null>(null);
-const loading = ref(false);
-
-const statusOptions = Object.keys(RESULT_LABEL_MAP).map((key) => ({
-  value: key,
-  label: RESULT_LABEL_MAP[key],
-}));
 
 const historyVisible = ref(false);
 const historyTitle = ref('');
 const currentCaseId = ref('');
 
 const selectedVehicleId = computed(() => selectedVehiclePaths.value[1] || '');
+const platformOptions = computed(() => {
+  const map = new Map<string, { label: string; value: string }>();
+  for (const item of vehicleOptions.value) {
+    if (!map.has(item.platform_id)) {
+      map.set(item.platform_id, {
+        label: item.platform_name,
+        value: item.platform_id,
+      });
+    }
+  }
+  return [...map.values()];
+});
+const statusOptions = Object.keys(RESULT_LABEL_MAP).map((key) => ({
+  value: key,
+  label: RESULT_LABEL_MAP[key],
+}));
 
-const [Grid, gridApi] = useZqTable({
-  tableTitle: '每日执行结果',
+const [OverviewGrid, overviewGridApi] = useZqTable({
+  tableTitle: '全量车型执行概览',
+  gridOptions: {
+    columns: useOverviewColumns(),
+    border: true,
+    stripe: true,
+    proxyConfig: {
+      autoLoad: false,
+      ajax: {
+        query: async ({ page }) => {
+          const rows = overviewData.value?.items || [];
+          const start = (page.currentPage - 1) * page.pageSize;
+          const end = start + page.pageSize;
+          return {
+            items: rows.slice(start, end),
+            total: rows.length,
+          };
+        },
+      },
+    },
+    pagerConfig: { enabled: true, pageSize: 20 },
+    toolbarConfig: { custom: true, refresh: true, search: false, zoom: true },
+  },
+  showSearchForm: false,
+});
+
+const [DetailGrid, detailGridApi] = useZqTable({
+  tableTitle: '车型执行明细',
   gridOptions: {
     columns: useResultColumns(),
     border: true,
@@ -94,19 +147,15 @@ const [Grid, gridApi] = useZqTable({
               selectedVehicleId.value,
               selectedDate.value,
             )) || [];
-
           let filtered = items;
           if (selectedStatus.value.length > 0) {
             filtered = items.filter((item) =>
               selectedStatus.value.includes(item.status),
             );
           }
-
-          const total = filtered.length;
           const start = (page.currentPage - 1) * page.pageSize;
           const end = start + page.pageSize;
-          const pagedItems = filtered.slice(start, end);
-          return { items: pagedItems, total };
+          return { items: filtered.slice(start, end), total: filtered.length };
         },
       },
     },
@@ -140,25 +189,30 @@ function rebuildCascaderOptions() {
   cascaderOptions.value = [...platformMap.values()];
 }
 
-function renderChart() {
-  const stats = summary.value?.stats || [];
-  renderEcharts({
+function renderChart(renderFn: any, stats: Array<{ count: number; label: string }>) {
+  const statusColors: Record<string, string> = {
+    成功: '#10b981', // 绿色
+    失败: '#ef4444', // 红色
+    超时: '#f59e0b', // 黄色
+    跳过: '#94a3b8', // 灰色
+  };
+
+  renderFn({
     tooltip: { trigger: 'item' },
-    legend: {
-      orient: 'vertical',
-      right: '5%',
-      top: 'center',
-    },
+    legend: { orient: 'vertical', right: '5%', top: 'center' },
     series: [
       {
         type: 'pie',
         radius: ['45%', '70%'],
         center: ['35%', '50%'],
-        data: stats.map((item) => ({ value: item.count, name: item.label })),
-        label: {
-          show: true,
-          formatter: '{b}\n{d}%',
-        },
+        data: stats.map((item) => ({
+          value: item.count,
+          name: item.label,
+          itemStyle: {
+            color: statusColors[item.label] || '#94a3b8',
+          },
+        })),
+        label: { show: true, formatter: '{b}\n{d}%' },
       },
     ],
   });
@@ -173,30 +227,55 @@ async function loadVehicleOptions() {
   );
   if (matched) {
     selectedVehiclePaths.value = [matched.platform_id, matched.id];
-  } else if (!selectedVehicleId.value && vehicleOptions.value.length > 0) {
+    activeView.value = 'vehicle';
+  } else if (vehicleOptions.value.length > 0 && !selectedVehicleId.value) {
     const first = vehicleOptions.value[0]!;
     selectedVehiclePaths.value = [first.platform_id, first.id];
   }
 }
 
-async function loadPage() {
+async function loadOverview() {
+  overviewLoading.value = true;
+  try {
+    overviewData.value = await getDailyOverviewApi({
+      execute_date: selectedDate.value,
+      platform_id: selectedPlatformId.value || undefined,
+      abnormal_only: abnormalOnly.value || undefined,
+    });
+    await overviewGridApi.reload();
+    await nextTick();
+    renderChart(renderOverviewChart, overviewData.value.summary.stats);
+  } finally {
+    overviewLoading.value = false;
+  }
+}
+
+async function loadVehicleView() {
   if (!selectedVehicleId.value) {
     summary.value = null;
-    await gridApi.reload();
+    await detailGridApi.reload();
     return;
   }
-  loading.value = true;
+  detailLoading.value = true;
   try {
     summary.value = await getDailySummaryApi(
       selectedVehicleId.value,
       selectedDate.value,
     );
-    await gridApi.reload();
+    await detailGridApi.reload();
     await nextTick();
-    renderChart();
+    renderChart(renderVehicleChart, summary.value.stats);
   } finally {
-    loading.value = false;
+    detailLoading.value = false;
   }
+}
+
+async function loadActiveView() {
+  if (activeView.value === 'overview') {
+    await loadOverview();
+    return;
+  }
+  await loadVehicleView();
 }
 
 function openHistory(row: DailyResultItem) {
@@ -205,16 +284,6 @@ function openHistory(row: DailyResultItem) {
   historyVisible.value = true;
 }
 
-watch(vehicleKeyword, () => {
-  rebuildCascaderOptions();
-});
-
-watch([selectedVehicleId, selectedDate], () => {
-  selectedStatus.value = [];
-  draftStatus.value = [];
-  loadPage();
-});
-
 function handleStatusFilterShow() {
   draftStatus.value = [...selectedStatus.value];
 }
@@ -222,214 +291,364 @@ function handleStatusFilterShow() {
 function confirmStatusFilter() {
   selectedStatus.value = [...draftStatus.value];
   statusPopoverVisible.value = false;
-  gridApi.reload();
+  detailGridApi.reload();
 }
 
 function resetStatusFilter() {
   draftStatus.value = [];
   selectedStatus.value = [];
   statusPopoverVisible.value = false;
-  gridApi.reload();
+  detailGridApi.reload();
 }
+
+async function jumpToVehicle(row: DailyOverviewRow) {
+  selectedVehiclePaths.value = [row.platform_id, row.vehicle_id];
+  activeView.value = 'vehicle';
+  await loadVehicleView();
+}
+
+watch(vehicleKeyword, () => {
+  rebuildCascaderOptions();
+});
+
+watch([selectedDate, selectedPlatformId, abnormalOnly], () => {
+  if (activeView.value === 'overview') {
+    loadOverview();
+  }
+});
+
+watch([selectedVehicleId, selectedDate], () => {
+  if (activeView.value === 'vehicle') {
+    selectedStatus.value = [];
+    draftStatus.value = [];
+    loadVehicleView();
+  }
+});
+
+watch(activeView, () => {
+  loadActiveView();
+});
 
 onMounted(async () => {
   await loadVehicleOptions();
-  await loadPage();
+  await loadActiveView();
 });
 </script>
 
 <template>
-  <Page auto-content-height content-class="flex flex-col">
+  <Page auto-content-height>
     <div class="flex h-full min-h-0 flex-col gap-4">
       <div class="shrink-0 rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm">
-        <ElForm
-          :inline="true"
-          class="flex flex-wrap items-center gap-4"
-          @submit.prevent
-        >
-          <ElFormItem label="MCU 平台 / 车型" class="!mb-0">
-            <ElCascader
-              v-model="selectedVehiclePaths"
-              class="w-[320px]"
-              clearable
-              filterable
-              placeholder="选择 MCU 平台 / 车型"
-              :options="cascaderOptions"
-              :props="{ emitPath: true }"
-            />
-          </ElFormItem>
-          <ElFormItem label="车型关键词" class="!mb-0">
-            <ElInput
-              v-model="vehicleKeyword"
-              class="w-[180px]"
-              clearable
-              placeholder="按关键词筛选"
-            />
-          </ElFormItem>
-          <ElFormItem label="执行日期" class="!mb-0">
-            <ElDatePicker
-              v-model="selectedDate"
-              placeholder="选择日期"
-              type="date"
-              value-format="YYYY-MM-DD"
-              class="!w-[160px]"
-            />
-          </ElFormItem>
-          <ElFormItem class="!mb-0">
-            <ElButton :loading="loading" type="primary" @click="loadPage">
-              刷新
-            </ElButton>
-          </ElFormItem>
-        </ElForm>
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <div class="text-base font-semibold text-gray-900">
+              每日执行结果
+            </div>
+            <div class="text-sm text-gray-500">
+              先看全量异常，再下钻到单车型明细。
+            </div>
+          </div>
+          <ElTabs v-model="activeView" class="auto-test-result-tabs">
+            <ElTabPane label="全量视图" name="overview" />
+            <ElTabPane label="车型视图" name="vehicle" />
+          </ElTabs>
+        </div>
       </div>
 
-      <div v-loading="loading" class="flex min-h-0 flex-1 flex-col gap-4">
-        <template v-if="summary">
-          <div class="grid grid-cols-5 gap-4 shrink-0">
-            <ElCard shadow="never" class="border-0 bg-blue-50/50">
-              <div class="text-sm text-gray-500">总用例</div>
-              <div class="text-2xl font-semibold text-blue-600">
-                {{ summary.total_count }}
-              </div>
-            </ElCard>
-            <ElCard shadow="never" class="border-0 bg-green-50/50">
-              <div class="text-sm text-gray-500">成功</div>
-              <div class="text-2xl font-semibold text-green-600">
-                {{ summary.success_count }}
-              </div>
-            </ElCard>
-            <ElCard shadow="never" class="border-0 bg-red-50/50">
-              <div class="text-sm text-gray-500">失败</div>
-              <div class="text-2xl font-semibold text-red-600">
-                {{ summary.failed_count }}
-              </div>
-            </ElCard>
-            <ElCard shadow="never" class="border-0 bg-orange-50/50">
-              <div class="text-sm text-gray-500">超时</div>
-              <div class="text-2xl font-semibold text-orange-500">
-                {{ summary.timeout_count }}
-              </div>
-            </ElCard>
-            <ElCard shadow="never" class="border-0 bg-gray-50/50">
-              <div class="text-sm text-gray-500">跳过</div>
-              <div class="text-2xl font-semibold text-gray-500">
-                {{ summary.skip_count }}
-              </div>
-            </ElCard>
-          </div>
+      <template v-if="activeView === 'overview'">
+        <div class="shrink-0 rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm">
+          <ElForm
+            :inline="true"
+            class="flex flex-wrap items-center gap-4"
+            @submit.prevent
+          >
+            <ElFormItem label="执行日期" class="!mb-0">
+              <ElDatePicker
+                v-model="selectedDate"
+                type="date"
+                value-format="YYYY-MM-DD"
+                class="!w-[160px]"
+              />
+            </ElFormItem>
+            <ElFormItem label="MCU 平台" class="!mb-0">
+              <ElSelect
+                v-model="selectedPlatformId"
+                class="!w-[220px]"
+                clearable
+                placeholder="全部平台"
+              >
+                <ElOption
+                  v-for="item in platformOptions"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </ElSelect>
+            </ElFormItem>
+            <ElFormItem label="仅看异常" class="!mb-0">
+              <ElSwitch v-model="abnormalOnly" />
+            </ElFormItem>
+            <ElFormItem class="!mb-0">
+              <ElButton
+                :loading="overviewLoading"
+                type="primary"
+                @click="loadOverview"
+              >
+                刷新
+              </ElButton>
+            </ElFormItem>
+          </ElForm>
+        </div>
 
-          <div class="grid min-h-0 flex-1 grid-cols-[1fr_400px] gap-4">
-            <Grid class="h-full rounded-lg shadow-sm border-0">
-              <template #header-status="{ column }">
-                <div
-                  class="flex cursor-pointer select-none items-center justify-center gap-1"
-                  @click.stop
-                >
-                  <span>{{ column.title }}</span>
-                  <ElPopover
-                    v-model:visible="statusPopoverVisible"
-                    placement="bottom"
-                    trigger="click"
-                    width="200"
-                    @show="handleStatusFilterShow"
-                  >
-                    <template #reference>
-                      <ElIcon
-                        class="hover:text-primary text-gray-400 transition-colors"
-                        :class="{ 'text-primary': selectedStatus.length > 0 }"
-                      >
-                        <Filter />
-                      </ElIcon>
-                    </template>
-                    <div class="p-1" @click.stop>
-                      <ElCheckboxGroup
-                        v-model="draftStatus"
-                        class="flex flex-col gap-2"
-                      >
-                        <ElCheckbox
-                          v-for="item in statusOptions"
-                          :key="item.value"
-                          :label="item.label"
-                          :value="item.value"
-                        />
-                      </ElCheckboxGroup>
-                      <div class="mt-4 flex justify-between border-t pt-2">
-                        <ElButton size="small" link @click="resetStatusFilter">
-                          重置
-                        </ElButton>
-                        <ElButton
-                          size="small"
-                          type="primary"
-                          @click="confirmStatusFilter"
-                        >
-                          确定
-                        </ElButton>
-                      </div>
-                    </div>
-                  </ElPopover>
-                </div>
-              </template>
-
-              <template #cell-status="{ row }">
-                <ElTag :type="RESULT_TAG_MAP[row.status]">
-                  {{ RESULT_LABEL_MAP[row.status] }}
-                </ElTag>
-              </template>
-              <template #cell-duration_seconds="{ row }">
-                {{ formatDuration(row.duration_seconds) }}
-              </template>
-              <template #cell-log_url="{ row }">
-                <ElLink
-                  v-if="row.log_url"
-                  :href="row.log_url"
-                  target="_blank"
-                  type="primary"
-                >
-                  查看日志
-                </ElLink>
-                <span v-else class="text-gray-400">-</span>
-              </template>
-              <template #cell-actions="{ row }">
-                <ElButton link type="primary" @click="openHistory(row)">
-                  历史
-                </ElButton>
-              </template>
-            </Grid>
+        <div
+          v-loading="overviewLoading"
+          class="grid min-h-0 flex-1 grid-cols-[1fr_400px] gap-4"
+        >
+          <div class="min-w-0 min-h-0 h-full">
+            <OverviewGrid class="h-full rounded-lg border-0 shadow-sm">
+              <template #cell-is_abnormal="{ row }">
+              <ElTag :type="row.is_abnormal ? 'danger' : 'success'">
+                {{ row.is_abnormal ? '异常' : '正常' }}
+              </ElTag>
+            </template>
+            <template #cell-total_duration_seconds="{ row }">
+              {{ formatDuration(row.total_duration_seconds) }}
+            </template>
+            <template #cell-actions="{ row }">
+              <ElButton link type="primary" @click="jumpToVehicle(row)">
+                查看明细
+              </ElButton>
+            </template>
+          </OverviewGrid>
+            </div>
 
             <ElCard
-              shadow="never"
-              class="flex h-full flex-col rounded-lg border-0 shadow-sm"
-              body-class="flex flex-col flex-1 min-h-0"
+            shadow="never"
+            class="flex h-full flex-col rounded-lg border-0 shadow-sm"
+            body-class="flex flex-col flex-1 min-h-0"
+          >
+            <template #header>
+              <div class="font-medium">当日全量执行占比</div>
+            </template>
+            <EchartsUI ref="overviewChartRef" class="min-h-[280px] w-full flex-1" />
+            <div
+              v-if="overviewData?.summary"
+              class="mt-4 space-y-3 border-t pt-6 text-sm text-gray-600"
             >
-              <template #header>
-                <div class="font-medium">当天全部用例执行占比</div>
-              </template>
-              <EchartsUI ref="chartRef" class="min-h-[280px] w-full flex-1" />
-              <div class="mt-4 space-y-3 border-t pt-6 text-sm text-gray-600">
-                <div class="flex justify-between">
-                  <span>车型</span>
-                  <span class="font-medium text-gray-900">
-                    {{ summary.vehicle_name }}（{{ summary.vehicle_code }}）
-                  </span>
-                </div>
-                <div class="flex justify-between">
-                  <span>执行日期</span>
-                  <span class="font-medium text-gray-900">
-                    {{ summary.execute_date }}
-                  </span>
-                </div>
-                <div class="flex justify-between">
-                  <span>最近上报</span>
-                  <span class="font-medium text-gray-900">
-                    {{ summary.last_report_at || '-' }}
-                  </span>
-                </div>
+              <div class="flex justify-between">
+                <span>车型总数</span>
+                <span class="font-medium text-gray-900">
+                  {{ overviewData.summary.vehicle_count }}
+                </span>
               </div>
-            </ElCard>
-          </div>
-        </template>
-        <ElEmpty v-else description="请选择车型并查询日报结果" />
-      </div>
+              <div class="flex justify-between">
+                <span>异常车型</span>
+                <span class="font-medium text-red-600">
+                  {{ overviewData.summary.abnormal_vehicle_count }}
+                </span>
+              </div>
+              <div class="flex justify-between">
+                <span>累计用例</span>
+                <span class="font-medium text-gray-900">
+                  {{ overviewData.summary.total_case_count }}
+                </span>
+              </div>
+              <div class="flex justify-between">
+                <span>累计耗时</span>
+                <span class="font-medium text-gray-900">
+                  {{
+                    formatDuration(overviewData.summary.total_duration_seconds)
+                  }}
+                </span>
+              </div>
+              <div class="flex justify-between">
+                <span>最近上报</span>
+                <span class="font-medium text-gray-900">
+                  {{ overviewData.summary.last_report_at || '-' }}
+                </span>
+              </div>
+            </div>
+            <ElEmpty v-else description="暂无全量数据" />
+          </ElCard>
+        </div>
+      </template>
+
+      <template v-else>
+        <div class="shrink-0 rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm">
+          <ElForm
+            :inline="true"
+            class="flex flex-wrap items-center gap-4"
+            @submit.prevent
+          >
+            <ElFormItem label="MCU 平台 / 车型" class="!mb-0">
+              <ElCascader
+                v-model="selectedVehiclePaths"
+                class="w-[320px]"
+                clearable
+                filterable
+                placeholder="选择 MCU 平台 / 车型"
+                :options="cascaderOptions"
+                :props="{ emitPath: true }"
+              />
+            </ElFormItem>
+            <ElFormItem label="车型关键词" class="!mb-0">
+              <ElInput
+                v-model="vehicleKeyword"
+                class="w-[180px]"
+                clearable
+                placeholder="按关键词筛选"
+              />
+            </ElFormItem>
+            <ElFormItem label="执行日期" class="!mb-0">
+              <ElDatePicker
+                v-model="selectedDate"
+                placeholder="选择日期"
+                type="date"
+                value-format="YYYY-MM-DD"
+                class="!w-[160px]"
+              />
+            </ElFormItem>
+            <ElFormItem class="!mb-0">
+              <ElButton
+                :loading="detailLoading"
+                type="primary"
+                @click="loadVehicleView"
+              >
+                刷新
+              </ElButton>
+            </ElFormItem>
+          </ElForm>
+        </div>
+
+        <div
+          v-loading="detailLoading"
+          class="flex min-h-0 flex-1 flex-col gap-4"
+        >
+          <template v-if="summary">
+            <div class="grid min-h-0 flex-1 grid-cols-[1fr_400px] gap-4">
+              <div class="min-w-0 min-h-0 h-full">
+                <DetailGrid class="h-full rounded-lg border-0 shadow-sm">
+                  <template #header-status="{ column }">
+                  <div
+                    class="flex cursor-pointer select-none items-center justify-center gap-1"
+                    @click.stop
+                  >
+                    <span>{{ column.title }}</span>
+                    <ElPopover
+                      v-model:visible="statusPopoverVisible"
+                      placement="bottom"
+                      trigger="click"
+                      width="200"
+                      @show="handleStatusFilterShow"
+                    >
+                      <template #reference>
+                        <ElIcon
+                          class="hover:text-primary text-gray-400 transition-colors"
+                          :class="{ 'text-primary': selectedStatus.length > 0 }"
+                        >
+                          <Filter />
+                        </ElIcon>
+                      </template>
+                      <div class="p-1" @click.stop>
+                        <ElCheckboxGroup
+                          v-model="draftStatus"
+                          class="flex flex-col gap-2"
+                        >
+                          <ElCheckbox
+                            v-for="item in statusOptions"
+                            :key="item.value"
+                            :label="item.label"
+                            :value="item.value"
+                          />
+                        </ElCheckboxGroup>
+                        <div class="mt-4 flex justify-between border-t pt-2">
+                          <ElButton
+                            size="small"
+                            link
+                            @click="resetStatusFilter"
+                          >
+                            重置
+                          </ElButton>
+                          <ElButton
+                            size="small"
+                            type="primary"
+                            @click="confirmStatusFilter"
+                          >
+                            确定
+                          </ElButton>
+                        </div>
+                      </div>
+                    </ElPopover>
+                  </div>
+                </template>
+                <template #cell-status="{ row }">
+                  <ElTag :type="RESULT_TAG_MAP[row.status]">
+                    {{ RESULT_LABEL_MAP[row.status] }}
+                  </ElTag>
+                </template>
+                <template #cell-duration_seconds="{ row }">
+                  {{ formatDuration(row.duration_seconds) }}
+                </template>
+                <template #cell-log_url="{ row }">
+                  <ElLink
+                    v-if="row.log_url"
+                    :href="row.log_url"
+                    target="_blank"
+                    type="primary"
+                  >
+                    查看日志
+                  </ElLink>
+                  <span v-else class="text-gray-400">-</span>
+                </template>
+                <template #cell-actions="{ row }">
+                  <ElButton link type="primary" @click="openHistory(row)">
+                    历史
+                  </ElButton>
+                </template>
+              </DetailGrid>
+              </div>
+
+              <ElCard
+                shadow="never"
+                class="flex h-full flex-col rounded-lg border-0 shadow-sm"
+                body-class="flex flex-col flex-1 min-h-0"
+              >
+                <template #header>
+                  <div class="font-medium">车型执行占比</div>
+                </template>
+                <EchartsUI ref="vehicleChartRef" class="min-h-[280px] w-full flex-1" />
+                <div class="mt-4 space-y-3 border-t pt-6 text-sm text-gray-600">
+                  <div class="flex justify-between">
+                    <span>车型</span>
+                    <span class="font-medium text-gray-900">
+                      {{ summary.vehicle_name }}（{{ summary.vehicle_code }}）
+                    </span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span>执行日期</span>
+                    <span class="font-medium text-gray-900">
+                      {{ summary.execute_date }}
+                    </span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span>总耗时</span>
+                    <span class="font-medium text-gray-900">
+                      {{ formatDuration(summary.total_duration_seconds) }}
+                    </span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span>最近上报</span>
+                    <span class="font-medium text-gray-900">
+                      {{ summary.last_report_at || '-' }}
+                    </span>
+                  </div>
+                </div>
+              </ElCard>
+            </div>
+          </template>
+          <ElEmpty v-else description="请选择车型并查询日报结果" />
+        </div>
+      </template>
     </div>
 
     <TestCaseHistoryDrawer
