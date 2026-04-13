@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import type {
   TaskFailureModeLandingDetail,
+  TaskFailureModeLandingPayload,
   TaskFailureModeLandingRow,
 } from '#/api/failure_mode';
 
@@ -26,7 +27,7 @@ const props = defineProps<{
   saveHandler: (
     taskId: string,
     failureModeId: string,
-    payload: Partial<TaskFailureModeLandingDetail>,
+    payload: TaskFailureModeLandingPayload,
   ) => Promise<TaskFailureModeLandingDetail>;
 }>();
 
@@ -89,10 +90,23 @@ const landedResourceCount = computed(() => {
   }, 0);
 });
 
+const filledResourceCount = computed(() => {
+  return landingSections.value.reduce((sum, section) => {
+    return (
+      sum +
+      section.rows.filter((item) => typeof item.is_landed === 'boolean').length
+    );
+  }, 0);
+});
+
 const totalResourceCount = computed(() => {
   return landingSections.value.reduce((sum, section) => {
     return sum + section.rows.length;
   }, 0);
+});
+
+const currentFailureModeStatusLabel = computed(() => {
+  return detail.value?.failure_mode_is_landed ? '已落地' : '未落地';
 });
 
 async function loadDetail() {
@@ -126,7 +140,6 @@ async function handleConfirm() {
       context.value.taskId,
       context.value.failureModeId,
       {
-        failure_mode_is_landed: detail.value.failure_mode_is_landed,
         interception_rows: detail.value.interception_rows,
         handling_rows: detail.value.handling_rows,
         observation_rows: detail.value.observation_rows,
@@ -169,12 +182,21 @@ defineExpose({ open });
         </div>
         <div class="fm-landing-drawer__summary">
           <div class="fm-landing-drawer__summary-card">
+            <span>当前派生结果</span>
+            <strong>{{ currentFailureModeStatusLabel }}</strong>
+          </div>
+          <div class="fm-landing-drawer__summary-card">
+            <span>已填写资源</span>
+            <strong>{{ filledResourceCount }}</strong>
+            <small>/ {{ totalResourceCount }}</small>
+          </div>
+          <div class="fm-landing-drawer__summary-card">
             <span>资源已落地</span>
             <strong>{{ landedResourceCount }}</strong>
             <small>/ {{ totalResourceCount }}</small>
           </div>
           <div class="fm-landing-drawer__summary-card">
-            <span>{{ readonly ? '查看模式' : '填写状态' }}</span>
+            <span>{{ readonly ? '查看模式' : '填写进度' }}</span>
             <ElTag
               :type="
                 readonly
@@ -202,21 +224,35 @@ defineExpose({ open });
         <section class="fm-landing-drawer__panel">
           <div class="fm-landing-drawer__panel-header">
             <div>
-              <div class="fm-landing-drawer__panel-title">故障模式本身</div>
+              <div class="fm-landing-drawer__panel-title">故障模式派生结果</div>
               <div class="fm-landing-drawer__panel-desc">
-                这里记录当前故障模式在该产品子系统下是否已真正落地。
+                故障模式本身不再单独录入落地状态，只根据当前绑定的四类资源自动推导。
               </div>
             </div>
           </div>
-          <div class="fm-landing-drawer__mode-row">
-            <span class="fm-landing-drawer__mode-label">落地状态</span>
-            <ElRadioGroup
-              v-model="detail.failure_mode_is_landed"
-              :disabled="loading || confirmLoading || readonly"
+          <div class="fm-landing-drawer__summary-strip">
+            <div class="fm-landing-drawer__summary-chip">
+              <span>故障模式状态</span>
+              <ElTag
+                :type="detail.failure_mode_is_landed ? 'success' : 'info'"
+                effect="light"
+                round
+              >
+                {{ currentFailureModeStatusLabel }}
+              </ElTag>
+            </div>
+            <div class="fm-landing-drawer__summary-chip">
+              <span>填写完整度</span>
+              <strong>
+                {{ filledResourceCount }}/{{ totalResourceCount }}
+              </strong>
+            </div>
+            <div
+              v-if="totalResourceCount === 0"
+              class="fm-landing-drawer__summary-hint"
             >
-              <ElRadioButton :label="true">已落地</ElRadioButton>
-              <ElRadioButton :label="false">未落地</ElRadioButton>
-            </ElRadioGroup>
+              当前没有任何关联资源，故障模式默认未落地。
+            </div>
           </div>
         </section>
 
@@ -231,7 +267,7 @@ defineExpose({ open });
                 {{ section.title }}
               </div>
               <div class="fm-landing-drawer__panel-desc">
-                当前按任务内最新绑定关系维护产品级显式落地状态。
+                当前按任务内最新绑定关系维护产品级显式落地状态，故障模式结果会随这里的填写实时派生。
               </div>
             </div>
           </div>
@@ -375,7 +411,6 @@ defineExpose({ open });
   line-height: 1.6;
 }
 
-.fm-landing-drawer__mode-row,
 .fm-landing-drawer__resource-row {
   display: flex;
   align-items: center;
@@ -383,14 +418,34 @@ defineExpose({ open });
   gap: 16px;
 }
 
-.fm-landing-drawer__mode-row {
+.fm-landing-drawer__summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   margin-top: 14px;
 }
 
-.fm-landing-drawer__mode-label {
+.fm-landing-drawer__summary-chip,
+.fm-landing-drawer__summary-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.82);
+  padding: 12px 14px;
   color: #334155;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+}
+
+.fm-landing-drawer__summary-chip strong {
+  color: #111827;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.fm-landing-drawer__summary-hint {
+  line-height: 1.6;
 }
 
 .fm-landing-drawer__resource-list {
@@ -428,7 +483,6 @@ defineExpose({ open });
 }
 
 @media (max-width: 860px) {
-  .fm-landing-drawer__mode-row,
   .fm-landing-drawer__resource-row {
     flex-direction: column;
     align-items: flex-start;

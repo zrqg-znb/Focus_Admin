@@ -4,6 +4,7 @@ import type {
   FailureModeItem,
   FailureModePayload,
   FailureModeSubsystemConfigOptions,
+  TaskFailureModeLandingPayload,
 } from '#/api/failure_mode';
 import type {
   FailureModeRoleAssignmentItem,
@@ -567,26 +568,14 @@ function getLandingStatusLabel(row: FailureModeItem) {
   if (!row.landing_completed) {
     return '待补齐';
   }
-  if (row.failure_mode_is_landed === true) {
-    return '已落地';
-  }
-  if (row.failure_mode_is_landed === false) {
-    return '未落地';
-  }
-  return '待确认';
+  return row.failure_mode_is_landed ? '已落地' : '未落地';
 }
 
 function getLandingStatusTagType(row: FailureModeItem) {
   if (!row.landing_completed) {
     return 'warning';
   }
-  if (row.failure_mode_is_landed === true) {
-    return 'success';
-  }
-  if (row.failure_mode_is_landed === false) {
-    return 'info';
-  }
-  return 'warning';
+  return row.failure_mode_is_landed ? 'success' : 'info';
 }
 
 function handleOpenLandingConfig(row: FailureModeItem) {
@@ -616,7 +605,7 @@ function loadTaskFailureModeLanding(taskId: string, failureModeId: string) {
 async function saveTaskFailureModeLanding(
   taskId: string,
   failureModeId: string,
-  payload: Record<string, any>,
+  payload: TaskFailureModeLandingPayload,
 ) {
   const result = await saveTaskFailureModeLandingApi(
     taskId,

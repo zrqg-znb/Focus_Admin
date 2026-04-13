@@ -111,7 +111,7 @@ export interface FailureModeItem {
   editable_in_task?: boolean;
   task_edit_mode?: 'direct_update' | 'draft' | null;
   landing_completed?: boolean;
-  failure_mode_is_landed?: boolean | null;
+  failure_mode_is_landed?: boolean;
   landing_resource_total?: number;
   landing_resource_landed_count?: number;
   sys_create_datetime?: string;
@@ -500,10 +500,7 @@ export function normalizeFailureModeItem(
     editable_in_task: Boolean(item.editable_in_task),
     task_edit_mode: item.task_edit_mode || null,
     landing_completed: Boolean(item.landing_completed),
-    failure_mode_is_landed:
-      typeof item.failure_mode_is_landed === 'boolean'
-        ? item.failure_mode_is_landed
-        : null,
+    failure_mode_is_landed: Boolean(item.failure_mode_is_landed),
     landing_resource_total: Number(item.landing_resource_total || 0),
     landing_resource_landed_count: Number(
       item.landing_resource_landed_count || 0,
@@ -523,12 +520,45 @@ export interface TaskFailureModeLandingDetail {
   task_id: string;
   failure_mode_id: string;
   failure_mode_brief: string;
-  failure_mode_is_landed?: boolean | null;
+  failure_mode_is_landed: boolean;
   landing_completed: boolean;
   interception_rows: TaskFailureModeLandingRow[];
   handling_rows: TaskFailureModeLandingRow[];
   observation_rows: TaskFailureModeLandingRow[];
   huatuo_rows: TaskFailureModeLandingRow[];
+}
+
+export interface TaskFailureModeLandingPayload {
+  interception_rows: TaskFailureModeLandingRow[];
+  handling_rows: TaskFailureModeLandingRow[];
+  observation_rows: TaskFailureModeLandingRow[];
+  huatuo_rows: TaskFailureModeLandingRow[];
+}
+
+export function normalizeTaskFailureModeLandingDetail(
+  detail: TaskFailureModeLandingDetail,
+): TaskFailureModeLandingDetail {
+  const normalizeRows = (
+    rows?: TaskFailureModeLandingRow[],
+  ): TaskFailureModeLandingRow[] =>
+    (rows || []).map((row) => ({
+      ...row,
+      group_key: String(row.group_key || ''),
+      is_landed: typeof row.is_landed === 'boolean' ? row.is_landed : null,
+      label: String(row.label || ''),
+      resource_id: String(row.resource_id || ''),
+      subtitle: row.subtitle || null,
+    }));
+
+  return {
+    ...detail,
+    failure_mode_is_landed: Boolean(detail.failure_mode_is_landed),
+    handling_rows: normalizeRows(detail.handling_rows),
+    huatuo_rows: normalizeRows(detail.huatuo_rows),
+    interception_rows: normalizeRows(detail.interception_rows),
+    landing_completed: Boolean(detail.landing_completed),
+    observation_rows: normalizeRows(detail.observation_rows),
+  };
 }
 
 export interface FailureModeProductStatisticsOverviewItem {

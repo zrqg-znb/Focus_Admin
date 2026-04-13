@@ -2,12 +2,16 @@ import type {
   FailureModeItem,
   FailureModePayload,
   TaskFailureModeLandingDetail,
+  TaskFailureModeLandingPayload,
   UserBriefInfo,
 } from './failure_mode';
 
 import { requestClient } from '#/api/request';
 
-import { normalizeFailureModeItem } from './failure_mode';
+import {
+  normalizeFailureModeItem,
+  normalizeTaskFailureModeLandingDetail,
+} from './failure_mode';
 
 export interface FailureModeProductItem {
   id: string;
@@ -261,20 +265,24 @@ export function getTaskFailureModeLandingApi(
   taskId: string,
   failureModeId: string,
 ) {
-  return requestClient.get<TaskFailureModeLandingDetail>(
-    `/api/failure-mode/workflow/tasks/${taskId}/failure-modes/${failureModeId}/landing`,
-  );
+  return requestClient
+    .get<TaskFailureModeLandingDetail>(
+      `/api/failure-mode/workflow/tasks/${taskId}/failure-modes/${failureModeId}/landing`,
+    )
+    .then(normalizeTaskFailureModeLandingDetail);
 }
 
 export function saveTaskFailureModeLandingApi(
   taskId: string,
   failureModeId: string,
-  data: Partial<TaskFailureModeLandingDetail>,
+  data: TaskFailureModeLandingPayload,
 ) {
-  return requestClient.put<TaskFailureModeLandingDetail>(
-    `/api/failure-mode/workflow/tasks/${taskId}/failure-modes/${failureModeId}/landing`,
-    data,
-  );
+  return requestClient
+    .put<TaskFailureModeLandingDetail>(
+      `/api/failure-mode/workflow/tasks/${taskId}/failure-modes/${failureModeId}/landing`,
+      data,
+    )
+    .then(normalizeTaskFailureModeLandingDetail);
 }
 
 export function saveTaskFailureModeDraftApi(

@@ -266,7 +266,7 @@ class FailureModeOutSchema(Schema):
     editable_in_task: bool = False
     task_edit_mode: Optional[str] = None
     landing_completed: bool = False
-    failure_mode_is_landed: Optional[bool] = None
+    failure_mode_is_landed: bool = False
     landing_resource_total: int = 0
     landing_resource_landed_count: int = 0
     sys_create_datetime: Optional[str] = None
@@ -896,7 +896,7 @@ class TaskFailureModeLandingOutSchema(Schema):
     task_id: str
     failure_mode_id: str
     failure_mode_brief: str
-    failure_mode_is_landed: Optional[bool] = None
+    failure_mode_is_landed: bool = False
     landing_completed: bool = False
     interception_rows: list[TaskFailureModeLandingRowSchema] = Field(default_factory=list)
     handling_rows: list[TaskFailureModeLandingRowSchema] = Field(default_factory=list)
@@ -905,7 +905,6 @@ class TaskFailureModeLandingOutSchema(Schema):
 
 
 class TaskFailureModeLandingSaveSchema(Schema):
-    failure_mode_is_landed: Optional[bool] = None
     interception_rows: list[TaskFailureModeLandingRowSchema] = Field(default_factory=list)
     handling_rows: list[TaskFailureModeLandingRowSchema] = Field(default_factory=list)
     observation_rows: list[TaskFailureModeLandingRowSchema] = Field(default_factory=list)

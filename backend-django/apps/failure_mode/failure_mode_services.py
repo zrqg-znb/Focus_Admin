@@ -612,6 +612,25 @@ def _resolve_insight_landing_status(flags: list[bool]) -> str:
     return '未落地'
 
 
+def _derive_product_failure_mode_is_landed(binding: ProductFailureMode) -> bool:
+    landing_flags: list[bool] = []
+    for relation_name in (
+        'interception_landings',
+        'handling_landings',
+        'observation_landings',
+        'huatuo_landings',
+    ):
+        relation_manager = getattr(binding, relation_name, None)
+        if not hasattr(relation_manager, 'all'):
+            continue
+        landing_flags.extend(
+            bool(item.is_landed)
+            for item in relation_manager.all()
+            if not getattr(item, 'is_deleted', False)
+        )
+    return bool(landing_flags) and all(landing_flags)
+
+
 def _build_failure_mode_insight_landing_row(
     *,
     item_id: str,
@@ -698,9 +717,10 @@ def _build_failure_mode_insight_product_payload(
             subsystem_seen.add(subsystem)
             row['subsystems'].append(subsystem)
 
-        row['_failure_mode_flags'].append(bool(relation.is_landed))
+        derived_failure_mode_landed = _derive_product_failure_mode_is_landed(relation)
+        row['_failure_mode_flags'].append(derived_failure_mode_landed)
         current_landed_at = row['_landed_at_raw']
-        if bool(relation.is_landed) and (
+        if derived_failure_mode_landed and (
             current_landed_at is None
             or (
                 relation.sys_update_datetime
@@ -2859,7 +2879,8 @@ def _build_product_statistics_payload_from_bindings(
         row = ensure_row(subsystem)
         row['baseline_failure_mode_count'] += 1
 
-        if bool(binding.is_landed):
+        failure_mode_is_landed = _derive_product_failure_mode_is_landed(binding)
+        if failure_mode_is_landed:
             row['landed_failure_mode_count'] += 1
             failure_mode_landing_counter['已落地'] += 1
         else:
@@ -2927,7 +2948,7 @@ def _build_product_statistics_payload_from_bindings(
             )
             observation_counters[monitor_type][status] += 1
 
-        pending = not bool(binding.is_landed)
+        pending = not failure_mode_is_landed
         if not pending and interception_status == '待开展':
             pending = True
         if not pending and huatuo_status == '待开展':
@@ -3028,7 +3049,7 @@ def list_failure_mode_product_statistics_overview(user: User) -> list[dict[str, 
         subsystem_rows = payload['rows']
         baseline_count = len(product_bindings)
         landed_count = sum(
-            1 for item in product_bindings if bool(getattr(item, 'is_landed', False))
+            1 for item in product_bindings if _derive_product_failure_mode_is_landed(item)
         )
         pending_count = sum(
             int(item['pending_failure_mode_count'])

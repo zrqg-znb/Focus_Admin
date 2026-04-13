@@ -32,7 +32,6 @@ import { ZqDrawer } from '#/components/zq-drawer';
 import {
   ensureOrderedRelationItems,
   filterRelationItemsBySubtitle,
-  getMasterResourceLabel,
   normalizeStringList,
   resolveSubsystemScopedOptions,
   upsertRelationItem,
@@ -126,50 +125,14 @@ const observationTypeOptions = computed(() => {
   );
 });
 
-const relationCardConfigs = computed(() => [
-  {
-    kind: 'interception' as MasterResourceKind,
-    ids: interceptionStrategyIds.value,
-    items: interceptionStrategyItems.value,
-    label: getMasterResourceLabel('interception'),
-    description: interceptionRequired.value
-      ? '已开启必配，支持搜索并多选关联产线拦截策略。'
-      : '关闭后视为无需配置，并自动清空关联。',
-    enabled: interceptionRequired.value,
-  },
-  {
-    kind: 'measure' as MasterResourceKind,
-    ids: handlingMeasureIds.value,
-    items: handlingMeasureItems.value,
-    label: getMasterResourceLabel('measure'),
-    description:
-      requiredHandlingMeasureCategories.value.length > 0
-        ? `当前必配类别：${requiredHandlingMeasureCategories.value.join('、')}。`
-        : '请先勾选需要的措施类别，再绑定对应措施。',
-    enabled: requiredHandlingMeasureCategories.value.length > 0,
-  },
-  {
-    kind: 'observation' as MasterResourceKind,
-    ids: observationMethodIds.value,
-    items: observationMethodItems.value,
-    label: getMasterResourceLabel('observation'),
-    description:
-      requiredObservationMethodTypes.value.length > 0
-        ? `当前必配类型：${requiredObservationMethodTypes.value.join('、')}。`
-        : '请先勾选需要的维测类型，再绑定对应维测手段。',
-    enabled: requiredObservationMethodTypes.value.length > 0,
-  },
-  {
-    kind: 'huatuo' as MasterResourceKind,
-    ids: huatuoDiagnosisIds.value,
-    items: huatuoDiagnosisItems.value,
-    label: getMasterResourceLabel('huatuo'),
-    description: huatuoRequired.value
-      ? '已开启必配，支持沉淀并复用华佗诊断方案。'
-      : '关闭后视为无需配置，并自动清空关联。',
-    enabled: huatuoRequired.value,
-  },
-]);
+const selectedRelationCount = computed(() => {
+  return (
+    interceptionStrategyIds.value.length +
+    handlingMeasureIds.value.length +
+    observationMethodIds.value.length +
+    huatuoDiagnosisIds.value.length
+  );
+});
 
 const [Form, formApi] = useVbenForm({
   commonConfig: getFormCommonConfig(),
@@ -570,6 +533,10 @@ function handleQuickEdit(payload: { id: string; kind: MasterResourceKind }) {
   masterDrawerRef.value?.openEdit(payload.kind, payload.id);
 }
 
+function handleViewRelation(kind: MasterResourceKind, id: string) {
+  masterDrawerRef.value?.openView(kind, id);
+}
+
 function handleMasterDataSuccess(payload: {
   action: 'create' | 'edit';
   kind: MasterResourceKind;
@@ -714,61 +681,123 @@ defineExpose({
         <Form />
       </div>
 
-      <div
-        class="grid gap-4 xl:h-[460px] xl:min-h-0 xl:grid-cols-[1.15fr_0.85fr] xl:items-stretch"
-      >
+      <div class="space-y-4">
+        <StringListEditor
+          v-model="relatedDtsNos"
+          add-text="新增问题单号"
+          add-button-placement="footer"
+          description="问题单作为补充线索单独维护，独立放在上方，避免与主数据关系配置互相挤压。"
+          :disabled="isReadonly"
+          item-label="问题单号"
+          label="关联问题单"
+          placeholder="请输入 dts_no"
+          scrollable
+        />
+
         <div
-          class="failure-mode-statistics-panel rounded-xl border border-[var(--el-border-color-light)] p-4 shadow-sm xl:h-full xl:min-h-0 xl:overflow-y-auto"
+          class="rounded-xl border border-[var(--el-border-color-light)] bg-[var(--el-fill-color-blank)] p-4 shadow-sm"
         >
-          <div class="mb-4 flex items-start justify-between gap-3">
+          <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
               <div
                 class="text-sm font-semibold text-[var(--el-text-color-primary)]"
               >
-                统计配置
+                关联能力配置
               </div>
               <div class="mt-1 text-xs text-[var(--el-text-color-secondary)]">
-                先声明哪些维度为必配，再维护对应关联，用于后续统计看板准确判断“已配置
-                / 待补充 / 无需配置”。
+                每张卡同时维护“是否必配”和“已绑定项”，查看态下可继续点开只读主数据详情。
               </div>
             </div>
-            <ElTag type="primary">统计字段</ElTag>
+            <ElTag type="info">已关联 {{ selectedRelationCount }} 项</ElTag>
           </div>
 
           <div class="grid gap-4 xl:grid-cols-2">
-            <div class="failure-mode-switch-card">
-              <div>
-                <div class="failure-mode-switch-card__title">
-                  产线拦截策略必配
+            <section class="failure-mode-relation-card">
+              <div class="failure-mode-relation-card__header">
+                <div>
+                  <div class="failure-mode-relation-card__title">
+                    产线拦截策略
+                  </div>
+                  <div class="failure-mode-relation-card__desc">
+                    开启必配后，可直接在当前卡片中维护关联的拦截策略。
+                  </div>
                 </div>
-                <div class="failure-mode-switch-card__desc">
-                  关闭时自动清空当前关联，并统计为“无需配置”。
-                </div>
+                <ElSwitch
+                  v-model="interceptionRequired"
+                  :disabled="isReadonly"
+                />
               </div>
-              <ElSwitch v-model="interceptionRequired" :disabled="isReadonly" />
-            </div>
-            <div class="failure-mode-switch-card">
-              <div>
-                <div class="failure-mode-switch-card__title">华佗诊断必配</div>
-                <div class="failure-mode-switch-card__desc">
-                  关闭时自动清空当前关联，并统计为“无需配置”。
-                </div>
-              </div>
-              <ElSwitch v-model="huatuoRequired" :disabled="isReadonly" />
-            </div>
-          </div>
 
-          <div class="mt-4 grid gap-4 xl:grid-cols-2">
-            <div class="failure-mode-check-card">
-              <div class="failure-mode-check-card__title">
-                故障处理措施必配类别
+              <div class="failure-mode-relation-card__toolbar">
+                <ElTag :type="interceptionRequired ? 'success' : 'info'" round>
+                  {{ interceptionRequired ? '必配' : '不涉及' }}
+                </ElTag>
+                <ElButton
+                  v-if="!isReadonly"
+                  :icon="Link"
+                  plain
+                  type="primary"
+                  @click="openRelationSelector('interception')"
+                >
+                  选择拦截策略
+                </ElButton>
               </div>
-              <div class="failure-mode-check-card__desc">
-                勾选后仅允许绑定对应类别的故障处理措施。
+
+              <div
+                v-if="interceptionStrategyItems.length > 0"
+                class="failure-mode-relation-card__content"
+              >
+                <template v-if="isReadonly">
+                  <button
+                    v-for="item in interceptionStrategyItems"
+                    :key="item.id"
+                    class="failure-mode-relation-card__link-tag"
+                    type="button"
+                    @click="handleViewRelation('interception', item.id)"
+                  >
+                    {{ item.label }}
+                  </button>
+                </template>
+                <template v-else>
+                  <ElTag
+                    v-for="item in interceptionStrategyItems"
+                    :key="item.id"
+                    closable
+                    effect="light"
+                    type="info"
+                    @close="removeRelationSelection('interception', item.id)"
+                  >
+                    {{ item.label }}
+                  </ElTag>
+                </template>
               </div>
+              <div v-else class="failure-mode-relation-card__empty">
+                {{
+                  interceptionRequired
+                    ? '暂未关联产线拦截策略。'
+                    : '当前产线拦截策略不涉及。'
+                }}
+              </div>
+            </section>
+
+            <section class="failure-mode-relation-card">
+              <div class="failure-mode-relation-card__header">
+                <div>
+                  <div class="failure-mode-relation-card__title">
+                    故障处理措施
+                  </div>
+                  <div class="failure-mode-relation-card__desc">
+                    先勾选必配类别，再绑定对应措施；查看态下可继续打开措施和其测试用例详情。
+                  </div>
+                </div>
+                <ElTag type="primary" round>
+                  {{ requiredHandlingMeasureCategories.length || 0 }} 个类别
+                </ElTag>
+              </div>
+
               <ElCheckboxGroup
                 v-model="requiredHandlingMeasureCategories"
-                class="mt-3 flex flex-wrap gap-3"
+                class="failure-mode-relation-card__checks"
                 :disabled="isReadonly"
               >
                 <ElCheckbox
@@ -781,15 +810,88 @@ defineExpose({
                   {{ item.label }}
                 </ElCheckbox>
               </ElCheckboxGroup>
-            </div>
-            <div class="failure-mode-check-card">
-              <div class="failure-mode-check-card__title">维测手段必配类型</div>
-              <div class="failure-mode-check-card__desc">
-                勾选后仅允许绑定对应类型的维测手段。
+
+              <div class="failure-mode-relation-card__toolbar">
+                <ElTag
+                  :type="
+                    requiredHandlingMeasureCategories.length > 0
+                      ? 'success'
+                      : 'info'
+                  "
+                  round
+                >
+                  {{
+                    requiredHandlingMeasureCategories.length > 0
+                      ? `必配：${requiredHandlingMeasureCategories.join('、')}`
+                      : '当前不涉及'
+                  }}
+                </ElTag>
+                <ElButton
+                  v-if="!isReadonly"
+                  :icon="Link"
+                  plain
+                  type="primary"
+                  @click="openRelationSelector('measure')"
+                >
+                  选择处理措施
+                </ElButton>
               </div>
+
+              <div
+                v-if="handlingMeasureItems.length > 0"
+                class="failure-mode-relation-card__content"
+              >
+                <template v-if="isReadonly">
+                  <button
+                    v-for="item in handlingMeasureItems"
+                    :key="item.id"
+                    class="failure-mode-relation-card__link-tag"
+                    type="button"
+                    @click="handleViewRelation('measure', item.id)"
+                  >
+                    <span>{{ item.label }}</span>
+                    <small v-if="item.subtitle">{{ item.subtitle }}</small>
+                  </button>
+                </template>
+                <template v-else>
+                  <ElTag
+                    v-for="item in handlingMeasureItems"
+                    :key="item.id"
+                    closable
+                    effect="light"
+                    type="info"
+                    @close="removeRelationSelection('measure', item.id)"
+                  >
+                    {{ item.label }}
+                    <span v-if="item.subtitle"> · {{ item.subtitle }}</span>
+                  </ElTag>
+                </template>
+              </div>
+              <div v-else class="failure-mode-relation-card__empty">
+                {{
+                  requiredHandlingMeasureCategories.length > 0
+                    ? '暂未关联故障处理措施。'
+                    : '请先勾选需要的措施类别。'
+                }}
+              </div>
+            </section>
+
+            <section class="failure-mode-relation-card">
+              <div class="failure-mode-relation-card__header">
+                <div>
+                  <div class="failure-mode-relation-card__title">维测手段</div>
+                  <div class="failure-mode-relation-card__desc">
+                    先勾选必配类型，再绑定对应维测手段。
+                  </div>
+                </div>
+                <ElTag type="primary" round>
+                  {{ requiredObservationMethodTypes.length || 0 }} 个类型
+                </ElTag>
+              </div>
+
               <ElCheckboxGroup
                 v-model="requiredObservationMethodTypes"
-                class="mt-3 flex flex-wrap gap-3"
+                class="failure-mode-relation-card__checks"
                 :disabled="isReadonly"
               >
                 <ElCheckbox
@@ -802,101 +904,136 @@ defineExpose({
                   {{ item.label }}
                 </ElCheckbox>
               </ElCheckboxGroup>
-            </div>
-          </div>
-        </div>
 
-        <StringListEditor
-          v-model="relatedDtsNos"
-          add-text="新增问题单号"
-          add-button-placement="footer"
-          class="xl:h-full xl:min-h-0"
-          description="顶部固定展示当前问题单数量，中间区域独立滚动维护，底部统一新增，避免表单随内容无限增高。"
-          :disabled="isReadonly"
-          item-label="问题单号"
-          label="关联问题单"
-          placeholder="请输入 dts_no"
-          scrollable
-        />
-      </div>
-
-      <div
-        class="rounded-xl border border-[var(--el-border-color-light)] bg-[var(--el-fill-color-blank)] p-4 shadow-sm"
-      >
-        <div class="mb-4 flex items-center justify-between gap-3">
-          <div>
-            <div
-              class="text-sm font-semibold text-[var(--el-text-color-primary)]"
-            >
-              关联主数据
-            </div>
-            <div class="mt-1 text-xs text-[var(--el-text-color-secondary)]">
-              按照当前“必配”定义进行绑定，后续统计页会直接复用这些关联关系做完成率聚合。
-            </div>
-          </div>
-          <ElTag type="info">
-            已关联
-            {{
-              relationCardConfigs.reduce(
-                (sum, item) => sum + item.ids.length,
-                0,
-              )
-            }}
-            项
-          </ElTag>
-        </div>
-
-        <div class="grid gap-4 xl:grid-cols-2">
-          <div
-            v-for="card in relationCardConfigs"
-            :key="card.kind"
-            class="rounded-xl border border-[var(--el-border-color-lighter)] bg-[var(--el-fill-color-light)] p-4"
-            :class="{ 'opacity-65': !card.enabled }"
-          >
-            <div class="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <div
-                  class="text-sm font-semibold text-[var(--el-text-color-primary)]"
+              <div class="failure-mode-relation-card__toolbar">
+                <ElTag
+                  :type="
+                    requiredObservationMethodTypes.length > 0
+                      ? 'success'
+                      : 'info'
+                  "
+                  round
                 >
-                  {{ card.label }}
-                </div>
-                <div class="mt-1 text-xs text-[var(--el-text-color-secondary)]">
-                  {{ card.description }}
-                </div>
+                  {{
+                    requiredObservationMethodTypes.length > 0
+                      ? `必配：${requiredObservationMethodTypes.join('、')}`
+                      : '当前不涉及'
+                  }}
+                </ElTag>
+                <ElButton
+                  v-if="!isReadonly"
+                  :icon="Link"
+                  plain
+                  type="primary"
+                  @click="openRelationSelector('observation')"
+                >
+                  选择维测手段
+                </ElButton>
               </div>
-              <ElButton
-                v-if="!isReadonly"
-                :icon="Link"
-                plain
-                type="primary"
-                @click="openRelationSelector(card.kind)"
-              >
-                选择
-              </ElButton>
-            </div>
 
-            <div v-if="card.items.length > 0" class="flex flex-wrap gap-2">
-              <ElTag
-                v-for="item in card.items"
-                :key="item.id"
-                :closable="!isReadonly"
-                effect="light"
-                type="info"
-                @close="removeRelationSelection(card.kind, item.id)"
+              <div
+                v-if="observationMethodItems.length > 0"
+                class="failure-mode-relation-card__content"
               >
-                {{ item.label }}
-              </ElTag>
-            </div>
-            <div
-              v-else
-              class="rounded-lg bg-[var(--el-fill-color-blank)] px-4 py-6 text-sm text-[var(--el-text-color-secondary)]"
-            >
-              {{
-                card.enabled
-                  ? `暂未关联${card.label}。`
-                  : `当前${card.label}为无需配置。`
-              }}
-            </div>
+                <template v-if="isReadonly">
+                  <button
+                    v-for="item in observationMethodItems"
+                    :key="item.id"
+                    class="failure-mode-relation-card__link-tag"
+                    type="button"
+                    @click="handleViewRelation('observation', item.id)"
+                  >
+                    <span>{{ item.label }}</span>
+                    <small v-if="item.subtitle">{{ item.subtitle }}</small>
+                  </button>
+                </template>
+                <template v-else>
+                  <ElTag
+                    v-for="item in observationMethodItems"
+                    :key="item.id"
+                    closable
+                    effect="light"
+                    type="info"
+                    @close="removeRelationSelection('observation', item.id)"
+                  >
+                    {{ item.label }}
+                    <span v-if="item.subtitle"> · {{ item.subtitle }}</span>
+                  </ElTag>
+                </template>
+              </div>
+              <div v-else class="failure-mode-relation-card__empty">
+                {{
+                  requiredObservationMethodTypes.length > 0
+                    ? '暂未关联维测手段。'
+                    : '请先勾选需要的维测类型。'
+                }}
+              </div>
+            </section>
+
+            <section class="failure-mode-relation-card">
+              <div class="failure-mode-relation-card__header">
+                <div>
+                  <div class="failure-mode-relation-card__title">
+                    华佗诊断方案
+                  </div>
+                  <div class="failure-mode-relation-card__desc">
+                    开启后可直接维护关联的华佗诊断方案。
+                  </div>
+                </div>
+                <ElSwitch v-model="huatuoRequired" :disabled="isReadonly" />
+              </div>
+
+              <div class="failure-mode-relation-card__toolbar">
+                <ElTag :type="huatuoRequired ? 'success' : 'info'" round>
+                  {{ huatuoRequired ? '必配' : '不涉及' }}
+                </ElTag>
+                <ElButton
+                  v-if="!isReadonly"
+                  :icon="Link"
+                  plain
+                  type="primary"
+                  @click="openRelationSelector('huatuo')"
+                >
+                  选择华佗方案
+                </ElButton>
+              </div>
+
+              <div
+                v-if="huatuoDiagnosisItems.length > 0"
+                class="failure-mode-relation-card__content"
+              >
+                <template v-if="isReadonly">
+                  <button
+                    v-for="item in huatuoDiagnosisItems"
+                    :key="item.id"
+                    class="failure-mode-relation-card__link-tag"
+                    type="button"
+                    @click="handleViewRelation('huatuo', item.id)"
+                  >
+                    {{ item.label }}
+                  </button>
+                </template>
+                <template v-else>
+                  <ElTag
+                    v-for="item in huatuoDiagnosisItems"
+                    :key="item.id"
+                    closable
+                    effect="light"
+                    type="info"
+                    @close="removeRelationSelection('huatuo', item.id)"
+                  >
+                    {{ item.label }}
+                  </ElTag>
+                </template>
+              </div>
+              <div v-else class="failure-mode-relation-card__empty">
+                {{
+                  huatuoRequired
+                    ? '暂未关联华佗诊断方案。'
+                    : '当前华佗诊断方案不涉及。'
+                }}
+              </div>
+            </section>
           </div>
         </div>
       </div>
@@ -918,41 +1055,85 @@ defineExpose({
 </template>
 
 <style scoped>
-.failure-mode-statistics-panel {
+.failure-mode-relation-card {
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 16px;
   background: linear-gradient(
     145deg,
-    color-mix(in srgb, var(--el-color-primary-light-9) 86%, white),
-    color-mix(in srgb, var(--el-color-primary-light-8) 28%, white)
+    color-mix(in srgb, var(--el-color-primary-light-9) 90%, white),
+    #ffffff
   );
-}
-
-.failure-mode-switch-card,
-.failure-mode-check-card {
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.9);
   padding: 16px;
 }
 
-.failure-mode-switch-card {
+.failure-mode-relation-card__header,
+.failure-mode-relation-card__toolbar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
 }
 
-.failure-mode-switch-card__title,
-.failure-mode-check-card__title {
+.failure-mode-relation-card__toolbar {
+  align-items: center;
+  margin-top: 14px;
+}
+
+.failure-mode-relation-card__title {
   color: var(--el-text-color-primary);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
 }
 
-.failure-mode-switch-card__desc,
-.failure-mode-check-card__desc {
+.failure-mode-relation-card__desc {
   margin-top: 4px;
   color: var(--el-text-color-secondary);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.6;
+}
+
+.failure-mode-relation-card__checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.failure-mode-relation-card__content {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.failure-mode-relation-card__empty {
+  margin-top: 14px;
+  border-radius: 12px;
+  background: var(--el-fill-color-light);
+  padding: 14px 16px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.failure-mode-relation-card__link-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--el-color-primary-light-9) 82%, white);
+  color: var(--el-color-primary);
+  cursor: pointer;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.failure-mode-relation-card__link-tag small {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.failure-mode-relation-card__link-tag:hover {
+  background: color-mix(in srgb, var(--el-color-primary-light-8) 74%, white);
 }
 </style>

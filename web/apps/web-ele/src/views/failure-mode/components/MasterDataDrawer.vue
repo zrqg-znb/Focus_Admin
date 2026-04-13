@@ -73,32 +73,46 @@ const visible = ref(false);
 const loading = ref(false);
 const confirmLoading = ref(false);
 const currentKind = ref<MasterResourceKind>('interception');
-const mode = ref<'create' | 'edit'>('create');
+const mode = ref<'create' | 'edit' | 'view'>('create');
 const editingId = ref('');
 const testCaseIds = ref<string[]>([]);
 const testCaseItems = ref<RelationItem[]>([]);
 const relationSelectorRef = ref<any>();
 const nestedMasterDrawerRef = ref<any>();
+const isReadonly = computed(() => mode.value === 'view');
 
 const drawerTitle = computed(() => {
-  const prefix = mode.value === 'create' ? '新增' : '编辑';
+  let prefix = '编辑';
+  if (mode.value === 'create') {
+    prefix = '新增';
+  } else if (mode.value === 'view') {
+    prefix = '查看';
+  }
   return `${prefix}${getMasterResourceLabel(currentKind.value)}`;
 });
 
-const [Form, formApi] = useVbenForm({
-  commonConfig: {
+function getFormCommonConfig() {
+  return {
     colon: true,
     componentProps: { class: 'w-full' },
+    disabled: isReadonly.value,
     labelClass: 'whitespace-nowrap',
     labelWidth: 156,
-  },
+  };
+}
+
+const [Form, formApi] = useVbenForm({
+  commonConfig: getFormCommonConfig(),
   schema: useMasterFormSchema('interception', props.dictOptions),
   showDefaultActions: false,
   wrapperClass: 'grid-cols-1 gap-x-6 xl:grid-cols-2',
 });
 
 function applySchema(kind: MasterResourceKind) {
-  formApi.setState({ schema: useMasterFormSchema(kind, props.dictOptions) });
+  formApi.setState({
+    commonConfig: getFormCommonConfig(),
+    schema: useMasterFormSchema(kind, props.dictOptions),
+  });
 }
 
 function getInitialValues(kind: MasterResourceKind) {
@@ -297,7 +311,83 @@ async function openEdit(
   }
 }
 
+async function openView(
+  kind: MasterResourceKind,
+  record: string | { id: string },
+) {
+  currentKind.value = kind;
+  mode.value = 'view';
+  editingId.value = typeof record === 'string' ? record : record.id;
+  applySchema(kind);
+  testCaseIds.value = [];
+  testCaseItems.value = [];
+  visible.value = true;
+  await nextTick();
+  loading.value = true;
+  try {
+    await formApi.resetForm();
+    const detail = await getDetailApi(kind)(editingId.value);
+    if (kind === 'interception') {
+      const row = detail as InterceptionStrategyItem;
+      formApi.setValues({
+        interception_item: row.interception_item,
+        owner_ids: row.owner_ids || [],
+        station: row.station || '',
+        version_detection_html: row.version_detection_html || '',
+      });
+      return;
+    }
+    if (kind === 'measure') {
+      const row = detail as HandlingMeasureItem;
+      formApi.setValues({
+        measure: row.measure,
+        measure_category: row.measure_category || undefined,
+        measure_detail_html: row.measure_detail_html || '',
+        measure_effect: row.measure_effect || '',
+        owner_ids: row.owner_ids || [],
+      });
+      testCaseIds.value = normalizeStringList(row.test_case_ids || []);
+      testCaseItems.value = ensureOrderedRelationItems(
+        testCaseIds.value,
+        row.test_case_items || [],
+      );
+      return;
+    }
+    if (kind === 'observation') {
+      const row = detail as ObservationMethodItem;
+      formApi.setValues({
+        log_id: row.log_id || '',
+        log_keyword: row.log_keyword || '',
+        log_path: row.log_path || '',
+        monitor_type: row.monitor_type || undefined,
+        owner_ids: row.owner_ids || [],
+      });
+      return;
+    }
+    if (kind === 'huatuo') {
+      const row = detail as HuatuoDiagnosisItem;
+      formApi.setValues({
+        description: row.description || '',
+        owner_ids: row.owner_ids || [],
+      });
+      return;
+    }
+    const row = detail as TestCaseItem;
+    formApi.setValues({
+      brief: row.brief,
+      cida_link: row.cida_link || '',
+      detail_html: row.detail_html || '',
+      owner_ids: row.owner_ids || [],
+    });
+  } finally {
+    loading.value = false;
+  }
+}
+
 function handleOpenRelationSelector() {
+  if (isReadonly.value) {
+    return;
+  }
   relationSelectorRef.value?.open({
     kind: 'testCase',
     selectedIds: testCaseIds.value,
@@ -317,17 +407,24 @@ function handleRelationConfirm(payload: {
 }
 
 function handleQuickCreate(kind: MasterResourceKind) {
-  if (!props.allowNested) {
+  if (!props.allowNested || isReadonly.value) {
     return;
   }
   nestedMasterDrawerRef.value?.openCreate(kind);
 }
 
 function handleQuickEdit(payload: { id: string; kind: MasterResourceKind }) {
-  if (!props.allowNested) {
+  if (!props.allowNested || isReadonly.value) {
     return;
   }
   nestedMasterDrawerRef.value?.openEdit(payload.kind, payload.id);
+}
+
+function handleViewNestedRelation(kind: MasterResourceKind, id: string) {
+  if (!props.allowNested) {
+    return;
+  }
+  nestedMasterDrawerRef.value?.openView(kind, id);
 }
 
 function handleNestedSuccess(payload: {
@@ -351,6 +448,9 @@ function handleNestedSuccess(payload: {
 }
 
 async function handleConfirm() {
+  if (isReadonly.value) {
+    return;
+  }
   const { valid } = await formApi.validate();
   if (!valid) {
     return;
@@ -360,12 +460,13 @@ async function handleConfirm() {
   try {
     const values = await formApi.getValues<Record<string, any>>();
     const payload = { ...values };
+    const action = mode.value === 'create' ? 'create' : 'edit';
     if (currentKind.value === 'measure') {
       payload.test_case_ids = [...testCaseIds.value];
     }
 
     let result: any;
-    if (mode.value === 'create') {
+    if (action === 'create') {
       const requestApi = getCreateApi(currentKind.value) as (
         data: Record<string, any>,
       ) => Promise<any>;
@@ -378,10 +479,10 @@ async function handleConfirm() {
       result = await requestApi(editingId.value, payload);
     }
 
-    ElMessage.success(mode.value === 'create' ? '创建成功' : '保存成功');
+    ElMessage.success(action === 'create' ? '创建成功' : '保存成功');
     visible.value = false;
     emit('success', {
-      action: mode.value,
+      action,
       item: result,
       kind: currentKind.value,
       relationItem: buildRelationItem(currentKind.value, result),
@@ -394,14 +495,17 @@ async function handleConfirm() {
 defineExpose({
   openCreate,
   openEdit,
+  openView,
 });
 </script>
 
 <template>
   <ZqDrawer
     v-model="visible"
+    :cancel-text="isReadonly ? '关闭' : '取消'"
     :confirm-loading="confirmLoading"
     :loading="loading"
+    :show-confirm-button="!isReadonly"
     :title="drawerTitle"
     size="62%"
     @confirm="handleConfirm"
@@ -425,10 +529,15 @@ defineExpose({
               关联测试用例
             </div>
             <div class="mt-1 text-xs text-[var(--el-text-color-secondary)]">
-              支持按关键词搜索、多选并直接快速新增或快编测试用例
+              {{
+                isReadonly
+                  ? '查看态下可继续打开测试用例只读详情'
+                  : '支持按关键词搜索、多选并直接快速新增或快编测试用例'
+              }}
             </div>
           </div>
           <ElButton
+            v-if="!isReadonly"
             :icon="Link"
             plain
             type="primary"
@@ -439,14 +548,27 @@ defineExpose({
         </div>
 
         <div v-if="testCaseItems.length > 0" class="flex flex-wrap gap-2">
-          <ElTag
-            v-for="item in testCaseItems"
-            :key="item.id"
-            effect="light"
-            type="info"
-          >
-            {{ item.label }}
-          </ElTag>
+          <template v-if="isReadonly">
+            <button
+              v-for="item in testCaseItems"
+              :key="item.id"
+              class="master-drawer__link-tag"
+              type="button"
+              @click="handleViewNestedRelation('testCase', item.id)"
+            >
+              {{ item.label }}
+            </button>
+          </template>
+          <template v-else>
+            <ElTag
+              v-for="item in testCaseItems"
+              :key="item.id"
+              effect="light"
+              type="info"
+            >
+              {{ item.label }}
+            </ElTag>
+          </template>
         </div>
         <div
           v-else
@@ -473,3 +595,20 @@ defineExpose({
     @success="handleNestedSuccess"
   />
 </template>
+
+<style scoped>
+.master-drawer__link-tag {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--el-color-primary-light-9) 82%, white);
+  color: var(--el-color-primary);
+  cursor: pointer;
+  padding: 8px 12px;
+}
+
+.master-drawer__link-tag:hover {
+  background: color-mix(in srgb, var(--el-color-primary-light-8) 74%, white);
+}
+</style>
