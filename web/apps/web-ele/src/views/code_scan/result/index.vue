@@ -2,10 +2,12 @@
 import type { ProjectOverviewTableRow } from './data';
 
 import type {
+  LatestResultsQueryParams,
   LatestScanResultItem,
   ProjectOverviewItem,
   ShieldApplyPayload,
   ShieldRecordItem,
+  ShieldStatus,
 } from '#/api/code_scan';
 
 import { computed, onMounted, ref, watch } from 'vue';
@@ -75,6 +77,7 @@ const shieldForm = ref<ShieldApplyPayload>({
 
 const projectMissing = ref(false);
 const selectedResults = ref<LatestScanResultItem[]>([]);
+const shieldStatusFilter = ref<'' | ShieldStatus>('');
 const tools = ref<string[]>([]);
 const toolCountMap = ref<Record<string, null | number>>({});
 const activeTool = ref('');
@@ -157,11 +160,14 @@ const [DetailGrid, detailGridApi] = useZqTable({
           if (!projectId.value || !activeTool.value || projectMissing.value) {
             return { items: [], total: 0 };
           }
-          const params: Record<string, any> = {
+          const params: LatestResultsQueryParams = {
             tool_name: activeTool.value,
             page: page.currentPage,
             pageSize: page.pageSize,
           };
+          if (shieldStatusFilter.value) {
+            params.shield_status = shieldStatusFilter.value;
+          }
           if (routeSubModules.value) {
             params.sub_modules = routeSubModules.value;
           }
@@ -189,6 +195,23 @@ const [DetailGrid, detailGridApi] = useZqTable({
 function displayCount(value: null | number | undefined) {
   if (value === null || value === undefined) return '未扫描';
   return String(value);
+}
+
+function extractSingleFilterValue(filters: Record<string, any[]>, key: string) {
+  const selected = filters[key];
+  if (!Array.isArray(selected) || selected.length === 0) {
+    return '';
+  }
+  return String(selected[0] || '');
+}
+
+function resetDetailPage() {
+  detailGridApi.pagination.currentPage = 1;
+  detailGridApi.setGridOptions({
+    pagerConfig: {
+      currentPage: 1,
+    },
+  });
 }
 
 function resetDetailState() {
@@ -273,7 +296,18 @@ async function refreshCurrentView() {
 
 function handleTabChange() {
   selectedResults.value = [];
+  resetDetailPage();
   detailGridApi.reload();
+}
+
+async function handleStatusHeaderFilterChange(filters: Record<string, any[]>) {
+  shieldStatusFilter.value = extractSingleFilterValue(
+    filters,
+    'shield_status',
+  ) as '' | ShieldStatus;
+  selectedResults.value = [];
+  resetDetailPage();
+  await detailGridApi.reload();
 }
 
 function openProject(row: ProjectOverviewTableRow) {
@@ -386,7 +420,13 @@ watch(
     route.query.tool_name,
     route.query.sub_modules,
   ],
-  async () => {
+  async (newValues, oldValues) => {
+    const newProjectId = String(newValues[0] || '');
+    const oldProjectId = String(oldValues?.[0] || '');
+    if (newProjectId !== oldProjectId) {
+      shieldStatusFilter.value = '';
+      resetDetailState();
+    }
     await refreshCurrentView();
   },
 );
@@ -441,7 +481,9 @@ watch(
           </ElTabs>
           <div class="min-h-0 flex-1 overflow-hidden">
             <DetailGrid
+              :key="projectId || 'detail-grid'"
               class="h-full"
+              @filter-change="handleStatusHeaderFilterChange"
               @selection-change="handleResultSelectionChange"
             >
               <template #expand_content="{ row }">

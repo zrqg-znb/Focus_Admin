@@ -18,7 +18,12 @@ from common.fu_auth import ApiKey
 
 router = Router()
 SUB_MODULE_SCOPED_TOOLS = {"valgrind", "tsan"}
-EXCLUDED_SHIELD_STATUSES = {"Shielded"}
+SHIELD_STATUS_ALIASES = {
+    "normal": "Normal",
+    "pending": "Pending",
+    "shielded": "Shielded",
+    "rejected": "Rejected",
+}
 
 
 def _normalize_sub_modules(raw_value: str | List[str] | None) -> list[str]:
@@ -45,6 +50,13 @@ def _normalize_sub_modules(raw_value: str | List[str] | None) -> list[str]:
 
 def _normalize_tool_name(raw_value: str | None) -> str:
     return str(raw_value or "").strip().lower()
+
+
+def _normalize_shield_status(raw_value: str | None) -> str | None:
+    normalized = str(raw_value or "").strip().lower()
+    if not normalized:
+        return None
+    return SHIELD_STATUS_ALIASES.get(normalized)
 
 
 def _select_latest_task_rows(
@@ -207,7 +219,6 @@ def list_project_overview(
 
         qs = (
             ScanResult.objects.filter(task_id__in=latest_task_ids, is_deleted=False)
-            .exclude(shield_status__in=EXCLUDED_SHIELD_STATUSES)
             .values("task_id")
             .annotate(cnt=Count("id"))
         )
@@ -378,6 +389,7 @@ def list_latest_results(
     request,
     project_id: str,
     tool_name: str = None,
+    shield_status: str = None,
     sub_modules: str = None,
     page: int = 1,
     pageSize: int = 20,
@@ -395,6 +407,9 @@ def list_latest_results(
         tasks_qs = tasks_qs.filter(tool_name=tool_name)
 
     normalized_modules = _normalize_sub_modules(sub_modules)
+    normalized_shield_status = _normalize_shield_status(shield_status)
+    if shield_status and not normalized_shield_status:
+        return {"items": [], "total": 0}
 
     task_ids = _select_latest_task_ids(
         tasks_qs,
@@ -412,10 +427,11 @@ def list_latest_results(
             task__is_deleted=False,
             task__project__is_deleted=False,
         )
-        .exclude(shield_status__in=EXCLUDED_SHIELD_STATUSES)
         .select_related("task")
         .order_by("-severity", "file_path", "line_number")
     )
+    if normalized_shield_status:
+        results_qs = results_qs.filter(shield_status=normalized_shield_status)
     
     total = results_qs.count()
     start = (page - 1) * pageSize

@@ -74,6 +74,8 @@ export interface ScanTaskItem {
   tool_name: string;
 }
 
+export type ShieldStatus = 'Normal' | 'Pending' | 'Rejected' | 'Shielded';
+
 export interface LatestScanResultItem {
   code_snippet?: null | string;
   description: string;
@@ -84,7 +86,7 @@ export interface LatestScanResultItem {
   id: string;
   line_number: number;
   severity: string;
-  shield_status: string;
+  shield_status: ShieldStatus;
   sub_module?: null | string;
   sys_create_datetime?: null | string;
   task_id: string;
@@ -192,6 +194,7 @@ export const listResultsApi = (taskId: string) => {
 export interface LatestResultsQueryParams {
   page?: number;
   pageSize?: number;
+  shield_status?: ShieldStatus;
   sub_modules?: string;
   tool_name?: string;
 }

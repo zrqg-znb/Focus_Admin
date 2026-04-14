@@ -1,6 +1,7 @@
 import type {
   LatestScanResultItem,
   ProjectOverviewItem,
+  ShieldStatus,
 } from '#/api/code_scan';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
@@ -17,6 +18,13 @@ export const ALL_SCAN_TOOLS = [
   'binexplorer',
   'clang-tidy',
   'valgrind',
+];
+
+export const SHIELD_STATUS_OPTIONS: ShieldStatus[] = [
+  'Normal',
+  'Pending',
+  'Shielded',
+  'Rejected',
 ];
 
 function withCenterAlign(columns: Record<string, any>[]) {
@@ -127,6 +135,12 @@ export function useDetailColumns(): ZqTableGridOptions<LatestScanResultItem>['co
       key: 'shield_status',
       dataKey: 'shield_status',
       title: '状态',
+      columnKey: 'shield_status',
+      filterMultiple: false,
+      filters: SHIELD_STATUS_OPTIONS.map((status) => ({
+        text: status,
+        value: status,
+      })),
       width: 120,
     },
   ]) as ZqTableGridOptions<LatestScanResultItem>['columns'];
