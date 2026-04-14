@@ -117,6 +117,8 @@ function createDefaultFilters(): DtsStatisticsFilters {
     severityNos: [],
     updateTimeBegin: toTimestampMs(start),
     updateTimeEnd: toTimestampMs(end),
+    dtsBizNoKeyword: '',
+    last_dts009_handlerKeywords: [],
     createAtBegin: 0,
     createAtEnd: 0,
     dCloseTimeBegin: 0,
@@ -227,6 +229,10 @@ function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
     severityNos: normalizeStringArray(source.severityNos),
     updateTimeBegin: Math.max(begin, 0),
     updateTimeEnd: Math.max(end, 0),
+    dtsBizNoKeyword: String(source.dtsBizNoKeyword || '').trim(),
+    last_dts009_handlerKeywords: normalizeStringArray(
+      source.last_dts009_handlerKeywords,
+    ),
     createAtBegin: createAtPair.begin,
     createAtEnd: createAtPair.end,
     dCloseTimeBegin: closeTimePair.begin,
@@ -249,6 +255,10 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
     severityNos: [...(payload.severityNos || [])].sort(),
     updateTimeBegin: payload.updateTimeBegin || 0,
     updateTimeEnd: payload.updateTimeEnd || 0,
+    dtsBizNoKeyword: payload.dtsBizNoKeyword || '',
+    last_dts009_handlerKeywords: [
+      ...(payload.last_dts009_handlerKeywords || []),
+    ].sort(),
     createAtBegin: payload.createAtBegin || 0,
     createAtEnd: payload.createAtEnd || 0,
     dCloseTimeBegin: payload.dCloseTimeBegin || 0,
@@ -497,6 +507,16 @@ function buildTimeFilterButtonText(begin: number, end: number) {
   }
   return '部分';
 }
+function buildKeywordFilterButtonText(value: string) {
+  return String(value || '').trim() ? '已设定' : '全部';
+}
+const selectedDtsBizNoKeywordLabel = computed(() =>
+  buildKeywordFilterButtonText(filters.value.dtsBizNoKeyword),
+);
+const selectedLastDts009HandlerLabel = computed(() => {
+  const count = filters.value.last_dts009_handlerKeywords.length;
+  return count > 0 ? `${count} 项` : '全部';
+});
 const selectedCreateAtLabel = computed(() =>
   buildTimeFilterButtonText(
     filters.value.createAtBegin,
@@ -563,34 +583,11 @@ const selectedProductLabel = computed(() => {
       ?.label || '座舱'
   );
 });
-const snapshotGeneratedAtLabel = computed(() => {
-  const text = String(snapshotMeta.value?.generatedAt || '').trim();
-  if (!text) {
-    return '未同步';
-  }
-  const date = new Date(text);
-  if (Number.isNaN(date.getTime())) {
-    return text;
-  }
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-});
-const snapshotWindowLabel = computed(() => {
-  const begin = Number(snapshotMeta.value?.windowBegin || 0);
-  const end = Number(snapshotMeta.value?.windowEnd || 0);
-  if (!begin || !end) {
-    return '最近 2 个月';
-  }
-  const format = (timestamp: number) => {
-    const date = new Date(timestamp);
-    const pad = (value: number) => String(value).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-  };
-  return `${format(begin)} ~ ${format(end)}`;
-});
 
 const flowFilterVisible = ref(false);
 const severityFilterVisible = ref(false);
+const dtsBizNoFilterVisible = ref(false);
+const lastDts009HandlerFilterVisible = ref(false);
 const createAtFilterVisible = ref(false);
 const closeTimeFilterVisible = ref(false);
 const closeTypeFilterVisible = ref(false);
@@ -600,6 +597,8 @@ const subsystemFilterVisible = ref(false);
 const autoPlGroupFilterVisible = ref(false);
 const draftFlowStates = ref<string[]>([]);
 const draftSeverityNos = ref<string[]>([]);
+const draftDtsBizNoKeyword = ref('');
+const draftLastDts009HandlerKeywords = ref<string[]>([]);
 const draftCreateAtBegin = ref<Date | null>(null);
 const draftCreateAtEnd = ref<Date | null>(null);
 const draftCloseTimeBegin = ref<Date | null>(null);
@@ -747,6 +746,26 @@ watch(
   (visible) => {
     if (visible) {
       draftSeverityNos.value = [...filters.value.severityNos];
+    }
+  },
+);
+
+watch(
+  () => dtsBizNoFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftDtsBizNoKeyword.value = filters.value.dtsBizNoKeyword || '';
+    }
+  },
+);
+
+watch(
+  () => lastDts009HandlerFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftLastDts009HandlerKeywords.value = [
+        ...filters.value.last_dts009_handlerKeywords,
+      ];
     }
   },
 );
@@ -968,6 +987,30 @@ async function confirmSeverityFilter() {
 
 function resetSeverityFilterDraft() {
   draftSeverityNos.value = [];
+}
+
+async function confirmDtsBizNoFilter() {
+  filters.value.dtsBizNoKeyword = String(
+    draftDtsBizNoKeyword.value || '',
+  ).trim();
+  dtsBizNoFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetDtsBizNoFilterDraft() {
+  draftDtsBizNoKeyword.value = '';
+}
+
+async function confirmLastDts009HandlerFilter() {
+  filters.value.last_dts009_handlerKeywords = normalizeStringArray(
+    draftLastDts009HandlerKeywords.value,
+  );
+  lastDts009HandlerFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetLastDts009HandlerFilterDraft() {
+  draftLastDts009HandlerKeywords.value = [];
 }
 
 async function confirmCreateAtFilter() {
@@ -1573,22 +1616,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <Page auto-content-height>
-    <div class="dts-statistics-shell flex flex-col gap-4">
-      <div class="dts-snapshot-banner">
-        <ElTag type="info" effect="plain">
-          当前产品：{{ selectedProductLabel }}
-        </ElTag>
-        <ElTag type="primary" effect="plain">
-          最近同步：{{ snapshotGeneratedAtLabel }}
-        </ElTag>
-        <ElTag type="success" effect="plain">
-          缓存窗口：{{ snapshotWindowLabel }}
-        </ElTag>
-        <ElTag v-if="snapshotMeta?.isStale" type="danger" effect="light">
-          快照已过期，当前使用最近一次成功同步结果
-        </ElTag>
-      </div>
+  <Page content-class="flex h-full min-h-0 flex-col" auto-content-height>
+    <div class="dts-statistics-shell flex h-full min-h-0 flex-col gap-4">
       <ElTabs v-model="activeTab" class="dts-statistics-tabs flex flex-col">
         <ElTabPane label="数据明细" name="list">
           <ElCard shadow="never" class="dts-data-card">
@@ -1878,6 +1907,60 @@ onUnmounted(() => {
 
                   <template #cell-iNumofTestDays="{ row }">
                     {{ formatCycleIntegerDisplay(row.iNumofTestDays) }}
+                  </template>
+
+                  <template #header-dtsBizNo>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">问题单号</span>
+                      <ElPopover
+                        v-model:visible="dtsBizNoFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="280"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': Boolean(filters.dtsBizNoKeyword),
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedDtsBizNoKeywordLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-model="draftDtsBizNoKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词模糊搜索问题单号"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetDtsBizNoFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmDtsBizNoFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
                   </template>
 
                   <template #header-createAt>
@@ -2484,6 +2567,74 @@ onUnmounted(() => {
                               type="primary"
                               size="small"
                               @click="confirmAutoPlGroupFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-last_dts009_handler>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">
+                        最后开发修改人
+                      </span>
+                      <ElPopover
+                        v-model:visible="lastDts009HandlerFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="280"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active':
+                                filters.last_dts009_handlerKeywords.length > 0,
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedLastDts009HandlerLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElSelect
+                              v-model="draftLastDts009HandlerKeywords"
+                              multiple
+                              filterable
+                              allow-create
+                              default-first-option
+                              :reserve-keyword="false"
+                              :teleported="false"
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入并回车，可添加多个开发修改人"
+                            >
+                              <ElOption
+                                v-for="item in draftLastDts009HandlerKeywords"
+                                :key="item"
+                                :label="item"
+                                :value="item"
+                              />
+                            </ElSelect>
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetLastDts009HandlerFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmLastDts009HandlerFilter"
                             >
                               确认
                             </ElButton>
@@ -3345,37 +3496,47 @@ onUnmounted(() => {
 
 <style scoped>
 .dts-statistics-shell {
+  flex: 1;
   min-height: 0;
-}
-
-.dts-snapshot-banner {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 
 .dts-statistics-tabs {
+  flex: 1;
   min-height: 0;
-  border: 1px solid #dbe5f1;
-  border-radius: 24px;
+  padding: 14px;
   background: linear-gradient(
     180deg,
-    rgb(255 255 255 / 0.96) 0%,
-    rgb(248 250 252 / 0.92) 100%
+    rgb(255 255 255 / 96%) 0%,
+    rgb(248 250 252 / 92%) 100%
   );
+  border: 1px solid #dbe5f1;
+  border-radius: 24px;
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.96),
-    0 12px 30px rgb(15 23 42 / 0.04);
-  padding: 14px;
+    inset 0 1px 0 rgb(255 255 255 / 96%),
+    0 12px 30px rgb(15 23 42 / 4%);
+}
+
+.dts-statistics-tabs :deep(.el-tabs__content) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.dts-statistics-tabs :deep(.el-tab-pane) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .dts-statistics-tabs :deep(.el-tabs__header) {
+  padding: 8px;
   margin-bottom: 18px;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef4ff 100%);
   border: 1px solid #dde6f2;
   border-radius: 18px;
-  background: linear-gradient(180deg, #f8fafc 0%, #eef4ff 100%);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.92);
-  padding: 8px;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 92%);
 }
 
 .dts-statistics-tabs :deep(.el-tabs__nav-wrap::after) {
@@ -3396,11 +3557,11 @@ onUnmounted(() => {
 
 .dts-statistics-tabs :deep(.el-tabs__item) {
   height: 40px;
-  border-radius: 12px;
-  color: #64748b;
+  padding: 0 18px !important;
   font-size: 13px;
   font-weight: 700;
-  padding: 0 18px !important;
+  color: #64748b;
+  border-radius: 12px;
   transition:
     background-color 0.2s ease,
     box-shadow 0.2s ease,
@@ -3413,29 +3574,30 @@ onUnmounted(() => {
 }
 
 .dts-statistics-tabs :deep(.el-tabs__item.is-active) {
-  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
   color: #0f172a;
+  background: linear-gradient(180deg, #fff 0%, #f8fbff 100%);
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.9),
-    0 8px 18px rgb(37 99 235 / 0.12);
+    inset 0 1px 0 rgb(255 255 255 / 90%),
+    0 8px 18px rgb(37 99 235 / 12%);
   transform: translateY(-1px);
 }
 
 .dts-data-card__actions {
   display: flex;
-  align-items: center;
-  gap: 8px;
   flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 
 .dts-data-card {
   display: flex;
-  min-height: 0;
+  flex: 1;
   flex-direction: column;
+  min-height: 0;
+  background: linear-gradient(180deg, #fff 0%, #fbfdff 100%);
   border: 1px solid #e2e8f0;
   border-radius: 20px;
-  background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
-  box-shadow: 0 14px 32px rgb(15 23 42 / 0.04);
+  box-shadow: 0 14px 32px rgb(15 23 42 / 4%);
 }
 
 .dts-data-card :deep(.el-card__header) {
@@ -3446,30 +3608,30 @@ onUnmounted(() => {
 .dts-data-card :deep(.el-card__body) {
   display: flex;
   flex: 1;
-  min-height: 0;
   flex-direction: column;
+  min-height: 0;
   padding: 0 0 16px;
 }
 
 .dts-data-card__header {
   display: flex;
+  gap: 12px;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
 }
 
 .dts-data-card__title {
-  color: #0f172a;
   font-size: 16px;
   font-weight: 700;
+  color: #0f172a;
 }
 
 .dts-data-card__desc {
-  color: #64748b;
+  max-width: 720px;
+  margin-top: 4px;
   font-size: 12px;
   line-height: 1.6;
-  margin-top: 4px;
-  max-width: 720px;
+  color: #64748b;
 }
 
 .dts-data-card__status {
@@ -3478,51 +3640,56 @@ onUnmounted(() => {
 }
 
 .dts-data-card__body {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .dts-data-grid-wrap {
-  min-height: 420px;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .dts-data-grid {
-  min-height: 420px;
+  min-height: 0;
 }
 
 .dts-table-title {
   display: flex;
   flex: 1;
-  min-width: 0;
   flex-wrap: wrap;
-  align-items: flex-start;
   gap: 10px 16px;
+  align-items: flex-start;
+  min-width: 0;
   padding: 6px 0 10px;
 }
 
 .dts-table-title__filters {
   display: flex;
   flex: 1 1 720px;
-  min-width: 0;
   flex-wrap: wrap;
-  align-items: center;
   gap: 10px 12px;
+  align-items: center;
+  min-width: 0;
 }
 
 .dts-table-title__field {
   display: flex;
-  align-items: center;
-  gap: 8px;
   flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 
 .dts-table-title__label,
 .dts-header-filter__label {
-  color: #475569;
   font-size: 12px;
   font-weight: 600;
   line-height: 1.3;
+  color: #475569;
   white-space: nowrap;
 }
 
@@ -3536,38 +3703,38 @@ onUnmounted(() => {
 
 .dts-table-title__actions {
   display: flex;
-  align-items: center;
-  gap: 8px;
   flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 
 .dts-table-title__meta {
   display: flex;
-  align-items: center;
-  gap: 8px;
   flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 
 .dts-header-filter {
   display: inline-flex;
-  align-items: center;
   gap: 6px;
+  align-items: center;
   min-width: 0;
 }
 
 .dts-header-filter-trigger {
   display: inline-flex;
-  align-items: center;
   gap: 4px;
+  align-items: center;
   height: 24px;
-  border: 1px solid #dcdfe6;
-  border-radius: 4px;
-  background: #ffffff;
-  color: #606266;
+  padding: 0 8px;
   font-size: 12px;
   line-height: 1;
-  padding: 0 8px;
+  color: #606266;
   cursor: pointer;
+  background: #fff;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
   transition:
     color 0.2s ease,
     border-color 0.2s ease,
@@ -3580,8 +3747,8 @@ onUnmounted(() => {
 
 .dts-header-filter-trigger.is-active {
   color: #409eff;
-  border-color: #a0cfff;
   background: #ecf5ff;
+  border-color: #a0cfff;
 }
 
 .dts-header-filter-trigger__icon {
@@ -3604,16 +3771,16 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 10px;
   max-height: 260px;
-  overflow: auto;
   padding-right: 4px;
+  overflow: auto;
 }
 
 .dts-header-filter-panel__search {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #ffffff;
   padding-bottom: 2px;
+  background: #fff;
 }
 
 .dts-header-filter-panel__date {
@@ -3633,10 +3800,10 @@ onUnmounted(() => {
 }
 
 .dts-header-filter-panel__time-label {
-  color: #606266;
   font-size: 12px;
   font-weight: 600;
   line-height: 1.4;
+  color: #606266;
 }
 
 .dts-header-filter-check-group {
@@ -3646,18 +3813,18 @@ onUnmounted(() => {
 }
 
 .dts-header-filter-panel__tip {
-  color: #64748b;
+  padding: 8px 2px;
   font-size: 12px;
   line-height: 1.6;
-  padding: 8px 2px;
+  color: #64748b;
 }
 
 .dts-header-filter-panel__actions {
   display: flex;
-  justify-content: flex-end;
   gap: 8px;
-  border-top: 1px solid #ebeef5;
+  justify-content: flex-end;
   padding-top: 10px;
+  border-top: 1px solid #ebeef5;
 }
 
 :deep(.dts-header-filter-popper.el-popper) {
@@ -3665,9 +3832,9 @@ onUnmounted(() => {
 }
 
 .dts-data-grid :deep(.flex.items-center.justify-between.px-4.pb-4.pt-2) {
-  align-items: flex-start;
-  gap: 12px;
   flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
 }
 
 .dts-data-grid
@@ -3693,10 +3860,10 @@ onUnmounted(() => {
 
 .dts-cell-tags {
   display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  flex-wrap: wrap;
 }
 
 .dts-data-guide {
@@ -3709,39 +3876,39 @@ onUnmounted(() => {
 
 .dts-data-empty {
   display: flex;
-  height: 100%;
-  min-height: 280px;
   align-items: center;
   justify-content: center;
+  height: 100%;
+  min-height: 280px;
 }
 
 .dts-data-guide__panel {
   width: min(100%, 420px);
-  border: 1px dashed #cbd5e1;
-  border-radius: 16px;
-  background: #ffffff;
   padding: 20px 22px;
   text-align: center;
+  background: #fff;
+  border: 1px dashed #cbd5e1;
+  border-radius: 16px;
 }
 
 .dts-data-guide__title {
-  color: #0f172a;
   font-size: 18px;
   font-weight: 700;
   line-height: 1.4;
+  color: #0f172a;
 }
 
 .dts-data-guide__desc {
-  color: #475569;
+  margin-top: 8px;
   font-size: 13px;
   line-height: 1.7;
-  margin-top: 8px;
+  color: #475569;
 }
 
 .dts-data-guide__meta {
-  color: #94a3b8;
-  font-size: 12px;
   margin-top: 8px;
+  font-size: 12px;
+  color: #94a3b8;
 }
 
 .dts-data-guide__actions {
@@ -3751,70 +3918,73 @@ onUnmounted(() => {
 }
 
 .dts-summary-panel {
+  flex: 1;
+  min-height: 0;
   padding-right: 4px;
+  overflow-y: auto;
 }
 
 .summary-overview-grid {
   display: grid;
-  gap: 12px;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
 }
 
 .dense-overview-card {
+  min-height: 216px;
   border: 1px solid #e2e8f0;
   border-radius: 20px;
-  box-shadow: 0 12px 28px rgb(15 23 42 / 0.04);
-  min-height: 216px;
+  box-shadow: 0 12px 28px rgb(15 23 42 / 4%);
 }
 
 .dense-overview-card--hero {
   background:
     radial-gradient(
       circle at top right,
-      rgba(37, 99, 235, 0.14),
+      rgb(37 99 235 / 14%),
       transparent 42%
     ),
-    linear-gradient(135deg, #eff6ff 0%, #ffffff 100%);
+    linear-gradient(135deg, #eff6ff 0%, #fff 100%);
 }
 
 .dense-overview-card__title-row {
   display: flex;
+  gap: 12px;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
 }
 
 .dense-overview-card__title {
-  color: #0f172a;
   font-size: 15px;
   font-weight: 700;
+  color: #0f172a;
 }
 
 .dense-overview-card__hero-value {
-  color: #0f172a;
+  margin-top: 18px;
   font-size: 40px;
   font-weight: 800;
   line-height: 1;
-  margin-top: 18px;
+  color: #0f172a;
 }
 
 .dense-overview-card__hero-label {
-  color: #475569;
-  font-size: 13px;
   margin-top: 6px;
+  font-size: 13px;
+  color: #475569;
 }
 
 .dense-overview-card__metric-grid {
   display: grid;
-  gap: 10px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
   margin-top: 18px;
 }
 
 .dense-overview-card__meta {
-  color: #64748b;
-  font-size: 12px;
   margin-top: 10px;
+  font-size: 12px;
+  color: #64748b;
 }
 
 .dense-overview-card__metric-grid--three {
@@ -3822,44 +3992,44 @@ onUnmounted(() => {
 }
 
 .dense-metric-block {
+  padding: 14px;
+  background: #fff;
   border: 1px solid #e2e8f0;
   border-radius: 16px;
-  background: #ffffff;
-  padding: 14px;
 }
 
 .dense-metric-block--warning {
-  background: linear-gradient(180deg, #fff7ed 0%, #ffffff 100%);
+  background: linear-gradient(180deg, #fff7ed 0%, #fff 100%);
   border-color: #fdba74;
 }
 
 .dense-metric-block--danger {
-  background: linear-gradient(180deg, #fef2f2 0%, #ffffff 100%);
+  background: linear-gradient(180deg, #fef2f2 0%, #fff 100%);
   border-color: #fca5a5;
 }
 
 .dense-metric-block--success {
-  background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 100%);
+  background: linear-gradient(180deg, #f0fdf4 0%, #fff 100%);
   border-color: #86efac;
 }
 
 .dense-metric-block__label {
-  color: #64748b;
   font-size: 12px;
+  color: #64748b;
 }
 
 .dense-metric-block__value {
-  color: #0f172a;
+  margin-top: 10px;
   font-size: 24px;
   font-weight: 800;
   line-height: 1.1;
-  margin-top: 10px;
+  color: #0f172a;
 }
 
 .dense-metric-block__subtext {
-  color: #475569;
-  font-size: 12px;
   margin-top: 6px;
+  font-size: 12px;
+  color: #475569;
 }
 
 .dense-completion-grid {
@@ -3869,47 +4039,47 @@ onUnmounted(() => {
 }
 
 .dense-completion-panel {
-  border-radius: 18px;
   padding: 16px;
+  border-radius: 18px;
 }
 
 .dense-completion-panel--qa {
-  background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+  background: linear-gradient(180deg, #eff6ff 0%, #fff 100%);
   border: 1px solid #bfdbfe;
 }
 
 .dense-completion-panel--dev {
-  background: linear-gradient(180deg, #fff7ed 0%, #ffffff 100%);
+  background: linear-gradient(180deg, #fff7ed 0%, #fff 100%);
   border: 1px solid #fdba74;
 }
 
 .dense-completion-panel--test {
-  background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 100%);
+  background: linear-gradient(180deg, #f0fdf4 0%, #fff 100%);
   border: 1px solid #86efac;
 }
 
 .dense-completion-panel__title {
-  color: #334155;
   font-size: 12px;
   font-weight: 700;
+  color: #334155;
 }
 
 .dense-completion-panel__headline {
-  color: #0f172a;
+  margin: 10px 0 12px;
   font-size: 24px;
   font-weight: 800;
   line-height: 1.2;
-  margin: 10px 0 12px;
+  color: #0f172a;
 }
 
 .dense-completion-panel__meta {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 14px;
-  color: #475569;
+  margin-top: 10px;
   font-size: 12px;
   line-height: 1.6;
-  margin-top: 10px;
+  color: #475569;
 }
 
 .summary-section-card {
@@ -3923,23 +4093,23 @@ onUnmounted(() => {
 
 .summary-section-card__header {
   display: flex;
+  gap: 12px;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
 }
 
 .summary-section-card__title {
-  color: #0f172a;
   font-size: 16px;
   font-weight: 700;
+  color: #0f172a;
 }
 
 .summary-section-card__desc {
-  color: #64748b;
+  max-width: 720px;
+  margin-top: 4px;
   font-size: 12px;
   line-height: 1.6;
-  margin-top: 4px;
-  max-width: 720px;
+  color: #64748b;
 }
 
 .summary-section-card__tag {
@@ -3964,16 +4134,16 @@ onUnmounted(() => {
 
 .dts-chart-card__header {
   display: flex;
+  gap: 12px;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
 }
 
 .dts-chart-card__title {
-  color: #0f172a;
   font-size: 13px;
-  line-height: 18px;
   font-weight: 600;
+  line-height: 18px;
+  color: #0f172a;
 }
 
 .dts-chart-card--wide {
@@ -3987,7 +4157,7 @@ onUnmounted(() => {
 
   .dts-data-grid-wrap,
   .dts-data-grid {
-    min-height: 360px;
+    min-height: 0;
   }
 
   .dts-table-title__filters {
@@ -4001,9 +4171,9 @@ onUnmounted(() => {
   .dts-data-grid :deep(.p-4) {
     position: sticky;
     bottom: 0;
-    background: #ffffff;
     z-index: 3;
-    box-shadow: 0 -6px 16px rgba(15, 23, 42, 0.08);
+    background: #fff;
+    box-shadow: 0 -6px 16px rgb(15 23 42 / 8%);
   }
 
   .dts-data-grid :deep(.el-table__body-wrapper) {
@@ -4017,8 +4187,8 @@ onUnmounted(() => {
 
 @media (max-width: 768px) {
   .dts-statistics-tabs {
-    border-radius: 18px;
     padding: 10px;
+    border-radius: 18px;
   }
 
   .dts-data-card__header,

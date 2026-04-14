@@ -27,7 +27,13 @@ def _normalize_timestamp(value: Any) -> int:
     return max(parsed, 0)
 
 
+def _normalize_optional_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
 class DtsLocalFilterSchema(Schema):
+    dtsBizNoKeyword: str = ""
+    last_dts009_handlerKeywords: list[str] = Field(default_factory=list)
     createAtBegin: int = 0
     createAtEnd: int = 0
     dCloseTimeBegin: int = 0
@@ -37,6 +43,19 @@ class DtsLocalFilterSchema(Schema):
     sConfigFlowTypes: list[str] = Field(default_factory=list)
     auto_pl_group_names: list[str] = Field(default_factory=list)
     uQbiCloseTypeNames: list[str] = Field(default_factory=list)
+
+    @field_validator(
+        "dtsBizNoKeyword",
+        mode="before",
+    )
+    @classmethod
+    def normalize_local_keyword(cls, value: Any):
+        return _normalize_optional_text(value)
+
+    @field_validator("last_dts009_handlerKeywords", mode="before")
+    @classmethod
+    def normalize_local_keyword_list(cls, value: Any):
+        return _normalize_text_list(value)
 
     @field_validator(
         "createAtBegin",
@@ -68,6 +87,8 @@ class DtsStatisticsQuerySchema(Schema):
     severityNos: list[str] = Field(default_factory=list)
     updateTimeBegin: int = 0
     updateTimeEnd: int = 0
+    dtsBizNoKeyword: str = ""
+    last_dts009_handlerKeywords: list[str] = Field(default_factory=list)
     createAtBegin: int = 0
     createAtEnd: int = 0
     dCloseTimeBegin: int = 0
@@ -94,6 +115,19 @@ class DtsStatisticsQuerySchema(Schema):
     @field_validator("severityNos", mode="before")
     @classmethod
     def normalize_severity_nos(cls, value: Any):
+        return _normalize_text_list(value)
+
+    @field_validator(
+        "dtsBizNoKeyword",
+        mode="before",
+    )
+    @classmethod
+    def normalize_keyword(cls, value: Any):
+        return _normalize_optional_text(value)
+
+    @field_validator("last_dts009_handlerKeywords", mode="before")
+    @classmethod
+    def normalize_keyword_list(cls, value: Any):
         return _normalize_text_list(value)
 
     @field_validator(
@@ -359,6 +393,8 @@ class DtsStatisticsExportSchema(Schema):
     severityNos: list[str] = Field(default_factory=list)
     updateTimeBegin: int = 0
     updateTimeEnd: int = 0
+    dtsBizNoKeyword: str = ""
+    last_dts009_handlerKeywords: list[str] = Field(default_factory=list)
     createAtBegin: int = 0
     createAtEnd: int = 0
     dCloseTimeBegin: int = 0
@@ -383,6 +419,19 @@ class DtsStatisticsExportSchema(Schema):
     @field_validator("severityNos", mode="before")
     @classmethod
     def normalize_severity_nos(cls, value: Any):
+        return _normalize_text_list(value)
+
+    @field_validator(
+        "dtsBizNoKeyword",
+        mode="before",
+    )
+    @classmethod
+    def normalize_keyword(cls, value: Any):
+        return _normalize_optional_text(value)
+
+    @field_validator("last_dts009_handlerKeywords", mode="before")
+    @classmethod
+    def normalize_export_keyword_list(cls, value: Any):
         return _normalize_text_list(value)
 
     @field_validator(

@@ -1400,6 +1400,10 @@ def _resolve_local_runtime_filters(
         int(getattr(query, "dCloseTimeEnd", 0) or 0),
     )
     return {
+        "dtsBizNoKeyword": _clean_text(getattr(query, "dtsBizNoKeyword", "")),
+        "last_dts009_handlerKeywords": _normalize_text_list(
+            getattr(query, "last_dts009_handlerKeywords", [])
+        ),
         "createAtBegin": create_at_begin,
         "createAtEnd": create_at_end,
         "dCloseTimeBegin": close_time_begin,
@@ -1657,6 +1661,20 @@ def _match_time_range(value: Any, begin: int, end: int) -> bool:
     return True
 
 
+def _match_keyword_like(value: Any, keyword: str) -> bool:
+    normalized_keyword = _clean_text(keyword).lower()
+    if not normalized_keyword:
+        return True
+    return normalized_keyword in _clean_text(value).lower()
+
+
+def _match_any_keyword_like(value: Any, keywords: list[str]) -> bool:
+    normalized_keywords = _normalize_text_list(keywords)
+    if not normalized_keywords:
+        return True
+    return any(_match_keyword_like(value, keyword) for keyword in normalized_keywords)
+
+
 def _apply_local_filters(
     rows: list[dict[str, Any]],
     query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
@@ -1665,6 +1683,14 @@ def _apply_local_filters(
 ) -> list[dict[str, Any]]:
     ignored = ignored_fields or set()
     local_filters = _resolve_local_runtime_filters(query)
+    dts_biz_no_keyword = (
+        "" if "dtsBizNo" in ignored else _clean_text(local_filters["dtsBizNoKeyword"])
+    )
+    last_dts009_handler_keywords = (
+        []
+        if "last_dts009_handler" in ignored
+        else _normalize_text_list(local_filters["last_dts009_handlerKeywords"])
+    )
     create_at_begin = (
         0 if "createAt" in ignored else int(local_filters["createAtBegin"] or 0)
     )
@@ -1709,6 +1735,13 @@ def _apply_local_filters(
         if (
             config_flow_type_values
             and config_flow_type not in config_flow_type_values
+        ):
+            continue
+        if not _match_keyword_like(row.get("dtsBizNo"), dts_biz_no_keyword):
+            continue
+        if not _match_any_keyword_like(
+            row.get("last_dts009_handler"),
+            last_dts009_handler_keywords,
         ):
             continue
         if not _match_time_range(row.get("createAt"), create_at_begin, create_at_end):
@@ -1898,6 +1931,14 @@ def _build_filtered_result_payload(
     if "updateAt" in ignored:
         update_time_begin = 0
         update_time_end = 0
+    dts_biz_no_keyword = (
+        "" if "dtsBizNo" in ignored else _clean_text(local_filters["dtsBizNoKeyword"])
+    )
+    last_dts009_handler_keywords = (
+        []
+        if "last_dts009_handler" in ignored
+        else _normalize_text_list(local_filters["last_dts009_handlerKeywords"])
+    )
     if "createAt" in ignored:
         local_filters["createAtBegin"] = 0
         local_filters["createAtEnd"] = 0
@@ -1921,6 +1962,8 @@ def _build_filtered_result_payload(
         "severityNos": severity_nos,
         "updateTimeBegin": update_time_begin,
         "updateTimeEnd": update_time_end,
+        "dtsBizNoKeyword": dts_biz_no_keyword,
+        "last_dts009_handlerKeywords": last_dts009_handler_keywords,
         "createAtBegin": int(local_filters.get("createAtBegin") or 0),
         "createAtEnd": int(local_filters.get("createAtEnd") or 0),
         "dCloseTimeBegin": int(local_filters.get("dCloseTimeBegin") or 0),

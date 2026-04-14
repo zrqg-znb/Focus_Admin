@@ -6,6 +6,8 @@ export interface DtsStatisticsFilters {
   severityNos: string[];
   updateTimeBegin: number;
   updateTimeEnd: number;
+  dtsBizNoKeyword: string;
+  last_dts009_handlerKeywords: string[];
   createAtBegin: number;
   createAtEnd: number;
   dCloseTimeBegin: number;
