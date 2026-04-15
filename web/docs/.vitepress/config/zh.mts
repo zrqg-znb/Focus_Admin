@@ -3,6 +3,7 @@ import type { DefaultTheme } from 'vitepress';
 import { defineConfig } from 'vitepress';
 
 import { version } from '../../../package.json';
+import { focusModules, focusModuleGroupLabels } from '../../src/data/modules';
 
 export const zh = defineConfig({
   description: 'Focus Admin - 企业级全栈管理系统',
@@ -41,6 +42,8 @@ export const zh = defineConfig({
 
     sidebar: {
       '/overview/': { base: '/overview/', items: sidebarOverview() },
+      '/modules/': { base: '/modules/', items: sidebarModules() },
+      '/platform/': { base: '/platform/', items: sidebarPlatform() },
       '/backend/': { base: '/backend/', items: sidebarBackend() },
       '/frontend/': { base: '/frontend/', items: sidebarFrontend() },
       '/dev-guide/': { base: '/dev-guide/', items: sidebarDevGuide() },
@@ -59,6 +62,7 @@ function sidebarOverview(): DefaultTheme.SidebarItem[] {
         { link: 'introduction', text: '项目介绍' },
         { link: 'tech-stack', text: '技术栈' },
         { link: 'architecture', text: '系统架构' },
+        { link: 'project-structure', text: '项目结构' },
       ],
     },
     {
@@ -66,7 +70,41 @@ function sidebarOverview(): DefaultTheme.SidebarItem[] {
       text: '快速开始',
       items: [
         { link: 'quick-start', text: '快速开始' },
-        { link: 'project-structure', text: '项目结构' },
+      ],
+    },
+  ];
+}
+
+function sidebarModules(): DefaultTheme.SidebarItem[] {
+  const grouped = Object.entries(focusModuleGroupLabels).map(([group, label]) => ({
+    collapsed: false,
+    items: focusModules
+      .filter((item) => item.group === group)
+      .map((item) => ({
+        link: item.slug,
+        text: item.title,
+      })),
+    text: label,
+  }));
+
+  return [
+    {
+      collapsed: false,
+      text: '模块总览',
+      items: [{ link: 'index', text: '产品模块地图' }],
+    },
+    ...grouped,
+  ];
+}
+
+function sidebarPlatform(): DefaultTheme.SidebarItem[] {
+  return [
+    {
+      collapsed: false,
+      text: '平台能力',
+      items: [
+        { link: 'capabilities', text: '平台能力总览' },
+        { link: 'reference', text: '技术参考入口' },
       ],
     },
   ];
@@ -93,11 +131,15 @@ function sidebarBackend(): DefaultTheme.SidebarItem[] {
       text: '业务模块',
       items: [
         { link: 'apps/project-manager', text: '项目管理' },
-        { link: 'apps/performance', text: '绩效管理' },
+        { link: 'apps/performance', text: '性能监控' },
         { link: 'apps/code-compliance', text: '代码合规' },
         { link: 'apps/code-scan', text: '代码扫描' },
         { link: 'apps/delivery-matrix', text: '交付矩阵' },
         { link: 'apps/integration-report', text: '集成报告' },
+        { link: 'apps/auto-test-report', text: '自动化测试报告' },
+        { link: 'apps/deepaudit', text: 'DeepAudit' },
+        { link: 'apps/failure-mode', text: '故障模式' },
+        { link: 'apps/requirement-center', text: '需求中心' },
       ],
     },
     {
@@ -130,9 +172,17 @@ function sidebarFrontend(): DefaultTheme.SidebarItem[] {
       collapsed: false,
       text: '功能页面',
       items: [
-        { link: 'views/project-manager', text: '项目管理页面' },
-        { link: 'views/performance', text: '绩效管理页面' },
-        { link: 'views/system', text: '系统管理页面' },
+        { link: 'views/dashboard', text: '仪表盘' },
+        { link: 'views/system', text: '系统管理' },
+        { link: 'views/project-manager', text: '项目管理' },
+        { link: 'views/performance', text: '性能监控' },
+        { link: 'views/code-compliance', text: '代码合规' },
+        { link: 'views/code-scan', text: '代码扫描' },
+        { link: 'views/delivery-matrix', text: '交付矩阵' },
+        { link: 'views/integration-report', text: '集成报告' },
+        { link: 'views/auto-test-report', text: '自动化测试报告' },
+        { link: 'views/failure-mode', text: '故障模式' },
+        { link: 'views/requirement-center', text: '需求中心' },
       ],
     },
     {
@@ -186,9 +236,31 @@ function nav(): DefaultTheme.NavItem[] {
       link: '/overview/introduction',
     },
     {
-      activeMatch: '^/backend/',
-      text: '后端文档',
+      activeMatch: '^/modules/',
+      text: '产品模块',
       items: [
+        {
+          text: '模块总览',
+          link: '/modules/index',
+        },
+        ...focusModules.map((item) => ({
+          text: item.title,
+          link: `/modules/${item.slug}`,
+        })),
+      ],
+    },
+    {
+      activeMatch: '^/platform/',
+      text: '平台能力',
+      items: [
+        {
+          text: '能力总览',
+          link: '/platform/capabilities',
+        },
+        {
+          text: '技术参考入口',
+          link: '/platform/reference',
+        },
         {
           text: '核心模块',
           link: '/backend/core/overview',
@@ -202,11 +274,6 @@ function nav(): DefaultTheme.NavItem[] {
           link: '/backend/system/scheduler',
         },
       ],
-    },
-    {
-      activeMatch: '^/frontend/',
-      text: '前端文档',
-      link: '/frontend/overview',
     },
     {
       activeMatch: '^/dev-guide/',
@@ -232,6 +299,10 @@ function nav(): DefaultTheme.NavItem[] {
         {
           link: 'https://github.com/jiangzhikj/zq-platform/releases',
           text: '更新日志',
+        },
+        {
+          link: '/platform/reference',
+          text: '技术参考',
         },
       ],
     },

@@ -1,4 +1,3 @@
-import type { PwaOptions } from '@vite-pwa/vitepress';
 import type { HeadConfig } from 'vitepress';
 
 import { resolve } from 'node:path';
@@ -8,10 +7,6 @@ import {
   viteVxeTableImportsPlugin,
 } from '@vben/vite-config';
 
-import {
-  GitChangelog,
-  GitChangelogMarkdownSection,
-} from '@nolebase/vitepress-plugin-git-changelog/vite';
 import tailwind from 'tailwindcss';
 import { defineConfig, postcssIsolateStyles } from 'vitepress';
 import {
@@ -23,7 +18,7 @@ import { demoPreviewPlugin } from './plugins/demo-preview';
 import { search as zhSearch } from './zh.mts';
 
 export const shared = defineConfig({
-  appearance: 'dark',
+  appearance: true,
   head: head(),
   markdown: {
     preConfig(md) {
@@ -31,7 +26,6 @@ export const shared = defineConfig({
       md.use(groupIconMdPlugin);
     },
   },
-  pwa: pwa(),
   srcDir: 'src',
   themeConfig: {
     i18nRouting: true,
@@ -72,25 +66,6 @@ export const shared = defineConfig({
       stringify: true,
     },
     plugins: [
-      GitChangelog({
-        mapAuthors: [
-          {
-            mapByNameAliases: ['Vben'],
-            name: 'vben',
-            username: 'anncwb',
-          },
-          {
-            name: 'vince',
-            username: 'vince292007',
-          },
-          {
-            name: 'Li Kui',
-            username: 'likui628',
-          },
-        ],
-        repoURL: () => 'https://github.com/jiangzhikj/zq-platform',
-      }),
-      GitChangelogMarkdownSection(),
       viteArchiverPlugin({ outputDir: '.vitepress' }),
       groupIconVitePlugin(),
       await viteVxeTableImportsPlugin(),
@@ -131,36 +106,4 @@ function head(): HeadConfig[] {
     ['meta', { content: 'Focus Admin 项目文档', name: 'keywords' }],
     ['link', { href: '/favicon.ico', rel: 'icon' }],
   ];
-}
-
-function pwa(): PwaOptions {
-  return {
-    includeManifestIcons: false,
-    manifest: {
-      description:
-        'Focus Admin - 企业级全栈管理系统文档',
-      icons: [
-        {
-          sizes: '192x192',
-          src: '/pwa-192x192.png',
-          type: 'image/png',
-        },
-        {
-          sizes: '512x512',
-          src: '/pwa-512x512.png',
-          type: 'image/png',
-        },
-      ],
-      id: '/',
-      name: 'Focus Admin Doc',
-      short_name: 'focus_admin_doc',
-      theme_color: '#ffffff',
-    },
-    outDir: resolve(process.cwd(), '.vitepress/dist'),
-    registerType: 'autoUpdate',
-    workbox: {
-      globPatterns: ['**/*.{css,js,html,svg,png,ico,txt,woff2}'],
-      maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-    },
-  };
 }

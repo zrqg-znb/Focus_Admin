@@ -28,7 +28,7 @@ backend-django/
 │   │   ├── milestone/       # 里程碑
 │   │   ├── code_quality/    # 代码质量
 │   │   └── dts/             # DTS 管理
-│   ├── performance/         # 绩效管理模块
+│   ├── performance/         # 性能监控模块
 │   ├── code_compliance/     # 代码合规模块
 │   ├── delivery_matrix/     # 交付矩阵模块
 │   ├── integration_report/  # 集成报告模块
