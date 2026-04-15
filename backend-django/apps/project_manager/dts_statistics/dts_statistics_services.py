@@ -32,6 +32,8 @@ from core.pl.pl_model import PlGroup
 from core.user.user_model import User
 from scheduler.module.executor import scheduler_task
 
+from apps.project_manager.project.project_model import Project
+
 from .dts_statistics_model import (
     DtsExtension,
     DtsStatisticsExportTask,
@@ -100,6 +102,7 @@ _DEFAULT_FIELDS = [
     "sSubmitUserName",
     "sSubsystemNoName",
     "sConfigFlowType",
+    "sProdCName",
     "sProdFamilyNoName",
     "sProdXtdNoName",
     "iTestBackCount",
@@ -123,6 +126,7 @@ _FIELD_SET_SUPPORTED_FIELDS = {
     "sDeptOneNoName",
     "sSubsystemNoName",
     "sConfigFlowType",
+    "auto_source_type",
     "auto_pl_group_name",
     "uQbiCloseTypeName",
 }
@@ -994,6 +998,7 @@ def _normalize_source_row(
     team_name = _clean_text(row.get("sDeptOneNoName"))
     subsystem_name = _clean_text(row.get("sSubsystemNoName"))
     config_flow_type = _clean_text(row.get("sConfigFlowType"))
+    project_code = _clean_text(row.get("sProdCName"))
     close_days = _clean_text(row.get("iNumOfCloseDays"))
     if not close_days:
         close_days = _clean_text(_compute_process_days(create_at, close_time))
@@ -1014,6 +1019,7 @@ def _normalize_source_row(
         "sSubmitUserName": _clean_text(row.get("sSubmitUserName")) or None,
         "sSubsystemNoName": subsystem_name or None,
         "sConfigFlowType": config_flow_type or None,
+        "sProdCName": project_code or None,
         "sProdFamilyNoName": _clean_text(row.get("sProdFamilyNoName")) or None,
         "sProdXtdNoName": _clean_text(row.get("sProdXtdNoName")) or None,
         "iTestBackCount": _clean_text(row.get("iTestBackCount")) or None,
@@ -1039,11 +1045,28 @@ def _normalize_source_row(
         "serverityNo": _resolve_severity_code(row) or None,
         "productId": product_id,
         "productName": product_name,
+        "projectName": None,
         "auto_source_type": None,
         "auto_pl_group_id": None,
         "auto_pl_group_name": None,
     }
     return normalized
+
+
+def _load_project_name_by_code(project_codes: Iterable[str]) -> dict[str, str]:
+    unique_codes = _normalize_text_list(list(project_codes))
+    if not unique_codes:
+        return {}
+    rows = (
+        Project.objects.filter(code__in=unique_codes, is_deleted=False)
+        .values("code", "name")
+        .all()
+    )
+    return {
+        _clean_text(item.get("code")): _clean_text(item.get("name"))
+        for item in rows
+        if _clean_text(item.get("code")) and _clean_text(item.get("name"))
+    }
 
 
 def _load_users_by_username(usernames: Iterable[str]) -> dict[str, User]:
@@ -1182,6 +1205,9 @@ def _filter_and_enrich_snapshot_rows(
     users_by_username = _load_users_by_username(usernames)
     dept_flag_by_username = _build_dept_base_soft_flag_map(users_by_username)
     auto_pl_group_by_username = _load_auto_pl_group_by_username(usernames)
+    project_name_by_code = _load_project_name_by_code(
+        _clean_text(item.get("sProdCName")) for item in rows
+    )
 
     counters = {
         "merged_total": len(rows),
@@ -1211,6 +1237,8 @@ def _filter_and_enrich_snapshot_rows(
             )
 
         enriched = dict(row)
+        project_code = _clean_text(row.get("sProdCName"))
+        enriched["projectName"] = project_name_by_code.get(project_code) or None
         enriched["auto_source_type"] = _resolve_auto_source_type(row)
         enriched["auto_pl_group_id"] = auto_pl_group_id
         enriched["auto_pl_group_name"] = auto_pl_group_name
@@ -1276,7 +1304,7 @@ def _load_extensions(defect_nos: list[str]) -> dict[str, DtsExtension]:
         return {}
     qs = (
         DtsExtension.objects.filter(defect_no__in=defect_nos)
-        .select_related("pl_group", "dev_owner", "test_owner")
+        .select_related("dev_owner", "test_owner")
         .all()
     )
     return {item.defect_no: item for item in qs}
@@ -1294,11 +1322,10 @@ def _merge_defect_with_extension(
     if extension is None:
         merged.update(
             {
-                "qa_category": None,
-                "pl_group_id": None,
-                "pl_group_name": None,
                 "is_downstream": None,
                 "process_quality_type": None,
+                "issue_intro_stage": None,
+                "need_aar": None,
                 "need_dev_analyze": None,
                 "need_test_analyze": None,
                 "dev_owner_id": None,
@@ -1309,13 +1336,19 @@ def _merge_defect_with_extension(
                 "is_test_analyzed": None,
                 "qa_remark": None,
                 "dev_sub_category": [],
+                "dev_feature": None,
                 "dev_reason": None,
                 "dev_intro_reason": None,
+                "dev_issue_intro_point": None,
+                "dev_issue_probability": None,
+                "dev_common_issue_type": None,
+                "dev_control_points": [],
+                "dev_intro_point_analysis": None,
                 "dev_improvements": [],
                 "dev_non_base_desc": [],
+                "dev_aar_link": None,
                 "dev_asset_link": None,
                 "dev_status": None,
-                "test_feature": None,
                 "test_miss_reason": [],
                 "test_standard_desc": None,
                 "test_improvements": [],
@@ -1326,11 +1359,10 @@ def _merge_defect_with_extension(
         )
         return merged
 
-    merged["qa_category"] = extension.qa_category
-    merged["pl_group_id"] = extension.pl_group_id
-    merged["pl_group_name"] = extension.pl_group.name if extension.pl_group else None
     merged["is_downstream"] = extension.is_downstream
     merged["process_quality_type"] = extension.process_quality_type
+    merged["issue_intro_stage"] = extension.issue_intro_stage
+    merged["need_aar"] = extension.need_aar
     merged["need_dev_analyze"] = extension.need_dev_analyze
     merged["need_test_analyze"] = extension.need_test_analyze
     merged["dev_owner_id"] = extension.dev_owner_id
@@ -1350,14 +1382,20 @@ def _merge_defect_with_extension(
     merged["qa_remark"] = extension.qa_remark
 
     merged["dev_sub_category"] = extension.dev_sub_category or []
+    merged["dev_feature"] = extension.dev_feature
     merged["dev_reason"] = extension.dev_reason
     merged["dev_intro_reason"] = extension.dev_intro_reason
+    merged["dev_issue_intro_point"] = extension.dev_issue_intro_point
+    merged["dev_issue_probability"] = extension.dev_issue_probability
+    merged["dev_common_issue_type"] = extension.dev_common_issue_type
+    merged["dev_control_points"] = extension.dev_control_points or []
+    merged["dev_intro_point_analysis"] = extension.dev_intro_point_analysis
     merged["dev_improvements"] = extension.dev_improvements or []
     merged["dev_non_base_desc"] = extension.dev_non_base_desc or []
+    merged["dev_aar_link"] = extension.dev_aar_link
     merged["dev_asset_link"] = extension.dev_asset_link
     merged["dev_status"] = extension.dev_status
 
-    merged["test_feature"] = extension.test_feature
     merged["test_miss_reason"] = extension.test_miss_reason or []
     merged["test_standard_desc"] = extension.test_standard_desc
     merged["test_improvements"] = extension.test_improvements or []
@@ -1401,6 +1439,15 @@ def _resolve_local_runtime_filters(
     )
     return {
         "dtsBizNoKeyword": _clean_text(getattr(query, "dtsBizNoKeyword", "")),
+        "projectKeyword": _clean_text(getattr(query, "projectKeyword", "")),
+        "briefDescKeyword": _clean_text(getattr(query, "briefDescKeyword", "")),
+        "currentHandlerKeyword": _clean_text(
+            getattr(query, "currentHandlerKeyword", "")
+        ),
+        "creatorKeyword": _clean_text(getattr(query, "creatorKeyword", "")),
+        "sSubmitUserNameKeyword": _clean_text(
+            getattr(query, "sSubmitUserNameKeyword", "")
+        ),
         "last_dts009_handlerKeywords": _normalize_text_list(
             getattr(query, "last_dts009_handlerKeywords", [])
         ),
@@ -1414,6 +1461,9 @@ def _resolve_local_runtime_filters(
         ),
         "sConfigFlowTypes": _normalize_text_list(
             getattr(query, "sConfigFlowTypes", [])
+        ),
+        "auto_source_types": _normalize_text_list(
+            getattr(query, "auto_source_types", [])
         ),
         "auto_pl_group_names": _normalize_text_list(
             getattr(query, "auto_pl_group_names", [])
@@ -1686,6 +1736,27 @@ def _apply_local_filters(
     dts_biz_no_keyword = (
         "" if "dtsBizNo" in ignored else _clean_text(local_filters["dtsBizNoKeyword"])
     )
+    project_keyword = (
+        ""
+        if "projectName" in ignored
+        else _clean_text(local_filters["projectKeyword"])
+    )
+    brief_desc_keyword = (
+        "" if "briefDesc" in ignored else _clean_text(local_filters["briefDescKeyword"])
+    )
+    current_handler_keyword = (
+        ""
+        if "currentHandler" in ignored
+        else _clean_text(local_filters["currentHandlerKeyword"])
+    )
+    creator_keyword = (
+        "" if "creator" in ignored else _clean_text(local_filters["creatorKeyword"])
+    )
+    submit_user_name_keyword = (
+        ""
+        if "sSubmitUserName" in ignored
+        else _clean_text(local_filters["sSubmitUserNameKeyword"])
+    )
     last_dts009_handler_keywords = (
         []
         if "last_dts009_handler" in ignored
@@ -1716,6 +1787,11 @@ def _apply_local_filters(
         for item in _normalize_text_list(local_filters["sConfigFlowTypes"])
         if item and item in _ALLOWED_CONFIG_FLOW_TYPES
     }
+    auto_source_values = set() if "auto_source_type" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["auto_source_types"])
+        if item
+    }
     auto_pl_group_values = set() if "auto_pl_group_name" in ignored else {
         item
         for item in _normalize_text_list(local_filters["auto_pl_group_names"])
@@ -1739,6 +1815,25 @@ def _apply_local_filters(
             continue
         if not _match_keyword_like(row.get("dtsBizNo"), dts_biz_no_keyword):
             continue
+        if project_keyword and not (
+            _match_keyword_like(row.get("projectName"), project_keyword)
+            or _match_keyword_like(row.get("sProdCName"), project_keyword)
+        ):
+            continue
+        if not _match_keyword_like(row.get("briefDesc"), brief_desc_keyword):
+            continue
+        if not _match_keyword_like(
+            row.get("currentHandler"),
+            current_handler_keyword,
+        ):
+            continue
+        if not _match_keyword_like(row.get("creator"), creator_keyword):
+            continue
+        if not _match_keyword_like(
+            row.get("sSubmitUserName"),
+            submit_user_name_keyword,
+        ):
+            continue
         if not _match_any_keyword_like(
             row.get("last_dts009_handler"),
             last_dts009_handler_keywords,
@@ -1755,6 +1850,11 @@ def _apply_local_filters(
         if dept_values and _clean_text(row.get("sDeptOneNoName")) not in dept_values:
             continue
         if subsystem_values and _clean_text(row.get("sSubsystemNoName")) not in subsystem_values:
+            continue
+        if (
+            auto_source_values
+            and _clean_text(row.get("auto_source_type")) not in auto_source_values
+        ):
             continue
         if (
             auto_pl_group_values
@@ -1934,6 +2034,25 @@ def _build_filtered_result_payload(
     dts_biz_no_keyword = (
         "" if "dtsBizNo" in ignored else _clean_text(local_filters["dtsBizNoKeyword"])
     )
+    project_keyword = (
+        "" if "projectName" in ignored else _clean_text(local_filters["projectKeyword"])
+    )
+    brief_desc_keyword = (
+        "" if "briefDesc" in ignored else _clean_text(local_filters["briefDescKeyword"])
+    )
+    current_handler_keyword = (
+        ""
+        if "currentHandler" in ignored
+        else _clean_text(local_filters["currentHandlerKeyword"])
+    )
+    creator_keyword = (
+        "" if "creator" in ignored else _clean_text(local_filters["creatorKeyword"])
+    )
+    submit_user_name_keyword = (
+        ""
+        if "sSubmitUserName" in ignored
+        else _clean_text(local_filters["sSubmitUserNameKeyword"])
+    )
     last_dts009_handler_keywords = (
         []
         if "last_dts009_handler" in ignored
@@ -1951,6 +2070,8 @@ def _build_filtered_result_payload(
         local_filters["sSubsystemNoNames"] = []
     if "sConfigFlowType" in ignored:
         local_filters["sConfigFlowTypes"] = []
+    if "auto_source_type" in ignored:
+        local_filters["auto_source_types"] = []
     if "auto_pl_group_name" in ignored:
         local_filters["auto_pl_group_names"] = []
     if "uQbiCloseTypeName" in ignored:
@@ -1963,6 +2084,11 @@ def _build_filtered_result_payload(
         "updateTimeBegin": update_time_begin,
         "updateTimeEnd": update_time_end,
         "dtsBizNoKeyword": dts_biz_no_keyword,
+        "projectKeyword": project_keyword,
+        "briefDescKeyword": brief_desc_keyword,
+        "currentHandlerKeyword": current_handler_keyword,
+        "creatorKeyword": creator_keyword,
+        "sSubmitUserNameKeyword": submit_user_name_keyword,
         "last_dts009_handlerKeywords": last_dts009_handler_keywords,
         "createAtBegin": int(local_filters.get("createAtBegin") or 0),
         "createAtEnd": int(local_filters.get("createAtEnd") or 0),
@@ -1974,6 +2100,9 @@ def _build_filtered_result_payload(
         ),
         "sConfigFlowTypes": _normalize_text_list(
             local_filters.get("sConfigFlowTypes")
+        ),
+        "auto_source_types": _normalize_text_list(
+            local_filters.get("auto_source_types")
         ),
         "auto_pl_group_names": _normalize_text_list(
             local_filters.get("auto_pl_group_names")
@@ -2115,7 +2244,7 @@ def _load_extensions_map_for_defects(
     for chunk in _iter_chunks(defect_nos):
         items = (
             DtsExtension.objects.filter(defect_no__in=chunk)
-            .select_related("pl_group", "dev_owner", "test_owner")
+            .select_related("dev_owner", "test_owner")
             .all()
         )
         for item in items:
@@ -2440,6 +2569,46 @@ def _format_cycle_integer_value(value: Any) -> str:
     return str(int(rounded))
 
 
+def _resolve_project_display_value(item: dict[str, Any]) -> str:
+    project_name = _clean_text(item.get("projectName"))
+    project_code = _clean_text(item.get("sProdCName"))
+    if project_name and project_code and project_name != project_code:
+        return f"{project_name} ({project_code})"
+    return project_name or project_code or "-"
+
+
+def _resolve_project_distribution_label(item: dict[str, Any]) -> str:
+    return (
+        _clean_text(item.get("projectName"))
+        or _clean_text(item.get("sProdCName"))
+        or _clean_text(item.get("sProdXtdNoName"))
+        or _clean_text(item.get("productName"))
+        or "未识别项目"
+    )
+
+
+def _has_value_for_summary(value: Any) -> bool:
+    if isinstance(value, list):
+        return any(_clean_text(item) for item in value)
+    return bool(_clean_text(value))
+
+
+def _is_qa_filled(ext: DtsExtension) -> bool:
+    return any(
+        [
+            _has_value_for_summary(ext.is_downstream),
+            _has_value_for_summary(ext.process_quality_type),
+            _has_value_for_summary(ext.issue_intro_stage),
+            _has_value_for_summary(ext.need_aar),
+            _has_value_for_summary(ext.need_dev_analyze),
+            _has_value_for_summary(ext.need_test_analyze),
+            _has_value_for_summary(ext.is_dev_analyzed),
+            _has_value_for_summary(ext.is_test_analyzed),
+            _has_value_for_summary(ext.qa_remark),
+        ]
+    )
+
+
 _EXPORT_COLUMN_SPECS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
     ("问题单号", lambda item: _clean_text(item.get("dtsBizNo"))),
     ("简要描述", lambda item: _clean_text(item.get("briefDesc"))),
@@ -2455,6 +2624,7 @@ _EXPORT_COLUMN_SPECS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
     ("当前处理人", lambda item: _clean_text(item.get("currentHandler"))),
     ("提单人工号", lambda item: _clean_text(item.get("creator"))),
     ("提单人姓名", lambda item: _clean_text(item.get("sSubmitUserName"))),
+    ("项目", _resolve_project_display_value),
     (
         "子系统",
         lambda item: _clean_text(item.get("sSubsystemNoName")),
@@ -2471,25 +2641,31 @@ _EXPORT_COLUMN_SPECS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
     ("定位周期", lambda item: _format_cycle_integer_value(item.get("iNumOfLocateDays"))),
     ("修改周期", lambda item: _format_cycle_integer_value(item.get("iNumofModifyDays"))),
     ("回归测试周期", lambda item: _format_cycle_integer_value(item.get("iNumofTestDays"))),
-    ("QA大类", lambda item: _clean_text(item.get("qa_category"))),
-    ("责任PL组", lambda item: _clean_text(item.get("pl_group_name"))),
     ("是否下游", lambda item: _clean_text(item.get("is_downstream"))),
     ("过程质量分类", lambda item: _clean_text(item.get("process_quality_type"))),
+    ("问题引入阶段", lambda item: _clean_text(item.get("issue_intro_stage"))),
+    ("是否需要AAR", lambda item: _clean_text(item.get("need_aar"))),
     ("需开发分析", lambda item: _clean_text(item.get("need_dev_analyze"))),
     ("需测试分析", lambda item: _clean_text(item.get("need_test_analyze"))),
-    ("开发责任人", lambda item: _clean_text(item.get("dev_owner_name"))),
-    ("测试责任人", lambda item: _clean_text(item.get("test_owner_name"))),
     ("开发分析完成", lambda item: _clean_text(item.get("is_dev_analyzed"))),
     ("测试分析完成", lambda item: _clean_text(item.get("is_test_analyzed"))),
     ("QA备注", lambda item: _clean_text(item.get("qa_remark"))),
+    ("开发责任人", lambda item: _clean_text(item.get("dev_owner_name"))),
+    ("特性/功能", lambda item: _clean_text(item.get("dev_feature"))),
     ("问题小类", lambda item: _join_lines(item.get("dev_sub_category"))),
     ("问题原因", lambda item: _clean_text(item.get("dev_reason"))),
     ("引入原因", lambda item: _clean_text(item.get("dev_intro_reason"))),
+    ("问题引入点", lambda item: _clean_text(item.get("dev_issue_intro_point"))),
+    ("问题概率", lambda item: _clean_text(item.get("dev_issue_probability"))),
+    ("是否共性问题", lambda item: _clean_text(item.get("dev_common_issue_type"))),
+    ("需要补强的开发控制点", lambda item: _join_lines(item.get("dev_control_points"))),
+    ("引入点分析", lambda item: _clean_text(item.get("dev_intro_point_analysis"))),
     ("开发填报-改进措施", lambda item: _join_lines(item.get("dev_improvements"))),
     ("非底软说明", lambda item: _join_lines(item.get("dev_non_base_desc"))),
+    ("AAR链接", lambda item: _clean_text(item.get("dev_aar_link"))),
     ("开发填报-落地资产链接", lambda item: _clean_text(item.get("dev_asset_link"))),
     ("开发填报-改进状态", lambda item: _clean_text(item.get("dev_status"))),
-    ("特效/功能", lambda item: _clean_text(item.get("test_feature"))),
+    ("测试责任人", lambda item: _clean_text(item.get("test_owner_name"))),
     ("漏测原因", lambda item: _join_lines(item.get("test_miss_reason"))),
     (
         "规范问题描述",
@@ -2793,7 +2969,7 @@ def get_dts_statistics_summary(
         source_counter[_clean_text(defect.get("auto_source_type"))] += 1
         auto_pl_group_counter[_clean_text(defect.get("auto_pl_group_name"))] += 1
         handler_counter[_clean_text(defect.get("currentHandler"))] += 1
-        project_counter[_clean_text(defect.get("sProdXtdNoName") or defect.get("productName"))] += 1
+        project_counter[_resolve_project_distribution_label(defect)] += 1
 
         if _is_closed(defect):
             closed_count += 1
@@ -2820,34 +2996,34 @@ def get_dts_statistics_summary(
     qa_filled_count = 0
     dev_analyzed_count = 0
     test_analyzed_count = 0
-    qa_category_counter: Counter[str] = Counter()
     dev_sub_category_counter: Counter[str] = Counter()
     test_miss_reason_counter: Counter[str] = Counter()
-    pl_group_counter: Counter[str] = Counter()
     action_status_counter: Counter[str] = Counter()
 
     for chunk in _iter_chunks(defect_nos):
         extensions = (
             DtsExtension.objects.filter(defect_no__in=chunk)
-            .select_related("pl_group")
             .only(
                 "defect_no",
-                "qa_category",
+                "is_downstream",
+                "process_quality_type",
+                "issue_intro_stage",
+                "need_aar",
+                "need_dev_analyze",
+                "need_test_analyze",
                 "is_dev_analyzed",
                 "is_test_analyzed",
+                "qa_remark",
                 "dev_sub_category",
                 "test_miss_reason",
-                "pl_group",
-                "pl_group__name",
                 "dev_status",
                 "test_status",
             )
             .all()
         )
         for ext in extensions:
-            if _clean_text(ext.qa_category):
+            if _is_qa_filled(ext):
                 qa_filled_count += 1
-                qa_category_counter[_clean_text(ext.qa_category)] += 1
             if _normalize_yes(ext.is_dev_analyzed):
                 dev_analyzed_count += 1
             if _normalize_yes(ext.is_test_analyzed):
@@ -2857,8 +3033,6 @@ def get_dts_statistics_summary(
                 dev_sub_category_counter[_clean_text(item)] += 1
             for item in ext.test_miss_reason or []:
                 test_miss_reason_counter[_clean_text(item)] += 1
-            if ext.pl_group and _clean_text(ext.pl_group.name):
-                pl_group_counter[_clean_text(ext.pl_group.name)] += 1
 
             action_status = (
                 _clean_text(ext.dev_status) or _clean_text(ext.test_status) or ""
@@ -2893,10 +3067,8 @@ def get_dts_statistics_summary(
         "source_dist": _distribution(source_counter),
         "auto_pl_group_dist": _distribution(auto_pl_group_counter, top_n=20),
         "handler_dist": _distribution(handler_counter, top_n=20),
-        "qa_category_dist": _distribution(qa_category_counter),
         "dev_sub_category_dist": _distribution(dev_sub_category_counter, top_n=20),
         "test_miss_reason_dist": _distribution(test_miss_reason_counter, top_n=20),
-        "pl_group_dist": _distribution(pl_group_counter),
         "project_dist": _distribution(project_counter),
         "action_status_dist": _distribution(action_status_counter),
         "snapshot": snapshot,
@@ -2926,9 +3098,12 @@ def get_dts_statistics_dict_options() -> dict[str, Any]:
 
     code_map = {
         "yes_no": "yes_no",
-        "qa_category": "dts_qa_category",
-        "process_quality_type": "dts_process_quality_type",
+        "issue_intro_stage": "dts_issue_intro_stage",
         "dev_sub_category": "dts_dev_sub_category",
+        "dev_issue_intro_point": "dts_dev_issue_intro_point",
+        "dev_issue_probability": "dts_dev_issue_probability",
+        "dev_common_issue_type": "dts_dev_common_issue_type",
+        "dev_control_points": "dts_dev_control_point",
         "dev_non_base_desc": "dts_dev_non_base_desc",
         "test_miss_reason": "dts_test_miss_reason",
         "action_status": "dts_action_status",

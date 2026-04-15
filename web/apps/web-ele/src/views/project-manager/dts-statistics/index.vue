@@ -48,6 +48,7 @@ import { useZqTable } from '#/components/zq-table';
 import {
   fetchDtsDictOptionsCached,
   formatCycleIntegerDisplay,
+  formatProjectDisplay,
   resolveDtsGovernanceTagMeta,
   resolveSeverityMeta,
   useColumns,
@@ -57,6 +58,15 @@ import DtsEditDrawer from './DtsEditDrawer.vue';
 defineOptions({ name: 'DtsStatistics' });
 
 type TabKey = 'dashboard' | 'list';
+type DtsFieldSetKey =
+  | 'auto_pl_group_name'
+  | 'auto_source_type'
+  | 'sConfigFlowType'
+  | 'sDeptOneNoName'
+  | 'sSubsystemNoName'
+  | 'uQbiCloseTypeName';
+type DtsFieldSetOptionsState = Record<DtsFieldSetKey, string[]>;
+type DtsFieldSetLoadingState = Record<DtsFieldSetKey, boolean>;
 
 const PRODUCT_OPTIONS = [
   { label: '座舱', value: '250539396', disabled: false },
@@ -118,6 +128,11 @@ function createDefaultFilters(): DtsStatisticsFilters {
     updateTimeBegin: toTimestampMs(start),
     updateTimeEnd: toTimestampMs(end),
     dtsBizNoKeyword: '',
+    projectKeyword: '',
+    briefDescKeyword: '',
+    currentHandlerKeyword: '',
+    creatorKeyword: '',
+    sSubmitUserNameKeyword: '',
     last_dts009_handlerKeywords: [],
     createAtBegin: 0,
     createAtEnd: 0,
@@ -127,6 +142,7 @@ function createDefaultFilters(): DtsStatisticsFilters {
     sDeptOneNoNames: [],
     sSubsystemNoNames: [],
     sConfigFlowTypes: [],
+    auto_source_types: [],
     auto_pl_group_names: [],
   };
 }
@@ -160,10 +176,8 @@ const summary = ref<DtsSummary>({
   source_dist: [],
   auto_pl_group_dist: [],
   handler_dist: [],
-  qa_category_dist: [],
   dev_sub_category_dist: [],
   test_miss_reason_dist: [],
-  pl_group_dist: [],
   project_dist: [],
   action_status_dist: [],
   snapshot: null,
@@ -230,6 +244,11 @@ function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
     updateTimeBegin: Math.max(begin, 0),
     updateTimeEnd: Math.max(end, 0),
     dtsBizNoKeyword: String(source.dtsBizNoKeyword || '').trim(),
+    projectKeyword: String(source.projectKeyword || '').trim(),
+    briefDescKeyword: String(source.briefDescKeyword || '').trim(),
+    currentHandlerKeyword: String(source.currentHandlerKeyword || '').trim(),
+    creatorKeyword: String(source.creatorKeyword || '').trim(),
+    sSubmitUserNameKeyword: String(source.sSubmitUserNameKeyword || '').trim(),
     last_dts009_handlerKeywords: normalizeStringArray(
       source.last_dts009_handlerKeywords,
     ),
@@ -241,6 +260,7 @@ function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
     sDeptOneNoNames: normalizeStringArray(source.sDeptOneNoNames),
     sSubsystemNoNames: normalizeStringArray(source.sSubsystemNoNames),
     sConfigFlowTypes: normalizeStringArray(source.sConfigFlowTypes),
+    auto_source_types: normalizeStringArray(source.auto_source_types),
     auto_pl_group_names: normalizeStringArray(source.auto_pl_group_names),
   };
 }
@@ -256,6 +276,11 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
     updateTimeBegin: payload.updateTimeBegin || 0,
     updateTimeEnd: payload.updateTimeEnd || 0,
     dtsBizNoKeyword: payload.dtsBizNoKeyword || '',
+    projectKeyword: payload.projectKeyword || '',
+    briefDescKeyword: payload.briefDescKeyword || '',
+    currentHandlerKeyword: payload.currentHandlerKeyword || '',
+    creatorKeyword: payload.creatorKeyword || '',
+    sSubmitUserNameKeyword: payload.sSubmitUserNameKeyword || '',
     last_dts009_handlerKeywords: [
       ...(payload.last_dts009_handlerKeywords || []),
     ].sort(),
@@ -267,6 +292,7 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
     sDeptOneNoNames: [...(payload.sDeptOneNoNames || [])].sort(),
     sSubsystemNoNames: [...(payload.sSubsystemNoNames || [])].sort(),
     sConfigFlowTypes: [...(payload.sConfigFlowTypes || [])].sort(),
+    auto_source_types: [...(payload.auto_source_types || [])].sort(),
     auto_pl_group_names: [...(payload.auto_pl_group_names || [])].sort(),
   });
 }
@@ -321,7 +347,7 @@ function disableOutOfWindowDate(date: Date) {
   return toTimestampMs(date) < resolveAllowedUpdateWindowBegin();
 }
 
-async function loadFieldSetOptions(fields: string[]) {
+async function loadFieldSetOptions(fields: DtsFieldSetKey[]) {
   if (!appliedFilters.value || queryLoading.value) {
     return;
   }
@@ -391,10 +417,8 @@ async function fetchSummary(force = false) {
       source_dist: [],
       auto_pl_group_dist: [],
       handler_dist: [],
-      qa_category_dist: [],
       dev_sub_category_dist: [],
       test_miss_reason_dist: [],
-      pl_group_dist: [],
       project_dist: [],
       action_status_dist: [],
       snapshot: null,
@@ -513,6 +537,21 @@ function buildKeywordFilterButtonText(value: string) {
 const selectedDtsBizNoKeywordLabel = computed(() =>
   buildKeywordFilterButtonText(filters.value.dtsBizNoKeyword),
 );
+const selectedProjectKeywordLabel = computed(() =>
+  buildKeywordFilterButtonText(filters.value.projectKeyword),
+);
+const selectedBriefDescKeywordLabel = computed(() =>
+  buildKeywordFilterButtonText(filters.value.briefDescKeyword),
+);
+const selectedCurrentHandlerKeywordLabel = computed(() =>
+  buildKeywordFilterButtonText(filters.value.currentHandlerKeyword),
+);
+const selectedCreatorKeywordLabel = computed(() =>
+  buildKeywordFilterButtonText(filters.value.creatorKeyword),
+);
+const selectedSubmitUserNameKeywordLabel = computed(() =>
+  buildKeywordFilterButtonText(filters.value.sSubmitUserNameKeyword),
+);
 const selectedLastDts009HandlerLabel = computed(() => {
   const count = filters.value.last_dts009_handlerKeywords.length;
   return count > 0 ? `${count} 项` : '全部';
@@ -535,6 +574,10 @@ const selectedCloseTypeLabel = computed(() => {
 });
 const selectedConfigFlowTypeLabel = computed(() => {
   const count = filters.value.sConfigFlowTypes.length;
+  return count > 0 ? `${count} 项` : '全部';
+});
+const selectedAutoSourceLabel = computed(() => {
+  const count = filters.value.auto_source_types.length;
   return count > 0 ? `${count} 项` : '全部';
 });
 const selectedDeptLabel = computed(() => {
@@ -587,17 +630,28 @@ const selectedProductLabel = computed(() => {
 const flowFilterVisible = ref(false);
 const severityFilterVisible = ref(false);
 const dtsBizNoFilterVisible = ref(false);
+const projectFilterVisible = ref(false);
+const briefDescFilterVisible = ref(false);
+const currentHandlerFilterVisible = ref(false);
+const creatorFilterVisible = ref(false);
+const submitUserNameFilterVisible = ref(false);
 const lastDts009HandlerFilterVisible = ref(false);
 const createAtFilterVisible = ref(false);
 const closeTimeFilterVisible = ref(false);
 const closeTypeFilterVisible = ref(false);
 const configFlowTypeFilterVisible = ref(false);
+const autoSourceFilterVisible = ref(false);
 const deptFilterVisible = ref(false);
 const subsystemFilterVisible = ref(false);
 const autoPlGroupFilterVisible = ref(false);
 const draftFlowStates = ref<string[]>([]);
 const draftSeverityNos = ref<string[]>([]);
 const draftDtsBizNoKeyword = ref('');
+const draftProjectKeyword = ref('');
+const draftBriefDescKeyword = ref('');
+const draftCurrentHandlerKeyword = ref('');
+const draftCreatorKeyword = ref('');
+const draftSubmitUserNameKeyword = ref('');
 const draftLastDts009HandlerKeywords = ref<string[]>([]);
 const draftCreateAtBegin = ref<Date | null>(null);
 const draftCreateAtEnd = ref<Date | null>(null);
@@ -605,24 +659,28 @@ const draftCloseTimeBegin = ref<Date | null>(null);
 const draftCloseTimeEnd = ref<Date | null>(null);
 const draftCloseTypeNames = ref<string[]>([]);
 const draftConfigFlowTypes = ref<string[]>([]);
+const draftAutoSourceTypes = ref<string[]>([]);
 const draftDeptNames = ref<string[]>([]);
 const draftSubsystemNames = ref<string[]>([]);
 const draftAutoPlGroupNames = ref<string[]>([]);
 const draftCloseTypeKeyword = ref('');
 const draftConfigFlowTypeKeyword = ref('');
+const draftAutoSourceKeyword = ref('');
 const draftDeptKeyword = ref('');
 const draftSubsystemKeyword = ref('');
 const draftAutoPlGroupKeyword = ref('');
-const fieldSetOptions = ref<Record<string, string[]>>({
+const fieldSetOptions = ref<DtsFieldSetOptionsState>({
   uQbiCloseTypeName: [],
   sConfigFlowType: [],
+  auto_source_type: [],
   sDeptOneNoName: [],
   sSubsystemNoName: [],
   auto_pl_group_name: [],
 });
-const fieldSetLoading = ref<Record<string, boolean>>({
+const fieldSetLoading = ref<DtsFieldSetLoadingState>({
   uQbiCloseTypeName: false,
   sConfigFlowType: false,
+  auto_source_type: false,
   sDeptOneNoName: false,
   sSubsystemNoName: false,
   auto_pl_group_name: false,
@@ -637,6 +695,12 @@ const filteredConfigFlowTypeOptions = computed(() =>
   filterFieldOptions(
     fieldSetOptions.value.sConfigFlowType || [],
     draftConfigFlowTypeKeyword.value,
+  ),
+);
+const filteredAutoSourceOptions = computed(() =>
+  filterFieldOptions(
+    fieldSetOptions.value.auto_source_type || [],
+    draftAutoSourceKeyword.value,
   ),
 );
 const filteredDeptOptions = computed(() =>
@@ -760,6 +824,53 @@ watch(
 );
 
 watch(
+  () => projectFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftProjectKeyword.value = filters.value.projectKeyword || '';
+    }
+  },
+);
+
+watch(
+  () => briefDescFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftBriefDescKeyword.value = filters.value.briefDescKeyword || '';
+    }
+  },
+);
+
+watch(
+  () => currentHandlerFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftCurrentHandlerKeyword.value =
+        filters.value.currentHandlerKeyword || '';
+    }
+  },
+);
+
+watch(
+  () => creatorFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftCreatorKeyword.value = filters.value.creatorKeyword || '';
+    }
+  },
+);
+
+watch(
+  () => submitUserNameFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftSubmitUserNameKeyword.value =
+        filters.value.sSubmitUserNameKeyword || '';
+    }
+  },
+);
+
+watch(
   () => lastDts009HandlerFilterVisible.value,
   (visible) => {
     if (visible) {
@@ -820,6 +931,22 @@ watch(
       draftConfigFlowTypes.value = [...filters.value.sConfigFlowTypes];
       draftConfigFlowTypeKeyword.value = '';
       void loadFieldSetOptions(['sConfigFlowType']);
+    }
+  },
+);
+
+watch(
+  () => autoSourceFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      if (!appliedFilters.value || queryLoading.value) {
+        autoSourceFilterVisible.value = false;
+        ElMessage.warning('请先完成当前查询，再打开候选值筛选');
+        return;
+      }
+      draftAutoSourceTypes.value = [...filters.value.auto_source_types];
+      draftAutoSourceKeyword.value = '';
+      void loadFieldSetOptions(['auto_source_type']);
     }
   },
 );
@@ -1001,6 +1128,62 @@ function resetDtsBizNoFilterDraft() {
   draftDtsBizNoKeyword.value = '';
 }
 
+async function confirmProjectFilter() {
+  filters.value.projectKeyword = String(draftProjectKeyword.value || '').trim();
+  projectFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetProjectFilterDraft() {
+  draftProjectKeyword.value = '';
+}
+
+async function confirmBriefDescFilter() {
+  filters.value.briefDescKeyword = String(
+    draftBriefDescKeyword.value || '',
+  ).trim();
+  briefDescFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetBriefDescFilterDraft() {
+  draftBriefDescKeyword.value = '';
+}
+
+async function confirmCurrentHandlerFilter() {
+  filters.value.currentHandlerKeyword = String(
+    draftCurrentHandlerKeyword.value || '',
+  ).trim();
+  currentHandlerFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetCurrentHandlerFilterDraft() {
+  draftCurrentHandlerKeyword.value = '';
+}
+
+async function confirmCreatorFilter() {
+  filters.value.creatorKeyword = String(draftCreatorKeyword.value || '').trim();
+  creatorFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetCreatorFilterDraft() {
+  draftCreatorKeyword.value = '';
+}
+
+async function confirmSubmitUserNameFilter() {
+  filters.value.sSubmitUserNameKeyword = String(
+    draftSubmitUserNameKeyword.value || '',
+  ).trim();
+  submitUserNameFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetSubmitUserNameFilterDraft() {
+  draftSubmitUserNameKeyword.value = '';
+}
+
 async function confirmLastDts009HandlerFilter() {
   filters.value.last_dts009_handlerKeywords = normalizeStringArray(
     draftLastDts009HandlerKeywords.value,
@@ -1069,6 +1252,19 @@ async function confirmConfigFlowTypeFilter() {
 function resetConfigFlowTypeFilterDraft() {
   draftConfigFlowTypes.value = [];
   draftConfigFlowTypeKeyword.value = '';
+}
+
+async function confirmAutoSourceFilter() {
+  filters.value.auto_source_types = normalizeStringArray(
+    draftAutoSourceTypes.value,
+  );
+  autoSourceFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetAutoSourceFilterDraft() {
+  draftAutoSourceTypes.value = [];
+  draftAutoSourceKeyword.value = '';
 }
 
 async function confirmDeptFilter() {
@@ -1278,10 +1474,6 @@ const { renderEcharts: renderAutoPlGroupChart } =
   useEcharts(autoPlGroupChartRef);
 const handlerChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderHandlerChart } = useEcharts(handlerChartRef);
-const qaCategoryChartRef = ref<EchartsUIType>();
-const { renderEcharts: renderQaCategoryChart } = useEcharts(qaCategoryChartRef);
-const plGroupChartRef = ref<EchartsUIType>();
-const { renderEcharts: renderPlGroupChart } = useEcharts(plGroupChartRef);
 const projectChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderProjectChart } = useEcharts(projectChartRef);
 const actionStatusChartRef = ref<EchartsUIType>();
@@ -1550,22 +1742,6 @@ watch(
   { deep: true, immediate: true },
 );
 
-watch(
-  [canRenderCharts, () => summary.value.qa_category_dist] as const,
-  ([ready, rows]) => {
-    if (!ready) return;
-    renderDistBar(renderQaCategoryChart, rows, 'QA类目分布', '#34d399');
-  },
-  { deep: true, immediate: true },
-);
-watch(
-  [canRenderCharts, () => summary.value.pl_group_dist] as const,
-  ([ready, rows]) => {
-    if (!ready) return;
-    renderDistBar(renderPlGroupChart, rows, '责任PL组分布', '#a78bfa');
-  },
-  { deep: true, immediate: true },
-);
 watch(
   [canRenderCharts, () => summary.value.action_status_dist] as const,
   ([ready, rows]) => {
@@ -1963,6 +2139,280 @@ onUnmounted(() => {
                     </div>
                   </template>
 
+                  <template #header-briefDesc>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">简要描述</span>
+                      <ElPopover
+                        v-model:visible="briefDescFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="280"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': Boolean(filters.briefDescKeyword),
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedBriefDescKeywordLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-model="draftBriefDescKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词模糊搜索简要描述"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetBriefDescFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmBriefDescFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-projectName>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">项目</span>
+                      <ElPopover
+                        v-model:visible="projectFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="280"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': Boolean(filters.projectKeyword),
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedProjectKeywordLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-model="draftProjectKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入项目名或项目编码模糊搜索"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetProjectFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmProjectFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-currentHandler>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">当前处理人</span>
+                      <ElPopover
+                        v-model:visible="currentHandlerFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="280"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': Boolean(
+                                filters.currentHandlerKeyword,
+                              ),
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedCurrentHandlerKeywordLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-model="draftCurrentHandlerKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词模糊搜索当前处理人"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetCurrentHandlerFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmCurrentHandlerFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-creator>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">提单人工号</span>
+                      <ElPopover
+                        v-model:visible="creatorFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="280"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': Boolean(filters.creatorKeyword),
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedCreatorKeywordLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-model="draftCreatorKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词模糊搜索提单人工号"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetCreatorFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmCreatorFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-sSubmitUserName>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">提单人姓名</span>
+                      <ElPopover
+                        v-model:visible="submitUserNameFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="280"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': Boolean(
+                                filters.sSubmitUserNameKeyword,
+                              ),
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedSubmitUserNameKeywordLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-model="draftSubmitUserNameKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词模糊搜索提单人姓名"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetSubmitUserNameFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmSubmitUserNameFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
                   <template #header-createAt>
                     <div class="dts-header-filter" @click.stop>
                       <span class="dts-header-filter__label">提单时间</span>
@@ -2312,6 +2762,93 @@ onUnmounted(() => {
                     </div>
                   </template>
 
+                  <template #header-auto_source_type>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">提单来源</span>
+                      <ElPopover
+                        v-model:visible="autoSourceFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="260"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': filters.auto_source_types.length > 0,
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedAutoSourceLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-if="!fieldSetLoading.auto_source_type"
+                              v-model="draftAutoSourceKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词筛选提单来源"
+                            />
+                            <div
+                              v-if="fieldSetLoading.auto_source_type"
+                              class="dts-header-filter-panel__tip"
+                            >
+                              正在加载候选值...
+                            </div>
+                            <ElEmpty
+                              v-else-if="
+                                fieldSetOptions.auto_source_type.length === 0
+                              "
+                              :image-size="56"
+                              description="暂无候选值"
+                            />
+                            <ElEmpty
+                              v-else-if="filteredAutoSourceOptions.length === 0"
+                              :image-size="56"
+                              description="暂无匹配项"
+                            />
+                            <ElCheckboxGroup
+                              v-else
+                              v-model="draftAutoSourceTypes"
+                              class="dts-header-filter-check-group"
+                            >
+                              <ElCheckbox
+                                v-for="item in filteredAutoSourceOptions"
+                                :key="item"
+                                :label="item"
+                                :value="item"
+                              >
+                                {{ item }}
+                              </ElCheckbox>
+                            </ElCheckboxGroup>
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetAutoSourceFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmAutoSourceFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
                   <template #header-sDeptOneNoName>
                     <div class="dts-header-filter" @click.stop>
                       <span class="dts-header-filter__label">提出方部门</span>
@@ -2644,24 +3181,16 @@ onUnmounted(() => {
                     </div>
                   </template>
 
-                  <template #cell-qa_category="{ row }">
-                    <span v-if="!row.qa_category" class="text-slate-400">
-                      -
-                    </span>
-                    <ElTag
-                      v-else
-                      :type="
-                        resolveGovTag('qa_category', row.qa_category)?.type ||
-                        'info'
-                      "
-                      effect="light"
-                      size="small"
-                    >
-                      {{
-                        resolveGovTag('qa_category', row.qa_category)?.label ||
-                        row.qa_category
-                      }}
-                    </ElTag>
+                  <template #cell-projectName="{ row }">
+                    <div class="dts-project-cell">
+                      <span>{{ formatProjectDisplay(row) }}</span>
+                      <span
+                        v-if="!row.projectName && row.sProdCName"
+                        class="dts-project-cell__hint"
+                      >
+                        未匹配项目
+                      </span>
+                    </div>
                   </template>
 
                   <template #cell-is_downstream="{ row }">
@@ -2691,12 +3220,27 @@ onUnmounted(() => {
                     >
                       -
                     </span>
+                    <ElTooltip
+                      v-else
+                      :content="row.process_quality_type"
+                      placement="top-start"
+                    >
+                      <span class="cursor-help">{{
+                        row.process_quality_type
+                      }}</span>
+                    </ElTooltip>
+                  </template>
+
+                  <template #cell-issue_intro_stage="{ row }">
+                    <span v-if="!row.issue_intro_stage" class="text-slate-400">
+                      -
+                    </span>
                     <ElTag
                       v-else
                       :type="
                         resolveGovTag(
-                          'process_quality_type',
-                          row.process_quality_type,
+                          'issue_intro_stage',
+                          row.issue_intro_stage,
                         )?.type || 'info'
                       "
                       effect="light"
@@ -2704,9 +3248,26 @@ onUnmounted(() => {
                     >
                       {{
                         resolveGovTag(
-                          'process_quality_type',
-                          row.process_quality_type,
-                        )?.label || row.process_quality_type
+                          'issue_intro_stage',
+                          row.issue_intro_stage,
+                        )?.label || row.issue_intro_stage
+                      }}
+                    </ElTag>
+                  </template>
+
+                  <template #cell-need_aar="{ row }">
+                    <span v-if="!row.need_aar" class="text-slate-400">-</span>
+                    <ElTag
+                      v-else
+                      :type="
+                        resolveGovTag('need_aar', row.need_aar)?.type || 'info'
+                      "
+                      effect="light"
+                      size="small"
+                    >
+                      {{
+                        resolveGovTag('need_aar', row.need_aar)?.label ||
+                        row.need_aar
                       }}
                     </ElTag>
                   </template>
@@ -2809,6 +3370,33 @@ onUnmounted(() => {
                       {{
                         resolveGovTag('dev_status', row.dev_status)?.label ||
                         row.dev_status
+                      }}
+                    </ElTag>
+                  </template>
+
+                  <template #cell-dev_common_issue_type="{ row }">
+                    <span
+                      v-if="!row.dev_common_issue_type"
+                      class="text-slate-400"
+                    >
+                      -
+                    </span>
+                    <ElTag
+                      v-else
+                      :type="
+                        resolveGovTag(
+                          'dev_common_issue_type',
+                          row.dev_common_issue_type,
+                        )?.type || 'info'
+                      "
+                      effect="light"
+                      size="small"
+                    >
+                      {{
+                        resolveGovTag(
+                          'dev_common_issue_type',
+                          row.dev_common_issue_type,
+                        )?.label || row.dev_common_issue_type
                       }}
                     </ElTag>
                   </template>
@@ -2924,6 +3512,45 @@ onUnmounted(() => {
                       >
                         <ElTag type="info" effect="plain" size="small">
                           +{{ (row.dev_non_base_desc || []).length - 2 }}
+                        </ElTag>
+                      </ElTooltip>
+                    </div>
+                  </template>
+
+                  <template #cell-dev_control_points="{ row }">
+                    <span
+                      v-if="(row.dev_control_points || []).length === 0"
+                      class="text-slate-400"
+                    >
+                      -
+                    </span>
+                    <div v-else class="dts-cell-tags">
+                      <template
+                        v-for="item in takeFirstTwo(row.dev_control_points)"
+                        :key="item"
+                      >
+                        <ElTag
+                          :type="
+                            resolveGovTag('dev_control_points', item)?.type ||
+                            'info'
+                          "
+                          effect="light"
+                          size="small"
+                        >
+                          {{
+                            resolveGovTag('dev_control_points', item)?.label ||
+                            item
+                          }}
+                        </ElTag>
+                      </template>
+
+                      <ElTooltip
+                        v-if="(row.dev_control_points || []).length > 2"
+                        :content="formatArrayTooltip(row.dev_control_points)"
+                        placement="top-start"
+                      >
+                        <ElTag type="info" effect="plain" size="small">
+                          +{{ (row.dev_control_points || []).length - 2 }}
                         </ElTag>
                       </ElTooltip>
                     </div>
@@ -3399,8 +4026,7 @@ onUnmounted(() => {
                     <div>
                       <div class="summary-section-card__title">治理填报</div>
                       <div class="summary-section-card__desc">
-                        查看 QA 类目、责任 PL
-                        组、措施状态与开发/测试原因分布，辅助后续治理与复盘。
+                        查看措施状态与开发/测试原因分布，辅助后续治理与复盘。
                       </div>
                     </div>
                     <ElTag
@@ -3408,36 +4034,12 @@ onUnmounted(() => {
                       type="primary"
                       effect="plain"
                     >
-                      {{ summary.qa_category_dist.length }} 类 QA 类目
+                      {{ summary.action_status_dist.length }} 类措施状态
                     </ElTag>
                   </div>
                 </template>
 
                 <div class="dts-charts-grid">
-                  <ElCard shadow="never" class="dts-chart-card">
-                    <template #header>
-                      <div class="dts-chart-card__header">
-                        <div class="dts-chart-card__title">QA类目分布</div>
-                        <ElTag type="success" effect="plain">
-                          {{ summary.qa_category_dist.length }} 类
-                        </ElTag>
-                      </div>
-                    </template>
-                    <EchartsUI ref="qaCategoryChartRef" height="320px" />
-                  </ElCard>
-
-                  <ElCard shadow="never" class="dts-chart-card">
-                    <template #header>
-                      <div class="dts-chart-card__header">
-                        <div class="dts-chart-card__title">责任PL组分布</div>
-                        <ElTag type="primary" effect="plain">
-                          {{ summary.pl_group_dist.length }} 组
-                        </ElTag>
-                      </div>
-                    </template>
-                    <EchartsUI ref="plGroupChartRef" height="320px" />
-                  </ElCard>
-
                   <ElCard shadow="never" class="dts-chart-card">
                     <template #header>
                       <div class="dts-chart-card__header">
@@ -3866,6 +4468,19 @@ onUnmounted(() => {
   justify-content: center;
 }
 
+.dts-project-cell {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: center;
+  line-height: 1.4;
+}
+
+.dts-project-cell__hint {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
 .dts-data-guide {
   display: flex;
   flex: 1;
@@ -3939,11 +4554,7 @@ onUnmounted(() => {
 
 .dense-overview-card--hero {
   background:
-    radial-gradient(
-      circle at top right,
-      rgb(37 99 235 / 14%),
-      transparent 42%
-    ),
+    radial-gradient(circle at top right, rgb(37 99 235 / 14%), transparent 42%),
     linear-gradient(135deg, #eff6ff 0%, #fff 100%);
 }
 

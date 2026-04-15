@@ -7,6 +7,11 @@ export interface DtsStatisticsFilters {
   updateTimeBegin: number;
   updateTimeEnd: number;
   dtsBizNoKeyword: string;
+  projectKeyword: string;
+  briefDescKeyword: string;
+  currentHandlerKeyword: string;
+  creatorKeyword: string;
+  sSubmitUserNameKeyword: string;
   last_dts009_handlerKeywords: string[];
   createAtBegin: number;
   createAtEnd: number;
@@ -16,6 +21,7 @@ export interface DtsStatisticsFilters {
   sDeptOneNoNames: string[];
   sSubsystemNoNames: string[];
   sConfigFlowTypes: string[];
+  auto_source_types: string[];
   auto_pl_group_names: string[];
 }
 
@@ -40,6 +46,7 @@ export interface DtsMergedDefect {
   sSubmitUserName?: null | string;
   sSubsystemNoName?: null | string;
   sConfigFlowType?: null | string;
+  sProdCName?: null | string;
   sProdFamilyNoName?: null | string;
   sProdXtdNoName?: null | string;
   iTestBackCount?: null | string;
@@ -60,15 +67,15 @@ export interface DtsMergedDefect {
   serverityNo?: null | string;
   productId?: null | string;
   productName?: null | string;
+  projectName?: null | string;
   auto_source_type?: null | string;
   auto_pl_group_id?: null | string;
   auto_pl_group_name?: null | string;
 
-  qa_category?: null | string;
-  pl_group_id?: null | string;
-  pl_group_name?: null | string;
   is_downstream?: null | string;
   process_quality_type?: null | string;
+  issue_intro_stage?: null | string;
+  need_aar?: null | string;
   need_dev_analyze?: null | string;
   need_test_analyze?: null | string;
   dev_owner_id?: null | string;
@@ -80,14 +87,20 @@ export interface DtsMergedDefect {
   qa_remark?: null | string;
 
   dev_sub_category: string[];
+  dev_feature?: null | string;
   dev_reason?: null | string;
   dev_intro_reason?: null | string;
+  dev_issue_intro_point?: null | string;
+  dev_issue_probability?: null | string;
+  dev_common_issue_type?: null | string;
+  dev_control_points: string[];
+  dev_intro_point_analysis?: null | string;
   dev_improvements: string[];
   dev_non_base_desc: string[];
+  dev_aar_link?: null | string;
   dev_asset_link?: null | string;
   dev_status?: null | string;
 
-  test_feature?: null | string;
   test_miss_reason: string[];
   test_standard_desc?: null | string;
   test_improvements: string[];
@@ -114,10 +127,10 @@ export interface DtsListResponse {
 }
 
 export interface DtsExtensionSavePayload {
-  qa_category?: null | string;
-  pl_group_id?: null | string;
   is_downstream?: null | string;
   process_quality_type?: null | string;
+  issue_intro_stage?: null | string;
+  need_aar?: null | string;
   need_dev_analyze?: null | string;
   need_test_analyze?: null | string;
   dev_owner_id?: null | string;
@@ -127,14 +140,20 @@ export interface DtsExtensionSavePayload {
   qa_remark?: null | string;
 
   dev_sub_category?: string[];
+  dev_feature?: null | string;
   dev_reason?: null | string;
   dev_intro_reason?: null | string;
+  dev_issue_intro_point?: null | string;
+  dev_issue_probability?: null | string;
+  dev_common_issue_type?: null | string;
+  dev_control_points?: string[];
+  dev_intro_point_analysis?: null | string;
   dev_improvements?: string[];
   dev_non_base_desc?: string[];
+  dev_aar_link?: null | string;
   dev_asset_link?: null | string;
   dev_status?: null | string;
 
-  test_feature?: null | string;
   test_miss_reason?: string[];
   test_standard_desc?: null | string;
   test_improvements?: string[];
@@ -173,10 +192,8 @@ export interface DtsSummary {
   source_dist: DtsDistributionItem[];
   auto_pl_group_dist: DtsDistributionItem[];
   handler_dist: DtsDistributionItem[];
-  qa_category_dist: DtsDistributionItem[];
   dev_sub_category_dist: DtsDistributionItem[];
   test_miss_reason_dist: DtsDistributionItem[];
-  pl_group_dist: DtsDistributionItem[];
   project_dist: DtsDistributionItem[];
   action_status_dist: DtsDistributionItem[];
   snapshot?: DtsSnapshotMeta | null;
@@ -228,9 +245,12 @@ export interface DtsDictOption {
 
 export interface DtsDictOptions {
   yes_no: DtsDictOption[];
-  qa_category: DtsDictOption[];
-  process_quality_type: DtsDictOption[];
+  issue_intro_stage: DtsDictOption[];
   dev_sub_category: DtsDictOption[];
+  dev_issue_intro_point: DtsDictOption[];
+  dev_issue_probability: DtsDictOption[];
+  dev_common_issue_type: DtsDictOption[];
+  dev_control_points: DtsDictOption[];
   dev_non_base_desc: DtsDictOption[];
   test_miss_reason: DtsDictOption[];
   action_status: DtsDictOption[];

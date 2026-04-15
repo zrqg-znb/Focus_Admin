@@ -33,6 +33,11 @@ def _normalize_optional_text(value: Any) -> str:
 
 class DtsLocalFilterSchema(Schema):
     dtsBizNoKeyword: str = ""
+    projectKeyword: str = ""
+    briefDescKeyword: str = ""
+    currentHandlerKeyword: str = ""
+    creatorKeyword: str = ""
+    sSubmitUserNameKeyword: str = ""
     last_dts009_handlerKeywords: list[str] = Field(default_factory=list)
     createAtBegin: int = 0
     createAtEnd: int = 0
@@ -41,11 +46,17 @@ class DtsLocalFilterSchema(Schema):
     sDeptOneNoNames: list[str] = Field(default_factory=list)
     sSubsystemNoNames: list[str] = Field(default_factory=list)
     sConfigFlowTypes: list[str] = Field(default_factory=list)
+    auto_source_types: list[str] = Field(default_factory=list)
     auto_pl_group_names: list[str] = Field(default_factory=list)
     uQbiCloseTypeNames: list[str] = Field(default_factory=list)
 
     @field_validator(
         "dtsBizNoKeyword",
+        "projectKeyword",
+        "briefDescKeyword",
+        "currentHandlerKeyword",
+        "creatorKeyword",
+        "sSubmitUserNameKeyword",
         mode="before",
     )
     @classmethod
@@ -72,6 +83,7 @@ class DtsLocalFilterSchema(Schema):
         "sDeptOneNoNames",
         "sSubsystemNoNames",
         "sConfigFlowTypes",
+        "auto_source_types",
         "auto_pl_group_names",
         "uQbiCloseTypeNames",
         mode="before",
@@ -88,6 +100,11 @@ class DtsStatisticsQuerySchema(Schema):
     updateTimeBegin: int = 0
     updateTimeEnd: int = 0
     dtsBizNoKeyword: str = ""
+    projectKeyword: str = ""
+    briefDescKeyword: str = ""
+    currentHandlerKeyword: str = ""
+    creatorKeyword: str = ""
+    sSubmitUserNameKeyword: str = ""
     last_dts009_handlerKeywords: list[str] = Field(default_factory=list)
     createAtBegin: int = 0
     createAtEnd: int = 0
@@ -96,6 +113,7 @@ class DtsStatisticsQuerySchema(Schema):
     sDeptOneNoNames: list[str] = Field(default_factory=list)
     sSubsystemNoNames: list[str] = Field(default_factory=list)
     sConfigFlowTypes: list[str] = Field(default_factory=list)
+    auto_source_types: list[str] = Field(default_factory=list)
     auto_pl_group_names: list[str] = Field(default_factory=list)
     uQbiCloseTypeNames: list[str] = Field(default_factory=list)
     pageIndex: int = 1
@@ -119,6 +137,11 @@ class DtsStatisticsQuerySchema(Schema):
 
     @field_validator(
         "dtsBizNoKeyword",
+        "projectKeyword",
+        "briefDescKeyword",
+        "currentHandlerKeyword",
+        "creatorKeyword",
+        "sSubmitUserNameKeyword",
         mode="before",
     )
     @classmethod
@@ -147,6 +170,7 @@ class DtsStatisticsQuerySchema(Schema):
         "sDeptOneNoNames",
         "sSubsystemNoNames",
         "sConfigFlowTypes",
+        "auto_source_types",
         "auto_pl_group_names",
         "uQbiCloseTypeNames",
         mode="before",
@@ -168,10 +192,10 @@ class DtsStatisticsQuerySchema(Schema):
 
 
 class DtsExtensionSaveSchema(Schema):
-    qa_category: Optional[str] = None
-    pl_group_id: Optional[str] = None
     is_downstream: Optional[str] = None
     process_quality_type: Optional[str] = None
+    issue_intro_stage: Optional[str] = None
+    need_aar: Optional[str] = None
     need_dev_analyze: Optional[str] = None
     need_test_analyze: Optional[str] = None
     dev_owner_id: Optional[str] = None
@@ -181,14 +205,20 @@ class DtsExtensionSaveSchema(Schema):
     qa_remark: Optional[str] = None
 
     dev_sub_category: list[str] = Field(default_factory=list)
+    dev_feature: Optional[str] = None
     dev_reason: Optional[str] = None
     dev_intro_reason: Optional[str] = None
+    dev_issue_intro_point: Optional[str] = None
+    dev_issue_probability: Optional[str] = None
+    dev_common_issue_type: Optional[str] = None
+    dev_control_points: list[str] = Field(default_factory=list)
+    dev_intro_point_analysis: Optional[str] = None
     dev_improvements: list[str] = Field(default_factory=list)
     dev_non_base_desc: list[str] = Field(default_factory=list)
+    dev_aar_link: Optional[str] = None
     dev_asset_link: Optional[str] = None
     dev_status: Optional[str] = None
 
-    test_feature: Optional[str] = None
     test_miss_reason: list[str] = Field(default_factory=list)
     test_standard_desc: Optional[str] = None
     test_improvements: list[str] = Field(default_factory=list)
@@ -198,6 +228,7 @@ class DtsExtensionSaveSchema(Schema):
 
     @field_validator(
         "dev_sub_category",
+        "dev_control_points",
         "dev_non_base_desc",
         "dev_improvements",
         "test_miss_reason",
@@ -220,10 +251,10 @@ class DtsExtensionSaveSchema(Schema):
         return normalized
 
     @field_validator(
-        "qa_category",
-        "pl_group_id",
         "is_downstream",
         "process_quality_type",
+        "issue_intro_stage",
+        "need_aar",
         "need_dev_analyze",
         "need_test_analyze",
         "dev_owner_id",
@@ -231,11 +262,16 @@ class DtsExtensionSaveSchema(Schema):
         "is_dev_analyzed",
         "is_test_analyzed",
         "qa_remark",
+        "dev_feature",
         "dev_reason",
         "dev_intro_reason",
+        "dev_issue_intro_point",
+        "dev_issue_probability",
+        "dev_common_issue_type",
+        "dev_intro_point_analysis",
+        "dev_aar_link",
         "dev_asset_link",
         "dev_status",
-        "test_feature",
         "test_standard_desc",
         "test_non_test_desc",
         "test_asset_link",
@@ -266,6 +302,7 @@ class DataLakeDefectSchema(Schema):
     sSubsystemNoName: Optional[str] = None
     sConfigFlowType: Optional[str] = None
     uQbiCloseTypeName: Optional[str] = None
+    sProdCName: Optional[str] = None
     sProdFamilyNoName: Optional[str] = None
     sProdXtdNoName: Optional[str] = None
     iTestBackCount: Optional[str] = None
@@ -288,17 +325,17 @@ class DataLakeDefectSchema(Schema):
     serverityNo: Optional[str] = None
     productId: Optional[str] = None
     productName: Optional[str] = None
+    projectName: Optional[str] = None
     auto_source_type: Optional[str] = None
     auto_pl_group_id: Optional[str] = None
     auto_pl_group_name: Optional[str] = None
 
 
 class DtsMergedDefectSchema(DataLakeDefectSchema):
-    qa_category: Optional[str] = None
-    pl_group_id: Optional[str] = None
-    pl_group_name: Optional[str] = None
     is_downstream: Optional[str] = None
     process_quality_type: Optional[str] = None
+    issue_intro_stage: Optional[str] = None
+    need_aar: Optional[str] = None
     need_dev_analyze: Optional[str] = None
     need_test_analyze: Optional[str] = None
     dev_owner_id: Optional[str] = None
@@ -310,14 +347,20 @@ class DtsMergedDefectSchema(DataLakeDefectSchema):
     qa_remark: Optional[str] = None
 
     dev_sub_category: list[str] = Field(default_factory=list)
+    dev_feature: Optional[str] = None
     dev_reason: Optional[str] = None
     dev_intro_reason: Optional[str] = None
+    dev_issue_intro_point: Optional[str] = None
+    dev_issue_probability: Optional[str] = None
+    dev_common_issue_type: Optional[str] = None
+    dev_control_points: list[str] = Field(default_factory=list)
+    dev_intro_point_analysis: Optional[str] = None
     dev_improvements: list[str] = Field(default_factory=list)
     dev_non_base_desc: list[str] = Field(default_factory=list)
+    dev_aar_link: Optional[str] = None
     dev_asset_link: Optional[str] = None
     dev_status: Optional[str] = None
 
-    test_feature: Optional[str] = None
     test_miss_reason: list[str] = Field(default_factory=list)
     test_standard_desc: Optional[str] = None
     test_improvements: list[str] = Field(default_factory=list)
@@ -373,10 +416,8 @@ class DtsSummarySchema(Schema):
     source_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     auto_pl_group_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     handler_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
-    qa_category_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     dev_sub_category_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     test_miss_reason_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
-    pl_group_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     project_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     action_status_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     snapshot: Optional[DtsSnapshotMetaSchema] = None
@@ -394,6 +435,11 @@ class DtsStatisticsExportSchema(Schema):
     updateTimeBegin: int = 0
     updateTimeEnd: int = 0
     dtsBizNoKeyword: str = ""
+    projectKeyword: str = ""
+    briefDescKeyword: str = ""
+    currentHandlerKeyword: str = ""
+    creatorKeyword: str = ""
+    sSubmitUserNameKeyword: str = ""
     last_dts009_handlerKeywords: list[str] = Field(default_factory=list)
     createAtBegin: int = 0
     createAtEnd: int = 0
@@ -402,6 +448,7 @@ class DtsStatisticsExportSchema(Schema):
     sDeptOneNoNames: list[str] = Field(default_factory=list)
     sSubsystemNoNames: list[str] = Field(default_factory=list)
     sConfigFlowTypes: list[str] = Field(default_factory=list)
+    auto_source_types: list[str] = Field(default_factory=list)
     auto_pl_group_names: list[str] = Field(default_factory=list)
     uQbiCloseTypeNames: list[str] = Field(default_factory=list)
 
@@ -423,6 +470,11 @@ class DtsStatisticsExportSchema(Schema):
 
     @field_validator(
         "dtsBizNoKeyword",
+        "projectKeyword",
+        "briefDescKeyword",
+        "currentHandlerKeyword",
+        "creatorKeyword",
+        "sSubmitUserNameKeyword",
         mode="before",
     )
     @classmethod
@@ -451,6 +503,7 @@ class DtsStatisticsExportSchema(Schema):
         "sDeptOneNoNames",
         "sSubsystemNoNames",
         "sConfigFlowTypes",
+        "auto_source_types",
         "auto_pl_group_names",
         "uQbiCloseTypeNames",
         mode="before",
@@ -523,9 +576,12 @@ class DtsDictOptionsSchema(Schema):
     """
 
     yes_no: list[DtsDictOptionSchema] = Field(default_factory=list)
-    qa_category: list[DtsDictOptionSchema] = Field(default_factory=list)
-    process_quality_type: list[DtsDictOptionSchema] = Field(default_factory=list)
+    issue_intro_stage: list[DtsDictOptionSchema] = Field(default_factory=list)
     dev_sub_category: list[DtsDictOptionSchema] = Field(default_factory=list)
+    dev_issue_intro_point: list[DtsDictOptionSchema] = Field(default_factory=list)
+    dev_issue_probability: list[DtsDictOptionSchema] = Field(default_factory=list)
+    dev_common_issue_type: list[DtsDictOptionSchema] = Field(default_factory=list)
+    dev_control_points: list[DtsDictOptionSchema] = Field(default_factory=list)
     dev_non_base_desc: list[DtsDictOptionSchema] = Field(default_factory=list)
     test_miss_reason: list[DtsDictOptionSchema] = Field(default_factory=list)
     action_status: list[DtsDictOptionSchema] = Field(default_factory=list)

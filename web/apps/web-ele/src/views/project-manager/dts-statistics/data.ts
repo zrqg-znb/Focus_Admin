@@ -1,12 +1,10 @@
 import type { VbenFormSchema } from '#/adapter/form';
-import type { PlGroup } from '#/api/core/pl';
 import type {
   DtsDictOptions,
   DtsMergedDefect,
 } from '#/api/project-manager/dts-statistics';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
-import { getAllPlApi } from '#/api/core/pl';
 import { getDtsDictOptions } from '#/api/project-manager/dts-statistics';
 
 type Columns = ZqTableGridOptions<DtsMergedDefect>['columns'];
@@ -44,11 +42,18 @@ function normalizeDtsDictOptions(
   const safeBundle = bundle || {};
   const normalized: DtsDictOptions = {
     yes_no: normalizeSelectOptions(safeBundle.yes_no),
-    qa_category: normalizeSelectOptions(safeBundle.qa_category),
-    process_quality_type: normalizeSelectOptions(
-      safeBundle.process_quality_type,
-    ),
+    issue_intro_stage: normalizeSelectOptions(safeBundle.issue_intro_stage),
     dev_sub_category: normalizeSelectOptions(safeBundle.dev_sub_category),
+    dev_issue_intro_point: normalizeSelectOptions(
+      safeBundle.dev_issue_intro_point,
+    ),
+    dev_issue_probability: normalizeSelectOptions(
+      safeBundle.dev_issue_probability,
+    ),
+    dev_common_issue_type: normalizeSelectOptions(
+      safeBundle.dev_common_issue_type,
+    ),
+    dev_control_points: normalizeSelectOptions(safeBundle.dev_control_points),
     dev_non_base_desc: normalizeSelectOptions(safeBundle.dev_non_base_desc),
     test_miss_reason: normalizeSelectOptions(safeBundle.test_miss_reason),
     action_status: normalizeSelectOptions(safeBundle.action_status),
@@ -98,16 +103,21 @@ export interface DtsDictTagMeta {
 }
 
 export type DtsGovernanceField =
+  | 'action_status'
+  | 'dev_common_issue_type'
+  | 'dev_control_points'
+  | 'dev_issue_intro_point'
+  | 'dev_issue_probability'
   | 'dev_non_base_desc'
   | 'dev_status'
   | 'dev_sub_category'
   | 'is_dev_analyzed'
   | 'is_downstream'
   | 'is_test_analyzed'
+  | 'issue_intro_stage'
+  | 'need_aar'
   | 'need_dev_analyze'
   | 'need_test_analyze'
-  | 'process_quality_type'
-  | 'qa_category'
   | 'test_miss_reason'
   | 'test_status';
 
@@ -125,6 +135,21 @@ function resolveOptionsForField(
 ): SelectOption[] {
   const safeOptions = dictOptions || normalizeDtsDictOptions(null);
   switch (field) {
+    case 'action_status': {
+      return safeOptions.action_status;
+    }
+    case 'dev_common_issue_type': {
+      return safeOptions.dev_common_issue_type;
+    }
+    case 'dev_control_points': {
+      return safeOptions.dev_control_points;
+    }
+    case 'dev_issue_intro_point': {
+      return safeOptions.dev_issue_intro_point;
+    }
+    case 'dev_issue_probability': {
+      return safeOptions.dev_issue_probability;
+    }
     case 'dev_non_base_desc': {
       return safeOptions.dev_non_base_desc;
     }
@@ -137,17 +162,15 @@ function resolveOptionsForField(
     case 'is_dev_analyzed':
     case 'is_downstream':
     case 'is_test_analyzed':
+    case 'need_aar':
     case 'need_dev_analyze':
     case 'need_test_analyze': {
       return safeOptions.yes_no.length > 0
         ? safeOptions.yes_no
         : YES_NO_OPTIONS;
     }
-    case 'process_quality_type': {
-      return safeOptions.process_quality_type;
-    }
-    case 'qa_category': {
-      return safeOptions.qa_category;
+    case 'issue_intro_stage': {
+      return safeOptions.issue_intro_stage;
     }
     case 'test_miss_reason': {
       return safeOptions.test_miss_reason;
@@ -240,6 +263,7 @@ export function resolveDtsGovernanceTagMeta(
 
   if (
     field === 'is_downstream' ||
+    field === 'need_aar' ||
     field === 'need_dev_analyze' ||
     field === 'need_test_analyze' ||
     field === 'is_dev_analyzed' ||
@@ -261,7 +285,11 @@ export function resolveDtsGovernanceTagMeta(
 
 export function resolveDtsGovernanceTagList(
   dictOptions: DtsDictOptions | null | undefined,
-  field: 'dev_sub_category' | 'test_miss_reason',
+  field:
+    | 'dev_control_points'
+    | 'dev_non_base_desc'
+    | 'dev_sub_category'
+    | 'test_miss_reason',
   raw: unknown,
 ): DtsDictTagMeta[] {
   const values = Array.isArray(raw) ? raw : [];
@@ -330,6 +358,15 @@ export function formatCycleIntegerDisplay(value: unknown) {
     return String(Math.round(numeric));
   }
   return text;
+}
+
+export function formatProjectDisplay(row?: null | Partial<DtsMergedDefect>) {
+  const projectName = String(row?.projectName || '').trim();
+  const projectCode = String(row?.sProdCName || '').trim();
+  if (projectName && projectCode && projectName !== projectCode) {
+    return `${projectName} (${projectCode})`;
+  }
+  return projectName || projectCode || '-';
 }
 
 export function getTodayDateRange(): [Date, Date] {
@@ -432,6 +469,12 @@ export function useColumns(): Columns {
       width: 130,
     },
     {
+      key: 'projectName',
+      dataKey: 'projectName',
+      title: '项目',
+      minWidth: 180,
+    },
+    {
       key: 'sSubsystemNoName',
       dataKey: 'sSubsystemNoName',
       title: '子系统',
@@ -514,21 +557,9 @@ export function useColumns(): Columns {
       title: 'QA填报',
       children: [
         {
-          key: 'qa_category',
-          dataKey: 'qa_category',
-          title: 'QA大类',
-          width: 140,
-        },
-        {
-          key: 'pl_group_name',
-          dataKey: 'pl_group_name',
-          title: '责任PL组',
-          width: 160,
-        },
-        {
           key: 'is_downstream',
           dataKey: 'is_downstream',
-          title: '是否下游',
+          title: '是否下游问题',
           width: 110,
         },
         {
@@ -536,6 +567,18 @@ export function useColumns(): Columns {
           dataKey: 'process_quality_type',
           title: '过程质量分类',
           minWidth: 160,
+        },
+        {
+          key: 'issue_intro_stage',
+          dataKey: 'issue_intro_stage',
+          title: '问题引入阶段',
+          width: 150,
+        },
+        {
+          key: 'need_aar',
+          dataKey: 'need_aar',
+          title: '是否需要AAR',
+          width: 130,
         },
         {
           key: 'need_dev_analyze',
@@ -548,18 +591,6 @@ export function useColumns(): Columns {
           dataKey: 'need_test_analyze',
           title: '需测试分析',
           width: 120,
-        },
-        {
-          key: 'dev_owner_name',
-          dataKey: 'dev_owner_name',
-          title: '开发责任人',
-          width: 140,
-        },
-        {
-          key: 'test_owner_name',
-          dataKey: 'test_owner_name',
-          title: '测试责任人',
-          width: 140,
         },
         {
           key: 'is_dev_analyzed',
@@ -586,6 +617,18 @@ export function useColumns(): Columns {
       title: '开发填报',
       children: [
         {
+          key: 'dev_owner_name',
+          dataKey: 'dev_owner_name',
+          title: '开发责任人',
+          width: 140,
+        },
+        {
+          key: 'dev_feature',
+          dataKey: 'dev_feature',
+          title: '特性/功能',
+          minWidth: 160,
+        },
+        {
           key: 'dev_sub_category',
           dataKey: 'dev_sub_category',
           title: '问题小类',
@@ -604,6 +647,36 @@ export function useColumns(): Columns {
           minWidth: 180,
         },
         {
+          key: 'dev_issue_intro_point',
+          dataKey: 'dev_issue_intro_point',
+          title: '问题引入点',
+          minWidth: 160,
+        },
+        {
+          key: 'dev_issue_probability',
+          dataKey: 'dev_issue_probability',
+          title: '问题概率',
+          width: 130,
+        },
+        {
+          key: 'dev_common_issue_type',
+          dataKey: 'dev_common_issue_type',
+          title: '是否共性问题',
+          minWidth: 150,
+        },
+        {
+          key: 'dev_control_points',
+          dataKey: 'dev_control_points',
+          title: '需要补强的开发控制点',
+          minWidth: 220,
+        },
+        {
+          key: 'dev_intro_point_analysis',
+          dataKey: 'dev_intro_point_analysis',
+          title: '引入点分析',
+          minWidth: 180,
+        },
+        {
           key: 'dev_improvements',
           dataKey: 'dev_improvements',
           title: '改进措施',
@@ -614,6 +687,12 @@ export function useColumns(): Columns {
           dataKey: 'dev_non_base_desc',
           title: '非底软说明',
           width: 160,
+        },
+        {
+          key: 'dev_aar_link',
+          dataKey: 'dev_aar_link',
+          title: 'AAR链接',
+          minWidth: 180,
         },
         {
           key: 'dev_asset_link',
@@ -634,10 +713,10 @@ export function useColumns(): Columns {
       title: '测试填报',
       children: [
         {
-          key: 'test_feature',
-          dataKey: 'test_feature',
-          title: '特效/功能',
-          width: 160,
+          key: 'test_owner_name',
+          dataKey: 'test_owner_name',
+          title: '测试责任人',
+          width: 140,
         },
         {
           key: 'test_miss_reason',
@@ -744,35 +823,8 @@ export function resolveSeverityMeta(raw?: null | string): SeverityMeta {
   };
 }
 
-async function fetchPlGroups(): Promise<PlGroup[]> {
-  const items = await getAllPlApi();
-  return (items || []).filter((item) => item.status);
-}
-
 export function useQaFormSchema(): VbenFormSchema[] {
   return [
-    {
-      component: 'ApiSelect',
-      fieldName: 'qa_category',
-      label: '问题大类',
-      componentProps: {
-        ...createDtsDictApiSelectProps('qa_category'),
-        placeholder: '请选择问题大类',
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'pl_group_id',
-      label: '责任PL组',
-      componentProps: {
-        api: fetchPlGroups,
-        labelField: 'name',
-        valueField: 'id',
-        showSearch: true,
-        optionFilterProp: 'label',
-        placeholder: '请选择责任PL组',
-      },
-    },
     {
       component: 'ApiSelect',
       fieldName: 'is_downstream',
@@ -783,12 +835,29 @@ export function useQaFormSchema(): VbenFormSchema[] {
       },
     },
     {
-      component: 'ApiSelect',
+      component: 'Input',
       fieldName: 'process_quality_type',
       label: '过程质量分类',
       componentProps: {
-        ...createDtsDictApiSelectProps('process_quality_type'),
-        placeholder: '请选择过程质量分类',
+        placeholder: '请输入过程质量分类',
+      },
+    },
+    {
+      component: 'ApiSelect',
+      fieldName: 'issue_intro_stage',
+      label: '问题引入阶段',
+      componentProps: {
+        ...createDtsDictApiSelectProps('issue_intro_stage'),
+        placeholder: '请选择问题引入阶段',
+      },
+    },
+    {
+      component: 'ApiSelect',
+      fieldName: 'need_aar',
+      label: '是否需要AAR',
+      componentProps: {
+        ...createDtsDictApiSelectProps('yes_no', YES_NO_OPTIONS),
+        placeholder: '请选择',
       },
     },
     {
@@ -807,22 +876,6 @@ export function useQaFormSchema(): VbenFormSchema[] {
       componentProps: {
         ...createDtsDictApiSelectProps('yes_no', YES_NO_OPTIONS),
         placeholder: '请选择',
-      },
-    },
-    {
-      component: 'UserSelector',
-      fieldName: 'dev_owner_id',
-      label: '开发责任人',
-      componentProps: {
-        placeholder: '请选择开发责任人',
-      },
-    },
-    {
-      component: 'UserSelector',
-      fieldName: 'test_owner_id',
-      label: '测试责任人',
-      componentProps: {
-        placeholder: '请选择测试责任人',
       },
     },
     {
@@ -858,6 +911,22 @@ export function useQaFormSchema(): VbenFormSchema[] {
 export function useDevFormSchema(): VbenFormSchema[] {
   return [
     {
+      component: 'UserSelector',
+      fieldName: 'dev_owner_id',
+      label: '开发责任人',
+      componentProps: {
+        placeholder: '请选择开发责任人',
+      },
+    },
+    {
+      component: 'Input',
+      fieldName: 'dev_feature',
+      label: '特性/功能',
+      componentProps: {
+        placeholder: '请输入特性/功能',
+      },
+    },
+    {
       component: 'ApiSelect',
       fieldName: 'dev_sub_category',
       label: '问题小类',
@@ -888,6 +957,54 @@ export function useDevFormSchema(): VbenFormSchema[] {
       },
     },
     {
+      component: 'ApiSelect',
+      fieldName: 'dev_issue_intro_point',
+      label: '问题引入点',
+      componentProps: {
+        ...createDtsDictApiSelectProps('dev_issue_intro_point'),
+        placeholder: '请选择问题引入点',
+      },
+    },
+    {
+      component: 'ApiSelect',
+      fieldName: 'dev_issue_probability',
+      label: '问题概率',
+      componentProps: {
+        ...createDtsDictApiSelectProps('dev_issue_probability'),
+        placeholder: '请选择问题概率',
+      },
+    },
+    {
+      component: 'ApiSelect',
+      fieldName: 'dev_common_issue_type',
+      label: '是否共性问题',
+      componentProps: {
+        ...createDtsDictApiSelectProps('dev_common_issue_type'),
+        placeholder: '请选择是否共性问题',
+      },
+    },
+    {
+      component: 'ApiSelect',
+      fieldName: 'dev_control_points',
+      label: '需要补强的开发控制点',
+      componentProps: {
+        ...createDtsDictApiSelectProps('dev_control_points'),
+        multiple: true,
+        collapseTags: true,
+        collapseTagsTooltip: true,
+        placeholder: '请选择开发控制点（可多选）',
+      },
+    },
+    {
+      component: 'Textarea',
+      fieldName: 'dev_intro_point_analysis',
+      label: '引入点分析',
+      componentProps: {
+        placeholder: '请输入引入点分析',
+        rows: 3,
+      },
+    },
+    {
       component: 'Textarea',
       fieldName: 'dev_improvements',
       label: '改进措施(开发)',
@@ -906,6 +1023,14 @@ export function useDevFormSchema(): VbenFormSchema[] {
         collapseTags: true,
         collapseTagsTooltip: true,
         placeholder: '请选择非底软问题说明（可多选）',
+      },
+    },
+    {
+      component: 'Input',
+      fieldName: 'dev_aar_link',
+      label: 'AAR链接',
+      componentProps: {
+        placeholder: '请输入AAR链接',
       },
     },
     {
@@ -931,11 +1056,11 @@ export function useDevFormSchema(): VbenFormSchema[] {
 export function useTestFormSchema(): VbenFormSchema[] {
   return [
     {
-      component: 'Input',
-      fieldName: 'test_feature',
-      label: '特效/功能',
+      component: 'UserSelector',
+      fieldName: 'test_owner_id',
+      label: '测试责任人',
       componentProps: {
-        placeholder: '请输入特效/功能',
+        placeholder: '请选择测试责任人',
       },
     },
     {
@@ -995,14 +1120,4 @@ export function useTestFormSchema(): VbenFormSchema[] {
       },
     },
   ];
-}
-
-export function normalizeProjectOptions(items: ProjectOut[]) {
-  return (items || [])
-    .map((item) => ({
-      ...item,
-      di_teams: Array.isArray(item.di_teams) ? item.di_teams : [],
-      version_c: (item as any).version_c as string | undefined,
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name));
 }

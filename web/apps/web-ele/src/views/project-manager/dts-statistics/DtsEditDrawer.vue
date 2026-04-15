@@ -20,6 +20,7 @@ import { ZqDrawer } from '#/components/zq-drawer';
 
 import {
   formatCycleIntegerDisplay,
+  formatProjectDisplay,
   useDevFormSchema,
   useQaFormSchema,
   useTestFormSchema,
@@ -53,34 +54,36 @@ const visible = computed({
 const activeTab = ref<EditTab>('qa');
 const confirmLoading = ref(false);
 
-const [QaForm, qaFormApi] = useVbenForm({
-  commonConfig: {
+function createDtsFormCommonConfig() {
+  return {
     colon: true,
     componentProps: { class: 'w-full' },
-  },
+    labelClass: 'justify-start text-left text-slate-700',
+  };
+}
+
+const [QaForm, qaFormApi] = useVbenForm({
+  layout: 'vertical',
+  commonConfig: createDtsFormCommonConfig(),
   schema: useQaFormSchema(),
   showDefaultActions: false,
-  wrapperClass: 'grid-cols-1 gap-x-4',
+  wrapperClass: 'grid-cols-1 gap-x-6',
 });
 
 const [DevForm, devFormApi] = useVbenForm({
-  commonConfig: {
-    colon: true,
-    componentProps: { class: 'w-full' },
-  },
+  layout: 'vertical',
+  commonConfig: createDtsFormCommonConfig(),
   schema: useDevFormSchema(),
   showDefaultActions: false,
-  wrapperClass: 'grid-cols-1 gap-x-4',
+  wrapperClass: 'grid-cols-1 gap-x-6',
 });
 
 const [TestForm, testFormApi] = useVbenForm({
-  commonConfig: {
-    colon: true,
-    componentProps: { class: 'w-full' },
-  },
+  layout: 'vertical',
+  commonConfig: createDtsFormCommonConfig(),
   schema: useTestFormSchema(),
   showDefaultActions: false,
-  wrapperClass: 'grid-cols-1 gap-x-4',
+  wrapperClass: 'grid-cols-1 gap-x-6',
 });
 
 const drawerTitle = computed(() => {
@@ -149,6 +152,7 @@ const baselineItems = computed(() => {
     { label: '当前处理人', value: normalizeDisplay(row?.currentHandler) },
     { label: '提单人工号', value: normalizeDisplay(row?.creator) },
     { label: '提单人姓名', value: normalizeDisplay(row?.sSubmitUserName) },
+    { label: '项目', value: formatProjectDisplay(row) },
     {
       label: '子系统',
       value: normalizeDisplay(row?.sSubsystemNoName),
@@ -337,6 +341,7 @@ async function handleConfirm() {
       ...devValues,
       ...testValues,
       dev_sub_category: normalizeStringList(devValues.dev_sub_category),
+      dev_control_points: normalizeStringList(devValues.dev_control_points),
       dev_non_base_desc: normalizeStringList(devValues.dev_non_base_desc),
       dev_improvements: normalizeStringList(devValues.dev_improvements),
       test_miss_reason: normalizeStringList(testValues.test_miss_reason),

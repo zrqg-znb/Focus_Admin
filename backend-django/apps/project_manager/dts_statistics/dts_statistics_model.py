@@ -10,18 +10,10 @@ class DtsExtension(RootModel):
     defect_no = models.CharField(max_length=64, primary_key=True, verbose_name="DTS单号")
 
     # QA 识别填写
-    qa_category = models.CharField(max_length=64, null=True, blank=True, verbose_name="问题大类")
-    pl_group = models.ForeignKey(
-        "core.PlGroup",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        db_constraint=False,
-        related_name="dts_extensions",
-        verbose_name="责任PL组",
-    )
     is_downstream = models.CharField(max_length=8, null=True, blank=True, verbose_name="是否下游产品质量问题")
     process_quality_type = models.CharField(max_length=255, null=True, blank=True, verbose_name="产品过程质量问题分类")
+    issue_intro_stage = models.CharField(max_length=255, null=True, blank=True, verbose_name="问题引入阶段")
+    need_aar = models.CharField(max_length=8, null=True, blank=True, verbose_name="是否需要AAR")
     need_dev_analyze = models.CharField(max_length=8, null=True, blank=True, verbose_name="是否需要开发分析引入原因")
     need_test_analyze = models.CharField(max_length=8, null=True, blank=True, verbose_name="是否需要测试分析漏测")
     dev_owner = models.ForeignKey(
@@ -48,15 +40,21 @@ class DtsExtension(RootModel):
 
     # 底软开发填写
     dev_sub_category = models.JSONField(default=list, blank=True, verbose_name="问题小类")
+    dev_feature = models.CharField(max_length=255, null=True, blank=True, verbose_name="特性/功能")
     dev_reason = models.TextField(null=True, blank=True, verbose_name="问题原因")
     dev_intro_reason = models.TextField(null=True, blank=True, verbose_name="引入原因")
+    dev_issue_intro_point = models.CharField(max_length=255, null=True, blank=True, verbose_name="问题引入点")
+    dev_issue_probability = models.CharField(max_length=255, null=True, blank=True, verbose_name="问题概率")
+    dev_common_issue_type = models.CharField(max_length=255, null=True, blank=True, verbose_name="是否共性问题")
+    dev_control_points = models.JSONField(default=list, blank=True, verbose_name="需要补强的开发控制点")
+    dev_intro_point_analysis = models.TextField(null=True, blank=True, verbose_name="引入点分析")
     dev_improvements = models.JSONField(default=list, blank=True, verbose_name="开发改进措施")
     dev_non_base_desc = models.JSONField(default=list, blank=True, verbose_name="非底软问题说明")
+    dev_aar_link = models.CharField(max_length=512, null=True, blank=True, verbose_name="AAR链接")
     dev_asset_link = models.CharField(max_length=512, null=True, blank=True, verbose_name="落地资产链接(开发)")
     dev_status = models.CharField(max_length=32, null=True, blank=True, verbose_name="开发改进措施状态")
 
     # 底软测试填写
-    test_feature = models.CharField(max_length=255, null=True, blank=True, verbose_name="特效/功能")
     test_miss_reason = models.JSONField(default=list, blank=True, verbose_name="漏测原因")
     test_standard_desc = models.TextField(null=True, blank=True, verbose_name="规范问题描述")
     test_improvements = models.JSONField(default=list, blank=True, verbose_name="测试改进措施")
