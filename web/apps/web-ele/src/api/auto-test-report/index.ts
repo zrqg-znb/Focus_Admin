@@ -64,6 +64,7 @@ export interface TestCaseItem {
   platform_name: string;
   case_no: string;
   case_name: string;
+  remark?: string;
   sort: number;
   is_active: boolean;
   latest_execute_time?: string;
@@ -75,6 +76,7 @@ export interface TestCasePayload {
   vehicle_id: string;
   case_no: string;
   case_name: string;
+  remark?: string;
   sort: number;
   is_active: boolean;
 }
@@ -82,6 +84,7 @@ export interface TestCasePayload {
 export interface ImportCaseRow {
   case_no: string;
   case_name: string;
+  remark?: string;
 }
 
 export interface ImportErrorRow {
@@ -154,10 +157,14 @@ export interface DailyOverviewResponse {
 }
 
 export interface DailyResultItem {
+  result_id?: string;
   case_id: string;
   case_no: string;
   case_name: string;
+  remark?: string;
   status: ResultStatus;
+  failure_reason?: string;
+  suggested_failure_reason?: string;
   start_time?: string;
   duration_seconds: number;
   log_url?: string;
@@ -165,8 +172,10 @@ export interface DailyResultItem {
 }
 
 export interface TestCaseHistoryRow {
+  id: string;
   execute_date: string;
   status: ResultStatus;
+  failure_reason?: string;
   start_time?: string;
   duration_seconds: number;
   log_url?: string;
@@ -309,6 +318,16 @@ export async function listDailyResultsApi(
   return requestClient.get<DailyResultItem[]>(`${base}/daily-results/list`, {
     params: { vehicle_id, execute_date },
   });
+}
+
+export async function updateDailyResultFailureReasonApi(
+  result_id: string,
+  failure_reason?: string,
+) {
+  return requestClient.patch<boolean>(
+    `${base}/daily-results/${result_id}/failure-reason`,
+    { failure_reason },
+  );
 }
 
 export async function getTestCaseHistoryApi(

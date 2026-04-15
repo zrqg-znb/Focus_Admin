@@ -51,6 +51,14 @@ export function useResultColumns(): ZqTableGridOptions<DailyResultItem>['columns
       headerAlign: 'center',
     },
     {
+      key: 'remark',
+      dataKey: 'remark',
+      title: '用例备注',
+      width: 220,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
       key: 'status',
       dataKey: 'status',
       title: '执行结果',
@@ -58,6 +66,14 @@ export function useResultColumns(): ZqTableGridOptions<DailyResultItem>['columns
       align: 'center',
       headerAlign: 'center',
       slots: { header: 'header-status' },
+    },
+    {
+      key: 'failure_reason',
+      dataKey: 'failure_reason',
+      title: '异常原因',
+      width: 280,
+      align: 'center',
+      headerAlign: 'center',
     },
     {
       key: 'start_time',

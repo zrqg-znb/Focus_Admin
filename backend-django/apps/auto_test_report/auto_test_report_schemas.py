@@ -49,6 +49,7 @@ class TestCaseIn(Schema):
     vehicle_id: str
     case_no: str
     case_name: str
+    remark: Optional[str] = None
     sort: int = 0
     is_active: bool = True
 
@@ -73,6 +74,7 @@ class TestCaseFilter(Schema):
 class ImportCaseRow(Schema):
     case_no: str
     case_name: str
+    remark: Optional[str] = None
 
 
 class ImportCasePayload(Schema):
@@ -93,14 +95,22 @@ class ImportResultOut(Schema):
 
 
 class DailyResultItemOut(Schema):
+    result_id: Optional[str] = None
     case_id: str
     case_no: str
     case_name: str
+    remark: Optional[str] = None
     status: str
+    failure_reason: Optional[str] = None
+    suggested_failure_reason: Optional[str] = None
     start_time: Optional[datetime] = None
     duration_seconds: int = 0
     log_url: Optional[str] = None
     reported_at: Optional[datetime] = None
+
+
+class UpdateTestCaseRemarkIn(Schema):
+    remark: Optional[str] = None
 
 
 class SummaryStat(Schema):
@@ -129,6 +139,7 @@ class DailyHistoryRow(Schema):
     id: str
     execute_date: date
     status: str
+    failure_reason: Optional[str] = None
     start_time: Optional[datetime] = None
     duration_seconds: int = 0
     log_url: Optional[str] = None
@@ -207,3 +218,7 @@ class DailyOverviewSummary(Schema):
 class DailyOverviewResponse(Schema):
     items: List[DailyOverviewRow]
     summary: DailyOverviewSummary
+
+
+class UpdateFailureReasonIn(Schema):
+    failure_reason: Optional[str] = None

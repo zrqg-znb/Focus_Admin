@@ -41,6 +41,7 @@ RESULT_LABELS = {
     RESULT_TIMEOUT: '超时',
     RESULT_SKIP: '跳过',
 }
+MANUAL_REASON_RESULTS = {RESULT_FAILED, RESULT_TIMEOUT}
 
 
 def _get_latest_result_order_by():
@@ -272,7 +273,11 @@ def list_test_cases(filters):
         queryset = queryset.filter(is_active=filters.is_active)
     keyword = (filters.keyword or '').strip()
     if keyword:
-        queryset = queryset.filter(Q(case_no__icontains=keyword) | Q(case_name__icontains=keyword))
+        queryset = queryset.filter(
+            Q(case_no__icontains=keyword)
+            | Q(case_name__icontains=keyword)
+            | Q(remark__icontains=keyword)
+        )
     queryset = queryset.order_by('-sort', 'case_no')
     return [serialize_test_case(item) for item in queryset]
 
@@ -299,6 +304,7 @@ def serialize_test_case(item: TestCase):
         'platform_name': item.vehicle.platform.name,
         'case_no': item.case_no,
         'case_name': item.case_name,
+        'remark': item.remark,
         'sort': item.sort,
         'is_active': item.is_active,
         'latest_execute_time': latest_execute_time,
@@ -313,6 +319,7 @@ def create_test_case(user, payload):
         vehicle=vehicle,
         case_no=payload.case_no.strip(),
         case_name=payload.case_name.strip(),
+        remark=(payload.remark or '').strip() or None,
         sort=payload.sort,
         is_active=payload.is_active,
     )
@@ -326,8 +333,17 @@ def update_test_case(user, case_id: str, payload):
     instance.vehicle = get_vehicle(payload.vehicle_id)
     instance.case_no = payload.case_no.strip()
     instance.case_name = payload.case_name.strip()
+    instance.remark = (payload.remark or '').strip() or None
     instance.sort = payload.sort
     instance.is_active = payload.is_active
+    _apply_audit_fields(instance, user)
+    instance.save()
+    return serialize_test_case(instance)
+
+
+def update_test_case_remark(user, case_id: str, remark: Optional[str]):
+    instance = get_test_case(case_id)
+    instance.remark = (remark or '').strip() or None
     _apply_audit_fields(instance, user)
     instance.save()
     return serialize_test_case(instance)
@@ -367,6 +383,7 @@ def import_test_cases(user, payload) -> ImportResultOut:
     for index, row in enumerate(payload.rows, start=1):
         case_no = (row.case_no or '').strip()
         case_name = (row.case_name or '').strip()
+        remark = (row.remark or '').strip() or None
         if not case_no:
             errors.append(ImportErrorRow(row_no=index, message='用例编号不能为空'))
             continue
@@ -380,15 +397,22 @@ def import_test_cases(user, payload) -> ImportResultOut:
 
         instance = TestCase.objects.filter(vehicle=vehicle, case_no=case_no, is_deleted=False).first()
         if not instance:
-            instance = TestCase(vehicle=vehicle, case_no=case_no, case_name=case_name, is_active=True)
+            instance = TestCase(
+                vehicle=vehicle,
+                case_no=case_no,
+                case_name=case_name,
+                remark=remark,
+                is_active=True,
+            )
             _apply_audit_fields(instance, user, is_create=True)
             instance.save()
             created_count += 1
             continue
-        if instance.case_name != case_name:
+        if instance.case_name != case_name or instance.remark != remark:
             instance.case_name = case_name
+            instance.remark = remark
             _apply_audit_fields(instance, user)
-            instance.save(update_fields=['case_name', 'sys_modifier', 'sys_update_datetime'])
+            instance.save(update_fields=['case_name', 'remark', 'sys_modifier', 'sys_update_datetime'])
             updated_count += 1
         else:
             ignored_count += 1
@@ -423,6 +447,7 @@ def parse_excel_rows(file_obj) -> list[dict]:
         case_name_index = header.index('用例名称')
     except ValueError:
         raise HttpError(400, 'Excel 模板缺少必填列：用例编号、用例名称')
+    remark_index = header.index('备注') if '备注' in header else None
 
     parsed_rows = []
     for row in rows[1:]:
@@ -435,6 +460,7 @@ def parse_excel_rows(file_obj) -> list[dict]:
         parsed_rows.append({
             'case_no': case_no,
             'case_name': case_name,
+            'remark': str(row[remark_index] or '').strip() if remark_index is not None else '',
         })
     return parsed_rows
 
@@ -443,8 +469,8 @@ def build_test_case_template_response():
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = '测试用例模板'
-    sheet.append(['用例编号', '用例名称'])
-    sheet.append(['CASE-001', '示例自动化用例'])
+    sheet.append(['用例编号', '用例名称', '备注'])
+    sheet.append(['CASE-001', '示例自动化用例', '固定备注示例'])
     response = HttpResponse(
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
@@ -465,6 +491,7 @@ def build_test_case_export_response(filters):
         '车型编号',
         '用例编号',
         '用例名称',
+        '备注',
         '最近执行时间',
         '更新时间',
     ])
@@ -475,6 +502,7 @@ def build_test_case_export_response(filters):
             item['vehicle_code'],
             item['case_no'],
             item['case_name'],
+            item.get('remark') or '',
             item.get('latest_execute_time') or '',
             item.get('sys_update_datetime') or '',
         ])
@@ -554,6 +582,28 @@ def recalculate_daily_batch(vehicle_id: str, execute_date, last_report_at=None):
         batch.last_report_at = last_report_at
     batch.save()
     return batch
+
+
+def get_suggested_failure_reason(vehicle_id: str, test_case_id: str, execute_date):
+    item = (
+        DailyExecutionResult.objects.filter(
+            vehicle_id=vehicle_id,
+            test_case_id=test_case_id,
+            is_deleted=False,
+            result__in=list(MANUAL_REASON_RESULTS),
+        )
+        .exclude(execute_date=execute_date)
+        .exclude(failure_reason__isnull=True)
+        .exclude(failure_reason__exact='')
+        .order_by(
+            '-execute_date',
+            '-start_time',
+            '-reported_at',
+            '-sys_create_datetime',
+        )
+        .first()
+    )
+    return item.failure_reason if item else None
 
 
 def get_daily_summary(vehicle_id: str, execute_date) -> DailySummaryOut:
@@ -693,10 +743,18 @@ def list_daily_results(vehicle_id: str, execute_date):
         result = result_map.get(case.id)
         items.append(
             DailyResultItemOut(
+                result_id=str(result.id) if result else None,
                 case_id=str(case.id),
                 case_no=case.case_no,
                 case_name=case.case_name,
+                remark=case.remark,
                 status=result.result if result else RESULT_SKIP,
+                failure_reason=result.failure_reason if result else None,
+                suggested_failure_reason=(
+                    get_suggested_failure_reason(str(vehicle.id), str(case.id), execute_date)
+                    if result and result.result in MANUAL_REASON_RESULTS and not result.failure_reason
+                    else None
+                ),
                 start_time=result.start_time if result else None,
                 duration_seconds=result.duration_seconds if result else 0,
                 log_url=result.log_url if result else None,
@@ -704,6 +762,18 @@ def list_daily_results(vehicle_id: str, execute_date):
             )
         )
     return items
+
+
+def update_daily_result_failure_reason(user, result_id: str, failure_reason: Optional[str]):
+    instance = DailyExecutionResult.objects.filter(id=result_id, is_deleted=False).first()
+    if not instance:
+        raise HttpError(404, '执行结果不存在')
+    if instance.result not in MANUAL_REASON_RESULTS:
+        raise HttpError(400, '仅失败或超时结果支持填写异常原因')
+    instance.failure_reason = (failure_reason or '').strip() or None
+    _apply_audit_fields(instance, user)
+    instance.save()
+    return True
 
 
 def get_test_case_history(case_id: str, page: int = 1, page_size: int = 10) -> DailyHistoryPage:
@@ -725,6 +795,7 @@ def get_test_case_history(case_id: str, page: int = 1, page_size: int = 10) -> D
             id=str(item.id),
             execute_date=item.execute_date,
             status=item.result,
+            failure_reason=item.failure_reason,
             start_time=item.start_time,
             duration_seconds=item.duration_seconds,
             log_url=item.log_url,

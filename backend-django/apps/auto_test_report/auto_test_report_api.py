@@ -21,6 +21,8 @@ from .auto_test_report_schemas import (
     TestCaseFilter,
     TestCaseIn,
     TestCaseOut,
+    UpdateFailureReasonIn,
+    UpdateTestCaseRemarkIn,
     VehicleIn,
     VehicleOption,
     VehicleOut,
@@ -132,6 +134,11 @@ def update_test_case(request, case_id: str, payload: TestCaseIn):
     return services.update_test_case(request.auth, case_id, payload)
 
 
+@router.patch('/test-cases/{case_id}/remark', response=TestCaseOut, summary='更新测试用例备注')
+def update_test_case_remark(request, case_id: str, payload: UpdateTestCaseRemarkIn):
+    return services.update_test_case_remark(request.auth, case_id, payload.remark)
+
+
 @router.delete('/test-cases/{case_id}', response=bool, summary='删除测试用例')
 def delete_test_case(request, case_id: str):
     return services.delete_test_case(case_id)
@@ -150,6 +157,15 @@ def get_daily_overview(request, query: DailyOverviewQuery = Query(...)):
 @router.get('/daily-results/list', response=List[DailyResultItemOut], summary='每日执行结果列表')
 def list_daily_results(request, query: DailyResultQuery = Query(...)):
     return services.list_daily_results(query.vehicle_id, query.execute_date)
+
+
+@router.patch('/daily-results/{result_id}/failure-reason', response=bool, summary='更新异常原因')
+def update_daily_result_failure_reason(request, result_id: str, payload: UpdateFailureReasonIn):
+    return services.update_daily_result_failure_reason(
+        request.auth,
+        result_id,
+        payload.failure_reason,
+    )
 
 
 @router.get('/test-cases/{case_id}/history', response=DailyHistoryPage, summary='测试用例历史执行')

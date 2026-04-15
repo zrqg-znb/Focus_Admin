@@ -61,6 +61,7 @@ class TestCase(RootModel):
     )
     case_no = models.CharField(max_length=128, verbose_name='用例编号')
     case_name = models.CharField(max_length=255, verbose_name='用例名称')
+    remark = models.TextField(null=True, blank=True, verbose_name='备注')
     is_active = models.BooleanField(default=True, verbose_name='是否启用')
 
     class Meta:
@@ -120,6 +121,7 @@ class DailyExecutionResult(RootModel):
     start_time = models.DateTimeField(verbose_name='开始时间')
     duration_seconds = models.IntegerField(default=0, verbose_name='执行时长(秒)')
     result = models.CharField(max_length=16, choices=RESULT_CHOICES, verbose_name='执行结果')
+    failure_reason = models.TextField(null=True, blank=True, verbose_name='异常原因')
     log_url = models.CharField(max_length=1024, null=True, blank=True, verbose_name='运行日志URL')
     reported_at = models.DateTimeField(auto_now=True, verbose_name='上报时间')
 

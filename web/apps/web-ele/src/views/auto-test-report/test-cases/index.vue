@@ -60,6 +60,7 @@ const caseForm = ref<TestCasePayload & { id?: string }>({
   vehicle_id: '',
   case_no: '',
   case_name: '',
+  remark: '',
   sort: 0,
   is_active: true,
 });
@@ -164,6 +165,7 @@ function openCreate() {
     vehicle_id: initialPath as any, // Temporary store the array here, will extract id on submit
     case_no: '',
     case_name: '',
+    remark: '',
     sort: 0,
     is_active: true,
   };
@@ -182,6 +184,7 @@ function openEdit(row: TestCaseItem) {
     vehicle_id: initialPath as any, // Temporary store the array here, will extract id on submit
     case_no: row.case_no,
     case_name: row.case_name,
+    remark: row.remark || '',
     sort: row.sort,
     is_active: row.is_active,
   };
@@ -464,6 +467,9 @@ onMounted(async () => {
         </ElFormItem>
         <ElFormItem label="用例名称" prop="case_name" required>
           <ElInput v-model="caseForm.case_name" />
+        </ElFormItem>
+        <ElFormItem label="备注">
+          <ElInput v-model="caseForm.remark" type="textarea" :rows="3" />
         </ElFormItem>
         <ElFormItem label="排序">
           <ElInputNumber v-model="caseForm.sort" class="w-full" />

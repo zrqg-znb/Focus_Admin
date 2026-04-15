@@ -43,6 +43,14 @@ export function useCaseColumns(): ZqTableGridOptions<TestCaseItem>['columns'] {
       headerAlign: 'center',
     },
     {
+      key: 'remark',
+      dataKey: 'remark',
+      title: '备注',
+      width: 240,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
       key: 'latest_execute_time',
       dataKey: 'latest_execute_time',
       title: '最近执行时间',
