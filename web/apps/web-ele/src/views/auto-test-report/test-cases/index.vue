@@ -23,8 +23,6 @@ import {
   ElMessageBox,
   ElSwitch,
   ElTooltip,
-  ElSelect,
-  ElOption,
 } from 'element-plus';
 
 import {
@@ -156,11 +154,15 @@ async function refreshGrid() {
 
 function openCreate() {
   caseDialogMode.value = 'create';
-  
+
   // Try to find the platform_id for the currentVehicleId to pre-fill the cascader
-  const matchedVehicle = vehicleOptions.value.find(v => v.id === currentVehicleId.value);
-  const initialPath = matchedVehicle ? [matchedVehicle.platform_id, matchedVehicle.id] : [];
-  
+  const matchedVehicle = vehicleOptions.value.find(
+    (v) => v.id === currentVehicleId.value,
+  );
+  const initialPath = matchedVehicle
+    ? [matchedVehicle.platform_id, matchedVehicle.id]
+    : [];
+
   caseForm.value = {
     vehicle_id: initialPath as any, // Temporary store the array here, will extract id on submit
     case_no: '',
@@ -174,11 +176,15 @@ function openCreate() {
 
 function openEdit(row: TestCaseItem) {
   caseDialogMode.value = 'edit';
-  
+
   // Find the platform_id to pre-fill the cascader
-  const matchedVehicle = vehicleOptions.value.find(v => v.id === row.vehicle_id);
-  const initialPath = matchedVehicle ? [matchedVehicle.platform_id, matchedVehicle.id] : [];
-  
+  const matchedVehicle = vehicleOptions.value.find(
+    (v) => v.id === row.vehicle_id,
+  );
+  const initialPath = matchedVehicle
+    ? [matchedVehicle.platform_id, matchedVehicle.id]
+    : [];
+
   caseForm.value = {
     id: row.id,
     vehicle_id: initialPath as any, // Temporary store the array here, will extract id on submit
@@ -197,16 +203,18 @@ async function submitCase() {
   try {
     // Extract the actual vehicle_id from the cascader path array
     const cascaderValue = caseForm.value.vehicle_id as unknown as string[];
-    const actualVehicleId = Array.isArray(cascaderValue) ? cascaderValue[cascaderValue.length - 1] : cascaderValue;
-    
+    const actualVehicleId = Array.isArray(cascaderValue)
+      ? cascaderValue[cascaderValue.length - 1]
+      : cascaderValue;
+
     if (!actualVehicleId) {
       ElMessage.warning('请选择归属车型');
       return;
     }
-    
+
     const payload = {
       ...caseForm.value,
-      vehicle_id: actualVehicleId
+      vehicle_id: actualVehicleId,
     };
 
     if (caseDialogMode.value === 'create') {
@@ -397,50 +405,53 @@ onMounted(async () => {
     <div class="min-h-0 flex-1">
       <Grid class="h-full" @selection-change="handleSelectionChange">
         <template #toolbar-actions>
-        <div class="flex items-center gap-2">
-          <ElButton type="primary" @click="openCreate">新增用例</ElButton>
-          <ElButton type="danger" @click="removeSelected">批量删除</ElButton>
-          <ElButton :loading="templateLoading" @click="downloadTemplate">
-            下载模板
-          </ElButton>
-          <ElButton :loading="importLoading" @click="$refs.excelInput?.click()">
-            导入 Excel
-          </ElButton>
-          <input
-            ref="excelInput"
-            class="hidden"
-            type="file"
-            accept=".xlsx,.xls"
-            @change="
-              (event) => onImportFile(event.target.files?.[0] || null)
-            "
-          />
-          <ElButton :loading="exportLoading" @click="exportCases">
-            导出用例
-          </ElButton>
-        </div>
-      </template>
-
-      <template #cell-latest_execute_time="{ row }">
-        {{ row.latest_execute_time || '-' }}
-      </template>
-
-      <template #cell-actions="{ row }">
-        <div class="flex items-center justify-center gap-1">
-          <ElTooltip content="历史执行记录">
-            <ElButton link type="success" @click="openHistory(row)">
-              历史
+          <div class="flex items-center gap-2">
+            <ElButton type="primary" @click="openCreate">新增用例</ElButton>
+            <ElButton type="danger" @click="removeSelected">批量删除</ElButton>
+            <ElButton :loading="templateLoading" @click="downloadTemplate">
+              下载模板
             </ElButton>
-          </ElTooltip>
-          <ElTooltip content="编辑">
-            <ElButton link type="primary" @click="openEdit(row)">编辑</ElButton>
-          </ElTooltip>
-          <ElTooltip content="删除">
-            <ElButton link type="danger" @click="removeCase(row)">
-              删除
+            <ElButton
+              :loading="importLoading"
+              @click="$refs.excelInput?.click()"
+            >
+              导入 Excel
             </ElButton>
-          </ElTooltip>
-        </div>
+            <input
+              ref="excelInput"
+              class="hidden"
+              type="file"
+              accept=".xlsx,.xls"
+              @change="(event) => onImportFile(event.target.files?.[0] || null)"
+            />
+            <ElButton :loading="exportLoading" @click="exportCases">
+              导出用例
+            </ElButton>
+          </div>
+        </template>
+
+        <template #cell-latest_execute_time="{ row }">
+          {{ row.latest_execute_time || '-' }}
+        </template>
+
+        <template #cell-actions="{ row }">
+          <div class="flex items-center justify-center gap-1">
+            <ElTooltip content="历史执行记录">
+              <ElButton link type="success" @click="openHistory(row)">
+                历史
+              </ElButton>
+            </ElTooltip>
+            <ElTooltip content="编辑">
+              <ElButton link type="primary" @click="openEdit(row)">
+                编辑
+              </ElButton>
+            </ElTooltip>
+            <ElTooltip content="删除">
+              <ElButton link type="danger" @click="removeCase(row)">
+                删除
+              </ElButton>
+            </ElTooltip>
+          </div>
         </template>
       </Grid>
     </div>

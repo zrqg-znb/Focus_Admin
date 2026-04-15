@@ -547,6 +547,7 @@ def report_daily_results(payload):
             start_time=item.start_time,
             duration_seconds=max(int(item.duration_seconds or 0), 0),
             result=item.result,
+            failure_reason=None,
             log_url=(item.log_url or '').strip() or None,
         )
         created_count += 1

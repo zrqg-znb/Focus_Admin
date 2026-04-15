@@ -324,9 +324,12 @@ export async function updateDailyResultFailureReasonApi(
   result_id: string,
   failure_reason?: string,
 ) {
-  return requestClient.patch<boolean>(
+  return requestClient.request<boolean>(
     `${base}/daily-results/${result_id}/failure-reason`,
-    { failure_reason },
+    {
+      method: 'PATCH',
+      data: { failure_reason },
+    },
   );
 }
 

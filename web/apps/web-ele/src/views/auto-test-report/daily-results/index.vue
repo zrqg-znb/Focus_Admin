@@ -29,9 +29,10 @@ import {
   ElIcon,
   ElInput,
   ElLink,
+  ElMessage,
+  ElOption,
   ElPopover,
   ElSelect,
-  ElOption,
   ElSwitch,
   ElTabPane,
   ElTabs,
@@ -43,6 +44,7 @@ import {
   getDailySummaryApi,
   listDailyResultsApi,
   listVehicleOptionsApi,
+  updateDailyResultFailureReasonApi,
 } from '#/api/auto-test-report';
 import { useZqTable } from '#/components/zq-table';
 
@@ -84,6 +86,8 @@ const summary = ref<DailySummary | null>(null);
 const historyVisible = ref(false);
 const historyTitle = ref('');
 const currentCaseId = ref('');
+const editingReasonCell = ref<null | { resultId: string }>(null);
+const editingReasonValue = ref('');
 
 const selectedVehicleId = computed(() => selectedVehiclePaths.value[1] || '');
 const platformOptions = computed(() => {
@@ -102,6 +106,60 @@ const statusOptions = Object.keys(RESULT_LABEL_MAP).map((key) => ({
   value: key,
   label: RESULT_LABEL_MAP[key],
 }));
+
+function canEditFailureReason(row: DailyResultItem) {
+  return Boolean(row.result_id && ['failed', 'timeout'].includes(row.status));
+}
+
+function isEditingFailureReason(row: DailyResultItem) {
+  return Boolean(
+    row.result_id &&
+      editingReasonCell.value?.resultId &&
+      editingReasonCell.value.resultId === row.result_id,
+  );
+}
+
+function beginFailureReasonEdit(row: DailyResultItem) {
+  if (!canEditFailureReason(row) || !row.result_id) {
+    return;
+  }
+  editingReasonCell.value = { resultId: row.result_id };
+  editingReasonValue.value =
+    row.failure_reason || row.suggested_failure_reason || '';
+}
+
+function cancelFailureReasonEdit() {
+  editingReasonCell.value = null;
+  editingReasonValue.value = '';
+}
+
+async function submitFailureReason(row: DailyResultItem, value?: string) {
+  if (!row.result_id || !canEditFailureReason(row)) {
+    cancelFailureReasonEdit();
+    return;
+  }
+  const nextValue = (value ?? editingReasonValue.value ?? '').trim();
+  try {
+    await updateDailyResultFailureReasonApi(
+      row.result_id,
+      nextValue || undefined,
+    );
+    row.failure_reason = nextValue || '';
+    row.suggested_failure_reason = row.failure_reason
+      ? undefined
+      : row.suggested_failure_reason;
+    ElMessage.success('异常原因已保存');
+  } finally {
+    cancelFailureReasonEdit();
+  }
+}
+
+async function applySuggestedFailureReason(row: DailyResultItem) {
+  if (!row.suggested_failure_reason || !row.result_id) {
+    return;
+  }
+  await submitFailureReason(row, row.suggested_failure_reason);
+}
 
 const [OverviewGrid, overviewGridApi] = useZqTable({
   tableTitle: '全量车型执行概览',
@@ -189,7 +247,10 @@ function rebuildCascaderOptions() {
   cascaderOptions.value = [...platformMap.values()];
 }
 
-function renderChart(renderFn: any, stats: Array<{ count: number; label: string }>) {
+function renderChart(
+  renderFn: any,
+  stats: Array<{ count: number; label: string }>,
+) {
   const statusColors: Record<string, string> = {
     成功: '#10b981', // 绿色
     失败: '#ef4444', // 红色
@@ -404,25 +465,25 @@ onMounted(async () => {
           v-loading="overviewLoading"
           class="grid min-h-0 flex-1 grid-cols-[1fr_400px] gap-4"
         >
-          <div class="min-w-0 min-h-0 h-full">
+          <div class="h-full min-h-0 min-w-0">
             <OverviewGrid class="h-full rounded-lg border-0 shadow-sm">
               <template #cell-is_abnormal="{ row }">
-              <ElTag :type="row.is_abnormal ? 'danger' : 'success'">
-                {{ row.is_abnormal ? '异常' : '正常' }}
-              </ElTag>
-            </template>
-            <template #cell-total_duration_seconds="{ row }">
-              {{ formatDuration(row.total_duration_seconds) }}
-            </template>
-            <template #cell-actions="{ row }">
-              <ElButton link type="primary" @click="jumpToVehicle(row)">
-                查看明细
-              </ElButton>
-            </template>
-          </OverviewGrid>
-            </div>
+                <ElTag :type="row.is_abnormal ? 'danger' : 'success'">
+                  {{ row.is_abnormal ? '异常' : '正常' }}
+                </ElTag>
+              </template>
+              <template #cell-total_duration_seconds="{ row }">
+                {{ formatDuration(row.total_duration_seconds) }}
+              </template>
+              <template #cell-actions="{ row }">
+                <ElButton link type="primary" @click="jumpToVehicle(row)">
+                  查看明细
+                </ElButton>
+              </template>
+            </OverviewGrid>
+          </div>
 
-            <ElCard
+          <ElCard
             shadow="never"
             class="flex h-full flex-col rounded-lg border-0 shadow-sm"
             body-class="flex flex-col flex-1 min-h-0"
@@ -430,7 +491,10 @@ onMounted(async () => {
             <template #header>
               <div class="font-medium">当日全量执行占比</div>
             </template>
-            <EchartsUI ref="overviewChartRef" class="min-h-[280px] w-full flex-1" />
+            <EchartsUI
+              ref="overviewChartRef"
+              class="min-h-[280px] w-full flex-1"
+            />
             <div
               v-if="overviewData?.summary"
               class="mt-4 space-y-3 border-t pt-6 text-sm text-gray-600"
@@ -526,86 +590,170 @@ onMounted(async () => {
         >
           <template v-if="summary">
             <div class="grid min-h-0 flex-1 grid-cols-[1fr_400px] gap-4">
-              <div class="min-w-0 min-h-0 h-full">
+              <div class="h-full min-h-0 min-w-0">
                 <DetailGrid class="h-full rounded-lg border-0 shadow-sm">
                   <template #header-status="{ column }">
-                  <div
-                    class="flex cursor-pointer select-none items-center justify-center gap-1"
-                    @click.stop
-                  >
-                    <span>{{ column.title }}</span>
+                    <div
+                      class="flex cursor-pointer select-none items-center justify-center gap-1"
+                      @click.stop
+                    >
+                      <span>{{ column.title }}</span>
+                      <ElPopover
+                        v-model:visible="statusPopoverVisible"
+                        placement="bottom"
+                        trigger="click"
+                        width="200"
+                        @show="handleStatusFilterShow"
+                      >
+                        <template #reference>
+                          <ElIcon
+                            class="hover:text-primary text-gray-400 transition-colors"
+                            :class="{
+                              'text-primary': selectedStatus.length > 0,
+                            }"
+                          >
+                            <Filter />
+                          </ElIcon>
+                        </template>
+                        <div class="p-1" @click.stop>
+                          <ElCheckboxGroup
+                            v-model="draftStatus"
+                            class="flex flex-col gap-2"
+                          >
+                            <ElCheckbox
+                              v-for="item in statusOptions"
+                              :key="item.value"
+                              :label="item.label"
+                              :value="item.value"
+                            />
+                          </ElCheckboxGroup>
+                          <div class="mt-4 flex justify-between border-t pt-2">
+                            <ElButton
+                              size="small"
+                              link
+                              @click="resetStatusFilter"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              size="small"
+                              type="primary"
+                              @click="confirmStatusFilter"
+                            >
+                              确定
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+                  <template #cell-status="{ row }">
+                    <ElTag :type="RESULT_TAG_MAP[row.status]">
+                      {{ RESULT_LABEL_MAP[row.status] }}
+                    </ElTag>
+                  </template>
+                  <template #cell-remark="{ row }">
                     <ElPopover
-                      v-model:visible="statusPopoverVisible"
-                      placement="bottom"
-                      trigger="click"
-                      width="200"
-                      @show="handleStatusFilterShow"
+                      v-if="row.remark"
+                      placement="top"
+                      trigger="hover"
+                      :content="row.remark"
+                      width="240"
                     >
                       <template #reference>
-                        <ElIcon
-                          class="hover:text-primary text-gray-400 transition-colors"
-                          :class="{ 'text-primary': selectedStatus.length > 0 }"
-                        >
-                          <Filter />
-                        </ElIcon>
+                        <span class="block truncate text-left">
+                          {{ row.remark }}
+                        </span>
                       </template>
-                      <div class="p-1" @click.stop>
-                        <ElCheckboxGroup
-                          v-model="draftStatus"
-                          class="flex flex-col gap-2"
+                    </ElPopover>
+                    <span v-else class="text-gray-400">-</span>
+                  </template>
+                  <template #cell-failure_reason="{ row }">
+                    <div class="w-full text-left">
+                      <ElInput
+                        v-if="isEditingFailureReason(row)"
+                        v-model="editingReasonValue"
+                        autofocus
+                        clearable
+                        placeholder="请输入异常原因"
+                        @blur="submitFailureReason(row)"
+                        @keydown.enter.prevent="submitFailureReason(row)"
+                        @keydown.esc.prevent="cancelFailureReasonEdit"
+                      />
+                      <template v-else>
+                        <div
+                          v-if="canEditFailureReason(row)"
+                          class="flex items-center gap-2"
                         >
-                          <ElCheckbox
-                            v-for="item in statusOptions"
-                            :key="item.value"
-                            :label="item.label"
-                            :value="item.value"
-                          />
-                        </ElCheckboxGroup>
-                        <div class="mt-4 flex justify-between border-t pt-2">
+                          <div
+                            class="min-w-0 flex-1 cursor-pointer"
+                            @dblclick="beginFailureReasonEdit(row)"
+                          >
+                            <ElPopover
+                              v-if="row.failure_reason"
+                              placement="top"
+                              trigger="hover"
+                              :content="row.failure_reason"
+                              width="240"
+                            >
+                              <template #reference>
+                                <span class="block truncate text-gray-900">
+                                  {{ row.failure_reason }}
+                                </span>
+                              </template>
+                            </ElPopover>
+                            <template v-else-if="row.suggested_failure_reason">
+                              <ElPopover
+                                placement="top"
+                                trigger="hover"
+                                :content="row.suggested_failure_reason"
+                                width="240"
+                              >
+                                <template #reference>
+                                  <span class="block truncate text-gray-400">
+                                    建议沿用：{{ row.suggested_failure_reason }}
+                                  </span>
+                                </template>
+                              </ElPopover>
+                            </template>
+                            <span v-else class="text-gray-400">请填写</span>
+                          </div>
                           <ElButton
-                            size="small"
+                            v-if="
+                              !row.failure_reason &&
+                              row.suggested_failure_reason
+                            "
                             link
-                            @click="resetStatusFilter"
-                          >
-                            重置
-                          </ElButton>
-                          <ElButton
-                            size="small"
                             type="primary"
-                            @click="confirmStatusFilter"
+                            @click="applySuggestedFailureReason(row)"
                           >
-                            确定
+                            沿用上次原因
                           </ElButton>
                         </div>
-                      </div>
-                    </ElPopover>
-                  </div>
-                </template>
-                <template #cell-status="{ row }">
-                  <ElTag :type="RESULT_TAG_MAP[row.status]">
-                    {{ RESULT_LABEL_MAP[row.status] }}
-                  </ElTag>
-                </template>
-                <template #cell-duration_seconds="{ row }">
-                  {{ formatDuration(row.duration_seconds) }}
-                </template>
-                <template #cell-log_url="{ row }">
-                  <ElLink
-                    v-if="row.log_url"
-                    :href="row.log_url"
-                    target="_blank"
-                    type="primary"
-                  >
-                    查看日志
-                  </ElLink>
-                  <span v-else class="text-gray-400">-</span>
-                </template>
-                <template #cell-actions="{ row }">
-                  <ElButton link type="primary" @click="openHistory(row)">
-                    历史
-                  </ElButton>
-                </template>
-              </DetailGrid>
+                        <span v-else class="text-gray-400">-</span>
+                      </template>
+                    </div>
+                  </template>
+                  <template #cell-duration_seconds="{ row }">
+                    {{ formatDuration(row.duration_seconds) }}
+                  </template>
+                  <template #cell-log_url="{ row }">
+                    <ElLink
+                      v-if="row.log_url"
+                      :href="row.log_url"
+                      target="_blank"
+                      type="primary"
+                    >
+                      查看日志
+                    </ElLink>
+                    <span v-else class="text-gray-400">-</span>
+                  </template>
+                  <template #cell-actions="{ row }">
+                    <ElButton link type="primary" @click="openHistory(row)">
+                      历史
+                    </ElButton>
+                  </template>
+                </DetailGrid>
               </div>
 
               <ElCard
@@ -616,7 +764,10 @@ onMounted(async () => {
                 <template #header>
                   <div class="font-medium">车型执行占比</div>
                 </template>
-                <EchartsUI ref="vehicleChartRef" class="min-h-[280px] w-full flex-1" />
+                <EchartsUI
+                  ref="vehicleChartRef"
+                  class="min-h-[280px] w-full flex-1"
+                />
                 <div class="mt-4 space-y-3 border-t pt-6 text-sm text-gray-600">
                   <div class="flex justify-between">
                     <span>车型</span>

@@ -79,6 +79,7 @@ watch(
           <div>开始时间：{{ item.start_time || '-' }}</div>
           <div>执行时长：{{ formatDuration(item.duration_seconds) }}</div>
           <div>上报时间：{{ item.reported_at || '-' }}</div>
+          <div>异常原因：{{ item.failure_reason || '-' }}</div>
           <div>
             运行日志：
             <ElLink
