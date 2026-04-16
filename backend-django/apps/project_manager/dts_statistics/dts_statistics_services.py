@@ -123,6 +123,7 @@ _DEFAULT_FIELDS = [
 ]
 
 _FIELD_SET_SUPPORTED_FIELDS = {
+    "projectName",
     "sDeptOneNoName",
     "sSubsystemNoName",
     "sConfigFlowType",
@@ -1439,14 +1440,16 @@ def _resolve_local_runtime_filters(
     )
     return {
         "dtsBizNoKeyword": _clean_text(getattr(query, "dtsBizNoKeyword", "")),
-        "projectKeyword": _clean_text(getattr(query, "projectKeyword", "")),
+        "projectNames": _normalize_text_list(getattr(query, "projectNames", [])),
         "briefDescKeyword": _clean_text(getattr(query, "briefDescKeyword", "")),
-        "currentHandlerKeyword": _clean_text(
-            getattr(query, "currentHandlerKeyword", "")
+        "currentHandlerKeywords": _normalize_text_list(
+            getattr(query, "currentHandlerKeywords", [])
         ),
-        "creatorKeyword": _clean_text(getattr(query, "creatorKeyword", "")),
-        "sSubmitUserNameKeyword": _clean_text(
-            getattr(query, "sSubmitUserNameKeyword", "")
+        "creatorKeywords": _normalize_text_list(
+            getattr(query, "creatorKeywords", [])
+        ),
+        "sSubmitUserNameKeywords": _normalize_text_list(
+            getattr(query, "sSubmitUserNameKeywords", [])
         ),
         "last_dts009_handlerKeywords": _normalize_text_list(
             getattr(query, "last_dts009_handlerKeywords", [])
@@ -1725,6 +1728,13 @@ def _match_any_keyword_like(value: Any, keywords: list[str]) -> bool:
     return any(_match_keyword_like(value, keyword) for keyword in normalized_keywords)
 
 
+def _resolve_field_set_option_value(item: dict[str, Any], field: str) -> str:
+    if field == "projectName":
+        resolved = _resolve_project_display_value(item)
+        return "" if resolved == "-" else resolved
+    return _clean_text(item.get(field))
+
+
 def _apply_local_filters(
     rows: list[dict[str, Any]],
     query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
@@ -1736,26 +1746,26 @@ def _apply_local_filters(
     dts_biz_no_keyword = (
         "" if "dtsBizNo" in ignored else _clean_text(local_filters["dtsBizNoKeyword"])
     )
-    project_keyword = (
-        ""
-        if "projectName" in ignored
-        else _clean_text(local_filters["projectKeyword"])
-    )
+    project_values = set() if "projectName" in ignored else {
+        item for item in _normalize_text_list(local_filters["projectNames"]) if item
+    }
     brief_desc_keyword = (
         "" if "briefDesc" in ignored else _clean_text(local_filters["briefDescKeyword"])
     )
-    current_handler_keyword = (
-        ""
+    current_handler_keywords = (
+        []
         if "currentHandler" in ignored
-        else _clean_text(local_filters["currentHandlerKeyword"])
+        else _normalize_text_list(local_filters["currentHandlerKeywords"])
     )
-    creator_keyword = (
-        "" if "creator" in ignored else _clean_text(local_filters["creatorKeyword"])
+    creator_keywords = (
+        []
+        if "creator" in ignored
+        else _normalize_text_list(local_filters["creatorKeywords"])
     )
-    submit_user_name_keyword = (
-        ""
+    submit_user_name_keywords = (
+        []
         if "sSubmitUserName" in ignored
-        else _clean_text(local_filters["sSubmitUserNameKeyword"])
+        else _normalize_text_list(local_filters["sSubmitUserNameKeywords"])
     )
     last_dts009_handler_keywords = (
         []
@@ -1815,23 +1825,23 @@ def _apply_local_filters(
             continue
         if not _match_keyword_like(row.get("dtsBizNo"), dts_biz_no_keyword):
             continue
-        if project_keyword and not (
-            _match_keyword_like(row.get("projectName"), project_keyword)
-            or _match_keyword_like(row.get("sProdCName"), project_keyword)
+        if (
+            project_values
+            and _resolve_project_display_value(row) not in project_values
         ):
             continue
         if not _match_keyword_like(row.get("briefDesc"), brief_desc_keyword):
             continue
-        if not _match_keyword_like(
+        if not _match_any_keyword_like(
             row.get("currentHandler"),
-            current_handler_keyword,
+            current_handler_keywords,
         ):
             continue
-        if not _match_keyword_like(row.get("creator"), creator_keyword):
+        if not _match_any_keyword_like(row.get("creator"), creator_keywords):
             continue
-        if not _match_keyword_like(
+        if not _match_any_keyword_like(
             row.get("sSubmitUserName"),
-            submit_user_name_keyword,
+            submit_user_name_keywords,
         ):
             continue
         if not _match_any_keyword_like(
@@ -1898,9 +1908,9 @@ def _build_snapshot_field_sets(rows: list[dict[str, Any]]) -> dict[str, list[str
     field_sets: dict[str, list[str]] = {}
     for field in _FIELD_SET_SUPPORTED_FIELDS:
         values = {
-            _clean_text(item.get(field))
+            _resolve_field_set_option_value(item, field)
             for item in rows
-            if _clean_text(item.get(field))
+            if _resolve_field_set_option_value(item, field)
         }
         if field == "sConfigFlowType":
             values = {
@@ -2034,25 +2044,17 @@ def _build_filtered_result_payload(
     dts_biz_no_keyword = (
         "" if "dtsBizNo" in ignored else _clean_text(local_filters["dtsBizNoKeyword"])
     )
-    project_keyword = (
-        "" if "projectName" in ignored else _clean_text(local_filters["projectKeyword"])
-    )
+    if "projectName" in ignored:
+        local_filters["projectNames"] = []
     brief_desc_keyword = (
         "" if "briefDesc" in ignored else _clean_text(local_filters["briefDescKeyword"])
     )
-    current_handler_keyword = (
-        ""
-        if "currentHandler" in ignored
-        else _clean_text(local_filters["currentHandlerKeyword"])
-    )
-    creator_keyword = (
-        "" if "creator" in ignored else _clean_text(local_filters["creatorKeyword"])
-    )
-    submit_user_name_keyword = (
-        ""
-        if "sSubmitUserName" in ignored
-        else _clean_text(local_filters["sSubmitUserNameKeyword"])
-    )
+    if "currentHandler" in ignored:
+        local_filters["currentHandlerKeywords"] = []
+    if "creator" in ignored:
+        local_filters["creatorKeywords"] = []
+    if "sSubmitUserName" in ignored:
+        local_filters["sSubmitUserNameKeywords"] = []
     last_dts009_handler_keywords = (
         []
         if "last_dts009_handler" in ignored
@@ -2084,11 +2086,15 @@ def _build_filtered_result_payload(
         "updateTimeBegin": update_time_begin,
         "updateTimeEnd": update_time_end,
         "dtsBizNoKeyword": dts_biz_no_keyword,
-        "projectKeyword": project_keyword,
+        "projectNames": _normalize_text_list(local_filters.get("projectNames")),
         "briefDescKeyword": brief_desc_keyword,
-        "currentHandlerKeyword": current_handler_keyword,
-        "creatorKeyword": creator_keyword,
-        "sSubmitUserNameKeyword": submit_user_name_keyword,
+        "currentHandlerKeywords": _normalize_text_list(
+            local_filters.get("currentHandlerKeywords")
+        ),
+        "creatorKeywords": _normalize_text_list(local_filters.get("creatorKeywords")),
+        "sSubmitUserNameKeywords": _normalize_text_list(
+            local_filters.get("sSubmitUserNameKeywords")
+        ),
         "last_dts009_handlerKeywords": last_dts009_handler_keywords,
         "createAtBegin": int(local_filters.get("createAtBegin") or 0),
         "createAtEnd": int(local_filters.get("createAtEnd") or 0),
@@ -2194,9 +2200,9 @@ def _collect_field_set_values(
 ) -> list[str]:
     values = sorted(
         {
-            _clean_text(item.get(field))
+            _resolve_field_set_option_value(item, field)
             for item in defects
-            if _clean_text(item.get(field))
+            if _resolve_field_set_option_value(item, field)
         }
     )
     return values

@@ -7,11 +7,11 @@ export interface DtsStatisticsFilters {
   updateTimeBegin: number;
   updateTimeEnd: number;
   dtsBizNoKeyword: string;
-  projectKeyword: string;
+  projectNames: string[];
   briefDescKeyword: string;
-  currentHandlerKeyword: string;
-  creatorKeyword: string;
-  sSubmitUserNameKeyword: string;
+  currentHandlerKeywords: string[];
+  creatorKeywords: string[];
+  sSubmitUserNameKeywords: string[];
   last_dts009_handlerKeywords: string[];
   createAtBegin: number;
   createAtEnd: number;

@@ -61,6 +61,7 @@ type TabKey = 'dashboard' | 'list';
 type DtsFieldSetKey =
   | 'auto_pl_group_name'
   | 'auto_source_type'
+  | 'projectName'
   | 'sConfigFlowType'
   | 'sDeptOneNoName'
   | 'sSubsystemNoName'
@@ -128,11 +129,11 @@ function createDefaultFilters(): DtsStatisticsFilters {
     updateTimeBegin: toTimestampMs(start),
     updateTimeEnd: toTimestampMs(end),
     dtsBizNoKeyword: '',
-    projectKeyword: '',
+    projectNames: [],
     briefDescKeyword: '',
-    currentHandlerKeyword: '',
-    creatorKeyword: '',
-    sSubmitUserNameKeyword: '',
+    currentHandlerKeywords: [],
+    creatorKeywords: [],
+    sSubmitUserNameKeywords: [],
     last_dts009_handlerKeywords: [],
     createAtBegin: 0,
     createAtEnd: 0,
@@ -244,11 +245,13 @@ function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
     updateTimeBegin: Math.max(begin, 0),
     updateTimeEnd: Math.max(end, 0),
     dtsBizNoKeyword: String(source.dtsBizNoKeyword || '').trim(),
-    projectKeyword: String(source.projectKeyword || '').trim(),
+    projectNames: normalizeStringArray(source.projectNames),
     briefDescKeyword: String(source.briefDescKeyword || '').trim(),
-    currentHandlerKeyword: String(source.currentHandlerKeyword || '').trim(),
-    creatorKeyword: String(source.creatorKeyword || '').trim(),
-    sSubmitUserNameKeyword: String(source.sSubmitUserNameKeyword || '').trim(),
+    currentHandlerKeywords: normalizeStringArray(source.currentHandlerKeywords),
+    creatorKeywords: normalizeStringArray(source.creatorKeywords),
+    sSubmitUserNameKeywords: normalizeStringArray(
+      source.sSubmitUserNameKeywords,
+    ),
     last_dts009_handlerKeywords: normalizeStringArray(
       source.last_dts009_handlerKeywords,
     ),
@@ -276,11 +279,13 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
     updateTimeBegin: payload.updateTimeBegin || 0,
     updateTimeEnd: payload.updateTimeEnd || 0,
     dtsBizNoKeyword: payload.dtsBizNoKeyword || '',
-    projectKeyword: payload.projectKeyword || '',
+    projectNames: [...(payload.projectNames || [])].sort(),
     briefDescKeyword: payload.briefDescKeyword || '',
-    currentHandlerKeyword: payload.currentHandlerKeyword || '',
-    creatorKeyword: payload.creatorKeyword || '',
-    sSubmitUserNameKeyword: payload.sSubmitUserNameKeyword || '',
+    currentHandlerKeywords: [...(payload.currentHandlerKeywords || [])].sort(),
+    creatorKeywords: [...(payload.creatorKeywords || [])].sort(),
+    sSubmitUserNameKeywords: [
+      ...(payload.sSubmitUserNameKeywords || []),
+    ].sort(),
     last_dts009_handlerKeywords: [
       ...(payload.last_dts009_handlerKeywords || []),
     ].sort(),
@@ -537,21 +542,25 @@ function buildKeywordFilterButtonText(value: string) {
 const selectedDtsBizNoKeywordLabel = computed(() =>
   buildKeywordFilterButtonText(filters.value.dtsBizNoKeyword),
 );
-const selectedProjectKeywordLabel = computed(() =>
-  buildKeywordFilterButtonText(filters.value.projectKeyword),
-);
+const selectedProjectLabel = computed(() => {
+  const count = filters.value.projectNames.length;
+  return count > 0 ? `${count} 项` : '全部';
+});
 const selectedBriefDescKeywordLabel = computed(() =>
   buildKeywordFilterButtonText(filters.value.briefDescKeyword),
 );
-const selectedCurrentHandlerKeywordLabel = computed(() =>
-  buildKeywordFilterButtonText(filters.value.currentHandlerKeyword),
-);
-const selectedCreatorKeywordLabel = computed(() =>
-  buildKeywordFilterButtonText(filters.value.creatorKeyword),
-);
-const selectedSubmitUserNameKeywordLabel = computed(() =>
-  buildKeywordFilterButtonText(filters.value.sSubmitUserNameKeyword),
-);
+const selectedCurrentHandlerLabel = computed(() => {
+  const count = filters.value.currentHandlerKeywords.length;
+  return count > 0 ? `${count} 项` : '全部';
+});
+const selectedCreatorLabel = computed(() => {
+  const count = filters.value.creatorKeywords.length;
+  return count > 0 ? `${count} 项` : '全部';
+});
+const selectedSubmitUserNameLabel = computed(() => {
+  const count = filters.value.sSubmitUserNameKeywords.length;
+  return count > 0 ? `${count} 项` : '全部';
+});
 const selectedLastDts009HandlerLabel = computed(() => {
   const count = filters.value.last_dts009_handlerKeywords.length;
   return count > 0 ? `${count} 项` : '全部';
@@ -647,11 +656,11 @@ const autoPlGroupFilterVisible = ref(false);
 const draftFlowStates = ref<string[]>([]);
 const draftSeverityNos = ref<string[]>([]);
 const draftDtsBizNoKeyword = ref('');
-const draftProjectKeyword = ref('');
+const draftProjectNames = ref<string[]>([]);
 const draftBriefDescKeyword = ref('');
-const draftCurrentHandlerKeyword = ref('');
-const draftCreatorKeyword = ref('');
-const draftSubmitUserNameKeyword = ref('');
+const draftCurrentHandlerKeywords = ref<string[]>([]);
+const draftCreatorKeywords = ref<string[]>([]);
+const draftSubmitUserNameKeywords = ref<string[]>([]);
 const draftLastDts009HandlerKeywords = ref<string[]>([]);
 const draftCreateAtBegin = ref<Date | null>(null);
 const draftCreateAtEnd = ref<Date | null>(null);
@@ -666,6 +675,7 @@ const draftAutoPlGroupNames = ref<string[]>([]);
 const draftCloseTypeKeyword = ref('');
 const draftConfigFlowTypeKeyword = ref('');
 const draftAutoSourceKeyword = ref('');
+const draftProjectKeyword = ref('');
 const draftDeptKeyword = ref('');
 const draftSubsystemKeyword = ref('');
 const draftAutoPlGroupKeyword = ref('');
@@ -673,6 +683,7 @@ const fieldSetOptions = ref<DtsFieldSetOptionsState>({
   uQbiCloseTypeName: [],
   sConfigFlowType: [],
   auto_source_type: [],
+  projectName: [],
   sDeptOneNoName: [],
   sSubsystemNoName: [],
   auto_pl_group_name: [],
@@ -681,6 +692,7 @@ const fieldSetLoading = ref<DtsFieldSetLoadingState>({
   uQbiCloseTypeName: false,
   sConfigFlowType: false,
   auto_source_type: false,
+  projectName: false,
   sDeptOneNoName: false,
   sSubsystemNoName: false,
   auto_pl_group_name: false,
@@ -701,6 +713,12 @@ const filteredAutoSourceOptions = computed(() =>
   filterFieldOptions(
     fieldSetOptions.value.auto_source_type || [],
     draftAutoSourceKeyword.value,
+  ),
+);
+const filteredProjectOptions = computed(() =>
+  filterFieldOptions(
+    fieldSetOptions.value.projectName || [],
+    draftProjectKeyword.value,
   ),
 );
 const filteredDeptOptions = computed(() =>
@@ -827,7 +845,14 @@ watch(
   () => projectFilterVisible.value,
   (visible) => {
     if (visible) {
-      draftProjectKeyword.value = filters.value.projectKeyword || '';
+      if (!appliedFilters.value || queryLoading.value) {
+        projectFilterVisible.value = false;
+        ElMessage.warning('请先完成当前查询，再打开候选值筛选');
+        return;
+      }
+      draftProjectNames.value = [...filters.value.projectNames];
+      draftProjectKeyword.value = '';
+      void loadFieldSetOptions(['projectName']);
     }
   },
 );
@@ -845,8 +870,9 @@ watch(
   () => currentHandlerFilterVisible.value,
   (visible) => {
     if (visible) {
-      draftCurrentHandlerKeyword.value =
-        filters.value.currentHandlerKeyword || '';
+      draftCurrentHandlerKeywords.value = [
+        ...filters.value.currentHandlerKeywords,
+      ];
     }
   },
 );
@@ -855,7 +881,7 @@ watch(
   () => creatorFilterVisible.value,
   (visible) => {
     if (visible) {
-      draftCreatorKeyword.value = filters.value.creatorKeyword || '';
+      draftCreatorKeywords.value = [...filters.value.creatorKeywords];
     }
   },
 );
@@ -864,8 +890,9 @@ watch(
   () => submitUserNameFilterVisible.value,
   (visible) => {
     if (visible) {
-      draftSubmitUserNameKeyword.value =
-        filters.value.sSubmitUserNameKeyword || '';
+      draftSubmitUserNameKeywords.value = [
+        ...filters.value.sSubmitUserNameKeywords,
+      ];
     }
   },
 );
@@ -1129,12 +1156,13 @@ function resetDtsBizNoFilterDraft() {
 }
 
 async function confirmProjectFilter() {
-  filters.value.projectKeyword = String(draftProjectKeyword.value || '').trim();
+  filters.value.projectNames = normalizeStringArray(draftProjectNames.value);
   projectFilterVisible.value = false;
   await handleSearch(true);
 }
 
 function resetProjectFilterDraft() {
+  draftProjectNames.value = [];
   draftProjectKeyword.value = '';
 }
 
@@ -1151,37 +1179,39 @@ function resetBriefDescFilterDraft() {
 }
 
 async function confirmCurrentHandlerFilter() {
-  filters.value.currentHandlerKeyword = String(
-    draftCurrentHandlerKeyword.value || '',
-  ).trim();
+  filters.value.currentHandlerKeywords = normalizeStringArray(
+    draftCurrentHandlerKeywords.value,
+  );
   currentHandlerFilterVisible.value = false;
   await handleSearch(true);
 }
 
 function resetCurrentHandlerFilterDraft() {
-  draftCurrentHandlerKeyword.value = '';
+  draftCurrentHandlerKeywords.value = [];
 }
 
 async function confirmCreatorFilter() {
-  filters.value.creatorKeyword = String(draftCreatorKeyword.value || '').trim();
+  filters.value.creatorKeywords = normalizeStringArray(
+    draftCreatorKeywords.value,
+  );
   creatorFilterVisible.value = false;
   await handleSearch(true);
 }
 
 function resetCreatorFilterDraft() {
-  draftCreatorKeyword.value = '';
+  draftCreatorKeywords.value = [];
 }
 
 async function confirmSubmitUserNameFilter() {
-  filters.value.sSubmitUserNameKeyword = String(
-    draftSubmitUserNameKeyword.value || '',
-  ).trim();
+  filters.value.sSubmitUserNameKeywords = normalizeStringArray(
+    draftSubmitUserNameKeywords.value,
+  );
   submitUserNameFilterVisible.value = false;
   await handleSearch(true);
 }
 
 function resetSubmitUserNameFilterDraft() {
-  draftSubmitUserNameKeyword.value = '';
+  draftSubmitUserNameKeywords.value = [];
 }
 
 async function confirmLastDts009HandlerFilter() {
@@ -2208,24 +2238,57 @@ onUnmounted(() => {
                             type="button"
                             class="dts-header-filter-trigger"
                             :class="{
-                              'is-active': Boolean(filters.projectKeyword),
+                              'is-active': filters.projectNames.length > 0,
                             }"
                           >
                             <Filter class="dts-header-filter-trigger__icon" />
                             <span class="dts-header-filter-trigger__text">
-                              {{ selectedProjectKeywordLabel }}
+                              {{ selectedProjectLabel }}
                             </span>
                           </button>
                         </template>
                         <div class="dts-header-filter-panel" @click.stop>
                           <div class="dts-header-filter-panel__body">
                             <ElInput
+                              v-if="!fieldSetLoading.projectName"
                               v-model="draftProjectKeyword"
                               size="small"
                               clearable
                               class="dts-header-filter-panel__search"
-                              placeholder="输入项目名或项目编码模糊搜索"
+                              placeholder="输入关键词筛选项目"
                             />
+                            <div
+                              v-if="fieldSetLoading.projectName"
+                              class="dts-header-filter-panel__tip"
+                            >
+                              正在加载候选值...
+                            </div>
+                            <ElEmpty
+                              v-else-if="
+                                fieldSetOptions.projectName.length === 0
+                              "
+                              :image-size="56"
+                              description="暂无候选值"
+                            />
+                            <ElEmpty
+                              v-else-if="filteredProjectOptions.length === 0"
+                              :image-size="56"
+                              description="暂无匹配项"
+                            />
+                            <ElCheckboxGroup
+                              v-else
+                              v-model="draftProjectNames"
+                              class="dts-header-filter-check-group"
+                            >
+                              <ElCheckbox
+                                v-for="item in filteredProjectOptions"
+                                :key="item"
+                                :label="item"
+                                :value="item"
+                              >
+                                {{ item }}
+                              </ElCheckbox>
+                            </ElCheckboxGroup>
                           </div>
                           <div class="dts-header-filter-panel__actions">
                             <ElButton
@@ -2262,26 +2325,36 @@ onUnmounted(() => {
                             type="button"
                             class="dts-header-filter-trigger"
                             :class="{
-                              'is-active': Boolean(
-                                filters.currentHandlerKeyword,
-                              ),
+                              'is-active':
+                                filters.currentHandlerKeywords.length > 0,
                             }"
                           >
                             <Filter class="dts-header-filter-trigger__icon" />
                             <span class="dts-header-filter-trigger__text">
-                              {{ selectedCurrentHandlerKeywordLabel }}
+                              {{ selectedCurrentHandlerLabel }}
                             </span>
                           </button>
                         </template>
                         <div class="dts-header-filter-panel" @click.stop>
                           <div class="dts-header-filter-panel__body">
-                            <ElInput
-                              v-model="draftCurrentHandlerKeyword"
-                              size="small"
-                              clearable
+                            <ElSelect
+                              v-model="draftCurrentHandlerKeywords"
+                              multiple
+                              filterable
+                              allow-create
+                              default-first-option
+                              :reserve-keyword="false"
+                              :teleported="false"
                               class="dts-header-filter-panel__search"
-                              placeholder="输入关键词模糊搜索当前处理人"
-                            />
+                              placeholder="输入并回车，可添加多个当前处理人"
+                            >
+                              <ElOption
+                                v-for="item in draftCurrentHandlerKeywords"
+                                :key="item"
+                                :label="item"
+                                :value="item"
+                              />
+                            </ElSelect>
                           </div>
                           <div class="dts-header-filter-panel__actions">
                             <ElButton
@@ -2318,24 +2391,35 @@ onUnmounted(() => {
                             type="button"
                             class="dts-header-filter-trigger"
                             :class="{
-                              'is-active': Boolean(filters.creatorKeyword),
+                              'is-active': filters.creatorKeywords.length > 0,
                             }"
                           >
                             <Filter class="dts-header-filter-trigger__icon" />
                             <span class="dts-header-filter-trigger__text">
-                              {{ selectedCreatorKeywordLabel }}
+                              {{ selectedCreatorLabel }}
                             </span>
                           </button>
                         </template>
                         <div class="dts-header-filter-panel" @click.stop>
                           <div class="dts-header-filter-panel__body">
-                            <ElInput
-                              v-model="draftCreatorKeyword"
-                              size="small"
-                              clearable
+                            <ElSelect
+                              v-model="draftCreatorKeywords"
+                              multiple
+                              filterable
+                              allow-create
+                              default-first-option
+                              :reserve-keyword="false"
+                              :teleported="false"
                               class="dts-header-filter-panel__search"
-                              placeholder="输入关键词模糊搜索提单人工号"
-                            />
+                              placeholder="输入并回车，可添加多个提单人工号"
+                            >
+                              <ElOption
+                                v-for="item in draftCreatorKeywords"
+                                :key="item"
+                                :label="item"
+                                :value="item"
+                              />
+                            </ElSelect>
                           </div>
                           <div class="dts-header-filter-panel__actions">
                             <ElButton
@@ -2372,26 +2456,36 @@ onUnmounted(() => {
                             type="button"
                             class="dts-header-filter-trigger"
                             :class="{
-                              'is-active': Boolean(
-                                filters.sSubmitUserNameKeyword,
-                              ),
+                              'is-active':
+                                filters.sSubmitUserNameKeywords.length > 0,
                             }"
                           >
                             <Filter class="dts-header-filter-trigger__icon" />
                             <span class="dts-header-filter-trigger__text">
-                              {{ selectedSubmitUserNameKeywordLabel }}
+                              {{ selectedSubmitUserNameLabel }}
                             </span>
                           </button>
                         </template>
                         <div class="dts-header-filter-panel" @click.stop>
                           <div class="dts-header-filter-panel__body">
-                            <ElInput
-                              v-model="draftSubmitUserNameKeyword"
-                              size="small"
-                              clearable
+                            <ElSelect
+                              v-model="draftSubmitUserNameKeywords"
+                              multiple
+                              filterable
+                              allow-create
+                              default-first-option
+                              :reserve-keyword="false"
+                              :teleported="false"
                               class="dts-header-filter-panel__search"
-                              placeholder="输入关键词模糊搜索提单人姓名"
-                            />
+                              placeholder="输入并回车，可添加多个提单人姓名"
+                            >
+                              <ElOption
+                                v-for="item in draftSubmitUserNameKeywords"
+                                :key="item"
+                                :label="item"
+                                :value="item"
+                              />
+                            </ElSelect>
                           </div>
                           <div class="dts-header-filter-panel__actions">
                             <ElButton

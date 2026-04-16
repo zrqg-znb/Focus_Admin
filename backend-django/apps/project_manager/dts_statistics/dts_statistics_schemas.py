@@ -33,11 +33,11 @@ def _normalize_optional_text(value: Any) -> str:
 
 class DtsLocalFilterSchema(Schema):
     dtsBizNoKeyword: str = ""
-    projectKeyword: str = ""
+    projectNames: list[str] = Field(default_factory=list)
     briefDescKeyword: str = ""
-    currentHandlerKeyword: str = ""
-    creatorKeyword: str = ""
-    sSubmitUserNameKeyword: str = ""
+    currentHandlerKeywords: list[str] = Field(default_factory=list)
+    creatorKeywords: list[str] = Field(default_factory=list)
+    sSubmitUserNameKeywords: list[str] = Field(default_factory=list)
     last_dts009_handlerKeywords: list[str] = Field(default_factory=list)
     createAtBegin: int = 0
     createAtEnd: int = 0
@@ -52,11 +52,7 @@ class DtsLocalFilterSchema(Schema):
 
     @field_validator(
         "dtsBizNoKeyword",
-        "projectKeyword",
         "briefDescKeyword",
-        "currentHandlerKeyword",
-        "creatorKeyword",
-        "sSubmitUserNameKeyword",
         mode="before",
     )
     @classmethod
@@ -80,6 +76,11 @@ class DtsLocalFilterSchema(Schema):
         return _normalize_timestamp(value)
 
     @field_validator(
+        "projectNames",
+        "currentHandlerKeywords",
+        "creatorKeywords",
+        "sSubmitUserNameKeywords",
+        "last_dts009_handlerKeywords",
         "sDeptOneNoNames",
         "sSubsystemNoNames",
         "sConfigFlowTypes",
@@ -100,11 +101,11 @@ class DtsStatisticsQuerySchema(Schema):
     updateTimeBegin: int = 0
     updateTimeEnd: int = 0
     dtsBizNoKeyword: str = ""
-    projectKeyword: str = ""
+    projectNames: list[str] = Field(default_factory=list)
     briefDescKeyword: str = ""
-    currentHandlerKeyword: str = ""
-    creatorKeyword: str = ""
-    sSubmitUserNameKeyword: str = ""
+    currentHandlerKeywords: list[str] = Field(default_factory=list)
+    creatorKeywords: list[str] = Field(default_factory=list)
+    sSubmitUserNameKeywords: list[str] = Field(default_factory=list)
     last_dts009_handlerKeywords: list[str] = Field(default_factory=list)
     createAtBegin: int = 0
     createAtEnd: int = 0
@@ -137,18 +138,21 @@ class DtsStatisticsQuerySchema(Schema):
 
     @field_validator(
         "dtsBizNoKeyword",
-        "projectKeyword",
         "briefDescKeyword",
-        "currentHandlerKeyword",
-        "creatorKeyword",
-        "sSubmitUserNameKeyword",
         mode="before",
     )
     @classmethod
     def normalize_keyword(cls, value: Any):
         return _normalize_optional_text(value)
 
-    @field_validator("last_dts009_handlerKeywords", mode="before")
+    @field_validator(
+        "projectNames",
+        "currentHandlerKeywords",
+        "creatorKeywords",
+        "sSubmitUserNameKeywords",
+        "last_dts009_handlerKeywords",
+        mode="before",
+    )
     @classmethod
     def normalize_keyword_list(cls, value: Any):
         return _normalize_text_list(value)
@@ -435,11 +439,11 @@ class DtsStatisticsExportSchema(Schema):
     updateTimeBegin: int = 0
     updateTimeEnd: int = 0
     dtsBizNoKeyword: str = ""
-    projectKeyword: str = ""
+    projectNames: list[str] = Field(default_factory=list)
     briefDescKeyword: str = ""
-    currentHandlerKeyword: str = ""
-    creatorKeyword: str = ""
-    sSubmitUserNameKeyword: str = ""
+    currentHandlerKeywords: list[str] = Field(default_factory=list)
+    creatorKeywords: list[str] = Field(default_factory=list)
+    sSubmitUserNameKeywords: list[str] = Field(default_factory=list)
     last_dts009_handlerKeywords: list[str] = Field(default_factory=list)
     createAtBegin: int = 0
     createAtEnd: int = 0
@@ -470,18 +474,21 @@ class DtsStatisticsExportSchema(Schema):
 
     @field_validator(
         "dtsBizNoKeyword",
-        "projectKeyword",
         "briefDescKeyword",
-        "currentHandlerKeyword",
-        "creatorKeyword",
-        "sSubmitUserNameKeyword",
         mode="before",
     )
     @classmethod
     def normalize_keyword(cls, value: Any):
         return _normalize_optional_text(value)
 
-    @field_validator("last_dts009_handlerKeywords", mode="before")
+    @field_validator(
+        "projectNames",
+        "currentHandlerKeywords",
+        "creatorKeywords",
+        "sSubmitUserNameKeywords",
+        "last_dts009_handlerKeywords",
+        mode="before",
+    )
     @classmethod
     def normalize_export_keyword_list(cls, value: Any):
         return _normalize_text_list(value)
