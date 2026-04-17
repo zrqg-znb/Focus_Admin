@@ -69,6 +69,222 @@ type DtsFieldSetKey =
 type DtsFieldSetOptionsState = Record<DtsFieldSetKey, string[]>;
 type DtsFieldSetLoadingState = Record<DtsFieldSetKey, boolean>;
 
+const GOVERNANCE_SELECT_FILTER_CONFIGS = [
+  {
+    columnKey: 'is_downstream',
+    dictKey: 'yes_no',
+    filterKey: 'is_downstream_values',
+    label: '是否下游问题',
+    placeholder: '输入关键词筛选是否下游问题',
+  },
+  {
+    columnKey: 'need_aar',
+    dictKey: 'yes_no',
+    filterKey: 'need_aar_values',
+    label: '是否需要AAR',
+    placeholder: '输入关键词筛选是否需要AAR',
+  },
+  {
+    columnKey: 'need_dev_analyze',
+    dictKey: 'yes_no',
+    filterKey: 'need_dev_analyze_values',
+    label: '需开发分析',
+    placeholder: '输入关键词筛选需开发分析',
+  },
+  {
+    columnKey: 'need_test_analyze',
+    dictKey: 'yes_no',
+    filterKey: 'need_test_analyze_values',
+    label: '需测试分析',
+    placeholder: '输入关键词筛选需测试分析',
+  },
+  {
+    columnKey: 'issue_intro_stage',
+    dictKey: 'issue_intro_stage',
+    filterKey: 'issue_intro_stage_values',
+    label: '问题引入阶段',
+    placeholder: '输入关键词筛选问题引入阶段',
+  },
+  {
+    columnKey: 'dev_sub_category',
+    dictKey: 'dev_sub_category',
+    filterKey: 'dev_sub_category_values',
+    label: '问题小类',
+    placeholder: '输入关键词筛选问题小类',
+  },
+  {
+    columnKey: 'dev_issue_intro_point',
+    dictKey: 'dev_issue_intro_point',
+    filterKey: 'dev_issue_intro_point_values',
+    label: '问题引入点',
+    placeholder: '输入关键词筛选问题引入点',
+  },
+  {
+    columnKey: 'dev_issue_probability',
+    dictKey: 'dev_issue_probability',
+    filterKey: 'dev_issue_probability_values',
+    label: '问题概率',
+    placeholder: '输入关键词筛选问题概率',
+  },
+  {
+    columnKey: 'dev_common_issue_type',
+    dictKey: 'dev_common_issue_type',
+    filterKey: 'dev_common_issue_type_values',
+    label: '是否共性问题',
+    placeholder: '输入关键词筛选是否共性问题',
+  },
+  {
+    columnKey: 'dev_control_points',
+    dictKey: 'dev_control_points',
+    filterKey: 'dev_control_points_values',
+    label: '开发控制点',
+    placeholder: '输入关键词筛选开发控制点',
+  },
+  {
+    columnKey: 'dev_non_base_desc',
+    dictKey: 'dev_non_base_desc',
+    filterKey: 'dev_non_base_desc_values',
+    label: '非底软说明',
+    placeholder: '输入关键词筛选非底软说明',
+  },
+  {
+    columnKey: 'dev_status',
+    dictKey: 'action_status',
+    filterKey: 'dev_status_values',
+    label: '开发改进状态',
+    placeholder: '输入关键词筛选开发改进状态',
+  },
+  {
+    columnKey: 'test_miss_reason',
+    dictKey: 'test_miss_reason',
+    filterKey: 'test_miss_reason_values',
+    label: '漏测原因',
+    placeholder: '输入关键词筛选漏测原因',
+  },
+  {
+    columnKey: 'test_status',
+    dictKey: 'action_status',
+    filterKey: 'test_status_values',
+    label: '测试改进状态',
+    placeholder: '输入关键词筛选测试改进状态',
+  },
+] as const;
+
+const GOVERNANCE_KEYWORD_FILTER_CONFIGS = [
+  {
+    columnKey: 'process_quality_type',
+    filterKey: 'process_quality_type_keyword',
+    label: '过程质量分类',
+    placeholder: '输入关键词模糊搜索过程质量分类',
+  },
+  {
+    columnKey: 'qa_remark',
+    filterKey: 'qa_remark_keyword',
+    label: 'QA备注',
+    placeholder: '输入关键词模糊搜索QA备注',
+  },
+  {
+    columnKey: 'dev_owner_name',
+    filterKey: 'dev_owner_name_keyword',
+    label: '开发责任人',
+    placeholder: '输入关键词模糊搜索开发责任人',
+  },
+  {
+    columnKey: 'dev_feature',
+    filterKey: 'dev_feature_keyword',
+    label: '特性/功能',
+    placeholder: '输入关键词模糊搜索特性/功能',
+  },
+  {
+    columnKey: 'dev_reason',
+    filterKey: 'dev_reason_keyword',
+    label: '问题原因',
+    placeholder: '输入关键词模糊搜索问题原因',
+  },
+  {
+    columnKey: 'dev_intro_reason',
+    filterKey: 'dev_intro_reason_keyword',
+    label: '引入原因',
+    placeholder: '输入关键词模糊搜索引入原因',
+  },
+  {
+    columnKey: 'dev_intro_point_analysis',
+    filterKey: 'dev_intro_point_analysis_keyword',
+    label: '引入点分析',
+    placeholder: '输入关键词模糊搜索引入点分析',
+  },
+  {
+    columnKey: 'dev_improvements',
+    filterKey: 'dev_improvements_keyword',
+    label: '开发改进措施',
+    placeholder: '输入关键词模糊搜索开发改进措施',
+  },
+  {
+    columnKey: 'dev_aar_link',
+    filterKey: 'dev_aar_link_keyword',
+    label: 'AAR链接',
+    placeholder: '输入关键词模糊搜索AAR链接',
+  },
+  {
+    columnKey: 'dev_asset_link',
+    filterKey: 'dev_asset_link_keyword',
+    label: '开发落地资产链接',
+    placeholder: '输入关键词模糊搜索开发落地资产链接',
+  },
+  {
+    columnKey: 'dev_remark',
+    filterKey: 'dev_remark_keyword',
+    label: '开发备注',
+    placeholder: '输入关键词模糊搜索开发备注',
+  },
+  {
+    columnKey: 'test_owner_name',
+    filterKey: 'test_owner_name_keyword',
+    label: '测试责任人',
+    placeholder: '输入关键词模糊搜索测试责任人',
+  },
+  {
+    columnKey: 'test_standard_desc',
+    filterKey: 'test_standard_desc_keyword',
+    label: '规范问题描述',
+    placeholder: '输入关键词模糊搜索规范问题描述',
+  },
+  {
+    columnKey: 'test_improvements',
+    filterKey: 'test_improvements_keyword',
+    label: '测试改进措施',
+    placeholder: '输入关键词模糊搜索测试改进措施',
+  },
+  {
+    columnKey: 'test_non_test_desc',
+    filterKey: 'test_non_test_desc_keyword',
+    label: '非测试说明',
+    placeholder: '输入关键词模糊搜索非测试说明',
+  },
+  {
+    columnKey: 'test_asset_link',
+    filterKey: 'test_asset_link_keyword',
+    label: '测试落地资产链接',
+    placeholder: '输入关键词模糊搜索测试落地资产链接',
+  },
+  {
+    columnKey: 'test_remark',
+    filterKey: 'test_remark_keyword',
+    label: '测试备注',
+    placeholder: '输入关键词模糊搜索测试备注',
+  },
+] as const;
+
+type GovernanceSelectFilterConfig =
+  (typeof GOVERNANCE_SELECT_FILTER_CONFIGS)[number];
+type GovernanceSelectColumnKey = GovernanceSelectFilterConfig['columnKey'];
+type GovernanceSelectFilterKey = GovernanceSelectFilterConfig['filterKey'];
+
+type GovernanceKeywordFilterConfig =
+  (typeof GOVERNANCE_KEYWORD_FILTER_CONFIGS)[number];
+type GovernanceKeywordColumnKey = GovernanceKeywordFilterConfig['columnKey'];
+type GovernanceKeywordFilterKey = GovernanceKeywordFilterConfig['filterKey'];
+
 const PRODUCT_OPTIONS = [
   { label: '座舱', value: '250539396', disabled: false },
   { label: '车控', value: '250539397', disabled: false },
@@ -145,6 +361,37 @@ function createDefaultFilters(): DtsStatisticsFilters {
     sConfigFlowTypes: [],
     auto_source_types: [],
     auto_pl_group_names: [],
+    is_downstream_values: [],
+    need_aar_values: [],
+    need_dev_analyze_values: [],
+    need_test_analyze_values: [],
+    process_quality_type_keyword: '',
+    qa_remark_keyword: '',
+    dev_owner_name_keyword: '',
+    issue_intro_stage_values: [],
+    dev_feature_keyword: '',
+    dev_sub_category_values: [],
+    dev_reason_keyword: '',
+    dev_intro_reason_keyword: '',
+    dev_issue_intro_point_values: [],
+    dev_issue_probability_values: [],
+    dev_common_issue_type_values: [],
+    dev_control_points_values: [],
+    dev_intro_point_analysis_keyword: '',
+    dev_improvements_keyword: '',
+    dev_non_base_desc_values: [],
+    dev_aar_link_keyword: '',
+    dev_asset_link_keyword: '',
+    dev_status_values: [],
+    dev_remark_keyword: '',
+    test_owner_name_keyword: '',
+    test_miss_reason_values: [],
+    test_standard_desc_keyword: '',
+    test_improvements_keyword: '',
+    test_non_test_desc_keyword: '',
+    test_asset_link_keyword: '',
+    test_status_values: [],
+    test_remark_keyword: '',
   };
 }
 
@@ -165,10 +412,10 @@ const summary = ref<DtsSummary>({
   avg_process_days: 0,
   qa_filled_count: 0,
   qa_completion_rate: 0,
-  dev_analyzed_count: 0,
-  dev_analysis_completion_rate: 0,
-  test_analyzed_count: 0,
-  test_analysis_completion_rate: 0,
+  dev_filled_count: 0,
+  dev_completion_rate: 0,
+  test_filled_count: 0,
+  test_completion_rate: 0,
   severity_dist: [],
   status_dist: [],
   team_dist: [],
@@ -265,6 +512,75 @@ function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
     sConfigFlowTypes: normalizeStringArray(source.sConfigFlowTypes),
     auto_source_types: normalizeStringArray(source.auto_source_types),
     auto_pl_group_names: normalizeStringArray(source.auto_pl_group_names),
+    is_downstream_values: normalizeStringArray(source.is_downstream_values),
+    need_aar_values: normalizeStringArray(source.need_aar_values),
+    need_dev_analyze_values: normalizeStringArray(
+      source.need_dev_analyze_values,
+    ),
+    need_test_analyze_values: normalizeStringArray(
+      source.need_test_analyze_values,
+    ),
+    process_quality_type_keyword: String(
+      source.process_quality_type_keyword || '',
+    ).trim(),
+    qa_remark_keyword: String(source.qa_remark_keyword || '').trim(),
+    dev_owner_name_keyword: String(source.dev_owner_name_keyword || '').trim(),
+    issue_intro_stage_values: normalizeStringArray(
+      source.issue_intro_stage_values,
+    ),
+    dev_feature_keyword: String(source.dev_feature_keyword || '').trim(),
+    dev_sub_category_values: normalizeStringArray(
+      source.dev_sub_category_values,
+    ),
+    dev_reason_keyword: String(source.dev_reason_keyword || '').trim(),
+    dev_intro_reason_keyword: String(
+      source.dev_intro_reason_keyword || '',
+    ).trim(),
+    dev_issue_intro_point_values: normalizeStringArray(
+      source.dev_issue_intro_point_values,
+    ),
+    dev_issue_probability_values: normalizeStringArray(
+      source.dev_issue_probability_values,
+    ),
+    dev_common_issue_type_values: normalizeStringArray(
+      source.dev_common_issue_type_values,
+    ),
+    dev_control_points_values: normalizeStringArray(
+      source.dev_control_points_values,
+    ),
+    dev_intro_point_analysis_keyword: String(
+      source.dev_intro_point_analysis_keyword || '',
+    ).trim(),
+    dev_improvements_keyword: String(
+      source.dev_improvements_keyword || '',
+    ).trim(),
+    dev_non_base_desc_values: normalizeStringArray(
+      source.dev_non_base_desc_values,
+    ),
+    dev_aar_link_keyword: String(source.dev_aar_link_keyword || '').trim(),
+    dev_asset_link_keyword: String(source.dev_asset_link_keyword || '').trim(),
+    dev_status_values: normalizeStringArray(source.dev_status_values),
+    dev_remark_keyword: String(source.dev_remark_keyword || '').trim(),
+    test_owner_name_keyword: String(
+      source.test_owner_name_keyword || '',
+    ).trim(),
+    test_miss_reason_values: normalizeStringArray(
+      source.test_miss_reason_values,
+    ),
+    test_standard_desc_keyword: String(
+      source.test_standard_desc_keyword || '',
+    ).trim(),
+    test_improvements_keyword: String(
+      source.test_improvements_keyword || '',
+    ).trim(),
+    test_non_test_desc_keyword: String(
+      source.test_non_test_desc_keyword || '',
+    ).trim(),
+    test_asset_link_keyword: String(
+      source.test_asset_link_keyword || '',
+    ).trim(),
+    test_status_values: normalizeStringArray(source.test_status_values),
+    test_remark_keyword: String(source.test_remark_keyword || '').trim(),
   };
 }
 
@@ -299,6 +615,58 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
     sConfigFlowTypes: [...(payload.sConfigFlowTypes || [])].sort(),
     auto_source_types: [...(payload.auto_source_types || [])].sort(),
     auto_pl_group_names: [...(payload.auto_pl_group_names || [])].sort(),
+    is_downstream_values: [...(payload.is_downstream_values || [])].sort(),
+    need_aar_values: [...(payload.need_aar_values || [])].sort(),
+    need_dev_analyze_values: [
+      ...(payload.need_dev_analyze_values || []),
+    ].sort(),
+    need_test_analyze_values: [
+      ...(payload.need_test_analyze_values || []),
+    ].sort(),
+    process_quality_type_keyword: payload.process_quality_type_keyword || '',
+    qa_remark_keyword: payload.qa_remark_keyword || '',
+    dev_owner_name_keyword: payload.dev_owner_name_keyword || '',
+    issue_intro_stage_values: [
+      ...(payload.issue_intro_stage_values || []),
+    ].sort(),
+    dev_feature_keyword: payload.dev_feature_keyword || '',
+    dev_sub_category_values: [
+      ...(payload.dev_sub_category_values || []),
+    ].sort(),
+    dev_reason_keyword: payload.dev_reason_keyword || '',
+    dev_intro_reason_keyword: payload.dev_intro_reason_keyword || '',
+    dev_issue_intro_point_values: [
+      ...(payload.dev_issue_intro_point_values || []),
+    ].sort(),
+    dev_issue_probability_values: [
+      ...(payload.dev_issue_probability_values || []),
+    ].sort(),
+    dev_common_issue_type_values: [
+      ...(payload.dev_common_issue_type_values || []),
+    ].sort(),
+    dev_control_points_values: [
+      ...(payload.dev_control_points_values || []),
+    ].sort(),
+    dev_intro_point_analysis_keyword:
+      payload.dev_intro_point_analysis_keyword || '',
+    dev_improvements_keyword: payload.dev_improvements_keyword || '',
+    dev_non_base_desc_values: [
+      ...(payload.dev_non_base_desc_values || []),
+    ].sort(),
+    dev_aar_link_keyword: payload.dev_aar_link_keyword || '',
+    dev_asset_link_keyword: payload.dev_asset_link_keyword || '',
+    dev_status_values: [...(payload.dev_status_values || [])].sort(),
+    dev_remark_keyword: payload.dev_remark_keyword || '',
+    test_owner_name_keyword: payload.test_owner_name_keyword || '',
+    test_miss_reason_values: [
+      ...(payload.test_miss_reason_values || []),
+    ].sort(),
+    test_standard_desc_keyword: payload.test_standard_desc_keyword || '',
+    test_improvements_keyword: payload.test_improvements_keyword || '',
+    test_non_test_desc_keyword: payload.test_non_test_desc_keyword || '',
+    test_asset_link_keyword: payload.test_asset_link_keyword || '',
+    test_status_values: [...(payload.test_status_values || [])].sort(),
+    test_remark_keyword: payload.test_remark_keyword || '',
   });
 }
 
@@ -410,10 +778,10 @@ async function fetchSummary(force = false) {
       avg_process_days: 0,
       qa_filled_count: 0,
       qa_completion_rate: 0,
-      dev_analyzed_count: 0,
-      dev_analysis_completion_rate: 0,
-      test_analyzed_count: 0,
-      test_analysis_completion_rate: 0,
+      dev_filled_count: 0,
+      dev_completion_rate: 0,
+      test_filled_count: 0,
+      test_completion_rate: 0,
       severity_dist: [],
       status_dist: [],
       team_dist: [],
@@ -739,6 +1107,142 @@ const filteredAutoPlGroupOptions = computed(() =>
     draftAutoPlGroupKeyword.value,
   ),
 );
+
+function createGovernanceSelectRecord<T>(
+  factory: (config: GovernanceSelectFilterConfig) => T,
+) {
+  const record = {} as Record<GovernanceSelectColumnKey, T>;
+  for (const config of GOVERNANCE_SELECT_FILTER_CONFIGS) {
+    record[config.columnKey] = factory(config);
+  }
+  return record;
+}
+
+function createGovernanceKeywordRecord<T>(
+  factory: (config: GovernanceKeywordFilterConfig) => T,
+) {
+  const record = {} as Record<GovernanceKeywordColumnKey, T>;
+  for (const config of GOVERNANCE_KEYWORD_FILTER_CONFIGS) {
+    record[config.columnKey] = factory(config);
+  }
+  return record;
+}
+
+const governanceSelectVisible = ref<Record<GovernanceSelectColumnKey, boolean>>(
+  createGovernanceSelectRecord(() => false),
+);
+const governanceSelectDraft = ref<Record<GovernanceSelectColumnKey, string[]>>(
+  createGovernanceSelectRecord(() => []),
+);
+const governanceSelectKeyword = ref<Record<GovernanceSelectColumnKey, string>>(
+  createGovernanceSelectRecord(() => ''),
+);
+
+const governanceKeywordVisible = ref<
+  Record<GovernanceKeywordColumnKey, boolean>
+>(createGovernanceKeywordRecord(() => false));
+const governanceKeywordDraft = ref<Record<GovernanceKeywordColumnKey, string>>(
+  createGovernanceKeywordRecord(() => ''),
+);
+
+function getFilterArrayValue(key: GovernanceSelectFilterKey): string[] {
+  return normalizeStringArray((filters.value as Record<string, any>)[key]);
+}
+
+function setFilterArrayValue(key: GovernanceSelectFilterKey, value: string[]) {
+  (filters.value as Record<string, any>)[key] = normalizeStringArray(value);
+}
+
+function getFilterKeywordValue(key: GovernanceKeywordFilterKey): string {
+  return String((filters.value as Record<string, any>)[key] || '').trim();
+}
+
+function setFilterKeywordValue(key: GovernanceKeywordFilterKey, value: string) {
+  (filters.value as Record<string, any>)[key] = String(value || '').trim();
+}
+
+function resolveDictCandidateValues(config: GovernanceSelectFilterConfig) {
+  const options = (dictOptions.value?.[config.dictKey] || []) as Array<{
+    label?: string;
+    value?: string;
+  }>;
+  const seen = new Set<string>();
+  const result: string[] = [];
+  options.forEach((item) => {
+    const text = String(item.label || item.value || '').trim();
+    if (!text || seen.has(text)) {
+      return;
+    }
+    seen.add(text);
+    result.push(text);
+  });
+  return result;
+}
+
+function getGovernanceSelectOptions(config: GovernanceSelectFilterConfig) {
+  const keyword = governanceSelectKeyword.value[config.columnKey] || '';
+  return filterFieldOptions(resolveDictCandidateValues(config), keyword);
+}
+
+function buildMultiFilterLabel(values: string[]) {
+  const count = normalizeStringArray(values).length;
+  return count > 0 ? `${count} 项` : '全部';
+}
+
+function handleGovernanceSelectPopoverShow(
+  config: GovernanceSelectFilterConfig,
+) {
+  governanceSelectDraft.value[config.columnKey] = getFilterArrayValue(
+    config.filterKey,
+  );
+  governanceSelectKeyword.value[config.columnKey] = '';
+  if (!dictOptions.value) {
+    void loadDictOptions();
+  }
+}
+
+function resetGovernanceSelectFilterDraft(
+  config: GovernanceSelectFilterConfig,
+) {
+  governanceSelectDraft.value[config.columnKey] = [];
+  governanceSelectKeyword.value[config.columnKey] = '';
+}
+
+async function confirmGovernanceSelectFilter(
+  config: GovernanceSelectFilterConfig,
+) {
+  setFilterArrayValue(
+    config.filterKey,
+    governanceSelectDraft.value[config.columnKey] || [],
+  );
+  governanceSelectVisible.value[config.columnKey] = false;
+  await handleSearch(true);
+}
+
+function handleGovernanceKeywordPopoverShow(
+  config: GovernanceKeywordFilterConfig,
+) {
+  governanceKeywordDraft.value[config.columnKey] = getFilterKeywordValue(
+    config.filterKey,
+  );
+}
+
+function resetGovernanceKeywordFilterDraft(
+  config: GovernanceKeywordFilterConfig,
+) {
+  governanceKeywordDraft.value[config.columnKey] = '';
+}
+
+async function confirmGovernanceKeywordFilter(
+  config: GovernanceKeywordFilterConfig,
+) {
+  setFilterKeywordValue(
+    config.filterKey,
+    governanceKeywordDraft.value[config.columnKey] || '',
+  );
+  governanceKeywordVisible.value[config.columnKey] = false;
+  await handleSearch(true);
+}
 
 let autoReloadTimer: null | number = null;
 let exportPrepareTimer: null | number = null;
@@ -3275,6 +3779,169 @@ onUnmounted(() => {
                     </div>
                   </template>
 
+                  <template
+                    v-for="config in GOVERNANCE_SELECT_FILTER_CONFIGS"
+                    :key="`header-${config.columnKey}`"
+                    #[`header-${config.columnKey}`]
+                  >
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">
+                        {{ config.label }}
+                      </span>
+                      <ElPopover
+                        v-model:visible="
+                          governanceSelectVisible[config.columnKey]
+                        "
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="280"
+                        popper-class="dts-header-filter-popper"
+                        @show="handleGovernanceSelectPopoverShow(config)"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active':
+                                getFilterArrayValue(config.filterKey).length >
+                                0,
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{
+                                buildMultiFilterLabel(
+                                  getFilterArrayValue(config.filterKey),
+                                )
+                              }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-model="
+                                governanceSelectKeyword[config.columnKey]
+                              "
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              :placeholder="config.placeholder"
+                            />
+                            <ElEmpty
+                              v-if="
+                                getGovernanceSelectOptions(config).length === 0
+                              "
+                              :image-size="56"
+                              description="暂无候选值"
+                            />
+                            <ElCheckboxGroup
+                              v-else
+                              v-model="governanceSelectDraft[config.columnKey]"
+                              class="dts-header-filter-check-group"
+                            >
+                              <ElCheckbox
+                                v-for="item in getGovernanceSelectOptions(
+                                  config,
+                                )"
+                                :key="item"
+                                :label="item"
+                                :value="item"
+                              >
+                                {{ item }}
+                              </ElCheckbox>
+                            </ElCheckboxGroup>
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetGovernanceSelectFilterDraft(config)"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmGovernanceSelectFilter(config)"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template
+                    v-for="config in GOVERNANCE_KEYWORD_FILTER_CONFIGS"
+                    :key="`header-${config.columnKey}`"
+                    #[`header-${config.columnKey}`]
+                  >
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">
+                        {{ config.label }}
+                      </span>
+                      <ElPopover
+                        v-model:visible="
+                          governanceKeywordVisible[config.columnKey]
+                        "
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="300"
+                        popper-class="dts-header-filter-popper"
+                        @show="handleGovernanceKeywordPopoverShow(config)"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': Boolean(
+                                getFilterKeywordValue(config.filterKey),
+                              ),
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{
+                                buildKeywordFilterButtonText(
+                                  getFilterKeywordValue(config.filterKey),
+                                )
+                              }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-model="governanceKeywordDraft[config.columnKey]"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              :placeholder="config.placeholder"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetGovernanceKeywordFilterDraft(config)"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmGovernanceKeywordFilter(config)"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
                   <template #cell-projectName="{ row }">
                     <div class="dts-project-cell">
                       <span>{{ formatProjectDisplay(row) }}</span>
@@ -3406,46 +4073,6 @@ onUnmounted(() => {
                           'need_test_analyze',
                           row.need_test_analyze,
                         )?.label || row.need_test_analyze
-                      }}
-                    </ElTag>
-                  </template>
-
-                  <template #cell-is_dev_analyzed="{ row }">
-                    <span v-if="!row.is_dev_analyzed" class="text-slate-400">
-                      -
-                    </span>
-                    <ElTag
-                      v-else
-                      :type="
-                        resolveGovTag('is_dev_analyzed', row.is_dev_analyzed)
-                          ?.type || 'info'
-                      "
-                      effect="light"
-                      size="small"
-                    >
-                      {{
-                        resolveGovTag('is_dev_analyzed', row.is_dev_analyzed)
-                          ?.label || row.is_dev_analyzed
-                      }}
-                    </ElTag>
-                  </template>
-
-                  <template #cell-is_test_analyzed="{ row }">
-                    <span v-if="!row.is_test_analyzed" class="text-slate-400">
-                      -
-                    </span>
-                    <ElTag
-                      v-else
-                      :type="
-                        resolveGovTag('is_test_analyzed', row.is_test_analyzed)
-                          ?.type || 'info'
-                      "
-                      effect="light"
-                      size="small"
-                    >
-                      {{
-                        resolveGovTag('is_test_analyzed', row.is_test_analyzed)
-                          ?.label || row.is_test_analyzed
                       }}
                     </ElTag>
                   </template>
@@ -3707,6 +4334,30 @@ onUnmounted(() => {
                     </ElTooltip>
                   </template>
 
+                  <template #cell-dev_remark="{ row }">
+                    <span v-if="!row.dev_remark" class="text-slate-400">-</span>
+                    <ElTooltip
+                      v-else
+                      :content="row.dev_remark"
+                      placement="top-start"
+                    >
+                      <span class="cursor-help">{{ row.dev_remark }}</span>
+                    </ElTooltip>
+                  </template>
+
+                  <template #cell-test_remark="{ row }">
+                    <span v-if="!row.test_remark" class="text-slate-400">
+                      -
+                    </span>
+                    <ElTooltip
+                      v-else
+                      :content="row.test_remark"
+                      placement="top-start"
+                    >
+                      <span class="cursor-help">{{ row.test_remark }}</span>
+                    </ElTooltip>
+                  </template>
+
                   <template #cell-actions="{ row }">
                     <ElButton
                       type="primary"
@@ -3826,16 +4477,9 @@ onUnmounted(() => {
                     填报完成度：QA
                     {{ Math.round((summary.qa_completion_rate || 0) * 100) }}% ·
                     开发
-                    {{
-                      Math.round(
-                        (summary.dev_analysis_completion_rate || 0) * 100,
-                      )
-                    }}% · 测试
-                    {{
-                      Math.round(
-                        (summary.test_analysis_completion_rate || 0) * 100,
-                      )
-                    }}%
+                    {{ Math.round((summary.dev_completion_rate || 0) * 100) }}%
+                    · 测试
+                    {{ Math.round((summary.test_completion_rate || 0) * 100) }}%
                   </div>
                 </ElCard>
 
@@ -3875,27 +4519,23 @@ onUnmounted(() => {
                       class="dense-completion-panel dense-completion-panel--dev"
                     >
                       <div class="dense-completion-panel__title">
-                        开发分析完成率
+                        开发填报完整率
                       </div>
                       <div class="dense-completion-panel__headline">
                         {{
-                          Math.round(
-                            (summary.dev_analysis_completion_rate || 0) * 100,
-                          )
+                          Math.round((summary.dev_completion_rate || 0) * 100)
                         }}%
                       </div>
                       <ElProgress
                         status="success"
                         :percentage="
-                          Math.round(
-                            (summary.dev_analysis_completion_rate || 0) * 100,
-                          )
+                          Math.round((summary.dev_completion_rate || 0) * 100)
                         "
                         :stroke-width="10"
                       />
                       <div class="dense-completion-panel__meta">
                         <span>
-                          {{ summary.dev_analyzed_count }} /
+                          {{ summary.dev_filled_count }} /
                           {{ summary.total_count }}
                         </span>
                       </div>
@@ -3905,27 +4545,23 @@ onUnmounted(() => {
                       class="dense-completion-panel dense-completion-panel--test"
                     >
                       <div class="dense-completion-panel__title">
-                        测试分析完成率
+                        测试填报完整率
                       </div>
                       <div class="dense-completion-panel__headline">
                         {{
-                          Math.round(
-                            (summary.test_analysis_completion_rate || 0) * 100,
-                          )
+                          Math.round((summary.test_completion_rate || 0) * 100)
                         }}%
                       </div>
                       <ElProgress
                         status="success"
                         :percentage="
-                          Math.round(
-                            (summary.test_analysis_completion_rate || 0) * 100,
-                          )
+                          Math.round((summary.test_completion_rate || 0) * 100)
                         "
                         :stroke-width="10"
                       />
                       <div class="dense-completion-panel__meta">
                         <span>
-                          {{ summary.test_analyzed_count }} /
+                          {{ summary.test_filled_count }} /
                           {{ summary.total_count }}
                         </span>
                       </div>

@@ -50,6 +50,7 @@ class DtsExtension(RootModel):
     dev_intro_point_analysis = models.TextField(null=True, blank=True, verbose_name="引入点分析")
     dev_improvements = models.JSONField(default=list, blank=True, verbose_name="开发改进措施")
     dev_non_base_desc = models.JSONField(default=list, blank=True, verbose_name="非底软问题说明")
+    dev_remark = models.TextField(null=True, blank=True, verbose_name="开发备注")
     dev_aar_link = models.CharField(max_length=512, null=True, blank=True, verbose_name="AAR链接")
     dev_asset_link = models.CharField(max_length=512, null=True, blank=True, verbose_name="落地资产链接(开发)")
     dev_status = models.CharField(max_length=32, null=True, blank=True, verbose_name="开发改进措施状态")
@@ -59,6 +60,7 @@ class DtsExtension(RootModel):
     test_standard_desc = models.TextField(null=True, blank=True, verbose_name="规范问题描述")
     test_improvements = models.JSONField(default=list, blank=True, verbose_name="测试改进措施")
     test_non_test_desc = models.TextField(null=True, blank=True, verbose_name="非测试问题说明")
+    test_remark = models.TextField(null=True, blank=True, verbose_name="测试备注")
     test_asset_link = models.CharField(max_length=512, null=True, blank=True, verbose_name="落地资产链接(测试)")
     test_status = models.CharField(max_length=32, null=True, blank=True, verbose_name="漏测改进措施状态")
 

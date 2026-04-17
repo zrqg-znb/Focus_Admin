@@ -180,6 +180,58 @@ _ALLOWED_CONFIG_FLOW_TYPES = {"简易", "标准"}
 
 _EXPORT_SHEET_TITLE = "DTS统计"
 
+_SNAPSHOT_LOCAL_FILTER_FIELD_KEYS = {
+    "dtsBizNo",
+    "projectName",
+    "briefDesc",
+    "currentHandler",
+    "creator",
+    "sSubmitUserName",
+    "last_dts009_handler",
+    "createAt",
+    "dCloseTime",
+    "sDeptOneNoName",
+    "sSubsystemNoName",
+    "sConfigFlowType",
+    "auto_source_type",
+    "auto_pl_group_name",
+    "uQbiCloseTypeName",
+}
+
+_GOVERNANCE_LOCAL_FILTER_FIELD_KEYS = {
+    "is_downstream",
+    "process_quality_type",
+    "need_aar",
+    "need_dev_analyze",
+    "need_test_analyze",
+    "qa_remark",
+    "dev_owner_name",
+    "issue_intro_stage",
+    "dev_feature",
+    "dev_sub_category",
+    "dev_reason",
+    "dev_intro_reason",
+    "dev_issue_intro_point",
+    "dev_issue_probability",
+    "dev_common_issue_type",
+    "dev_control_points",
+    "dev_intro_point_analysis",
+    "dev_improvements",
+    "dev_non_base_desc",
+    "dev_aar_link",
+    "dev_asset_link",
+    "dev_status",
+    "dev_remark",
+    "test_owner_name",
+    "test_miss_reason",
+    "test_standard_desc",
+    "test_improvements",
+    "test_non_test_desc",
+    "test_asset_link",
+    "test_status",
+    "test_remark",
+}
+
 
 def _get_setting(name: str, default: Any = None) -> Any:
     return getattr(settings, name, os.environ.get(name, default))
@@ -1333,8 +1385,6 @@ def _merge_defect_with_extension(
                 "dev_owner_name": None,
                 "test_owner_id": None,
                 "test_owner_name": None,
-                "is_dev_analyzed": None,
-                "is_test_analyzed": None,
                 "qa_remark": None,
                 "dev_sub_category": [],
                 "dev_feature": None,
@@ -1350,12 +1400,14 @@ def _merge_defect_with_extension(
                 "dev_aar_link": None,
                 "dev_asset_link": None,
                 "dev_status": None,
+                "dev_remark": None,
                 "test_miss_reason": [],
                 "test_standard_desc": None,
                 "test_improvements": [],
                 "test_non_test_desc": None,
                 "test_asset_link": None,
                 "test_status": None,
+                "test_remark": None,
             }
         )
         return merged
@@ -1378,8 +1430,6 @@ def _merge_defect_with_extension(
         if extension.test_owner
         else None
     )
-    merged["is_dev_analyzed"] = extension.is_dev_analyzed
-    merged["is_test_analyzed"] = extension.is_test_analyzed
     merged["qa_remark"] = extension.qa_remark
 
     merged["dev_sub_category"] = extension.dev_sub_category or []
@@ -1396,6 +1446,7 @@ def _merge_defect_with_extension(
     merged["dev_aar_link"] = extension.dev_aar_link
     merged["dev_asset_link"] = extension.dev_asset_link
     merged["dev_status"] = extension.dev_status
+    merged["dev_remark"] = extension.dev_remark
 
     merged["test_miss_reason"] = extension.test_miss_reason or []
     merged["test_standard_desc"] = extension.test_standard_desc
@@ -1403,6 +1454,7 @@ def _merge_defect_with_extension(
     merged["test_non_test_desc"] = extension.test_non_test_desc
     merged["test_asset_link"] = extension.test_asset_link
     merged["test_status"] = extension.test_status
+    merged["test_remark"] = extension.test_remark
     return merged
 
 
@@ -1473,6 +1525,89 @@ def _resolve_local_runtime_filters(
         ),
         "uQbiCloseTypeNames": _normalize_text_list(
             getattr(query, "uQbiCloseTypeNames", [])
+        ),
+        "is_downstream_values": _normalize_text_list(
+            getattr(query, "is_downstream_values", [])
+        ),
+        "need_aar_values": _normalize_text_list(
+            getattr(query, "need_aar_values", [])
+        ),
+        "need_dev_analyze_values": _normalize_text_list(
+            getattr(query, "need_dev_analyze_values", [])
+        ),
+        "need_test_analyze_values": _normalize_text_list(
+            getattr(query, "need_test_analyze_values", [])
+        ),
+        "process_quality_type_keyword": _clean_text(
+            getattr(query, "process_quality_type_keyword", "")
+        ),
+        "qa_remark_keyword": _clean_text(getattr(query, "qa_remark_keyword", "")),
+        "dev_owner_name_keyword": _clean_text(
+            getattr(query, "dev_owner_name_keyword", "")
+        ),
+        "issue_intro_stage_values": _normalize_text_list(
+            getattr(query, "issue_intro_stage_values", [])
+        ),
+        "dev_feature_keyword": _clean_text(getattr(query, "dev_feature_keyword", "")),
+        "dev_sub_category_values": _normalize_text_list(
+            getattr(query, "dev_sub_category_values", [])
+        ),
+        "dev_reason_keyword": _clean_text(getattr(query, "dev_reason_keyword", "")),
+        "dev_intro_reason_keyword": _clean_text(
+            getattr(query, "dev_intro_reason_keyword", "")
+        ),
+        "dev_issue_intro_point_values": _normalize_text_list(
+            getattr(query, "dev_issue_intro_point_values", [])
+        ),
+        "dev_issue_probability_values": _normalize_text_list(
+            getattr(query, "dev_issue_probability_values", [])
+        ),
+        "dev_common_issue_type_values": _normalize_text_list(
+            getattr(query, "dev_common_issue_type_values", [])
+        ),
+        "dev_control_points_values": _normalize_text_list(
+            getattr(query, "dev_control_points_values", [])
+        ),
+        "dev_intro_point_analysis_keyword": _clean_text(
+            getattr(query, "dev_intro_point_analysis_keyword", "")
+        ),
+        "dev_improvements_keyword": _clean_text(
+            getattr(query, "dev_improvements_keyword", "")
+        ),
+        "dev_non_base_desc_values": _normalize_text_list(
+            getattr(query, "dev_non_base_desc_values", [])
+        ),
+        "dev_aar_link_keyword": _clean_text(getattr(query, "dev_aar_link_keyword", "")),
+        "dev_asset_link_keyword": _clean_text(
+            getattr(query, "dev_asset_link_keyword", "")
+        ),
+        "dev_status_values": _normalize_text_list(
+            getattr(query, "dev_status_values", [])
+        ),
+        "dev_remark_keyword": _clean_text(getattr(query, "dev_remark_keyword", "")),
+        "test_owner_name_keyword": _clean_text(
+            getattr(query, "test_owner_name_keyword", "")
+        ),
+        "test_miss_reason_values": _normalize_text_list(
+            getattr(query, "test_miss_reason_values", [])
+        ),
+        "test_standard_desc_keyword": _clean_text(
+            getattr(query, "test_standard_desc_keyword", "")
+        ),
+        "test_improvements_keyword": _clean_text(
+            getattr(query, "test_improvements_keyword", "")
+        ),
+        "test_non_test_desc_keyword": _clean_text(
+            getattr(query, "test_non_test_desc_keyword", "")
+        ),
+        "test_asset_link_keyword": _clean_text(
+            getattr(query, "test_asset_link_keyword", "")
+        ),
+        "test_status_values": _normalize_text_list(
+            getattr(query, "test_status_values", [])
+        ),
+        "test_remark_keyword": _clean_text(
+            getattr(query, "test_remark_keyword", "")
         ),
     }
 
@@ -1728,6 +1863,25 @@ def _match_any_keyword_like(value: Any, keywords: list[str]) -> bool:
     return any(_match_keyword_like(value, keyword) for keyword in normalized_keywords)
 
 
+def _match_list_intersects(value: Any, selected_values: set[str]) -> bool:
+    if not selected_values:
+        return True
+    normalized_values = set(_normalize_text_list(value))
+    if not normalized_values:
+        return False
+    return bool(normalized_values.intersection(selected_values))
+
+
+def _match_list_keyword_like(value: Any, keyword: str) -> bool:
+    normalized_keyword = _clean_text(keyword).lower()
+    if not normalized_keyword:
+        return True
+    values = _normalize_text_list(value)
+    if not values:
+        return False
+    return any(normalized_keyword in _clean_text(item).lower() for item in values)
+
+
 def _resolve_field_set_option_value(item: dict[str, Any], field: str) -> str:
     if field == "projectName":
         resolved = _resolve_project_display_value(item)
@@ -1812,6 +1966,147 @@ def _apply_local_filters(
         for item in _normalize_text_list(local_filters["uQbiCloseTypeNames"])
         if item
     }
+    is_downstream_values = set() if "is_downstream" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["is_downstream_values"])
+        if item
+    }
+    need_aar_values = set() if "need_aar" in ignored else {
+        item for item in _normalize_text_list(local_filters["need_aar_values"]) if item
+    }
+    need_dev_analyze_values = set() if "need_dev_analyze" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["need_dev_analyze_values"])
+        if item
+    }
+    need_test_analyze_values = set() if "need_test_analyze" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["need_test_analyze_values"])
+        if item
+    }
+    process_quality_type_keyword = (
+        ""
+        if "process_quality_type" in ignored
+        else _clean_text(local_filters["process_quality_type_keyword"])
+    )
+    qa_remark_keyword = (
+        "" if "qa_remark" in ignored else _clean_text(local_filters["qa_remark_keyword"])
+    )
+    dev_owner_name_keyword = (
+        ""
+        if "dev_owner_name" in ignored
+        else _clean_text(local_filters["dev_owner_name_keyword"])
+    )
+    issue_intro_stage_values = set() if "issue_intro_stage" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["issue_intro_stage_values"])
+        if item
+    }
+    dev_feature_keyword = (
+        "" if "dev_feature" in ignored else _clean_text(local_filters["dev_feature_keyword"])
+    )
+    dev_sub_category_values = set() if "dev_sub_category" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["dev_sub_category_values"])
+        if item
+    }
+    dev_reason_keyword = (
+        "" if "dev_reason" in ignored else _clean_text(local_filters["dev_reason_keyword"])
+    )
+    dev_intro_reason_keyword = (
+        ""
+        if "dev_intro_reason" in ignored
+        else _clean_text(local_filters["dev_intro_reason_keyword"])
+    )
+    dev_issue_intro_point_values = set() if "dev_issue_intro_point" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["dev_issue_intro_point_values"])
+        if item
+    }
+    dev_issue_probability_values = set() if "dev_issue_probability" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["dev_issue_probability_values"])
+        if item
+    }
+    dev_common_issue_type_values = set() if "dev_common_issue_type" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["dev_common_issue_type_values"])
+        if item
+    }
+    dev_control_points_values = set() if "dev_control_points" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["dev_control_points_values"])
+        if item
+    }
+    dev_intro_point_analysis_keyword = (
+        ""
+        if "dev_intro_point_analysis" in ignored
+        else _clean_text(local_filters["dev_intro_point_analysis_keyword"])
+    )
+    dev_improvements_keyword = (
+        ""
+        if "dev_improvements" in ignored
+        else _clean_text(local_filters["dev_improvements_keyword"])
+    )
+    dev_non_base_desc_values = set() if "dev_non_base_desc" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["dev_non_base_desc_values"])
+        if item
+    }
+    dev_aar_link_keyword = (
+        ""
+        if "dev_aar_link" in ignored
+        else _clean_text(local_filters["dev_aar_link_keyword"])
+    )
+    dev_asset_link_keyword = (
+        ""
+        if "dev_asset_link" in ignored
+        else _clean_text(local_filters["dev_asset_link_keyword"])
+    )
+    dev_status_values = set() if "dev_status" in ignored else {
+        item for item in _normalize_text_list(local_filters["dev_status_values"]) if item
+    }
+    dev_remark_keyword = (
+        "" if "dev_remark" in ignored else _clean_text(local_filters["dev_remark_keyword"])
+    )
+    test_owner_name_keyword = (
+        ""
+        if "test_owner_name" in ignored
+        else _clean_text(local_filters["test_owner_name_keyword"])
+    )
+    test_miss_reason_values = set() if "test_miss_reason" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["test_miss_reason_values"])
+        if item
+    }
+    test_standard_desc_keyword = (
+        ""
+        if "test_standard_desc" in ignored
+        else _clean_text(local_filters["test_standard_desc_keyword"])
+    )
+    test_improvements_keyword = (
+        ""
+        if "test_improvements" in ignored
+        else _clean_text(local_filters["test_improvements_keyword"])
+    )
+    test_non_test_desc_keyword = (
+        ""
+        if "test_non_test_desc" in ignored
+        else _clean_text(local_filters["test_non_test_desc_keyword"])
+    )
+    test_asset_link_keyword = (
+        ""
+        if "test_asset_link" in ignored
+        else _clean_text(local_filters["test_asset_link_keyword"])
+    )
+    test_status_values = set() if "test_status" in ignored else {
+        item for item in _normalize_text_list(local_filters["test_status_values"]) if item
+    }
+    test_remark_keyword = (
+        ""
+        if "test_remark" in ignored
+        else _clean_text(local_filters["test_remark_keyword"])
+    )
 
     result: list[dict[str, Any]] = []
     for row in rows:
@@ -1872,6 +2167,107 @@ def _apply_local_filters(
         ):
             continue
         if close_type_values and _clean_text(row.get("uQbiCloseTypeName")) not in close_type_values:
+            continue
+        if is_downstream_values and _clean_text(row.get("is_downstream")) not in is_downstream_values:
+            continue
+        if need_aar_values and _clean_text(row.get("need_aar")) not in need_aar_values:
+            continue
+        if (
+            need_dev_analyze_values
+            and _clean_text(row.get("need_dev_analyze")) not in need_dev_analyze_values
+        ):
+            continue
+        if (
+            need_test_analyze_values
+            and _clean_text(row.get("need_test_analyze")) not in need_test_analyze_values
+        ):
+            continue
+        if not _match_keyword_like(
+            row.get("process_quality_type"), process_quality_type_keyword
+        ):
+            continue
+        if not _match_keyword_like(row.get("qa_remark"), qa_remark_keyword):
+            continue
+        if not _match_keyword_like(row.get("dev_owner_name"), dev_owner_name_keyword):
+            continue
+        if (
+            issue_intro_stage_values
+            and _clean_text(row.get("issue_intro_stage")) not in issue_intro_stage_values
+        ):
+            continue
+        if not _match_keyword_like(row.get("dev_feature"), dev_feature_keyword):
+            continue
+        if not _match_list_intersects(row.get("dev_sub_category"), dev_sub_category_values):
+            continue
+        if not _match_keyword_like(row.get("dev_reason"), dev_reason_keyword):
+            continue
+        if not _match_keyword_like(row.get("dev_intro_reason"), dev_intro_reason_keyword):
+            continue
+        if (
+            dev_issue_intro_point_values
+            and _clean_text(row.get("dev_issue_intro_point"))
+            not in dev_issue_intro_point_values
+        ):
+            continue
+        if (
+            dev_issue_probability_values
+            and _clean_text(row.get("dev_issue_probability"))
+            not in dev_issue_probability_values
+        ):
+            continue
+        if (
+            dev_common_issue_type_values
+            and _clean_text(row.get("dev_common_issue_type"))
+            not in dev_common_issue_type_values
+        ):
+            continue
+        if not _match_list_intersects(
+            row.get("dev_control_points"), dev_control_points_values
+        ):
+            continue
+        if not _match_keyword_like(
+            row.get("dev_intro_point_analysis"), dev_intro_point_analysis_keyword
+        ):
+            continue
+        if not _match_list_keyword_like(
+            row.get("dev_improvements"), dev_improvements_keyword
+        ):
+            continue
+        if not _match_list_intersects(
+            row.get("dev_non_base_desc"), dev_non_base_desc_values
+        ):
+            continue
+        if not _match_keyword_like(row.get("dev_aar_link"), dev_aar_link_keyword):
+            continue
+        if not _match_keyword_like(row.get("dev_asset_link"), dev_asset_link_keyword):
+            continue
+        if dev_status_values and _clean_text(row.get("dev_status")) not in dev_status_values:
+            continue
+        if not _match_keyword_like(row.get("dev_remark"), dev_remark_keyword):
+            continue
+        if not _match_keyword_like(row.get("test_owner_name"), test_owner_name_keyword):
+            continue
+        if not _match_list_intersects(
+            row.get("test_miss_reason"), test_miss_reason_values
+        ):
+            continue
+        if not _match_keyword_like(
+            row.get("test_standard_desc"), test_standard_desc_keyword
+        ):
+            continue
+        if not _match_list_keyword_like(
+            row.get("test_improvements"), test_improvements_keyword
+        ):
+            continue
+        if not _match_keyword_like(
+            row.get("test_non_test_desc"), test_non_test_desc_keyword
+        ):
+            continue
+        if not _match_keyword_like(row.get("test_asset_link"), test_asset_link_keyword):
+            continue
+        if test_status_values and _clean_text(row.get("test_status")) not in test_status_values:
+            continue
+        if not _match_keyword_like(row.get("test_remark"), test_remark_keyword):
             continue
         result.append(row)
     return result
@@ -2078,6 +2474,68 @@ def _build_filtered_result_payload(
         local_filters["auto_pl_group_names"] = []
     if "uQbiCloseTypeName" in ignored:
         local_filters["uQbiCloseTypeNames"] = []
+    if "is_downstream" in ignored:
+        local_filters["is_downstream_values"] = []
+    if "need_aar" in ignored:
+        local_filters["need_aar_values"] = []
+    if "need_dev_analyze" in ignored:
+        local_filters["need_dev_analyze_values"] = []
+    if "need_test_analyze" in ignored:
+        local_filters["need_test_analyze_values"] = []
+    if "process_quality_type" in ignored:
+        local_filters["process_quality_type_keyword"] = ""
+    if "qa_remark" in ignored:
+        local_filters["qa_remark_keyword"] = ""
+    if "dev_owner_name" in ignored:
+        local_filters["dev_owner_name_keyword"] = ""
+    if "issue_intro_stage" in ignored:
+        local_filters["issue_intro_stage_values"] = []
+    if "dev_feature" in ignored:
+        local_filters["dev_feature_keyword"] = ""
+    if "dev_sub_category" in ignored:
+        local_filters["dev_sub_category_values"] = []
+    if "dev_reason" in ignored:
+        local_filters["dev_reason_keyword"] = ""
+    if "dev_intro_reason" in ignored:
+        local_filters["dev_intro_reason_keyword"] = ""
+    if "dev_issue_intro_point" in ignored:
+        local_filters["dev_issue_intro_point_values"] = []
+    if "dev_issue_probability" in ignored:
+        local_filters["dev_issue_probability_values"] = []
+    if "dev_common_issue_type" in ignored:
+        local_filters["dev_common_issue_type_values"] = []
+    if "dev_control_points" in ignored:
+        local_filters["dev_control_points_values"] = []
+    if "dev_intro_point_analysis" in ignored:
+        local_filters["dev_intro_point_analysis_keyword"] = ""
+    if "dev_improvements" in ignored:
+        local_filters["dev_improvements_keyword"] = ""
+    if "dev_non_base_desc" in ignored:
+        local_filters["dev_non_base_desc_values"] = []
+    if "dev_aar_link" in ignored:
+        local_filters["dev_aar_link_keyword"] = ""
+    if "dev_asset_link" in ignored:
+        local_filters["dev_asset_link_keyword"] = ""
+    if "dev_status" in ignored:
+        local_filters["dev_status_values"] = []
+    if "dev_remark" in ignored:
+        local_filters["dev_remark_keyword"] = ""
+    if "test_owner_name" in ignored:
+        local_filters["test_owner_name_keyword"] = ""
+    if "test_miss_reason" in ignored:
+        local_filters["test_miss_reason_values"] = []
+    if "test_standard_desc" in ignored:
+        local_filters["test_standard_desc_keyword"] = ""
+    if "test_improvements" in ignored:
+        local_filters["test_improvements_keyword"] = ""
+    if "test_non_test_desc" in ignored:
+        local_filters["test_non_test_desc_keyword"] = ""
+    if "test_asset_link" in ignored:
+        local_filters["test_asset_link_keyword"] = ""
+    if "test_status" in ignored:
+        local_filters["test_status_values"] = []
+    if "test_remark" in ignored:
+        local_filters["test_remark_keyword"] = ""
     return {
         "snapshotVersion": _clean_text(snapshot_version),
         "productId": product_id,
@@ -2116,6 +2574,81 @@ def _build_filtered_result_payload(
         "uQbiCloseTypeNames": _normalize_text_list(
             local_filters.get("uQbiCloseTypeNames")
         ),
+        "is_downstream_values": _normalize_text_list(
+            local_filters.get("is_downstream_values")
+        ),
+        "need_aar_values": _normalize_text_list(local_filters.get("need_aar_values")),
+        "need_dev_analyze_values": _normalize_text_list(
+            local_filters.get("need_dev_analyze_values")
+        ),
+        "need_test_analyze_values": _normalize_text_list(
+            local_filters.get("need_test_analyze_values")
+        ),
+        "process_quality_type_keyword": _clean_text(
+            local_filters.get("process_quality_type_keyword")
+        ),
+        "qa_remark_keyword": _clean_text(local_filters.get("qa_remark_keyword")),
+        "dev_owner_name_keyword": _clean_text(
+            local_filters.get("dev_owner_name_keyword")
+        ),
+        "issue_intro_stage_values": _normalize_text_list(
+            local_filters.get("issue_intro_stage_values")
+        ),
+        "dev_feature_keyword": _clean_text(local_filters.get("dev_feature_keyword")),
+        "dev_sub_category_values": _normalize_text_list(
+            local_filters.get("dev_sub_category_values")
+        ),
+        "dev_reason_keyword": _clean_text(local_filters.get("dev_reason_keyword")),
+        "dev_intro_reason_keyword": _clean_text(
+            local_filters.get("dev_intro_reason_keyword")
+        ),
+        "dev_issue_intro_point_values": _normalize_text_list(
+            local_filters.get("dev_issue_intro_point_values")
+        ),
+        "dev_issue_probability_values": _normalize_text_list(
+            local_filters.get("dev_issue_probability_values")
+        ),
+        "dev_common_issue_type_values": _normalize_text_list(
+            local_filters.get("dev_common_issue_type_values")
+        ),
+        "dev_control_points_values": _normalize_text_list(
+            local_filters.get("dev_control_points_values")
+        ),
+        "dev_intro_point_analysis_keyword": _clean_text(
+            local_filters.get("dev_intro_point_analysis_keyword")
+        ),
+        "dev_improvements_keyword": _clean_text(
+            local_filters.get("dev_improvements_keyword")
+        ),
+        "dev_non_base_desc_values": _normalize_text_list(
+            local_filters.get("dev_non_base_desc_values")
+        ),
+        "dev_aar_link_keyword": _clean_text(local_filters.get("dev_aar_link_keyword")),
+        "dev_asset_link_keyword": _clean_text(
+            local_filters.get("dev_asset_link_keyword")
+        ),
+        "dev_status_values": _normalize_text_list(local_filters.get("dev_status_values")),
+        "dev_remark_keyword": _clean_text(local_filters.get("dev_remark_keyword")),
+        "test_owner_name_keyword": _clean_text(
+            local_filters.get("test_owner_name_keyword")
+        ),
+        "test_miss_reason_values": _normalize_text_list(
+            local_filters.get("test_miss_reason_values")
+        ),
+        "test_standard_desc_keyword": _clean_text(
+            local_filters.get("test_standard_desc_keyword")
+        ),
+        "test_improvements_keyword": _clean_text(
+            local_filters.get("test_improvements_keyword")
+        ),
+        "test_non_test_desc_keyword": _clean_text(
+            local_filters.get("test_non_test_desc_keyword")
+        ),
+        "test_asset_link_keyword": _clean_text(
+            local_filters.get("test_asset_link_keyword")
+        ),
+        "test_status_values": _normalize_text_list(local_filters.get("test_status_values")),
+        "test_remark_keyword": _clean_text(local_filters.get("test_remark_keyword")),
         "ignoredFields": sorted(ignored),
     }
 
@@ -2165,18 +2698,21 @@ def _get_filtered_snapshot_rows(
     *,
     ignored_fields: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    effective_ignored = set(ignored_fields or set()).union(
+        _GOVERNANCE_LOCAL_FILTER_FIELD_KEYS
+    )
     raw_meta, snapshot = _get_snapshot_rows_for_query(query)
     payload = _build_filtered_result_payload(
         query,
         snapshot_version=_clean_text(snapshot.get("version")),
-        ignored_fields=ignored_fields,
+        ignored_fields=effective_ignored,
     )
     cache_key, _ = _cache_key(_FILTERED_RESULT_CACHE_KEY_PREFIX, payload)
     cached = CacheManager.get(cache_key)
     if isinstance(cached, list):
         return [item for item in cached if isinstance(item, dict)], snapshot
     rows = _load_snapshot_rows(raw_meta)
-    filtered = _apply_snapshot_filters(rows, query, ignored_fields=ignored_fields)
+    filtered = _apply_snapshot_filters(rows, query, ignored_fields=effective_ignored)
     CacheManager.set(
         cache_key,
         filtered,
@@ -2191,7 +2727,27 @@ def _resolve_runtime_defects(
     user: Any = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     del user
-    return _get_filtered_snapshot_rows(query)
+    defects, snapshot = _get_filtered_snapshot_rows(
+        query,
+        ignored_fields=_GOVERNANCE_LOCAL_FILTER_FIELD_KEYS,
+    )
+    if not defects:
+        return defects, snapshot
+
+    extensions_map = _load_extensions_map_for_defects(defects)
+    merged_defects = [
+        _merge_defect_with_extension(
+            defect,
+            extension=extensions_map.get(_clean_text(defect.get("dtsBizNo"))),
+        )
+        for defect in defects
+    ]
+    filtered_defects = _apply_local_filters(
+        merged_defects,
+        query,
+        ignored_fields=_SNAPSHOT_LOCAL_FILTER_FIELD_KEYS,
+    )
+    return _sort_defects(filtered_defects), snapshot
 
 
 def _collect_field_set_values(
@@ -2520,32 +3076,12 @@ def get_dts_statistics_list(
 ) -> dict[str, Any]:
     defects, snapshot = _resolve_runtime_defects(query, user=user)
     total, page_items = _paginate(defects, query.pageIndex, query.pageSize)
-    defect_nos = [
-        _clean_text(item.get("dtsBizNo"))
-        for item in page_items
-        if _clean_text(item.get("dtsBizNo"))
-    ]
-    extensions = _load_extensions(defect_nos)
-    items = [
-        _merge_defect_with_extension(
-            defect,
-            extension=extensions.get(_clean_text(defect.get("dtsBizNo"))),
-        )
-        for defect in page_items
-    ]
-    return {"total": total, "items": items, "snapshot": snapshot}
+    return {"total": total, "items": page_items, "snapshot": snapshot}
 
 
 def _distribution(counter: Counter[str], *, top_n: int | None = None) -> list[dict[str, Any]]:
     items = counter.most_common(top_n)
     return [{"label": label, "value": int(value)} for label, value in items if label]
-
-
-def _normalize_yes(value: Any) -> bool:
-    text = _clean_text(value)
-    if not text:
-        return False
-    return text in {"是", "yes", "y", "true", "1", "完成", "已完成"}
 
 
 def _iter_chunks(values: list[str], chunk_size: int = 2000) -> Iterable[list[str]]:
@@ -2604,13 +3140,49 @@ def _is_qa_filled(ext: DtsExtension) -> bool:
         [
             _has_value_for_summary(ext.is_downstream),
             _has_value_for_summary(ext.process_quality_type),
-            _has_value_for_summary(ext.issue_intro_stage),
             _has_value_for_summary(ext.need_aar),
             _has_value_for_summary(ext.need_dev_analyze),
             _has_value_for_summary(ext.need_test_analyze),
-            _has_value_for_summary(ext.is_dev_analyzed),
-            _has_value_for_summary(ext.is_test_analyzed),
             _has_value_for_summary(ext.qa_remark),
+        ]
+    )
+
+
+def _is_dev_filled(ext: DtsExtension) -> bool:
+    return any(
+        [
+            _has_value_for_summary(ext.dev_owner_id),
+            _has_value_for_summary(ext.issue_intro_stage),
+            _has_value_for_summary(ext.dev_feature),
+            _has_value_for_summary(ext.dev_sub_category),
+            _has_value_for_summary(ext.dev_reason),
+            _has_value_for_summary(ext.dev_intro_reason),
+            _has_value_for_summary(ext.dev_issue_intro_point),
+            _has_value_for_summary(ext.dev_issue_probability),
+            _has_value_for_summary(ext.dev_common_issue_type),
+            _has_value_for_summary(ext.dev_control_points),
+            _has_value_for_summary(ext.dev_intro_point_analysis),
+            _has_value_for_summary(ext.dev_improvements),
+            _has_value_for_summary(ext.dev_non_base_desc),
+            _has_value_for_summary(ext.dev_aar_link),
+            _has_value_for_summary(ext.dev_asset_link),
+            _has_value_for_summary(ext.dev_status),
+            _has_value_for_summary(ext.dev_remark),
+        ]
+    )
+
+
+def _is_test_filled(ext: DtsExtension) -> bool:
+    return any(
+        [
+            _has_value_for_summary(ext.test_owner_id),
+            _has_value_for_summary(ext.test_miss_reason),
+            _has_value_for_summary(ext.test_standard_desc),
+            _has_value_for_summary(ext.test_improvements),
+            _has_value_for_summary(ext.test_non_test_desc),
+            _has_value_for_summary(ext.test_asset_link),
+            _has_value_for_summary(ext.test_status),
+            _has_value_for_summary(ext.test_remark),
         ]
     )
 
@@ -2649,14 +3221,12 @@ _EXPORT_COLUMN_SPECS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
     ("回归测试周期", lambda item: _format_cycle_integer_value(item.get("iNumofTestDays"))),
     ("是否下游", lambda item: _clean_text(item.get("is_downstream"))),
     ("过程质量分类", lambda item: _clean_text(item.get("process_quality_type"))),
-    ("问题引入阶段", lambda item: _clean_text(item.get("issue_intro_stage"))),
     ("是否需要AAR", lambda item: _clean_text(item.get("need_aar"))),
     ("需开发分析", lambda item: _clean_text(item.get("need_dev_analyze"))),
     ("需测试分析", lambda item: _clean_text(item.get("need_test_analyze"))),
-    ("开发分析完成", lambda item: _clean_text(item.get("is_dev_analyzed"))),
-    ("测试分析完成", lambda item: _clean_text(item.get("is_test_analyzed"))),
     ("QA备注", lambda item: _clean_text(item.get("qa_remark"))),
     ("开发责任人", lambda item: _clean_text(item.get("dev_owner_name"))),
+    ("问题引入阶段", lambda item: _clean_text(item.get("issue_intro_stage"))),
     ("特性/功能", lambda item: _clean_text(item.get("dev_feature"))),
     ("问题小类", lambda item: _join_lines(item.get("dev_sub_category"))),
     ("问题原因", lambda item: _clean_text(item.get("dev_reason"))),
@@ -2671,6 +3241,7 @@ _EXPORT_COLUMN_SPECS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
     ("AAR链接", lambda item: _clean_text(item.get("dev_aar_link"))),
     ("开发填报-落地资产链接", lambda item: _clean_text(item.get("dev_asset_link"))),
     ("开发填报-改进状态", lambda item: _clean_text(item.get("dev_status"))),
+    ("开发备注", lambda item: _clean_text(item.get("dev_remark"))),
     ("测试责任人", lambda item: _clean_text(item.get("test_owner_name"))),
     ("漏测原因", lambda item: _join_lines(item.get("test_miss_reason"))),
     (
@@ -2681,6 +3252,7 @@ _EXPORT_COLUMN_SPECS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
     ("非测试说明", lambda item: _clean_text(item.get("test_non_test_desc"))),
     ("测试填报-落地资产链接", lambda item: _clean_text(item.get("test_asset_link"))),
     ("测试填报-改进状态", lambda item: _clean_text(item.get("test_status"))),
+    ("测试备注", lambda item: _clean_text(item.get("test_remark"))),
 ]
 
 _EXPORT_HEADERS = tuple(title for title, _ in _EXPORT_COLUMN_SPECS)
@@ -3000,8 +3572,8 @@ def get_dts_statistics_summary(
     ]
 
     qa_filled_count = 0
-    dev_analyzed_count = 0
-    test_analyzed_count = 0
+    dev_filled_count = 0
+    test_filled_count = 0
     dev_sub_category_counter: Counter[str] = Counter()
     test_miss_reason_counter: Counter[str] = Counter()
     action_status_counter: Counter[str] = Counter()
@@ -3017,23 +3589,41 @@ def get_dts_statistics_summary(
                 "need_aar",
                 "need_dev_analyze",
                 "need_test_analyze",
-                "is_dev_analyzed",
-                "is_test_analyzed",
                 "qa_remark",
+                "dev_owner_id",
+                "dev_feature",
                 "dev_sub_category",
+                "dev_reason",
+                "dev_intro_reason",
+                "dev_issue_intro_point",
+                "dev_issue_probability",
+                "dev_common_issue_type",
+                "dev_control_points",
+                "dev_intro_point_analysis",
+                "dev_improvements",
+                "dev_non_base_desc",
+                "dev_aar_link",
+                "dev_asset_link",
                 "test_miss_reason",
+                "test_owner_id",
+                "test_standard_desc",
+                "test_improvements",
+                "test_non_test_desc",
+                "test_asset_link",
                 "dev_status",
                 "test_status",
+                "dev_remark",
+                "test_remark",
             )
             .all()
         )
         for ext in extensions:
             if _is_qa_filled(ext):
                 qa_filled_count += 1
-            if _normalize_yes(ext.is_dev_analyzed):
-                dev_analyzed_count += 1
-            if _normalize_yes(ext.is_test_analyzed):
-                test_analyzed_count += 1
+            if _is_dev_filled(ext):
+                dev_filled_count += 1
+            if _is_test_filled(ext):
+                test_filled_count += 1
 
             for item in ext.dev_sub_category or []:
                 dev_sub_category_counter[_clean_text(item)] += 1
@@ -3047,11 +3637,11 @@ def get_dts_statistics_summary(
                 action_status_counter[action_status] += 1
 
     qa_completion_rate = round(qa_filled_count / total_count, 4) if total_count else 0.0
-    dev_analysis_completion_rate = (
-        round(dev_analyzed_count / total_count, 4) if total_count else 0.0
+    dev_completion_rate = (
+        round(dev_filled_count / total_count, 4) if total_count else 0.0
     )
-    test_analysis_completion_rate = (
-        round(test_analyzed_count / total_count, 4) if total_count else 0.0
+    test_completion_rate = (
+        round(test_filled_count / total_count, 4) if total_count else 0.0
     )
 
     return {
@@ -3061,10 +3651,10 @@ def get_dts_statistics_summary(
         "avg_process_days": avg_process_days,
         "qa_filled_count": qa_filled_count,
         "qa_completion_rate": qa_completion_rate,
-        "dev_analyzed_count": dev_analyzed_count,
-        "dev_analysis_completion_rate": dev_analysis_completion_rate,
-        "test_analyzed_count": test_analyzed_count,
-        "test_analysis_completion_rate": test_analysis_completion_rate,
+        "dev_filled_count": dev_filled_count,
+        "dev_completion_rate": dev_completion_rate,
+        "test_filled_count": test_filled_count,
+        "test_completion_rate": test_completion_rate,
         "severity_dist": _distribution(severity_counter),
         "status_dist": _distribution(status_counter),
         "team_dist": _distribution(team_counter, top_n=30),

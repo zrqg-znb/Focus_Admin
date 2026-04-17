@@ -23,6 +23,37 @@ export interface DtsStatisticsFilters {
   sConfigFlowTypes: string[];
   auto_source_types: string[];
   auto_pl_group_names: string[];
+  is_downstream_values: string[];
+  need_aar_values: string[];
+  need_dev_analyze_values: string[];
+  need_test_analyze_values: string[];
+  process_quality_type_keyword: string;
+  qa_remark_keyword: string;
+  dev_owner_name_keyword: string;
+  issue_intro_stage_values: string[];
+  dev_feature_keyword: string;
+  dev_sub_category_values: string[];
+  dev_reason_keyword: string;
+  dev_intro_reason_keyword: string;
+  dev_issue_intro_point_values: string[];
+  dev_issue_probability_values: string[];
+  dev_common_issue_type_values: string[];
+  dev_control_points_values: string[];
+  dev_intro_point_analysis_keyword: string;
+  dev_improvements_keyword: string;
+  dev_non_base_desc_values: string[];
+  dev_aar_link_keyword: string;
+  dev_asset_link_keyword: string;
+  dev_status_values: string[];
+  dev_remark_keyword: string;
+  test_owner_name_keyword: string;
+  test_miss_reason_values: string[];
+  test_standard_desc_keyword: string;
+  test_improvements_keyword: string;
+  test_non_test_desc_keyword: string;
+  test_asset_link_keyword: string;
+  test_status_values: string[];
+  test_remark_keyword: string;
 }
 
 export interface DtsStatisticsQuery extends DtsStatisticsFilters {
@@ -82,8 +113,6 @@ export interface DtsMergedDefect {
   dev_owner_name?: null | string;
   test_owner_id?: null | string;
   test_owner_name?: null | string;
-  is_dev_analyzed?: null | string;
-  is_test_analyzed?: null | string;
   qa_remark?: null | string;
 
   dev_sub_category: string[];
@@ -100,6 +129,7 @@ export interface DtsMergedDefect {
   dev_aar_link?: null | string;
   dev_asset_link?: null | string;
   dev_status?: null | string;
+  dev_remark?: null | string;
 
   test_miss_reason: string[];
   test_standard_desc?: null | string;
@@ -107,6 +137,7 @@ export interface DtsMergedDefect {
   test_non_test_desc?: null | string;
   test_asset_link?: null | string;
   test_status?: null | string;
+  test_remark?: null | string;
 }
 
 export interface DtsSnapshotMeta {
@@ -135,8 +166,6 @@ export interface DtsExtensionSavePayload {
   need_test_analyze?: null | string;
   dev_owner_id?: null | string;
   test_owner_id?: null | string;
-  is_dev_analyzed?: null | string;
-  is_test_analyzed?: null | string;
   qa_remark?: null | string;
 
   dev_sub_category?: string[];
@@ -153,6 +182,7 @@ export interface DtsExtensionSavePayload {
   dev_aar_link?: null | string;
   dev_asset_link?: null | string;
   dev_status?: null | string;
+  dev_remark?: null | string;
 
   test_miss_reason?: string[];
   test_standard_desc?: null | string;
@@ -160,6 +190,7 @@ export interface DtsExtensionSavePayload {
   test_non_test_desc?: null | string;
   test_asset_link?: null | string;
   test_status?: null | string;
+  test_remark?: null | string;
 }
 
 export interface DtsSaveResponse {
@@ -179,10 +210,10 @@ export interface DtsSummary {
 
   qa_filled_count: number;
   qa_completion_rate: number;
-  dev_analyzed_count: number;
-  dev_analysis_completion_rate: number;
-  test_analyzed_count: number;
-  test_analysis_completion_rate: number;
+  dev_filled_count: number;
+  dev_completion_rate: number;
+  test_filled_count: number;
+  test_completion_rate: number;
 
   severity_dist: DtsDistributionItem[];
   status_dist: DtsDistributionItem[];

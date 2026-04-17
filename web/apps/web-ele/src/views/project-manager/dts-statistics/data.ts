@@ -111,9 +111,7 @@ export type DtsGovernanceField =
   | 'dev_non_base_desc'
   | 'dev_status'
   | 'dev_sub_category'
-  | 'is_dev_analyzed'
   | 'is_downstream'
-  | 'is_test_analyzed'
   | 'issue_intro_stage'
   | 'need_aar'
   | 'need_dev_analyze'
@@ -159,9 +157,7 @@ function resolveOptionsForField(
     case 'dev_sub_category': {
       return safeOptions.dev_sub_category;
     }
-    case 'is_dev_analyzed':
     case 'is_downstream':
-    case 'is_test_analyzed':
     case 'need_aar':
     case 'need_dev_analyze':
     case 'need_test_analyze': {
@@ -265,9 +261,7 @@ export function resolveDtsGovernanceTagMeta(
     field === 'is_downstream' ||
     field === 'need_aar' ||
     field === 'need_dev_analyze' ||
-    field === 'need_test_analyze' ||
-    field === 'is_dev_analyzed' ||
-    field === 'is_test_analyzed'
+    field === 'need_test_analyze'
   ) {
     return { label, type: resolveYesNoTagType(label) };
   }
@@ -569,12 +563,6 @@ export function useColumns(): Columns {
           minWidth: 160,
         },
         {
-          key: 'issue_intro_stage',
-          dataKey: 'issue_intro_stage',
-          title: '问题引入阶段',
-          width: 150,
-        },
-        {
           key: 'need_aar',
           dataKey: 'need_aar',
           title: '是否需要AAR',
@@ -593,18 +581,6 @@ export function useColumns(): Columns {
           width: 120,
         },
         {
-          key: 'is_dev_analyzed',
-          dataKey: 'is_dev_analyzed',
-          title: '开发分析完成',
-          width: 140,
-        },
-        {
-          key: 'is_test_analyzed',
-          dataKey: 'is_test_analyzed',
-          title: '测试分析完成',
-          width: 140,
-        },
-        {
           key: 'qa_remark',
           dataKey: 'qa_remark',
           title: 'QA备注',
@@ -621,6 +597,12 @@ export function useColumns(): Columns {
           dataKey: 'dev_owner_name',
           title: '开发责任人',
           width: 140,
+        },
+        {
+          key: 'issue_intro_stage',
+          dataKey: 'issue_intro_stage',
+          title: '问题引入阶段',
+          width: 150,
         },
         {
           key: 'dev_feature',
@@ -706,6 +688,12 @@ export function useColumns(): Columns {
           title: '改进状态',
           width: 140,
         },
+        {
+          key: 'dev_remark',
+          dataKey: 'dev_remark',
+          title: '开发备注',
+          minWidth: 200,
+        },
       ],
     },
     {
@@ -753,6 +741,12 @@ export function useColumns(): Columns {
           dataKey: 'test_status',
           title: '改进状态',
           width: 140,
+        },
+        {
+          key: 'test_remark',
+          dataKey: 'test_remark',
+          title: '测试备注',
+          minWidth: 200,
         },
       ],
     },
@@ -844,15 +838,6 @@ export function useQaFormSchema(): VbenFormSchema[] {
     },
     {
       component: 'ApiSelect',
-      fieldName: 'issue_intro_stage',
-      label: '问题引入阶段',
-      componentProps: {
-        ...createDtsDictApiSelectProps('issue_intro_stage'),
-        placeholder: '请选择问题引入阶段',
-      },
-    },
-    {
-      component: 'ApiSelect',
       fieldName: 'need_aar',
       label: '是否需要AAR',
       componentProps: {
@@ -873,24 +858,6 @@ export function useQaFormSchema(): VbenFormSchema[] {
       component: 'ApiSelect',
       fieldName: 'need_test_analyze',
       label: '需测试分析',
-      componentProps: {
-        ...createDtsDictApiSelectProps('yes_no', YES_NO_OPTIONS),
-        placeholder: '请选择',
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'is_dev_analyzed',
-      label: '开发分析完成',
-      componentProps: {
-        ...createDtsDictApiSelectProps('yes_no', YES_NO_OPTIONS),
-        placeholder: '请选择',
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'is_test_analyzed',
-      label: '测试分析完成',
       componentProps: {
         ...createDtsDictApiSelectProps('yes_no', YES_NO_OPTIONS),
         placeholder: '请选择',
@@ -924,6 +891,15 @@ export function useDevFormSchema(): VbenFormSchema[] {
       label: '特性/功能',
       componentProps: {
         placeholder: '请输入特性/功能',
+      },
+    },
+    {
+      component: 'ApiSelect',
+      fieldName: 'issue_intro_stage',
+      label: '问题引入阶段',
+      componentProps: {
+        ...createDtsDictApiSelectProps('issue_intro_stage'),
+        placeholder: '请选择问题引入阶段',
       },
     },
     {
@@ -1050,6 +1026,15 @@ export function useDevFormSchema(): VbenFormSchema[] {
         placeholder: '请选择改进状态',
       },
     },
+    {
+      component: 'Textarea',
+      fieldName: 'dev_remark',
+      label: '开发备注',
+      componentProps: {
+        placeholder: '请输入开发备注',
+        rows: 3,
+      },
+    },
   ];
 }
 
@@ -1117,6 +1102,15 @@ export function useTestFormSchema(): VbenFormSchema[] {
       componentProps: {
         ...createDtsDictApiSelectProps('action_status'),
         placeholder: '请选择改进状态',
+      },
+    },
+    {
+      component: 'Textarea',
+      fieldName: 'test_remark',
+      label: '测试备注',
+      componentProps: {
+        placeholder: '请输入测试备注',
+        rows: 3,
       },
     },
   ];
