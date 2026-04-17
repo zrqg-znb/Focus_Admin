@@ -45,6 +45,7 @@ import {
 } from '#/api/project-manager/dts-statistics';
 import { useZqTable } from '#/components/zq-table';
 
+import DtsHeaderPersonSelector from './components/DtsHeaderPersonSelector.vue';
 import {
   fetchDtsDictOptionsCached,
   formatCycleIntegerDisplay,
@@ -184,12 +185,6 @@ const GOVERNANCE_KEYWORD_FILTER_CONFIGS = [
     placeholder: '输入关键词模糊搜索QA备注',
   },
   {
-    columnKey: 'dev_owner_name',
-    filterKey: 'dev_owner_name_keyword',
-    label: '开发责任人',
-    placeholder: '输入关键词模糊搜索开发责任人',
-  },
-  {
     columnKey: 'dev_feature',
     filterKey: 'dev_feature_keyword',
     label: '特性/功能',
@@ -236,12 +231,6 @@ const GOVERNANCE_KEYWORD_FILTER_CONFIGS = [
     filterKey: 'dev_remark_keyword',
     label: '开发备注',
     placeholder: '输入关键词模糊搜索开发备注',
-  },
-  {
-    columnKey: 'test_owner_name',
-    filterKey: 'test_owner_name_keyword',
-    label: '测试责任人',
-    placeholder: '输入关键词模糊搜索测试责任人',
   },
   {
     columnKey: 'test_standard_desc',
@@ -345,12 +334,21 @@ function createDefaultFilters(): DtsStatisticsFilters {
     updateTimeBegin: toTimestampMs(start),
     updateTimeEnd: toTimestampMs(end),
     dtsBizNoKeyword: '',
+    parentNoKeyword: '',
     projectNames: [],
     briefDescKeyword: '',
+    iTestBackCountKeyword: '',
+    iNumOfCloseDaysKeyword: '',
+    iNumOfFirmDaysKeyword: '',
+    iNumOfLocateDaysKeyword: '',
+    iNumofModifyDaysKeyword: '',
+    iNumofTestDaysKeyword: '',
     currentHandlerKeywords: [],
     creatorKeywords: [],
     sSubmitUserNameKeywords: [],
     last_dts009_handlerKeywords: [],
+    last_dts010_handlerKeywords: [],
+    last_dts013_handlerKeywords: [],
     createAtBegin: 0,
     createAtEnd: 0,
     dCloseTimeBegin: 0,
@@ -367,7 +365,7 @@ function createDefaultFilters(): DtsStatisticsFilters {
     need_test_analyze_values: [],
     process_quality_type_keyword: '',
     qa_remark_keyword: '',
-    dev_owner_name_keyword: '',
+    dev_owner_name_keyword: [],
     issue_intro_stage_values: [],
     dev_feature_keyword: '',
     dev_sub_category_values: [],
@@ -384,7 +382,7 @@ function createDefaultFilters(): DtsStatisticsFilters {
     dev_asset_link_keyword: '',
     dev_status_values: [],
     dev_remark_keyword: '',
-    test_owner_name_keyword: '',
+    test_owner_name_keyword: [],
     test_miss_reason_values: [],
     test_standard_desc_keyword: '',
     test_improvements_keyword: '',
@@ -492,8 +490,19 @@ function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
     updateTimeBegin: Math.max(begin, 0),
     updateTimeEnd: Math.max(end, 0),
     dtsBizNoKeyword: String(source.dtsBizNoKeyword || '').trim(),
+    parentNoKeyword: String(source.parentNoKeyword || '').trim(),
     projectNames: normalizeStringArray(source.projectNames),
     briefDescKeyword: String(source.briefDescKeyword || '').trim(),
+    iTestBackCountKeyword: String(source.iTestBackCountKeyword || '').trim(),
+    iNumOfCloseDaysKeyword: String(source.iNumOfCloseDaysKeyword || '').trim(),
+    iNumOfFirmDaysKeyword: String(source.iNumOfFirmDaysKeyword || '').trim(),
+    iNumOfLocateDaysKeyword: String(
+      source.iNumOfLocateDaysKeyword || '',
+    ).trim(),
+    iNumofModifyDaysKeyword: String(
+      source.iNumofModifyDaysKeyword || '',
+    ).trim(),
+    iNumofTestDaysKeyword: String(source.iNumofTestDaysKeyword || '').trim(),
     currentHandlerKeywords: normalizeStringArray(source.currentHandlerKeywords),
     creatorKeywords: normalizeStringArray(source.creatorKeywords),
     sSubmitUserNameKeywords: normalizeStringArray(
@@ -501,6 +510,12 @@ function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
     ),
     last_dts009_handlerKeywords: normalizeStringArray(
       source.last_dts009_handlerKeywords,
+    ),
+    last_dts010_handlerKeywords: normalizeStringArray(
+      source.last_dts010_handlerKeywords,
+    ),
+    last_dts013_handlerKeywords: normalizeStringArray(
+      source.last_dts013_handlerKeywords,
     ),
     createAtBegin: createAtPair.begin,
     createAtEnd: createAtPair.end,
@@ -524,7 +539,7 @@ function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
       source.process_quality_type_keyword || '',
     ).trim(),
     qa_remark_keyword: String(source.qa_remark_keyword || '').trim(),
-    dev_owner_name_keyword: String(source.dev_owner_name_keyword || '').trim(),
+    dev_owner_name_keyword: normalizeStringArray(source.dev_owner_name_keyword),
     issue_intro_stage_values: normalizeStringArray(
       source.issue_intro_stage_values,
     ),
@@ -561,9 +576,9 @@ function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
     dev_asset_link_keyword: String(source.dev_asset_link_keyword || '').trim(),
     dev_status_values: normalizeStringArray(source.dev_status_values),
     dev_remark_keyword: String(source.dev_remark_keyword || '').trim(),
-    test_owner_name_keyword: String(
-      source.test_owner_name_keyword || '',
-    ).trim(),
+    test_owner_name_keyword: normalizeStringArray(
+      source.test_owner_name_keyword,
+    ),
     test_miss_reason_values: normalizeStringArray(
       source.test_miss_reason_values,
     ),
@@ -595,8 +610,15 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
     updateTimeBegin: payload.updateTimeBegin || 0,
     updateTimeEnd: payload.updateTimeEnd || 0,
     dtsBizNoKeyword: payload.dtsBizNoKeyword || '',
+    parentNoKeyword: payload.parentNoKeyword || '',
     projectNames: [...(payload.projectNames || [])].sort(),
     briefDescKeyword: payload.briefDescKeyword || '',
+    iTestBackCountKeyword: payload.iTestBackCountKeyword || '',
+    iNumOfCloseDaysKeyword: payload.iNumOfCloseDaysKeyword || '',
+    iNumOfFirmDaysKeyword: payload.iNumOfFirmDaysKeyword || '',
+    iNumOfLocateDaysKeyword: payload.iNumOfLocateDaysKeyword || '',
+    iNumofModifyDaysKeyword: payload.iNumofModifyDaysKeyword || '',
+    iNumofTestDaysKeyword: payload.iNumofTestDaysKeyword || '',
     currentHandlerKeywords: [...(payload.currentHandlerKeywords || [])].sort(),
     creatorKeywords: [...(payload.creatorKeywords || [])].sort(),
     sSubmitUserNameKeywords: [
@@ -604,6 +626,12 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
     ].sort(),
     last_dts009_handlerKeywords: [
       ...(payload.last_dts009_handlerKeywords || []),
+    ].sort(),
+    last_dts010_handlerKeywords: [
+      ...(payload.last_dts010_handlerKeywords || []),
+    ].sort(),
+    last_dts013_handlerKeywords: [
+      ...(payload.last_dts013_handlerKeywords || []),
     ].sort(),
     createAtBegin: payload.createAtBegin || 0,
     createAtEnd: payload.createAtEnd || 0,
@@ -625,7 +653,7 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
     ].sort(),
     process_quality_type_keyword: payload.process_quality_type_keyword || '',
     qa_remark_keyword: payload.qa_remark_keyword || '',
-    dev_owner_name_keyword: payload.dev_owner_name_keyword || '',
+    dev_owner_name_keyword: [...(payload.dev_owner_name_keyword || [])].sort(),
     issue_intro_stage_values: [
       ...(payload.issue_intro_stage_values || []),
     ].sort(),
@@ -657,7 +685,9 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
     dev_asset_link_keyword: payload.dev_asset_link_keyword || '',
     dev_status_values: [...(payload.dev_status_values || [])].sort(),
     dev_remark_keyword: payload.dev_remark_keyword || '',
-    test_owner_name_keyword: payload.test_owner_name_keyword || '',
+    test_owner_name_keyword: [
+      ...(payload.test_owner_name_keyword || []),
+    ].sort(),
     test_miss_reason_values: [
       ...(payload.test_miss_reason_values || []),
     ].sort(),
@@ -910,12 +940,33 @@ function buildKeywordFilterButtonText(value: string) {
 const selectedDtsBizNoKeywordLabel = computed(() =>
   buildKeywordFilterButtonText(filters.value.dtsBizNoKeyword),
 );
+const selectedParentNoKeywordLabel = computed(() =>
+  buildKeywordFilterButtonText(filters.value.parentNoKeyword),
+);
 const selectedProjectLabel = computed(() => {
   const count = filters.value.projectNames.length;
   return count > 0 ? `${count} 项` : '全部';
 });
 const selectedBriefDescKeywordLabel = computed(() =>
   buildKeywordFilterButtonText(filters.value.briefDescKeyword),
+);
+const selectedITestBackCountKeywordLabel = computed(() =>
+  buildKeywordFilterButtonText(filters.value.iTestBackCountKeyword),
+);
+const selectedINumOfCloseDaysKeywordLabel = computed(() =>
+  buildKeywordFilterButtonText(filters.value.iNumOfCloseDaysKeyword),
+);
+const selectedINumOfFirmDaysKeywordLabel = computed(() =>
+  buildKeywordFilterButtonText(filters.value.iNumOfFirmDaysKeyword),
+);
+const selectedINumOfLocateDaysKeywordLabel = computed(() =>
+  buildKeywordFilterButtonText(filters.value.iNumOfLocateDaysKeyword),
+);
+const selectedINumofModifyDaysKeywordLabel = computed(() =>
+  buildKeywordFilterButtonText(filters.value.iNumofModifyDaysKeyword),
+);
+const selectedINumofTestDaysKeywordLabel = computed(() =>
+  buildKeywordFilterButtonText(filters.value.iNumofTestDaysKeyword),
 );
 const selectedCurrentHandlerLabel = computed(() => {
   const count = filters.value.currentHandlerKeywords.length;
@@ -931,6 +982,22 @@ const selectedSubmitUserNameLabel = computed(() => {
 });
 const selectedLastDts009HandlerLabel = computed(() => {
   const count = filters.value.last_dts009_handlerKeywords.length;
+  return count > 0 ? `${count} 项` : '全部';
+});
+const selectedLastDts010HandlerLabel = computed(() => {
+  const count = filters.value.last_dts010_handlerKeywords.length;
+  return count > 0 ? `${count} 项` : '全部';
+});
+const selectedLastDts013HandlerLabel = computed(() => {
+  const count = filters.value.last_dts013_handlerKeywords.length;
+  return count > 0 ? `${count} 项` : '全部';
+});
+const selectedDevOwnerNameLabel = computed(() => {
+  const count = filters.value.dev_owner_name_keyword.length;
+  return count > 0 ? `${count} 项` : '全部';
+});
+const selectedTestOwnerNameLabel = computed(() => {
+  const count = filters.value.test_owner_name_keyword.length;
   return count > 0 ? `${count} 项` : '全部';
 });
 const selectedCreateAtLabel = computed(() =>
@@ -1007,12 +1074,23 @@ const selectedProductLabel = computed(() => {
 const flowFilterVisible = ref(false);
 const severityFilterVisible = ref(false);
 const dtsBizNoFilterVisible = ref(false);
+const parentNoFilterVisible = ref(false);
 const projectFilterVisible = ref(false);
 const briefDescFilterVisible = ref(false);
+const iTestBackCountFilterVisible = ref(false);
+const iNumOfCloseDaysFilterVisible = ref(false);
+const iNumOfFirmDaysFilterVisible = ref(false);
+const iNumOfLocateDaysFilterVisible = ref(false);
+const iNumofModifyDaysFilterVisible = ref(false);
+const iNumofTestDaysFilterVisible = ref(false);
 const currentHandlerFilterVisible = ref(false);
 const creatorFilterVisible = ref(false);
 const submitUserNameFilterVisible = ref(false);
 const lastDts009HandlerFilterVisible = ref(false);
+const lastDts010HandlerFilterVisible = ref(false);
+const lastDts013HandlerFilterVisible = ref(false);
+const devOwnerNameFilterVisible = ref(false);
+const testOwnerNameFilterVisible = ref(false);
 const createAtFilterVisible = ref(false);
 const closeTimeFilterVisible = ref(false);
 const closeTypeFilterVisible = ref(false);
@@ -1024,12 +1102,23 @@ const autoPlGroupFilterVisible = ref(false);
 const draftFlowStates = ref<string[]>([]);
 const draftSeverityNos = ref<string[]>([]);
 const draftDtsBizNoKeyword = ref('');
+const draftParentNoKeyword = ref('');
 const draftProjectNames = ref<string[]>([]);
 const draftBriefDescKeyword = ref('');
+const draftITestBackCountKeyword = ref('');
+const draftINumOfCloseDaysKeyword = ref('');
+const draftINumOfFirmDaysKeyword = ref('');
+const draftINumOfLocateDaysKeyword = ref('');
+const draftINumofModifyDaysKeyword = ref('');
+const draftINumofTestDaysKeyword = ref('');
 const draftCurrentHandlerKeywords = ref<string[]>([]);
 const draftCreatorKeywords = ref<string[]>([]);
 const draftSubmitUserNameKeywords = ref<string[]>([]);
 const draftLastDts009HandlerKeywords = ref<string[]>([]);
+const draftLastDts010HandlerKeywords = ref<string[]>([]);
+const draftLastDts013HandlerKeywords = ref<string[]>([]);
+const draftDevOwnerNameKeywords = ref<string[]>([]);
+const draftTestOwnerNameKeywords = ref<string[]>([]);
 const draftCreateAtBegin = ref<Date | null>(null);
 const draftCreateAtEnd = ref<Date | null>(null);
 const draftCloseTimeBegin = ref<Date | null>(null);
@@ -1346,6 +1435,15 @@ watch(
 );
 
 watch(
+  () => parentNoFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftParentNoKeyword.value = filters.value.parentNoKeyword || '';
+    }
+  },
+);
+
+watch(
   () => projectFilterVisible.value,
   (visible) => {
     if (visible) {
@@ -1366,6 +1464,66 @@ watch(
   (visible) => {
     if (visible) {
       draftBriefDescKeyword.value = filters.value.briefDescKeyword || '';
+    }
+  },
+);
+
+watch(
+  () => iTestBackCountFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftITestBackCountKeyword.value =
+        filters.value.iTestBackCountKeyword || '';
+    }
+  },
+);
+
+watch(
+  () => iNumOfCloseDaysFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftINumOfCloseDaysKeyword.value =
+        filters.value.iNumOfCloseDaysKeyword || '';
+    }
+  },
+);
+
+watch(
+  () => iNumOfFirmDaysFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftINumOfFirmDaysKeyword.value =
+        filters.value.iNumOfFirmDaysKeyword || '';
+    }
+  },
+);
+
+watch(
+  () => iNumOfLocateDaysFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftINumOfLocateDaysKeyword.value =
+        filters.value.iNumOfLocateDaysKeyword || '';
+    }
+  },
+);
+
+watch(
+  () => iNumofModifyDaysFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftINumofModifyDaysKeyword.value =
+        filters.value.iNumofModifyDaysKeyword || '';
+    }
+  },
+);
+
+watch(
+  () => iNumofTestDaysFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftINumofTestDaysKeyword.value =
+        filters.value.iNumofTestDaysKeyword || '';
     }
   },
 );
@@ -1407,6 +1565,50 @@ watch(
     if (visible) {
       draftLastDts009HandlerKeywords.value = [
         ...filters.value.last_dts009_handlerKeywords,
+      ];
+    }
+  },
+);
+
+watch(
+  () => lastDts010HandlerFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftLastDts010HandlerKeywords.value = [
+        ...filters.value.last_dts010_handlerKeywords,
+      ];
+    }
+  },
+);
+
+watch(
+  () => lastDts013HandlerFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftLastDts013HandlerKeywords.value = [
+        ...filters.value.last_dts013_handlerKeywords,
+      ];
+    }
+  },
+);
+
+watch(
+  () => devOwnerNameFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftDevOwnerNameKeywords.value = [
+        ...filters.value.dev_owner_name_keyword,
+      ];
+    }
+  },
+);
+
+watch(
+  () => testOwnerNameFilterVisible.value,
+  (visible) => {
+    if (visible) {
+      draftTestOwnerNameKeywords.value = [
+        ...filters.value.test_owner_name_keyword,
       ];
     }
   },
@@ -1659,6 +1861,18 @@ function resetDtsBizNoFilterDraft() {
   draftDtsBizNoKeyword.value = '';
 }
 
+async function confirmParentNoFilter() {
+  filters.value.parentNoKeyword = String(
+    draftParentNoKeyword.value || '',
+  ).trim();
+  parentNoFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetParentNoFilterDraft() {
+  draftParentNoKeyword.value = '';
+}
+
 async function confirmProjectFilter() {
   filters.value.projectNames = normalizeStringArray(draftProjectNames.value);
   projectFilterVisible.value = false;
@@ -1680,6 +1894,78 @@ async function confirmBriefDescFilter() {
 
 function resetBriefDescFilterDraft() {
   draftBriefDescKeyword.value = '';
+}
+
+async function confirmITestBackCountFilter() {
+  filters.value.iTestBackCountKeyword = String(
+    draftITestBackCountKeyword.value || '',
+  ).trim();
+  iTestBackCountFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetITestBackCountFilterDraft() {
+  draftITestBackCountKeyword.value = '';
+}
+
+async function confirmINumOfCloseDaysFilter() {
+  filters.value.iNumOfCloseDaysKeyword = String(
+    draftINumOfCloseDaysKeyword.value || '',
+  ).trim();
+  iNumOfCloseDaysFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetINumOfCloseDaysFilterDraft() {
+  draftINumOfCloseDaysKeyword.value = '';
+}
+
+async function confirmINumOfFirmDaysFilter() {
+  filters.value.iNumOfFirmDaysKeyword = String(
+    draftINumOfFirmDaysKeyword.value || '',
+  ).trim();
+  iNumOfFirmDaysFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetINumOfFirmDaysFilterDraft() {
+  draftINumOfFirmDaysKeyword.value = '';
+}
+
+async function confirmINumOfLocateDaysFilter() {
+  filters.value.iNumOfLocateDaysKeyword = String(
+    draftINumOfLocateDaysKeyword.value || '',
+  ).trim();
+  iNumOfLocateDaysFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetINumOfLocateDaysFilterDraft() {
+  draftINumOfLocateDaysKeyword.value = '';
+}
+
+async function confirmINumofModifyDaysFilter() {
+  filters.value.iNumofModifyDaysKeyword = String(
+    draftINumofModifyDaysKeyword.value || '',
+  ).trim();
+  iNumofModifyDaysFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetINumofModifyDaysFilterDraft() {
+  draftINumofModifyDaysKeyword.value = '';
+}
+
+async function confirmINumofTestDaysFilter() {
+  filters.value.iNumofTestDaysKeyword = String(
+    draftINumofTestDaysKeyword.value || '',
+  ).trim();
+  iNumofTestDaysFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetINumofTestDaysFilterDraft() {
+  draftINumofTestDaysKeyword.value = '';
 }
 
 async function confirmCurrentHandlerFilter() {
@@ -1728,6 +2014,54 @@ async function confirmLastDts009HandlerFilter() {
 
 function resetLastDts009HandlerFilterDraft() {
   draftLastDts009HandlerKeywords.value = [];
+}
+
+async function confirmLastDts010HandlerFilter() {
+  filters.value.last_dts010_handlerKeywords = normalizeStringArray(
+    draftLastDts010HandlerKeywords.value,
+  );
+  lastDts010HandlerFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetLastDts010HandlerFilterDraft() {
+  draftLastDts010HandlerKeywords.value = [];
+}
+
+async function confirmLastDts013HandlerFilter() {
+  filters.value.last_dts013_handlerKeywords = normalizeStringArray(
+    draftLastDts013HandlerKeywords.value,
+  );
+  lastDts013HandlerFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetLastDts013HandlerFilterDraft() {
+  draftLastDts013HandlerKeywords.value = [];
+}
+
+async function confirmDevOwnerNameFilter() {
+  filters.value.dev_owner_name_keyword = normalizeStringArray(
+    draftDevOwnerNameKeywords.value,
+  );
+  devOwnerNameFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetDevOwnerNameFilterDraft() {
+  draftDevOwnerNameKeywords.value = [];
+}
+
+async function confirmTestOwnerNameFilter() {
+  filters.value.test_owner_name_keyword = normalizeStringArray(
+    draftTestOwnerNameKeywords.value,
+  );
+  testOwnerNameFilterVisible.value = false;
+  await handleSearch(true);
+}
+
+function resetTestOwnerNameFilterDraft() {
+  draftTestOwnerNameKeywords.value = [];
 }
 
 async function confirmCreateAtFilter() {
@@ -2673,6 +3007,60 @@ onUnmounted(() => {
                     </div>
                   </template>
 
+                  <template #header-parentNo>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">父单单号</span>
+                      <ElPopover
+                        v-model:visible="parentNoFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="280"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': Boolean(filters.parentNoKeyword),
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedParentNoKeywordLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-model="draftParentNoKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词模糊搜索父单单号"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetParentNoFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmParentNoFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
                   <template #header-briefDesc>
                     <div class="dts-header-filter" @click.stop>
                       <span class="dts-header-filter__label">简要描述</span>
@@ -2718,6 +3106,342 @@ onUnmounted(() => {
                               type="primary"
                               size="small"
                               @click="confirmBriefDescFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-iTestBackCount>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">测试返回次数</span>
+                      <ElPopover
+                        v-model:visible="iTestBackCountFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="300"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': Boolean(
+                                filters.iTestBackCountKeyword,
+                              ),
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedITestBackCountKeywordLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-model="draftITestBackCountKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词模糊搜索测试返回次数"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetITestBackCountFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmITestBackCountFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-iNumOfCloseDays>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">关闭周期</span>
+                      <ElPopover
+                        v-model:visible="iNumOfCloseDaysFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="300"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': Boolean(
+                                filters.iNumOfCloseDaysKeyword,
+                              ),
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedINumOfCloseDaysKeywordLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-model="draftINumOfCloseDaysKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词模糊搜索关闭周期"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetINumOfCloseDaysFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmINumOfCloseDaysFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-iNumOfFirmDays>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">确认周期</span>
+                      <ElPopover
+                        v-model:visible="iNumOfFirmDaysFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="300"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': Boolean(
+                                filters.iNumOfFirmDaysKeyword,
+                              ),
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedINumOfFirmDaysKeywordLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-model="draftINumOfFirmDaysKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词模糊搜索确认周期"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetINumOfFirmDaysFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmINumOfFirmDaysFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-iNumOfLocateDays>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">定位周期</span>
+                      <ElPopover
+                        v-model:visible="iNumOfLocateDaysFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="300"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': Boolean(
+                                filters.iNumOfLocateDaysKeyword,
+                              ),
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedINumOfLocateDaysKeywordLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-model="draftINumOfLocateDaysKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词模糊搜索定位周期"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetINumOfLocateDaysFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmINumOfLocateDaysFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-iNumofModifyDays>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">修改周期</span>
+                      <ElPopover
+                        v-model:visible="iNumofModifyDaysFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="300"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': Boolean(
+                                filters.iNumofModifyDaysKeyword,
+                              ),
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedINumofModifyDaysKeywordLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-model="draftINumofModifyDaysKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词模糊搜索修改周期"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetINumofModifyDaysFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmINumofModifyDaysFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-iNumofTestDays>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">回归测试周期</span>
+                      <ElPopover
+                        v-model:visible="iNumofTestDaysFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="300"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active': Boolean(
+                                filters.iNumofTestDaysKeyword,
+                              ),
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedINumofTestDaysKeywordLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <ElInput
+                              v-model="draftINumofTestDaysKeyword"
+                              size="small"
+                              clearable
+                              class="dts-header-filter-panel__search"
+                              placeholder="输入关键词模糊搜索回归测试周期"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetINumofTestDaysFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmINumofTestDaysFilter"
                             >
                               确认
                             </ElButton>
@@ -2821,7 +3545,7 @@ onUnmounted(() => {
                         v-model:visible="currentHandlerFilterVisible"
                         placement="bottom-start"
                         trigger="click"
-                        :width="280"
+                        :width="620"
                         popper-class="dts-header-filter-popper"
                       >
                         <template #reference>
@@ -2841,24 +3565,11 @@ onUnmounted(() => {
                         </template>
                         <div class="dts-header-filter-panel" @click.stop>
                           <div class="dts-header-filter-panel__body">
-                            <ElSelect
+                            <DtsHeaderPersonSelector
                               v-model="draftCurrentHandlerKeywords"
-                              multiple
-                              filterable
-                              allow-create
-                              default-first-option
-                              :reserve-keyword="false"
-                              :teleported="false"
-                              class="dts-header-filter-panel__search"
-                              placeholder="输入并回车，可添加多个当前处理人"
-                            >
-                              <ElOption
-                                v-for="item in draftCurrentHandlerKeywords"
-                                :key="item"
-                                :label="item"
-                                :value="item"
-                              />
-                            </ElSelect>
+                              :visible="currentHandlerFilterVisible"
+                              value-mode="username"
+                            />
                           </div>
                           <div class="dts-header-filter-panel__actions">
                             <ElButton
@@ -2887,7 +3598,7 @@ onUnmounted(() => {
                         v-model:visible="creatorFilterVisible"
                         placement="bottom-start"
                         trigger="click"
-                        :width="280"
+                        :width="620"
                         popper-class="dts-header-filter-popper"
                       >
                         <template #reference>
@@ -2906,24 +3617,11 @@ onUnmounted(() => {
                         </template>
                         <div class="dts-header-filter-panel" @click.stop>
                           <div class="dts-header-filter-panel__body">
-                            <ElSelect
+                            <DtsHeaderPersonSelector
                               v-model="draftCreatorKeywords"
-                              multiple
-                              filterable
-                              allow-create
-                              default-first-option
-                              :reserve-keyword="false"
-                              :teleported="false"
-                              class="dts-header-filter-panel__search"
-                              placeholder="输入并回车，可添加多个提单人工号"
-                            >
-                              <ElOption
-                                v-for="item in draftCreatorKeywords"
-                                :key="item"
-                                :label="item"
-                                :value="item"
-                              />
-                            </ElSelect>
+                              :visible="creatorFilterVisible"
+                              value-mode="username"
+                            />
                           </div>
                           <div class="dts-header-filter-panel__actions">
                             <ElButton
@@ -2952,7 +3650,7 @@ onUnmounted(() => {
                         v-model:visible="submitUserNameFilterVisible"
                         placement="bottom-start"
                         trigger="click"
-                        :width="280"
+                        :width="620"
                         popper-class="dts-header-filter-popper"
                       >
                         <template #reference>
@@ -2972,24 +3670,11 @@ onUnmounted(() => {
                         </template>
                         <div class="dts-header-filter-panel" @click.stop>
                           <div class="dts-header-filter-panel__body">
-                            <ElSelect
+                            <DtsHeaderPersonSelector
                               v-model="draftSubmitUserNameKeywords"
-                              multiple
-                              filterable
-                              allow-create
-                              default-first-option
-                              :reserve-keyword="false"
-                              :teleported="false"
-                              class="dts-header-filter-panel__search"
-                              placeholder="输入并回车，可添加多个提单人姓名"
-                            >
-                              <ElOption
-                                v-for="item in draftSubmitUserNameKeywords"
-                                :key="item"
-                                :label="item"
-                                :value="item"
-                              />
-                            </ElSelect>
+                              :visible="submitUserNameFilterVisible"
+                              value-mode="name"
+                            />
                           </div>
                           <div class="dts-header-filter-panel__actions">
                             <ElButton
@@ -3720,7 +4405,7 @@ onUnmounted(() => {
                         v-model:visible="lastDts009HandlerFilterVisible"
                         placement="bottom-start"
                         trigger="click"
-                        :width="280"
+                        :width="620"
                         popper-class="dts-header-filter-popper"
                       >
                         <template #reference>
@@ -3740,24 +4425,11 @@ onUnmounted(() => {
                         </template>
                         <div class="dts-header-filter-panel" @click.stop>
                           <div class="dts-header-filter-panel__body">
-                            <ElSelect
+                            <DtsHeaderPersonSelector
                               v-model="draftLastDts009HandlerKeywords"
-                              multiple
-                              filterable
-                              allow-create
-                              default-first-option
-                              :reserve-keyword="false"
-                              :teleported="false"
-                              class="dts-header-filter-panel__search"
-                              placeholder="输入并回车，可添加多个开发修改人"
-                            >
-                              <ElOption
-                                v-for="item in draftLastDts009HandlerKeywords"
-                                :key="item"
-                                :label="item"
-                                :value="item"
-                              />
-                            </ElSelect>
+                              :visible="lastDts009HandlerFilterVisible"
+                              value-mode="username"
+                            />
                           </div>
                           <div class="dts-header-filter-panel__actions">
                             <ElButton
@@ -3770,6 +4442,222 @@ onUnmounted(() => {
                               type="primary"
                               size="small"
                               @click="confirmLastDts009HandlerFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-last_dts010_handler>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">
+                        最后审核修改人
+                      </span>
+                      <ElPopover
+                        v-model:visible="lastDts010HandlerFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="620"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active':
+                                filters.last_dts010_handlerKeywords.length > 0,
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedLastDts010HandlerLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <DtsHeaderPersonSelector
+                              v-model="draftLastDts010HandlerKeywords"
+                              :visible="lastDts010HandlerFilterVisible"
+                              value-mode="username"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetLastDts010HandlerFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmLastDts010HandlerFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-last_dts013_handler>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">
+                        最后测试回归人
+                      </span>
+                      <ElPopover
+                        v-model:visible="lastDts013HandlerFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="620"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active':
+                                filters.last_dts013_handlerKeywords.length > 0,
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedLastDts013HandlerLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <DtsHeaderPersonSelector
+                              v-model="draftLastDts013HandlerKeywords"
+                              :visible="lastDts013HandlerFilterVisible"
+                              value-mode="username"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetLastDts013HandlerFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmLastDts013HandlerFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-dev_owner_name>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">开发责任人</span>
+                      <ElPopover
+                        v-model:visible="devOwnerNameFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="620"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active':
+                                filters.dev_owner_name_keyword.length > 0,
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedDevOwnerNameLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <DtsHeaderPersonSelector
+                              v-model="draftDevOwnerNameKeywords"
+                              :visible="devOwnerNameFilterVisible"
+                              value-mode="name"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetDevOwnerNameFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmDevOwnerNameFilter"
+                            >
+                              确认
+                            </ElButton>
+                          </div>
+                        </div>
+                      </ElPopover>
+                    </div>
+                  </template>
+
+                  <template #header-test_owner_name>
+                    <div class="dts-header-filter" @click.stop>
+                      <span class="dts-header-filter__label">测试责任人</span>
+                      <ElPopover
+                        v-model:visible="testOwnerNameFilterVisible"
+                        placement="bottom-start"
+                        trigger="click"
+                        :width="620"
+                        popper-class="dts-header-filter-popper"
+                      >
+                        <template #reference>
+                          <button
+                            type="button"
+                            class="dts-header-filter-trigger"
+                            :class="{
+                              'is-active':
+                                filters.test_owner_name_keyword.length > 0,
+                            }"
+                          >
+                            <Filter class="dts-header-filter-trigger__icon" />
+                            <span class="dts-header-filter-trigger__text">
+                              {{ selectedTestOwnerNameLabel }}
+                            </span>
+                          </button>
+                        </template>
+                        <div class="dts-header-filter-panel" @click.stop>
+                          <div class="dts-header-filter-panel__body">
+                            <DtsHeaderPersonSelector
+                              v-model="draftTestOwnerNameKeywords"
+                              :visible="testOwnerNameFilterVisible"
+                              value-mode="name"
+                            />
+                          </div>
+                          <div class="dts-header-filter-panel__actions">
+                            <ElButton
+                              size="small"
+                              @click="resetTestOwnerNameFilterDraft"
+                            >
+                              重置
+                            </ElButton>
+                            <ElButton
+                              type="primary"
+                              size="small"
+                              @click="confirmTestOwnerNameFilter"
                             >
                               确认
                             </ElButton>

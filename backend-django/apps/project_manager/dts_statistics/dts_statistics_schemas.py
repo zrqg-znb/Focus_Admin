@@ -33,12 +33,21 @@ def _normalize_optional_text(value: Any) -> str:
 
 class DtsLocalFilterSchema(Schema):
     dtsBizNoKeyword: str = ""
+    parentNoKeyword: str = ""
     projectNames: list[str] = Field(default_factory=list)
     briefDescKeyword: str = ""
+    iTestBackCountKeyword: str = ""
+    iNumOfCloseDaysKeyword: str = ""
+    iNumOfFirmDaysKeyword: str = ""
+    iNumOfLocateDaysKeyword: str = ""
+    iNumofModifyDaysKeyword: str = ""
+    iNumofTestDaysKeyword: str = ""
     currentHandlerKeywords: list[str] = Field(default_factory=list)
     creatorKeywords: list[str] = Field(default_factory=list)
     sSubmitUserNameKeywords: list[str] = Field(default_factory=list)
     last_dts009_handlerKeywords: list[str] = Field(default_factory=list)
+    last_dts010_handlerKeywords: list[str] = Field(default_factory=list)
+    last_dts013_handlerKeywords: list[str] = Field(default_factory=list)
     createAtBegin: int = 0
     createAtEnd: int = 0
     dCloseTimeBegin: int = 0
@@ -55,7 +64,7 @@ class DtsLocalFilterSchema(Schema):
     need_test_analyze_values: list[str] = Field(default_factory=list)
     process_quality_type_keyword: str = ""
     qa_remark_keyword: str = ""
-    dev_owner_name_keyword: str = ""
+    dev_owner_name_keyword: list[str] = Field(default_factory=list)
     issue_intro_stage_values: list[str] = Field(default_factory=list)
     dev_feature_keyword: str = ""
     dev_sub_category_values: list[str] = Field(default_factory=list)
@@ -72,7 +81,7 @@ class DtsLocalFilterSchema(Schema):
     dev_asset_link_keyword: str = ""
     dev_status_values: list[str] = Field(default_factory=list)
     dev_remark_keyword: str = ""
-    test_owner_name_keyword: str = ""
+    test_owner_name_keyword: list[str] = Field(default_factory=list)
     test_miss_reason_values: list[str] = Field(default_factory=list)
     test_standard_desc_keyword: str = ""
     test_improvements_keyword: str = ""
@@ -83,10 +92,16 @@ class DtsLocalFilterSchema(Schema):
 
     @field_validator(
         "dtsBizNoKeyword",
+        "parentNoKeyword",
         "briefDescKeyword",
+        "iTestBackCountKeyword",
+        "iNumOfCloseDaysKeyword",
+        "iNumOfFirmDaysKeyword",
+        "iNumOfLocateDaysKeyword",
+        "iNumofModifyDaysKeyword",
+        "iNumofTestDaysKeyword",
         "process_quality_type_keyword",
         "qa_remark_keyword",
-        "dev_owner_name_keyword",
         "dev_feature_keyword",
         "dev_reason_keyword",
         "dev_intro_reason_keyword",
@@ -95,7 +110,6 @@ class DtsLocalFilterSchema(Schema):
         "dev_aar_link_keyword",
         "dev_asset_link_keyword",
         "dev_remark_keyword",
-        "test_owner_name_keyword",
         "test_standard_desc_keyword",
         "test_improvements_keyword",
         "test_non_test_desc_keyword",
@@ -106,11 +120,6 @@ class DtsLocalFilterSchema(Schema):
     @classmethod
     def normalize_local_keyword(cls, value: Any):
         return _normalize_optional_text(value)
-
-    @field_validator("last_dts009_handlerKeywords", mode="before")
-    @classmethod
-    def normalize_local_keyword_list(cls, value: Any):
-        return _normalize_text_list(value)
 
     @field_validator(
         "createAtBegin",
@@ -129,6 +138,8 @@ class DtsLocalFilterSchema(Schema):
         "creatorKeywords",
         "sSubmitUserNameKeywords",
         "last_dts009_handlerKeywords",
+        "last_dts010_handlerKeywords",
+        "last_dts013_handlerKeywords",
         "sDeptOneNoNames",
         "sSubsystemNoNames",
         "sConfigFlowTypes",
@@ -147,8 +158,10 @@ class DtsLocalFilterSchema(Schema):
         "dev_control_points_values",
         "dev_non_base_desc_values",
         "dev_status_values",
+        "dev_owner_name_keyword",
         "test_miss_reason_values",
         "test_status_values",
+        "test_owner_name_keyword",
         mode="before",
     )
     @classmethod
@@ -163,12 +176,21 @@ class DtsStatisticsQuerySchema(Schema):
     updateTimeBegin: int = 0
     updateTimeEnd: int = 0
     dtsBizNoKeyword: str = ""
+    parentNoKeyword: str = ""
     projectNames: list[str] = Field(default_factory=list)
     briefDescKeyword: str = ""
+    iTestBackCountKeyword: str = ""
+    iNumOfCloseDaysKeyword: str = ""
+    iNumOfFirmDaysKeyword: str = ""
+    iNumOfLocateDaysKeyword: str = ""
+    iNumofModifyDaysKeyword: str = ""
+    iNumofTestDaysKeyword: str = ""
     currentHandlerKeywords: list[str] = Field(default_factory=list)
     creatorKeywords: list[str] = Field(default_factory=list)
     sSubmitUserNameKeywords: list[str] = Field(default_factory=list)
     last_dts009_handlerKeywords: list[str] = Field(default_factory=list)
+    last_dts010_handlerKeywords: list[str] = Field(default_factory=list)
+    last_dts013_handlerKeywords: list[str] = Field(default_factory=list)
     createAtBegin: int = 0
     createAtEnd: int = 0
     dCloseTimeBegin: int = 0
@@ -185,7 +207,7 @@ class DtsStatisticsQuerySchema(Schema):
     need_test_analyze_values: list[str] = Field(default_factory=list)
     process_quality_type_keyword: str = ""
     qa_remark_keyword: str = ""
-    dev_owner_name_keyword: str = ""
+    dev_owner_name_keyword: list[str] = Field(default_factory=list)
     issue_intro_stage_values: list[str] = Field(default_factory=list)
     dev_feature_keyword: str = ""
     dev_sub_category_values: list[str] = Field(default_factory=list)
@@ -202,7 +224,7 @@ class DtsStatisticsQuerySchema(Schema):
     dev_asset_link_keyword: str = ""
     dev_status_values: list[str] = Field(default_factory=list)
     dev_remark_keyword: str = ""
-    test_owner_name_keyword: str = ""
+    test_owner_name_keyword: list[str] = Field(default_factory=list)
     test_miss_reason_values: list[str] = Field(default_factory=list)
     test_standard_desc_keyword: str = ""
     test_improvements_keyword: str = ""
@@ -231,10 +253,16 @@ class DtsStatisticsQuerySchema(Schema):
 
     @field_validator(
         "dtsBizNoKeyword",
+        "parentNoKeyword",
         "briefDescKeyword",
+        "iTestBackCountKeyword",
+        "iNumOfCloseDaysKeyword",
+        "iNumOfFirmDaysKeyword",
+        "iNumOfLocateDaysKeyword",
+        "iNumofModifyDaysKeyword",
+        "iNumofTestDaysKeyword",
         "process_quality_type_keyword",
         "qa_remark_keyword",
-        "dev_owner_name_keyword",
         "dev_feature_keyword",
         "dev_reason_keyword",
         "dev_intro_reason_keyword",
@@ -243,7 +271,6 @@ class DtsStatisticsQuerySchema(Schema):
         "dev_aar_link_keyword",
         "dev_asset_link_keyword",
         "dev_remark_keyword",
-        "test_owner_name_keyword",
         "test_standard_desc_keyword",
         "test_improvements_keyword",
         "test_non_test_desc_keyword",
@@ -261,6 +288,10 @@ class DtsStatisticsQuerySchema(Schema):
         "creatorKeywords",
         "sSubmitUserNameKeywords",
         "last_dts009_handlerKeywords",
+        "last_dts010_handlerKeywords",
+        "last_dts013_handlerKeywords",
+        "dev_owner_name_keyword",
+        "test_owner_name_keyword",
         mode="before",
     )
     @classmethod
@@ -563,12 +594,21 @@ class DtsStatisticsExportSchema(Schema):
     updateTimeBegin: int = 0
     updateTimeEnd: int = 0
     dtsBizNoKeyword: str = ""
+    parentNoKeyword: str = ""
     projectNames: list[str] = Field(default_factory=list)
     briefDescKeyword: str = ""
+    iTestBackCountKeyword: str = ""
+    iNumOfCloseDaysKeyword: str = ""
+    iNumOfFirmDaysKeyword: str = ""
+    iNumOfLocateDaysKeyword: str = ""
+    iNumofModifyDaysKeyword: str = ""
+    iNumofTestDaysKeyword: str = ""
     currentHandlerKeywords: list[str] = Field(default_factory=list)
     creatorKeywords: list[str] = Field(default_factory=list)
     sSubmitUserNameKeywords: list[str] = Field(default_factory=list)
     last_dts009_handlerKeywords: list[str] = Field(default_factory=list)
+    last_dts010_handlerKeywords: list[str] = Field(default_factory=list)
+    last_dts013_handlerKeywords: list[str] = Field(default_factory=list)
     createAtBegin: int = 0
     createAtEnd: int = 0
     dCloseTimeBegin: int = 0
@@ -585,7 +625,7 @@ class DtsStatisticsExportSchema(Schema):
     need_test_analyze_values: list[str] = Field(default_factory=list)
     process_quality_type_keyword: str = ""
     qa_remark_keyword: str = ""
-    dev_owner_name_keyword: str = ""
+    dev_owner_name_keyword: list[str] = Field(default_factory=list)
     issue_intro_stage_values: list[str] = Field(default_factory=list)
     dev_feature_keyword: str = ""
     dev_sub_category_values: list[str] = Field(default_factory=list)
@@ -602,7 +642,7 @@ class DtsStatisticsExportSchema(Schema):
     dev_asset_link_keyword: str = ""
     dev_status_values: list[str] = Field(default_factory=list)
     dev_remark_keyword: str = ""
-    test_owner_name_keyword: str = ""
+    test_owner_name_keyword: list[str] = Field(default_factory=list)
     test_miss_reason_values: list[str] = Field(default_factory=list)
     test_standard_desc_keyword: str = ""
     test_improvements_keyword: str = ""
@@ -629,10 +669,16 @@ class DtsStatisticsExportSchema(Schema):
 
     @field_validator(
         "dtsBizNoKeyword",
+        "parentNoKeyword",
         "briefDescKeyword",
+        "iTestBackCountKeyword",
+        "iNumOfCloseDaysKeyword",
+        "iNumOfFirmDaysKeyword",
+        "iNumOfLocateDaysKeyword",
+        "iNumofModifyDaysKeyword",
+        "iNumofTestDaysKeyword",
         "process_quality_type_keyword",
         "qa_remark_keyword",
-        "dev_owner_name_keyword",
         "dev_feature_keyword",
         "dev_reason_keyword",
         "dev_intro_reason_keyword",
@@ -641,7 +687,6 @@ class DtsStatisticsExportSchema(Schema):
         "dev_aar_link_keyword",
         "dev_asset_link_keyword",
         "dev_remark_keyword",
-        "test_owner_name_keyword",
         "test_standard_desc_keyword",
         "test_improvements_keyword",
         "test_non_test_desc_keyword",
@@ -659,6 +704,10 @@ class DtsStatisticsExportSchema(Schema):
         "creatorKeywords",
         "sSubmitUserNameKeywords",
         "last_dts009_handlerKeywords",
+        "last_dts010_handlerKeywords",
+        "last_dts013_handlerKeywords",
+        "dev_owner_name_keyword",
+        "test_owner_name_keyword",
         mode="before",
     )
     @classmethod

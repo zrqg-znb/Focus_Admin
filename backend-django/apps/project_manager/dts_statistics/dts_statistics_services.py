@@ -182,12 +182,21 @@ _EXPORT_SHEET_TITLE = "DTS统计"
 
 _SNAPSHOT_LOCAL_FILTER_FIELD_KEYS = {
     "dtsBizNo",
+    "parentNo",
     "projectName",
     "briefDesc",
+    "iTestBackCount",
+    "iNumOfCloseDays",
+    "iNumOfFirmDays",
+    "iNumOfLocateDays",
+    "iNumofModifyDays",
+    "iNumofTestDays",
     "currentHandler",
     "creator",
     "sSubmitUserName",
     "last_dts009_handler",
+    "last_dts010_handler",
+    "last_dts013_handler",
     "createAt",
     "dCloseTime",
     "sDeptOneNoName",
@@ -1492,8 +1501,27 @@ def _resolve_local_runtime_filters(
     )
     return {
         "dtsBizNoKeyword": _clean_text(getattr(query, "dtsBizNoKeyword", "")),
+        "parentNoKeyword": _clean_text(getattr(query, "parentNoKeyword", "")),
         "projectNames": _normalize_text_list(getattr(query, "projectNames", [])),
         "briefDescKeyword": _clean_text(getattr(query, "briefDescKeyword", "")),
+        "iTestBackCountKeyword": _clean_text(
+            getattr(query, "iTestBackCountKeyword", "")
+        ),
+        "iNumOfCloseDaysKeyword": _clean_text(
+            getattr(query, "iNumOfCloseDaysKeyword", "")
+        ),
+        "iNumOfFirmDaysKeyword": _clean_text(
+            getattr(query, "iNumOfFirmDaysKeyword", "")
+        ),
+        "iNumOfLocateDaysKeyword": _clean_text(
+            getattr(query, "iNumOfLocateDaysKeyword", "")
+        ),
+        "iNumofModifyDaysKeyword": _clean_text(
+            getattr(query, "iNumofModifyDaysKeyword", "")
+        ),
+        "iNumofTestDaysKeyword": _clean_text(
+            getattr(query, "iNumofTestDaysKeyword", "")
+        ),
         "currentHandlerKeywords": _normalize_text_list(
             getattr(query, "currentHandlerKeywords", [])
         ),
@@ -1505,6 +1533,12 @@ def _resolve_local_runtime_filters(
         ),
         "last_dts009_handlerKeywords": _normalize_text_list(
             getattr(query, "last_dts009_handlerKeywords", [])
+        ),
+        "last_dts010_handlerKeywords": _normalize_text_list(
+            getattr(query, "last_dts010_handlerKeywords", [])
+        ),
+        "last_dts013_handlerKeywords": _normalize_text_list(
+            getattr(query, "last_dts013_handlerKeywords", [])
         ),
         "createAtBegin": create_at_begin,
         "createAtEnd": create_at_end,
@@ -1542,8 +1576,8 @@ def _resolve_local_runtime_filters(
             getattr(query, "process_quality_type_keyword", "")
         ),
         "qa_remark_keyword": _clean_text(getattr(query, "qa_remark_keyword", "")),
-        "dev_owner_name_keyword": _clean_text(
-            getattr(query, "dev_owner_name_keyword", "")
+        "dev_owner_name_keyword": _normalize_text_list(
+            getattr(query, "dev_owner_name_keyword", [])
         ),
         "issue_intro_stage_values": _normalize_text_list(
             getattr(query, "issue_intro_stage_values", [])
@@ -1585,8 +1619,8 @@ def _resolve_local_runtime_filters(
             getattr(query, "dev_status_values", [])
         ),
         "dev_remark_keyword": _clean_text(getattr(query, "dev_remark_keyword", "")),
-        "test_owner_name_keyword": _clean_text(
-            getattr(query, "test_owner_name_keyword", "")
+        "test_owner_name_keyword": _normalize_text_list(
+            getattr(query, "test_owner_name_keyword", [])
         ),
         "test_miss_reason_values": _normalize_text_list(
             getattr(query, "test_miss_reason_values", [])
@@ -1863,6 +1897,11 @@ def _match_any_keyword_like(value: Any, keywords: list[str]) -> bool:
     return any(_match_keyword_like(value, keyword) for keyword in normalized_keywords)
 
 
+def _resolve_cycle_filter_value(value: Any) -> str:
+    formatted = _format_cycle_integer_value(value)
+    return "" if formatted == "-" else formatted
+
+
 def _match_list_intersects(value: Any, selected_values: set[str]) -> bool:
     if not selected_values:
         return True
@@ -1900,11 +1939,44 @@ def _apply_local_filters(
     dts_biz_no_keyword = (
         "" if "dtsBizNo" in ignored else _clean_text(local_filters["dtsBizNoKeyword"])
     )
+    parent_no_keyword = (
+        "" if "parentNo" in ignored else _clean_text(local_filters["parentNoKeyword"])
+    )
     project_values = set() if "projectName" in ignored else {
         item for item in _normalize_text_list(local_filters["projectNames"]) if item
     }
     brief_desc_keyword = (
         "" if "briefDesc" in ignored else _clean_text(local_filters["briefDescKeyword"])
+    )
+    i_test_back_count_keyword = (
+        ""
+        if "iTestBackCount" in ignored
+        else _clean_text(local_filters["iTestBackCountKeyword"])
+    )
+    i_num_of_close_days_keyword = (
+        ""
+        if "iNumOfCloseDays" in ignored
+        else _clean_text(local_filters["iNumOfCloseDaysKeyword"])
+    )
+    i_num_of_firm_days_keyword = (
+        ""
+        if "iNumOfFirmDays" in ignored
+        else _clean_text(local_filters["iNumOfFirmDaysKeyword"])
+    )
+    i_num_of_locate_days_keyword = (
+        ""
+        if "iNumOfLocateDays" in ignored
+        else _clean_text(local_filters["iNumOfLocateDaysKeyword"])
+    )
+    i_num_of_modify_days_keyword = (
+        ""
+        if "iNumofModifyDays" in ignored
+        else _clean_text(local_filters["iNumofModifyDaysKeyword"])
+    )
+    i_num_of_test_days_keyword = (
+        ""
+        if "iNumofTestDays" in ignored
+        else _clean_text(local_filters["iNumofTestDaysKeyword"])
     )
     current_handler_keywords = (
         []
@@ -1925,6 +1997,16 @@ def _apply_local_filters(
         []
         if "last_dts009_handler" in ignored
         else _normalize_text_list(local_filters["last_dts009_handlerKeywords"])
+    )
+    last_dts010_handler_keywords = (
+        []
+        if "last_dts010_handler" in ignored
+        else _normalize_text_list(local_filters["last_dts010_handlerKeywords"])
+    )
+    last_dts013_handler_keywords = (
+        []
+        if "last_dts013_handler" in ignored
+        else _normalize_text_list(local_filters["last_dts013_handlerKeywords"])
     )
     create_at_begin = (
         0 if "createAt" in ignored else int(local_filters["createAtBegin"] or 0)
@@ -1992,10 +2074,10 @@ def _apply_local_filters(
     qa_remark_keyword = (
         "" if "qa_remark" in ignored else _clean_text(local_filters["qa_remark_keyword"])
     )
-    dev_owner_name_keyword = (
-        ""
+    dev_owner_name_keywords = (
+        []
         if "dev_owner_name" in ignored
-        else _clean_text(local_filters["dev_owner_name_keyword"])
+        else _normalize_text_list(local_filters["dev_owner_name_keyword"])
     )
     issue_intro_stage_values = set() if "issue_intro_stage" in ignored else {
         item
@@ -2069,10 +2151,10 @@ def _apply_local_filters(
     dev_remark_keyword = (
         "" if "dev_remark" in ignored else _clean_text(local_filters["dev_remark_keyword"])
     )
-    test_owner_name_keyword = (
-        ""
+    test_owner_name_keywords = (
+        []
         if "test_owner_name" in ignored
-        else _clean_text(local_filters["test_owner_name_keyword"])
+        else _normalize_text_list(local_filters["test_owner_name_keyword"])
     )
     test_miss_reason_values = set() if "test_miss_reason" in ignored else {
         item
@@ -2120,12 +2202,44 @@ def _apply_local_filters(
             continue
         if not _match_keyword_like(row.get("dtsBizNo"), dts_biz_no_keyword):
             continue
+        if not _match_keyword_like(row.get("parentNo"), parent_no_keyword):
+            continue
         if (
             project_values
             and _resolve_project_display_value(row) not in project_values
         ):
             continue
         if not _match_keyword_like(row.get("briefDesc"), brief_desc_keyword):
+            continue
+        if not _match_keyword_like(
+            row.get("iTestBackCount"),
+            i_test_back_count_keyword,
+        ):
+            continue
+        if not _match_keyword_like(
+            _resolve_cycle_filter_value(row.get("iNumOfCloseDays")),
+            i_num_of_close_days_keyword,
+        ):
+            continue
+        if not _match_keyword_like(
+            _resolve_cycle_filter_value(row.get("iNumOfFirmDays")),
+            i_num_of_firm_days_keyword,
+        ):
+            continue
+        if not _match_keyword_like(
+            _resolve_cycle_filter_value(row.get("iNumOfLocateDays")),
+            i_num_of_locate_days_keyword,
+        ):
+            continue
+        if not _match_keyword_like(
+            _resolve_cycle_filter_value(row.get("iNumofModifyDays")),
+            i_num_of_modify_days_keyword,
+        ):
+            continue
+        if not _match_keyword_like(
+            _resolve_cycle_filter_value(row.get("iNumofTestDays")),
+            i_num_of_test_days_keyword,
+        ):
             continue
         if not _match_any_keyword_like(
             row.get("currentHandler"),
@@ -2142,6 +2256,16 @@ def _apply_local_filters(
         if not _match_any_keyword_like(
             row.get("last_dts009_handler"),
             last_dts009_handler_keywords,
+        ):
+            continue
+        if not _match_any_keyword_like(
+            row.get("last_dts010_handler"),
+            last_dts010_handler_keywords,
+        ):
+            continue
+        if not _match_any_keyword_like(
+            row.get("last_dts013_handler"),
+            last_dts013_handler_keywords,
         ):
             continue
         if not _match_time_range(row.get("createAt"), create_at_begin, create_at_end):
@@ -2188,7 +2312,9 @@ def _apply_local_filters(
             continue
         if not _match_keyword_like(row.get("qa_remark"), qa_remark_keyword):
             continue
-        if not _match_keyword_like(row.get("dev_owner_name"), dev_owner_name_keyword):
+        if not _match_any_keyword_like(
+            row.get("dev_owner_name"), dev_owner_name_keywords
+        ):
             continue
         if (
             issue_intro_stage_values
@@ -2245,7 +2371,9 @@ def _apply_local_filters(
             continue
         if not _match_keyword_like(row.get("dev_remark"), dev_remark_keyword):
             continue
-        if not _match_keyword_like(row.get("test_owner_name"), test_owner_name_keyword):
+        if not _match_any_keyword_like(
+            row.get("test_owner_name"), test_owner_name_keywords
+        ):
             continue
         if not _match_list_intersects(
             row.get("test_miss_reason"), test_miss_reason_values
@@ -2487,7 +2615,7 @@ def _build_filtered_result_payload(
     if "qa_remark" in ignored:
         local_filters["qa_remark_keyword"] = ""
     if "dev_owner_name" in ignored:
-        local_filters["dev_owner_name_keyword"] = ""
+        local_filters["dev_owner_name_keyword"] = []
     if "issue_intro_stage" in ignored:
         local_filters["issue_intro_stage_values"] = []
     if "dev_feature" in ignored:
@@ -2521,7 +2649,7 @@ def _build_filtered_result_payload(
     if "dev_remark" in ignored:
         local_filters["dev_remark_keyword"] = ""
     if "test_owner_name" in ignored:
-        local_filters["test_owner_name_keyword"] = ""
+        local_filters["test_owner_name_keyword"] = []
     if "test_miss_reason" in ignored:
         local_filters["test_miss_reason_values"] = []
     if "test_standard_desc" in ignored:
@@ -2544,8 +2672,29 @@ def _build_filtered_result_payload(
         "updateTimeBegin": update_time_begin,
         "updateTimeEnd": update_time_end,
         "dtsBizNoKeyword": dts_biz_no_keyword,
+        "parentNoKeyword": ""
+        if "parentNo" in ignored
+        else _clean_text(local_filters.get("parentNoKeyword")),
         "projectNames": _normalize_text_list(local_filters.get("projectNames")),
         "briefDescKeyword": brief_desc_keyword,
+        "iTestBackCountKeyword": ""
+        if "iTestBackCount" in ignored
+        else _clean_text(local_filters.get("iTestBackCountKeyword")),
+        "iNumOfCloseDaysKeyword": ""
+        if "iNumOfCloseDays" in ignored
+        else _clean_text(local_filters.get("iNumOfCloseDaysKeyword")),
+        "iNumOfFirmDaysKeyword": ""
+        if "iNumOfFirmDays" in ignored
+        else _clean_text(local_filters.get("iNumOfFirmDaysKeyword")),
+        "iNumOfLocateDaysKeyword": ""
+        if "iNumOfLocateDays" in ignored
+        else _clean_text(local_filters.get("iNumOfLocateDaysKeyword")),
+        "iNumofModifyDaysKeyword": ""
+        if "iNumofModifyDays" in ignored
+        else _clean_text(local_filters.get("iNumofModifyDaysKeyword")),
+        "iNumofTestDaysKeyword": ""
+        if "iNumofTestDays" in ignored
+        else _clean_text(local_filters.get("iNumofTestDaysKeyword")),
         "currentHandlerKeywords": _normalize_text_list(
             local_filters.get("currentHandlerKeywords")
         ),
@@ -2554,6 +2703,12 @@ def _build_filtered_result_payload(
             local_filters.get("sSubmitUserNameKeywords")
         ),
         "last_dts009_handlerKeywords": last_dts009_handler_keywords,
+        "last_dts010_handlerKeywords": []
+        if "last_dts010_handler" in ignored
+        else _normalize_text_list(local_filters.get("last_dts010_handlerKeywords")),
+        "last_dts013_handlerKeywords": []
+        if "last_dts013_handler" in ignored
+        else _normalize_text_list(local_filters.get("last_dts013_handlerKeywords")),
         "createAtBegin": int(local_filters.get("createAtBegin") or 0),
         "createAtEnd": int(local_filters.get("createAtEnd") or 0),
         "dCloseTimeBegin": int(local_filters.get("dCloseTimeBegin") or 0),
@@ -2588,7 +2743,7 @@ def _build_filtered_result_payload(
             local_filters.get("process_quality_type_keyword")
         ),
         "qa_remark_keyword": _clean_text(local_filters.get("qa_remark_keyword")),
-        "dev_owner_name_keyword": _clean_text(
+        "dev_owner_name_keyword": _normalize_text_list(
             local_filters.get("dev_owner_name_keyword")
         ),
         "issue_intro_stage_values": _normalize_text_list(
@@ -2629,7 +2784,7 @@ def _build_filtered_result_payload(
         ),
         "dev_status_values": _normalize_text_list(local_filters.get("dev_status_values")),
         "dev_remark_keyword": _clean_text(local_filters.get("dev_remark_keyword")),
-        "test_owner_name_keyword": _clean_text(
+        "test_owner_name_keyword": _normalize_text_list(
             local_filters.get("test_owner_name_keyword")
         ),
         "test_miss_reason_values": _normalize_text_list(
