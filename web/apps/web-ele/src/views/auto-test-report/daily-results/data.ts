@@ -82,6 +82,7 @@ export function useResultColumns(): ZqTableGridOptions<DailyResultItem>['columns
       width: 180,
       align: 'center',
       headerAlign: 'center',
+      sortable: 'custom',
     },
     {
       key: 'duration_seconds',

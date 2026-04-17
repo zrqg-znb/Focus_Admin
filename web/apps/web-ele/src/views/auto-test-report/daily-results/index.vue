@@ -88,6 +88,10 @@ const historyTitle = ref('');
 const currentCaseId = ref('');
 const editingReasonCell = ref<null | { resultId: string }>(null);
 const editingReasonValue = ref('');
+const detailSortState = ref<null | {
+  order: 'ascending' | 'descending' | null;
+  prop: string;
+}>(null);
 
 const selectedVehicleId = computed(() => selectedVehiclePaths.value[1] || '');
 const platformOptions = computed(() => {
@@ -210,6 +214,22 @@ const [DetailGrid, detailGridApi] = useZqTable({
             filtered = items.filter((item) =>
               selectedStatus.value.includes(item.status),
             );
+          }
+          if (
+            detailSortState.value?.prop === 'start_time' &&
+            detailSortState.value.order
+          ) {
+            const direction =
+              detailSortState.value.order === 'ascending' ? 1 : -1;
+            filtered = [...filtered].sort((left, right) => {
+              const leftValue = left.start_time
+                ? new Date(left.start_time).getTime()
+                : Number.NEGATIVE_INFINITY;
+              const rightValue = right.start_time
+                ? new Date(right.start_time).getTime()
+                : Number.NEGATIVE_INFINITY;
+              return (leftValue - rightValue) * direction;
+            });
           }
           const start = (page.currentPage - 1) * page.pageSize;
           const end = start + page.pageSize;
@@ -362,6 +382,16 @@ function resetStatusFilter() {
   detailGridApi.reload();
 }
 
+function handleDetailSortChange(data: {
+  order: 'ascending' | 'descending' | null;
+  prop?: string;
+}) {
+  detailSortState.value = data.prop
+    ? { order: data.order, prop: data.prop }
+    : null;
+  detailGridApi.reload();
+}
+
 async function jumpToVehicle(row: DailyOverviewRow) {
   selectedVehiclePaths.value = [row.platform_id, row.vehicle_id];
   activeView.value = 'vehicle';
@@ -382,6 +412,7 @@ watch([selectedVehicleId, selectedDate], () => {
   if (activeView.value === 'vehicle') {
     selectedStatus.value = [];
     draftStatus.value = [];
+    detailSortState.value = null;
     loadVehicleView();
   }
 });
@@ -591,7 +622,10 @@ onMounted(async () => {
           <template v-if="summary">
             <div class="grid min-h-0 flex-1 grid-cols-[1fr_400px] gap-4">
               <div class="h-full min-h-0 min-w-0">
-                <DetailGrid class="h-full rounded-lg border-0 shadow-sm">
+                <DetailGrid
+                  class="h-full rounded-lg border-0 shadow-sm"
+                  @sort-change="handleDetailSortChange"
+                >
                   <template #header-status="{ column }">
                     <div
                       class="flex cursor-pointer select-none items-center justify-center gap-1"
