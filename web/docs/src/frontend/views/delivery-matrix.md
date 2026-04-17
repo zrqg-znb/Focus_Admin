@@ -1,26 +1,39 @@
-# 交付矩阵页面
+# 交付矩阵前端附录
 
-交付矩阵 (`delivery-matrix`) 页面用于管理产品交付过程中的各项检查清单、交付物标准及矩阵层级结构。
+交付矩阵前端位于 `web/apps/web-ele/src/views/delivery-matrix/`，分为管理端和展示端两个视角。
 
 ## 页面结构
 
-### 1. 矩阵管理后台 (Admin)
-位于 `views/delivery-matrix/admin/`：
-- 维护交付矩阵的树状结构。
-- 允许配置每个节点（如特定阶段或特定角色的交付要求）所需的文档、代码标准或评审报告。
+- `admin/index.vue`
+  管理端主页面
+- `admin/modules/DeliveryTree.vue`
+  树结构导航与节点操作
+- `admin/modules/DeliveryForm.vue`
+  节点与岗位编辑表单
+- `admin/modules/PositionEdit.vue`
+  岗位编辑子组件
+- `dashboard/index.vue`
+  展示型矩阵看板
 
-### 2. 交付仪表盘 (Dashboard)
-位于 `views/delivery-matrix/dashboard/`：
-- 面向项目成员展示当前所处交付阶段的整体完成情况。
-- 高亮标识尚未提交的交付物或被驳回的评审项。
+## API 入口
 
-## 核心组件
+- `src/api/delivery-matrix/index.ts`
 
-- `DeliveryTree.vue`：利用 Element Plus 的 Tree 组件封装，支持节点的拖拽排序、增删改节点。
-- `DeliveryForm.vue`：用于编辑选中节点的详细交付物配置，包括文件模板的上传、审批责任人的配置等。
-- `PositionEdit.vue`：专门用于调整矩阵节点相对位置的辅助弹窗。
+主要消费：
 
-## 交互特点
+- `getTree`
+- `createNode`
+- `updateNode`
+- `deleteNode`
+- `updateNodePositions`
+- `getValidParents`
 
-- 交付矩阵结构较深，页面采用了“左树右表/表单”的经典布局。左侧树组件用于导航与结构管理，右侧展示当前选中节点的详细信息或下级节点列表。
-- 支持基于业务角色的权限控制，仅特定质量保证（QA）或项目管理人员可编辑矩阵结构，普通开发人员仅可查看并上传交付物。
+## 实现特点
+
+- 管理端采用“左树右表单”布局
+- 父节点选择器会过滤当前节点及其子树
+- 岗位列表是节点的整体配置，不是局部 patch
+
+## 对应主线文档
+
+- [交付矩阵](/modules/delivery-matrix)

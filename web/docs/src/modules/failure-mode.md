@@ -95,8 +95,6 @@ const apis = [
 - 华驼诊断信息
 - 相关测试案例
 
-这一层回答“这个故障到底是什么、如何识别、如何处理”。
-
 ## 2. 关系洞察层
 
 模块支持从不同角度查看故障模式的关联关系，例如：
@@ -104,8 +102,6 @@ const apis = [
 - 某条处理措施关联了哪些故障模式
 - 某种观测方式覆盖了哪些产品
 - 某个测试案例和哪些故障模式相连
-
-这一层回答“经验资产之间如何连接”。
 
 ## 3. 工作流层
 
@@ -117,8 +113,6 @@ const apis = [
 - 评审与关闭
 - 落地配置
 
-这一层回答“谁来处理、如何流转、最终有没有落地”。
-
 ## 4. 统计与配置层
 
 - 通过产品、子系统、状态等维度观察问题分布
@@ -127,38 +121,64 @@ const apis = [
 </FocusModuleSection>
 
 <FocusModuleSection
-  kicker="Key Objects"
-  title="核心对象关系"
-  summary="模块的数据模型不是围着单一故障表设计，而是围着知识条目与任务流转双主线设计。"
+  kicker="Data Model"
+  title="表结构与关系设计"
+  summary="故障模式模块的最大特点是：不是一张大表，而是由故障条目、关系表、产品落地表、任务表共同组成。"
 >
 
-```text
-Failure Mode
-  ├─ 基础语义: brief / symptoms / root cause / effect
-  ├─ 风险属性: severity / occurrence / detectability
-  ├─ 关联资产:
-  │    ├─ Handling Measures
-  │    ├─ Observation Methods
-  │    ├─ Interception Strategies
-  │    ├─ Huatuo Diagnoses
-  │    └─ Test Cases
-  └─ 落地映射:
-       ├─ Product
-       ├─ Subsystem
-       └─ Workflow Task
+```mermaid
+erDiagram
+    FAILURE_MODE ||--o{ FAILURE_MODE_INTERCEPTION_REL : links
+    FAILURE_MODE ||--o{ FAILURE_MODE_HANDLING_REL : links
+    FAILURE_MODE ||--o{ FAILURE_MODE_OBSERVATION_REL : links
+    FAILURE_MODE ||--o{ FAILURE_MODE_HUATUO_REL : links
+    HANDLING_MEASURE ||--o{ HANDLING_MEASURE_TESTCASE_REL : validates
+    TEST_CASE ||--o{ HANDLING_MEASURE_TESTCASE_REL : validates
 
-Workflow Task
-  ├─ task_type
-  ├─ assignee / reviewer / processor
-  ├─ review minutes / attachments
-  └─ status lifecycle
+    FAILURE_MODE_PRODUCT ||--o{ PRODUCT_FAILURE_MODE : maps
+    FAILURE_MODE ||--o{ PRODUCT_FAILURE_MODE : maps
+    PRODUCT_FAILURE_MODE ||--o{ PRODUCT_FM_INTERCEPTION_LANDING : configures
+    PRODUCT_FAILURE_MODE ||--o{ PRODUCT_FM_HANDLING_LANDING : configures
+    PRODUCT_FAILURE_MODE ||--o{ PRODUCT_FM_OBSERVATION_LANDING : configures
+    PRODUCT_FAILURE_MODE ||--o{ PRODUCT_FM_HUATUO_LANDING : configures
+
+    FAILURE_MODE_TASK ||--o{ TASK_FAILURE_MODE : binds
+    FAILURE_MODE ||--o{ TASK_FAILURE_MODE : binds
+    FAILURE_MODE_TASK ||--o{ FAILURE_MODE_TASK_DRAFT : drafts
+    FAILURE_MODE_TASK ||--o{ FAILURE_MODE_TASK_LOG : logs
+    FAILURE_MODE_PRODUCT ||--o{ FAILURE_MODE_ROLE_ASSIGNMENT : scopes
 ```
 
-设计重点：
+## 关键表设计说明
 
-- “故障模式条目”负责沉淀知识
-- “任务对象”负责承接处理流程
-- 二者分离，避免知识资产与临时处理动作互相污染
+### `FailureMode`
+
+这是知识主对象，关键字段包括：
+
+- 语义描述：`brief`、`effect_html`、`root_cause_html`
+- 分类属性：`subsystem`、`module_name`、`chips`
+- 风险属性：`functional_safety_level`、`occurrence_frequency`、`detectability`、`severity`
+- 来源属性：`source_type`、`source_task`
+- 必配约束：`interception_required`、`huatuo_required`
+
+### 关系表
+
+四类关系表都采用独立表设计，而不是直接写进 JSON：
+
+- `FailureModeInterceptionStrategyRel`
+- `FailureModeHandlingMeasureRel`
+- `FailureModeObservationMethodRel`
+- `FailureModeHuatuoDiagnosisRel`
+
+### 落地表
+
+`ProductFailureMode` 以及四类 `Landing` 表表达的是“故障模式在具体产品里的落地状态”。  
+这层设计使平台能区分知识定义和项目落地。
+
+### 流程表
+
+`FailureModeTask`、`TaskFailureMode`、`FailureModeTaskDraft`、`FailureModeTaskLog` 共同形成流程域。  
+其中草稿对象用于让任务内修改先不直接污染正式知识对象。
 
 </FocusModuleSection>
 
@@ -209,18 +229,69 @@ Workflow Task
 - 工作流任务的状态管理
 - 产品、角色、子系统等配置管理
 
+### 关键方法原理
+
+#### `failure_mode_services` 中的关系规范化
+
+service 层做了大量归一化处理，例如：
+
+- 文本列表规范化
+- 可选字段规范化
+- 布尔值与枚举值规范化
+
+这是为了确保来自前端复杂表单的数据在落库前变成统一结构。
+
+#### `failure_mode_workflow_services` 中的任务流转
+
+工作流服务负责任务创建、绑定故障模式、保存修订草稿、提交评审、关闭 / 驳回 / 改派。  
+这说明任务流不是前端拼接状态，而是服务层集中控制的正式流程。
+
 ## 前端
 
 - 页面目录位于 `views/failure-mode/*`
-- API 分为 `failure_mode.ts` 和 `failure_mode_workflow.ts`
+- API 分为 `failure_mode.ts` 与 `failure_mode_workflow.ts`
 - 使用大量抽屉、关系洞察页和统计视图承载复杂信息
 
-前端职责分工：
+</FocusModuleSection>
 
-- 主列表页负责浏览与维护知识条目
-- 工作流页负责推进任务处理
-- 统计页负责解释分布与趋势
-- 配置页负责长期治理所需的组织结构
+<FocusModuleSection
+  kicker="Sequence"
+  title="时序图：故障模式任务如何驱动知识落地"
+  summary="模块的关键不是单纯改一条故障模式，而是通过任务把知识落进具体产品。"
+>
+
+```mermaid
+sequenceDiagram
+    participant User as 质量工程师
+    participant UI as 前端工作流页
+    participant API as Workflow API
+    participant Service as failure_mode_workflow_services
+    participant Task as FailureModeTask
+    participant Draft as FailureModeTaskDraft
+    participant Mapping as TaskFailureMode
+    participant Landing as ProductFailureMode
+    participant Log as FailureModeTaskLog
+
+    User->>UI: 创建任务并选择产品/子系统
+    UI->>API: POST /workflow/tasks
+    API->>Service: create task
+    Service->>Task: 创建任务对象
+    Service->>Log: 写入创建日志
+
+    User->>UI: 绑定故障模式、编辑修订草稿
+    UI->>API: bind / draft save
+    API->>Service: bind_failure_modes / save_draft
+    Service->>Mapping: 建立任务-故障模式绑定
+    Service->>Draft: 保存任务内草稿
+    Service->>Log: 记录绑定与草稿动作
+
+    User->>UI: 提交评审并保存落地
+    UI->>API: submit / save landing
+    API->>Service: submit / save_landing
+    Service->>Landing: 更新产品落地配置
+    Service->>Task: 更新状态
+    Service->>Log: 写入提交或关闭日志
+```
 
 </FocusModuleSection>
 

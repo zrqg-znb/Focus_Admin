@@ -99,19 +99,66 @@ const apis = [
 
 ## 关系结构
 
-```text
-PerformanceIndicator
-  ├─ 定义维度: category / project / module / chip_type / name
-  ├─ 基线维度: baseline_value / baseline_unit / fluctuation_range / direction
-  ├─ 责任维度: owner
-  ├─ 1:N -> PerformanceIndicatorData
-  └─ 1:N -> PerformanceRiskRecord
+```mermaid
+erDiagram
+    USER ||--o{ PERFORMANCE_INDICATOR : owns
+    PERFORMANCE_INDICATOR ||--o{ PERFORMANCE_INDICATOR_DATA : stores
+    PERFORMANCE_INDICATOR ||--o{ PERFORMANCE_RISK_RECORD : triggers
+    PERFORMANCE_INDICATOR_DATA ||--o| PERFORMANCE_RISK_RECORD : may_generate
+    USER ||--o{ PERFORMANCE_RISK_RECORD : confirms
 
-PerformanceIndicatorData
-  ├─ date
-  ├─ value
-  ├─ fluctuation_value
-  └─ 1:1 -> 可能触发一条 PerformanceRiskRecord
+    PERFORMANCE_INDICATOR {
+        uuid id PK
+        string code UK
+        string category
+        string name
+        string module
+        string project
+        string chip_type
+        string value_type
+        float baseline_value
+        string baseline_unit
+        float fluctuation_range
+        string fluctuation_direction
+        uuid owner_id FK
+    }
+
+    PERFORMANCE_INDICATOR_DATA {
+        uuid id PK
+        uuid indicator_id FK
+        date date
+        float value
+        float fluctuation_value
+    }
+
+    PERFORMANCE_RISK_RECORD {
+        uuid id PK
+        uuid indicator_id FK
+        uuid data_id FK
+        date occur_date
+        string status
+        uuid owner_id FK
+        uuid confirmed_by_id FK
+        datetime confirmed_at
+        datetime resolved_at
+        float baseline_value
+        float measured_value
+        float deviation_value
+        float allowed_range
+        string direction
+        string message
+    }
+
+    PERFORMANCE_IMPORT_TASK {
+        uuid id PK
+        string filename
+        string status
+        int progress
+        int total_rows
+        int processed_rows
+        int success_count
+        int error_count
+    }
 ```
 
 ## 设计意图
@@ -157,18 +204,15 @@ PerformanceIndicatorData
 
 ## 数据上报闭环
 
-```text
-维护指标定义
-  ↓
-导入或手工新增指标
-  ↓
-测试侧上传某次执行数据
-  ↓
-后端根据基线值与波动方向计算偏差
-  ↓
-如果超出允许范围则生成风险记录
-  ↓
-前端风险页确认 / 解决异常
+```mermaid
+flowchart LR
+    A["维护指标定义"] --> B["导入或手工新增指标"]
+    B --> C["测试侧上传性能数据"]
+    C --> D["后端按基线与方向计算偏差"]
+    D --> E{"是否超出允许范围"}
+    E -- 否 --> F["仅写入指标数据"]
+    E -- 是 --> G["生成或更新风险记录"]
+    G --> H["风险页确认 / 解决异常"]
 ```
 
 ## 关键判断逻辑
@@ -177,6 +221,33 @@ PerformanceIndicatorData
 - 根据 `fluctuation_direction` 判断“偏大是异常”还是“偏小是异常”
 - 根据 `fluctuation_range` 与 `baseline_value` 计算是否越界
 - 越界后创建或更新风险对象，而不是只给前端一个临时红点
+
+## 时序图：一次性能数据上传如何变成风险记录
+
+```mermaid
+sequenceDiagram
+    participant Tester as 测试工程师
+    participant Frontend as 前端页面
+    participant API as Performance API
+    participant Service as upload_performance_data
+    participant Indicator as PerformanceIndicator
+    participant Data as PerformanceIndicatorData
+    participant Risk as PerformanceRiskRecord
+
+    Tester->>Frontend: 上传某日性能数据
+    Frontend->>API: POST /api/performance/data/upload
+    API->>Service: 校验并处理 payload
+    Service->>Indicator: 按 category/project/module/chip/name 定位指标
+    Service->>Data: 写入或更新当日测试值
+    Service->>Service: 计算 fluctuation_value 与偏差方向
+    alt 未越界
+        Service-->>API: 返回上传成功
+    else 超出阈值
+        Service->>Risk: 创建或更新风险记录
+        Service-->>API: 返回上传成功 + 风险已识别
+    end
+    API-->>Frontend: 展示上传结果
+```
 
 </FocusModuleSection>
 
@@ -199,6 +270,32 @@ PerformanceIndicatorData
 - 提供指标 CRUD 与批量处理能力
 - 承担数据上传、趋势查询和风险查询
 - 在服务层沉淀风险识别逻辑
+
+### 关键方法原理
+
+#### `upload_performance_data`
+
+这是模块里最关键的方法之一，它承担了“数据接入 -> 计算偏差 -> 风险生成”这条主链路。
+
+实现原理可以概括为：
+
+1. 先从请求体中提取项目、模块、芯片类型、日期与批量数据
+2. 根据维度组合定位对应指标
+3. 对每条数据计算 `fluctuation_value`
+4. 再结合 `fluctuation_direction` 和 `fluctuation_range` 判断是否越界
+5. 若越界，则创建或更新对应 `PerformanceRiskRecord`
+
+这意味着风险识别不是定时批处理，而是内嵌在数据上传事务里的实时判断逻辑。
+
+#### `run_indicator_import_task`
+
+导入逻辑被拆成单独任务对象和后台线程，主要是为了：
+
+- 避免大文件导入阻塞请求线程
+- 让前端能轮询查看导入进度
+- 记录失败行和错误摘要，便于重复修正
+
+因此导入任务不是“上传完立刻一次性完成”，而是一个可追踪的后台处理过程。
 
 ## 前端实现
 

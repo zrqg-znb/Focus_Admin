@@ -181,6 +181,7 @@ function sidebarFrontend(): DefaultTheme.SidebarItem[] {
         { link: 'views/delivery-matrix', text: '交付矩阵' },
         { link: 'views/integration-report', text: '集成报告' },
         { link: 'views/auto-test-report', text: '自动化测试报告' },
+        { link: 'views/deepaudit', text: 'DeepAudit' },
         { link: 'views/failure-mode', text: '故障模式' },
         { link: 'views/requirement-center', text: '需求中心' },
       ],

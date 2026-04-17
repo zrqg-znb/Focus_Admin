@@ -1,28 +1,49 @@
-# 代码合规页面
+# 代码合规前端附录
 
-代码合规 (`code-compliance`) 模块页面用于呈现项目代码扫描后的合规性结果，帮助研发团队发现和修复潜在的安全风险和规范违背项。
+代码合规前端位于 `web/apps/web-ele/src/views/compliance/`，采用“岗位概览 -> 用户详情 -> 风险抽屉 -> 分支处理对话框”四层展开。
 
 ## 页面结构
 
-主要由以下子页面构成：
+- `overview/index.vue`
+  岗位维度概览页
+- `detail/index.vue`
+  岗位下钻到用户维度
+- `components/RiskDrawer.vue`
+  用户风险明细抽屉
+- `components/RiskHandleDialog.vue`
+  分支整改对话框
 
-### 1. 合规总览 (Overview)
-位于 `views/compliance/overview/`：
-- 展示各项目的整体合规得分及合规状态。
-- 使用环形图和趋势图直观地表达各严重级别的合规问题分布。
+## API 入口
 
-### 2. 问题详情 (Detail)
-位于 `views/compliance/detail/`：
-- 提供可筛选、分页的数据表格，列出所有扫描出的合规风险（Risk）。
-- 支持按项目、严重级别、规则分类、状态等维度进行过滤。
+- `src/api/compliance/index.ts`
 
-## 核心组件
+主要消费：
 
-- `RiskDrawer.vue`：右侧抽屉组件，点击表格某一行时弹出，展示具体违规代码段、修复建议和关联的文件路径。
-- `RiskHandleDialog.vue`：处理风险的弹窗组件，支持将风险标记为“已修复”、“误报”或“延迟处理”。
+- `getPostStats`
+- `getPostUsersStats`
+- `getUserRecords`
+- `updateBranchStatus`
+- `uploadComplianceData`
 
-## 状态管理与数据流
+## 前端数据流
 
-- 该页面的状态流转依赖于后端 `code_compliance` 模块。
-- 通过 `src/api/compliance/index.ts` 中定义的接口拉取合规规则、扫描报告和单条风险的详情。
-- 表格使用了封装的 `VxeTable`，支持复杂的本地/远端过滤和高性能渲染。
+```mermaid
+flowchart TD
+    Overview["overview/index.vue"] --> PostStats["/stats/post"]
+    Overview --> Detail["detail/index.vue"]
+    Detail --> UserStats["/stats/post/{post_id}/users"]
+    Detail --> Drawer["RiskDrawer"]
+    Drawer --> Records["/user/{user_id}/records"]
+    Drawer --> Dialog["RiskHandleDialog"]
+    Dialog --> Update["/branch/{branch_id}"]
+```
+
+## 实现特点
+
+- 概览页与详情页都用统计卡 + 表格组合
+- 风险处理粒度在分支级，不在记录级
+- 模板下载与导入动作直接挂在概览页
+
+## 对应主线文档
+
+- [代码合规](/modules/code-compliance)

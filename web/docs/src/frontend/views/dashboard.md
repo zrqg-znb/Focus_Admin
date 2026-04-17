@@ -1,27 +1,61 @@
-# 仪表盘页面
+# 仪表盘前端附录
 
-仪表盘 (`dashboard`) 模块是用户登录后看到的默认首页，负责展示系统的核心监控指标、项目的整体运行状况、代码分析的摘要数据等。
+仪表盘页面位于 `web/apps/web-ele/src/views/dashboard/workspace/`，它不是单一页面吃一个大接口，而是由多个聚合 API 和多个展示组件共同装配而成。
 
-## 页面结构
+## 页面入口
 
-### 1. 数据分析 (Analytics)
-位于 `views/dashboard/analytics/`，负责系统全局的业务数据统计展示：
-- **核心数据卡片**：展示访问量、活跃用户、新增缺陷数等。
-- **趋势图表**：展示最近一周/一月的流量或项目进展趋势。
-- **来源与分布**：展示不同项目、不同来源的数据占比。
+- `views/dashboard/workspace/index.vue`
+  工作台主入口，负责页签、scope 和接口并发加载
+- `views/dashboard/workspace/components/FavoriteProjectsView.vue`
+  收藏视角
+- `views/dashboard/workspace/components/AllProjectsView.vue`
+  全量视角
 
-### 2. 工作台 (Workspace)
-位于 `views/dashboard/workspace/`，面向研发人员的个人和项目工作台：
-- **项目卡片视图**：快捷访问最近或标星的项目。
-- **项目数据微件 (Widgets)**：展示当前用户的待办需求、分配的故障单或正在进行的里程碑。
-- **动态流**：记录项目中的最新动态。
+## API 入口
 
-## 核心组件
+- `src/api/dashboard.ts`
 
-- `ProjectBar.vue` & `ProjectPie.vue`：使用 ECharts 渲染各项目缺陷和代码质量的占比图表。
-- `MilestoneTimeline.vue`：使用时间轴组件直观地展示各项目的关键 QG 点达成情况。
-- `QGRiskCard.vue`：高亮提示当前已超期或风险较高的 QG 点，辅助项目管理人员聚焦关键问题。
+主要消费：
 
-## 数据交互
+- `getCoreMetrics`
+- `getProjectDistribution`
+- `getProjectTimelines`
+- `getUpcomingMilestones`
 
-仪表盘的数据大多来自 `/api/dashboard` 下的聚合接口。前端通过 `Promise.all` 等并发手段，并行拉取各个子模块（如项目管理、性能、需求等）的摘要数据，以缩短页面的渲染白屏时间。
+## 关键组件
+
+- `QGRiskCard`
+  里程碑风险卡片
+- `RequirementWorkspacePanel`
+  需求工作台摘要
+- `ProjectPie / ProjectBar`
+  分布图
+- `MilestoneTimeline / MilestoneTable`
+  项目时间轴和预警列表
+
+## 数据流
+
+```mermaid
+flowchart LR
+    Index["workspace/index.vue"] --> API["src/api/dashboard.ts"]
+    API --> Core["core-metrics"]
+    API --> Dist["project-distribution"]
+    API --> Timeline["project-timelines"]
+    API --> Milestone["milestones"]
+    Core --> Favorite["FavoriteProjectsView"]
+    Core --> All["AllProjectsView"]
+    Dist --> All
+    Timeline --> Favorite
+    Timeline --> All
+    Milestone --> All
+```
+
+## 实现重点
+
+- 通过页签切换 `scope=all|favorites`
+- 首屏数据分接口并行加载，而不是串行大请求
+- 风险卡片和需求工作台是嵌套聚合面板，不属于 Dashboard API 本体
+
+## 对应主线文档
+
+- [工作台 / 仪表盘](/modules/dashboard)

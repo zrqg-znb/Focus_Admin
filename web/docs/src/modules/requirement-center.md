@@ -113,6 +113,97 @@ const apis = [
 </FocusModuleSection>
 
 <FocusModuleSection
+  kicker="Data Model"
+  title="字段与表关系设计"
+  summary="需求中心的架构重点是树形结构、流程状态和协作留痕三套机制叠加在同一对象上。"
+>
+
+```mermaid
+erDiagram
+    USER ||--o{ REQUIREMENT : submits
+    USER ||--o{ REQUIREMENT : reviews
+    USER ||--o{ REQUIREMENT : owns
+    REQUIREMENT ||--o{ REQUIREMENT : contains
+    REQUIREMENT ||--o{ REQUIREMENT_COMMENT : has
+    REQUIREMENT ||--o{ REQUIREMENT_LOG : has
+    REQUIREMENT ||--o{ REQUIREMENT_WATCHER : has
+    USER ||--o{ REQUIREMENT_COMMENT : comments
+    USER ||--o{ REQUIREMENT_LOG : operates
+    USER ||--o{ REQUIREMENT_WATCHER : watches
+
+    REQUIREMENT {
+        uuid id PK
+        string title
+        string type
+        string source
+        string priority
+        string status
+        uuid submitter_id FK
+        uuid reviewer_id FK
+        uuid owner_id FK
+        uuid parent_id FK
+        string root_id
+        int level
+        string tree_path
+        int child_count
+        bool is_leaf
+        datetime review_due_at
+        datetime dev_due_at
+        bool is_review_overdue
+        bool is_dev_overdue
+    }
+
+    REQUIREMENT_COMMENT {
+        uuid id PK
+        uuid requirement_id FK
+        uuid commenter_id FK
+        text content
+        json mentions
+    }
+
+    REQUIREMENT_LOG {
+        uuid id PK
+        uuid requirement_id FK
+        string action
+        string from_status
+        string to_status
+        uuid operator_id FK
+        text note
+    }
+```
+
+## 关键字段设计意图
+
+### 树结构字段
+
+- `root_id`
+- `level`
+- `tree_path`
+- `child_count`
+- `is_leaf`
+
+这些字段说明需求中心不是运行时递归拼树，而是提前把树结构索引化，便于高效查询和排序。
+
+### 协作字段
+
+- `submitter`
+- `reviewer`
+- `owner`
+
+三个角色分离，意味着“提需求的人”、“评审的人”和“执行的人”是架构上明确区分的角色。
+
+### 超时字段
+
+- `review_due_at`
+- `dev_due_at`
+- `is_review_overdue`
+- `is_dev_overdue`
+
+这组字段说明需求中心不仅记录状态，还负责跟踪时效压力。
+
+</FocusModuleSection>
+
+<FocusModuleSection
   kicker="Lifecycle"
   title="需求生命周期"
   summary="需求中心的真正设计重心是状态流转，而不仅是列表查询。"
@@ -136,6 +227,34 @@ const apis = [
 
 - 把需求对象从静态记录变成持续推进的工作对象
 - 让评审、责任分配和评论留痕都落在同一对象上
+
+## 时序图：一次需求提交流转
+
+```mermaid
+sequenceDiagram
+    participant Submitter as 提单人
+    participant UI as 前端需求页
+    participant API as Requirement API
+    participant Service as requirement_services
+    participant Req as Requirement
+    participant Log as RequirementLog
+    participant Watcher as RequirementWatcher
+
+    Submitter->>UI: 创建并提交需求
+    UI->>API: POST /requirements
+    API->>Service: create_requirement
+    Service->>Req: 写入需求主对象
+    Service->>Watcher: 自动建立角色关注人
+    Service->>Log: 写入 CREATE 日志
+    API-->>UI: 返回草稿需求
+
+    Submitter->>UI: 点击提交
+    UI->>API: POST /requirements/{id}/submit
+    API->>Service: submit_requirement
+    Service->>Req: 更新状态为 submitted
+    Service->>Log: 写入 SUBMIT 日志
+    API-->>UI: 返回更新后的需求对象
+```
 
 </FocusModuleSection>
 
@@ -189,6 +308,23 @@ const apis = [
   - 评论 / 日志
   - 批量操作
   - Dashboard 统计
+
+### 关键方法原理
+
+#### `create_requirement`
+
+这个方法不是单纯保存一条记录，还同时完成了：
+
+1. 初始化树结构字段 `root_id / tree_path / level`
+2. 建立角色关注人
+3. 写入创建日志
+
+这说明需求对象一旦创建，就会立刻进入“可协作、可追踪”的状态，而不是先裸存一条记录。
+
+#### `update_requirement`
+
+更新逻辑先做权限和状态校验，再允许修改 reviewer / owner 等关键角色字段。  
+这说明需求编辑本身也是受生命周期约束的，不是任意状态都可编辑。
 
 ## 前端
 

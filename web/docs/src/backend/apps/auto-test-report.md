@@ -1,48 +1,46 @@
-# 自动化测试报告模块
+# 自动化测试报告后端实现附录
 
-自动化测试报告模块 (`auto_test_report`) 用于管理和展示自动化测试的执行结果，支持日常测试结果记录、测试用例追踪和测试车辆/设备配置管理。
+自动化测试报告后端位于 `backend-django/apps/auto_test_report/`，按平台、车型、用例、每日明细、每日汇总五层对象组织。
 
-## 架构概览
+## 核心模型
 
-### 模型设计
+模型位于 `auto_test_report_model.py`：
 
-模块主要包含以下核心模型：
+- `McuPlatform`
+- `VehicleModel`
+- `TestCase`
+- `DailyExecutionBatch`
+- `DailyExecutionResult`
 
-- **AutoTestDailyResult (日常测试结果)**：记录每天的测试执行汇总，包括总用例数、通过数、失败数、未执行数以及整体通过率。
-- **AutoTestCaseHistory (测试用例历史)**：记录单条测试用例的详细执行记录，包括所属特性、用例名称、执行状态、关联的问题单（DTS）及日志附件等。
-- **VehicleConfig (车辆/设备配置)**：管理测试所需的硬件载体配置信息，如车型、软件版本等。
+## 核心服务职责
 
-### 数据流向
+服务位于 `auto_test_report_services.py`，负责：
 
-```
-┌─────────────────┐      ┌─────────────────────────┐      ┌─────────────────┐
-│ 测试执行引擎 / CI │ ───▶ │ AutoTestDailyResult (汇总)│ ◀─── │ Dashboard 展示   │
-└─────────────────┘      └─────────────────────────┘      └─────────────────┘
-                                     │
-                                     ▼
-                         ┌─────────────────────────┐
-                         │ AutoTestCaseHistory(明细)│
-                         └─────────────────────────┘
-                                     │
-                                     ▼
-                         ┌─────────────────────────┐
-                         │  VehicleConfig (配置)   │
-                         └─────────────────────────┘
-```
+- 平台与车型 CRUD
+- 用例增删改查、导入、导出
+- 测试结果上报
+- 每日汇总重算
+- 全量概览与单车型明细查询
+- 异常原因补录与历史建议
 
-## 核心功能
+## 核心 API
 
-1. **日常结果汇总**：通过 API 接收或定时脚本导入测试结果的汇总统计，便于项目管理层快速了解每日的自动化测试质量趋势。
-2. **测试用例追踪**：针对失败或阻塞的测试用例，记录详细的错误日志和关联的 DTS 问题单号，支持从汇总报表下钻至用例级别的排查。
-3. **车辆配置管理**：记录不同测试批次所使用的软硬件环境版本，确保测试结果的溯源和复现性。
+接口位于 `auto_test_report_api.py`，典型路由包括：
 
-## API 接口概览
+- `/api/auto-test-report/platforms`
+- `/api/auto-test-report/vehicles`
+- `/api/auto-test-report/test-cases`
+- `/api/auto-test-report/daily-results/summary`
+- `/api/auto-test-report/daily-results/overview`
+- `/api/auto-test-report/daily-results/list`
+- `/api/auto-test-report/report/daily-results`
 
-- `/api/auto-test-report/daily-results`：日常测试结果的 CRUD 接口。
-- `/api/auto-test-report/test-cases`：测试用例明细的检索与管理接口。
-- `/api/auto-test-report/vehicle-config`：测试环境/车辆配置接口。
+## 实现重点
 
-## 使用场景
+- 每日汇总不是外部直接上传，而是由 `recalculate_daily_batch` 从明细重算
+- `skip_count` 通过“总用例数 - 有结果用例数”推导
+- 失败 / 超时结果支持回看历史 `failure_reason` 给出建议值
 
-- 质量保障团队可通过看板直观地看到各项目自动化测试的覆盖率与通过率趋势。
-- 测试工程师可以通过用例明细模块追踪失败用例，关联缺陷（DTS），并在修复后验证其回归状态。
+## 对应主线文档
+
+- [自动化测试报告](/modules/auto-test-report)

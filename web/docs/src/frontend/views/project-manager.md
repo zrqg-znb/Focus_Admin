@@ -1,58 +1,42 @@
-# 项目管理页面
+# 项目管理前端附录
 
-## 页面列表
+项目管理前端主要位于 `web/apps/web-ele/src/views/project-manager/`，采用“项目主数据 + 多子域页面”结构，每个子域围绕同一个项目上下文展开。
 
-| 页面 | 路径 | 说明 |
-| --- | --- | --- |
-| 项目列表 | /project-manager/project | 项目管理主页 |
-| 迭代管理 | /project-manager/iteration | 迭代列表 |
-| 里程碑 | /project-manager/milestone | 里程碑管理 |
-| 代码质量 | /project-manager/code-quality | 代码质量分析 |
+## 页面层级
 
-## 页面结构
+主要页面包括：
 
-```
-views/project-manager/
-├── project/
-│   ├── index.vue           # 项目列表
-│   └── components/
-│       ├── ProjectForm.vue # 项目表单
-│       └── ProjectCard.vue # 项目卡片
-├── iteration/
-│   └── index.vue           # 迭代列表
-├── milestone/
-│   └── index.vue           # 里程碑管理
-└── code-quality/
-    └── index.vue           # 代码质量
-```
+- `project/`
+  项目主数据与能力开关
+- `milestone/`
+  里程碑节点、风险与日志
+- `iteration/`
+  迭代推进与指标
+- `code-quality/`
+  代码质量模块与指标
+- `hardware/`
+  硬件与典配相关页面
+- `requirement_workspace/`
+  需求工作区面板
 
-## 项目列表页面示例
+## API 分层
 
-```vue
-<template>
-  <Page>
-    <!-- 搜索区域 -->
-    <SearchForm :schema="searchSchema" @search="handleSearch" />
-    
-    <!-- 操作按钮 -->
-    <div class="mb-4">
-      <el-button type="primary" @click="handleAdd">新增项目</el-button>
-    </div>
-    
-    <!-- 数据表格 -->
-    <vxe-grid
-      ref="gridRef"
-      v-bind="gridOptions"
-      @page-change="handlePageChange"
-    >
-      <template #action="{ row }">
-        <el-button link @click="handleEdit(row)">编辑</el-button>
-        <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
-      </template>
-    </vxe-grid>
-    
-    <!-- 编辑弹窗 -->
-    <ProjectForm ref="formRef" @success="loadData" />
-  </Page>
-</template>
-```
+API 主要位于：
+
+- `src/api/project-manager/*.ts`
+
+特点：
+
+- 每个子域一个独立 API 文件
+- 列表页普遍配合 `zq-table`
+- `data.ts` 负责列定义、过滤项和表单 schema
+
+## 交互特征
+
+- 项目页负责承接子域能力开关
+- 里程碑和迭代页依赖项目上下文
+- 代码质量和 DTS 更偏指标展示与趋势表格
+
+## 对应主线文档
+
+- [项目管理](/modules/project-manager)

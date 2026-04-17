@@ -1,32 +1,39 @@
-# 代码扫描页面
+# 代码扫描前端附录
 
-代码扫描 (`code_scan`) 模块页面主要用于管理自动化扫描任务的配置、执行日志及最终生成的审计报告。
+代码扫描前端位于 `web/apps/web-ele/src/views/code_scan/`，按项目配置、结果治理、审批与任务日志拆成多个页面。
 
 ## 页面结构
 
-该模块分为多个功能页：
+- `project/index.vue`
+  扫描项目管理页
+- `result/index.vue`
+  最新结果页
+- `audit/index.vue`
+  屏蔽审批页
+- `task-log/index.vue`
+  解析任务日志页
 
-### 1. 扫描项目管理 (Project)
-位于 `views/code_scan/project/`：
-- 管理需要被扫描的代码仓库（Git 地址、分支、认证信息）。
-- 配置项目的扫描频率（如：每日定时扫描、提交触发扫描）。
+## API 入口
 
-### 2. 审计规则与配置 (Audit)
-位于 `views/code_scan/audit/`：
-- 维护代码扫描的规则库（支持静态规则和 LLM 提示词）。
-- 管理不同工具（如 cppcheck, tsan, weggli）的执行参数。
+- `src/api/code_scan/index.ts`
 
-### 3. 扫描任务日志 (Task Log)
-位于 `views/code_scan/task-log/`：
-- 实时查看扫描任务的状态（排队中、扫描中、成功、失败）。
-- 点击可查看对应任务的详细执行日志，排查扫描失败原因。
+主要消费：
 
-### 4. 扫描结果 (Result)
-位于 `views/code_scan/result/`：
-- 汇总展示特定任务产出的所有代码缺陷和建议。
-- 支持按不同工具类型过滤扫描结果。
+- `listProjectsApi`
+- `listProjectOverviewApi`
+- `listTasksApi`
+- `listLatestResultsApi`
+- `applyShieldApi`
+- `listApplicationsApi`
+- `auditShieldApi`
 
-## 交互设计
+## 交互特点
 
-- **实时状态刷新**：任务日志页面利用 WebSocket 或定时轮询更新当前扫描进度。
-- **动态表单配置**：审计规则页面利用动态表单渲染（通过 Schema 驱动），支持对不同扫描工具展示不同的配置项。
+- 项目页负责配置扫描项目，并跳转到结果页和日志页
+- 结果页按项目读取“最新任务视图”，不是全历史结果
+- 审批页负责处理 `Pending` 的屏蔽申请
+- 日志页负责查看解析状态和原始日志
+
+## 对应主线文档
+
+- [代码扫描](/modules/code-scan)

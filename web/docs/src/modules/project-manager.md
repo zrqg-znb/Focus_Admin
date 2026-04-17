@@ -94,16 +94,35 @@ const apis = [
 
 ## 子域结构
 
-```text
-Project
-  ├─ Milestone           里程碑 / QG 节点
-  ├─ Iteration           迭代推进
-  ├─ Code Quality        代码质量与模块指标
-  ├─ DTS / DTS Statistics 缺陷与问题统计
-  ├─ Hardware            硬件与平台配置
-  ├─ Report              项目报告
-  ├─ Requirement Board   项目内需求看板
-  └─ Requirement Workspace 工作区聚合视图
+```mermaid
+erDiagram
+    PROJECT ||--o{ PROJECT_PHASE_CONFIG : contains
+    PROJECT ||--o| MILESTONE : owns
+    PROJECT ||--o{ ITERATION : runs
+    PROJECT ||--o{ CODE_MODULE : measures
+    PROJECT ||--o{ DTS_TEAM : tracks
+    PROJECT ||--o{ SYNC_LOG : syncs
+
+    MILESTONE ||--o{ MILESTONE_QG_CONFIG : defines
+    MILESTONE_QG_CONFIG ||--o{ MILESTONE_RISK_ITEM : produces
+    MILESTONE_RISK_ITEM ||--o{ MILESTONE_RISK_LOG : records
+
+    ITERATION ||--o{ ITERATION_METRIC : stores
+    CODE_MODULE ||--o{ CODE_METRIC : stores
+    DTS_TEAM ||--o{ DTS_DATA : stores
+
+    PROJECT {
+        uuid id PK
+        string name
+        string code UK
+        string domain
+        string type
+        bool enable_milestone
+        bool enable_iteration
+        bool enable_quality
+        bool enable_dts
+        bool enable_hardware_config
+    }
 ```
 
 ## 设计意图
@@ -147,6 +166,51 @@ Project
 </FocusModuleSection>
 
 <FocusModuleSection
+  kicker="Domain Logic"
+  title="关键对象与字段设计"
+  summary="项目管理模块最重要的设计，不是页面数量，而是不同子域如何共享项目主数据。"
+>
+
+## `Project`
+
+项目是所有子域的聚合根，关键字段包括：
+
+- 基础识别：`name`、`code`、`domain`、`type`
+- 责任边界：`managers`
+- 状态与注释：`is_closed`、`repo_url`、`remark`
+- 能力开关：`enable_milestone`、`enable_iteration`、`enable_quality`、`enable_dts`、`enable_hardware_config`
+
+设计意义：
+
+- 项目对象既是业务实体，也是“子域能力开关中心”
+- 不同项目可以只开启自己真正需要的能力，避免所有子域强耦合
+
+## `ProjectPhaseConfig`
+
+项目阶段典配对象用于描述“不同阶段需要什么典配环境”，关键字段包括：
+
+- `stage_name`、`stage_start`、`stage_end`
+- `scenario`
+- `vehicle_hardware`
+- `cdc_platform`
+- `smart_screen_versions`
+
+它将交付阶段和环境配置绑定起来，服务于项目推进与验证配套。
+
+## `Milestone` / `MilestoneQGConfig` / `MilestoneRiskItem`
+
+这是一条独立的里程碑风险链：
+
+- `Milestone` 保存项目节点日期
+- `MilestoneQGConfig` 定义每个 QG 的规则和配置
+- `MilestoneRiskItem` 保存每日/阶段性风险记录
+- `MilestoneRiskLog` 保存操作日志
+
+这条链的设计价值在于：风险不是写在备注里，而是被结构化地沉淀和跟踪。
+
+</FocusModuleSection>
+
+<FocusModuleSection
   kicker="Key Flows"
   title="关键流程"
   summary="项目管理模块最大的价值在于把多个原本分散的流程压进同一条项目主线。"
@@ -174,6 +238,35 @@ Project
 代码质量 / DTS / 风险数据持续汇入
   ↓
 报告、工作台、交付矩阵读取摘要
+```
+
+## 泳道图：项目立项后多个子域如何进入协同
+
+```mermaid
+sequenceDiagram
+    participant PM as 项目经理
+    participant FE as 前端项目页
+    participant ProjectAPI as Project API
+    participant Milestone as 里程碑子域
+    participant Iteration as 迭代子域
+    participant Quality as 质量子域
+    participant DTS as DTS 子域
+
+    PM->>FE: 创建项目并配置能力开关
+    FE->>ProjectAPI: POST /api/project-manager/projects
+    ProjectAPI-->>FE: 返回项目对象
+    alt 启用里程碑
+        FE->>Milestone: 初始化项目里程碑上下文
+    end
+    alt 启用迭代
+        FE->>Iteration: 准备迭代统计入口
+    end
+    alt 启用代码质量
+        FE->>Quality: 关联模块质量视图
+    end
+    alt 启用 DTS
+        FE->>DTS: 关联问题单统计配置
+    end
 ```
 
 </FocusModuleSection>
@@ -204,6 +297,29 @@ Project
 - 每个子域独立演进，但都挂在同一项目上下文下
 - 通过服务层处理刷新、聚合和统计逻辑
 - 保持 API 命名与业务子域基本一致
+
+### 关键方法原理
+
+#### `project_service` 中的项目创建 / 更新逻辑
+
+项目服务层的关键职责不只是保存项目字段，而是同步维护：
+
+- 项目经理关系
+- 项目阶段典配
+- 子域开关与相关配置项
+
+这意味着“项目保存”本质上是一个配置入口，不是简单 CRUD。
+
+#### `milestone_service.check_qg_risks_daily`
+
+这个方法体现了里程碑子域的核心实现原理：
+
+1. 遍历启用的 QG 配置
+2. 判断当前日期是否进入检查窗口
+3. 调用单节点检查逻辑
+4. 生成或更新风险项
+
+它把“QG 风险识别”从人工判断转成了结构化的日常检查任务。
 
 ## 前端
 
