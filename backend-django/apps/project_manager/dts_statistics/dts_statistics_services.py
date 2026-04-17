@@ -40,6 +40,7 @@ from .dts_statistics_model import (
     DtsStatisticsQueryTask,
 )
 from .dts_statistics_schemas import (
+    DtsBatchExtensionSaveSchema,
     DtsExtensionSaveSchema,
     DtsFieldSetRequestSchema,
     DtsStatisticsExportSchema,
@@ -130,6 +131,49 @@ _FIELD_SET_SUPPORTED_FIELDS = {
     "auto_source_type",
     "auto_pl_group_name",
     "uQbiCloseTypeName",
+}
+
+_EXTENSION_ALLOWED_FIELDS = {
+    "is_downstream",
+    "process_quality_type",
+    "need_aar",
+    "need_dev_analyze",
+    "need_test_analyze",
+    "dev_owner_id",
+    "test_owner_id",
+    "qa_remark",
+    "issue_intro_stage",
+    "dev_sub_category",
+    "dev_feature",
+    "dev_reason",
+    "dev_intro_reason",
+    "dev_issue_intro_point",
+    "dev_issue_probability",
+    "dev_common_issue_type",
+    "dev_control_points",
+    "dev_intro_point_analysis",
+    "dev_improvements",
+    "dev_non_base_desc",
+    "dev_aar_link",
+    "dev_asset_link",
+    "dev_status",
+    "dev_remark",
+    "test_miss_reason",
+    "test_standard_desc",
+    "test_improvements",
+    "test_non_test_desc",
+    "test_asset_link",
+    "test_status",
+    "test_remark",
+}
+
+_EXTENSION_LIST_FIELDS = {
+    "dev_sub_category",
+    "dev_control_points",
+    "dev_improvements",
+    "dev_non_base_desc",
+    "test_miss_reason",
+    "test_improvements",
 }
 
 _SEVERITY_NAME_TO_CODE = {
@@ -3826,16 +3870,109 @@ def get_dts_statistics_summary(
     }
 
 
+def _normalize_defect_no_list(values: Iterable[str] | None) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in values or []:
+        defect_no = _clean_text(item)
+        if not defect_no or defect_no in seen:
+            continue
+        seen.add(defect_no)
+        normalized.append(defect_no)
+    return normalized
+
+
+def _ensure_valid_extension_field_mask(field_mask: Iterable[str] | None) -> list[str]:
+    normalized = _normalize_text_list(field_mask)
+    if not normalized:
+        raise HttpError(422, "fieldMask 不能为空")
+
+    invalid = [field for field in normalized if field not in _EXTENSION_ALLOWED_FIELDS]
+    if invalid:
+        raise HttpError(422, f"fieldMask 包含不支持的字段: {', '.join(invalid)}")
+    return normalized
+
+
+def _build_single_extension_payload(data: DtsExtensionSaveSchema) -> dict[str, Any]:
+    payload = data.dict(exclude_unset=True)
+    invalid = [field for field in payload.keys() if field not in _EXTENSION_ALLOWED_FIELDS]
+    if invalid:
+        raise HttpError(422, f"存在不支持的保存字段: {', '.join(invalid)}")
+    return payload
+
+
+def _build_batch_extension_payload(
+    data: DtsBatchExtensionSaveSchema,
+    field_mask: list[str],
+) -> dict[str, Any]:
+    raw = data.data.dict(exclude_unset=False)
+    payload: dict[str, Any] = {}
+    for field in field_mask:
+        value = raw.get(field)
+        if field in _EXTENSION_LIST_FIELDS:
+            payload[field] = list(value or [])
+            continue
+        payload[field] = value
+    return payload
+
+
+def _apply_extension_payload_to_instance(
+    instance: DtsExtension,
+    payload: dict[str, Any],
+) -> None:
+    for field, value in payload.items():
+        setattr(instance, field, value)
+
+
 @transaction.atomic
 def save_dts_extension(defect_no: str, data: DtsExtensionSaveSchema) -> dict[str, Any]:
     safe_defect_no = _clean_text(defect_no)
     if not safe_defect_no:
         raise HttpError(422, "defect_no 不能为空")
 
-    payload = data.dict(exclude_unset=True)
+    payload = _build_single_extension_payload(data)
     if payload:
         DtsExtension.objects.update_or_create(defect_no=safe_defect_no, defaults=payload)
     return {"success": True}
+
+
+def batch_save_dts_extension(data: DtsBatchExtensionSaveSchema) -> dict[str, Any]:
+    defect_nos = _normalize_defect_no_list(data.defectNos)
+    if not defect_nos:
+        raise HttpError(422, "defectNos 不能为空")
+
+    field_mask = _ensure_valid_extension_field_mask(data.fieldMask)
+    payload = _build_batch_extension_payload(data, field_mask)
+    existing_map = _load_extensions(defect_nos)
+
+    failed_items: list[dict[str, str]] = []
+    success_count = 0
+
+    for defect_no in defect_nos:
+        instance = existing_map.get(defect_no)
+        if instance is None:
+            instance = DtsExtension(defect_no=defect_no)
+        try:
+            _apply_extension_payload_to_instance(instance, payload)
+            instance.save()
+            success_count += 1
+        except Exception as error:
+            logger.exception(
+                "DtsStatistics batch save extension failed defect_no=%s",
+                defect_no,
+            )
+            failed_items.append(
+                {
+                    "defectNo": defect_no,
+                    "errorMessage": _clean_text(error) or "保存失败",
+                }
+            )
+
+    return {
+        "successCount": success_count,
+        "failedCount": len(failed_items),
+        "failedItems": failed_items,
+    }
 
 
 def get_dts_statistics_dict_options() -> dict[str, Any]:

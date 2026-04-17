@@ -3,6 +3,8 @@ from common.fu_auth import BearerAuth as GlobalAuth
 
 from . import dts_statistics_services
 from .dts_statistics_schemas import (
+    DtsBatchExtensionSaveSchema,
+    DtsBatchSaveResponseSchema,
     DtsDictOptionsSchema,
     DtsExtensionSaveSchema,
     DtsExportPrepareResponseSchema,
@@ -47,6 +49,11 @@ def get_dts_query_task(request, task_id: str):
 @router.post("/save-extension/{defect_no}", response=DtsSaveResponseSchema)
 def save_extension(request, defect_no: str, data: DtsExtensionSaveSchema):
     return dts_statistics_services.save_dts_extension(defect_no, data)
+
+
+@router.post("/batch-save-extension", response=DtsBatchSaveResponseSchema)
+def batch_save_extension(request, data: DtsBatchExtensionSaveSchema):
+    return dts_statistics_services.batch_save_dts_extension(data)
 
 
 @router.post("/summary", response=DtsSummarySchema)

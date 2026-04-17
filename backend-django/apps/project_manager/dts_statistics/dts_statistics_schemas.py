@@ -445,6 +445,114 @@ class DtsExtensionSaveSchema(Schema):
         return text or None
 
 
+class DtsBatchExtensionDataSchema(Schema):
+    is_downstream: Optional[str] = None
+    process_quality_type: Optional[str] = None
+    need_aar: Optional[str] = None
+    need_dev_analyze: Optional[str] = None
+    need_test_analyze: Optional[str] = None
+    dev_owner_id: Optional[str] = None
+    test_owner_id: Optional[str] = None
+    qa_remark: Optional[str] = None
+
+    issue_intro_stage: Optional[str] = None
+    dev_sub_category: Optional[list[str]] = None
+    dev_feature: Optional[str] = None
+    dev_reason: Optional[str] = None
+    dev_intro_reason: Optional[str] = None
+    dev_issue_intro_point: Optional[str] = None
+    dev_issue_probability: Optional[str] = None
+    dev_common_issue_type: Optional[str] = None
+    dev_control_points: Optional[list[str]] = None
+    dev_intro_point_analysis: Optional[str] = None
+    dev_improvements: Optional[list[str]] = None
+    dev_non_base_desc: Optional[list[str]] = None
+    dev_aar_link: Optional[str] = None
+    dev_asset_link: Optional[str] = None
+    dev_status: Optional[str] = None
+    dev_remark: Optional[str] = None
+
+    test_miss_reason: Optional[list[str]] = None
+    test_standard_desc: Optional[str] = None
+    test_improvements: Optional[list[str]] = None
+    test_non_test_desc: Optional[str] = None
+    test_asset_link: Optional[str] = None
+    test_status: Optional[str] = None
+    test_remark: Optional[str] = None
+
+    @field_validator(
+        "dev_sub_category",
+        "dev_control_points",
+        "dev_non_base_desc",
+        "dev_improvements",
+        "test_miss_reason",
+        "test_improvements",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_string_list(cls, value: Any):
+        if value is None:
+            return None
+        values = value if isinstance(value, list) else [value]
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in values:
+            text = str(item or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        return normalized
+
+    @field_validator(
+        "is_downstream",
+        "process_quality_type",
+        "issue_intro_stage",
+        "need_aar",
+        "need_dev_analyze",
+        "need_test_analyze",
+        "dev_owner_id",
+        "test_owner_id",
+        "qa_remark",
+        "dev_feature",
+        "dev_reason",
+        "dev_intro_reason",
+        "dev_issue_intro_point",
+        "dev_issue_probability",
+        "dev_common_issue_type",
+        "dev_intro_point_analysis",
+        "dev_aar_link",
+        "dev_asset_link",
+        "dev_status",
+        "dev_remark",
+        "test_standard_desc",
+        "test_non_test_desc",
+        "test_asset_link",
+        "test_status",
+        "test_remark",
+        mode="before",
+    )
+    @classmethod
+    def normalize_batch_optional_text(cls, value: Any):
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+
+class DtsBatchExtensionSaveSchema(Schema):
+    defectNos: list[str] = Field(default_factory=list)
+    fieldMask: list[str] = Field(default_factory=list)
+    data: DtsBatchExtensionDataSchema = Field(
+        default_factory=DtsBatchExtensionDataSchema
+    )
+
+    @field_validator("defectNos", "fieldMask", mode="before")
+    @classmethod
+    def normalize_batch_text_list(cls, value: Any):
+        return _normalize_text_list(value)
+
+
 class DataLakeDefectSchema(Schema):
     dtsBizNo: str
     briefDesc: Optional[str] = None
@@ -547,6 +655,17 @@ class DtsListResponseSchema(Schema):
 
 class DtsSaveResponseSchema(Schema):
     success: bool
+
+
+class DtsBatchSaveFailedItemSchema(Schema):
+    defectNo: str
+    errorMessage: str
+
+
+class DtsBatchSaveResponseSchema(Schema):
+    successCount: int = 0
+    failedCount: int = 0
+    failedItems: list[DtsBatchSaveFailedItemSchema] = Field(default_factory=list)
 
 
 class DtsDistributionItemSchema(Schema):

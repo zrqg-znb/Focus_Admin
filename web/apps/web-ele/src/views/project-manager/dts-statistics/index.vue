@@ -2,6 +2,7 @@
 import type { EchartsUIType } from '@vben/plugins/echarts';
 
 import type {
+  DtsBatchSaveResponse,
   DtsDictOptions,
   DtsExportTask,
   DtsMergedDefect,
@@ -25,6 +26,7 @@ import {
   ElEmpty,
   ElInput,
   ElMessage,
+  ElMessageBox,
   ElOption,
   ElPopover,
   ElProgress,
@@ -54,6 +56,7 @@ import {
   resolveSeverityMeta,
   useColumns,
 } from './data';
+import DtsBatchEditDrawer from './DtsBatchEditDrawer.vue';
 import DtsEditDrawer from './DtsEditDrawer.vue';
 
 defineOptions({ name: 'DtsStatistics' });
@@ -396,7 +399,12 @@ function createDefaultFilters(): DtsStatisticsFilters {
 const activeTab = ref<TabKey>('list');
 
 const editVisible = ref(false);
+const batchEditVisible = ref(false);
 const editingRow = ref<DtsMergedDefect | null>(null);
+const selectedDtsBizNos = ref<string[]>([]);
+const selectionFingerprint = ref('');
+const selectionVersion = ref(0);
+const syncingGridSelection = ref(false);
 
 const dateRange = ref<[Date, Date] | null>(createDefaultDateRange());
 const filters = ref<DtsStatisticsFilters>(createDefaultFilters());
@@ -456,6 +464,49 @@ function normalizeStringArray(values?: string[]) {
     result.push(text);
   }
   return result;
+}
+
+function bumpSelectionVersion() {
+  selectionVersion.value += 1;
+}
+
+function setSelectedDtsBizNos(values?: string[]) {
+  selectedDtsBizNos.value = normalizeStringArray(values);
+  bumpSelectionVersion();
+}
+
+function clearBatchSelection({ silent = false }: { silent?: boolean } = {}) {
+  if (selectedDtsBizNos.value.length === 0 && !selectionFingerprint.value) {
+    return;
+  }
+  selectedDtsBizNos.value = [];
+  selectionFingerprint.value = '';
+  batchEditVisible.value = false;
+  bumpSelectionVersion();
+  if (!silent) {
+    ElMessage.info('已清空当前批量选择');
+  }
+}
+
+function syncCurrentPageSelection() {
+  const rows = Array.isArray(gridApi.tableData.value)
+    ? (gridApi.tableData.value as DtsMergedDefect[])
+    : [];
+  syncingGridSelection.value = true;
+  gridApi.clearSelection();
+  if (selectedDtsBizNos.value.length > 0) {
+    const selectedSet = new Set(selectedDtsBizNos.value);
+    rows.forEach((row) => {
+      const defectNo = String(row?.dtsBizNo || '').trim();
+      if (!defectNo || !selectedSet.has(defectNo)) {
+        return;
+      }
+      gridApi.toggleRowSelection(row, true);
+    });
+  }
+  void nextTick(() => {
+    syncingGridSelection.value = false;
+  });
 }
 
 function normalizeTimestampPair(left?: number, right?: number) {
@@ -851,6 +902,7 @@ async function fetchSummary(force = false) {
 const [Grid, gridApi] = useZqTable({
   gridOptions: {
     columns: useColumns(),
+    showSelection: true,
     border: true,
     stripe: true,
     rowKey: 'dtsBizNo',
@@ -888,11 +940,48 @@ const [Grid, gridApi] = useZqTable({
   },
 });
 
+function handleGridSelectionChange(selection: DtsMergedDefect[]) {
+  if (syncingGridSelection.value) {
+    return;
+  }
+  const currentPageIds = (
+    Array.isArray(gridApi.tableData.value) ? gridApi.tableData.value : []
+  )
+    .map((row) => String(row?.dtsBizNo || '').trim())
+    .filter(Boolean);
+  const selectedPageIds = (selection || [])
+    .map((row) => String(row?.dtsBizNo || '').trim())
+    .filter(Boolean);
+
+  const next = new Set(selectedDtsBizNos.value);
+  currentPageIds.forEach((id) => next.delete(id));
+  selectedPageIds.forEach((id) => next.add(id));
+  selectedDtsBizNos.value = [...next];
+  selectionFingerprint.value = buildFingerprint(appliedFilters.value);
+}
+
+watch(
+  [() => gridApi.tableData.value, selectionVersion],
+  async () => {
+    await nextTick();
+    syncCurrentPageSelection();
+  },
+  { deep: true },
+);
+
 const dataResultCount = computed(() => Number(gridApi.total.value || 0));
+const selectedDtsCount = computed(() => selectedDtsBizNos.value.length);
 const canExport = computed(
   () =>
     hasAppliedFilters.value &&
     dataResultCount.value > 0 &&
+    !queryLoading.value &&
+    !exportPreparing.value,
+);
+const canBatchEdit = computed(
+  () =>
+    hasAppliedFilters.value &&
+    selectedDtsCount.value > 0 &&
     !queryLoading.value &&
     !exportPreparing.value,
 );
@@ -1775,6 +1864,15 @@ async function runSearch(
     ElMessage.warning(invalidMessage);
     return;
   }
+  const nextFingerprint = buildFingerprint(payload);
+  if (
+    selectedDtsBizNos.value.length > 0 &&
+    selectionFingerprint.value &&
+    selectionFingerprint.value !== nextFingerprint
+  ) {
+    clearBatchSelection({ silent: true });
+    ElMessage.info('筛选条件已变更，已清空之前的批量选择');
+  }
   const previousApplied = appliedFilters.value
     ? cloneFilters(appliedFilters.value)
     : null;
@@ -1793,6 +1891,7 @@ async function runSearch(
     }
     await nextTick();
     await Promise.all([gridApi.reload(), fetchSummary(true)]);
+    selectionFingerprint.value = nextFingerprint;
     await nextTick();
     updateDataGridHeight();
   } catch (error) {
@@ -1818,6 +1917,7 @@ async function handleReset() {
   stopExportPreparePolling();
   exportPreparing.value = false;
   exportPrepareTask.value = null;
+  clearBatchSelection({ silent: true });
   const nextFilters = createDefaultFilters();
   suspendAutoReload = true;
   filters.value = nextFilters;
@@ -2298,9 +2398,73 @@ async function handleExport() {
   }
 }
 
-function handleSaved() {
-  gridApi.reload();
-  void fetchSummary(true);
+async function refreshCurrentView() {
+  await Promise.all([gridApi.reload(), fetchSummary(true)]);
+  await nextTick();
+  updateDataGridHeight();
+}
+
+function formatBatchFailedItems(response: DtsBatchSaveResponse) {
+  return response.failedItems
+    .map((item) => `${item.defectNo}: ${item.errorMessage || '保存失败'}`)
+    .join('\n');
+}
+
+async function showBatchFailureDetails(
+  response: DtsBatchSaveResponse,
+  title: string,
+) {
+  if (response.failedItems.length <= 0) {
+    return;
+  }
+  await ElMessageBox.alert(formatBatchFailedItems(response), title, {
+    confirmButtonText: '知道了',
+  });
+}
+
+function openBatchEdit() {
+  if (selectedDtsCount.value <= 0) {
+    ElMessage.warning('请先勾选要批量填报的 DTS');
+    return;
+  }
+  batchEditVisible.value = true;
+}
+
+async function handleBatchSaved(response: DtsBatchSaveResponse) {
+  const failedIds = normalizeStringArray(
+    response.failedItems.map((item) => item.defectNo),
+  );
+
+  if (response.successCount > 0 && response.failedCount <= 0) {
+    batchEditVisible.value = false;
+    clearBatchSelection({ silent: true });
+    await refreshCurrentView();
+    ElMessage.success(`批量保存成功，已更新 ${response.successCount} 条 DTS`);
+    return;
+  }
+
+  if (response.successCount > 0) {
+    batchEditVisible.value = false;
+    setSelectedDtsBizNos(failedIds);
+    selectionFingerprint.value = buildFingerprint(appliedFilters.value);
+    await refreshCurrentView();
+    ElMessage.warning(
+      `批量保存已完成，成功 ${response.successCount} 条，失败 ${response.failedCount} 条`,
+    );
+    await showBatchFailureDetails(response, '部分 DTS 保存失败');
+    return;
+  }
+
+  setSelectedDtsBizNos(
+    failedIds.length > 0 ? failedIds : selectedDtsBizNos.value,
+  );
+  selectionFingerprint.value = buildFingerprint(appliedFilters.value);
+  ElMessage.error('批量保存失败，未成功更新任何 DTS');
+  await showBatchFailureDetails(response, '批量保存失败');
+}
+
+async function handleSaved() {
+  await refreshCurrentView();
 }
 
 function formatArrayCell(value: unknown) {
@@ -2676,6 +2840,13 @@ onUnmounted(() => {
                 <div class="dts-data-card__actions">
                   <ElButton
                     type="primary"
+                    :disabled="!canBatchEdit"
+                    @click="openBatchEdit"
+                  >
+                    批量填报
+                  </ElButton>
+                  <ElButton
+                    type="primary"
                     plain
                     :disabled="!canExport"
                     :loading="exportPreparing"
@@ -2692,6 +2863,17 @@ onUnmounted(() => {
                       hasAppliedFilters
                         ? `已加载 ${dataResultCount} 条结果`
                         : '等待查询'
+                    }}
+                  </ElTag>
+                  <ElTag
+                    class="dts-data-card__status"
+                    :effect="selectedDtsCount > 0 ? 'light' : 'plain'"
+                    :type="selectedDtsCount > 0 ? 'warning' : 'info'"
+                  >
+                    {{
+                      selectedDtsCount > 0
+                        ? `已选 ${selectedDtsCount} 条`
+                        : '未选择批量对象'
                     }}
                   </ElTag>
                   <ElTag
@@ -2720,7 +2902,10 @@ onUnmounted(() => {
                 class="dts-data-grid-wrap"
                 :style="dataGridWrapStyle"
               >
-                <Grid class="dts-data-grid h-full min-h-0">
+                <Grid
+                  class="dts-data-grid h-full min-h-0"
+                  @selection-change="handleGridSelectionChange"
+                >
                   <template #table-title>
                     <div class="dts-table-title">
                       <div class="dts-table-title__filters">
@@ -5704,6 +5889,12 @@ onUnmounted(() => {
           </div>
         </ElTabPane>
       </ElTabs>
+
+      <DtsBatchEditDrawer
+        v-model="batchEditVisible"
+        :selected-dts-biz-nos="selectedDtsBizNos"
+        @success="handleBatchSaved"
+      />
 
       <DtsEditDrawer
         v-model="editVisible"

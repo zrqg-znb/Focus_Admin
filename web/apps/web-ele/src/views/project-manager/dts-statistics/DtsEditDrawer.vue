@@ -19,8 +19,10 @@ import { saveDtsExtension } from '#/api/project-manager/dts-statistics';
 import { ZqDrawer } from '#/components/zq-drawer';
 
 import {
+  buildDtsExtensionSubmitPayload,
   formatCycleIntegerDisplay,
   formatProjectDisplay,
+  joinDtsTextareaLines,
   useDevFormSchema,
   useQaFormSchema,
   useTestFormSchema,
@@ -214,50 +216,6 @@ const richTextItems = computed(() => {
   });
 });
 
-function normalizeStringList(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    const result: string[] = [];
-    const seen = new Set<string>();
-    value.forEach((item) => {
-      const text = String(item || '').trim();
-      if (!text || seen.has(text)) {
-        return;
-      }
-      seen.add(text);
-      result.push(text);
-    });
-    return result;
-  }
-
-  const text = String(value || '').trim();
-  if (!text) {
-    return [];
-  }
-
-  const parts = text.split(/\r?\n|,|，/g);
-  const result: string[] = [];
-  const seen = new Set<string>();
-  parts.forEach((part) => {
-    const item = String(part || '').trim();
-    if (!item || seen.has(item)) {
-      return;
-    }
-    seen.add(item);
-    result.push(item);
-  });
-  return result;
-}
-
-function joinLines(value: unknown): string {
-  if (!Array.isArray(value)) {
-    return String(value || '').trim();
-  }
-  return value
-    .map((item) => String(item || '').trim())
-    .filter(Boolean)
-    .join('\n');
-}
-
 function syncFormValues() {
   const row = props.row;
   if (!row) {
@@ -269,11 +227,11 @@ function syncFormValues() {
   qaFormApi.setValues(row);
   devFormApi.setValues({
     ...row,
-    dev_improvements: joinLines(row.dev_improvements),
+    dev_improvements: joinDtsTextareaLines(row.dev_improvements),
   });
   testFormApi.setValues({
     ...row,
-    test_improvements: joinLines(row.test_improvements),
+    test_improvements: joinDtsTextareaLines(row.test_improvements),
   });
 }
 
@@ -336,17 +294,11 @@ async function handleConfirm() {
     const devValues = await devFormApi.getValues<Record<string, any>>();
     const testValues = await testFormApi.getValues<Record<string, any>>();
 
-    const payload: DtsExtensionSavePayload = {
+    const payload: DtsExtensionSavePayload = buildDtsExtensionSubmitPayload({
       ...qaValues,
       ...devValues,
       ...testValues,
-      dev_sub_category: normalizeStringList(devValues.dev_sub_category),
-      dev_control_points: normalizeStringList(devValues.dev_control_points),
-      dev_non_base_desc: normalizeStringList(devValues.dev_non_base_desc),
-      dev_improvements: normalizeStringList(devValues.dev_improvements),
-      test_miss_reason: normalizeStringList(testValues.test_miss_reason),
-      test_improvements: normalizeStringList(testValues.test_improvements),
-    };
+    });
 
     await saveDtsExtension(dtsBizNo, payload);
     ElMessage.success('保存成功');

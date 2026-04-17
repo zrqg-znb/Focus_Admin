@@ -14,7 +14,23 @@ const YES_NO_OPTIONS = [
   { label: '否', value: '否' },
 ];
 
-type SelectOption = { label: string; value: string };
+export type SelectOption = { label: string; value: string };
+
+export type DtsFormFieldComponent =
+  | 'ApiSelect'
+  | 'Input'
+  | 'Textarea'
+  | 'UserSelector';
+
+export interface DtsFormFieldConfig {
+  component: DtsFormFieldComponent;
+  fieldName: string;
+  label: string;
+  placeholder: string;
+  dictKey?: keyof DtsDictOptions;
+  multiple?: boolean;
+  rows?: number;
+}
 
 function normalizeSelectOptions(
   items: Array<Partial<SelectOption>> | null | undefined,
@@ -817,301 +833,346 @@ export function resolveSeverityMeta(raw?: null | string): SeverityMeta {
   };
 }
 
+export const DTS_QA_FORM_FIELDS: DtsFormFieldConfig[] = [
+  {
+    component: 'ApiSelect',
+    fieldName: 'is_downstream',
+    label: '是否下游问题',
+    placeholder: '请选择',
+    dictKey: 'yes_no',
+  },
+  {
+    component: 'Input',
+    fieldName: 'process_quality_type',
+    label: '过程质量分类',
+    placeholder: '请输入过程质量分类',
+  },
+  {
+    component: 'ApiSelect',
+    fieldName: 'need_aar',
+    label: '是否需要AAR',
+    placeholder: '请选择',
+    dictKey: 'yes_no',
+  },
+  {
+    component: 'ApiSelect',
+    fieldName: 'need_dev_analyze',
+    label: '需开发分析',
+    placeholder: '请选择',
+    dictKey: 'yes_no',
+  },
+  {
+    component: 'ApiSelect',
+    fieldName: 'need_test_analyze',
+    label: '需测试分析',
+    placeholder: '请选择',
+    dictKey: 'yes_no',
+  },
+  {
+    component: 'Textarea',
+    fieldName: 'qa_remark',
+    label: '备注',
+    placeholder: '请输入备注',
+    rows: 3,
+  },
+];
+
+export const DTS_DEV_FORM_FIELDS: DtsFormFieldConfig[] = [
+  {
+    component: 'UserSelector',
+    fieldName: 'dev_owner_id',
+    label: '开发责任人',
+    placeholder: '请选择开发责任人',
+  },
+  {
+    component: 'Input',
+    fieldName: 'dev_feature',
+    label: '特性/功能',
+    placeholder: '请输入特性/功能',
+  },
+  {
+    component: 'ApiSelect',
+    fieldName: 'issue_intro_stage',
+    label: '问题引入阶段',
+    placeholder: '请选择问题引入阶段',
+    dictKey: 'issue_intro_stage',
+  },
+  {
+    component: 'ApiSelect',
+    fieldName: 'dev_sub_category',
+    label: '问题小类',
+    placeholder: '请选择问题小类（可多选）',
+    dictKey: 'dev_sub_category',
+    multiple: true,
+  },
+  {
+    component: 'Textarea',
+    fieldName: 'dev_reason',
+    label: '问题原因',
+    placeholder: '请输入问题原因',
+    rows: 3,
+  },
+  {
+    component: 'Textarea',
+    fieldName: 'dev_intro_reason',
+    label: '引入原因',
+    placeholder: '请输入引入原因',
+    rows: 3,
+  },
+  {
+    component: 'ApiSelect',
+    fieldName: 'dev_issue_intro_point',
+    label: '问题引入点',
+    placeholder: '请选择问题引入点',
+    dictKey: 'dev_issue_intro_point',
+  },
+  {
+    component: 'ApiSelect',
+    fieldName: 'dev_issue_probability',
+    label: '问题概率',
+    placeholder: '请选择问题概率',
+    dictKey: 'dev_issue_probability',
+  },
+  {
+    component: 'ApiSelect',
+    fieldName: 'dev_common_issue_type',
+    label: '是否共性问题',
+    placeholder: '请选择是否共性问题',
+    dictKey: 'dev_common_issue_type',
+  },
+  {
+    component: 'ApiSelect',
+    fieldName: 'dev_control_points',
+    label: '需要补强的开发控制点',
+    placeholder: '请选择开发控制点（可多选）',
+    dictKey: 'dev_control_points',
+    multiple: true,
+  },
+  {
+    component: 'Textarea',
+    fieldName: 'dev_intro_point_analysis',
+    label: '引入点分析',
+    placeholder: '请输入引入点分析',
+    rows: 3,
+  },
+  {
+    component: 'Textarea',
+    fieldName: 'dev_improvements',
+    label: '改进措施(开发)',
+    placeholder: '一行一条（保存时自动拆分）',
+    rows: 3,
+  },
+  {
+    component: 'ApiSelect',
+    fieldName: 'dev_non_base_desc',
+    label: '非底软说明',
+    placeholder: '请选择非底软问题说明（可多选）',
+    dictKey: 'dev_non_base_desc',
+    multiple: true,
+  },
+  {
+    component: 'Input',
+    fieldName: 'dev_aar_link',
+    label: 'AAR链接',
+    placeholder: '请输入AAR链接',
+  },
+  {
+    component: 'Input',
+    fieldName: 'dev_asset_link',
+    label: '落地资产链接(开发)',
+    placeholder: '请输入链接',
+  },
+  {
+    component: 'ApiSelect',
+    fieldName: 'dev_status',
+    label: '改进状态(开发)',
+    placeholder: '请选择改进状态',
+    dictKey: 'action_status',
+  },
+  {
+    component: 'Textarea',
+    fieldName: 'dev_remark',
+    label: '开发备注',
+    placeholder: '请输入开发备注',
+    rows: 3,
+  },
+];
+
+export const DTS_TEST_FORM_FIELDS: DtsFormFieldConfig[] = [
+  {
+    component: 'UserSelector',
+    fieldName: 'test_owner_id',
+    label: '测试责任人',
+    placeholder: '请选择测试责任人',
+  },
+  {
+    component: 'ApiSelect',
+    fieldName: 'test_miss_reason',
+    label: '漏测原因',
+    placeholder: '请选择漏测原因（可多选）',
+    dictKey: 'test_miss_reason',
+    multiple: true,
+  },
+  {
+    component: 'Textarea',
+    fieldName: 'test_standard_desc',
+    label: '规范问题描述',
+    placeholder: '请输入规范问题描述',
+    rows: 3,
+  },
+  {
+    component: 'Textarea',
+    fieldName: 'test_improvements',
+    label: '改进措施(测试)',
+    placeholder: '一行一条（保存时自动拆分）',
+    rows: 3,
+  },
+  {
+    component: 'Textarea',
+    fieldName: 'test_non_test_desc',
+    label: '非测试说明',
+    placeholder: '请输入非测试问题说明',
+    rows: 2,
+  },
+  {
+    component: 'Input',
+    fieldName: 'test_asset_link',
+    label: '落地资产链接(测试)',
+    placeholder: '请输入链接',
+  },
+  {
+    component: 'ApiSelect',
+    fieldName: 'test_status',
+    label: '改进状态(测试)',
+    placeholder: '请选择改进状态',
+    dictKey: 'action_status',
+  },
+  {
+    component: 'Textarea',
+    fieldName: 'test_remark',
+    label: '测试备注',
+    placeholder: '请输入测试备注',
+    rows: 3,
+  },
+];
+
+export function getDtsDictOptionsByKey(
+  bundle: DtsDictOptions | null | undefined,
+  key: keyof DtsDictOptions,
+) {
+  const safeBundle = normalizeDtsDictOptions(bundle);
+  const options = safeBundle[key] || [];
+  if (key === 'yes_no' && options.length === 0) {
+    return [...YES_NO_OPTIONS];
+  }
+  return options;
+}
+
+export function normalizeDtsStringListValue(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    const result: string[] = [];
+    const seen = new Set<string>();
+    value.forEach((item) => {
+      const text = String(item || '').trim();
+      if (!text || seen.has(text)) {
+        return;
+      }
+      seen.add(text);
+      result.push(text);
+    });
+    return result;
+  }
+
+  const text = String(value || '').trim();
+  if (!text) {
+    return [];
+  }
+
+  const parts = text.split(/\r?\n|,|，/);
+  const result: string[] = [];
+  const seen = new Set<string>();
+  parts.forEach((part) => {
+    const item = String(part || '').trim();
+    if (!item || seen.has(item)) {
+      return;
+    }
+    seen.add(item);
+    result.push(item);
+  });
+  return result;
+}
+
+export function joinDtsTextareaLines(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return String(value || '').trim();
+  }
+  return value
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+export function buildDtsExtensionSubmitPayload(raw: Record<string, any>) {
+  return {
+    ...raw,
+    dev_sub_category: normalizeDtsStringListValue(raw.dev_sub_category),
+    dev_control_points: normalizeDtsStringListValue(raw.dev_control_points),
+    dev_non_base_desc: normalizeDtsStringListValue(raw.dev_non_base_desc),
+    dev_improvements: normalizeDtsStringListValue(raw.dev_improvements),
+    test_miss_reason: normalizeDtsStringListValue(raw.test_miss_reason),
+    test_improvements: normalizeDtsStringListValue(raw.test_improvements),
+  };
+}
+
+function createDtsFormSchemaFromConfigs(
+  fields: DtsFormFieldConfig[],
+): VbenFormSchema[] {
+  return fields.map((field) => {
+    const schema: VbenFormSchema = {
+      component: field.component,
+      fieldName: field.fieldName,
+      label: field.label,
+      componentProps: {
+        placeholder: field.placeholder,
+      },
+    };
+
+    if (field.component === 'ApiSelect' && field.dictKey) {
+      schema.componentProps = {
+        ...createDtsDictApiSelectProps(
+          field.dictKey,
+          field.dictKey === 'yes_no' ? YES_NO_OPTIONS : [],
+        ),
+        placeholder: field.placeholder,
+        ...(field.multiple
+          ? {
+              multiple: true,
+              collapseTags: true,
+              collapseTagsTooltip: true,
+            }
+          : {}),
+      };
+    }
+
+    if (field.component === 'Textarea') {
+      schema.componentProps = {
+        placeholder: field.placeholder,
+        rows: field.rows || 3,
+      };
+    }
+
+    return schema;
+  });
+}
+
 export function useQaFormSchema(): VbenFormSchema[] {
-  return [
-    {
-      component: 'ApiSelect',
-      fieldName: 'is_downstream',
-      label: '是否下游问题',
-      componentProps: {
-        ...createDtsDictApiSelectProps('yes_no', YES_NO_OPTIONS),
-        placeholder: '请选择',
-      },
-    },
-    {
-      component: 'Input',
-      fieldName: 'process_quality_type',
-      label: '过程质量分类',
-      componentProps: {
-        placeholder: '请输入过程质量分类',
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'need_aar',
-      label: '是否需要AAR',
-      componentProps: {
-        ...createDtsDictApiSelectProps('yes_no', YES_NO_OPTIONS),
-        placeholder: '请选择',
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'need_dev_analyze',
-      label: '需开发分析',
-      componentProps: {
-        ...createDtsDictApiSelectProps('yes_no', YES_NO_OPTIONS),
-        placeholder: '请选择',
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'need_test_analyze',
-      label: '需测试分析',
-      componentProps: {
-        ...createDtsDictApiSelectProps('yes_no', YES_NO_OPTIONS),
-        placeholder: '请选择',
-      },
-    },
-    {
-      component: 'Textarea',
-      fieldName: 'qa_remark',
-      label: '备注',
-      componentProps: {
-        placeholder: '请输入备注',
-        rows: 3,
-      },
-    },
-  ];
+  return createDtsFormSchemaFromConfigs(DTS_QA_FORM_FIELDS);
 }
 
 export function useDevFormSchema(): VbenFormSchema[] {
-  return [
-    {
-      component: 'UserSelector',
-      fieldName: 'dev_owner_id',
-      label: '开发责任人',
-      componentProps: {
-        placeholder: '请选择开发责任人',
-      },
-    },
-    {
-      component: 'Input',
-      fieldName: 'dev_feature',
-      label: '特性/功能',
-      componentProps: {
-        placeholder: '请输入特性/功能',
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'issue_intro_stage',
-      label: '问题引入阶段',
-      componentProps: {
-        ...createDtsDictApiSelectProps('issue_intro_stage'),
-        placeholder: '请选择问题引入阶段',
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'dev_sub_category',
-      label: '问题小类',
-      componentProps: {
-        ...createDtsDictApiSelectProps('dev_sub_category'),
-        multiple: true,
-        collapseTags: true,
-        collapseTagsTooltip: true,
-        placeholder: '请选择问题小类（可多选）',
-      },
-    },
-    {
-      component: 'Textarea',
-      fieldName: 'dev_reason',
-      label: '问题原因',
-      componentProps: {
-        placeholder: '请输入问题原因',
-        rows: 3,
-      },
-    },
-    {
-      component: 'Textarea',
-      fieldName: 'dev_intro_reason',
-      label: '引入原因',
-      componentProps: {
-        placeholder: '请输入引入原因',
-        rows: 3,
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'dev_issue_intro_point',
-      label: '问题引入点',
-      componentProps: {
-        ...createDtsDictApiSelectProps('dev_issue_intro_point'),
-        placeholder: '请选择问题引入点',
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'dev_issue_probability',
-      label: '问题概率',
-      componentProps: {
-        ...createDtsDictApiSelectProps('dev_issue_probability'),
-        placeholder: '请选择问题概率',
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'dev_common_issue_type',
-      label: '是否共性问题',
-      componentProps: {
-        ...createDtsDictApiSelectProps('dev_common_issue_type'),
-        placeholder: '请选择是否共性问题',
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'dev_control_points',
-      label: '需要补强的开发控制点',
-      componentProps: {
-        ...createDtsDictApiSelectProps('dev_control_points'),
-        multiple: true,
-        collapseTags: true,
-        collapseTagsTooltip: true,
-        placeholder: '请选择开发控制点（可多选）',
-      },
-    },
-    {
-      component: 'Textarea',
-      fieldName: 'dev_intro_point_analysis',
-      label: '引入点分析',
-      componentProps: {
-        placeholder: '请输入引入点分析',
-        rows: 3,
-      },
-    },
-    {
-      component: 'Textarea',
-      fieldName: 'dev_improvements',
-      label: '改进措施(开发)',
-      componentProps: {
-        placeholder: '一行一条（保存时自动拆分）',
-        rows: 3,
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'dev_non_base_desc',
-      label: '非底软说明',
-      componentProps: {
-        ...createDtsDictApiSelectProps('dev_non_base_desc'),
-        multiple: true,
-        collapseTags: true,
-        collapseTagsTooltip: true,
-        placeholder: '请选择非底软问题说明（可多选）',
-      },
-    },
-    {
-      component: 'Input',
-      fieldName: 'dev_aar_link',
-      label: 'AAR链接',
-      componentProps: {
-        placeholder: '请输入AAR链接',
-      },
-    },
-    {
-      component: 'Input',
-      fieldName: 'dev_asset_link',
-      label: '落地资产链接(开发)',
-      componentProps: {
-        placeholder: '请输入链接',
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'dev_status',
-      label: '改进状态(开发)',
-      componentProps: {
-        ...createDtsDictApiSelectProps('action_status'),
-        placeholder: '请选择改进状态',
-      },
-    },
-    {
-      component: 'Textarea',
-      fieldName: 'dev_remark',
-      label: '开发备注',
-      componentProps: {
-        placeholder: '请输入开发备注',
-        rows: 3,
-      },
-    },
-  ];
+  return createDtsFormSchemaFromConfigs(DTS_DEV_FORM_FIELDS);
 }
 
 export function useTestFormSchema(): VbenFormSchema[] {
-  return [
-    {
-      component: 'UserSelector',
-      fieldName: 'test_owner_id',
-      label: '测试责任人',
-      componentProps: {
-        placeholder: '请选择测试责任人',
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'test_miss_reason',
-      label: '漏测原因',
-      componentProps: {
-        ...createDtsDictApiSelectProps('test_miss_reason'),
-        multiple: true,
-        collapseTags: true,
-        collapseTagsTooltip: true,
-        placeholder: '请选择漏测原因（可多选）',
-      },
-    },
-    {
-      component: 'Textarea',
-      fieldName: 'test_standard_desc',
-      label: '规范问题描述',
-      componentProps: {
-        placeholder: '请输入规范问题描述',
-        rows: 3,
-      },
-    },
-    {
-      component: 'Textarea',
-      fieldName: 'test_improvements',
-      label: '改进措施(测试)',
-      componentProps: {
-        placeholder: '一行一条（保存时自动拆分）',
-        rows: 3,
-      },
-    },
-    {
-      component: 'Textarea',
-      fieldName: 'test_non_test_desc',
-      label: '非测试说明',
-      componentProps: {
-        placeholder: '请输入非测试问题说明',
-        rows: 2,
-      },
-    },
-    {
-      component: 'Input',
-      fieldName: 'test_asset_link',
-      label: '落地资产链接(测试)',
-      componentProps: {
-        placeholder: '请输入链接',
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'test_status',
-      label: '改进状态(测试)',
-      componentProps: {
-        ...createDtsDictApiSelectProps('action_status'),
-        placeholder: '请选择改进状态',
-      },
-    },
-    {
-      component: 'Textarea',
-      fieldName: 'test_remark',
-      label: '测试备注',
-      componentProps: {
-        placeholder: '请输入测试备注',
-        rows: 3,
-      },
-    },
-  ];
+  return createDtsFormSchemaFromConfigs(DTS_TEST_FORM_FIELDS);
 }

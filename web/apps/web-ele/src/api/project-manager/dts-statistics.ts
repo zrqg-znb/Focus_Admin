@@ -206,6 +206,59 @@ export interface DtsSaveResponse {
   success: boolean;
 }
 
+export interface DtsBatchExtensionPatchPayload {
+  is_downstream?: null | string;
+  process_quality_type?: null | string;
+  issue_intro_stage?: null | string;
+  need_aar?: null | string;
+  need_dev_analyze?: null | string;
+  need_test_analyze?: null | string;
+  dev_owner_id?: null | string;
+  test_owner_id?: null | string;
+  qa_remark?: null | string;
+
+  dev_sub_category?: null | string[];
+  dev_feature?: null | string;
+  dev_reason?: null | string;
+  dev_intro_reason?: null | string;
+  dev_issue_intro_point?: null | string;
+  dev_issue_probability?: null | string;
+  dev_common_issue_type?: null | string;
+  dev_control_points?: null | string[];
+  dev_intro_point_analysis?: null | string;
+  dev_improvements?: null | string[];
+  dev_non_base_desc?: null | string[];
+  dev_aar_link?: null | string;
+  dev_asset_link?: null | string;
+  dev_status?: null | string;
+  dev_remark?: null | string;
+
+  test_miss_reason?: null | string[];
+  test_standard_desc?: null | string;
+  test_improvements?: null | string[];
+  test_non_test_desc?: null | string;
+  test_asset_link?: null | string;
+  test_status?: null | string;
+  test_remark?: null | string;
+}
+
+export interface DtsBatchExtensionSavePayload {
+  defectNos: string[];
+  fieldMask: string[];
+  data: DtsBatchExtensionPatchPayload;
+}
+
+export interface DtsBatchSaveFailedItem {
+  defectNo: string;
+  errorMessage: string;
+}
+
+export interface DtsBatchSaveResponse {
+  successCount: number;
+  failedCount: number;
+  failedItems: DtsBatchSaveFailedItem[];
+}
+
 export interface DtsDistributionItem {
   label: string;
   value: number;
@@ -316,6 +369,15 @@ export async function saveDtsExtension(
 ) {
   return requestClient.post<DtsSaveResponse>(
     `${base}/save-extension/${dtsBizNo}`,
+    data,
+  );
+}
+
+export async function batchSaveDtsExtension(
+  data: DtsBatchExtensionSavePayload,
+) {
+  return requestClient.post<DtsBatchSaveResponse>(
+    `${base}/batch-save-extension`,
     data,
   );
 }

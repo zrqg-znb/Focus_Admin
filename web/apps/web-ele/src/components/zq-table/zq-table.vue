@@ -120,6 +120,7 @@ function getColumnStateKey(col: any, path: number[]): string {
 }
 
 const tableContainerRef = ref<HTMLElement>();
+const elTableRef = ref<any>(null);
 const tableHeight = ref(0);
 
 const isFullscreen = ref(false);
@@ -136,6 +137,14 @@ useResizeObserver(tableContainerRef, (entries) => {
     tableHeight.value = nextHeight;
   }
 });
+
+watch(
+  elTableRef,
+  (value) => {
+    props.api.setTableRef(value);
+  },
+  { immediate: true },
+);
 
 const FORM_SLOT_PREFIX = 'form-';
 const CELL_SLOT_PREFIX = 'cell-';
@@ -870,6 +879,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  props.api.setTableRef(null);
   props.api.unmount();
 });
 
@@ -1404,6 +1414,7 @@ function handleFilterChange(data: Record<string, any[]>) {
     >
       <div class="h-full w-full" ref="tableContainerRef">
         <ElTable
+          ref="elTableRef"
           v-bind="tableProps"
           :data="tableData"
           :height="resolvedTableHeight"

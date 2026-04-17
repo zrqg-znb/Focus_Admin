@@ -51,6 +51,7 @@ export class ZqTableApi<T extends Record<string, any> = any> {
   public store: Store<ZqTableProps<T>>;
   // 响应式数据供组件消费
   public tableData = ref<T[]>([]);
+  public tableRef = ref<any>(null);
   public total = ref(0);
 
   private isMounted = false;
@@ -73,6 +74,10 @@ export class ZqTableApi<T extends Record<string, any> = any> {
     this.stateHandler = new StateHandler();
     bindMethods(this);
     this.syncStateToRefs();
+  }
+
+  clearSelection() {
+    this.tableRef.value?.clearSelection?.();
   }
 
   handlePageChange(currentPage: number, pageSize: number) {
@@ -205,6 +210,14 @@ export class ZqTableApi<T extends Record<string, any> = any> {
     } else {
       this.store.setState((prev) => mergeWithArrayOverride(stateOrFn, prev));
     }
+  }
+
+  setTableRef(tableRef: any) {
+    this.tableRef.value = tableRef;
+  }
+
+  toggleRowSelection(row: T, selected?: boolean) {
+    this.tableRef.value?.toggleRowSelection?.(row, selected);
   }
 
   toggleSearchForm(show?: boolean) {
