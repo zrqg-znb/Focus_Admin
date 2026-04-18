@@ -5,7 +5,6 @@ import DefaultTheme from 'vitepress/theme';
 
 import {
   FocusApiTable,
-  FocusHome,
   FocusModuleGrid,
   FocusModuleHero,
   FocusModuleSection,
@@ -21,7 +20,6 @@ export default {
   async enhanceApp(ctx: EnhanceAppContext) {
     const { app } = ctx;
     app.component('FocusApiTable', FocusApiTable);
-    app.component('FocusHome', FocusHome);
     app.component('FocusModuleGrid', FocusModuleGrid);
     app.component('FocusModuleHero', FocusModuleHero);
     app.component('FocusModuleSection', FocusModuleSection);
