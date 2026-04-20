@@ -19,6 +19,7 @@ ARTIFACTS_DIR = DEEPAUDIT_ROOT / 'artifacts'
 VECTOR_DB_DIR = DEEPAUDIT_ROOT / 'vector_db'
 SSH_DIR = DEEPAUDIT_ROOT / 'ssh'
 KNOWLEDGE_DIR = DEEPAUDIT_ROOT / 'knowledge'
+REPO_CACHE_DIR = DEEPAUDIT_ROOT / 'repo_cache'
 
 
 
@@ -33,6 +34,7 @@ def ensure_storage_dirs() -> None:
         VECTOR_DB_DIR,
         SSH_DIR,
         KNOWLEDGE_DIR,
+        REPO_CACHE_DIR,
     ]:
         directory.mkdir(parents=True, exist_ok=True)
 
@@ -71,6 +73,13 @@ def create_workspace(prefix: str) -> Path:
 
 
 
+def reserve_workspace_path(prefix: str) -> Path:
+    path = create_workspace(prefix)
+    shutil.rmtree(path, ignore_errors=True)
+    return path
+
+
+
 def cleanup_workspace(path: Path | None) -> None:
     if path and path.exists():
         shutil.rmtree(path, ignore_errors=True)
@@ -93,6 +102,22 @@ def save_json_artifact(file_name: str, data: dict) -> Path:
     normalized = normalize_json_payload(data)
     target.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding='utf-8')
     return target
+
+
+
+def get_project_repo_cache_root(project_id: str) -> Path:
+    ensure_storage_dirs()
+    target = REPO_CACHE_DIR / str(project_id)
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def delete_project_repo_cache(project_id: str) -> bool:
+    target = REPO_CACHE_DIR / str(project_id)
+    if target.exists():
+        shutil.rmtree(target, ignore_errors=True)
+        return True
+    return False
 
 
 

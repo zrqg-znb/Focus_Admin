@@ -473,9 +473,21 @@ def _env_str(name: str, default: str = "") -> str:
     return str(value or "").strip()
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() not in {'0', 'false', 'no'}
+
+
 DEEPAUDIT_DOCKER_ENABLED = os.environ.get('DEEPAUDIT_DOCKER_ENABLED', 'true').lower() not in {'0', 'false', 'no'}
 DEEPAUDIT_QUEUE = os.environ.get('DEEPAUDIT_QUEUE', 'deepaudit')
 DEEPAUDIT_TIKTOKEN_MODE = _env_str('DEEPAUDIT_TIKTOKEN_MODE', 'local') or 'local'
+DEEPAUDIT_GIT_CLONE_TIMEOUT = _env_int('DEEPAUDIT_GIT_CLONE_TIMEOUT', 1800)
+DEEPAUDIT_GIT_LS_REMOTE_TIMEOUT = _env_int('DEEPAUDIT_GIT_LS_REMOTE_TIMEOUT', 120)
+DEEPAUDIT_GIT_RETRY_COUNT = _env_int('DEEPAUDIT_GIT_RETRY_COUNT', 3)
+DEEPAUDIT_REPO_CACHE_ENABLED = _env_bool('DEEPAUDIT_REPO_CACHE_ENABLED', True)
+DEEPAUDIT_REPO_CACHE_TTL_SECONDS = _env_int('DEEPAUDIT_REPO_CACHE_TTL_SECONDS', 1800)
 TIKTOKEN_CACHE_DIR = _env_str('TIKTOKEN_CACHE_DIR', '')
 DATA_GYM_CACHE_DIR = _env_str('DATA_GYM_CACHE_DIR', '')
 

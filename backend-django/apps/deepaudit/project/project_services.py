@@ -7,7 +7,13 @@ from django.shortcuts import get_object_or_404
 from ninja.errors import HttpError
 
 from apps.deepaudit.constants import PROJECT_MEMBER_ROLE_OWNER
-from apps.deepaudit.git_service import list_remote_branches
+from apps.deepaudit.git_service import (
+    GitServiceError,
+    ensure_repository_cache,
+    list_remote_branches,
+    list_repository_files,
+    repository_cache_enabled,
+)
 from apps.deepaudit.permissions import (
     accessible_project_queryset,
     require_project_member_manage,
@@ -27,7 +33,7 @@ from apps.deepaudit.runtime import (
 )
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact, AuditIssue, AuditTask
 from apps.deepaudit.serialization import format_datetime_text
-from apps.deepaudit.storage import delete_project_zip, get_project_zip, save_project_zip
+from apps.deepaudit.storage import delete_project_repo_cache, delete_project_zip, get_project_zip, save_project_zip
 from core.user.user_model import User
 
 
@@ -80,6 +86,10 @@ def _project_task_summary(project: AuditProject) -> dict:
         'findings_count': agent_tasks.aggregate(total=Count('findings'))['total'] or 0,
         'open_issue_count': AuditIssue.objects.filter(task__project=project, is_deleted=False, status='open').count(),
     }
+
+
+def _invalidate_project_repo_cache(project_id: str) -> None:
+    delete_project_repo_cache(str(project_id))
 
 
 def serialize_project(project: AuditProject, current_role: str = 'viewer', include_members: bool = False) -> dict:
@@ -176,6 +186,8 @@ def create_project(user, payload: dict) -> AuditProject:
 def update_project(user, project_id: str, payload: dict) -> AuditProject:
     access = require_project_role(user, project_id, min_role='admin')
     project = access.project
+    cache_fields = ('source_type', 'repository_url', 'default_branch')
+    cache_before = {field: getattr(project, field) for field in cache_fields}
     for field in ('name', 'description', 'source_type', 'repository_url', 'repository_type', 'default_branch', 'is_active'):
         if field not in payload or payload[field] is None:
             continue
@@ -187,6 +199,8 @@ def update_project(user, project_id: str, payload: dict) -> AuditProject:
         project.programming_languages = _normalize_languages(payload.get('programming_languages'))
     project.sys_modifier = user
     project.save()
+    if any(cache_before[field] != getattr(project, field) for field in cache_fields):
+        _invalidate_project_repo_cache(project.id)
     return project
 
 
@@ -202,6 +216,7 @@ def delete_project(user, project_id: str) -> bool:
     project.sys_modifier = user
     project.save(update_fields=['is_deleted', 'sys_modifier', 'sys_update_datetime'])
     project.members.update(is_deleted=True, sys_modifier=user)
+    _invalidate_project_repo_cache(project.id)
     return True
 
 
@@ -219,6 +234,7 @@ def restore_project(user, project_id: str) -> bool:
 def purge_project(user, project_id: str) -> bool:
     access = require_project_role(user, project_id, min_role='owner', include_deleted=True)
     delete_project_zip(access.project.id)
+    _invalidate_project_repo_cache(access.project.id)
     access.project.delete()
     return True
 
@@ -301,6 +317,7 @@ def transfer_owner(user, project_id: str, target_user_id: str) -> bool:
 def upload_project_zip(user, project_id: str, file_name: str, file_bytes: bytes) -> dict:
     access = require_project_role(user, project_id, min_role='member')
     project = access.project
+    _invalidate_project_repo_cache(project.id)
     target = save_project_zip(project.id, file_name, file_bytes)
     artifact = project.artifacts.filter(kind='project_zip').first()
     if artifact:
@@ -365,18 +382,38 @@ def list_branches(user, project_id: str) -> list[str]:
 
 def list_files(user, project_id: str, *, branch_name: str | None = None, exclude_patterns: list[str] | None = None) -> list[dict]:
     access = require_project_role(user, project_id, min_role='viewer')
+    project = access.project
+    user_id = str(getattr(user, 'id', '') or project.owner_id)
+    if project.source_type == 'repository' and repository_cache_enabled():
+        user_payload = load_user_config_payload(user_id)
+        ssh_private_key = load_ssh_private_key(user_id)
+        try:
+            cache_repo = ensure_repository_cache(
+                project,
+                project.repository_url or '',
+                branch_name or project.default_branch,
+                user_payload,
+                ssh_private_key=ssh_private_key,
+                allow_stale_on_failure=True,
+            )
+        except GitServiceError as exc:
+            raise HttpError(400, str(exc)) from exc
+        return list_repository_files(cache_repo, exclude_patterns=exclude_patterns or [])
+
     workspace = None
     try:
         workspace, _payload = prepare_workspace(
-            access.project,
+            project,
             branch_name=branch_name,
-            user_id=str(getattr(user, 'id', '') or access.project.owner_id),
+            user_id=user_id,
         )
         rows = []
         for path in workspace.rglob('*'):
             if not path.is_file():
                 continue
             relative_path = str(path.relative_to(workspace)).replace('\\', '/')
+            if relative_path == '.git' or relative_path.startswith('.git/'):
+                continue
             if exclude_patterns and any(pattern and pattern in relative_path for pattern in exclude_patterns):
                 continue
             rows.append({'path': relative_path, 'size': path.stat().st_size})

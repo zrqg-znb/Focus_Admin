@@ -166,7 +166,9 @@ export default function FileSelectionDialog({
             setExpandedFolders(folders);
         } catch (error) {
             console.error("Failed to load files:", error);
-            toast.error("加载文件列表失败");
+            const errorMessage =
+                error instanceof Error ? error.message : "加载文件列表失败";
+            toast.error(errorMessage);
         } finally {
             setLoading(false);
         }

@@ -22,6 +22,8 @@ from apps.deepaudit.storage import VECTOR_DB_DIR, ensure_storage_dirs
 
 
 ALLOWED_KNOWLEDGE_UPLOAD_SUFFIXES = {'.json', '.md', '.markdown', '.txt'}
+CUSTOM_KNOWLEDGE_ID_PATTERN = re.compile(r'^[a-z0-9][a-z0-9_-]*$')
+RESERVED_KNOWLEDGE_PREFIXES = ('vuln_', 'vuln-', 'framework_', 'framework-')
 
 
 def _normalize_scope(payload: dict | None = None) -> dict:
@@ -77,6 +79,53 @@ def _normalize_text_list(values: list[str] | tuple[str, ...] | str | None) -> li
     return [str(item).strip() for item in raw_items if str(item).strip()]
 
 
+def _normalize_custom_knowledge_id(value: str | None) -> str:
+    document_id = str(value or '').strip()
+    if not document_id:
+        raise HttpError(422, '知识条目必须显式填写模块 ID，不能再依赖标题自动生成')
+    if not CUSTOM_KNOWLEDGE_ID_PATTERN.fullmatch(document_id):
+        raise HttpError(422, '模块 ID 仅支持小写字母、数字、下划线和连字符，且必须以字母或数字开头')
+    if document_id.startswith(RESERVED_KNOWLEDGE_PREFIXES):
+        reserved = '、'.join(sorted(set(RESERVED_KNOWLEDGE_PREFIXES)))
+        raise HttpError(422, f'模块 ID 不能使用内置知识前缀：{reserved}')
+    return document_id
+
+
+def _require_custom_knowledge_tags(tags: list[str]) -> list[str]:
+    normalized_tags = _normalize_text_list(tags)
+    if not normalized_tags:
+        raise HttpError(422, '知识条目至少需要一个标签，便于筛选、检索和模块复用')
+    return normalized_tags
+
+
+def _infer_knowledge_maintenance_scope(document_id: str) -> str:
+    lowered = str(document_id or '').strip().lower()
+    if lowered.startswith('custom_'):
+        return 'personal'
+    if lowered.startswith('team_'):
+        return 'team'
+    if lowered.startswith('proj_'):
+        return 'project'
+    return 'custom'
+
+
+def _ensure_custom_document_writable(user, document_id: str) -> dict | None:
+    existing_document = security_knowledge_rag.get_document(document_id)
+    if not existing_document:
+        return None
+
+    metadata = dict(existing_document.get('metadata') or {})
+    source = str(metadata.get('source') or '').strip().lower() or 'builtin'
+    if source != 'custom':
+        raise HttpError(422, f'模块 ID `{document_id}` 已被内置知识占用，请更换 ID')
+
+    current_user_id = str(get_user_id(user) or '').strip()
+    owner_id = str(metadata.get('created_by_id') or '').strip()
+    if owner_id and current_user_id and owner_id != current_user_id:
+        raise HttpError(403, f'模块 ID `{document_id}` 已被其他用户占用，不能覆盖对方的自定义知识条目')
+    return existing_document
+
+
 def _require_rag_ready(embedding_config: dict) -> None:
     provider = str(embedding_config.get('provider') or 'openai').strip().lower()
     api_key = str(embedding_config.get('api_key') or '').strip()
@@ -126,6 +175,7 @@ def get_project_rag_status(user, project_id: str, payload: dict | None = None) -
             access.project,
             branch_name=scope['branch_name'] or access.project.default_branch,
             user_id=str(getattr(user, 'id', '') or ''),
+            allow_stale_on_failure=True,
         )
         retriever = ProjectCodeRetriever(
             project_root=str(workspace),
@@ -217,6 +267,7 @@ def query_project_rag(user, project_id: str, payload: dict) -> dict:
             access.project,
             branch_name=scope['branch_name'] or access.project.default_branch,
             user_id=str(getattr(user, 'id', '') or ''),
+            allow_stale_on_failure=True,
         )
         retriever = ProjectCodeRetriever(
             project_root=str(workspace),
@@ -329,16 +380,21 @@ def rebuild_knowledge_index(_user) -> dict:
 
 
 def save_knowledge_document(user, payload: dict) -> dict:
+    document_id = _normalize_custom_knowledge_id(payload.get('id'))
+    _ensure_custom_document_writable(user, document_id)
+    tags = _require_custom_knowledge_tags(payload.get('tags') or [])
     category = _normalize_knowledge_category(payload.get('category'))
     metadata = {
         **dict(payload.get('metadata') or {}),
+        'maintenance_scope': _infer_knowledge_maintenance_scope(document_id),
         'created_by_id': str(get_user_id(user) or ''),
     }
     try:
         document = security_knowledge_rag.save_custom_document({
             **dict(payload or {}),
+            'id': document_id,
             'category': category,
-            'tags': _normalize_text_list(payload.get('tags')),
+            'tags': tags,
             'cwe_ids': _normalize_text_list(payload.get('cwe_ids')),
             'owasp_ids': _normalize_text_list(payload.get('owasp_ids')),
             'metadata': metadata,

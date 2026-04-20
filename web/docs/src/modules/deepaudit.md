@@ -412,6 +412,25 @@ sequenceDiagram
 
 </FocusModuleSection>
 
+<FocusModuleSection
+  kicker="Knowledge Base"
+  title="知识库维护建议"
+  summary="DeepAudit 的安全知识库建议分成共享基线知识和自定义知识两层维护，避免把个人经验直接写进内置规则。"
+>
+
+- 共享基线知识
+  继续维护在 `backend-django/apps/deepaudit/agent_engine/knowledge/` 下的 `vulnerabilities/` 和 `frameworks/`，适合长期稳定、对所有项目通用、需要跟代码一起评审发布的知识。
+- 个人 / 团队 / 项目知识
+  默认维护成 `custom` 条目，通过系统配置页的知识库管理器或 `/api/deepaudit/rag/knowledge/*` 接口写入，底层会落到 `media/deepaudit/knowledge/*.json`。
+- 模块 ID 规范
+  建议显式填写并采用 `custom_*`、`team_*`、`proj_*` 前缀；避免使用内置保留前缀 `vuln_*`、`framework_*`。
+- 推荐内容结构
+  每条知识优先包含适用场景、风险模式、检测信号、误报边界、修复建议和最小示例，便于筛选、语义检索和 Agent 注入复用。
+- 维护节奏
+  审计任务结束后及时沉淀新模式和误报边界；定期清理过时条目、合并重复条目，并统一标签。
+
+</FocusModuleSection>
+
 <FocusModuleSection kicker="Core APIs" title="核心 API 清单" summary="以下接口覆盖项目接入、任务执行、策略配置、RAG、实时流和报告导出。">
 
 <FocusApiTable :items="apis" />

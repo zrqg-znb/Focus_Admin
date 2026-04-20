@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 import subprocess
 import zipfile
 from functools import lru_cache
@@ -13,9 +12,9 @@ from django.conf import settings
 from django.db.models import QuerySet
 from ninja.errors import HttpError
 
-from apps.deepaudit.git_service import GitServiceError, clone_repository
+from apps.deepaudit import storage as deepaudit_storage
+from apps.deepaudit.git_service import GitServiceError, create_repository_workspace
 from apps.deepaudit.heuristics import build_summary, is_text_file, scan_content, should_exclude
-from apps.deepaudit.storage import cleanup_workspace, create_workspace, get_project_zip, iter_text_files
 from apps.deepaudit.user_config.user_config_model import AuditSshCredential, AuditUserConfig
 from apps.deepaudit.encryption import decrypt_value
 
@@ -79,26 +78,33 @@ def load_ssh_private_key(user_id: str) -> str | None:
     return decrypt_value(credential.private_key_encrypted)
 
 
-def prepare_workspace(project, *, branch_name: str | None = None, user_id: str | None = None) -> tuple[Path, dict]:
+def prepare_workspace(
+    project,
+    *,
+    branch_name: str | None = None,
+    user_id: str | None = None,
+    allow_stale_on_failure: bool = False,
+) -> tuple[Path, dict]:
     user_payload = load_user_config_payload(user_id or getattr(project.owner, 'id', '') or '')
     if project.source_type == 'repository':
         try:
-            workspace = clone_repository(
+            workspace = create_repository_workspace(
                 project,
                 project.repository_url or '',
                 branch_name or project.default_branch,
                 user_payload,
                 ssh_private_key=load_ssh_private_key(user_id or str(project.owner_id)),
+                allow_stale_on_failure=allow_stale_on_failure,
             )
         except GitServiceError as exc:
             raise HttpError(400, str(exc)) from exc
         return workspace, user_payload
 
-    zip_path = get_project_zip(project.id)
+    zip_path = deepaudit_storage.get_project_zip(project.id)
     if not zip_path or not zip_path.exists():
         raise HttpError(400, '当前 ZIP 项目尚未上传压缩包')
 
-    workspace = create_workspace(f'zip-{project.id}')
+    workspace = deepaudit_storage.create_workspace(f'zip-{project.id}')
     with zipfile.ZipFile(zip_path, 'r') as archive:
         archive.extractall(workspace)
     return workspace, user_payload
@@ -120,7 +126,7 @@ def list_project_files(
     }
     max_bytes = int(max_file_size or 0)
     items: list[dict] = []
-    for file_path in iter_text_files(workspace):
+    for file_path in deepaudit_storage.iter_text_files(workspace):
         relative_path = _normalize_path(str(file_path.relative_to(workspace)))
         if normalized_targets and relative_path not in normalized_targets:
             continue
@@ -206,7 +212,39 @@ def run_heuristic_scan(
 
 
 def cleanup_runtime_workspace(workspace: Path | None) -> None:
-    cleanup_workspace(workspace)
+    if not workspace or not workspace.exists():
+        return
+
+    git_metadata = workspace / '.git'
+    if git_metadata.is_file():
+        try:
+            common_dir = subprocess.run(
+                ['git', '-C', str(workspace), 'rev-parse', '--git-common-dir'],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            ).stdout.strip()
+            if common_dir:
+                subprocess.run(
+                    ['git', f'--git-dir={common_dir}', 'worktree', 'remove', '--force', str(workspace)],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                subprocess.run(
+                    ['git', f'--git-dir={common_dir}', 'worktree', 'prune'],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                return
+        except Exception as exc:
+            logger.warning('DeepAudit failed to remove git worktree %s cleanly: %s', workspace, exc)
+
+    deepaudit_storage.cleanup_workspace(workspace)
 
 
 def load_rule_export(rule_set) -> dict:

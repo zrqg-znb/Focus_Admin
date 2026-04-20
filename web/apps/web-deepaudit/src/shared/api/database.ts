@@ -73,6 +73,10 @@ function toProject(item: any): null | Project {
   return normalizeProject(item) as Project | null;
 }
 
+function getApiErrorMessage(error: any, fallback: string): string {
+  return error?.response?.data?.detail || error?.message || fallback;
+}
+
 async function getProjectsList() {
   const res = await apiClient.get("/projects/");
   return toItems<Project>(res.data, toProject);
@@ -154,8 +158,8 @@ export const api = {
       }
       const res = await apiClient.get(`/projects/${id}/files`, { params });
       return Array.isArray(res.data) ? res.data : [];
-    } catch {
-      return [];
+    } catch (error) {
+      throw new Error(getApiErrorMessage(error, "加载文件列表失败"));
     }
   },
 

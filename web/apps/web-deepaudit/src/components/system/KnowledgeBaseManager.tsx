@@ -49,6 +49,29 @@ const CATEGORY_OPTIONS = [
   { value: "compliance", label: "合规要求" },
 ] as const;
 
+const MODULE_ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
+const RESERVED_ID_PREFIXES = ["vuln_", "framework_"];
+const KNOWLEDGE_CONTENT_TEMPLATE = `适用场景
+- 
+
+风险模式
+- 
+
+检测信号
+- 
+
+误报边界
+- 
+
+修复建议
+- 
+
+最小示例
+\`\`\`text
+# 在这里放一段最小复现或修复示例
+\`\`\`
+`;
+
 type EditorFormState = {
   id: string;
   title: string;
@@ -102,6 +125,56 @@ function formatCategoryLabel(category: string) {
 
 function isCustomDocument(document: null | KnowledgeDocument) {
   return String(document?.metadata?.source || "").trim().toLowerCase() === "custom";
+}
+
+function validateModuleId(value: string) {
+  const normalized = value.trim();
+  if (!normalized) {
+    return "请显式填写模块 ID，避免依赖标题自动生成";
+  }
+  if (!MODULE_ID_PATTERN.test(normalized)) {
+    return "模块 ID 仅支持小写字母、数字、下划线和连字符，且必须以字母或数字开头";
+  }
+  if (RESERVED_ID_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
+    return `模块 ID 不能使用内置知识前缀：${RESERVED_ID_PREFIXES.join(", ")}`;
+  }
+  return null;
+}
+
+function inferMaintenanceScope(document: null | KnowledgeDocument, fallbackId = "") {
+  const explicitScope = String(document?.metadata?.maintenance_scope || "").trim().toLowerCase();
+  if (explicitScope) {
+    return explicitScope;
+  }
+  if (!isCustomDocument(document)) {
+    return "builtin";
+  }
+  const documentId = (document?.id || fallbackId).trim().toLowerCase();
+  if (documentId.startsWith("custom_")) {
+    return "personal";
+  }
+  if (documentId.startsWith("team_")) {
+    return "team";
+  }
+  if (documentId.startsWith("proj_")) {
+    return "project";
+  }
+  return "custom";
+}
+
+function formatMaintenanceScopeLabel(scope: string) {
+  switch (scope) {
+    case "builtin":
+      return "共享基线";
+    case "personal":
+      return "个人知识";
+    case "team":
+      return "团队知识";
+    case "project":
+      return "项目专项";
+    default:
+      return "自定义知识";
+  }
 }
 
 function toEditorForm(document: KnowledgeDocument): EditorFormState {
@@ -206,6 +279,13 @@ export function KnowledgeBaseManager() {
     setEditorOpen(true);
   };
 
+  const applyContentTemplate = () => {
+    setEditorForm((current) => ({
+      ...current,
+      content: current.content.trim() ? current.content : KNOWLEDGE_CONTENT_TEMPLATE,
+    }));
+  };
+
   const openEditDialog = async (documentId: string) => {
     try {
       const detail = await getKnowledgeDocument(documentId);
@@ -219,8 +299,19 @@ export function KnowledgeBaseManager() {
   };
 
   const handleSave = async () => {
+    const normalizedId = editorForm.id.trim();
+    const idError = validateModuleId(normalizedId);
+    if (idError) {
+      toast.error(idError);
+      return;
+    }
     if (!editorForm.title.trim()) {
       toast.error("请输入知识条目标题");
+      return;
+    }
+    const normalizedTags = splitInputList(editorForm.tags);
+    if (normalizedTags.length === 0) {
+      toast.error("请至少填写一个标签，便于筛选和模块复用");
       return;
     }
     if (!editorForm.content.trim()) {
@@ -231,12 +322,12 @@ export function KnowledgeBaseManager() {
     try {
       setSaving(true);
       await saveKnowledgeDocument({
-        id: editorForm.id.trim() || undefined,
+        id: normalizedId,
         title: editorForm.title.trim(),
         content: editorForm.content.trim(),
         category: editorForm.category,
         severity: editorForm.severity.trim() || undefined,
-        tags: splitInputList(editorForm.tags),
+        tags: normalizedTags,
         cwe_ids: splitInputList(editorForm.cweIds),
         owasp_ids: splitInputList(editorForm.owaspIds),
       });
@@ -256,15 +347,26 @@ export function KnowledgeBaseManager() {
       toast.error("请先选择要上传的知识文件");
       return;
     }
+    const normalizedId = uploadMeta.id.trim();
+    const idError = validateModuleId(normalizedId);
+    if (idError) {
+      toast.error(idError);
+      return;
+    }
+    const normalizedTags = splitInputList(uploadMeta.tags);
+    if (normalizedTags.length === 0) {
+      toast.error("上传知识文件时请至少填写一个标签，便于筛选和模块复用");
+      return;
+    }
     try {
       setUploading(true);
       await uploadKnowledgeDocument({
         file: uploadFile,
-        documentId: uploadMeta.id.trim() || undefined,
+        documentId: normalizedId,
         title: uploadMeta.title.trim() || undefined,
         category: uploadMeta.category || undefined,
         severity: uploadMeta.severity.trim() || undefined,
-        tags: splitInputList(uploadMeta.tags),
+        tags: normalizedTags,
         cweIds: splitInputList(uploadMeta.cweIds),
         owaspIds: splitInputList(uploadMeta.owaspIds),
       });
@@ -371,6 +473,42 @@ export function KnowledgeBaseManager() {
         <div className="cyber-card p-4">
           <div className="text-xs uppercase text-muted-foreground font-bold mb-2">索引分块数</div>
           <div className="text-2xl font-mono font-bold text-foreground">{status?.chunk_count || 0}</div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] gap-4">
+        <div className="cyber-card p-5 space-y-3">
+          <div className="text-xs uppercase text-muted-foreground font-bold">维护分层</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <div className="rounded border border-border bg-muted/30 p-4 space-y-2">
+              <div className="font-semibold text-foreground">共享基线知识</div>
+              <div className="text-muted-foreground">
+                漏洞和框架安全的长期规则继续维护在内置 knowledge 模块中，适合所有项目共用并走 Git 审核。
+              </div>
+              <div className="text-xs font-mono text-muted-foreground">
+                内置前缀保留: vuln_* / framework_*
+              </div>
+            </div>
+            <div className="rounded border border-border bg-muted/30 p-4 space-y-2">
+              <div className="font-semibold text-foreground">个人 / 团队 / 项目知识</div>
+              <div className="text-muted-foreground">
+                误报边界、审计清单、内部规范和项目坑点默认维护成 custom 条目，保存后会进入模块校验和 Agent 注入链路。
+              </div>
+              <div className="text-xs font-mono text-muted-foreground">
+                推荐前缀: custom_ / team_ / proj_
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="cyber-card p-5 space-y-3">
+          <div className="text-xs uppercase text-muted-foreground font-bold">推荐内容结构</div>
+          <div className="text-sm text-muted-foreground">
+            新建条目时优先沉淀适用场景、风险模式、检测信号、误报边界、修复建议和最小示例，避免只留一段零散笔记。
+          </div>
+          <div className="rounded border border-border bg-muted/30 p-3 text-xs font-mono text-muted-foreground whitespace-pre-wrap">
+            {KNOWLEDGE_CONTENT_TEMPLATE.trim()}
+          </div>
         </div>
       </div>
 
@@ -502,6 +640,9 @@ export function KnowledgeBaseManager() {
                             >
                               {custom ? "custom" : "builtin"}
                             </Badge>
+                            <Badge variant="outline" className="font-mono text-[10px] uppercase border-border text-muted-foreground">
+                              {formatMaintenanceScopeLabel(inferMaintenanceScope(document))}
+                            </Badge>
                           </div>
                           <div className="mt-2 text-xs text-muted-foreground font-mono break-all">{document.id}</div>
                           <div className="mt-3 line-clamp-3 text-sm text-muted-foreground">{document.content}</div>
@@ -544,6 +685,9 @@ export function KnowledgeBaseManager() {
                           {selectedDocument.severity}
                         </Badge>
                       )}
+                      <Badge variant="outline" className="font-mono text-[10px] uppercase border-border text-muted-foreground">
+                        {formatMaintenanceScopeLabel(inferMaintenanceScope(selectedDocument))}
+                      </Badge>
                     </div>
                     <div className="mt-2 text-xs text-muted-foreground font-mono break-all">{selectedDocument.id}</div>
                   </div>
@@ -591,6 +735,7 @@ export function KnowledgeBaseManager() {
                     <div className="text-xs uppercase text-muted-foreground font-bold mb-2">模块元数据</div>
                     <div className="space-y-1 text-xs font-mono text-muted-foreground">
                       <div>来源: {String(selectedDocument.metadata?.source || "builtin")}</div>
+                      <div>维护范围: {formatMaintenanceScopeLabel(inferMaintenanceScope(selectedDocument))}</div>
                       {selectedDocument.file_path && <div>文件: {selectedDocument.file_path}</div>}
                       {selectedDocument.metadata?.uploaded_file_name && (
                         <div>上传文件: {String(selectedDocument.metadata.uploaded_file_name)}</div>
@@ -637,7 +782,9 @@ export function KnowledgeBaseManager() {
         <DialogContent className="max-w-4xl">
           <DialogHeader>
             <DialogTitle>{editorMode === "create" ? "新建知识条目" : "编辑知识条目"}</DialogTitle>
-            <DialogDescription>自定义知识条目保存后会立即进入模块校验和检索索引。</DialogDescription>
+            <DialogDescription>
+              自定义知识条目保存后会立即进入模块校验和检索索引。请显式填写模块 ID，并避免使用内置前缀。
+            </DialogDescription>
           </DialogHeader>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-6">
@@ -646,9 +793,12 @@ export function KnowledgeBaseManager() {
               <Input
                 value={editorForm.id}
                 onChange={(event) => setEditorForm((current) => ({ ...current, id: event.target.value }))}
-                placeholder="例如 csrf_review"
+                placeholder="例如 custom_zrq_csrf_review"
                 className="cyber-input"
               />
+              <div className="text-xs text-muted-foreground">
+                推荐前缀: <span className="font-mono">custom_</span> / <span className="font-mono">team_</span> / <span className="font-mono">proj_</span>
+              </div>
             </div>
             <div className="space-y-2">
               <Label className="text-xs uppercase text-muted-foreground font-bold">标题</Label>
@@ -691,7 +841,7 @@ export function KnowledgeBaseManager() {
               <Input
                 value={editorForm.tags}
                 onChange={(event) => setEditorForm((current) => ({ ...current, tags: event.target.value }))}
-                placeholder="逗号分隔，例如 csrf, django"
+                placeholder="必填，逗号分隔，例如 csrf, django"
                 className="cyber-input"
               />
             </div>
@@ -713,13 +863,26 @@ export function KnowledgeBaseManager() {
               </div>
             </div>
             <div className="space-y-2 md:col-span-2">
-              <Label className="text-xs uppercase text-muted-foreground font-bold">知识内容</Label>
+              <div className="flex items-center justify-between gap-3">
+                <Label className="text-xs uppercase text-muted-foreground font-bold">知识内容</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="cyber-btn-outline h-8 px-3 text-xs"
+                  onClick={applyContentTemplate}
+                >
+                  插入推荐模板
+                </Button>
+              </div>
               <Textarea
                 value={editorForm.content}
                 onChange={(event) => setEditorForm((current) => ({ ...current, content: event.target.value }))}
                 placeholder="输入安全知识内容，可直接粘贴 Markdown 或纯文本"
                 className="cyber-input min-h-[18rem] font-mono text-sm"
               />
+              <div className="text-xs text-muted-foreground">
+                推荐包含：适用场景、风险模式、检测信号、误报边界、修复建议、最小示例。
+              </div>
             </div>
           </div>
 
@@ -738,7 +901,9 @@ export function KnowledgeBaseManager() {
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>上传知识文件</DialogTitle>
-            <DialogDescription>支持 `.json`、`.md`、`.markdown`、`.txt`，上传后会自动重建知识索引。</DialogDescription>
+            <DialogDescription>
+              支持 `.json`、`.md`、`.markdown`、`.txt`。上传时同样建议显式填写模块 ID 和标签，便于后续模块复用。
+            </DialogDescription>
           </DialogHeader>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-6">
@@ -756,9 +921,12 @@ export function KnowledgeBaseManager() {
               <Input
                 value={uploadMeta.id}
                 onChange={(event) => setUploadMeta((current) => ({ ...current, id: event.target.value }))}
-                placeholder="可选，不填则自动生成"
+                placeholder="必填，例如 team_backend_auth_checklist"
                 className="cyber-input"
               />
+              <div className="text-xs text-muted-foreground">
+                建议显式填写，避免依赖文件标题或内容自动推断。
+              </div>
             </div>
             <div className="space-y-2">
               <Label className="text-xs uppercase text-muted-foreground font-bold">标题</Label>
@@ -801,7 +969,7 @@ export function KnowledgeBaseManager() {
               <Input
                 value={uploadMeta.tags}
                 onChange={(event) => setUploadMeta((current) => ({ ...current, tags: event.target.value }))}
-                placeholder="逗号分隔"
+                placeholder="必填，逗号分隔"
                 className="cyber-input"
               />
             </div>
@@ -854,6 +1022,8 @@ export function KnowledgeBaseManager() {
         <p className="text-muted-foreground">• 自定义知识条目会立即进入模块校验和 Agent 知识注入链路。</p>
         <p className="text-muted-foreground">• 语义检索依赖 embedding 配置；未配置时仍可使用普通关键字筛选。</p>
         <p className="text-muted-foreground">• 删除仅支持 `custom` 来源条目，内置漏洞知识和框架知识默认只读。</p>
+        <p className="text-muted-foreground">• 同一个模块 ID 会覆盖同名自定义条目，因此多人协作时必须先约定前缀和归属规则。</p>
+        <p className="text-muted-foreground">• 只有对所有项目都长期有效、且需要随代码版本审查发布的知识，才建议升级为内置模块。</p>
       </div>
     </div>
   );

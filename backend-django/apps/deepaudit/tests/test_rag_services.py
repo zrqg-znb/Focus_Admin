@@ -24,7 +24,7 @@ class RagKnowledgeServicesTestCase(TestCase):
         self.addCleanup(lambda: shutil.rmtree(self.temp_dir, ignore_errors=True))
 
     def test_save_list_and_delete_custom_knowledge_document(self) -> None:
-        with patch('apps.deepaudit.agent_engine.knowledge.rag_knowledge.KNOWLEDGE_DIR', self.temp_dir):
+        with patch('apps.deepaudit.agent_engine.knowledge.rag_knowledge.deepaudit_storage.KNOWLEDGE_DIR', self.temp_dir):
             security_knowledge_rag.reload_knowledge_sources()
 
             rebuild_mock = AsyncMock(return_value={'enabled': False, 'chunk_count': 0, 'document_count': 1})
@@ -51,6 +51,7 @@ class RagKnowledgeServicesTestCase(TestCase):
             detail = rag_services.get_knowledge_document(self.user, 'custom_oauth_review')
             self.assertEqual(detail['title'], 'OAuth Review Checklist')
             self.assertEqual(detail['metadata'].get('created_by_id'), str(self.user.id))
+            self.assertEqual(detail['metadata'].get('maintenance_scope'), 'personal')
 
             with patch.object(security_knowledge_rag, 'rebuild_index', rebuild_mock):
                 deleted = rag_services.delete_knowledge_document(self.user, 'custom_oauth_review')
@@ -67,7 +68,7 @@ class RagKnowledgeServicesTestCase(TestCase):
         self.assertIn('unknown_custom_module', result['invalid'])
 
     def test_upload_knowledge_document_supports_markdown_and_custom_module_validation(self) -> None:
-        with patch('apps.deepaudit.agent_engine.knowledge.rag_knowledge.KNOWLEDGE_DIR', self.temp_dir):
+        with patch('apps.deepaudit.agent_engine.knowledge.rag_knowledge.deepaudit_storage.KNOWLEDGE_DIR', self.temp_dir):
             security_knowledge_rag.reload_knowledge_sources()
 
             rebuild_mock = AsyncMock(return_value={'enabled': False, 'chunk_count': 0, 'document_count': 1})
@@ -101,3 +102,84 @@ class RagKnowledgeServicesTestCase(TestCase):
             )
 
         self.assertEqual(context.exception.status_code, 422)
+
+    def test_save_knowledge_document_requires_explicit_id_and_tags(self) -> None:
+        with self.assertRaises(HttpError) as context:
+            rag_services.save_knowledge_document(
+                self.user,
+                {
+                    'title': 'Missing ID',
+                    'content': 'Need explicit module id.',
+                    'category': 'best_practice',
+                    'tags': ['audit'],
+                },
+            )
+        self.assertEqual(context.exception.status_code, 422)
+        self.assertIn('模块 ID', str(context.exception))
+
+        with self.assertRaises(HttpError) as tags_context:
+            rag_services.save_knowledge_document(
+                self.user,
+                {
+                    'id': 'custom_missing_tags',
+                    'title': 'Missing Tags',
+                    'content': 'Need at least one tag.',
+                    'category': 'best_practice',
+                    'tags': [],
+                },
+            )
+        self.assertEqual(tags_context.exception.status_code, 422)
+        self.assertIn('至少需要一个标签', str(tags_context.exception))
+
+    def test_save_knowledge_document_rejects_reserved_prefix(self) -> None:
+        with self.assertRaises(HttpError) as context:
+            rag_services.save_knowledge_document(
+                self.user,
+                {
+                    'id': 'vuln_custom_override',
+                    'title': 'Bad Prefix',
+                    'content': 'Should be rejected.',
+                    'category': 'best_practice',
+                    'tags': ['override'],
+                },
+            )
+
+        self.assertEqual(context.exception.status_code, 422)
+        self.assertIn('内置知识前缀', str(context.exception))
+
+    def test_save_knowledge_document_blocks_overwriting_other_users_custom_entry(self) -> None:
+        other_user = User.objects.create(
+            username='other-knowledge-owner',
+            password='not-used',
+            name='Other Knowledge Owner',
+        )
+        with patch('apps.deepaudit.agent_engine.knowledge.rag_knowledge.deepaudit_storage.KNOWLEDGE_DIR', self.temp_dir):
+            security_knowledge_rag.reload_knowledge_sources()
+
+            rebuild_mock = AsyncMock(return_value={'enabled': False, 'chunk_count': 0, 'document_count': 1})
+            with patch.object(security_knowledge_rag, 'rebuild_index', rebuild_mock):
+                rag_services.save_knowledge_document(
+                    other_user,
+                    {
+                        'id': 'team_shared_auth_review',
+                        'title': 'Shared Auth Review',
+                        'content': 'Owned by another user.',
+                        'category': 'best_practice',
+                        'tags': ['auth', 'team'],
+                    },
+                )
+
+                with self.assertRaises(HttpError) as context:
+                    rag_services.save_knowledge_document(
+                        self.user,
+                        {
+                            'id': 'team_shared_auth_review',
+                            'title': 'Overwrite Attempt',
+                            'content': 'Should not overwrite.',
+                            'category': 'best_practice',
+                            'tags': ['auth', 'team'],
+                        },
+                    )
+
+        self.assertEqual(context.exception.status_code, 403)
+        self.assertIn('其他用户占用', str(context.exception))
