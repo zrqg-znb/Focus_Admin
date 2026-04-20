@@ -1391,8 +1391,8 @@ export const ReportExportDialog = memo(function ReportExportDialog({
     <div class="container">
       <div class="header-content">
         <div class="brand">
-          <div class="brand-logo">D</div>
-          <span class="brand-text">DeepAudit</span>
+          <div class="brand-logo">F</div>
+          <span class="brand-text">FocusAudit</span>
         </div>
         <h1 class="header-title">${taskName}</h1>
         <div class="header-meta">${generateDate}</div>
@@ -1484,8 +1484,8 @@ export const ReportExportDialog = memo(function ReportExportDialog({
     <div class="container">
       <div class="footer-content">
         <div class="footer-brand">
-          <div class="footer-brand-icon">D</div>
-          DeepAudit
+          <div class="footer-brand-icon">F</div>
+          FocusAudit
         </div>
         <span>·</span>
         <span>${generateDate}</span>

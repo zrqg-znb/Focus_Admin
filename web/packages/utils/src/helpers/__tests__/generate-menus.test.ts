@@ -174,35 +174,35 @@ describe('generateMenus', () => {
   });
 
   it('keeps the route path for external-link menus with hidden children', async () => {
-    const deepauditRoutes = [
+    const focusauditRoutes = [
       {
-        name: 'deepaudit',
-        path: '/deepaudit',
-        redirect: '/deepaudit/dashboard',
+        name: 'focusaudit',
+        path: '/focusaudit',
+        redirect: '/focusaudit/dashboard',
         meta: {
           hideChildrenInMenu: true,
-          link: '/deepaudit-app/',
+          link: '/focusaudit-app/',
           openInNewWindow: true,
-          title: 'DeepAudit 平台',
+          title: 'FocusAudit 平台',
         },
         children: [
           {
-            name: 'deepauditDashboard',
-            path: '/deepaudit/dashboard',
+            name: 'focusauditDashboard',
+            path: '/focusaudit/dashboard',
             meta: { title: '仪表盘' },
           },
         ],
       },
     ] as RouteRecordRaw[];
 
-    const deepauditRouter = {
+    const focusauditRouter = {
       getRoutes: vi.fn(() => [
-        { name: 'deepaudit', path: '/deepaudit' },
-        { name: 'deepauditDashboard', path: '/deepaudit/dashboard' },
+        { name: 'focusaudit', path: '/focusaudit' },
+        { name: 'focusauditDashboard', path: '/focusaudit/dashboard' },
       ]),
     };
 
-    const menus = generateMenus(deepauditRoutes, deepauditRouter as any);
+    const menus = generateMenus(focusauditRoutes, focusauditRouter as any);
     expect(menus).toEqual([
       {
         activeIcon: undefined,
@@ -210,11 +210,11 @@ describe('generateMenus', () => {
         badgeType: undefined,
         badgeVariants: undefined,
         icon: undefined,
-        name: 'DeepAudit 平台',
+        name: 'FocusAudit 平台',
         order: undefined,
         parent: undefined,
         parents: undefined,
-        path: '/deepaudit',
+        path: '/focusaudit',
         show: true,
         children: [],
       },

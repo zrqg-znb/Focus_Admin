@@ -97,6 +97,32 @@ function AgentAuditPageContent() {
   const canCancelAgentTask = hasAccess(DEEPAUDIT_ACTION_CODES.AGENT_TASKS_CANCEL);
   const canExportReport = hasAccess(DEEPAUDIT_ACTION_CODES.REPORTS_EXPORT);
   const canInspectCheckpoints = Boolean(task?.id);
+  const taskStatus = String(task?.status || "").toLowerCase();
+  const hasMeaningfulLogs = logs.some(
+    (log) => !(log.type === "info" && log.title === "Connected to audit stream"),
+  );
+  const shouldShowStartupSyncHint = isRunning && !hasMeaningfulLogs;
+  const startupSyncDetail = useMemo(() => {
+    const currentStep = String(task?.current_step || "").trim();
+    if (currentStep) {
+      return currentStep;
+    }
+
+    const currentPhase = String(task?.current_phase || "").trim().toLowerCase();
+    if (currentPhase) {
+      return `当前阶段：${PHASE_LABEL_MAP[currentPhase] || currentPhase}`;
+    }
+
+    if (taskStatus === "pending" || taskStatus === "initializing") {
+      return "任务已进入队列，正在分配工作区并同步代码仓库。";
+    }
+
+    if (taskStatus === "planning") {
+      return "正在准备仓库上下文并生成首轮审计计划。";
+    }
+
+    return "大型仓库首次同步可能需要更久，请稍候。";
+  }, [task?.current_phase, task?.current_step, taskStatus]);
 
   // 🔥 当 taskId 变化时立即重置状态（新建任务时清理旧日志）
   useEffect(() => {
@@ -747,7 +773,6 @@ function AgentAuditPageContent() {
     hasConnectedRef.current = true;
     console.log(`[AgentAudit] Connecting to stream (afterSequence will be passed via streamOptions)`);
     connectStream();
-    dispatch({ type: 'ADD_LOG', payload: { type: 'info', title: 'Connected to audit stream' } });
 
     return () => {
       console.log('[AgentAudit] Cleanup: disconnecting stream');
@@ -934,14 +959,26 @@ function AgentAuditPageContent() {
               <div className="h-full flex items-center justify-center">
                 <div className="text-center text-muted-foreground">
                   {isRunning ? (
-                    <div className="flex flex-col items-center gap-3">
-                      <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-                      <span className="text-sm font-mono tracking-wide">
-                        {selectedAgentId && !showAllLogs
-                          ? 'WAITING FOR ACTIVITY FROM SELECTED AGENT...'
-                          : 'WAITING FOR AGENT ACTIVITY...'}
-                      </span>
-                    </div>
+                    shouldShowStartupSyncHint ? (
+                      <div className="flex max-w-md flex-col items-center gap-3 px-4">
+                        <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                        <span className="text-sm font-medium tracking-wide text-foreground">
+                          正在同步代码并准备审计上下文...
+                        </span>
+                        <p className="text-xs leading-6 text-muted-foreground">
+                          {startupSyncDetail}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center gap-3">
+                        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                        <span className="text-sm font-mono tracking-wide">
+                          {selectedAgentId && !showAllLogs
+                            ? 'WAITING FOR ACTIVITY FROM SELECTED AGENT...'
+                            : 'WAITING FOR AGENT ACTIVITY...'}
+                        </span>
+                      </div>
+                    )
                   ) : (
                     <span className="text-sm font-mono tracking-wide">
                       {selectedAgentId && !showAllLogs

@@ -27,7 +27,6 @@ import {
 import routes from "@/app/routes";
 import { useAuth } from "@/shared/context/AuthContext";
 import { version } from "../../../package.json";
-import { buildAssetUrl } from "@/shared/api/focusAdapter";
 
 // Icon mapping for routes with consistent sizing
 const routeIcons: Record<string, React.ReactNode> = {
@@ -51,7 +50,6 @@ export default function Sidebar({ collapsed, setCollapsed }: SidebarProps) {
     const { hasAccess } = useAuth();
     const location = useLocation();
     const [mobileOpen, setMobileOpen] = useState(false);
-    const logoUrl = buildAssetUrl("logo_deepaudit.png");
 
     const visibleRoutes = routes.filter(
         (route) => route.visible !== false && hasAccess(route.requiredAccess),
@@ -132,17 +130,13 @@ export default function Sidebar({ collapsed, setCollapsed }: SidebarProps) {
                             {/* Logo Icon */}
                             <div className="relative flex-shrink-0">
                                 <div
-                                    className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden transition-all duration-300 group-hover:shadow-[0_0_20px_rgba(255,107,44,0.3)]"
+                                    className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden transition-all duration-300 group-hover:shadow-[0_0_20px_rgba(37,99,235,0.25)]"
                                     style={{
                                         background: 'linear-gradient(135deg, hsl(var(--primary) / 0.15), hsl(var(--primary) / 0.05))',
                                         border: '1px solid hsl(var(--primary) / 0.4)'
                                     }}
                                 >
-                                    <img
-                                        src={logoUrl}
-                                        alt="DeepAudit"
-                                        className="w-6 h-6 object-contain transition-transform duration-300 group-hover:scale-110"
-                                    />
+                                    <Shield className="w-5 h-5 text-primary transition-transform duration-300 group-hover:scale-110" />
                                 </div>
                                 {/* Glow effect */}
                                 <div className="absolute inset-0 bg-primary/30 rounded-xl blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
@@ -151,11 +145,14 @@ export default function Sidebar({ collapsed, setCollapsed }: SidebarProps) {
                             {/* Logo Text */}
                             <div className={`transition-all duration-300 ${collapsed ? 'w-0 opacity-0 overflow-hidden' : 'flex-1 min-w-0 opacity-100'}`}>
                                 <div
-                                    className="text-xl font-bold tracking-wider font-mono leading-tight"
-                                    style={{ textShadow: '0 0 25px rgba(255,107,44,0.4)' }}
+                                    className="text-lg font-semibold tracking-tight font-display leading-tight"
+                                    style={{ textShadow: '0 0 18px rgba(37,99,235,0.14)' }}
                                 >
-                                    <span className="text-primary">DEEP</span>
-                                    <span style={{ color: 'var(--cyber-text)' }}>AUDIT</span>
+                                    <span className="text-primary">Focus</span>
+                                    <span style={{ color: 'var(--cyber-text)' }}>Audit</span>
+                                </div>
+                                <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground mt-0.5">
+                                    Focus Security Workspace
                                 </div>
                             </div>
                         </Link>
@@ -195,7 +192,7 @@ export default function Sidebar({ collapsed, setCollapsed }: SidebarProps) {
                                         className={`
                                             flex items-center gap-3 px-3 py-2 transition-all duration-300 group relative rounded-lg
                                             ${isActive
-                                                ? 'bg-primary/15 border border-primary/40 shadow-[0_0_15px_rgba(255,107,44,0.1)]'
+                                                ? 'bg-primary/12 border border-primary/30 shadow-[0_0_15px_rgba(37,99,235,0.12)]'
                                                 : 'border border-transparent hover:bg-card/60 hover:border-border/50'
                                             }
                                         `}
@@ -217,7 +214,7 @@ export default function Sidebar({ collapsed, setCollapsed }: SidebarProps) {
                                     >
                                         {/* Active indicator */}
                                         {isActive && (
-                                            <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-primary rounded-r shadow-[0_0_8px_rgba(255,107,44,0.5)]" />
+                                            <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-primary rounded-r shadow-[0_0_8px_rgba(37,99,235,0.45)]" />
                                         )}
 
                                         {/* Icon */}
@@ -230,7 +227,7 @@ export default function Sidebar({ collapsed, setCollapsed }: SidebarProps) {
 
                                         {/* Label */}
                                         {!collapsed && (
-                                            <span className={`font-mono text-sm tracking-wide transition-all duration-300 ${isActive ? 'font-semibold' : 'font-medium'}`}>
+                                            <span className={`text-sm transition-all duration-300 ${isActive ? 'font-semibold' : 'font-medium'}`}>
                                                 {route.name}
                                             </span>
                                         )}
@@ -281,7 +278,7 @@ export default function Sidebar({ collapsed, setCollapsed }: SidebarProps) {
                                 <UserCircle className="w-[18px] h-[18px] flex-shrink-0" />
                             </span>
                             {!collapsed && (
-                                <span className="font-mono text-sm">账号管理</span>
+                                <span className="text-sm font-medium">账号管理</span>
                             )}
                         </Link>
 
@@ -297,7 +294,7 @@ export default function Sidebar({ collapsed, setCollapsed }: SidebarProps) {
                             >
                                 <Github className="w-[18px] h-[18px] group-hover:text-primary transition-colors" />
                                 {!collapsed && (
-                                    <span className="text-xs font-mono text-muted-foreground">v{version}</span>
+                                    <span className="text-xs font-medium text-muted-foreground">v{version}</span>
                                 )}
                             </a>
 
@@ -310,7 +307,7 @@ export default function Sidebar({ collapsed, setCollapsed }: SidebarProps) {
                                         />
                                         <div className="absolute inset-0 w-2 h-2 rounded-full bg-emerald-400 animate-ping opacity-50" />
                                     </div>
-                                    <span className="text-xs font-mono text-emerald-500">Online</span>
+                                    <span className="text-xs font-medium text-emerald-500">Online</span>
                                 </div>
                             )}
 

@@ -61,7 +61,7 @@ def _serialize_scan_activity(task: AuditTask) -> dict:
         'findings_count': 0,
         'created_by_name': serialize_user_brief(task.created_by).get('name') if task.created_by else None,
         'created_at': format_datetime_text(task.sys_create_datetime),
-        'route_path': f'/deepaudit/tasks/{task.id}',
+        'route_path': f'/focusaudit/tasks/{task.id}',
     }
 
 
@@ -77,7 +77,7 @@ def _serialize_agent_activity(task: AgentTask) -> dict:
         'findings_count': task.findings_count,
         'created_by_name': serialize_user_brief(task.created_by).get('name') if task.created_by else None,
         'created_at': format_datetime_text(task.sys_create_datetime),
-        'route_path': f'/deepaudit/agent-audit/{task.id}',
+        'route_path': f'/focusaudit/agent-audit/{task.id}',
     }
 
 
@@ -367,7 +367,7 @@ def clear_domain_data(user) -> dict:
         owned_projects.delete()
 
     return {
-        'message': '当前用户 DeepAudit 域数据已清空',
+        'message': '当前用户 FocusAudit 域数据已清空',
         'deleted': deleted,
         'removed_files': removed_files,
     }
@@ -979,7 +979,7 @@ def import_domain_data(user, payload: dict[str, Any] | None) -> dict:
                 imported['events'] += 1
 
     return {
-        'message': 'DeepAudit 域数据导入完成',
+        'message': 'FocusAudit 域数据导入完成',
         'imported': imported,
         'skipped': skipped,
         'warnings': warnings,

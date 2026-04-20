@@ -18,11 +18,10 @@ export default {
       },
     },
     extend: {
-      // Typography - Pixel-perfect monospace for terminal aesthetic
       fontFamily: {
-        mono: ['"ArkPixel"', '"CJK Fallback"', '"Noto Sans SC"', '"PingFang SC"', '"Microsoft YaHei"', '"JetBrains Mono"', '"Roboto Mono"', '"Courier New"', 'monospace'],
-        sans: ['"Inter"', '"Noto Sans SC"', '"PingFang SC"', '"Microsoft YaHei"', 'system-ui', 'sans-serif'],
-        display: ['"Orbitron"', '"Rajdhani"', 'sans-serif'],
+        mono: ['"JetBrains Mono"', '"Roboto Mono"', '"SFMono-Regular"', '"ArkPixel"', '"CJK Fallback"', '"Noto Sans SC"', '"PingFang SC"', '"Microsoft YaHei"', '"Courier New"', 'monospace'],
+        sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', '"Helvetica Neue"', 'Arial', '"Noto Sans"', '"Noto Sans SC"', '"PingFang SC"', '"Microsoft YaHei"', 'system-ui', 'sans-serif'],
+        display: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', '"Helvetica Neue"', 'Arial', '"Noto Sans"', '"Noto Sans SC"', '"PingFang SC"', '"Microsoft YaHei"', 'system-ui', 'sans-serif'],
       },
       fontSize: {
         'xs': ['0.8125rem', { lineHeight: '1.125rem', letterSpacing: '0.01em' }],  // 13px
@@ -75,8 +74,8 @@ export default {
         },
         // Core Palette - Direct color access
         terminal: {
-          orange: '#FF6B2C',      // Vibrant Orange
-          'orange-dark': '#E55A1F',
+          orange: '#2563EB',
+          'orange-dark': '#1D4ED8',
           red: '#D32F2F',         // Deep Red
           'red-dark': '#B71C1C',
           green: '#00E676',       // Signal Green
@@ -106,13 +105,11 @@ export default {
       boxShadow: {
         'sm': 'var(--shadow-sm)',
         'md': 'var(--shadow-md)',
-        'lg': '0 4px 6px rgba(0, 0, 0, 0.12)',
+        'lg': 'var(--shadow-lg)',
         'focus': 'var(--shadow-focus)',
-        // Minimal retro effect for special cases
         'terminal': '1px 1px 0px rgba(0, 0, 0, 0.15)',
         'terminal-md': '2px 2px 0px rgba(0, 0, 0, 0.15)',
-        // Glow effects for status indicators
-        'glow-orange': '0 0 8px rgba(255, 107, 44, 0.4)',
+        'glow-orange': '0 0 8px rgba(37, 99, 235, 0.4)',
         'glow-red': '0 0 8px rgba(211, 47, 47, 0.4)',
         'glow-green': '0 0 8px rgba(0, 230, 118, 0.4)',
       },

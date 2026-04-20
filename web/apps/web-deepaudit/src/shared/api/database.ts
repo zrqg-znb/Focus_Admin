@@ -676,7 +676,7 @@ export const api = {
         database_connected: false,
         total_records: 0,
         last_backup_date: null,
-        issues: ["无法连接到 DeepAudit 数据工具接口"],
+        issues: ["无法连接到 FocusAudit 数据工具接口"],
         warnings: [],
       };
     }

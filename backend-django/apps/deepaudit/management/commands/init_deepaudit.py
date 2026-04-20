@@ -47,30 +47,30 @@ MENU_SEEDS = [
     MenuSeed(
         'root',
         None,
-        'DeepAudit 平台',
-        'DeepAudit 平台',
-        '/deepaudit',
+        'FocusAudit 平台',
+        'FocusAudit 平台',
+        '/focusaudit',
         'BasicLayout',
         'catalog',
         90,
         None,
         'lucide:shield',
         hide_children_in_menu=True,
-        link='/deepaudit-app/',
+        link='/focusaudit-app/',
         open_in_new_window=True,
     ),
-    MenuSeed('agent_audit', 'root', 'Agent审计', 'Agent审计', '/deepaudit/agent-audit', '/deepaudit/agent-audit/index', order=10, hide_in_menu=True, auth_code='deepaudit:agent-audit'),
-    MenuSeed('dashboard', 'root', '仪表盘', '仪表盘', '/deepaudit/dashboard', '/deepaudit/dashboard/index', order=20, hide_in_menu=True, auth_code='deepaudit:dashboard'),
-    MenuSeed('projects', 'root', '项目管理', '项目管理', '/deepaudit/projects', '/deepaudit/projects/index', order=30, hide_in_menu=True, auth_code='deepaudit:projects'),
-    MenuSeed('instant_analysis', 'root', '即时分析', '即时分析', '/deepaudit/instant-analysis', '/deepaudit/instant-analysis/index', order=40, hide_in_menu=True, auth_code='deepaudit:instant-analysis'),
-    MenuSeed('tasks', 'root', '任务中心', '任务中心', '/deepaudit/tasks', '/deepaudit/tasks/index', order=50, hide_in_menu=True, auth_code='deepaudit:tasks'),
-    MenuSeed('rules', 'root', '审计规则', '审计规则', '/deepaudit/rules', '/deepaudit/rules/index', order=60, hide_in_menu=True, auth_code='deepaudit:rules'),
-    MenuSeed('prompts', 'root', '提示词模板', '提示词模板', '/deepaudit/prompts', '/deepaudit/prompts/index', order=70, hide_in_menu=True, auth_code='deepaudit:prompts'),
-    MenuSeed('settings', 'root', '审计设置', '审计设置', '/deepaudit/settings', '/deepaudit/settings/index', order=80, hide_in_menu=True, auth_code='deepaudit:settings'),
-    MenuSeed('recycle_bin', 'root', '回收站', '回收站', '/deepaudit/recycle-bin', '/deepaudit/recycle-bin/index', order=90, hide_in_menu=True, auth_code='deepaudit:recycle-bin'),
-    MenuSeed('project_detail', 'projects', '项目详情', '项目详情', '/deepaudit/projects/:id', '/deepaudit/projects/detail', order=1, active_path='/deepaudit/projects', hide_in_menu=True, keep_alive=False, auth_code='deepaudit:projects:detail'),
-    MenuSeed('task_detail', 'tasks', '任务详情', '任务详情', '/deepaudit/tasks/:id', '/deepaudit/tasks/detail', order=1, active_path='/deepaudit/tasks', hide_in_menu=True, keep_alive=False, auth_code='deepaudit:tasks:detail'),
-    MenuSeed('agent_detail', 'agent_audit', 'Agent任务详情', 'Agent任务详情', '/deepaudit/agent-audit/:id', '/deepaudit/agent-audit/detail', order=1, active_path='/deepaudit/agent-audit', hide_in_menu=True, keep_alive=False, auth_code='deepaudit:agent-audit:detail'),
+    MenuSeed('agent_audit', 'root', 'Agent审计', 'Agent审计', '/focusaudit/agent-audit', '/focusaudit/agent-audit/index', order=10, hide_in_menu=True, auth_code='deepaudit:agent-audit'),
+    MenuSeed('dashboard', 'root', '仪表盘', '仪表盘', '/focusaudit/dashboard', '/focusaudit/dashboard/index', order=20, hide_in_menu=True, auth_code='deepaudit:dashboard'),
+    MenuSeed('projects', 'root', '项目管理', '项目管理', '/focusaudit/projects', '/focusaudit/projects/index', order=30, hide_in_menu=True, auth_code='deepaudit:projects'),
+    MenuSeed('instant_analysis', 'root', '即时分析', '即时分析', '/focusaudit/instant-analysis', '/focusaudit/instant-analysis/index', order=40, hide_in_menu=True, auth_code='deepaudit:instant-analysis'),
+    MenuSeed('tasks', 'root', '任务中心', '任务中心', '/focusaudit/tasks', '/focusaudit/tasks/index', order=50, hide_in_menu=True, auth_code='deepaudit:tasks'),
+    MenuSeed('rules', 'root', '审计规则', '审计规则', '/focusaudit/rules', '/focusaudit/rules/index', order=60, hide_in_menu=True, auth_code='deepaudit:rules'),
+    MenuSeed('prompts', 'root', '提示词模板', '提示词模板', '/focusaudit/prompts', '/focusaudit/prompts/index', order=70, hide_in_menu=True, auth_code='deepaudit:prompts'),
+    MenuSeed('settings', 'root', '审计设置', '审计设置', '/focusaudit/settings', '/focusaudit/settings/index', order=80, hide_in_menu=True, auth_code='deepaudit:settings'),
+    MenuSeed('recycle_bin', 'root', '回收站', '回收站', '/focusaudit/recycle-bin', '/focusaudit/recycle-bin/index', order=90, hide_in_menu=True, auth_code='deepaudit:recycle-bin'),
+    MenuSeed('project_detail', 'projects', '项目详情', '项目详情', '/focusaudit/projects/:id', '/focusaudit/projects/detail', order=1, active_path='/focusaudit/projects', hide_in_menu=True, keep_alive=False, auth_code='deepaudit:projects:detail'),
+    MenuSeed('task_detail', 'tasks', '任务详情', '任务详情', '/focusaudit/tasks/:id', '/focusaudit/tasks/detail', order=1, active_path='/focusaudit/tasks', hide_in_menu=True, keep_alive=False, auth_code='deepaudit:tasks:detail'),
+    MenuSeed('agent_detail', 'agent_audit', 'Agent任务详情', 'Agent任务详情', '/focusaudit/agent-audit/:id', '/focusaudit/agent-audit/detail', order=1, active_path='/focusaudit/agent-audit', hide_in_menu=True, keep_alive=False, auth_code='deepaudit:agent-audit:detail'),
 ]
 
 
@@ -218,7 +218,7 @@ PERMISSION_SEEDS = {
 
 
 class Command(BaseCommand):
-    help = '初始化 DeepAudit 菜单、权限以及默认模板/规则集'
+    help = '初始化 FocusAudit 菜单、权限以及默认模板/规则集'
 
     def handle(self, *args, **options):
         operator = User.objects.filter(is_superuser=True).order_by('sys_create_datetime').first()
@@ -230,35 +230,23 @@ class Command(BaseCommand):
         PermissionCacheManager.invalidate_permission_cache()
         PermissionCacheManager.invalidate_global_permissions()
         self.stdout.write(self.style.SUCCESS(
-            f'DeepAudit 初始化完成：菜单 {len(menus)} 项，权限 {permission_count} 项，模板 {template_count} 项，规则集 {rule_count} 项。'
+            f'FocusAudit 初始化完成：菜单 {len(menus)} 项，权限 {permission_count} 项，模板 {template_count} 项，规则集 {rule_count} 项。'
         ))
 
     def _seed_menus(self, operator):
         created = {}
         for seed in MENU_SEEDS:
             parent = created.get(seed.parent_key)
-            menu, _ = Menu.objects.get_or_create(
-                parent=parent,
-                path=seed.path,
-                defaults={
-                    'name': seed.name,
-                    'title': seed.title,
-                    'authCode': seed.auth_code,
-                    'type': seed.menu_type,
-                    'component': seed.component,
-                    'redirect': seed.redirect,
-                    'activePath': seed.active_path,
-                    'icon': seed.icon,
-                    'order': seed.order,
-                    'hideInMenu': seed.hide_in_menu,
-                    'hideChildrenInMenu': seed.hide_children_in_menu,
-                    'keepAlive': seed.keep_alive,
-                    'link': seed.link,
-                    'openInNewWindow': seed.open_in_new_window,
-                    'sys_creator': operator,
-                    'sys_modifier': operator,
-                },
-            )
+            menu = self._find_existing_menu(seed, parent)
+            if not menu:
+                menu = Menu(
+                    parent=parent,
+                    path=seed.path,
+                    sys_creator=operator,
+                )
+
+            menu.parent = parent
+            menu.path = seed.path
             menu.name = seed.name
             menu.title = seed.title
             menu.authCode = seed.auth_code
@@ -277,6 +265,44 @@ class Command(BaseCommand):
             menu.save()
             created[seed.key] = menu
         return created
+
+    @staticmethod
+    def _legacy_path(path: str | None) -> str | None:
+        if not path:
+            return path
+        if path.startswith('/focusaudit'):
+            return path.replace('/focusaudit', '/deepaudit', 1)
+        return path
+
+    @staticmethod
+    def _legacy_link(link: str | None) -> str | None:
+        if not link:
+            return link
+        if link.startswith('/focusaudit-app'):
+            return link.replace('/focusaudit-app', '/deepaudit-app', 1)
+        return link
+
+    def _find_existing_menu(self, seed: MenuSeed, parent):
+        exact_match = Menu.objects.filter(parent=parent, path=seed.path).order_by('sys_create_datetime').first()
+        if exact_match:
+            return exact_match
+
+        legacy_path = self._legacy_path(seed.path)
+        if legacy_path and legacy_path != seed.path:
+            legacy_match = Menu.objects.filter(parent=parent, path=legacy_path).order_by('sys_create_datetime').first()
+            if legacy_match:
+                return legacy_match
+
+        if seed.link:
+            link_candidates = [seed.link]
+            legacy_link = self._legacy_link(seed.link)
+            if legacy_link and legacy_link != seed.link:
+                link_candidates.append(legacy_link)
+            link_match = Menu.objects.filter(parent=parent, link__in=link_candidates).order_by('sys_create_datetime').first()
+            if link_match:
+                return link_match
+
+        return None
 
     def _seed_permissions(self, menus, operator) -> int:
         total = 0

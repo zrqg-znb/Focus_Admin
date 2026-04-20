@@ -38,10 +38,13 @@ export default function TerminalProgressDialog({
     const [isCompleted, setIsCompleted] = useState(false);
     const [isFailed, setIsFailed] = useState(false);
     const [isCancelled, setIsCancelled] = useState(false);
+    const [currentStage, setCurrentStage] = useState<"preparing" | "syncing" | "scanning" | "completed" | "failed" | "cancelled">("preparing");
     const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
     const logsEndRef = useRef<HTMLDivElement>(null);
     const pollIntervalRef = useRef<number | null>(null);
     const hasInitializedLogsRef = useRef(false);
+    const hasWorkspaceSyncHintRef = useRef(false);
+    const hasScanStartedRef = useRef(false);
 
     // Refs for state accessed in intervals/effects to avoid dependency cycles
     const logsRef = useRef<LogEntry[]>([]);
@@ -88,6 +91,7 @@ export default function TerminalProgressDialog({
         // 1. 标记任务为取消状态
         taskControl.cancelTask(taskId);
         setIsCancelled(true);
+        setCurrentStage("cancelled");
         addLog("[ERR] 用户取消任务，正在停止...", "error");
 
         // 2. 立即更新数据库状态
@@ -133,7 +137,10 @@ export default function TerminalProgressDialog({
             setIsCompleted(false);
             setIsFailed(false);
             setIsCancelled(false);
+            setCurrentStage("preparing");
             hasInitializedLogsRef.current = false;
+            hasWorkspaceSyncHintRef.current = false;
+            hasScanStartedRef.current = false;
             if (pollIntervalRef.current) {
                 clearInterval(pollIntervalRef.current);
                 pollIntervalRef.current = null;
@@ -149,7 +156,7 @@ export default function TerminalProgressDialog({
             addLog("[INFO] 审计任务已启动", "info");
             addLog(`TASK_ID: ${taskId}`, "info");
             addLog(`TYPE: ${taskType === "repository" ? "REPO_AUDIT" : "ZIP_AUDIT"}`, "info");
-            addLog("[WAIT] 正在初始化审计环境...", "info");
+            addLog("[WAIT] 任务已进入队列，正在等待工作区就绪...", "info");
         }
 
         let lastScannedFiles = 0;
@@ -215,19 +222,50 @@ export default function TerminalProgressDialog({
                     lastStatus = task.status;
                 }
 
+                const isWorkspaceSyncing =
+                    (task.status === "pending" || task.status === "running") &&
+                    (task.total_files || 0) === 0 &&
+                    (task.scanned_files || 0) === 0;
+
+                if (isWorkspaceSyncing) {
+                    setCurrentStage("syncing");
+                    if (!hasWorkspaceSyncHintRef.current) {
+                        addLog(
+                            taskType === "repository"
+                                ? "[SYNC] 正在同步代码并准备工作区..."
+                                : "[SYNC] 正在整理上传源码并准备工作区...",
+                            "info",
+                        );
+                        addLog(
+                            taskType === "repository"
+                                ? "[WAIT] 正在读取仓库内容，大型仓库首次加载可能需要更久..."
+                                : "[WAIT] 正在读取源码目录并初始化分析环境，请稍候...",
+                            "info",
+                        );
+                        hasWorkspaceSyncHintRef.current = true;
+                    }
+                } else if (!isCompletedRef.current && !isFailedRef.current && !isCancelledRef.current) {
+                    setCurrentStage("scanning");
+                }
+
                 // 检查任务状态
                 if (task.status === "pending") {
                     // 静默跳过 pending 状态，不显示任何日志
                 } else if (task.status === "running") {
-                    // 首次进入运行状态
-                    if (statusChanged && logsRef.current.filter(l => l.message.includes("开始扫描")).length === 0) {
-                        addLog("[SCAN] 开始扫描代码文件...", "info");
+                    if ((task.total_files > 0 || task.scanned_files > 0) && !hasScanStartedRef.current) {
+                        addLog(
+                            taskType === "repository"
+                                ? "[SCAN] 仓库同步完成，开始扫描代码文件..."
+                                : "[SCAN] 工作区准备完成，开始扫描代码文件...",
+                            "info",
+                        );
                         if (task.project) {
                             addLog(`[PROJ] 项目: ${task.project.name}`, "info");
                             if (task.branch_name) {
                                 addLog(`[BRCH] 分支: ${task.branch_name}`, "info");
                             }
                         }
+                        hasScanStartedRef.current = true;
                     }
 
                     // 显示进度更新（仅在有变化时）
@@ -257,6 +295,7 @@ export default function TerminalProgressDialog({
                 } else if (task.status === "completed") {
                     // 任务完成
                     if (!isCompletedRef.current) {
+                        setCurrentStage("completed");
                         addLog("", "info"); // 空行分隔
                         addLog("[DONE] 代码扫描完成", "success");
                         addLog("----------------------------------", "info");
@@ -314,6 +353,7 @@ export default function TerminalProgressDialog({
                 } else if (task.status === "cancelled") {
                     // 任务被取消
                     if (!isCancelledRef.current) {
+                        setCurrentStage("cancelled");
                         addLog("", "info"); // 空行分隔
                         addLog("[STOP] 任务已被用户取消", "warning");
                         addLog("----------------------------------", "warning");
@@ -333,6 +373,7 @@ export default function TerminalProgressDialog({
                 } else if (task.status === "failed") {
                     // 任务失败
                     if (!isFailedRef.current) {
+                        setCurrentStage("failed");
                         addLog("", "info"); // 空行分隔
                         addLog("[FAIL] 审计任务执行失败", "error");
                         addLog("----------------------------------", "error");
@@ -428,6 +469,24 @@ export default function TerminalProgressDialog({
                 return "text-muted-foreground";
         }
     };
+
+    const liveStageText = isCompleted
+        ? "TASK COMPLETED"
+        : isFailed
+          ? "TASK FAILED"
+          : isCancelled
+            ? "TASK CANCELLED"
+            : currentStage === "syncing"
+              ? (taskType === "repository" ? "SYNCING REPOSITORY..." : "PREPARING WORKSPACE...")
+              : currentStage === "scanning"
+                ? "SCANNING FILES..."
+                : "INITIALIZING...";
+
+    const liveStageDescription = currentStage === "syncing"
+        ? (taskType === "repository" ? "正在同步代码并读取仓库内容" : "正在准备源码工作区")
+        : currentStage === "scanning"
+          ? "已进入扫描阶段，正在统计文件和问题"
+          : "等待任务启动";
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -530,6 +589,11 @@ export default function TerminalProgressDialog({
                                 ) : (
                                     <Badge className="w-full justify-center cyber-badge-info animate-pulse">RUNNING</Badge>
                                 )}
+                                {!isCompleted && !isFailed && !isCancelled && (
+                                    <p className="text-[11px] leading-5 text-slate-500 dark:text-[#8b97ab]">
+                                        {liveStageDescription}
+                                    </p>
+                                )}
                             </div>
                         </div>
 
@@ -566,9 +630,7 @@ export default function TerminalProgressDialog({
                             <div className="h-14 px-4 border-t border-slate-200 dark:border-[#1a2535] bg-slate-50 dark:cyber-bg-elevated/90 flex items-center justify-between">
                                 <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-[#6a7587] font-mono tracking-wide">
                                     <Activity className="w-3.5 h-3.5" />
-                                    <span>
-                                        {isCompleted ? "TASK COMPLETED" : isFailed ? "TASK FAILED" : isCancelled ? "TASK CANCELLED" : "EXECUTING..."}
-                                    </span>
+                                    <span>{liveStageText}</span>
                                 </div>
 
                                 <div className="flex items-center gap-3">

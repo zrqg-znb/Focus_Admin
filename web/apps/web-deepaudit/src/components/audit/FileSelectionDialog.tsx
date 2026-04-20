@@ -618,8 +618,18 @@ export default function FileSelectionDialog({
                     {/* 文件列表 */}
                     <div className="border border-border cyber-bg-elevated relative h-[450px] overflow-hidden rounded">
                         {loading ? (
-                            <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="loading-spinner" />
+                            <div className="absolute inset-0 flex items-center justify-center bg-background/80 px-6 text-center backdrop-blur-sm">
+                                <div className="max-w-sm space-y-4">
+                                    <div className="loading-spinner mx-auto" />
+                                    <div className="space-y-2">
+                                        <p className="text-sm font-semibold text-foreground">
+                                            正在同步代码并读取文件列表...
+                                        </p>
+                                        <p className="text-xs leading-6 text-muted-foreground">
+                                            大型仓库首次加载可能需要更久，请稍候。
+                                        </p>
+                                    </div>
+                                </div>
                             </div>
                         ) : filteredFiles.length > 0 ? (
                             <div className="h-full overflow-auto custom-scrollbar">

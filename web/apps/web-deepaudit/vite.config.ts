@@ -6,11 +6,32 @@ import svgr from "vite-plugin-svgr";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
+  const legacyBaseRedirectPlugin = {
+    name: "legacy-deepaudit-base-redirect",
+    configureServer(server: import("vite").ViteDevServer) {
+      server.middlewares.use((req, res, next) => {
+        const url = req.url || "";
+        if (!url.startsWith("/deepaudit-app")) {
+          next();
+          return;
+        }
+
+        const redirectedUrl = url.replace(
+          /^\/deepaudit-app(?=\/|$)/,
+          "/focusaudit-app",
+        );
+        res.statusCode = 302;
+        res.setHeader("Location", redirectedUrl);
+        res.end();
+      });
+    },
+  };
 
   return {
-    base: "/deepaudit-app/",
+    base: "/focusaudit-app/",
     plugins: [
       react(),
+      legacyBaseRedirectPlugin,
       svgr({
         svgrOptions: {
           icon: true,
@@ -54,7 +75,7 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5174,
       host: true,
-      open: "/deepaudit-app/",
+      open: "/focusaudit-app/",
       cors: {
         origin: true,
         credentials: true,

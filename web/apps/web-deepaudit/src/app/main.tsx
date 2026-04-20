@@ -12,7 +12,7 @@ createRoot(document.getElementById("root")!).render(
     <ErrorBoundary>
       <ThemeProvider
         attribute="class"
-        defaultTheme="dark"
+        defaultTheme="light"
         enableSystem
         disableTransitionOnChange={false}
       >

@@ -468,7 +468,7 @@ export default function Projects() {
               <div className="w-3 h-3 rounded-full bg-green-500/80" />
             </div>
             <span className="ml-2 font-mono text-xs text-muted-foreground tracking-wider">
-              new_project@deepaudit
+              new_project@focusaudit
             </span>
           </div>
 
@@ -1009,7 +1009,7 @@ export default function Projects() {
               <div className="w-3 h-3 rounded-full bg-green-500/80" />
             </div>
             <span className="ml-2 font-mono text-xs text-muted-foreground tracking-wider">
-              edit_project@deepaudit
+              edit_project@focusaudit
             </span>
           </div>
 
@@ -1276,7 +1276,7 @@ export default function Projects() {
               <div className="w-3 h-3 rounded-full bg-green-500/80" />
             </div>
             <span className="ml-2 font-mono text-xs text-rose-400 tracking-wider">
-              confirm_delete@deepaudit
+              confirm_delete@focusaudit
             </span>
           </div>
 

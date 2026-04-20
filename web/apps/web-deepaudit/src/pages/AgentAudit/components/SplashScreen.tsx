@@ -13,7 +13,7 @@ interface SplashScreenProps {
 
 // Enhanced boot sequence messages with icons
 const BOOT_SEQUENCE = [
-  { text: "[INIT] Loading DeepAudit Core...", delay: 0, type: 'init' },
+  { text: "[INIT] Loading FocusAudit Core...", delay: 0, type: 'init' },
   { text: "[SCAN] Neural Analysis Engine v3.0", delay: 200, type: 'scan' },
   { text: "[LOAD] Vulnerability Pattern Database", delay: 400, type: 'load' },
   { text: "[SYNC] Agent Orchestration Module", delay: 600, type: 'sync' },
@@ -234,16 +234,16 @@ export function SplashScreen({ onComplete }: SplashScreenProps) {
               <div
                 className="text-5xl sm:text-6xl md:text-7xl font-bold tracking-wider mb-3 font-mono relative logo-text"
               >
-                <span className="text-primary">DEEP</span>
+                <span className="text-primary">FOCUS</span>
                 <span className="text-gray-800 dark:text-white">AUDIT</span>
               </div>
               {/* Glitch layers - dark mode only, opacity controlled by CSS */}
               <div className="glitch-layer glitch-layer-1 text-5xl sm:text-6xl md:text-7xl font-bold tracking-wider font-mono absolute top-0 left-0 w-full opacity-0 dark:opacity-0">
-                <span className="text-cyan-500">DEEP</span>
+                <span className="text-cyan-500">FOCUS</span>
                 <span className="text-white">AUDIT</span>
               </div>
               <div className="glitch-layer glitch-layer-2 text-5xl sm:text-6xl md:text-7xl font-bold tracking-wider font-mono absolute top-0 left-0 w-full opacity-0 dark:opacity-0">
-                <span className="text-red-500">DEEP</span>
+                <span className="text-red-500">FOCUS</span>
                 <span className="text-white">AUDIT</span>
               </div>
             </div>
@@ -268,7 +268,7 @@ export function SplashScreen({ onComplete }: SplashScreenProps) {
           >
             {/* Terminal border glow - dark mode only */}
             <div className="absolute inset-0 rounded-xl border border-primary/30 pointer-events-none hidden dark:block" />
-            <div className="absolute inset-0 rounded-xl shadow-[0_0_30px_rgba(255,107,44,0.2),inset_0_0_30px_rgba(0,0,0,0.5)] pointer-events-none hidden dark:block" />
+            <div className="absolute inset-0 rounded-xl shadow-[0_0_30px_rgba(37,99,235,0.2),inset_0_0_30px_rgba(0,0,0,0.5)] pointer-events-none hidden dark:block" />
 
             {/* Terminal header - adaptive */}
             <div className="relative flex items-center gap-3 px-4 py-2.5 bg-gray-100 dark:bg-gray-950 border-b border-gray-200 dark:border-primary/20">
@@ -282,7 +282,7 @@ export function SplashScreen({ onComplete }: SplashScreenProps) {
               <div className="flex-1 flex items-center justify-center gap-2">
                 <span className="text-primary/60 text-xs">▶</span>
                 <span className="text-xs text-gray-500 dark:text-gray-400 font-mono tracking-[0.15em] uppercase">
-                  root@deepaudit:~#
+                  root@focusaudit:~#
                 </span>
                 <span className="w-2 h-4 bg-primary/80 animate-pulse" />
               </div>
@@ -319,7 +319,7 @@ export function SplashScreen({ onComplete }: SplashScreenProps) {
                   <span className="text-emerald-600 dark:text-emerald-500/60">$</span>
                   <span className={`w-1.5 h-1.5 rounded-full ${
                     log.includes("[READY]") ? "bg-emerald-500 dark:shadow-[0_0_8px_rgba(52,211,153,0.8)]" :
-                    log.includes("[INIT]") ? "bg-primary dark:shadow-[0_0_8px_rgba(255,107,44,0.8)]" :
+                    log.includes("[INIT]") ? "bg-primary dark:shadow-[0_0_8px_rgba(37,99,235,0.8)]" :
                     log.includes("[SCAN]") ? "bg-violet-500 dark:shadow-[0_0_8px_rgba(167,139,250,0.8)]" :
                     log.includes("[LOAD]") ? "bg-amber-500 dark:shadow-[0_0_8px_rgba(251,191,36,0.8)]" :
                     log.includes("[SYNC]") ? "bg-cyan-500 dark:shadow-[0_0_8px_rgba(34,211,238,0.8)]" :
@@ -413,16 +413,16 @@ export function SplashScreen({ onComplete }: SplashScreenProps) {
         /* Cyber grid background - adaptive */
         .cyber-grid {
           background-image:
-            linear-gradient(rgba(255,107,44,0.15) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(255,107,44,0.15) 1px, transparent 1px);
+            linear-gradient(rgba(37,99,235,0.15) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(37,99,235,0.15) 1px, transparent 1px);
           background-size: 50px 50px;
           animation: gridMove 20s linear infinite;
         }
 
         .dark .cyber-grid {
           background-image:
-            linear-gradient(rgba(255,107,44,0.1) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(255,107,44,0.1) 1px, transparent 1px);
+            linear-gradient(rgba(37,99,235,0.1) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(37,99,235,0.1) 1px, transparent 1px);
         }
 
         @keyframes gridMove {
@@ -435,8 +435,8 @@ export function SplashScreen({ onComplete }: SplashScreenProps) {
           position: absolute;
           width: 100%;
           height: 2px;
-          background: linear-gradient(90deg, transparent, rgba(255,107,44,0.5), rgba(0,255,255,0.3), transparent);
-          box-shadow: 0 0 10px rgba(255,107,44,0.5), 0 0 20px rgba(0,255,255,0.3);
+          background: linear-gradient(90deg, transparent, rgba(37,99,235,0.5), rgba(0,255,255,0.3), transparent);
+          box-shadow: 0 0 10px rgba(37,99,235,0.5), 0 0 20px rgba(0,255,255,0.3);
           animation: scanLine 4s linear infinite;
         }
 
@@ -479,7 +479,7 @@ export function SplashScreen({ onComplete }: SplashScreenProps) {
             180deg,
             transparent 0%,
             rgba(0,255,255,0.3) 10%,
-            rgba(255,107,44,0.5) 50%,
+            rgba(37,99,235,0.5) 50%,
             rgba(0,255,255,0.3) 90%,
             transparent 100%
           );
@@ -546,15 +546,15 @@ export function SplashScreen({ onComplete }: SplashScreenProps) {
         /* Neon text effect - dark mode only */
         .dark .logo-text {
           text-shadow:
-            0 0 10px rgba(255,107,44,0.8),
-            0 0 20px rgba(255,107,44,0.6),
-            0 0 40px rgba(255,107,44,0.4),
-            0 0 80px rgba(255,107,44,0.2);
+            0 0 10px rgba(37,99,235,0.8),
+            0 0 20px rgba(37,99,235,0.6),
+            0 0 40px rgba(37,99,235,0.4),
+            0 0 80px rgba(37,99,235,0.2);
         }
 
         /* Light mode logo - subtle shadow */
         .logo-text {
-          text-shadow: 0 2px 10px rgba(255,107,44,0.2);
+          text-shadow: 0 2px 10px rgba(37,99,235,0.2);
         }
 
         /* Cyber text styling - dark mode only */

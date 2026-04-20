@@ -12,7 +12,7 @@ export default function NotFound() {
   return (
     <>
       <PageMeta title="页面未找到" description="" />
-      <div className="relative flex flex-col items-center justify-center min-h-screen p-6 cyber-bg-elevated font-mono overflow-hidden">
+      <div className="relative flex flex-col items-center justify-center min-h-screen p-6 cyber-bg-elevated font-sans overflow-hidden">
         {/* Grid background */}
         <div className="absolute inset-0 cyber-grid-subtle pointer-events-none" />
 
@@ -34,7 +34,7 @@ export default function NotFound() {
           {/* Error Code */}
           <div className="mb-6">
             <span className="text-8xl font-bold text-primary"
-              style={{ textShadow: '0 0 30px rgba(255,107,44,0.5), 0 0 60px rgba(255,107,44,0.3)' }}>
+              style={{ textShadow: '0 0 30px rgba(37,99,235,0.32), 0 0 60px rgba(37,99,235,0.18)' }}>
               404
             </span>
           </div>
@@ -76,8 +76,8 @@ export default function NotFound() {
         </div>
 
         {/* Footer */}
-        <p className="absolute bottom-6 left-1/2 -translate-x-1/2 text-xs text-muted-foreground font-mono uppercase">
-          &copy; {new Date().getFullYear()} DeepAudit
+        <p className="absolute bottom-6 left-1/2 -translate-x-1/2 text-xs text-muted-foreground font-medium uppercase tracking-[0.18em]">
+          &copy; {new Date().getFullYear()} FocusAudit
         </p>
       </div>
     </>

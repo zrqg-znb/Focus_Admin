@@ -27,7 +27,7 @@ RUN echo "types { application/javascript js mjs; }" > /etc/nginx/conf.d/mjs.conf
 
 # 复制构建产物
 COPY --from=builder /app/apps/web-ele/dist /usr/share/nginx/html
-COPY --from=builder /app/apps/web-deepaudit/dist /usr/share/nginx/html/deepaudit-app
+COPY --from=builder /app/apps/web-deepaudit/dist /usr/share/nginx/html/focusaudit-app
 
 # 复制 nginx 配置
 COPY --from=builder /app/scripts/deploy/nginx.conf /etc/nginx/nginx.conf

@@ -869,7 +869,7 @@ public class Example {
                   启动真实仓库审计任务
                 </div>
                 <p className="mt-2 text-xs leading-6 text-muted-foreground">
-                  这里会直接复用 DeepAudit 的仓库扫描后端，创建正式审计任务并跳转到任务详情，而不是走任何 mock 流程。
+                  这里会直接复用 FocusAudit 的仓库扫描后端，创建正式审计任务并跳转到任务详情，而不是走任何 mock 流程。
                 </p>
               </div>
 
