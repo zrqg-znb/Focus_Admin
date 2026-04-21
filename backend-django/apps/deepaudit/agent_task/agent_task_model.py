@@ -3,7 +3,7 @@ from django.db import models
 from common.fu_model import RootModel
 from core.user.user_model import User
 
-from apps.deepaudit.constants import AGENT_TASK_STATUS_CHOICES, FINDING_STATUS_CHOICES, SEVERITY_CHOICES
+from apps.deepaudit.constants import AGENT_TASK_STATUS_CHOICES, FINDING_STATUS_CHOICES, REPOSITORY_TYPE_CHOICES, SEVERITY_CHOICES
 from apps.deepaudit.project.project_model import AuditProject
 
 
@@ -16,6 +16,8 @@ class AgentTask(RootModel):
     audit_scope = models.JSONField(default=dict, blank=True, verbose_name='审计范围')
     target_vulnerabilities = models.JSONField(default=list, blank=True, verbose_name='目标漏洞')
     verification_level = models.CharField(max_length=50, default='sandbox', verbose_name='验证级别')
+    repository_url = models.CharField(max_length=1000, blank=True, null=True, verbose_name='仓库地址快照')
+    repository_type = models.CharField(max_length=20, choices=REPOSITORY_TYPE_CHOICES, default='single', verbose_name='仓库类型快照')
     branch_name = models.CharField(max_length=255, blank=True, null=True, verbose_name='分支名称')
     manifest_xml = models.CharField(max_length=1000, blank=True, null=True, verbose_name='Manifest XML')
     group = models.CharField(max_length=255, blank=True, null=True, verbose_name='Group')

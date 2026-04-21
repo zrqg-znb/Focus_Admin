@@ -72,6 +72,32 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+function parseProjectProgrammingLanguages(project: null | Project): string[] {
+  if (!project?.programming_languages) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(project.programming_languages);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function buildEditFormFromProject(project: Project): CreateProjectForm {
+  return {
+    name: project.name,
+    description: project.description || '',
+    source_type: project.source_type || 'repository',
+    repository_url: project.repository_url || '',
+    repository_type: normalizeRepositoryType(project.repository_type),
+    default_branch: project.default_branch || 'main',
+    manifest_xml: project.manifest_xml || '',
+    group: project.group || '',
+    programming_languages: parseProjectProgrammingLanguages(project),
+  };
+}
+
 export default function ProjectDetail() {
   const { hasAccess } = useAuth();
   const { id } = useParams<{ id: string }>();
@@ -93,6 +119,10 @@ export default function ProjectDetail() {
     group: '',
     programming_languages: [],
   });
+  const [settingsDirty, setSettingsDirty] = useState(false);
+  const [settingsProjectId, setSettingsProjectId] = useState<null | string>(
+    null,
+  );
   const [activeTab, setActiveTab] = useState('overview');
   const [latestIssues, setLatestIssues] = useState<AggregatedAuditIssue[]>([]);
   const [latestFindings, setLatestFindings] = useState<
@@ -114,6 +144,17 @@ export default function ProjectDetail() {
   const canCreateAnyTask = canCreateFastTask || canCreateAgentTask;
   const canUpdateProject = hasAccess(DEEPAUDIT_ACTION_CODES.PROJECTS_UPDATE);
   const canUpdateIssues = hasAccess(DEEPAUDIT_ACTION_CODES.ISSUES_UPDATE);
+
+  const syncEditFormFromProject = (nextProject: Project) => {
+    setEditForm(buildEditFormFromProject(nextProject));
+    setSettingsDirty(false);
+    setSettingsProjectId(nextProject.id);
+  };
+
+  const updateEditForm = (patch: Partial<CreateProjectForm>) => {
+    setSettingsDirty(true);
+    setEditForm((current) => ({ ...current, ...patch }));
+  };
 
   // ============ Helpers ============
 
@@ -498,20 +539,7 @@ export default function ProjectDetail() {
     }
     if (!project) return;
 
-    setEditForm({
-      name: project.name,
-      description: project.description || '',
-      source_type: project.source_type || 'repository',
-      repository_url: project.repository_url || '',
-      repository_type: normalizeRepositoryType(project.repository_type),
-      default_branch: project.default_branch || 'main',
-      manifest_xml: project.manifest_xml || '',
-      group: project.group || '',
-      programming_languages: project.programming_languages
-        ? JSON.parse(project.programming_languages)
-        : [],
-    });
-
+    syncEditFormFromProject(project);
     setActiveTab('settings');
   };
 
@@ -542,6 +570,19 @@ export default function ProjectDetail() {
       loadProjectData();
     }
   }, [id]);
+
+  useEffect(() => {
+    if (!project) {
+      return;
+    }
+    if (settingsProjectId !== project.id) {
+      syncEditFormFromProject(project);
+      return;
+    }
+    if (!settingsDirty) {
+      setEditForm(buildEditFormFromProject(project));
+    }
+  }, [project, settingsDirty, settingsProjectId]);
 
   const loadProjectData = async () => {
     if (!id) return;
@@ -654,6 +695,7 @@ export default function ProjectDetail() {
     try {
       await api.updateProject(id, editForm);
       toast.success('项目信息已保存');
+      setSettingsDirty(false);
       loadProjectData();
     } catch (error) {
       console.error('Failed to update project:', error);
@@ -662,11 +704,15 @@ export default function ProjectDetail() {
   };
 
   const handleToggleLanguage = (lang: string) => {
+    if (!canUpdateProject) {
+      return;
+    }
     const currentLanguages = editForm.programming_languages || [];
     const newLanguages = currentLanguages.includes(lang)
       ? currentLanguages.filter((l) => l !== lang)
       : [...currentLanguages, lang];
 
+    setSettingsDirty(true);
     setEditForm({ ...editForm, programming_languages: newLanguages });
   };
 
@@ -1095,6 +1141,11 @@ export default function ProjectDetail() {
               <Edit className="text-primary h-5 w-5" />
               <h3 className="section-title">编辑项目配置</h3>
             </div>
+            {!canUpdateProject && (
+              <div className="rounded border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">
+                当前账号没有编辑权限，以下配置仅供查看。
+              </div>
+            )}
 
             <div className="flex flex-col gap-6">
               {/* 基本信息 */}
@@ -1108,10 +1159,9 @@ export default function ProjectDetail() {
                   </Label>
                   <Input
                     className="cyber-input mt-1"
+                    disabled={!canUpdateProject}
                     id="edit-name"
-                    onChange={(e) =>
-                      setEditForm({ ...editForm, name: e.target.value })
-                    }
+                    onChange={(e) => updateEditForm({ name: e.target.value })}
                     placeholder="输入项目名称"
                     value={editForm.name}
                   />
@@ -1126,9 +1176,10 @@ export default function ProjectDetail() {
                   </Label>
                   <Textarea
                     className="cyber-input mt-1 min-h-[80px]"
+                    disabled={!canUpdateProject}
                     id="edit-description"
                     onChange={(e) =>
-                      setEditForm({ ...editForm, description: e.target.value })
+                      updateEditForm({ description: e.target.value })
                     }
                     placeholder="输入项目描述"
                     rows={3}
@@ -1154,12 +1205,10 @@ export default function ProjectDetail() {
                     </Label>
                     <Input
                       className="cyber-input mt-1"
+                      disabled={!canUpdateProject}
                       id="edit-repo-url"
                       onChange={(e) =>
-                        setEditForm({
-                          ...editForm,
-                          repository_url: e.target.value,
-                        })
+                        updateEditForm({ repository_url: e.target.value })
                       }
                       placeholder="https://codehub.example.com/team/repo.git 或 git@codehub.example.com:team/repo.git"
                       value={editForm.repository_url}
@@ -1175,8 +1224,9 @@ export default function ProjectDetail() {
                         认证类型
                       </Label>
                       <Select
+                        disabled={!canUpdateProject}
                         onValueChange={(value: any) =>
-                          setEditForm({ ...editForm, repository_type: value })
+                          updateEditForm({ repository_type: value })
                         }
                         value={editForm.repository_type}
                       >
@@ -1208,12 +1258,10 @@ export default function ProjectDetail() {
                       </Label>
                       <Input
                         className="cyber-input mt-1"
+                        disabled={!canUpdateProject}
                         id="edit-branch"
                         onChange={(e) =>
-                          setEditForm({
-                            ...editForm,
-                            default_branch: e.target.value,
-                          })
+                          updateEditForm({ default_branch: e.target.value })
                         }
                         placeholder="main"
                         value={editForm.default_branch}
@@ -1232,12 +1280,10 @@ export default function ProjectDetail() {
                         </Label>
                         <Input
                           className="cyber-input mt-1"
+                          disabled={!canUpdateProject}
                           id="edit-manifest-xml"
                           onChange={(e) =>
-                            setEditForm({
-                              ...editForm,
-                              manifest_xml: e.target.value,
-                            })
+                            updateEditForm({ manifest_xml: e.target.value })
                           }
                           placeholder="default.xml"
                           value={editForm.manifest_xml || ''}
@@ -1252,9 +1298,10 @@ export default function ProjectDetail() {
                         </Label>
                         <Input
                           className="cyber-input mt-1"
+                          disabled={!canUpdateProject}
                           id="edit-group"
                           onChange={(e) =>
-                            setEditForm({ ...editForm, group: e.target.value })
+                            updateEditForm({ group: e.target.value })
                           }
                           placeholder="可选"
                           value={editForm.group || ''}

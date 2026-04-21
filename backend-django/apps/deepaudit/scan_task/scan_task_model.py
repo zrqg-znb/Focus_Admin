@@ -3,7 +3,7 @@ from django.db import models
 from common.fu_model import RootModel
 from core.user.user_model import User
 
-from apps.deepaudit.constants import ISSUE_STATUS_CHOICES, SCAN_TYPE_CHOICES, SEVERITY_CHOICES, TASK_STATUS_CHOICES
+from apps.deepaudit.constants import ISSUE_STATUS_CHOICES, REPOSITORY_TYPE_CHOICES, SCAN_TYPE_CHOICES, SEVERITY_CHOICES, TASK_STATUS_CHOICES
 from apps.deepaudit.project.project_model import AuditProject
 
 
@@ -12,6 +12,8 @@ class AuditTask(RootModel):
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='deepaudit_tasks', db_constraint=False, verbose_name='创建人')
     task_type = models.CharField(max_length=20, choices=SCAN_TYPE_CHOICES, default='repository', verbose_name='任务类型')
     status = models.CharField(max_length=20, choices=TASK_STATUS_CHOICES, default='pending', db_index=True, verbose_name='任务状态')
+    repository_url = models.CharField(max_length=1000, blank=True, null=True, verbose_name='仓库地址快照')
+    repository_type = models.CharField(max_length=20, choices=REPOSITORY_TYPE_CHOICES, default='single', verbose_name='仓库类型快照')
     branch_name = models.CharField(max_length=255, blank=True, null=True, verbose_name='分支名称')
     manifest_xml = models.CharField(max_length=1000, blank=True, null=True, verbose_name='Manifest XML')
     group = models.CharField(max_length=255, blank=True, null=True, verbose_name='Group')

@@ -6,16 +6,16 @@ import subprocess
 import zipfile
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from django.conf import settings
 from django.db.models import QuerySet
 from ninja.errors import HttpError
 
 from apps.deepaudit import storage as deepaudit_storage
-from apps.deepaudit.git_service import GitServiceError, create_repository_workspace
+from apps.deepaudit.git_service import GitEventCallback, GitServiceError, create_repository_workspace
 from apps.deepaudit.heuristics import build_summary, is_text_file, scan_content, should_exclude
-from apps.deepaudit.repo_specs import build_effective_project_repository_spec
+from apps.deepaudit.repo_specs import build_effective_project_repository_spec, format_repository_spec_for_log
 from apps.deepaudit.user_config.user_config_model import AuditSshCredential, AuditUserConfig
 from apps.deepaudit.encryption import decrypt_value
 
@@ -84,6 +84,78 @@ def load_ssh_private_key(user_id: str) -> str | None:
     return decrypt_value(credential.private_key_encrypted)
 
 
+def prepare_repository_workspace(
+    project,
+    *,
+    repository_spec: dict[str, str],
+    user_id: str | None = None,
+    user_payload: dict | None = None,
+    ssh_private_key: str | None = None,
+    allow_stale_on_failure: bool = False,
+    event_callback: GitEventCallback | None = None,
+    log_context: dict[str, Any] | None = None,
+) -> tuple[Path, dict]:
+    resolved_user_id = str(user_id or getattr(getattr(project, 'owner', None), 'id', '') or getattr(project, 'owner_id', '') or '')
+    payload = user_payload or load_user_config_payload(resolved_user_id)
+    resolved_ssh_key = ssh_private_key
+    if resolved_ssh_key is None:
+        resolved_ssh_key = load_ssh_private_key(resolved_user_id or str(project.owner_id))
+
+    logger.info(
+        'DeepAudit preparing repository workspace for project %s: %s %s',
+        getattr(project, 'id', ''),
+        format_repository_spec_for_log(repository_spec),
+        ' '.join(
+            [
+                f'{key}={value}'
+                for key, value in (log_context or {}).items()
+                if str(value or '').strip()
+            ]
+        ),
+    )
+    if event_callback is not None:
+        event_callback(
+            'info',
+            '开始准备代码工作区',
+            {
+                'repository_type': repository_spec.get('repository_type'),
+                'repository_url': repository_spec.get('repository_url'),
+                'branch_name': repository_spec.get('branch_name'),
+                'manifest_xml': repository_spec.get('manifest_xml'),
+                'group': repository_spec.get('group'),
+            },
+        )
+    try:
+        workspace = create_repository_workspace(
+            project,
+            repository_spec['repository_url'] or '',
+            repository_spec['branch_name'],
+            payload,
+            ssh_private_key=resolved_ssh_key,
+            allow_stale_on_failure=allow_stale_on_failure,
+            manifest_xml=repository_spec['manifest_xml'],
+            group=repository_spec['group'],
+            repository_type=repository_spec['repository_type'],
+            repository_spec=repository_spec,
+            event_callback=event_callback,
+            log_context=log_context,
+        )
+    except GitServiceError as exc:
+        raise HttpError(400, str(exc)) from exc
+    if event_callback is not None:
+        event_callback(
+            'info',
+            '仓库工作区已准备完成',
+            {
+                'workspace': str(workspace),
+                'repository_type': repository_spec.get('repository_type'),
+                'repository_url': repository_spec.get('repository_url'),
+                'branch_name': repository_spec.get('branch_name'),
+            },
+        )
+    return workspace, payload
+
+
 def prepare_workspace(
     project,
     *,
@@ -93,34 +165,25 @@ def prepare_workspace(
     user_id: str | None = None,
     allow_stale_on_failure: bool = False,
 ) -> tuple[Path, dict]:
-    user_payload = load_user_config_payload(user_id or getattr(project.owner, 'id', '') or '')
     if project.source_type == 'repository':
-        try:
-            repository_spec = build_effective_project_repository_spec(
-                project,
-                branch_name=branch_name,
-                manifest_xml=manifest_xml,
-                group=group,
-            )
-            workspace = create_repository_workspace(
-                project,
-                repository_spec['repository_url'] or '',
-                repository_spec['branch_name'],
-                user_payload,
-                ssh_private_key=load_ssh_private_key(user_id or str(project.owner_id)),
-                allow_stale_on_failure=allow_stale_on_failure,
-                manifest_xml=repository_spec['manifest_xml'],
-                group=repository_spec['group'],
-                repository_type=repository_spec['repository_type'],
-            )
-        except GitServiceError as exc:
-            raise HttpError(400, str(exc)) from exc
-        return workspace, user_payload
+        repository_spec = build_effective_project_repository_spec(
+            project,
+            branch_name=branch_name,
+            manifest_xml=manifest_xml,
+            group=group,
+        )
+        return prepare_repository_workspace(
+            project,
+            repository_spec=repository_spec,
+            user_id=user_id,
+            allow_stale_on_failure=allow_stale_on_failure,
+        )
 
     zip_path = deepaudit_storage.get_project_zip(project.id)
     if not zip_path or not zip_path.exists():
         raise HttpError(400, '当前 ZIP 项目尚未上传压缩包')
 
+    user_payload = load_user_config_payload(user_id or getattr(project.owner, 'id', '') or '')
     workspace = deepaudit_storage.create_workspace(f'zip-{project.id}')
     with zipfile.ZipFile(zip_path, 'r') as archive:
         archive.extractall(workspace)

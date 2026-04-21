@@ -61,15 +61,21 @@ def _normalize_languages(value) -> list[str]:
 
 
 def _resolve_project_repository_spec(project: AuditProject | None, payload: dict) -> dict[str, str]:
+    source_type = payload.get('source_type') if 'source_type' in payload else getattr(project, 'source_type', 'repository')
     repository_url = payload.get('repository_url') if 'repository_url' in payload else getattr(project, 'repository_url', '')
     repository_type = payload.get('repository_type') if 'repository_type' in payload else getattr(project, 'repository_type', 'single')
     default_branch = payload.get('default_branch') if 'default_branch' in payload else getattr(project, 'default_branch', 'main')
     manifest_xml = payload.get('manifest_xml') if 'manifest_xml' in payload else getattr(project, 'manifest_xml', '')
     group = payload.get('group') if 'group' in payload else getattr(project, 'group', '')
     repo_type = normalize_repository_type(repository_type)
+    repository_url_text = str(repository_url or '').strip()
     branch_text = str(default_branch or '').strip()
     manifest_text = str(manifest_xml or '').strip()
-    if repo_type == 'multi':
+    if str(source_type or 'repository').strip() == 'repository' and not repository_url_text:
+        raise HttpError(422, '仓库项目必须填写 repository_url')
+    if str(source_type or 'repository').strip() == 'repository' and repo_type == 'multi':
+        if not repository_url_text:
+            raise HttpError(422, '多仓项目必须填写 repository_url')
         if not branch_text:
             raise HttpError(422, '多仓项目必须填写 default_branch')
         if not manifest_text:

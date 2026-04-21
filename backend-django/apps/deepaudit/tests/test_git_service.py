@@ -227,6 +227,36 @@ class GitServiceTestCase(SimpleTestCase):
         self.assertEqual(calls[0][1]['cwd'], str(target_path))
         self.assertEqual(calls[1][1]['cwd'], str(target_path))
 
+    @override_settings(DEEPAUDIT_GIT_CLONE_TIMEOUT=321)
+    def test_clone_repository_multi_soft_fails_on_mm_sync_nonzero(self) -> None:
+        target_path = self.temp_root / 'workspace'
+
+        def fake_run(cmd, **_kwargs):
+            if cmd[:3] == ['git', 'mm', 'init']:
+                return SimpleNamespace(stdout='init ok', stderr='', returncode=0)
+            if cmd == ['git', 'mm', 'sync']:
+                return SimpleNamespace(stdout='partial sync', stderr='permission denied on child repo', returncode=23)
+            raise AssertionError(f'unexpected command: {cmd}')
+
+        with (
+            patch('apps.deepaudit.git_service.subprocess.run', side_effect=fake_run),
+            self.assertLogs('apps.deepaudit.git_service', level='WARNING') as captured,
+        ):
+            result = git_service.clone_repository(
+                self.project,
+                'https://example.com/repo.git',
+                'main',
+                {'other_config': {}},
+                target_path=target_path,
+                repository_type='multi',
+                manifest_xml='default.xml',
+                group='platform',
+            )
+
+        self.assertEqual(result, target_path)
+        self.assertTrue(target_path.exists())
+        self.assertIn('soft-failed', '\n'.join(captured.output))
+
     def test_cache_paths_depend_on_effective_repository_spec(self) -> None:
         spec_a = self._repo_spec(branch_name='main', repository_type='multi', manifest_xml='a.xml', group='platform')
         spec_b = self._repo_spec(branch_name='dev', repository_type='multi', manifest_xml='b.xml', group='platform')
@@ -235,3 +265,77 @@ class GitServiceTestCase(SimpleTestCase):
 
         self.assertNotEqual(paths_a['root'], paths_b['root'])
         self.assertNotEqual(paths_a['repo'], paths_b['repo'])
+
+    @override_settings(DEEPAUDIT_REPO_CACHE_ENABLED=True)
+    def test_create_repository_workspace_multi_copies_cache_without_clone_or_worktree(self) -> None:
+        repo_spec = self._repo_spec(repository_type='multi', manifest_xml='default.xml', group='platform')
+        cache_repo = self.temp_root / 'repo-cache' / 'workspace'
+        cache_repo.mkdir(parents=True, exist_ok=True)
+        (cache_repo / 'manifest.xml').write_text('<manifest />\n', encoding='utf-8')
+
+        with (
+            patch('apps.deepaudit.git_service.ensure_repository_cache', return_value=cache_repo),
+            patch('apps.deepaudit.git_service.clone_repository', side_effect=AssertionError('should not git clone')),
+            patch('apps.deepaudit.git_service.subprocess.run', side_effect=AssertionError('should not use git worktree')),
+        ):
+            workspace = git_service.create_repository_workspace(
+                self.project,
+                repo_spec['repository_url'],
+                repo_spec['branch_name'],
+                {'other_config': {}},
+                repository_spec=repo_spec,
+            )
+
+        self.assertTrue(workspace.exists())
+        self.assertTrue((workspace / 'manifest.xml').exists())
+
+    @override_settings(DEEPAUDIT_REPO_CACHE_ENABLED=True)
+    def test_create_repository_workspace_multi_keeps_partial_sync_without_single_repo_fallback(self) -> None:
+        repo_spec = self._repo_spec(repository_type='multi', manifest_xml='default.xml', group='platform')
+        commands: list[list[str]] = []
+
+        def fake_run(cmd, **_kwargs):
+            commands.append(cmd)
+            if cmd[:3] == ['git', 'mm', 'init']:
+                return SimpleNamespace(stdout='init ok', stderr='', returncode=0)
+            if cmd == ['git', 'mm', 'sync']:
+                return SimpleNamespace(stdout='partial sync', stderr='permission denied on child repo', returncode=23)
+            raise AssertionError(f'unexpected command: {cmd}')
+
+        with patch('apps.deepaudit.git_service.subprocess.run', side_effect=fake_run):
+            workspace = git_service.create_repository_workspace(
+                self.project,
+                repo_spec['repository_url'],
+                repo_spec['branch_name'],
+                {'other_config': {}},
+                repository_spec=repo_spec,
+            )
+
+        self.assertTrue(workspace.exists())
+        self.assertTrue(any(cmd[:3] == ['git', 'mm', 'init'] for cmd in commands))
+        self.assertTrue(any(cmd == ['git', 'mm', 'sync'] for cmd in commands))
+        self.assertFalse(any(cmd[0] == 'git' and 'clone' in cmd for cmd in commands))
+        self.assertFalse(any(cmd[:3] == ['git', '-C', str(workspace)] and 'worktree' in cmd for cmd in commands))
+
+    def test_git_command_logs_are_sanitized(self) -> None:
+        target_path = self.temp_root / 'workspace'
+        token = 'super-secret-token'
+
+        def fake_run(cmd, **_kwargs):
+            return SimpleNamespace(stdout=f'Cloning from https://oauth2:{token}@example.com/repo.git', stderr='', returncode=0)
+
+        with (
+            patch('apps.deepaudit.git_service.subprocess.run', side_effect=fake_run),
+            self.assertLogs('apps.deepaudit.git_service', level='INFO') as captured,
+        ):
+            git_service.clone_repository(
+                self.project,
+                'https://example.com/repo.git',
+                'main',
+                {'other_config': {'codehub_token': token}},
+                target_path=target_path,
+            )
+
+        joined = '\n'.join(captured.output)
+        self.assertNotIn(token, joined)
+        self.assertIn('https://example.com/repo.git', joined)

@@ -4,6 +4,7 @@ import json
 import shutil
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.test import TestCase
@@ -13,6 +14,8 @@ from apps.deepaudit.agent_task.agent_task_model import AgentCheckpoint, AgentEve
 from apps.deepaudit.agent_task.agent_task_services import (
     build_checkpoints,
     build_tree,
+    create_task,
+    execute_agent_task,
     export_agent_pdf_response,
     export_agent_report_response,
     export_agent_json_response,
@@ -43,7 +46,12 @@ class AgentTaskServicesTestCase(TestCase):
         self.project = AuditProject.objects.create(
             name='DeepAudit Demo',
             owner=self.user,
+            source_type='repository',
+            repository_url='https://codehub.example.com/platform/manifest.git',
+            repository_type='multi',
             default_branch='main',
+            manifest_xml='default.xml',
+            group='platform',
             sys_creator=self.user,
             sys_modifier=self.user,
         )
@@ -57,10 +65,116 @@ class AgentTaskServicesTestCase(TestCase):
             status=status,
             current_phase=current_phase,
             current_step=f'{current_phase} started',
+            repository_url=self.project.repository_url,
+            repository_type=self.project.repository_type,
+            branch_name=self.project.default_branch,
+            manifest_xml=self.project.manifest_xml,
+            group=self.project.group,
             started_at=timezone.now(),
             sys_creator=self.user,
             sys_modifier=self.user,
         )
+
+    def test_create_task_snapshots_repository_spec(self) -> None:
+        access = SimpleNamespace(project=self.project, role='owner')
+
+        with patch('apps.deepaudit.agent_task.agent_task_services.require_project_role', return_value=access):
+            task = create_task(
+                self.user,
+                {
+                    'project_id': str(self.project.id),
+                    'name': 'Snapshot Agent Task',
+                },
+            )
+
+        self.assertEqual(task.repository_type, 'multi')
+        self.assertEqual(task.repository_url, 'https://codehub.example.com/platform/manifest.git')
+        self.assertEqual(task.branch_name, 'main')
+        self.assertEqual(task.manifest_xml, 'default.xml')
+        self.assertEqual(task.group, 'platform')
+
+    def test_execute_agent_task_uses_snapshotted_repository_spec_after_project_changes(self) -> None:
+        self.task.branch_name = 'release/main'
+        self.task.save(update_fields=['branch_name', 'sys_update_datetime'])
+
+        self.project.repository_url = 'https://codehub.example.com/platform/single.git'
+        self.project.repository_type = 'single'
+        self.project.default_branch = 'develop'
+        self.project.manifest_xml = None
+        self.project.group = None
+        self.project.sys_modifier = self.user
+        self.project.save(
+            update_fields=[
+                'repository_url',
+                'repository_type',
+                'default_branch',
+                'manifest_xml',
+                'group',
+                'sys_modifier',
+                'sys_update_datetime',
+            ]
+        )
+
+        with (
+            patch('apps.deepaudit.agent_task.agent_task_services.close_runtime_db_connections'),
+            patch('apps.deepaudit.agent_task.agent_task_services.docker_available', return_value=True),
+            patch(
+                'apps.deepaudit.agent_task.agent_task_services.prepare_repository_workspace',
+                return_value=(Path('/tmp/focusaudit-agent-workspace'), {'llm_config': {}, 'other_config': {}}),
+            ) as mock_prepare,
+            patch('apps.deepaudit.agent_task.agent_runner.run_orchestrator_agent_sync'),
+            patch('apps.deepaudit.agent_task.agent_task_services.cleanup_runtime_workspace'),
+        ):
+            execute_agent_task(str(self.task.id))
+
+        repository_spec = mock_prepare.call_args.kwargs['repository_spec']
+        self.assertEqual(repository_spec['repository_type'], 'multi')
+        self.assertEqual(repository_spec['repository_url'], 'https://codehub.example.com/platform/manifest.git')
+        self.assertEqual(repository_spec['branch_name'], 'release/main')
+        self.assertEqual(repository_spec['manifest_xml'], 'default.xml')
+        self.assertEqual(repository_spec['group'], 'platform')
+
+    def test_execute_agent_task_persists_repository_init_events(self) -> None:
+        def fake_prepare_repository_workspace(*_args, **kwargs):
+            callback = kwargs['event_callback']
+            callback(
+                'info',
+                '多仓初始化命令开始执行',
+                {'command': 'git mm init -u https://codehub.example.com/platform/manifest.git -b main -m default.xml'},
+            )
+            callback(
+                'warning',
+                '多仓同步命令返回非 0，已按 warning 继续执行',
+                {
+                    'command': 'git mm sync',
+                    'exit_code': 23,
+                    'stderr_tail': 'permission denied on child repo',
+                    'soft_failed': True,
+                },
+            )
+            return Path('/tmp/focusaudit-agent-workspace'), {'llm_config': {}, 'other_config': {}}
+
+        with (
+            patch('apps.deepaudit.agent_task.agent_task_services.close_runtime_db_connections'),
+            patch('apps.deepaudit.agent_task.agent_task_services.docker_available', return_value=True),
+            patch(
+                'apps.deepaudit.agent_task.agent_task_services.prepare_repository_workspace',
+                side_effect=fake_prepare_repository_workspace,
+            ),
+            patch('apps.deepaudit.agent_task.agent_runner.run_orchestrator_agent_sync'),
+            patch('apps.deepaudit.agent_task.agent_task_services.cleanup_runtime_workspace'),
+        ):
+            execute_agent_task(str(self.task.id))
+
+        event_messages = list(
+            self.task.events.filter(is_deleted=False, event_type__in=['info', 'warning']).values_list('message', flat=True)
+        )
+        self.assertIn('多仓初始化命令开始执行', event_messages)
+        self.assertIn('多仓同步命令返回非 0，已按 warning 继续执行', event_messages)
+        warning_event = self.task.events.filter(is_deleted=False, event_type='warning').latest('sequence')
+        self.assertEqual(warning_event.event_metadata.get('command'), 'git mm sync')
+        self.assertEqual(warning_event.event_metadata.get('exit_code'), 23)
+        self.assertTrue(warning_event.event_metadata.get('soft_failed'))
 
     def _create_event(
         self,
@@ -433,6 +547,11 @@ class AgentTaskServicesTestCase(TestCase):
         self.assertEqual(resumed.audit_scope.get('resume_from_task_id'), task.id)
         self.assertEqual(resumed.agent_config.get('resume', {}).get('requested_checkpoint_id'), str(checkpoint.id))
         self.assertEqual(resumed.agent_config.get('resume', {}).get('resume_checkpoint_id'), str(restorable.id))
+        self.assertEqual(resumed.repository_url, task.repository_url)
+        self.assertEqual(resumed.repository_type, task.repository_type)
+        self.assertEqual(resumed.branch_name, task.branch_name)
+        self.assertEqual(resumed.manifest_xml, task.manifest_xml)
+        self.assertEqual(resumed.group, task.group)
         mock_dispatch.assert_called_once()
 
     def test_refresh_task_snapshot_preserves_last_real_phase_on_failure(self) -> None:

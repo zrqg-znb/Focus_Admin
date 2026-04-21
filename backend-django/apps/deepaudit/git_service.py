@@ -3,13 +3,15 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import shlex
 import shutil
 import stat
 import subprocess
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from django.conf import settings
@@ -18,6 +20,7 @@ from . import storage as deepaudit_storage
 from .heuristics import should_exclude
 from .repo_specs import (
     build_repository_spec,
+    format_repository_spec_for_log,
     is_multi_repository_type,
     normalize_repository_type,
     normalize_repo_override,
@@ -27,6 +30,10 @@ from .repo_specs import (
 )
 
 logger = logging.getLogger(__name__)
+
+GitEventCallback = Callable[[str, str, dict[str, Any]], None]
+GIT_OUTPUT_TAIL_LIMIT = 1200
+GIT_TEXT_SCRUB_RE = re.compile(r'(https?://)([^/\s:@]+(?::[^@\s/]+)?@)')
 
 
 class GitServiceError(RuntimeError):
@@ -62,6 +69,94 @@ def _inject_token(repository_url: str, token: str) -> str:
     if parts.port:
         netloc = f'{netloc}:{parts.port}'
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def _sanitize_url_for_log(value: str) -> str:
+    text = str(value or '').strip()
+    if not text.startswith(('http://', 'https://')):
+        return text
+    parts = urlsplit(text)
+    if not parts.username and '@' not in parts.netloc:
+        return text
+    netloc = parts.hostname or ''
+    if parts.port:
+        netloc = f'{netloc}:{parts.port}'
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def _sanitize_text_for_log(value: Any) -> str:
+    text = str(value or '')
+    if not text:
+        return ''
+    return GIT_TEXT_SCRUB_RE.sub(r'\1***@', text)
+
+
+def _sanitize_command_for_log(cmd: list[str]) -> str:
+    return shlex.join([_sanitize_url_for_log(_sanitize_text_for_log(arg)) for arg in cmd])
+
+
+def _summarize_process_output(value: Any, *, limit: int = GIT_OUTPUT_TAIL_LIMIT) -> str:
+    text = _sanitize_text_for_log(value).strip()
+    if not text:
+        return ''
+    if len(text) <= limit:
+        return text
+    return f'...[truncated {len(text) - limit} chars] {text[-limit:]}'
+
+
+def _format_log_context(log_context: dict[str, Any] | None) -> str:
+    if not log_context:
+        return ''
+    parts: list[str] = []
+    for key in ('task_kind', 'task_id', 'user_id'):
+        value = str(log_context.get(key) or '').strip()
+        if value:
+            parts.append(f'{key}={value}')
+    return ' '.join(parts)
+
+
+def _build_command_metadata(
+    *,
+    cmd: list[str],
+    cwd: Path | None,
+    attempt: int,
+    attempts: int,
+    exit_code: int | None = None,
+    duration_ms: int | None = None,
+    stdout_tail: str = '',
+    stderr_tail: str = '',
+    soft_failed: bool = False,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        'command': _sanitize_command_for_log(cmd),
+        'cwd': str(cwd) if cwd else '',
+        'attempt': attempt,
+        'attempts': attempts,
+        'soft_failed': bool(soft_failed),
+    }
+    if exit_code is not None:
+        metadata['exit_code'] = int(exit_code)
+    if duration_ms is not None:
+        metadata['duration_ms'] = int(duration_ms)
+    if stdout_tail:
+        metadata['stdout_tail'] = stdout_tail
+    if stderr_tail:
+        metadata['stderr_tail'] = stderr_tail
+    return metadata
+
+
+def _emit_git_event(
+    event_callback: GitEventCallback | None,
+    level: str,
+    message: str,
+    metadata: dict[str, Any],
+) -> None:
+    if event_callback is None:
+        return
+    try:
+        event_callback(level, message, metadata)
+    except Exception as exc:
+        logger.warning('DeepAudit failed to emit git progress event: %s', exc)
 
 
 def build_clone_context(
@@ -147,6 +242,43 @@ def _effective_repository_spec(
     )
 
 
+def _resolved_repository_spec(
+    project,
+    repository_url: str,
+    branch_name: str | None,
+    *,
+    repository_spec: dict[str, Any] | None = None,
+    repository_type: str | None = None,
+    manifest_xml: str | None = None,
+    group: str | None = None,
+) -> dict[str, str]:
+    if repository_spec is not None:
+        return build_repository_spec(
+            repository_spec.get('repository_url'),
+            repository_spec.get('branch_name'),
+            repository_type=repository_spec.get('repository_type'),
+            manifest_xml=repository_spec.get('manifest_xml'),
+            group=repository_spec.get('group'),
+        )
+    return _effective_repository_spec(
+        project,
+        repository_url,
+        branch_name,
+        repository_type=repository_type,
+        manifest_xml=manifest_xml,
+        group=group,
+    )
+
+
+def _validate_repository_spec(repository_spec: dict[str, Any]) -> dict[str, str]:
+    normalized = repository_spec_state(repository_spec)
+    if not normalized['repository_url']:
+        raise GitServiceError('仓库地址为空，无法初始化代码工作区')
+    if is_multi_repository_type(normalized['repository_type']) and not normalized['manifest_xml']:
+        raise GitServiceError('多仓仓库缺少 manifest_xml，无法执行 git mm init')
+    return normalized
+
+
 def _cache_paths(project, repository_spec: dict[str, Any]) -> dict[str, Path]:
     spec_key = repository_spec_cache_key(repository_spec)
     cache_root = deepaudit_storage.get_project_repo_cache_root(_project_id(project)) / spec_key
@@ -226,9 +358,32 @@ def _failure_message(*, project, branch_name: str, operation: str, raw_message: 
     return f'{operation} 失败：项目 {_project_id(project)} 分支 {branch_name}。{_compact_git_error(raw_message)}'
 
 
-def _log_retry(*, operation: str, project, branch_name: str, attempt: int, attempts: int, elapsed: float, message: str) -> None:
+def _log_retry(
+    *,
+    operation: str,
+    project,
+    branch_name: str,
+    attempt: int,
+    attempts: int,
+    elapsed: float,
+    message: str,
+    repository_spec: dict[str, Any] | None = None,
+    log_context: dict[str, Any] | None = None,
+    cwd: Path | None = None,
+    cmd: list[str] | None = None,
+) -> None:
+    parts: list[str] = []
+    if repository_spec is not None:
+        parts.append(format_repository_spec_for_log(repository_spec))
+    context_text = _format_log_context(log_context)
+    if context_text:
+        parts.append(context_text)
+    if cwd is not None:
+        parts.append(f'cwd={cwd}')
+    if cmd:
+        parts.append(f'command={_sanitize_command_for_log(cmd)}')
     logger.warning(
-        'DeepAudit %s failed on attempt %s/%s for project %s branch %s after %.2fs: %s',
+        'DeepAudit %s failed on attempt %s/%s for project %s branch %s after %.2fs: %s %s',
         operation,
         attempt,
         attempts,
@@ -236,6 +391,7 @@ def _log_retry(*, operation: str, project, branch_name: str, attempt: int, attem
         branch_name,
         elapsed,
         message,
+        ' '.join(parts).strip(),
     )
 
 
@@ -249,31 +405,139 @@ def _run_git_command(
     operation: str,
     cwd: Path | None = None,
     retry_count: int | None = None,
+    repository_spec: dict[str, Any] | None = None,
+    log_context: dict[str, Any] | None = None,
+    event_callback: GitEventCallback | None = None,
+    soft_fail: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     attempts = max(1, int(retry_count or _git_retry_count()))
     last_error = ''
+    command_text = _sanitize_command_for_log(cmd)
+    spec_text = format_repository_spec_for_log(repository_spec) if repository_spec is not None else ''
+    context_text = _format_log_context(log_context)
     for attempt in range(1, attempts + 1):
         started_at = time.monotonic()
+        logger.info(
+            'DeepAudit %s started for project %s branch %s attempt %s/%s: command=%s cwd=%s %s %s',
+            operation,
+            _project_id(project),
+            branch_name,
+            attempt,
+            attempts,
+            command_text,
+            str(cwd) if cwd else '-',
+            spec_text,
+            context_text,
+        )
+        _emit_git_event(
+            event_callback,
+            'info',
+            f'{operation}命令开始执行',
+            _build_command_metadata(
+                cmd=cmd,
+                cwd=cwd,
+                attempt=attempt,
+                attempts=attempts,
+            ),
+        )
         try:
             result = subprocess.run(
                 cmd,
-                check=True,
+                check=False,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
                 env=env,
                 cwd=str(cwd) if cwd else None,
             )
-            logger.info(
-                'DeepAudit %s succeeded for project %s branch %s in %.2fs (attempt %s/%s)',
+            elapsed_ms = int((time.monotonic() - started_at) * 1000)
+            stdout_tail = _summarize_process_output(result.stdout)
+            stderr_tail = _summarize_process_output(result.stderr)
+            metadata = _build_command_metadata(
+                cmd=cmd,
+                cwd=cwd,
+                attempt=attempt,
+                attempts=attempts,
+                exit_code=result.returncode,
+                duration_ms=elapsed_ms,
+                stdout_tail=stdout_tail,
+                stderr_tail=stderr_tail,
+                soft_failed=soft_fail and result.returncode != 0,
+            )
+            if result.returncode == 0:
+                logger.info(
+                    'DeepAudit %s succeeded for project %s branch %s in %.2fs: exit_code=%s command=%s cwd=%s stdout_tail=%s stderr_tail=%s %s %s',
+                    operation,
+                    _project_id(project),
+                    branch_name,
+                    elapsed_ms / 1000,
+                    result.returncode,
+                    command_text,
+                    str(cwd) if cwd else '-',
+                    stdout_tail or '-',
+                    stderr_tail or '-',
+                    spec_text,
+                    context_text,
+                )
+                _emit_git_event(event_callback, 'info', f'{operation}命令执行完成', metadata)
+                return result
+            raw_error = result.stderr or result.stdout or f'command exited with {result.returncode}'
+            last_error = _failure_message(project=project, branch_name=branch_name, operation=operation, raw_message=raw_error)
+            if soft_fail:
+                logger.warning(
+                    'DeepAudit %s soft-failed for project %s branch %s in %.2fs and will continue: exit_code=%s command=%s cwd=%s stdout_tail=%s stderr_tail=%s %s %s',
+                    operation,
+                    _project_id(project),
+                    branch_name,
+                    elapsed_ms / 1000,
+                    result.returncode,
+                    command_text,
+                    str(cwd) if cwd else '-',
+                    stdout_tail or '-',
+                    stderr_tail or '-',
+                    spec_text,
+                    context_text,
+                )
+                _emit_git_event(
+                    event_callback,
+                    'warning',
+                    f'{operation}命令返回非 0，已按 warning 继续执行',
+                    metadata,
+                )
+                return result
+            if attempt < attempts and _is_retryable_git_error(raw_error):
+                _log_retry(
+                    operation=operation,
+                    project=project,
+                    branch_name=branch_name,
+                    attempt=attempt,
+                    attempts=attempts,
+                    elapsed=elapsed_ms / 1000,
+                    message=last_error,
+                    repository_spec=repository_spec,
+                    log_context=log_context,
+                    cwd=cwd,
+                    cmd=cmd,
+                )
+                _emit_git_event(event_callback, 'warning', f'{operation}命令执行失败，准备重试', metadata)
+                time.sleep(attempt)
+                continue
+            logger.error(
+                'DeepAudit %s failed for project %s branch %s in %.2fs: exit_code=%s command=%s cwd=%s stdout_tail=%s stderr_tail=%s %s %s',
                 operation,
                 _project_id(project),
                 branch_name,
-                time.monotonic() - started_at,
-                attempt,
-                attempts,
+                elapsed_ms / 1000,
+                result.returncode,
+                command_text,
+                str(cwd) if cwd else '-',
+                stdout_tail or '-',
+                stderr_tail or '-',
+                spec_text,
+                context_text,
             )
-            return result
+            _emit_git_event(event_callback, 'warning', f'{operation}命令执行失败', metadata)
+            raise GitServiceError(last_error)
         except subprocess.TimeoutExpired as exc:
             elapsed = time.monotonic() - started_at
             last_error = _timeout_message(project=project, branch_name=branch_name, operation=operation, timeout=timeout)
@@ -285,25 +549,24 @@ def _run_git_command(
                 attempts=attempts,
                 elapsed=elapsed,
                 message=last_error,
+                repository_spec=repository_spec,
+                log_context=log_context,
+                cwd=cwd,
+                cmd=cmd,
             )
-            if attempt < attempts:
-                time.sleep(attempt)
-                continue
-            raise GitServiceError(last_error) from exc
-        except subprocess.CalledProcessError as exc:
-            elapsed = time.monotonic() - started_at
-            raw_error = exc.stderr or exc.stdout or str(exc)
-            last_error = _failure_message(project=project, branch_name=branch_name, operation=operation, raw_message=raw_error)
-            if attempt < attempts and _is_retryable_git_error(raw_error):
-                _log_retry(
-                    operation=operation,
-                    project=project,
-                    branch_name=branch_name,
+            _emit_git_event(
+                event_callback,
+                'warning',
+                f'{operation}命令执行超时',
+                _build_command_metadata(
+                    cmd=cmd,
+                    cwd=cwd,
                     attempt=attempt,
                     attempts=attempts,
-                    elapsed=elapsed,
-                    message=last_error,
-                )
+                    duration_ms=int(elapsed * 1000),
+                ),
+            )
+            if attempt < attempts:
                 time.sleep(attempt)
                 continue
             raise GitServiceError(last_error) from exc
@@ -332,20 +595,24 @@ def clone_repository(
     ssh_private_key: str | None = None,
     *,
     target_path: Path | None = None,
+    repository_spec: dict[str, Any] | None = None,
     repository_type: str | None = None,
     manifest_xml: str | None = None,
     group: str | None = None,
+    event_callback: GitEventCallback | None = None,
+    log_context: dict[str, Any] | None = None,
 ) -> Path:
-    branch = _branch_name(project, branch_name)
-    repo_type = normalize_repository_type(repository_type or getattr(project, 'repository_type', 'single'))
-    repository_spec = _effective_repository_spec(
+    repository_spec = _validate_repository_spec(_resolved_repository_spec(
         project,
         repository_url,
-        branch,
-        repository_type=repo_type,
+        branch_name,
+        repository_spec=repository_spec,
+        repository_type=repository_type,
         manifest_xml=manifest_xml,
         group=group,
-    )
+    ))
+    branch = repository_spec['branch_name']
+    repo_type = repository_spec['repository_type']
     clone_url, env = build_clone_context(
         project,
         repository_spec['repository_url'],
@@ -358,6 +625,12 @@ def clone_repository(
     workspace.parent.mkdir(parents=True, exist_ok=True)
     if workspace.exists():
         shutil.rmtree(workspace, ignore_errors=True)
+    logger.info(
+        'DeepAudit starting repository initialization for project %s target=%s: %s',
+        _project_id(project),
+        workspace,
+        format_repository_spec_for_log(repository_spec),
+    )
     try:
         if repo_type == 'multi':
             workspace.mkdir(parents=True, exist_ok=True)
@@ -374,6 +647,12 @@ def clone_repository(
             ]
             if repository_spec['group']:
                 init_cmd.extend(['-g', repository_spec['group']])
+            logger.info(
+                'DeepAudit project %s will initialize multi-repo workspace via git mm init + git mm sync: target=%s %s',
+                _project_id(project),
+                workspace,
+                format_repository_spec_for_log(repository_spec),
+            )
             _run_git_command(
                 init_cmd,
                 env=env,
@@ -382,6 +661,9 @@ def clone_repository(
                 branch_name=branch,
                 operation='多仓初始化',
                 cwd=workspace,
+                repository_spec=repository_spec,
+                log_context=log_context,
+                event_callback=event_callback,
             )
             _run_git_command(
                 ['git', 'mm', 'sync'],
@@ -391,10 +673,21 @@ def clone_repository(
                 branch_name=branch,
                 operation='多仓同步',
                 cwd=workspace,
+                retry_count=1,
+                repository_spec=repository_spec,
+                log_context=log_context,
+                event_callback=event_callback,
+                soft_fail=True,
             )
             if clone_url != repository_spec['repository_url']:
                 _scrub_origin_url(workspace, repository_spec['repository_url'], env)
         else:
+            logger.info(
+                'DeepAudit project %s will initialize single-repo workspace via git clone: target=%s %s',
+                _project_id(project),
+                workspace,
+                format_repository_spec_for_log(repository_spec),
+            )
             cmd = [
                 'git',
                 '-c',
@@ -416,6 +709,9 @@ def clone_repository(
                 project=project,
                 branch_name=branch,
                 operation='仓库克隆',
+                repository_spec=repository_spec,
+                log_context=log_context,
+                event_callback=event_callback,
             )
             if clone_url != repository_spec['repository_url']:
                 _scrub_origin_url(workspace, repository_spec['repository_url'], env)
@@ -436,6 +732,9 @@ def _update_repository_cache(
     clone_url: str,
     branch_name: str,
     env: dict[str, str],
+    repository_spec: dict[str, Any] | None = None,
+    log_context: dict[str, Any] | None = None,
+    event_callback: GitEventCallback | None = None,
 ) -> None:
     fetch_cmd = [
         'git',
@@ -459,6 +758,9 @@ def _update_repository_cache(
         project=project,
         branch_name=branch_name,
         operation='仓库同步',
+        repository_spec=repository_spec,
+        log_context=log_context,
+        event_callback=event_callback,
     )
     for operation, cmd in (
         (
@@ -482,6 +784,9 @@ def _update_repository_cache(
             branch_name=branch_name,
             operation=operation,
             retry_count=1,
+            repository_spec=repository_spec,
+            log_context=log_context,
+            event_callback=event_callback,
         )
     if clone_url != repository_url:
         _scrub_origin_url(cache_repo, repository_url, env)
@@ -533,21 +838,26 @@ def ensure_repository_cache(
     user_config: dict,
     ssh_private_key: str | None = None,
     *,
+    repository_spec: dict[str, Any] | None = None,
     repository_type: str | None = None,
     manifest_xml: str | None = None,
     group: str | None = None,
     allow_stale_on_failure: bool = False,
+    event_callback: GitEventCallback | None = None,
+    log_context: dict[str, Any] | None = None,
 ) -> Path:
-    branch = _branch_name(project, branch_name)
-    repo_type = normalize_repository_type(repository_type or getattr(project, 'repository_type', 'single'))
-    repository_spec = _effective_repository_spec(
+    repository_spec = _validate_repository_spec(_resolved_repository_spec(
         project,
         repository_url,
-        branch,
-        repository_type=repo_type,
+        branch_name,
+        repository_spec=repository_spec,
+        repository_type=repository_type,
         manifest_xml=manifest_xml,
         group=group,
-    )
+    ))
+    branch = repository_spec['branch_name']
+    repo_type = repository_spec['repository_type']
+    spec_key = repository_spec_cache_key(repository_spec)
     cache_paths = _cache_paths(project, repository_spec)
     cache_repo = cache_paths['repo']
     cache_root = cache_paths['root']
@@ -564,6 +874,13 @@ def ensure_repository_cache(
     initial_state = _read_cache_state(cache_paths['state'])
     initial_cache_exists = _cache_exists(cache_repo, repository_type=repo_type)
     if initial_cache_exists and _cache_is_fresh(initial_state) and _cache_state_matches(initial_state, repository_spec):
+        logger.info(
+            'DeepAudit repository cache hit for project %s spec_key=%s repo_path=%s %s',
+            _project_id(project),
+            spec_key,
+            cache_repo,
+            format_repository_spec_for_log(repository_spec),
+        )
         return cache_repo
 
     try:
@@ -571,9 +888,23 @@ def ensure_repository_cache(
             state = _read_cache_state(cache_paths['state'])
             cache_exists = _cache_exists(cache_repo, repository_type=repo_type)
             if cache_exists and _cache_is_fresh(state) and _cache_state_matches(state, repository_spec):
+                logger.info(
+                    'DeepAudit repository cache hit after lock acquisition for project %s spec_key=%s repo_path=%s %s',
+                    _project_id(project),
+                    spec_key,
+                    cache_repo,
+                    format_repository_spec_for_log(repository_spec),
+                )
                 return cache_repo
 
             cache_root.mkdir(parents=True, exist_ok=True)
+            logger.info(
+                'DeepAudit refreshing repository cache for project %s spec_key=%s repo_path=%s %s',
+                _project_id(project),
+                spec_key,
+                cache_repo,
+                format_repository_spec_for_log(repository_spec),
+            )
             if repo_type == 'multi':
                 refresh_target = cache_repo if not cache_exists else cache_root / f'refresh-{os.getpid()}-{int(time.time() * 1000)}'
                 if refresh_target.exists():
@@ -587,9 +918,12 @@ def ensure_repository_cache(
                         user_config,
                         ssh_private_key=ssh_private_key,
                         target_path=refresh_target,
+                        repository_spec=repository_spec,
                         repository_type=repo_type,
                         manifest_xml=repository_spec['manifest_xml'],
                         group=repository_spec['group'],
+                        event_callback=event_callback,
+                        log_context=log_context,
                     )
                     if refresh_target != cache_repo:
                         backup_repo = cache_root / f'backup-{os.getpid()}-{int(time.time() * 1000)}'
@@ -624,9 +958,12 @@ def ensure_repository_cache(
                     user_config,
                     ssh_private_key=ssh_private_key,
                     target_path=cache_repo,
+                    repository_spec=repository_spec,
                     repository_type=repo_type,
                     manifest_xml=repository_spec['manifest_xml'],
                     group=repository_spec['group'],
+                    event_callback=event_callback,
+                    log_context=log_context,
                 )
             else:
                 _update_repository_cache(
@@ -636,6 +973,9 @@ def ensure_repository_cache(
                     clone_url=clone_url,
                     branch_name=repository_spec['branch_name'],
                     env=env,
+                    repository_spec=repository_spec,
+                    log_context=log_context,
+                    event_callback=event_callback,
                 )
             _write_cache_state(
                 cache_paths['state'],
@@ -664,50 +1004,61 @@ def create_repository_workspace(
     user_config: dict,
     ssh_private_key: str | None = None,
     *,
+    repository_spec: dict[str, Any] | None = None,
     repository_type: str | None = None,
     manifest_xml: str | None = None,
     group: str | None = None,
     allow_stale_on_failure: bool = False,
+    event_callback: GitEventCallback | None = None,
+    log_context: dict[str, Any] | None = None,
 ) -> Path:
+    repository_spec = _validate_repository_spec(_resolved_repository_spec(
+        project,
+        repository_url,
+        branch_name,
+        repository_spec=repository_spec,
+        repository_type=repository_type,
+        manifest_xml=manifest_xml,
+        group=group,
+    ))
+    branch = repository_spec['branch_name']
+    repo_type = repository_spec['repository_type']
     if not repository_cache_enabled():
         return clone_repository(
             project,
-            repository_url,
-            branch_name,
+            repository_spec['repository_url'],
+            branch,
             user_config,
             ssh_private_key=ssh_private_key,
+            repository_spec=repository_spec,
             repository_type=repository_type,
             manifest_xml=manifest_xml,
             group=group,
+            event_callback=event_callback,
+            log_context=log_context,
         )
 
-    branch = _branch_name(project, branch_name)
-    repo_type = normalize_repository_type(repository_type or getattr(project, 'repository_type', 'single'))
     cache_repo = ensure_repository_cache(
         project,
-        repository_url,
+        repository_spec['repository_url'],
         branch,
         user_config,
         ssh_private_key=ssh_private_key,
+        repository_spec=repository_spec,
         repository_type=repo_type,
         manifest_xml=manifest_xml,
         group=group,
         allow_stale_on_failure=allow_stale_on_failure,
+        event_callback=event_callback,
+        log_context=log_context,
     )
     cache_paths = _cache_paths(
         project,
-        _effective_repository_spec(
-            project,
-            repository_url,
-            branch,
-            repository_type=repo_type,
-            manifest_xml=manifest_xml,
-            group=group,
-        ),
+        repository_spec,
     )
     _, env = build_clone_context(
         project,
-        repository_url,
+        repository_spec['repository_url'],
         branch,
         user_config,
         ssh_private_key,
@@ -718,6 +1069,24 @@ def create_repository_workspace(
         workspace = deepaudit_storage.reserve_workspace_path(f'project-{project.id}')
         try:
             shutil.copytree(cache_repo, workspace, dirs_exist_ok=True)
+            logger.info(
+                'DeepAudit created workspace by copying multi-repo cache: project=%s cache_repo=%s workspace=%s %s',
+                _project_id(project),
+                cache_repo,
+                workspace,
+                format_repository_spec_for_log(repository_spec),
+            )
+            _emit_git_event(
+                event_callback,
+                'info',
+                '代码工作区准备完成',
+                {
+                    'workspace': str(workspace),
+                    'cache_repo': str(cache_repo),
+                    'workspace_source': 'copied from multi-repo cache',
+                    'repository_type': repo_type,
+                },
+            )
             return workspace
         except Exception:
             shutil.rmtree(workspace, ignore_errors=True)
@@ -734,6 +1103,13 @@ def create_repository_workspace(
         )
         workspace = deepaudit_storage.reserve_workspace_path(f'project-{project.id}')
         try:
+            logger.info(
+                'DeepAudit creating git worktree workspace from single-repo cache: project=%s cache_repo=%s workspace=%s %s',
+                _project_id(project),
+                cache_repo,
+                workspace,
+                format_repository_spec_for_log(repository_spec),
+            )
             _run_git_command(
                 [
                     'git',
@@ -752,6 +1128,20 @@ def create_repository_workspace(
                 branch_name=branch,
                 operation='工作区快照创建',
                 retry_count=1,
+                repository_spec=repository_spec,
+                log_context=log_context,
+                event_callback=event_callback,
+            )
+            _emit_git_event(
+                event_callback,
+                'info',
+                '代码工作区准备完成',
+                {
+                    'workspace': str(workspace),
+                    'cache_repo': str(cache_repo),
+                    'workspace_source': 'git worktree from single-repo cache',
+                    'repository_type': repo_type,
+                },
             )
             return workspace
         except Exception:

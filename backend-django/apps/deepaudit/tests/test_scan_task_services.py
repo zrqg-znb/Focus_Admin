@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import patch
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase
 
-from apps.deepaudit.scan_task.scan_task_services import _scan_files_with_concurrency
+from apps.deepaudit.project.project_model import AuditProject
+from apps.deepaudit.scan_task.scan_task_model import AuditTask
+from apps.deepaudit.scan_task.scan_task_services import _scan_files_with_concurrency, create_task, execute_scan_task
+from core.user.user_model import User
 
 
 class ScanTaskServicesConcurrencyTestCase(SimpleTestCase):
@@ -55,3 +60,111 @@ class ScanTaskServicesConcurrencyTestCase(SimpleTestCase):
         self.assertEqual(summary['scanned_files'], 4)
         self.assertEqual(max_in_flight, 2)
         self.assertEqual(len(progress_updates), 4)
+
+
+class ScanTaskSnapshotTestCase(TestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create(
+            username='scan-owner',
+            password='not-used',
+            name='Scan Owner',
+        )
+        self.project = AuditProject.objects.create(
+            name='FocusAudit Multi Repo',
+            owner=self.user,
+            source_type='repository',
+            repository_url='https://codehub.example.com/platform/manifest.git',
+            repository_type='multi',
+            default_branch='release/main',
+            manifest_xml='default.xml',
+            group='platform',
+            sys_creator=self.user,
+            sys_modifier=self.user,
+        )
+
+    def test_create_task_snapshots_repository_spec(self) -> None:
+        access = SimpleNamespace(project=self.project, role='owner')
+
+        with (
+            patch('apps.deepaudit.scan_task.scan_task_services.require_project_role', return_value=access),
+            patch('apps.deepaudit.scan_task.scan_task_services.resolve_scan_profile', return_value={}),
+            patch('apps.deepaudit.scan_task.scan_task_services.serialize_scan_profile', return_value={}),
+        ):
+            task = create_task(
+                self.user,
+                {'project_id': str(self.project.id)},
+                task_type='repository',
+            )
+
+        self.assertEqual(task.repository_type, 'multi')
+        self.assertEqual(task.repository_url, 'https://codehub.example.com/platform/manifest.git')
+        self.assertEqual(task.branch_name, 'release/main')
+        self.assertEqual(task.manifest_xml, 'default.xml')
+        self.assertEqual(task.group, 'platform')
+
+    def test_execute_scan_task_uses_snapshotted_repository_spec_after_project_changes(self) -> None:
+        task = AuditTask.objects.create(
+            project=self.project,
+            created_by=self.user,
+            task_type='repository',
+            status='pending',
+            repository_url='https://codehub.example.com/platform/manifest.git',
+            repository_type='multi',
+            branch_name='release/main',
+            manifest_xml='default.xml',
+            group='platform',
+            scan_config={},
+            sys_creator=self.user,
+            sys_modifier=self.user,
+        )
+        self.project.repository_url = 'https://codehub.example.com/platform/single.git'
+        self.project.repository_type = 'single'
+        self.project.default_branch = 'main'
+        self.project.manifest_xml = None
+        self.project.group = None
+        self.project.sys_modifier = self.user
+        self.project.save(
+            update_fields=[
+                'repository_url',
+                'repository_type',
+                'default_branch',
+                'manifest_xml',
+                'group',
+                'sys_modifier',
+                'sys_update_datetime',
+            ]
+        )
+
+        with (
+            patch('apps.deepaudit.scan_task.scan_task_services.resolve_scan_profile', return_value={}),
+            patch('apps.deepaudit.scan_task.scan_task_services.serialize_scan_profile', return_value={}),
+            patch(
+                'apps.deepaudit.scan_task.scan_task_services.prepare_repository_workspace',
+                return_value=(Path('/tmp/focusaudit-scan-workspace'), {'other_config': {}}),
+            ) as mock_prepare,
+            patch('apps.deepaudit.scan_task.scan_task_services.list_project_files', return_value=[]),
+            patch(
+                'apps.deepaudit.scan_task.scan_task_services._scan_files_with_concurrency',
+                new=AsyncMock(
+                    return_value={
+                        'cancelled': False,
+                        'scanned_files': 0,
+                        'skipped_files': 0,
+                        'failed_files': 0,
+                        'total_lines': 0,
+                        'total_issues': 0,
+                        'quality_scores': [],
+                    }
+                ),
+            ),
+            patch('apps.deepaudit.scan_task.scan_task_services._is_cancelled', return_value=False),
+            patch('apps.deepaudit.scan_task.scan_task_services.cleanup_runtime_workspace'),
+        ):
+            execute_scan_task(str(task.id))
+
+        repository_spec = mock_prepare.call_args.kwargs['repository_spec']
+        self.assertEqual(repository_spec['repository_type'], 'multi')
+        self.assertEqual(repository_spec['repository_url'], 'https://codehub.example.com/platform/manifest.git')
+        self.assertEqual(repository_spec['branch_name'], 'release/main')
+        self.assertEqual(repository_spec['manifest_xml'], 'default.xml')
+        self.assertEqual(repository_spec['group'], 'platform')

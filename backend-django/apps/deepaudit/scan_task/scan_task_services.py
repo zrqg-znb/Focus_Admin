@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 
 from asgiref.sync import async_to_sync, sync_to_async
@@ -16,8 +17,14 @@ from apps.deepaudit.heuristics import detect_language_from_path
 from apps.deepaudit.llm.service import LLMService
 from apps.deepaudit.permissions import accessible_project_queryset, get_user_id, require_project_role, serialize_user_brief
 from apps.deepaudit.reporting import ReportBuilder
-from apps.deepaudit.repo_specs import build_effective_project_repository_spec, normalize_repository_type
-from apps.deepaudit.runtime import cleanup_runtime_workspace, list_project_files, prepare_workspace
+from apps.deepaudit.repo_specs import (
+    build_effective_project_repository_spec,
+    build_task_repository_spec,
+    format_repository_spec_for_log,
+    normalize_repository_type,
+    validate_repository_spec_for_execution,
+)
+from apps.deepaudit.runtime import cleanup_runtime_workspace, list_project_files, prepare_repository_workspace
 from apps.deepaudit.scan_profile import resolve_scan_profile, serialize_scan_profile
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact, AuditIssue, AuditTask, InstantAnalysisRecord
 from apps.deepaudit.serialization import format_datetime_text, normalize_json_payload
@@ -27,6 +34,7 @@ from apps.deepaudit.user_config import user_config_services
 
 ACTIVE_TASK_STATUSES = {'pending', 'running'}
 VALID_ISSUE_STATUSES = {ISSUE_STATUS_OPEN, ISSUE_STATUS_RESOLVED, ISSUE_STATUS_FALSE_POSITIVE}
+logger = logging.getLogger(__name__)
 
 
 def serialize_issue(issue: AuditIssue) -> dict:
@@ -62,6 +70,8 @@ def serialize_task(task: AuditTask, include_issues: bool = False) -> dict:
         'created_by_name': serialize_user_brief(task.created_by).get('name') if task.created_by else None,
         'task_type': task.task_type,
         'status': task.status,
+        'repository_url': task.repository_url,
+        'repository_type': normalize_repository_type(task.repository_type),
         'branch_name': task.branch_name,
         'manifest_xml': task.manifest_xml,
         'group': task.group,
@@ -124,12 +134,17 @@ def create_task(user, payload: dict, *, task_type: str) -> AuditTask:
     access = require_project_role(user, payload.get('project_id'), min_role='member')
     repository_spec = build_effective_project_repository_spec(
         access.project,
+        repository_url=payload.get('repository_url'),
+        repository_type=payload.get('repository_type'),
         branch_name=payload.get('branch_name'),
         manifest_xml=payload.get('manifest_xml'),
         group=payload.get('group'),
     )
-    if access.project.source_type == 'repository' and normalize_repository_type(access.project.repository_type) == 'multi' and not repository_spec['manifest_xml']:
-        raise HttpError(422, '多仓任务必须填写 manifest_xml')
+    if access.project.source_type == 'repository':
+        if not repository_spec['repository_url']:
+            raise HttpError(422, '仓库任务必须填写 repository_url')
+        if normalize_repository_type(repository_spec['repository_type']) == 'multi' and not repository_spec['manifest_xml']:
+            raise HttpError(422, '多仓任务必须填写 manifest_xml')
     scan_config = {
         'file_paths': payload.get('file_paths') or [],
         'rule_set_id': payload.get('rule_set_id'),
@@ -149,6 +164,8 @@ def create_task(user, payload: dict, *, task_type: str) -> AuditTask:
         created_by=user,
         task_type=task_type,
         status='pending',
+        repository_url=repository_spec['repository_url'] or None,
+        repository_type=repository_spec['repository_type'],
         branch_name=repository_spec['branch_name'],
         manifest_xml=repository_spec['manifest_xml'] or None,
         group=repository_spec['group'] or None,
@@ -670,12 +687,37 @@ def execute_scan_task(task_id: str) -> None:
         task.error_message = ''
         task.scan_config = scan_config
         task.save(update_fields=['status', 'started_at', 'error_message', 'scan_config', 'sys_update_datetime'])
-        workspace, user_payload = prepare_workspace(
+        repository_spec = build_task_repository_spec(task)
+        if task.project.source_type == 'repository':
+            repository_spec = validate_repository_spec_for_execution(repository_spec)
+        logger.info(
+            'DeepAudit scan task %s will initialize repository workspace for project %s: %s',
+            task.id,
+            task.project_id,
+            format_repository_spec_for_log(repository_spec),
+        )
+        if (
+            task.project.source_type == 'repository'
+            and (
+                normalize_repository_type(task.project.repository_type) != repository_spec['repository_type']
+                or str(task.project.repository_url or '').strip() != repository_spec['repository_url']
+            )
+        ):
+            logger.warning(
+                'DeepAudit scan task %s is using snapshotted repository spec instead of current project config: current_repository_type=%s current_repository_url=%s',
+                task.id,
+                normalize_repository_type(task.project.repository_type),
+                str(task.project.repository_url or '').strip() or '-',
+            )
+        workspace, user_payload = prepare_repository_workspace(
             task.project,
-            branch_name=task.branch_name,
+            repository_spec=repository_spec,
             user_id=str(task.created_by_id),
-            manifest_xml=task.manifest_xml,
-            group=task.group,
+            log_context={
+                'task_kind': 'scan',
+                'task_id': str(task.id),
+                'user_id': str(task.created_by_id),
+            },
         )
         runtime_scan_config = (user_payload.get('other_config') or {}).get('scan_config') or {}
         files = list_project_files(

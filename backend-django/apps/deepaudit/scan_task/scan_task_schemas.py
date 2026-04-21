@@ -53,6 +53,8 @@ class AuditTaskSchema(Schema):
     created_by_name: str | None = None
     task_type: str
     status: str
+    repository_url: str | None = None
+    repository_type: str = 'single'
     branch_name: str | None = None
     manifest_xml: str | None = None
     group: str | None = None

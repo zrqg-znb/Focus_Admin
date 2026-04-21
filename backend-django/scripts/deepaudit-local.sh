@@ -64,6 +64,8 @@ WORKER_NAME="${WORKER_NAME:-focus-local-${DEEPAUDIT_QUEUE}@${HOST_TAG}}"
 PID_DIR="$ROOT_DIR/run"
 WORKER_PID_FILE="$PID_DIR/celery-${DEEPAUDIT_QUEUE}.pid"
 WORKER_LOG_FILE="$LOG_DIR/celery-${DEEPAUDIT_QUEUE}.log"
+SERVER_LOG_FILE="$LOG_DIR/server.log"
+ERROR_LOG_FILE="$LOG_DIR/error.log"
 UVICORN_RELOAD_DIRS=(
   "$ROOT_DIR/application"
   "$ROOT_DIR/apps"
@@ -136,6 +138,17 @@ ensure_no_duplicate_worker() {
     return 1
   fi
   return 0
+}
+
+reset_worker_log_file() {
+  rm -f "$WORKER_LOG_FILE"
+  : >"$WORKER_LOG_FILE"
+}
+
+print_log_destinations() {
+  echo "Celery 运行日志: $WORKER_LOG_FILE"
+  echo "DeepAudit 业务日志: $SERVER_LOG_FILE"
+  echo "错误日志: $ERROR_LOG_FILE"
 }
 
 check_python_deps() {
@@ -233,7 +246,9 @@ run_worker() {
   check_python_deps
   check_django_settings
   ensure_no_duplicate_worker || exit 0
-  exec "$PYTHON_BIN" -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l info
+  reset_worker_log_file
+  print_log_destinations
+  exec "$PYTHON_BIN" -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l info --logfile "$WORKER_LOG_FILE"
 }
 
 run_stop() {
@@ -265,7 +280,7 @@ run_status() {
   pid="$(read_worker_pid)"
   if [[ -n "$pid" ]] && worker_process_alive "$pid"; then
     echo "DeepAudit Worker 运行中: PID=$pid NAME=$WORKER_NAME QUEUE=$DEEPAUDIT_QUEUE"
-    echo "日志: $WORKER_LOG_FILE"
+    print_log_destinations
     return 0
   fi
   echo "DeepAudit Worker 未运行。"
@@ -281,9 +296,11 @@ run_background_worker() {
   check_python_deps
   check_django_settings
   ensure_no_duplicate_worker || return 0
-  "$PYTHON_BIN" -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l info >"$WORKER_LOG_FILE" 2>&1 &
+  reset_worker_log_file
+  print_log_destinations
+  "$PYTHON_BIN" -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l info --logfile "$WORKER_LOG_FILE" >/dev/null 2>&1 < /dev/null &
   local celery_pid=$!
-  printf 'DeepAudit Celery Worker 已启动，PID=%s，NAME=%s，日志: %s\n' "$celery_pid" "$WORKER_NAME" "$WORKER_LOG_FILE"
+  printf 'DeepAudit Celery Worker 已启动，PID=%s，NAME=%s\n' "$celery_pid" "$WORKER_NAME"
 }
 
 run_server() {
@@ -296,6 +313,7 @@ run_server() {
 run_all() {
   ensure_redis
   check_python_deps
+  check_django_settings
 
   celery_pid=""
   cleanup() {
@@ -305,9 +323,11 @@ run_all() {
   }
 
   ensure_no_duplicate_worker || exit 0
-  "$PYTHON_BIN" -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l info >"$WORKER_LOG_FILE" 2>&1 &
+  reset_worker_log_file
+  print_log_destinations
+  "$PYTHON_BIN" -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l info --logfile "$WORKER_LOG_FILE" >/dev/null 2>&1 < /dev/null &
   celery_pid=$!
-  printf 'DeepAudit Celery Worker 已启动，PID=%s，NAME=%s，日志: %s\n' "$celery_pid" "$WORKER_NAME" "$WORKER_LOG_FILE"
+  printf 'DeepAudit Celery Worker 已启动，PID=%s，NAME=%s\n' "$celery_pid" "$WORKER_NAME"
   trap cleanup EXIT INT TERM
 
   start_uvicorn_server

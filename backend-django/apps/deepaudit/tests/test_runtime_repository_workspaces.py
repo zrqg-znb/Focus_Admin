@@ -130,6 +130,81 @@ class RuntimeRepositoryWorkspaceTestCase(SimpleTestCase):
         self.assertEqual(mock_create.call_args.kwargs['manifest_xml'], 'custom.xml')
         self.assertEqual(mock_create.call_args.kwargs['group'], 'team-a')
 
+    def test_prepare_repository_workspace_uses_explicit_repository_spec(self) -> None:
+        project = SimpleNamespace(
+            id='project-1',
+            owner_id='owner-1',
+            source_type='repository',
+            repository_url='https://example.com/single.git',
+            repository_type='single',
+            default_branch='main',
+            owner=SimpleNamespace(id='owner-1'),
+        )
+        repository_spec = build_repository_spec(
+            'https://example.com/manifest.git',
+            'release/main',
+            repository_type='multi',
+            manifest_xml='default.xml',
+            group='platform',
+        )
+        workspace = self.temp_root / 'workspace'
+
+        with (
+            patch('apps.deepaudit.runtime.load_user_config_payload', return_value={'llm_config': {}, 'other_config': {}}),
+            patch('apps.deepaudit.runtime.load_ssh_private_key', return_value=None),
+            patch('apps.deepaudit.runtime.create_repository_workspace', return_value=workspace) as mock_create,
+        ):
+            result_workspace, _user_payload = runtime.prepare_repository_workspace(
+                project,
+                repository_spec=repository_spec,
+                user_id='owner-1',
+            )
+
+        self.assertEqual(result_workspace, workspace)
+        self.assertEqual(mock_create.call_count, 1)
+        self.assertEqual(mock_create.call_args.kwargs['repository_spec'], repository_spec)
+        self.assertEqual(mock_create.call_args.kwargs['repository_type'], 'multi')
+        self.assertEqual(mock_create.call_args.kwargs['manifest_xml'], 'default.xml')
+        self.assertEqual(mock_create.call_args.kwargs['group'], 'platform')
+
+    def test_prepare_repository_workspace_forwards_event_callback(self) -> None:
+        project = SimpleNamespace(
+            id='project-1',
+            owner_id='owner-1',
+            source_type='repository',
+            repository_url='https://example.com/repo.git',
+            repository_type='multi',
+            default_branch='main',
+            owner=SimpleNamespace(id='owner-1'),
+        )
+        repository_spec = build_repository_spec(
+            'https://example.com/repo.git',
+            'release/main',
+            repository_type='multi',
+            manifest_xml='default.xml',
+            group='platform',
+        )
+        workspace = self.temp_root / 'workspace'
+
+        def event_callback(*_args, **_kwargs):
+            return None
+
+        with (
+            patch('apps.deepaudit.runtime.load_user_config_payload', return_value={'llm_config': {}, 'other_config': {}}),
+            patch('apps.deepaudit.runtime.load_ssh_private_key', return_value=None),
+            patch('apps.deepaudit.runtime.create_repository_workspace', return_value=workspace) as mock_create,
+        ):
+            runtime.prepare_repository_workspace(
+                project,
+                repository_spec=repository_spec,
+                user_id='owner-1',
+                event_callback=event_callback,
+                log_context={'task_kind': 'agent', 'task_id': 'task-1'},
+            )
+
+        self.assertIs(mock_create.call_args.kwargs['event_callback'], event_callback)
+        self.assertEqual(mock_create.call_args.kwargs['log_context'], {'task_kind': 'agent', 'task_id': 'task-1'})
+
 
 class ProjectRepositoryFileListingTestCase(SimpleTestCase):
     def test_list_files_uses_cached_repository_listing(self) -> None:

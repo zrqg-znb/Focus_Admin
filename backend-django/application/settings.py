@@ -318,6 +318,7 @@ CELERY_WORKER_CONCURRENCY = 2  # 并发数
 CELERY_MAX_TASKS_PER_CHILD = 5  # 没个worker最多执行5个任务便自我销毁释放内存
 CELERY_TIMEZONE = TIME_ZONE  # celery 时区问题
 CELERY_RESULT_BACKEND = 'django-db'  # celery结果存储到数据库中
+CELERY_WORKER_HIJACK_ROOT_LOGGER = False
 
 # # ================================================= #
 # # ******************** JWT 配置 ***************** #

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from collections import Counter
 from pathlib import Path
@@ -27,8 +28,14 @@ from apps.deepaudit.heuristics import normalize_severity_weight
 from apps.deepaudit.permissions import require_project_role, serialize_user_brief
 from apps.deepaudit.realtime import push_task_event
 from apps.deepaudit.reporting import ReportBuilder
-from apps.deepaudit.repo_specs import build_effective_project_repository_spec, normalize_repository_type
-from apps.deepaudit.runtime import cleanup_runtime_workspace, docker_available, prepare_workspace
+from apps.deepaudit.repo_specs import (
+    build_effective_project_repository_spec,
+    build_task_repository_spec,
+    format_repository_spec_for_log,
+    normalize_repository_type,
+    validate_repository_spec_for_execution,
+)
+from apps.deepaudit.runtime import cleanup_runtime_workspace, docker_available, prepare_repository_workspace
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact
 from apps.deepaudit.serialization import format_datetime_text, normalize_json_payload
 from apps.deepaudit.db_runtime import close_runtime_db_connections, ensure_runtime_db_connection, run_with_fresh_connection
@@ -113,6 +120,7 @@ REPORT_LANGUAGE_BY_EXTENSION = {
 
 TOOL_COUNT_EVENT_TYPES = {'tool_call', 'tool_start', 'tool_call_start'}
 UNSET = object()
+logger = logging.getLogger(__name__)
 
 
 def _to_int(value, default: int = 0) -> int:
@@ -457,6 +465,8 @@ def serialize_task(instance: AgentTask) -> dict:
         'audit_scope': instance.audit_scope or {},
         'target_vulnerabilities': list(instance.target_vulnerabilities or []),
         'verification_level': instance.verification_level,
+        'repository_url': instance.repository_url,
+        'repository_type': normalize_repository_type(instance.repository_type),
         'branch_name': instance.branch_name,
         'manifest_xml': instance.manifest_xml,
         'group': instance.group,
@@ -521,12 +531,17 @@ def create_task(user, payload: dict) -> AgentTask:
     access = require_project_role(user, payload.get('project_id'), min_role='member')
     repository_spec = build_effective_project_repository_spec(
         access.project,
+        repository_url=payload.get('repository_url'),
+        repository_type=payload.get('repository_type'),
         branch_name=payload.get('branch_name'),
         manifest_xml=payload.get('manifest_xml'),
         group=payload.get('group'),
     )
-    if access.project.source_type == 'repository' and normalize_repository_type(access.project.repository_type) == 'multi' and not repository_spec['manifest_xml']:
-        raise HttpError(422, '多仓任务必须填写 manifest_xml')
+    if access.project.source_type == 'repository':
+        if not repository_spec['repository_url']:
+            raise HttpError(422, '仓库任务必须填写 repository_url')
+        if normalize_repository_type(repository_spec['repository_type']) == 'multi' and not repository_spec['manifest_xml']:
+            raise HttpError(422, '多仓任务必须填写 manifest_xml')
     return AgentTask.objects.create(
         project=access.project,
         created_by=user,
@@ -535,6 +550,8 @@ def create_task(user, payload: dict) -> AgentTask:
         audit_scope=payload.get('audit_scope') or {},
         target_vulnerabilities=payload.get('target_vulnerabilities') or [],
         verification_level=payload.get('verification_level') or 'sandbox',
+        repository_url=repository_spec['repository_url'] or None,
+        repository_type=repository_spec['repository_type'],
         branch_name=repository_spec['branch_name'],
         manifest_xml=repository_spec['manifest_xml'] or None,
         group=repository_spec['group'] or None,
@@ -637,6 +654,8 @@ def resume_task_from_checkpoint(user, task_id: str, checkpoint_id: str) -> Agent
         },
         'target_vulnerabilities': list(source_task.target_vulnerabilities or []),
         'verification_level': source_task.verification_level or 'sandbox',
+        'repository_url': source_task.repository_url,
+        'repository_type': source_task.repository_type,
         'branch_name': source_task.branch_name or source_task.project.default_branch,
         'manifest_xml': source_task.manifest_xml,
         'group': source_task.group,
@@ -1576,6 +1595,30 @@ def create_event(
     return event
 
 
+def _build_repository_event_callback(task_id: str):
+    def _callback(level: str, message: str, metadata: dict | None = None) -> None:
+        event_type = 'warning' if str(level or '').strip().lower() == 'warning' else 'info'
+
+        def _emit() -> None:
+            current = AgentTask.objects.select_related('created_by').filter(id=task_id, is_deleted=False).first()
+            if not current:
+                return
+            create_event(
+                current,
+                event_type,
+                phase=current.current_phase or AGENT_PHASE_PLANNING,
+                message=message,
+                metadata=metadata or {},
+            )
+
+        try:
+            run_with_fresh_connection(_emit)
+        except Exception as exc:
+            logger.warning('DeepAudit failed to persist repository init event for agent task %s: %s', task_id, exc)
+
+    return _callback
+
+
 def execute_agent_task(task_id: str) -> None:
     """
     Celery Task 入口
@@ -1602,12 +1645,40 @@ def execute_agent_task(task_id: str) -> None:
         )
         
         # 克隆或解压代码空间
-        workspace, user_payload = prepare_workspace(
+        repository_spec = build_task_repository_spec(instance)
+        if instance.project.source_type == 'repository':
+            repository_spec = validate_repository_spec_for_execution(repository_spec)
+        logger.info(
+            'DeepAudit agent task %s will initialize repository workspace for project %s: %s',
+            instance.id,
+            instance.project_id,
+            format_repository_spec_for_log(repository_spec),
+        )
+        if (
+            instance.project.source_type == 'repository'
+            and (
+                normalize_repository_type(instance.project.repository_type) != repository_spec['repository_type']
+                or str(instance.project.repository_url or '').strip() != repository_spec['repository_url']
+            )
+        ):
+            logger.warning(
+                'DeepAudit agent task %s is using snapshotted repository spec instead of current project config: current_repository_type=%s current_repository_url=%s',
+                instance.id,
+                normalize_repository_type(instance.project.repository_type),
+                str(instance.project.repository_url or '').strip() or '-',
+            )
+
+        repository_event_callback = _build_repository_event_callback(str(instance.id))
+        workspace, user_payload = prepare_repository_workspace(
             instance.project,
-            branch_name=instance.branch_name,
-            manifest_xml=instance.manifest_xml,
-            group=instance.group,
+            repository_spec=repository_spec,
             user_id=str(instance.created_by_id),
+            event_callback=repository_event_callback,
+            log_context={
+                'task_kind': 'agent',
+                'task_id': str(instance.id),
+                'user_id': str(instance.created_by_id),
+            },
         )
         
         # 准备交给 Agent 的上下文数据

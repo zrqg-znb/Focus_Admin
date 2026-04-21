@@ -40,6 +40,8 @@ class AgentTaskSchema(Schema):
     audit_scope: dict[str, Any] = Field(default_factory=dict)
     target_vulnerabilities: list[str] = Field(default_factory=list)
     verification_level: str = 'sandbox'
+    repository_url: str | None = None
+    repository_type: str = 'single'
     branch_name: str | None = None
     manifest_xml: str | None = None
     group: str | None = None
