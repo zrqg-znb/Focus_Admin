@@ -121,12 +121,12 @@ export interface DtsDictTagMeta {
 
 export type DtsGovernanceField =
   | 'action_status'
+  | 'dev_asset_type'
   | 'dev_common_issue_type'
   | 'dev_control_points'
   | 'dev_issue_intro_point'
   | 'dev_issue_probability'
   | 'dev_non_base_desc'
-  | 'dev_asset_type'
   | 'dev_status'
   | 'dev_sub_category'
   | 'is_base_soft_issue'
@@ -156,6 +156,9 @@ function resolveOptionsForField(
     case 'action_status': {
       return safeOptions.action_status;
     }
+    case 'dev_asset_type': {
+      return safeOptions.dev_asset_type;
+    }
     case 'dev_common_issue_type': {
       return safeOptions.dev_common_issue_type;
     }
@@ -170,9 +173,6 @@ function resolveOptionsForField(
     }
     case 'dev_non_base_desc': {
       return safeOptions.dev_non_base_desc;
-    }
-    case 'dev_asset_type': {
-      return safeOptions.dev_asset_type;
     }
     case 'dev_status': {
       return safeOptions.action_status;
@@ -307,8 +307,8 @@ export function resolveDtsGovernanceTagMeta(
 export function resolveDtsGovernanceTagList(
   dictOptions: DtsDictOptions | null | undefined,
   field:
-    | 'dev_control_points'
     | 'dev_asset_type'
+    | 'dev_control_points'
     | 'dev_non_base_desc'
     | 'dev_sub_category'
     | 'test_miss_reason',

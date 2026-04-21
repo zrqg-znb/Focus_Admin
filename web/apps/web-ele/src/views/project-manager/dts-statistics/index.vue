@@ -52,8 +52,8 @@ import {
   fetchDtsDictOptionsCached,
   formatCycleIntegerDisplay,
   formatProjectDisplay,
-  resolveDtsGovernanceTagMeta,
   resolveDtsGovernanceTagList,
+  resolveDtsGovernanceTagMeta,
   resolveSeverityMeta,
   useColumns,
 } from './data';
@@ -670,9 +670,7 @@ function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
     ),
     dev_aar_link_keyword: String(source.dev_aar_link_keyword || '').trim(),
     dev_asset_link_keyword: String(source.dev_asset_link_keyword || '').trim(),
-    dev_asset_type_values: normalizeStringArray(
-      source.dev_asset_type_values,
-    ),
+    dev_asset_type_values: normalizeStringArray(source.dev_asset_type_values),
     dev_status_values: normalizeStringArray(source.dev_status_values),
     dev_remark_keyword: String(source.dev_remark_keyword || '').trim(),
     test_owner_name_keyword: normalizeStringArray(
@@ -5426,9 +5424,9 @@ onUnmounted(() => {
                         <ElTag type="info" effect="plain" size="small">
                           +{{ (row.dev_non_base_desc || []).length - 2 }}
                         </ElTag>
-                        </ElTooltip>
-                      </div>
-                    </template>
+                      </ElTooltip>
+                    </div>
+                  </template>
 
                   <template #cell-dev_asset_type="{ row }">
                     <span
@@ -5445,11 +5443,7 @@ onUnmounted(() => {
                         ).slice(0, 2)"
                         :key="item.label"
                       >
-                        <ElTag
-                          :type="item.type"
-                          effect="light"
-                          size="small"
-                        >
+                        <ElTag :type="item.type" effect="light" size="small">
                           {{ item.label }}
                         </ElTag>
                       </template>
