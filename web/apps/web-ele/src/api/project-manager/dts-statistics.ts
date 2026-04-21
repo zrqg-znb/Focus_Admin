@@ -47,6 +47,9 @@ export interface DtsStatisticsFilters {
   dev_issue_intro_point_values: string[];
   dev_issue_probability_values: string[];
   dev_common_issue_type_values: string[];
+  is_base_soft_issue_values: string[];
+  is_duplicate_issue_values: string[];
+  duplicate_issue_no_keyword: string;
   dev_control_points_values: string[];
   dev_intro_point_analysis_keyword: string;
   dev_improvements_keyword: string;
@@ -131,6 +134,9 @@ export interface DtsMergedDefect {
   dev_issue_intro_point?: null | string;
   dev_issue_probability?: null | string;
   dev_common_issue_type?: null | string;
+  is_base_soft_issue?: null | string;
+  is_duplicate_issue?: null | string;
+  duplicate_issue_no?: null | string;
   dev_control_points: string[];
   dev_intro_point_analysis?: null | string;
   dev_improvements: string[];
@@ -184,6 +190,9 @@ export interface DtsExtensionSavePayload {
   dev_issue_intro_point?: null | string;
   dev_issue_probability?: null | string;
   dev_common_issue_type?: null | string;
+  is_base_soft_issue?: null | string;
+  is_duplicate_issue?: null | string;
+  duplicate_issue_no?: null | string;
   dev_control_points?: string[];
   dev_intro_point_analysis?: null | string;
   dev_improvements?: string[];
@@ -224,6 +233,9 @@ export interface DtsBatchExtensionPatchPayload {
   dev_issue_intro_point?: null | string;
   dev_issue_probability?: null | string;
   dev_common_issue_type?: null | string;
+  is_base_soft_issue?: null | string;
+  is_duplicate_issue?: null | string;
+  duplicate_issue_no?: null | string;
   dev_control_points?: null | string[];
   dev_intro_point_analysis?: null | string;
   dev_improvements?: null | string[];

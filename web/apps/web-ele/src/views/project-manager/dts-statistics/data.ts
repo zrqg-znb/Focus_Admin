@@ -127,7 +127,9 @@ export type DtsGovernanceField =
   | 'dev_non_base_desc'
   | 'dev_status'
   | 'dev_sub_category'
+  | 'is_base_soft_issue'
   | 'is_downstream'
+  | 'is_duplicate_issue'
   | 'issue_intro_stage'
   | 'need_aar'
   | 'need_dev_analyze'
@@ -173,7 +175,9 @@ function resolveOptionsForField(
     case 'dev_sub_category': {
       return safeOptions.dev_sub_category;
     }
+    case 'is_base_soft_issue':
     case 'is_downstream':
+    case 'is_duplicate_issue':
     case 'need_aar':
     case 'need_dev_analyze':
     case 'need_test_analyze': {
@@ -274,7 +278,9 @@ export function resolveDtsGovernanceTagMeta(
   }
 
   if (
+    field === 'is_base_soft_issue' ||
     field === 'is_downstream' ||
+    field === 'is_duplicate_issue' ||
     field === 'need_aar' ||
     field === 'need_dev_analyze' ||
     field === 'need_test_analyze'
@@ -663,6 +669,25 @@ export function useColumns(): Columns {
           minWidth: 150,
         },
         {
+          key: 'is_base_soft_issue',
+          dataKey: 'is_base_soft_issue',
+          title: '是否底软问题',
+          width: 130,
+        },
+        {
+          key: 'is_duplicate_issue',
+          dataKey: 'is_duplicate_issue',
+          title: '是否重复问题',
+          width: 130,
+        },
+        {
+          key: 'duplicate_issue_no',
+          dataKey: 'duplicate_issue_no',
+          title: '重复问题单号',
+          minWidth: 180,
+          showOverflowTooltip: true,
+        },
+        {
           key: 'dev_control_points',
           dataKey: 'dev_control_points',
           title: '需要补强的开发控制点',
@@ -942,6 +967,26 @@ export const DTS_DEV_FORM_FIELDS: DtsFormFieldConfig[] = [
   },
   {
     component: 'ApiSelect',
+    fieldName: 'is_base_soft_issue',
+    label: '是否底软问题',
+    placeholder: '请选择是否底软问题',
+    dictKey: 'yes_no',
+  },
+  {
+    component: 'ApiSelect',
+    fieldName: 'is_duplicate_issue',
+    label: '是否重复问题',
+    placeholder: '请选择是否重复问题',
+    dictKey: 'yes_no',
+  },
+  {
+    component: 'Input',
+    fieldName: 'duplicate_issue_no',
+    label: '重复问题单号',
+    placeholder: '仅重复问题填写',
+  },
+  {
+    component: 'ApiSelect',
     fieldName: 'dev_control_points',
     label: '需要补强的开发控制点',
     placeholder: '请选择开发控制点（可多选）',
@@ -1113,8 +1158,13 @@ export function joinDtsTextareaLines(value: unknown): string {
 }
 
 export function buildDtsExtensionSubmitPayload(raw: Record<string, any>) {
+  const isDuplicateIssue = String(raw.is_duplicate_issue || '').trim();
   return {
     ...raw,
+    duplicate_issue_no:
+      isDuplicateIssue === '是'
+        ? String(raw.duplicate_issue_no || '').trim()
+        : '',
     dev_sub_category: normalizeDtsStringListValue(raw.dev_sub_category),
     dev_control_points: normalizeDtsStringListValue(raw.dev_control_points),
     dev_non_base_desc: normalizeDtsStringListValue(raw.dev_non_base_desc),

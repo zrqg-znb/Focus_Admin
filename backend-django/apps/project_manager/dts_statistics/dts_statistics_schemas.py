@@ -73,6 +73,9 @@ class DtsLocalFilterSchema(Schema):
     dev_issue_intro_point_values: list[str] = Field(default_factory=list)
     dev_issue_probability_values: list[str] = Field(default_factory=list)
     dev_common_issue_type_values: list[str] = Field(default_factory=list)
+    is_base_soft_issue_values: list[str] = Field(default_factory=list)
+    is_duplicate_issue_values: list[str] = Field(default_factory=list)
+    duplicate_issue_no_keyword: str = ""
     dev_control_points_values: list[str] = Field(default_factory=list)
     dev_intro_point_analysis_keyword: str = ""
     dev_improvements_keyword: str = ""
@@ -109,6 +112,7 @@ class DtsLocalFilterSchema(Schema):
         "dev_improvements_keyword",
         "dev_aar_link_keyword",
         "dev_asset_link_keyword",
+        "duplicate_issue_no_keyword",
         "dev_remark_keyword",
         "test_standard_desc_keyword",
         "test_improvements_keyword",
@@ -216,6 +220,9 @@ class DtsStatisticsQuerySchema(Schema):
     dev_issue_intro_point_values: list[str] = Field(default_factory=list)
     dev_issue_probability_values: list[str] = Field(default_factory=list)
     dev_common_issue_type_values: list[str] = Field(default_factory=list)
+    is_base_soft_issue_values: list[str] = Field(default_factory=list)
+    is_duplicate_issue_values: list[str] = Field(default_factory=list)
+    duplicate_issue_no_keyword: str = ""
     dev_control_points_values: list[str] = Field(default_factory=list)
     dev_intro_point_analysis_keyword: str = ""
     dev_improvements_keyword: str = ""
@@ -270,6 +277,7 @@ class DtsStatisticsQuerySchema(Schema):
         "dev_improvements_keyword",
         "dev_aar_link_keyword",
         "dev_asset_link_keyword",
+        "duplicate_issue_no_keyword",
         "dev_remark_keyword",
         "test_standard_desc_keyword",
         "test_improvements_keyword",
@@ -327,6 +335,8 @@ class DtsStatisticsQuerySchema(Schema):
         "dev_issue_intro_point_values",
         "dev_issue_probability_values",
         "dev_common_issue_type_values",
+        "is_base_soft_issue_values",
+        "is_duplicate_issue_values",
         "dev_control_points_values",
         "dev_non_base_desc_values",
         "dev_status_values",
@@ -368,6 +378,9 @@ class DtsExtensionSaveSchema(Schema):
     dev_issue_intro_point: Optional[str] = None
     dev_issue_probability: Optional[str] = None
     dev_common_issue_type: Optional[str] = None
+    is_base_soft_issue: Optional[str] = None
+    is_duplicate_issue: Optional[str] = None
+    duplicate_issue_no: Optional[str] = None
     dev_control_points: list[str] = Field(default_factory=list)
     dev_intro_point_analysis: Optional[str] = None
     dev_improvements: list[str] = Field(default_factory=list)
@@ -425,6 +438,9 @@ class DtsExtensionSaveSchema(Schema):
         "dev_issue_intro_point",
         "dev_issue_probability",
         "dev_common_issue_type",
+        "is_base_soft_issue",
+        "is_duplicate_issue",
+        "duplicate_issue_no",
         "dev_intro_point_analysis",
         "dev_aar_link",
         "dev_asset_link",
@@ -463,6 +479,9 @@ class DtsBatchExtensionDataSchema(Schema):
     dev_issue_intro_point: Optional[str] = None
     dev_issue_probability: Optional[str] = None
     dev_common_issue_type: Optional[str] = None
+    is_base_soft_issue: Optional[str] = None
+    is_duplicate_issue: Optional[str] = None
+    duplicate_issue_no: Optional[str] = None
     dev_control_points: Optional[list[str]] = None
     dev_intro_point_analysis: Optional[str] = None
     dev_improvements: Optional[list[str]] = None
@@ -520,6 +539,9 @@ class DtsBatchExtensionDataSchema(Schema):
         "dev_issue_intro_point",
         "dev_issue_probability",
         "dev_common_issue_type",
+        "is_base_soft_issue",
+        "is_duplicate_issue",
+        "duplicate_issue_no",
         "dev_intro_point_analysis",
         "dev_aar_link",
         "dev_asset_link",
@@ -618,6 +640,9 @@ class DtsMergedDefectSchema(DataLakeDefectSchema):
     dev_issue_intro_point: Optional[str] = None
     dev_issue_probability: Optional[str] = None
     dev_common_issue_type: Optional[str] = None
+    is_base_soft_issue: Optional[str] = None
+    is_duplicate_issue: Optional[str] = None
+    duplicate_issue_no: Optional[str] = None
     dev_control_points: list[str] = Field(default_factory=list)
     dev_intro_point_analysis: Optional[str] = None
     dev_improvements: list[str] = Field(default_factory=list)
@@ -753,6 +778,9 @@ class DtsStatisticsExportSchema(Schema):
     dev_issue_intro_point_values: list[str] = Field(default_factory=list)
     dev_issue_probability_values: list[str] = Field(default_factory=list)
     dev_common_issue_type_values: list[str] = Field(default_factory=list)
+    is_base_soft_issue_values: list[str] = Field(default_factory=list)
+    is_duplicate_issue_values: list[str] = Field(default_factory=list)
+    duplicate_issue_no_keyword: str = ""
     dev_control_points_values: list[str] = Field(default_factory=list)
     dev_intro_point_analysis_keyword: str = ""
     dev_improvements_keyword: str = ""
@@ -805,6 +833,7 @@ class DtsStatisticsExportSchema(Schema):
         "dev_improvements_keyword",
         "dev_aar_link_keyword",
         "dev_asset_link_keyword",
+        "duplicate_issue_no_keyword",
         "dev_remark_keyword",
         "test_standard_desc_keyword",
         "test_improvements_keyword",
@@ -862,6 +891,8 @@ class DtsStatisticsExportSchema(Schema):
         "dev_issue_intro_point_values",
         "dev_issue_probability_values",
         "dev_common_issue_type_values",
+        "is_base_soft_issue_values",
+        "is_duplicate_issue_values",
         "dev_control_points_values",
         "dev_non_base_desc_values",
         "dev_status_values",

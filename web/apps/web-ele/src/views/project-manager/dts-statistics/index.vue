@@ -138,6 +138,20 @@ const GOVERNANCE_SELECT_FILTER_CONFIGS = [
     placeholder: '输入关键词筛选是否共性问题',
   },
   {
+    columnKey: 'is_base_soft_issue',
+    dictKey: 'yes_no',
+    filterKey: 'is_base_soft_issue_values',
+    label: '是否底软问题',
+    placeholder: '输入关键词筛选是否底软问题',
+  },
+  {
+    columnKey: 'is_duplicate_issue',
+    dictKey: 'yes_no',
+    filterKey: 'is_duplicate_issue_values',
+    label: '是否重复问题',
+    placeholder: '输入关键词筛选是否重复问题',
+  },
+  {
     columnKey: 'dev_control_points',
     dictKey: 'dev_control_points',
     filterKey: 'dev_control_points_values',
@@ -234,6 +248,12 @@ const GOVERNANCE_KEYWORD_FILTER_CONFIGS = [
     filterKey: 'dev_remark_keyword',
     label: '开发备注',
     placeholder: '输入关键词模糊搜索开发备注',
+  },
+  {
+    columnKey: 'duplicate_issue_no',
+    filterKey: 'duplicate_issue_no_keyword',
+    label: '重复问题单号',
+    placeholder: '输入关键词模糊搜索重复问题单号',
   },
   {
     columnKey: 'test_standard_desc',
@@ -377,6 +397,9 @@ function createDefaultFilters(): DtsStatisticsFilters {
     dev_issue_intro_point_values: [],
     dev_issue_probability_values: [],
     dev_common_issue_type_values: [],
+    is_base_soft_issue_values: [],
+    is_duplicate_issue_values: [],
+    duplicate_issue_no_keyword: '',
     dev_control_points_values: [],
     dev_intro_point_analysis_keyword: '',
     dev_improvements_keyword: '',
@@ -611,6 +634,15 @@ function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
     dev_common_issue_type_values: normalizeStringArray(
       source.dev_common_issue_type_values,
     ),
+    is_base_soft_issue_values: normalizeStringArray(
+      source.is_base_soft_issue_values,
+    ),
+    is_duplicate_issue_values: normalizeStringArray(
+      source.is_duplicate_issue_values,
+    ),
+    duplicate_issue_no_keyword: String(
+      source.duplicate_issue_no_keyword || '',
+    ).trim(),
     dev_control_points_values: normalizeStringArray(
       source.dev_control_points_values,
     ),
@@ -723,6 +755,13 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
     dev_common_issue_type_values: [
       ...(payload.dev_common_issue_type_values || []),
     ].sort(),
+    is_base_soft_issue_values: [
+      ...(payload.is_base_soft_issue_values || []),
+    ].sort(),
+    is_duplicate_issue_values: [
+      ...(payload.is_duplicate_issue_values || []),
+    ].sort(),
+    duplicate_issue_no_keyword: payload.duplicate_issue_no_keyword || '',
     dev_control_points_values: [
       ...(payload.dev_control_points_values || []),
     ].sort(),
@@ -5193,6 +5232,69 @@ onUnmounted(() => {
                         )?.label || row.dev_common_issue_type
                       }}
                     </ElTag>
+                  </template>
+
+                  <template #cell-is_base_soft_issue="{ row }">
+                    <span v-if="!row.is_base_soft_issue" class="text-slate-400">
+                      -
+                    </span>
+                    <ElTag
+                      v-else
+                      :type="
+                        resolveGovTag(
+                          'is_base_soft_issue',
+                          row.is_base_soft_issue,
+                        )?.type || 'info'
+                      "
+                      effect="light"
+                      size="small"
+                    >
+                      {{
+                        resolveGovTag(
+                          'is_base_soft_issue',
+                          row.is_base_soft_issue,
+                        )?.label || row.is_base_soft_issue
+                      }}
+                    </ElTag>
+                  </template>
+
+                  <template #cell-is_duplicate_issue="{ row }">
+                    <span v-if="!row.is_duplicate_issue" class="text-slate-400">
+                      -
+                    </span>
+                    <ElTag
+                      v-else
+                      :type="
+                        resolveGovTag(
+                          'is_duplicate_issue',
+                          row.is_duplicate_issue,
+                        )?.type || 'info'
+                      "
+                      effect="light"
+                      size="small"
+                    >
+                      {{
+                        resolveGovTag(
+                          'is_duplicate_issue',
+                          row.is_duplicate_issue,
+                        )?.label || row.is_duplicate_issue
+                      }}
+                    </ElTag>
+                  </template>
+
+                  <template #cell-duplicate_issue_no="{ row }">
+                    <span v-if="!row.duplicate_issue_no" class="text-slate-400">
+                      -
+                    </span>
+                    <ElTooltip
+                      v-else
+                      :content="row.duplicate_issue_no"
+                      placement="top-start"
+                    >
+                      <span class="cursor-help">{{
+                        row.duplicate_issue_no
+                      }}</span>
+                    </ElTooltip>
                   </template>
 
                   <template #cell-test_status="{ row }">

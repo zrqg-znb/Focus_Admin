@@ -150,6 +150,9 @@ _EXTENSION_ALLOWED_FIELDS = {
     "dev_issue_intro_point",
     "dev_issue_probability",
     "dev_common_issue_type",
+    "is_base_soft_issue",
+    "is_duplicate_issue",
+    "duplicate_issue_no",
     "dev_control_points",
     "dev_intro_point_analysis",
     "dev_improvements",
@@ -267,6 +270,9 @@ _GOVERNANCE_LOCAL_FILTER_FIELD_KEYS = {
     "dev_issue_intro_point",
     "dev_issue_probability",
     "dev_common_issue_type",
+    "is_base_soft_issue",
+    "is_duplicate_issue",
+    "duplicate_issue_no",
     "dev_control_points",
     "dev_intro_point_analysis",
     "dev_improvements",
@@ -1446,6 +1452,9 @@ def _merge_defect_with_extension(
                 "dev_issue_intro_point": None,
                 "dev_issue_probability": None,
                 "dev_common_issue_type": None,
+                "is_base_soft_issue": None,
+                "is_duplicate_issue": None,
+                "duplicate_issue_no": None,
                 "dev_control_points": [],
                 "dev_intro_point_analysis": None,
                 "dev_improvements": [],
@@ -1492,6 +1501,9 @@ def _merge_defect_with_extension(
     merged["dev_issue_intro_point"] = extension.dev_issue_intro_point
     merged["dev_issue_probability"] = extension.dev_issue_probability
     merged["dev_common_issue_type"] = extension.dev_common_issue_type
+    merged["is_base_soft_issue"] = extension.is_base_soft_issue
+    merged["is_duplicate_issue"] = extension.is_duplicate_issue
+    merged["duplicate_issue_no"] = extension.duplicate_issue_no
     merged["dev_control_points"] = extension.dev_control_points or []
     merged["dev_intro_point_analysis"] = extension.dev_intro_point_analysis
     merged["dev_improvements"] = extension.dev_improvements or []
@@ -1642,6 +1654,15 @@ def _resolve_local_runtime_filters(
         ),
         "dev_common_issue_type_values": _normalize_text_list(
             getattr(query, "dev_common_issue_type_values", [])
+        ),
+        "is_base_soft_issue_values": _normalize_text_list(
+            getattr(query, "is_base_soft_issue_values", [])
+        ),
+        "is_duplicate_issue_values": _normalize_text_list(
+            getattr(query, "is_duplicate_issue_values", [])
+        ),
+        "duplicate_issue_no_keyword": _clean_text(
+            getattr(query, "duplicate_issue_no_keyword", "")
         ),
         "dev_control_points_values": _normalize_text_list(
             getattr(query, "dev_control_points_values", [])
@@ -2159,6 +2180,21 @@ def _apply_local_filters(
         for item in _normalize_text_list(local_filters["dev_common_issue_type_values"])
         if item
     }
+    is_base_soft_issue_values = set() if "is_base_soft_issue" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["is_base_soft_issue_values"])
+        if item
+    }
+    is_duplicate_issue_values = set() if "is_duplicate_issue" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["is_duplicate_issue_values"])
+        if item
+    }
+    duplicate_issue_no_keyword = (
+        ""
+        if "duplicate_issue_no" in ignored
+        else _clean_text(local_filters["duplicate_issue_no_keyword"])
+    )
     dev_control_points_values = set() if "dev_control_points" in ignored else {
         item
         for item in _normalize_text_list(local_filters["dev_control_points_values"])
@@ -2390,6 +2426,20 @@ def _apply_local_filters(
             and _clean_text(row.get("dev_common_issue_type"))
             not in dev_common_issue_type_values
         ):
+            continue
+        if (
+            is_base_soft_issue_values
+            and _clean_text(row.get("is_base_soft_issue"))
+            not in is_base_soft_issue_values
+        ):
+            continue
+        if (
+            is_duplicate_issue_values
+            and _clean_text(row.get("is_duplicate_issue"))
+            not in is_duplicate_issue_values
+        ):
+            continue
+        if not _match_keyword_like(row.get("duplicate_issue_no"), duplicate_issue_no_keyword):
             continue
         if not _match_list_intersects(
             row.get("dev_control_points"), dev_control_points_values
@@ -2676,6 +2726,12 @@ def _build_filtered_result_payload(
         local_filters["dev_issue_probability_values"] = []
     if "dev_common_issue_type" in ignored:
         local_filters["dev_common_issue_type_values"] = []
+    if "is_base_soft_issue" in ignored:
+        local_filters["is_base_soft_issue_values"] = []
+    if "is_duplicate_issue" in ignored:
+        local_filters["is_duplicate_issue_values"] = []
+    if "duplicate_issue_no" in ignored:
+        local_filters["duplicate_issue_no_keyword"] = ""
     if "dev_control_points" in ignored:
         local_filters["dev_control_points_values"] = []
     if "dev_intro_point_analysis" in ignored:
@@ -2809,6 +2865,15 @@ def _build_filtered_result_payload(
         ),
         "dev_common_issue_type_values": _normalize_text_list(
             local_filters.get("dev_common_issue_type_values")
+        ),
+        "is_base_soft_issue_values": _normalize_text_list(
+            local_filters.get("is_base_soft_issue_values")
+        ),
+        "is_duplicate_issue_values": _normalize_text_list(
+            local_filters.get("is_duplicate_issue_values")
+        ),
+        "duplicate_issue_no_keyword": _clean_text(
+            local_filters.get("duplicate_issue_no_keyword")
         ),
         "dev_control_points_values": _normalize_text_list(
             local_filters.get("dev_control_points_values")
@@ -3359,6 +3424,9 @@ def _is_dev_filled(ext: DtsExtension) -> bool:
             _has_value_for_summary(ext.dev_issue_intro_point),
             _has_value_for_summary(ext.dev_issue_probability),
             _has_value_for_summary(ext.dev_common_issue_type),
+            _has_value_for_summary(ext.is_base_soft_issue),
+            _has_value_for_summary(ext.is_duplicate_issue),
+            _has_value_for_summary(ext.duplicate_issue_no),
             _has_value_for_summary(ext.dev_control_points),
             _has_value_for_summary(ext.dev_intro_point_analysis),
             _has_value_for_summary(ext.dev_improvements),
@@ -3433,6 +3501,9 @@ _EXPORT_COLUMN_SPECS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
     ("问题引入点", lambda item: _clean_text(item.get("dev_issue_intro_point"))),
     ("问题概率", lambda item: _clean_text(item.get("dev_issue_probability"))),
     ("是否共性问题", lambda item: _clean_text(item.get("dev_common_issue_type"))),
+    ("是否底软问题", lambda item: _clean_text(item.get("is_base_soft_issue"))),
+    ("是否重复问题", lambda item: _clean_text(item.get("is_duplicate_issue"))),
+    ("重复问题单号", lambda item: _clean_text(item.get("duplicate_issue_no"))),
     ("需要补强的开发控制点", lambda item: _join_lines(item.get("dev_control_points"))),
     ("引入点分析", lambda item: _clean_text(item.get("dev_intro_point_analysis"))),
     ("开发填报-改进措施", lambda item: _join_lines(item.get("dev_improvements"))),
@@ -3797,6 +3868,9 @@ def get_dts_statistics_summary(
                 "dev_issue_intro_point",
                 "dev_issue_probability",
                 "dev_common_issue_type",
+                "is_base_soft_issue",
+                "is_duplicate_issue",
+                "duplicate_issue_no",
                 "dev_control_points",
                 "dev_intro_point_analysis",
                 "dev_improvements",
@@ -3893,19 +3967,28 @@ def _ensure_valid_extension_field_mask(field_mask: Iterable[str] | None) -> list
     return normalized
 
 
+def _normalize_extension_payload_for_save(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    if "is_duplicate_issue" in normalized and _clean_text(
+        normalized.get("is_duplicate_issue")
+    ) != "是":
+        normalized["duplicate_issue_no"] = None
+    return normalized
+
+
 def _build_single_extension_payload(data: DtsExtensionSaveSchema) -> dict[str, Any]:
     payload = data.dict(exclude_unset=True)
     invalid = [field for field in payload.keys() if field not in _EXTENSION_ALLOWED_FIELDS]
     if invalid:
         raise HttpError(422, f"存在不支持的保存字段: {', '.join(invalid)}")
-    return payload
+    return _normalize_extension_payload_for_save(payload)
 
 
 def _build_batch_extension_payload(
     data: DtsBatchExtensionSaveSchema,
     field_mask: list[str],
 ) -> dict[str, Any]:
-    raw = data.data.dict(exclude_unset=False)
+    raw = data.data.dict(exclude_unset=True)
     payload: dict[str, Any] = {}
     for field in field_mask:
         value = raw.get(field)
@@ -3913,7 +3996,7 @@ def _build_batch_extension_payload(
             payload[field] = list(value or [])
             continue
         payload[field] = value
-    return payload
+    return _normalize_extension_payload_for_save(payload)
 
 
 def _apply_extension_payload_to_instance(
