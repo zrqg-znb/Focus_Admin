@@ -64,6 +64,18 @@ WORKER_NAME="${WORKER_NAME:-focus-local-${DEEPAUDIT_QUEUE}@${HOST_TAG}}"
 PID_DIR="$ROOT_DIR/run"
 WORKER_PID_FILE="$PID_DIR/celery-${DEEPAUDIT_QUEUE}.pid"
 WORKER_LOG_FILE="$LOG_DIR/celery-${DEEPAUDIT_QUEUE}.log"
+UVICORN_RELOAD_DIRS=(
+  "$ROOT_DIR/application"
+  "$ROOT_DIR/apps"
+  "$ROOT_DIR/common"
+  "$ROOT_DIR/core"
+  "$ROOT_DIR/scheduler"
+  "$ROOT_DIR/system"
+)
+UVICORN_RELOAD_ARGS=()
+for reload_dir in "${UVICORN_RELOAD_DIRS[@]}"; do
+  UVICORN_RELOAD_ARGS+=(--reload-dir "$reload_dir")
+done
 
 mkdir -p "$LOG_DIR"
 mkdir -p "$PID_DIR"
@@ -209,6 +221,13 @@ run_check() {
   echo "DeepAudit 本地链路检查通过。"
 }
 
+start_uvicorn_server() {
+  local host="${RUNSERVER_ADDR%:*}"
+  local port="${RUNSERVER_ADDR##*:}"
+  # 只监听代码目录，避免 DeepAudit 拉代码写入 media/run/logs 时触发重载。
+  exec "$PYTHON_BIN" -m uvicorn application.asgi:application --host "$host" --port "$port" "${UVICORN_RELOAD_ARGS[@]}"
+}
+
 run_worker() {
   ensure_redis
   check_python_deps
@@ -271,9 +290,7 @@ run_server() {
   ensure_redis
   check_python_deps
   check_django_settings
-  local host="${RUNSERVER_ADDR%:*}"
-  local port="${RUNSERVER_ADDR##*:}"
-  exec "$PYTHON_BIN" -m uvicorn application.asgi:application --host "$host" --port "$port" --reload
+  start_uvicorn_server
 }
 
 run_all() {
@@ -293,9 +310,7 @@ run_all() {
   printf 'DeepAudit Celery Worker 已启动，PID=%s，NAME=%s，日志: %s\n' "$celery_pid" "$WORKER_NAME" "$WORKER_LOG_FILE"
   trap cleanup EXIT INT TERM
 
-  local host="${RUNSERVER_ADDR%:*}"
-  local port="${RUNSERVER_ADDR##*:}"
-  exec "$PYTHON_BIN" -m uvicorn application.asgi:application --host "$host" --port "$port" --reload
+  start_uvicorn_server
 }
 
 cmd="${1:-check}"
