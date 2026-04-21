@@ -217,8 +217,16 @@ def _legacy_other_to_snake(other_config: dict[str, Any]) -> dict[str, Any]:
     embedding_config = dict(
         other_config.get("embedding_config") or other_config.get("embeddingConfig") or {}
     )
+    codehub_token = str(other_config.get("codehub_token") or other_config.get("codehubToken") or "").strip()
+    if not codehub_token:
+        for legacy_key in ("github_token", "gitlab_token", "gitea_token", "githubToken", "gitlabToken", "giteaToken"):
+            legacy_value = str(other_config.get(legacy_key) or "").strip()
+            if legacy_value:
+                codehub_token = legacy_value
+                break
     return _clean_dict(
         {
+            "codehub_token": codehub_token or None,
             "output_language": str(
                 other_config.get("output_language")
                 or other_config.get("outputLanguage")
@@ -392,6 +400,7 @@ def build_legacy_other_config(other_config: dict[str, Any]) -> dict[str, Any]:
     embedding_config = dict(other_config.get("embedding_config") or {})
     return _clean_dict(
         {
+            "codehubToken": str(other_config.get("codehub_token") or "").strip() or None,
             "outputLanguage": str(other_config.get("output_language") or "").strip()
             or None,
             "scanConfig": _clean_dict(

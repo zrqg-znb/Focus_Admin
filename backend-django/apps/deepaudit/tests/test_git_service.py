@@ -13,6 +13,7 @@ from django.test import SimpleTestCase, override_settings
 
 from apps.deepaudit import storage as deepaudit_storage
 from apps.deepaudit import git_service
+from apps.deepaudit.repo_specs import build_repository_spec
 
 
 def _storage_patch(temp_root: Path):
@@ -38,12 +39,21 @@ class GitServiceTestCase(SimpleTestCase):
             id='project-1',
             owner_id='owner-1',
             default_branch='main',
-            repository_type='other',
+            repository_type='single',
         )
         self.storage_patch = _storage_patch(self.temp_root)
         self.storage_patch.start()
         self.addCleanup(self.storage_patch.stop)
         self.addCleanup(lambda: shutil.rmtree(self.temp_root, ignore_errors=True))
+
+    def _repo_spec(self, *, branch_name: str = 'main', repository_type: str = 'single', manifest_xml: str = '', group: str = '') -> dict:
+        return build_repository_spec(
+            'https://example.com/repo.git',
+            branch_name,
+            repository_type=repository_type,
+            manifest_xml=manifest_xml,
+            group=group,
+        )
 
     @override_settings(DEEPAUDIT_GIT_CLONE_TIMEOUT=321, DEEPAUDIT_GIT_RETRY_COUNT=2)
     def test_clone_repository_uses_no_tags_timeout_and_lfs_skip(self) -> None:
@@ -92,11 +102,12 @@ class GitServiceTestCase(SimpleTestCase):
 
     @override_settings(DEEPAUDIT_REPO_CACHE_TTL_SECONDS=1800)
     def test_ensure_repository_cache_skips_refresh_when_cache_is_fresh(self) -> None:
-        cache_paths = git_service._cache_paths(self.project, 'main')
+        repo_spec = self._repo_spec()
+        cache_paths = git_service._cache_paths(self.project, repo_spec)
         cache_paths['repo'].mkdir(parents=True, exist_ok=True)
         (cache_paths['repo'] / '.git').mkdir()
         cache_paths['state'].write_text(
-            json.dumps({'last_synced_at': int(time.time()), 'branch_name': 'main'}),
+            json.dumps({'last_synced_at': int(time.time()), 'repository_spec': repo_spec}),
             encoding='utf-8',
         )
 
@@ -106,17 +117,19 @@ class GitServiceTestCase(SimpleTestCase):
                 'https://example.com/repo.git',
                 'main',
                 {'other_config': {}},
+                repository_type='single',
             )
 
         self.assertEqual(cache_repo, cache_paths['repo'])
 
     @override_settings(DEEPAUDIT_REPO_CACHE_TTL_SECONDS=60)
     def test_ensure_repository_cache_refreshes_expired_cache(self) -> None:
-        cache_paths = git_service._cache_paths(self.project, 'main')
+        repo_spec = self._repo_spec()
+        cache_paths = git_service._cache_paths(self.project, repo_spec)
         cache_paths['repo'].mkdir(parents=True, exist_ok=True)
         (cache_paths['repo'] / '.git').mkdir()
         cache_paths['state'].write_text(
-            json.dumps({'last_synced_at': int(time.time()) - 3600, 'branch_name': 'main'}),
+            json.dumps({'last_synced_at': int(time.time()) - 3600, 'repository_spec': repo_spec}),
             encoding='utf-8',
         )
         commands: list[list[str]] = []
@@ -131,6 +144,7 @@ class GitServiceTestCase(SimpleTestCase):
                 'https://example.com/repo.git',
                 'main',
                 {'other_config': {}},
+                repository_type='single',
             )
 
         self.assertEqual(cache_repo, cache_paths['repo'])
@@ -138,11 +152,12 @@ class GitServiceTestCase(SimpleTestCase):
 
     @override_settings(DEEPAUDIT_REPO_CACHE_TTL_SECONDS=60)
     def test_cache_refresh_lock_serializes_same_cache_path(self) -> None:
-        cache_paths = git_service._cache_paths(self.project, 'main')
+        repo_spec = self._repo_spec()
+        cache_paths = git_service._cache_paths(self.project, repo_spec)
         cache_paths['repo'].mkdir(parents=True, exist_ok=True)
         (cache_paths['repo'] / '.git').mkdir()
         cache_paths['state'].write_text(
-            json.dumps({'last_synced_at': int(time.time()) - 3600, 'branch_name': 'main'}),
+            json.dumps({'last_synced_at': int(time.time()) - 3600, 'repository_spec': repo_spec}),
             encoding='utf-8',
         )
         fetch_started = threading.Event()
@@ -165,6 +180,7 @@ class GitServiceTestCase(SimpleTestCase):
                     'https://example.com/repo.git',
                     'main',
                     {'other_config': {}},
+                    repository_type='single',
                 )
             except Exception as exc:
                 errors.append(exc)
@@ -182,3 +198,40 @@ class GitServiceTestCase(SimpleTestCase):
 
         self.assertFalse(errors)
         self.assertEqual(fetch_count, 1)
+
+    @override_settings(DEEPAUDIT_GIT_CLONE_TIMEOUT=321)
+    def test_clone_repository_multi_runs_mm_init_and_sync(self) -> None:
+        target_path = self.temp_root / 'workspace'
+        calls: list[tuple[list[str], dict]] = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append((cmd, kwargs))
+            return SimpleNamespace(stdout='', stderr='', returncode=0)
+
+        with patch('apps.deepaudit.git_service.subprocess.run', side_effect=fake_run):
+            result = git_service.clone_repository(
+                self.project,
+                'https://example.com/repo.git',
+                'main',
+                {'other_config': {}},
+                target_path=target_path,
+                repository_type='multi',
+                manifest_xml='default.xml',
+                group='platform',
+            )
+
+        self.assertEqual(result, target_path)
+        self.assertGreaterEqual(len(calls), 2)
+        self.assertEqual(calls[0][0][:3], ['git', 'mm', 'init'])
+        self.assertEqual(calls[1][0], ['git', 'mm', 'sync'])
+        self.assertEqual(calls[0][1]['cwd'], str(target_path))
+        self.assertEqual(calls[1][1]['cwd'], str(target_path))
+
+    def test_cache_paths_depend_on_effective_repository_spec(self) -> None:
+        spec_a = self._repo_spec(branch_name='main', repository_type='multi', manifest_xml='a.xml', group='platform')
+        spec_b = self._repo_spec(branch_name='dev', repository_type='multi', manifest_xml='b.xml', group='platform')
+        paths_a = git_service._cache_paths(self.project, spec_a)
+        paths_b = git_service._cache_paths(self.project, spec_b)
+
+        self.assertNotEqual(paths_a['root'], paths_b['root'])
+        self.assertNotEqual(paths_a['repo'], paths_b['repo'])

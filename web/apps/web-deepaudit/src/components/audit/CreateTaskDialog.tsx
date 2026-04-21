@@ -3,67 +3,75 @@
  * Cyberpunk Terminal Aesthetic
  */
 
-import { useState, useEffect, useMemo, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import type { AuditMode } from '@/components/agent/AgentModeSelector';
+import type { PromptTemplate } from '@/shared/api/prompts';
+import type { AuditRuleSet } from '@/shared/api/rules';
+import type { Project } from '@/shared/types';
+
+import AgentModeSelector from '@/components/agent/AgentModeSelector';
+import { Badge } from '@/components/ui/badge';
+import { BranchSelector } from '@/components/ui/branch-selector';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Checkbox } from "@/components/ui/checkbox";
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { BranchSelector } from "@/components/ui/branch-selector";
+} from '@/components/ui/select';
+import { runRepositoryAudit } from '@/features/projects/services/repoScan';
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
-  Search,
-  ChevronRight,
-  GitBranch,
-  Upload,
-  FolderOpen,
-  Settings2,
-  Package,
-  Globe,
-  Shield,
-  Loader2,
-  Zap,
-  Bot,
-} from "lucide-react";
-import { toast } from "sonner";
-import { api } from "@/shared/config/database";
-import { getRuleSets, type AuditRuleSet } from "@/shared/api/rules";
-import { getPromptTemplates, type PromptTemplate } from "@/shared/api/prompts";
-import { createAgentTask } from "@/shared/api/agentTasks";
-import { useAuth } from "@/shared/context/AuthContext";
-import { DEEPAUDIT_ACTION_CODES } from "@/shared/focus/focusPermission";
-
-import { useProjects } from "./hooks/useTaskForm";
-import { useZipFile, formatFileSize } from "./hooks/useZipFile";
-import FileSelectionDialog from "./FileSelectionDialog";
-import AgentModeSelector, { type AuditMode } from "@/components/agent/AgentModeSelector";
-
-import { runRepositoryAudit } from "@/features/projects/services/repoScan";
-import {
-  scanZipFile,
   scanStoredZipFile,
+  scanZipFile,
   validateZipFile,
-} from "@/features/projects/services/repoZipScan";
-import { isRepositoryProject, isZipProject } from "@/shared/utils/projectUtils";
-import type { Project } from "@/shared/types";
+} from '@/features/projects/services/repoZipScan';
+import { createAgentTask } from '@/shared/api/agentTasks';
+import { getPromptTemplates } from '@/shared/api/prompts';
+import { getRuleSets } from '@/shared/api/rules';
+import { api } from '@/shared/config/database';
+import { useAuth } from '@/shared/context/AuthContext';
+import { DEEPAUDIT_ACTION_CODES } from '@/shared/focus/focusPermission';
+import {
+  getRepositoryTypeLabel,
+  isMultiRepository,
+  isRepositoryProject,
+  isZipProject,
+} from '@/shared/utils/projectUtils';
+import {
+  Bot,
+  ChevronRight,
+  FolderOpen,
+  GitBranch,
+  Globe,
+  Loader2,
+  Package,
+  Search,
+  Settings2,
+  Shield,
+  Upload,
+  Zap,
+} from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
+
+import FileSelectionDialog from './FileSelectionDialog';
+import { useProjects } from './hooks/useTaskForm';
+import { formatFileSize, useZipFile } from './hooks/useZipFile';
 
 interface CreateTaskDialogProps {
   open: boolean;
@@ -74,11 +82,11 @@ interface CreateTaskDialogProps {
 }
 
 const DEFAULT_EXCLUDES = [
-  "node_modules/**",
-  ".git/**",
-  "dist/**",
-  "build/**",
-  "*.log",
+  'node_modules/**',
+  '.git/**',
+  'dist/**',
+  'build/**',
+  '*.log',
 ];
 
 export default function CreateTaskDialog({
@@ -90,9 +98,11 @@ export default function CreateTaskDialog({
 }: CreateTaskDialogProps) {
   const navigate = useNavigate();
   const { hasAccess } = useAuth();
-  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [branch, setBranch] = useState("main");
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [branch, setBranch] = useState('main');
+  const [manifestXml, setManifestXml] = useState('');
+  const [group, setGroup] = useState('');
   const [branches, setBranches] = useState<string[]>([]);
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [excludePatterns, setExcludePatterns] = useState(DEFAULT_EXCLUDES);
@@ -102,18 +112,21 @@ export default function CreateTaskDialog({
   const [creating, setCreating] = useState(false);
   const [uploading, setUploading] = useState(false);
 
-  const [auditMode, setAuditMode] = useState<AuditMode>("agent");
+  const [auditMode, setAuditMode] = useState<AuditMode>('agent');
 
   const [ruleSets, setRuleSets] = useState<AuditRuleSet[]>([]);
   const [promptTemplates, setPromptTemplates] = useState<PromptTemplate[]>([]);
-  const [selectedRuleSetId, setSelectedRuleSetId] = useState<string>("");
-  const [selectedPromptTemplateId, setSelectedPromptTemplateId] = useState<string>("");
+  const [selectedRuleSetId, setSelectedRuleSetId] = useState<string>('');
+  const [selectedPromptTemplateId, setSelectedPromptTemplateId] =
+    useState<string>('');
 
   const { projects, loading, loadProjects } = useProjects();
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
   const zipState = useZipFile(selectedProject, projects);
   const canCreateFastTask = hasAccess(DEEPAUDIT_ACTION_CODES.TASKS_CREATE);
-  const canCreateAgentTask = hasAccess(DEEPAUDIT_ACTION_CODES.AGENT_TASKS_CREATE);
+  const canCreateAgentTask = hasAccess(
+    DEEPAUDIT_ACTION_CODES.AGENT_TASKS_CREATE,
+  );
 
   useEffect(() => {
     const loadBranches = async () => {
@@ -134,9 +147,9 @@ export default function CreateTaskDialog({
           setBranch(result.default_branch);
         }
       } catch (error) {
-        const msg = error instanceof Error ? error.message : "未知错误";
+        const msg = error instanceof Error ? error.message : '未知错误';
         toast.error(`加载分支失败: ${msg}`);
-        setBranches([project.default_branch || "main"]);
+        setBranches([project.default_branch || 'main']);
       } finally {
         setLoadingBranches(false);
       }
@@ -151,7 +164,7 @@ export default function CreateTaskDialog({
     return projects.filter(
       (p) =>
         p.name.toLowerCase().includes(term) ||
-        p.description?.toLowerCase().includes(term)
+        p.description?.toLowerCase().includes(term),
     );
   }, [projects, searchTerm]);
 
@@ -164,20 +177,24 @@ export default function CreateTaskDialog({
         ]);
         setRuleSets(rulesRes.items);
         setPromptTemplates(promptsRes.items);
-        const defaultRuleSet = rulesRes.items.find((r: AuditRuleSet) => r.is_default);
+        const defaultRuleSet = rulesRes.items.find(
+          (r: AuditRuleSet) => r.is_default,
+        );
         if (defaultRuleSet) {
           setSelectedRuleSetId(defaultRuleSet.id);
         } else if (rulesRes.items.length > 0) {
           setSelectedRuleSetId(rulesRes.items[0].id);
         }
-        const defaultPrompt = promptsRes.items.find((p: PromptTemplate) => p.is_default);
+        const defaultPrompt = promptsRes.items.find(
+          (p: PromptTemplate) => p.is_default,
+        );
         if (defaultPrompt) {
           setSelectedPromptTemplateId(defaultPrompt.id);
         } else if (promptsRes.items.length > 0) {
           setSelectedPromptTemplateId(promptsRes.items[0].id);
         }
       } catch (error) {
-        console.error("加载规则集和提示词失败:", error);
+        console.error('加载规则集和提示词失败:', error);
       }
     };
     loadRulesAndPrompts();
@@ -189,47 +206,63 @@ export default function CreateTaskDialog({
       if (preselectedProjectId) {
         setSelectedProjectId(preselectedProjectId);
       }
-      setSearchTerm("");
+      setSearchTerm('');
+      setBranch('main');
+      setManifestXml('');
+      setGroup('');
       setShowAdvanced(false);
-      const defaultRuleSet = ruleSets.find(r => r.is_default);
-      setSelectedRuleSetId(defaultRuleSet?.id || ruleSets[0]?.id || "");
-      const defaultPrompt = promptTemplates.find(p => p.is_default);
-      setSelectedPromptTemplateId(defaultPrompt?.id || promptTemplates[0]?.id || "");
+      const defaultRuleSet = ruleSets.find((r) => r.is_default);
+      setSelectedRuleSetId(defaultRuleSet?.id || ruleSets[0]?.id || '');
+      const defaultPrompt = promptTemplates.find((p) => p.is_default);
+      setSelectedPromptTemplateId(
+        defaultPrompt?.id || promptTemplates[0]?.id || '',
+      );
       zipState.reset();
     }
   }, [open, preselectedProjectId, ruleSets, promptTemplates]);
 
   useEffect(() => {
-    if (auditMode === "agent" && !canCreateAgentTask && canCreateFastTask) {
-      setAuditMode("fast");
+    if (auditMode === 'agent' && !canCreateAgentTask && canCreateFastTask) {
+      setAuditMode('fast');
     }
-    if (auditMode === "fast" && !canCreateFastTask && canCreateAgentTask) {
-      setAuditMode("agent");
+    if (auditMode === 'fast' && !canCreateFastTask && canCreateAgentTask) {
+      setAuditMode('agent');
     }
   }, [auditMode, canCreateAgentTask, canCreateFastTask]);
+
+  useEffect(() => {
+    if (!selectedProject || !isRepositoryProject(selectedProject)) {
+      setManifestXml('');
+      setGroup('');
+      return;
+    }
+    setBranch(selectedProject.default_branch || 'main');
+    setManifestXml(selectedProject.manifest_xml || '');
+    setGroup(selectedProject.group || '');
+  }, [selectedProject?.id]);
 
   const excludePatternsRef = useRef(excludePatterns);
   useEffect(() => {
     if (excludePatternsRef.current !== excludePatterns && selectedFiles) {
       setSelectedFiles(undefined);
-      toast.info("排除模式已更改，请重新选择文件");
+      toast.info('排除模式已更改，请重新选择文件');
     }
     excludePatternsRef.current = excludePatterns;
   }, [excludePatterns]);
 
   const handleStartScan = async () => {
     if (!selectedProject) {
-      toast.error("请选择项目");
+      toast.error('请选择项目');
       return;
     }
 
-    if (auditMode === "agent" && !canCreateAgentTask) {
-      toast.error("当前账号没有创建 Agent 审计任务的权限");
+    if (auditMode === 'agent' && !canCreateAgentTask) {
+      toast.error('当前账号没有创建 Agent 审计任务的权限');
       return;
     }
 
-    if (auditMode === "fast" && !canCreateFastTask) {
-      toast.error("当前账号没有创建快速审计任务的权限");
+    if (auditMode === 'fast' && !canCreateFastTask) {
+      toast.error('当前账号没有创建快速审计任务的权限');
       return;
     }
 
@@ -237,22 +270,30 @@ export default function CreateTaskDialog({
       setCreating(true);
       let taskId: string;
 
-      if (auditMode === "agent") {
+      if (auditMode === 'agent') {
         const agentTask = await createAgentTask({
           project_id: selectedProject.id,
           name: `Agent审计-${selectedProject.name}`,
-          branch_name: isRepositoryProject(selectedProject) ? branch : undefined,
+          branch_name: isRepositoryProject(selectedProject)
+            ? branch
+            : undefined,
+          manifest_xml: isRepositoryProject(selectedProject)
+            ? manifestXml || undefined
+            : undefined,
+          group: isRepositoryProject(selectedProject)
+            ? group || undefined
+            : undefined,
           exclude_patterns: excludePatterns,
           target_files: selectedFiles,
-          verification_level: "sandbox",
+          verification_level: 'sandbox',
         });
 
         onOpenChange(false);
         onTaskCreated();
-        toast.success("Agent 审计任务已创建");
+        toast.success('Agent 审计任务已创建');
         navigate(`/agent-audit/${agentTask.id}`);
 
-        setSelectedProjectId("");
+        setSelectedProjectId('');
         setSelectedFiles(undefined);
         setExcludePatterns(DEFAULT_EXCLUDES);
         return;
@@ -263,7 +304,7 @@ export default function CreateTaskDialog({
           taskId = await scanStoredZipFile({
             projectId: selectedProject.id,
             excludePatterns,
-            createdBy: "local-user",
+            createdBy: 'local-user',
             filePaths: selectedFiles,
             ruleSetId: selectedRuleSetId || undefined,
             promptTemplateId: selectedPromptTemplateId || undefined,
@@ -273,25 +314,27 @@ export default function CreateTaskDialog({
             projectId: selectedProject.id,
             zipFile: zipState.zipFile,
             excludePatterns,
-            createdBy: "local-user",
+            createdBy: 'local-user',
             ruleSetId: selectedRuleSetId || undefined,
             promptTemplateId: selectedPromptTemplateId || undefined,
           });
         } else {
-          toast.error("请上传 ZIP 文件");
+          toast.error('请上传 ZIP 文件');
           return;
         }
       } else {
         if (!selectedProject.repository_url) {
-          toast.error("仓库地址为空");
+          toast.error('仓库地址为空');
           return;
         }
         taskId = await runRepositoryAudit({
           projectId: selectedProject.id,
           repoUrl: selectedProject.repository_url,
           branch,
+          manifestXml,
+          group,
           exclude: excludePatterns,
-          createdBy: "local-user",
+          createdBy: 'local-user',
           filePaths: selectedFiles,
           ruleSetId: selectedRuleSetId || undefined,
           promptTemplateId: selectedPromptTemplateId || undefined,
@@ -303,13 +346,13 @@ export default function CreateTaskDialog({
       if (onFastScanStarted) {
         onFastScanStarted(taskId);
       }
-      toast.success("扫描任务已启动");
+      toast.success('扫描任务已启动');
 
-      setSelectedProjectId("");
+      setSelectedProjectId('');
       setSelectedFiles(undefined);
       setExcludePatterns(DEFAULT_EXCLUDES);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "未知错误";
+      const msg = error instanceof Error ? error.message : '未知错误';
       toast.error(`启动失败: ${msg}`);
     } finally {
       setCreating(false);
@@ -324,35 +367,103 @@ export default function CreateTaskDialog({
         !!zipState.zipFile
       );
     }
+    if (isMultiRepository(selectedProject)) {
+      return (
+        !!selectedProject.repository_url &&
+        !!branch.trim() &&
+        !!manifestXml.trim()
+      );
+    }
     return !!selectedProject.repository_url && !!branch.trim();
-  }, [selectedProject, zipState, branch]);
+  }, [selectedProject, zipState, branch, manifestXml]);
   const canSubmitCurrentMode =
-    auditMode === "agent" ? canCreateAgentTask : canCreateFastTask;
+    auditMode === 'agent' ? canCreateAgentTask : canCreateFastTask;
+
+  const projectListContent = (() => {
+    if (loading) {
+      return (
+        <div className="flex h-full items-center justify-center">
+          <Loader2 className="text-primary h-5 w-5 animate-spin" />
+        </div>
+      );
+    }
+
+    if (filteredProjects.length === 0) {
+      return (
+        <div className="text-muted-foreground flex h-full flex-col items-center justify-center font-mono">
+          <Package className="mb-2 h-8 w-8 opacity-50" />
+          <span className="text-sm">{searchTerm ? '未找到' : '暂无项目'}</span>
+        </div>
+      );
+    }
+
+    return (
+      <div className="p-1">
+        {filteredProjects.map((project) => (
+          <ProjectCard
+            key={project.id}
+            onSelect={() => setSelectedProjectId(project.id)}
+            project={project}
+            selected={selectedProjectId === project.id}
+          />
+        ))}
+      </div>
+    );
+  })();
+
+  const startButtonContent = (() => {
+    if (creating) {
+      return (
+        <>
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          启动中...
+        </>
+      );
+    }
+
+    if (auditMode === 'agent') {
+      return (
+        <>
+          <Bot className="mr-2 h-4 w-4" />
+          启动 Agent 审计
+        </>
+      );
+    }
+
+    return (
+      <>
+        <Zap className="mr-2 h-4 w-4" />
+        开始快速扫描
+      </>
+    );
+  })();
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="!w-[min(90vw,520px)] !max-w-none max-h-[85vh] flex flex-col p-0 gap-0 cyber-dialog border border-border rounded-lg">
+      <Dialog onOpenChange={onOpenChange} open={open}>
+        <DialogContent className="cyber-dialog border-border flex max-h-[85vh] !w-[min(90vw,520px)] !max-w-none flex-col gap-0 rounded-lg border p-0">
           {/* Header */}
-          <DialogHeader className="px-5 py-4 border-b border-border flex-shrink-0 bg-muted">
-            <DialogTitle className="flex items-center gap-3 font-mono text-foreground">
-              <div className="p-2 bg-primary/20 rounded border border-primary/30">
-                <Shield className="w-5 h-5 text-primary" />
+          <DialogHeader className="border-border bg-muted flex-shrink-0 border-b px-5 py-4">
+            <DialogTitle className="text-foreground flex items-center gap-3 font-mono">
+              <div className="bg-primary/20 border-primary/30 rounded border p-2">
+                <Shield className="text-primary h-5 w-5" />
               </div>
               <div>
-                <span className="text-base font-bold uppercase tracking-wider">开始代码审计</span>
-                <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                <span className="text-base font-bold uppercase tracking-wider">
+                  开始代码审计
+                </span>
+                <p className="text-muted-foreground mt-0.5 text-xs font-normal">
                   Code Security Analysis
                 </p>
               </div>
             </DialogTitle>
           </DialogHeader>
 
-          <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          <div className="flex-1 space-y-5 overflow-y-auto p-5">
             {/* 项目选择 */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-mono font-bold uppercase text-muted-foreground">
+                <span className="text-muted-foreground font-mono text-sm font-bold uppercase">
                   选择项目
                 </span>
                 <Badge className="cyber-badge-muted font-mono text-xs">
@@ -362,134 +473,188 @@ export default function CreateTaskDialog({
 
               {/* 搜索框 */}
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Search className="text-muted-foreground absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" />
                 <Input
+                  className="cyber-input h-10 !pl-9"
+                  onChange={(e) => setSearchTerm(e.target.value)}
                   placeholder="搜索项目..."
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="!pl-9 h-10 cyber-input"
                 />
               </div>
 
               {/* 项目列表 */}
-              <ScrollArea className="h-[180px] border border-border rounded bg-muted/50">
-                {loading ? (
-                  <div className="flex items-center justify-center h-full">
-                    <Loader2 className="w-5 h-5 animate-spin text-primary" />
-                  </div>
-                ) : filteredProjects.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full text-muted-foreground font-mono">
-                    <Package className="w-8 h-8 mb-2 opacity-50" />
-                    <span className="text-sm">
-                      {searchTerm ? "未找到" : "暂无项目"}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="p-1">
-                    {filteredProjects.map((project) => (
-                      <ProjectCard
-                        key={project.id}
-                        project={project}
-                        selected={selectedProjectId === project.id}
-                        onSelect={() => setSelectedProjectId(project.id)}
-                      />
-                    ))}
-                  </div>
-                )}
+              <ScrollArea className="border-border bg-muted/50 h-[180px] rounded border">
+                {projectListContent}
               </ScrollArea>
             </div>
 
             {/* 审计模式选择 */}
             {selectedProject && (
               <AgentModeSelector
-                value={auditMode}
-                onChange={setAuditMode}
                 disabled={creating}
+                onChange={setAuditMode}
+                value={auditMode}
               />
             )}
 
             {/* 配置区域 */}
             {selectedProject && (
               <div className="space-y-4">
-                <span className="text-sm font-mono font-bold uppercase text-muted-foreground">
+                <span className="text-muted-foreground font-mono text-sm font-bold uppercase">
                   配置
                 </span>
 
                 {isRepositoryProject(selectedProject) ? (
-                  <div className="flex items-center gap-3 p-3 border border-border rounded bg-blue-50 dark:bg-blue-950/20">
-                    <GitBranch className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                    <span className="font-mono text-base text-muted-foreground w-12">
-                      分支
-                    </span>
-                    {loadingBranches ? (
-                      <div className="flex items-center gap-2 flex-1">
-                        <Loader2 className="w-4 h-4 animate-spin text-blue-600 dark:text-blue-400" />
-                        <span className="text-sm text-blue-600 dark:text-blue-400 font-mono">加载中...</span>
-                      </div>
-                    ) : (
-                      <BranchSelector
-                        value={branch}
-                        onChange={setBranch}
-                        branches={branches}
-                        placeholder="选择分支"
-                        className="flex-1"
-                      />
+                  <div className="border-border space-y-3 rounded border bg-blue-50 p-3 dark:bg-blue-950/20">
+                    <div className="flex items-center gap-3">
+                      <GitBranch className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                      <span className="text-muted-foreground w-12 font-mono text-base">
+                        模式
+                      </span>
+                      <Badge className="cyber-badge-info font-mono text-xs">
+                        {getRepositoryTypeLabel(
+                          selectedProject.repository_type,
+                        )}
+                      </Badge>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <GitBranch className="h-5 w-5 text-blue-600 opacity-0 dark:text-blue-400" />
+                      <span className="text-muted-foreground w-12 font-mono text-base">
+                        分支
+                      </span>
+                      {loadingBranches ? (
+                        <div className="flex flex-1 items-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400" />
+                          <span className="font-mono text-sm text-blue-600 dark:text-blue-400">
+                            加载中...
+                          </span>
+                        </div>
+                      ) : (
+                        <BranchSelector
+                          branches={branches}
+                          className="flex-1"
+                          onChange={setBranch}
+                          placeholder="选择分支"
+                          value={branch}
+                        />
+                      )}
+                    </div>
+
+                    {isMultiRepository(selectedProject) && (
+                      <>
+                        <div className="flex items-center gap-3">
+                          <GitBranch className="h-5 w-5 text-blue-600 opacity-0 dark:text-blue-400" />
+                          <span className="text-muted-foreground w-12 font-mono text-base">
+                            清单
+                          </span>
+                          <Input
+                            className="cyber-input h-10 flex-1"
+                            onChange={(e) => setManifestXml(e.target.value)}
+                            placeholder={
+                              selectedProject.manifest_xml || 'default.xml'
+                            }
+                            value={manifestXml}
+                          />
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <GitBranch className="h-5 w-5 text-blue-600 opacity-0 dark:text-blue-400" />
+                          <span className="text-muted-foreground w-12 font-mono text-base">
+                            组
+                          </span>
+                          <Input
+                            className="cyber-input h-10 flex-1"
+                            onChange={(e) => setGroup(e.target.value)}
+                            placeholder={selectedProject.group || '可选'}
+                            value={group}
+                          />
+                        </div>
+                        <p className="font-mono text-xs text-blue-700 dark:text-blue-300/80">
+                          多仓会执行 `git mm init -u ... -b ... -m ... [-g
+                          ...]`，随后执行 `git mm sync`
+                        </p>
+                      </>
                     )}
                   </div>
                 ) : (
                   <ZipUploadCard
-                    zipState={zipState}
                     onUpload={async () => {
                       if (!zipState.zipFile || !selectedProject) return;
                       setUploading(true);
                       try {
-                        await api.uploadProjectZip(selectedProject.id, zipState.zipFile);
-                        toast.success("文件上传成功");
+                        await api.uploadProjectZip(
+                          selectedProject.id,
+                          zipState.zipFile,
+                        );
+                        toast.success('文件上传成功');
                         zipState.switchToStored();
                         loadProjects();
                       } catch (error) {
-                        const msg = error instanceof Error ? error.message : "上传失败";
+                        const msg =
+                          error instanceof Error ? error.message : '上传失败';
                         toast.error(msg);
                       } finally {
                         setUploading(false);
                       }
                     }}
                     uploading={uploading}
+                    zipState={zipState}
                   />
                 )}
 
                 {/* 规则集和提示词选择 - 仅快速扫描模式显示 */}
-                {auditMode !== "agent" && (
-                  <div className="p-3 border border-border rounded bg-violet-50 dark:bg-violet-950/20 space-y-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Zap className="w-4 h-4 text-violet-600 dark:text-violet-400" />
-                      <span className="font-mono text-sm font-bold text-violet-700 dark:text-violet-300 uppercase">审计配置</span>
+                {auditMode !== 'agent' && (
+                  <div className="border-border space-y-3 rounded border bg-violet-50 p-3 dark:bg-violet-950/20">
+                    <div className="mb-2 flex items-center gap-2">
+                      <Zap className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                      <span className="font-mono text-sm font-bold uppercase text-violet-700 dark:text-violet-300">
+                        审计配置
+                      </span>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-xs font-mono font-bold text-muted-foreground mb-1 uppercase">规则集</label>
-                        <Select value={selectedRuleSetId} onValueChange={setSelectedRuleSetId}>
-                          <SelectTrigger className="h-9 cyber-input text-xs">
+                        <label className="text-muted-foreground mb-1 block font-mono text-xs font-bold uppercase">
+                          规则集
+                        </label>
+                        <Select
+                          onValueChange={setSelectedRuleSetId}
+                          value={selectedRuleSetId}
+                        >
+                          <SelectTrigger className="cyber-input h-9 text-xs">
                             <SelectValue placeholder="选择规则集" />
                           </SelectTrigger>
                           <SelectContent className="cyber-dialog border-border">
                             {ruleSets.map((rs) => (
-                              <SelectItem key={rs.id} value={rs.id} className="font-mono text-xs">
-                                {rs.name} {rs.is_default && '(默认)'} ({rs.enabled_rules_count})
+                              <SelectItem
+                                className="font-mono text-xs"
+                                key={rs.id}
+                                value={rs.id}
+                              >
+                                {rs.name} {rs.is_default && '(默认)'} (
+                                {rs.enabled_rules_count})
                               </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
                       </div>
                       <div>
-                        <label className="block text-xs font-mono font-bold text-muted-foreground mb-1 uppercase">提示词模板</label>
-                        <Select value={selectedPromptTemplateId} onValueChange={setSelectedPromptTemplateId}>
-                          <SelectTrigger className="h-9 cyber-input text-xs">
+                        <label className="text-muted-foreground mb-1 block font-mono text-xs font-bold uppercase">
+                          提示词模板
+                        </label>
+                        <Select
+                          onValueChange={setSelectedPromptTemplateId}
+                          value={selectedPromptTemplateId}
+                        >
+                          <SelectTrigger className="cyber-input h-9 text-xs">
                             <SelectValue placeholder="选择提示词模板" />
                           </SelectTrigger>
                           <SelectContent className="cyber-dialog border-border">
                             {promptTemplates.map((pt) => (
-                              <SelectItem key={pt.id} value={pt.id} className="font-mono text-xs">
+                              <SelectItem
+                                className="font-mono text-xs"
+                                key={pt.id}
+                                value={pt.id}
+                              >
                                 {pt.name} {pt.is_default && '(默认)'}
                               </SelectItem>
                             ))}
@@ -501,25 +666,25 @@ export default function CreateTaskDialog({
                 )}
 
                 {/* 高级选项 */}
-                <Collapsible open={showAdvanced} onOpenChange={setShowAdvanced}>
-                  <CollapsibleTrigger className="flex items-center gap-2 text-xs font-mono text-muted-foreground hover:text-foreground transition-colors">
+                <Collapsible onOpenChange={setShowAdvanced} open={showAdvanced}>
+                  <CollapsibleTrigger className="text-muted-foreground hover:text-foreground flex items-center gap-2 font-mono text-xs transition-colors">
                     <ChevronRight
-                      className={`w-4 h-4 transition-transform ${showAdvanced ? "rotate-90" : ""}`}
+                      className={`h-4 w-4 transition-transform ${showAdvanced ? 'rotate-90' : ''}`}
                     />
-                    <Settings2 className="w-4 h-4" />
-                    <span className="uppercase font-bold">高级选项</span>
+                    <Settings2 className="h-4 w-4" />
+                    <span className="font-bold uppercase">高级选项</span>
                   </CollapsibleTrigger>
                   <CollapsibleContent className="mt-3 space-y-3">
                     {/* 排除模式 */}
-                    <div className="p-3 border border-dashed border-border rounded bg-muted/50 space-y-3">
+                    <div className="border-border bg-muted/50 space-y-3 rounded border border-dashed p-3">
                       <div className="flex items-center justify-between">
-                        <span className="font-mono text-xs uppercase font-bold text-muted-foreground">
+                        <span className="text-muted-foreground font-mono text-xs font-bold uppercase">
                           排除模式
                         </span>
                         <button
-                          type="button"
+                          className="text-primary hover:text-primary/80 font-mono text-xs"
                           onClick={() => setExcludePatterns(DEFAULT_EXCLUDES)}
-                          className="text-xs font-mono text-primary hover:text-primary/80"
+                          type="button"
                         >
                           重置为默认
                         </button>
@@ -528,11 +693,11 @@ export default function CreateTaskDialog({
                       <div className="flex flex-wrap gap-1.5">
                         {excludePatterns.map((p) => (
                           <Badge
+                            className="bg-muted text-foreground cursor-pointer border-0 font-mono text-xs hover:bg-rose-100 hover:text-rose-600 dark:hover:bg-rose-900/50 dark:hover:text-rose-400"
                             key={p}
-                            className="bg-muted text-foreground border-0 font-mono text-xs cursor-pointer hover:bg-rose-100 dark:hover:bg-rose-900/50 hover:text-rose-600 dark:hover:text-rose-400"
                             onClick={() =>
                               setExcludePatterns((prev) =>
-                                prev.filter((x) => x !== p)
+                                prev.filter((x) => x !== p),
                               )
                             }
                           >
@@ -540,23 +705,37 @@ export default function CreateTaskDialog({
                           </Badge>
                         ))}
                         {excludePatterns.length === 0 && (
-                          <span className="text-xs text-muted-foreground font-mono">无排除模式</span>
+                          <span className="text-muted-foreground font-mono text-xs">
+                            无排除模式
+                          </span>
                         )}
                       </div>
 
                       <div className="flex flex-wrap gap-1">
-                        <span className="text-xs text-muted-foreground font-mono mr-1">快捷添加:</span>
-                        {[".test.", ".spec.", ".min.", "coverage/", "docs/", ".md"].map((pattern) => (
+                        <span className="text-muted-foreground mr-1 font-mono text-xs">
+                          快捷添加:
+                        </span>
+                        {[
+                          '.test.',
+                          '.spec.',
+                          '.min.',
+                          'coverage/',
+                          'docs/',
+                          '.md',
+                        ].map((pattern) => (
                           <button
-                            key={pattern}
-                            type="button"
+                            className="border-border bg-muted hover:bg-muted text-muted-foreground hover:text-foreground rounded border px-1.5 py-0.5 font-mono text-xs disabled:cursor-not-allowed disabled:opacity-40"
                             disabled={excludePatterns.includes(pattern)}
+                            key={pattern}
                             onClick={() => {
                               if (!excludePatterns.includes(pattern)) {
-                                setExcludePatterns((prev) => [...prev, pattern]);
+                                setExcludePatterns((prev) => [
+                                  ...prev,
+                                  pattern,
+                                ]);
                               }
                             }}
-                            className="text-xs font-mono px-1.5 py-0.5 border border-border bg-muted hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed rounded"
+                            type="button"
                           >
                             +{pattern}
                           </button>
@@ -564,17 +743,17 @@ export default function CreateTaskDialog({
                       </div>
 
                       <Input
-                        placeholder="添加自定义排除模式，回车确认"
-                        className="h-8 cyber-input text-sm"
+                        className="cyber-input h-8 text-sm"
                         onKeyDown={(e) => {
-                          if (e.key === "Enter" && e.currentTarget.value) {
+                          if (e.key === 'Enter' && e.currentTarget.value) {
                             const val = e.currentTarget.value.trim();
                             if (val && !excludePatterns.includes(val)) {
                               setExcludePatterns((prev) => [...prev, val]);
                             }
-                            e.currentTarget.value = "";
+                            e.currentTarget.value = '';
                           }
                         }}
+                        placeholder="添加自定义排除模式，回车确认"
                       />
                     </div>
 
@@ -584,39 +763,40 @@ export default function CreateTaskDialog({
                       const isZip = isZipProject(selectedProject);
                       const hasStoredZip = zipState.storedZipInfo?.has_file;
                       const useStored = zipState.useStoredZip;
-                      const canSelectFiles = isRepo || (isZip && useStored && hasStoredZip);
+                      const canSelectFiles =
+                        isRepo || (isZip && useStored && hasStoredZip);
 
                       return (
-                        <div className="flex items-center justify-between p-3 border border-dashed border-border rounded bg-muted/50">
+                        <div className="border-border bg-muted/50 flex items-center justify-between rounded border border-dashed p-3">
                           <div>
-                            <p className="font-mono text-xs uppercase font-bold text-muted-foreground">
+                            <p className="text-muted-foreground font-mono text-xs font-bold uppercase">
                               扫描范围
                             </p>
-                            <p className="text-sm font-bold text-foreground mt-1">
+                            <p className="text-foreground mt-1 text-sm font-bold">
                               {selectedFiles
                                 ? `已选 ${selectedFiles.length} 个文件`
-                                : "全部文件"}
+                                : '全部文件'}
                             </p>
                           </div>
                           <div className="flex gap-2">
                             {selectedFiles && canSelectFiles && (
                               <Button
+                                className="h-8 text-xs text-rose-600 hover:bg-rose-100 hover:text-rose-700 dark:text-rose-400 dark:hover:bg-rose-900/30 dark:hover:text-rose-300"
+                                onClick={() => setSelectedFiles(undefined)}
                                 size="sm"
                                 variant="ghost"
-                                onClick={() => setSelectedFiles(undefined)}
-                                className="h-8 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/30 hover:text-rose-700 dark:hover:text-rose-300"
                               >
                                 重置
                               </Button>
                             )}
                             <Button
+                              className="cyber-btn-outline h-8 font-mono text-xs font-bold disabled:opacity-50"
+                              disabled={!canSelectFiles}
+                              onClick={() => setShowFileSelection(true)}
                               size="sm"
                               variant="outline"
-                              onClick={() => setShowFileSelection(true)}
-                              disabled={!canSelectFiles}
-                              className="h-8 text-xs cyber-btn-outline font-mono font-bold disabled:opacity-50"
                             >
-                              <FolderOpen className="w-3 h-3 mr-1" />
+                              <FolderOpen className="mr-1 h-3 w-3" />
                               选择文件
                             </Button>
                           </div>
@@ -630,48 +810,36 @@ export default function CreateTaskDialog({
           </div>
 
           {/* Footer */}
-          <div className="flex-shrink-0 flex justify-end gap-3 px-5 py-4 bg-muted border-t border-border">
+          <div className="bg-muted border-border flex flex-shrink-0 justify-end gap-3 border-t px-5 py-4">
             <Button
-              variant="ghost"
-              onClick={() => onOpenChange(false)}
+              className="text-muted-foreground hover:text-foreground hover:bg-muted h-10 px-4 font-mono"
               disabled={creating}
-              className="px-4 h-10 font-mono text-muted-foreground hover:text-foreground hover:bg-muted"
+              onClick={() => onOpenChange(false)}
+              variant="ghost"
             >
               取消
             </Button>
             <Button
-              onClick={handleStartScan}
+              className="cyber-btn-primary h-10 px-5 font-mono font-bold uppercase"
               disabled={!canStart || creating || !canSubmitCurrentMode}
-              className="px-5 h-10 cyber-btn-primary font-mono font-bold uppercase"
+              onClick={handleStartScan}
             >
-              {creating ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  启动中...
-                </>
-              ) : auditMode === "agent" ? (
-                <>
-                  <Bot className="w-4 h-4 mr-2" />
-                  启动 Agent 审计
-                </>
-              ) : (
-                <>
-                  <Zap className="w-4 h-4 mr-2" />
-                  开始快速扫描
-                </>
-              )}
+              {startButtonContent}
             </Button>
           </div>
         </DialogContent>
       </Dialog>
 
       <FileSelectionDialog
-        open={showFileSelection}
-        onOpenChange={setShowFileSelection}
-        projectId={selectedProjectId}
         branch={branch}
         excludePatterns={excludePatterns}
+        group={group}
+        manifestXml={manifestXml}
         onConfirm={setSelectedFiles}
+        onOpenChange={setShowFileSelection}
+        open={showFileSelection}
+        projectId={selectedProjectId}
+        repositoryType={selectedProject?.repository_type}
       />
     </>
   );
@@ -682,18 +850,19 @@ function ProjectCard({
   selected,
   onSelect,
 }: {
+  onSelect: () => void;
   project: Project;
   selected: boolean;
-  onSelect: () => void;
 }) {
   const isRepo = isRepositoryProject(project);
 
   return (
     <div
-      className={`flex items-center gap-3 p-3 cursor-pointer rounded transition-all ${selected
-          ? "bg-primary/10 border border-primary/50"
-          : "hover:bg-muted border border-transparent"
-        }`}
+      className={`flex cursor-pointer items-center gap-3 rounded p-3 transition-all ${
+        selected
+          ? 'bg-primary/10 border-primary/50 border'
+          : 'hover:bg-muted border border-transparent'
+      }`}
       onClick={onSelect}
     >
       <Checkbox
@@ -701,30 +870,43 @@ function ProjectCard({
         className="border-border data-[state=checked]:bg-primary data-[state=checked]:border-primary"
       />
 
-      <div className={`p-1.5 rounded ${isRepo ? "bg-blue-500/20" : "bg-amber-500/20"}`}>
+      <div
+        className={`rounded p-1.5 ${isRepo ? 'bg-blue-500/20' : 'bg-amber-500/20'}`}
+      >
         {isRepo ? (
-          <Globe className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+          <Globe className="h-4 w-4 text-blue-600 dark:text-blue-400" />
         ) : (
-          <Package className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+          <Package className="h-4 w-4 text-amber-600 dark:text-amber-400" />
         )}
       </div>
 
-      <div className="flex-1 min-w-0 overflow-hidden">
+      <div className="min-w-0 flex-1 overflow-hidden">
         <div className="flex items-center gap-2">
-          <span className={`font-mono text-base truncate ${selected ? 'text-foreground font-bold' : 'text-foreground'}`}>
+          <span
+            className={`truncate font-mono text-base ${selected ? 'text-foreground font-bold' : 'text-foreground'}`}
+          >
             {project.name}
           </span>
           <Badge
-            className={`text-xs px-1 py-0 font-mono ${isRepo
-                ? "bg-blue-500/20 text-blue-600 dark:text-blue-400 border-blue-500/30"
-                : "bg-amber-500/20 text-amber-600 dark:text-amber-400 border-amber-500/30"
-              }`}
+            className={`px-1 py-0 font-mono text-xs ${
+              isRepo
+                ? 'border-blue-500/30 bg-blue-500/20 text-blue-600 dark:text-blue-400'
+                : 'border-amber-500/30 bg-amber-500/20 text-amber-600 dark:text-amber-400'
+            }`}
           >
-            {isRepo ? "REPO" : "ZIP"}
+            {isRepo ? 'REPO' : 'ZIP'}
           </Badge>
+          {isRepo && (
+            <Badge className="cyber-badge-muted font-mono text-xs uppercase">
+              {getRepositoryTypeLabel(project.repository_type)}
+            </Badge>
+          )}
         </div>
         {project.description && (
-          <p className="text-sm text-muted-foreground mt-0.5 font-mono line-clamp-2" title={project.description}>
+          <p
+            className="text-muted-foreground mt-0.5 line-clamp-2 font-mono text-sm"
+            title={project.description}
+          >
             {project.description}
           </p>
         )}
@@ -738,15 +920,15 @@ function ZipUploadCard({
   onUpload,
   uploading,
 }: {
-  zipState: ReturnType<typeof useZipFile>;
   onUpload: () => void;
   uploading: boolean;
+  zipState: ReturnType<typeof useZipFile>;
 }) {
   if (zipState.loading) {
     return (
-      <div className="flex items-center gap-3 p-3 border border-border rounded bg-blue-50 dark:bg-blue-950/20">
-        <Loader2 className="w-5 h-5 animate-spin text-blue-600 dark:text-blue-400" />
-        <span className="text-sm font-mono text-blue-600 dark:text-blue-400">
+      <div className="border-border flex items-center gap-3 rounded border bg-blue-50 p-3 dark:bg-blue-950/20">
+        <Loader2 className="h-5 w-5 animate-spin text-blue-600 dark:text-blue-400" />
+        <span className="font-mono text-sm text-blue-600 dark:text-blue-400">
           检查文件中...
         </span>
       </div>
@@ -755,75 +937,79 @@ function ZipUploadCard({
 
   if (zipState.storedZipInfo?.has_file) {
     return (
-      <div className="p-3 border border-border rounded bg-emerald-50 dark:bg-emerald-950/20 space-y-3">
+      <div className="border-border space-y-3 rounded border bg-emerald-50 p-3 dark:bg-emerald-950/20">
         <div className="flex items-center gap-3">
-          <div className="p-1.5 bg-emerald-500/20 rounded">
-            <Package className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+          <div className="rounded bg-emerald-500/20 p-1.5">
+            <Package className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
           </div>
           <div className="flex-1">
-            <p className="text-sm font-bold text-emerald-700 dark:text-emerald-300 font-mono">
+            <p className="font-mono text-sm font-bold text-emerald-700 dark:text-emerald-300">
               {zipState.storedZipInfo.original_filename}
             </p>
-            <p className="text-xs text-emerald-600 dark:text-emerald-500 font-mono">
+            <p className="font-mono text-xs text-emerald-600 dark:text-emerald-500">
               {zipState.storedZipInfo.file_size &&
                 formatFileSize(zipState.storedZipInfo.file_size)}
               {zipState.storedZipInfo.uploaded_at &&
-                ` · ${new Date(zipState.storedZipInfo.uploaded_at).toLocaleDateString("zh-CN")}`}
+                ` · ${new Date(zipState.storedZipInfo.uploaded_at).toLocaleDateString('zh-CN')}`}
             </p>
           </div>
         </div>
 
-        <div className="flex gap-4 pt-2 border-t border-emerald-500/20">
-          <label className="flex items-center gap-2 cursor-pointer font-mono text-sm">
+        <div className="flex gap-4 border-t border-emerald-500/20 pt-2">
+          <label className="flex cursor-pointer items-center gap-2 font-mono text-sm">
             <input
-              type="radio"
               checked={zipState.useStoredZip}
+              className="h-4 w-4 accent-emerald-500"
               onChange={() => zipState.switchToStored()}
-              className="w-4 h-4 accent-emerald-500"
-            />
-            <span className="text-emerald-700 dark:text-emerald-300">使用此文件</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer font-mono text-sm">
-            <input
               type="radio"
-              checked={!zipState.useStoredZip}
-              onChange={() => zipState.switchToUpload()}
-              className="w-4 h-4 accent-emerald-500"
             />
-            <span className="text-emerald-700 dark:text-emerald-300">上传新文件</span>
+            <span className="text-emerald-700 dark:text-emerald-300">
+              使用此文件
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 font-mono text-sm">
+            <input
+              checked={!zipState.useStoredZip}
+              className="h-4 w-4 accent-emerald-500"
+              onChange={() => zipState.switchToUpload()}
+              type="radio"
+            />
+            <span className="text-emerald-700 dark:text-emerald-300">
+              上传新文件
+            </span>
           </label>
         </div>
 
         {!zipState.useStoredZip && (
-          <div className="flex gap-2 items-center">
+          <div className="flex items-center gap-2">
             <Input
-              type="file"
               accept=".zip"
+              className="border-border bg-background file:bg-primary/20 file:text-primary hover:file:bg-primary/30 focus:ring-primary/50 h-9 flex-1 rounded border px-3 py-1.5 font-mono text-sm file:mr-3 file:rounded file:border-0 file:px-3 file:py-1 file:font-mono file:text-xs focus:outline-none focus:ring-1"
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) {
                   const v = validateZipFile(file);
                   if (!v.valid) {
-                    toast.error(v.error || "文件无效");
-                    e.target.value = "";
+                    toast.error(v.error || '文件无效');
+                    e.target.value = '';
                     return;
                   }
                   zipState.handleFileSelect(file, e.target);
                 }
               }}
-              className="h-9 flex-1 border border-border rounded bg-background px-3 py-1.5 text-sm font-mono file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-mono file:bg-primary/20 file:text-primary hover:file:bg-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/50"
+              type="file"
             />
             {zipState.zipFile && (
               <Button
-                size="sm"
-                onClick={onUpload}
+                className="cyber-btn-primary h-9 px-3"
                 disabled={uploading}
-                className="h-9 px-3 cyber-btn-primary"
+                onClick={onUpload}
+                size="sm"
               >
                 {uploading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <Upload className="w-4 h-4" />
+                  <Upload className="h-4 w-4" />
                 )}
               </Button>
             )}
@@ -834,50 +1020,50 @@ function ZipUploadCard({
   }
 
   return (
-    <div className="p-3 border border-dashed border-amber-500/50 rounded bg-amber-50 dark:bg-amber-950/20">
+    <div className="rounded border border-dashed border-amber-500/50 bg-amber-50 p-3 dark:bg-amber-950/20">
       <div className="flex items-start gap-3">
-        <div className="p-1.5 bg-amber-500/20 rounded">
-          <Upload className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+        <div className="rounded bg-amber-500/20 p-1.5">
+          <Upload className="h-4 w-4 text-amber-600 dark:text-amber-400" />
         </div>
         <div className="flex-1">
-          <p className="text-sm font-bold text-amber-700 dark:text-amber-300 font-mono uppercase">
+          <p className="font-mono text-sm font-bold uppercase text-amber-700 dark:text-amber-300">
             上传 ZIP 文件
           </p>
-          <div className="flex gap-2 items-center mt-2">
+          <div className="mt-2 flex items-center gap-2">
             <Input
-              type="file"
               accept=".zip"
+              className="border-border bg-background file:bg-primary/20 file:text-primary hover:file:bg-primary/30 focus:ring-primary/50 h-9 flex-1 rounded border px-3 py-1.5 font-mono text-sm file:mr-3 file:rounded file:border-0 file:px-3 file:py-1 file:font-mono file:text-xs focus:outline-none focus:ring-1"
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) {
                   const v = validateZipFile(file);
                   if (!v.valid) {
-                    toast.error(v.error || "文件无效");
-                    e.target.value = "";
+                    toast.error(v.error || '文件无效');
+                    e.target.value = '';
                     return;
                   }
                   zipState.handleFileSelect(file, e.target);
                 }
               }}
-              className="h-9 flex-1 border border-border rounded bg-background px-3 py-1.5 text-sm font-mono file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-mono file:bg-primary/20 file:text-primary hover:file:bg-primary/30 focus:outline-none focus:ring-1 focus:ring-primary/50"
+              type="file"
             />
             {zipState.zipFile && (
               <Button
-                size="sm"
-                onClick={onUpload}
+                className="cyber-btn-primary h-9 px-3"
                 disabled={uploading}
-                className="h-9 px-3 cyber-btn-primary"
+                onClick={onUpload}
+                size="sm"
               >
                 {uploading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <Upload className="w-4 h-4" />
+                  <Upload className="h-4 w-4" />
                 )}
               </Button>
             )}
           </div>
           {zipState.zipFile && (
-            <p className="text-xs text-amber-600 dark:text-amber-400 mt-2 font-mono">
+            <p className="mt-2 font-mono text-xs text-amber-600 dark:text-amber-400">
               已选: {zipState.zipFile.name} (
               {formatFileSize(zipState.zipFile.size)})
             </p>

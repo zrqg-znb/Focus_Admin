@@ -124,11 +124,20 @@ def list_project_branches(request, project_id: str):
 
 
 @router.get('/{project_id}/files', response=list[dict], summary='获取项目文件列表')
-def list_project_files(request, project_id: str, branch_name: str | None = None, exclude_patterns: str = ''):
+def list_project_files(
+    request,
+    project_id: str,
+    branch_name: str | None = None,
+    manifest_xml: str | None = None,
+    group: str | None = None,
+    exclude_patterns: str = '',
+):
     patterns = [item.strip() for item in exclude_patterns.split(',') if item.strip()]
     return project_services.list_files(
         request.auth,
         project_id,
         branch_name=branch_name,
+        manifest_xml=manifest_xml,
+        group=group,
         exclude_patterns=patterns,
     )

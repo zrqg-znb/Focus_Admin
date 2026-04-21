@@ -3,37 +3,52 @@
  * Cyberpunk Terminal Aesthetic
  */
 
-import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import type { Project } from '@/shared/types';
+
 import {
-  Search,
-  GitBranch,
-  Calendar,
-  Users,
-  ExternalLink,
-  Trash2,
-  RotateCcw,
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { api } from '@/shared/config/database';
+import { useAuth } from '@/shared/context/AuthContext';
+import { DEEPAUDIT_ACTION_CODES } from '@/shared/focus/focusPermission';
+import {
+  getRepositoryTypeLabel,
+  getSourceTypeBadge,
+  isRepositoryProject,
+} from '@/shared/utils/projectUtils';
+import {
   AlertTriangle,
+  Calendar,
+  ExternalLink,
+  GitBranch,
   Inbox,
-} from "lucide-react";
-import { api } from "@/shared/config/database";
-import type { Project } from "@/shared/types";
-import { toast } from "sonner";
-import { isRepositoryProject, getSourceTypeBadge } from "@/shared/utils/projectUtils";
-import { useAuth } from "@/shared/context/AuthContext";
-import { DEEPAUDIT_ACTION_CODES } from "@/shared/focus/focusPermission";
+  RotateCcw,
+  Search,
+  Trash2,
+  Users,
+} from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 
 export default function RecycleBin() {
   const { hasAccess } = useAuth();
   const [deletedProjects, setDeletedProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState('');
   const [showRestoreDialog, setShowRestoreDialog] = useState(false);
-  const [showPermanentDeleteDialog, setShowPermanentDeleteDialog] = useState(false);
-  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [showPermanentDeleteDialog, setShowPermanentDeleteDialog] =
+    useState(false);
+  const [selectedProject, setSelectedProject] = useState<null | Project>(null);
   const canRestoreProject = hasAccess(DEEPAUDIT_ACTION_CODES.PROJECTS_RESTORE);
   const canDeleteProject = hasAccess(DEEPAUDIT_ACTION_CODES.PROJECTS_DELETE);
 
@@ -48,7 +63,7 @@ export default function RecycleBin() {
       setDeletedProjects(data);
     } catch (error) {
       console.error('Failed to load deleted projects:', error);
-      toast.error("加载已删除项目失败");
+      toast.error('加载已删除项目失败');
     } finally {
       setLoading(false);
     }
@@ -56,7 +71,7 @@ export default function RecycleBin() {
 
   const handleRestoreClick = (project: Project) => {
     if (!canRestoreProject) {
-      toast.error("当前账号没有恢复项目的权限");
+      toast.error('当前账号没有恢复项目的权限');
       return;
     }
     setSelectedProject(project);
@@ -65,7 +80,7 @@ export default function RecycleBin() {
 
   const handlePermanentDeleteClick = (project: Project) => {
     if (!canDeleteProject) {
-      toast.error("当前账号没有永久删除项目的权限");
+      toast.error('当前账号没有永久删除项目的权限');
       return;
     }
     setSelectedProject(project);
@@ -75,7 +90,7 @@ export default function RecycleBin() {
   const handleConfirmRestore = async () => {
     if (!selectedProject) return;
     if (!canRestoreProject) {
-      toast.error("当前账号没有恢复项目的权限");
+      toast.error('当前账号没有恢复项目的权限');
       return;
     }
 
@@ -87,14 +102,14 @@ export default function RecycleBin() {
       loadDeletedProjects();
     } catch (error) {
       console.error('Failed to restore project:', error);
-      toast.error("恢复项目失败");
+      toast.error('恢复项目失败');
     }
   };
 
   const handleConfirmPermanentDelete = async () => {
     if (!selectedProject) return;
     if (!canDeleteProject) {
-      toast.error("当前账号没有永久删除项目的权限");
+      toast.error('当前账号没有永久删除项目的权限');
       return;
     }
 
@@ -107,20 +122,27 @@ export default function RecycleBin() {
       loadDeletedProjects();
     } catch (error) {
       console.error('Failed to permanently delete project:', error);
-      toast.error("永久删除项目失败");
+      toast.error('永久删除项目失败');
     }
   };
 
-  const filteredProjects = deletedProjects.filter(project =>
-    project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    project.description?.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredProjects = deletedProjects.filter(
+    (project) =>
+      project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      project.description?.toLowerCase().includes(searchTerm.toLowerCase()),
   );
 
   const getRepositoryIcon = (type?: string) => {
     switch (type) {
-      case 'github': return '🐙';
-      case 'gitlab': return '🦊';
-      default: return '📁';
+      case 'multi': {
+        return '🗂️';
+      }
+      case 'single': {
+        return '🧬';
+      }
+      default: {
+        return '📁';
+      }
     }
   };
 
@@ -130,58 +152,67 @@ export default function RecycleBin() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen cyber-bg-elevated">
-        <div className="text-center space-y-4">
+      <div className="cyber-bg-elevated flex min-h-screen items-center justify-center">
+        <div className="space-y-4 text-center">
           <div className="loading-spinner mx-auto" />
-          <p className="text-muted-foreground font-mono text-sm uppercase tracking-wider">加载中...</p>
+          <p className="text-muted-foreground font-mono text-sm uppercase tracking-wider">
+            加载中...
+          </p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 p-6 cyber-bg-elevated min-h-screen font-mono relative">
+    <div className="cyber-bg-elevated relative min-h-screen space-y-6 p-6 font-mono">
       {/* Grid background */}
-      <div className="absolute inset-0 cyber-grid-subtle pointer-events-none" />
+      <div className="cyber-grid-subtle pointer-events-none absolute inset-0" />
 
       {/* Search Bar */}
-      <div className="cyber-card p-0 relative z-10">
+      <div className="cyber-card relative z-10 p-0">
         <div className="cyber-card-header">
-          <Trash2 className="w-5 h-5 text-rose-400" />
-          <h3 className="text-lg font-bold uppercase tracking-wider text-foreground">回收站</h3>
-          <Badge className="ml-2 cyber-badge-muted">{deletedProjects.length} 个项目</Badge>
+          <Trash2 className="h-5 w-5 text-rose-400" />
+          <h3 className="text-foreground text-lg font-bold uppercase tracking-wider">
+            回收站
+          </h3>
+          <Badge className="cyber-badge-muted ml-2">
+            {deletedProjects.length} 个项目
+          </Badge>
         </div>
         <div className="p-4">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+            <Search className="text-muted-foreground absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 transform" />
             <Input
+              className="cyber-input h-10 !pl-10"
+              onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="搜索已删除的项目..."
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="!pl-10 cyber-input h-10"
             />
           </div>
         </div>
       </div>
 
       {/* Projects Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 relative z-10">
+      <div className="relative z-10 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {filteredProjects.length > 0 ? (
           filteredProjects.map((project) => (
-            <div key={project.id} className="cyber-card p-0 hover:border-border transition-all group">
+            <div
+              className="cyber-card hover:border-border group p-0 transition-all"
+              key={project.id}
+            >
               {/* Project Header */}
-              <div className="p-4 border-b border-border bg-muted/50">
+              <div className="border-border bg-muted/50 border-b p-4">
                 <div className="flex items-start justify-between">
                   <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-muted border border-border flex items-center justify-center text-lg rounded">
+                    <div className="bg-muted border-border flex h-10 w-10 items-center justify-center rounded border text-lg">
                       {getRepositoryIcon(project.repository_type)}
                     </div>
                     <div>
-                      <h3 className="text-base font-bold uppercase text-foreground truncate max-w-[150px] group-hover:text-primary transition-colors">
+                      <h3 className="text-foreground group-hover:text-primary max-w-[150px] truncate text-base font-bold uppercase transition-colors">
                         {project.name}
                       </h3>
                       {project.description && (
-                        <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
+                        <p className="text-muted-foreground mt-1 line-clamp-1 text-xs">
                           {project.description}
                         </p>
                       )}
@@ -189,38 +220,47 @@ export default function RecycleBin() {
                   </div>
                   <div className="flex flex-col items-end gap-1">
                     <Badge className="cyber-badge-danger">已删除</Badge>
-                    <Badge className={`${isRepositoryProject(project) ? 'cyber-badge-info' : 'cyber-badge-warning'}`}>
+                    <Badge
+                      className={`${isRepositoryProject(project) ? 'cyber-badge-info' : 'cyber-badge-warning'}`}
+                    >
                       {getSourceTypeBadge(project.source_type)}
                     </Badge>
+                    {isRepositoryProject(project) && (
+                      <Badge className="cyber-badge-muted">
+                        {getRepositoryTypeLabel(project.repository_type)}
+                      </Badge>
+                    )}
                   </div>
                 </div>
               </div>
 
-              <div className="p-4 space-y-4">
+              <div className="space-y-4 p-4">
                 {/* Project Info */}
                 <div className="space-y-3">
                   {isRepositoryProject(project) && project.repository_url && (
-                    <div className="flex items-center text-xs text-muted-foreground">
-                      <GitBranch className="w-4 h-4 mr-2 flex-shrink-0 text-muted-foreground" />
+                    <div className="text-muted-foreground flex items-center text-xs">
+                      <GitBranch className="text-muted-foreground mr-2 h-4 w-4 flex-shrink-0" />
                       <a
+                        className="hover:text-primary flex items-center truncate transition-colors"
                         href={project.repository_url}
-                        target="_blank"
                         rel="noopener noreferrer"
-                        className="hover:text-primary transition-colors flex items-center truncate"
+                        target="_blank"
                       >
-                        <span className="truncate">{project.repository_url.replace('https://', '')}</span>
-                        <ExternalLink className="w-3 h-3 ml-1 flex-shrink-0" />
+                        <span className="truncate">
+                          {project.repository_url.replace('https://', '')}
+                        </span>
+                        <ExternalLink className="ml-1 h-3 w-3 flex-shrink-0" />
                       </a>
                     </div>
                   )}
 
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <div className="text-muted-foreground flex items-center justify-between text-xs">
                     <div className="flex items-center">
-                      <Calendar className="w-4 h-4 mr-2 text-muted-foreground" />
+                      <Calendar className="text-muted-foreground mr-2 h-4 w-4" />
                       删除于 {formatDate(project.updated_at)}
                     </div>
                     <div className="flex items-center">
-                      <Users className="w-4 h-4 mr-2 text-muted-foreground" />
+                      <Users className="text-muted-foreground mr-2 h-4 w-4" />
                       {project.owner?.full_name || '未知'}
                     </div>
                   </div>
@@ -229,11 +269,13 @@ export default function RecycleBin() {
                 {/* Programming Languages */}
                 {project.programming_languages && (
                   <div className="flex flex-wrap gap-2">
-                    {JSON.parse(project.programming_languages).slice(0, 4).map((lang: string) => (
-                      <Badge key={lang} className="cyber-badge-muted text-xs">
-                        {lang}
-                      </Badge>
-                    ))}
+                    {JSON.parse(project.programming_languages)
+                      .slice(0, 4)
+                      .map((lang: string) => (
+                        <Badge className="cyber-badge-muted text-xs" key={lang}>
+                          {lang}
+                        </Badge>
+                      ))}
                     {JSON.parse(project.programming_languages).length > 4 && (
                       <Badge className="cyber-badge-muted text-xs">
                         +{JSON.parse(project.programming_languages).length - 4}
@@ -243,33 +285,33 @@ export default function RecycleBin() {
                 )}
 
                 {/* Action Buttons */}
-                {(canRestoreProject || canDeleteProject) ? (
-                  <div className="flex gap-2 pt-3 border-t border-border">
+                {canRestoreProject || canDeleteProject ? (
+                  <div className="border-border flex gap-2 border-t pt-3">
                     {canRestoreProject && (
                       <Button
+                        className="cyber-btn-outline h-9 flex-1 border-emerald-500/30 text-emerald-400 hover:border-emerald-500/50 hover:bg-emerald-500/10"
+                        onClick={() => handleRestoreClick(project)}
                         size="sm"
                         variant="outline"
-                        className="flex-1 h-9 cyber-btn-outline text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 hover:border-emerald-500/50"
-                        onClick={() => handleRestoreClick(project)}
                       >
-                        <RotateCcw className="w-4 h-4 mr-2" />
+                        <RotateCcw className="mr-2 h-4 w-4" />
                         恢复
                       </Button>
                     )}
                     {canDeleteProject && (
                       <Button
+                        className="cyber-btn-outline h-9 flex-1 border-rose-500/30 text-rose-400 hover:border-rose-500/50 hover:bg-rose-500/10"
+                        onClick={() => handlePermanentDeleteClick(project)}
                         size="sm"
                         variant="outline"
-                        className="flex-1 h-9 cyber-btn-outline text-rose-400 border-rose-500/30 hover:bg-rose-500/10 hover:border-rose-500/50"
-                        onClick={() => handlePermanentDeleteClick(project)}
                       >
-                        <Trash2 className="w-4 h-4 mr-2" />
+                        <Trash2 className="mr-2 h-4 w-4" />
                         永久删除
                       </Button>
                     )}
                   </div>
                 ) : (
-                  <div className="pt-3 border-t border-border text-xs text-muted-foreground">
+                  <div className="border-border text-muted-foreground border-t pt-3 text-xs">
                     当前账号无可执行操作
                   </div>
                 )}
@@ -277,7 +319,7 @@ export default function RecycleBin() {
             </div>
           ))
         ) : (
-          <div className="col-span-full cyber-card p-16">
+          <div className="cyber-card col-span-full p-16">
             <div className="empty-state">
               <Inbox className="empty-state-icon" />
               <p className="empty-state-title">
@@ -292,24 +334,31 @@ export default function RecycleBin() {
       </div>
 
       {/* Restore Dialog */}
-      <AlertDialog open={showRestoreDialog} onOpenChange={setShowRestoreDialog}>
-        <AlertDialogContent className="cyber-card p-0 cyber-dialog max-w-md !fixed">
+      <AlertDialog onOpenChange={setShowRestoreDialog} open={showRestoreDialog}>
+        <AlertDialogContent className="cyber-card cyber-dialog !fixed max-w-md p-0">
           <AlertDialogHeader className="cyber-card-header">
-            <RotateCcw className="w-5 h-5 text-emerald-400" />
-            <AlertDialogTitle className="text-lg font-bold uppercase tracking-wider text-foreground">
+            <RotateCcw className="h-5 w-5 text-emerald-400" />
+            <AlertDialogTitle className="text-foreground text-lg font-bold uppercase tracking-wider">
               确认恢复项目
             </AlertDialogTitle>
           </AlertDialogHeader>
-          <AlertDialogDescription className="p-6 text-muted-foreground">
-            您确定要恢复项目 <span className="font-bold text-foreground">"{selectedProject?.name}"</span> 吗？
-            <br /><br />
+          <AlertDialogDescription className="text-muted-foreground p-6">
+            您确定要恢复项目{' '}
+            <span className="text-foreground font-bold">
+              "{selectedProject?.name}"
+            </span>{' '}
+            吗？
+            <br />
+            <br />
             恢复后，该项目将重新出现在项目列表中，您可以继续使用该项目的所有功能。
           </AlertDialogDescription>
-          <AlertDialogFooter className="p-4 border-t border-border flex gap-3">
-            <AlertDialogCancel className="cyber-btn-outline">取消</AlertDialogCancel>
+          <AlertDialogFooter className="border-border flex gap-3 border-t p-4">
+            <AlertDialogCancel className="cyber-btn-outline">
+              取消
+            </AlertDialogCancel>
             <AlertDialogAction
+              className="cyber-btn-primary border-emerald-500 bg-emerald-600 hover:bg-emerald-500"
               onClick={handleConfirmRestore}
-              className="cyber-btn-primary bg-emerald-600 hover:bg-emerald-500 border-emerald-500"
             >
               确认恢复
             </AlertDialogAction>
@@ -318,34 +367,46 @@ export default function RecycleBin() {
       </AlertDialog>
 
       {/* Permanent Delete Dialog */}
-      <AlertDialog open={showPermanentDeleteDialog} onOpenChange={setShowPermanentDeleteDialog}>
-        <AlertDialogContent className="cyber-card p-0 cyber-dialog max-w-md !fixed">
-          <AlertDialogHeader className="p-4 border-b border-rose-500/30 bg-rose-500/10 flex flex-row items-center gap-2">
-            <AlertTriangle className="w-5 h-5 text-rose-400" />
+      <AlertDialog
+        onOpenChange={setShowPermanentDeleteDialog}
+        open={showPermanentDeleteDialog}
+      >
+        <AlertDialogContent className="cyber-card cyber-dialog !fixed max-w-md p-0">
+          <AlertDialogHeader className="flex flex-row items-center gap-2 border-b border-rose-500/30 bg-rose-500/10 p-4">
+            <AlertTriangle className="h-5 w-5 text-rose-400" />
             <AlertDialogTitle className="text-lg font-bold uppercase tracking-wider text-rose-400">
               警告：永久删除项目
             </AlertDialogTitle>
           </AlertDialogHeader>
-          <AlertDialogDescription className="p-6 text-muted-foreground">
-            您确定要<span className="font-bold text-rose-400 uppercase">永久删除</span>项目 <span className="font-bold text-foreground">"{selectedProject?.name}"</span> 吗？
-            <br /><br />
-            <div className="bg-rose-500/10 border border-rose-500/30 p-4 rounded">
-              <p className="text-rose-400 font-bold mb-2 uppercase flex items-center">
-                <AlertTriangle className="w-4 h-4 mr-2" />
+          <AlertDialogDescription className="text-muted-foreground p-6">
+            您确定要
+            <span className="font-bold uppercase text-rose-400">永久删除</span>
+            项目{' '}
+            <span className="text-foreground font-bold">
+              "{selectedProject?.name}"
+            </span>{' '}
+            吗？
+            <br />
+            <br />
+            <div className="rounded border border-rose-500/30 bg-rose-500/10 p-4">
+              <p className="mb-2 flex items-center font-bold uppercase text-rose-400">
+                <AlertTriangle className="mr-2 h-4 w-4" />
                 此操作不可撤销！
               </p>
-              <ul className="list-disc list-inside text-rose-300/80 space-y-1 text-xs">
+              <ul className="list-inside list-disc space-y-1 text-xs text-rose-300/80">
                 <li>项目数据将被永久删除</li>
                 <li>相关的审计任务可能会受影响</li>
                 <li>无法通过任何方式恢复</li>
               </ul>
             </div>
           </AlertDialogDescription>
-          <AlertDialogFooter className="p-4 border-t border-border flex gap-3">
-            <AlertDialogCancel className="cyber-btn-outline">取消</AlertDialogCancel>
+          <AlertDialogFooter className="border-border flex gap-3 border-t p-4">
+            <AlertDialogCancel className="cyber-btn-outline">
+              取消
+            </AlertDialogCancel>
             <AlertDialogAction
+              className="cyber-btn-primary border-rose-500 bg-rose-600 hover:bg-rose-500"
               onClick={handleConfirmPermanentDelete}
-              className="cyber-btn-primary bg-rose-600 hover:bg-rose-500 border-rose-500"
             >
               确认永久删除
             </AlertDialogAction>

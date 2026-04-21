@@ -41,7 +41,7 @@ except ImportError:  # pragma: no cover - runtime dependency expected in app env
 
 
 SENSITIVE_LLM_FIELDS = {'api_key'}
-SENSITIVE_TOKEN_FIELDS = {'github_token', 'gitlab_token', 'gitea_token'}
+SENSITIVE_TOKEN_FIELDS = {'codehub_token', 'github_token', 'gitlab_token', 'gitea_token'}
 SENSITIVE_EMBEDDING_FIELDS = {'api_key'}
 LLM_TEST_MODELS = {
     'openai': 'gpt-5',
@@ -121,11 +121,16 @@ def _build_system_default_llm_config() -> dict:
 
 def _build_system_default_other_config() -> dict:
     payload = deepcopy(DEFAULT_OTHER_CONFIG)
+    codehub_token = str(
+        getattr(settings, 'CODEHUB_TOKEN', '')
+        or getattr(settings, 'GITHUB_TOKEN', '')
+        or getattr(settings, 'GITLAB_TOKEN', '')
+        or getattr(settings, 'GITEA_TOKEN', '')
+        or ''
+    ).strip()
     payload.update(
         {
-            'github_token': str(getattr(settings, 'GITHUB_TOKEN', '') or '').strip(),
-            'gitlab_token': str(getattr(settings, 'GITLAB_TOKEN', '') or '').strip(),
-            'gitea_token': str(getattr(settings, 'GITEA_TOKEN', '') or '').strip(),
+            'codehub_token': codehub_token,
             'output_language': str(getattr(settings, 'OUTPUT_LANGUAGE', payload['output_language']) or payload['output_language']).strip() or payload['output_language'],
         }
     )
@@ -190,6 +195,21 @@ def _encrypt_other_config(payload: dict) -> dict:
         if embedding.get(key):
             embedding[key] = encrypt_value(str(embedding[key]))
     result['embedding_config'] = embedding
+    return result
+
+
+def _normalize_codehub_token(payload: dict) -> dict:
+    result = dict(payload or {})
+    codehub_token = str(result.get('codehub_token') or '').strip()
+    if not codehub_token:
+        for legacy_key in ('github_token', 'gitlab_token', 'gitea_token'):
+            legacy_value = str(result.get(legacy_key) or '').strip()
+            if legacy_value:
+                codehub_token = legacy_value
+                break
+    result['codehub_token'] = codehub_token
+    for legacy_key in ('github_token', 'gitlab_token', 'gitea_token'):
+        result.pop(legacy_key, None)
     return result
 
 
@@ -507,7 +527,9 @@ def get_default_user_config() -> dict:
 
 def serialize_user_config(instance: AuditUserConfig) -> dict:
     llm_config = _deep_merge(_build_system_default_llm_config(), _decrypt_llm_config(instance.llm_config or {}))
-    other_config = _deep_merge(_build_system_default_other_config(), _decrypt_other_config(instance.other_config or {}))
+    other_config = _normalize_codehub_token(
+        _deep_merge(_build_system_default_other_config(), _decrypt_other_config(instance.other_config or {}))
+    )
     return {
         'user_id': str(instance.user_id),
         'llm_config': llm_config,
@@ -525,7 +547,7 @@ def update_user_config(user, payload: dict) -> dict:
     instance = get_or_create_config(user)
     current = serialize_user_config(instance)
     merged_llm = _deep_merge(current['llm_config'], payload.get('llm_config') or {})
-    merged_other = _deep_merge(current['other_config'], payload.get('other_config') or {})
+    merged_other = _normalize_codehub_token(_deep_merge(current['other_config'], payload.get('other_config') or {}))
     instance.llm_config = _encrypt_llm_config(merged_llm)
     instance.other_config = _encrypt_other_config(merged_other)
     instance.sys_modifier = user
@@ -972,7 +994,7 @@ def generate_ssh_credential(user, payload: dict) -> dict:
     return {
         'public_key': public_key,
         'fingerprint': _fingerprint(public_key),
-        'message': 'SSH 密钥生成成功，请将公钥添加到 Git 服务账号或 Deploy Key',
+        'message': 'SSH 密钥生成成功，请将公钥添加到 CodeHub 或内网 Git 服务账号 / Deploy Key',
     }
 
 
@@ -1065,7 +1087,7 @@ def test_ssh_credential(user, payload: dict) -> dict:
         if 'permission denied' in lowered:
             return {
                 'success': False,
-                'message': 'SSH 密钥验证失败：权限被拒绝，请确认公钥已添加到 Git 服务',
+                'message': 'SSH 密钥验证失败：权限被拒绝，请确认公钥已添加到 CodeHub 或内网 Git 服务',
                 'output': output,
             }
         if 'connection refused' in lowered or 'no route to host' in lowered:

@@ -16,8 +16,10 @@ class AuditProjectBaseSchema(Schema):
     description: str | None = None
     source_type: str = 'repository'
     repository_url: str | None = None
-    repository_type: str = 'other'
+    repository_type: str = 'single'
     default_branch: str = 'main'
+    manifest_xml: str | None = None
+    group: str | None = None
     programming_languages: list[str] = Field(default_factory=list)
     is_active: bool = True
 
@@ -33,6 +35,8 @@ class AuditProjectUpdateSchema(Schema):
     repository_url: str | None = None
     repository_type: str | None = None
     default_branch: str | None = None
+    manifest_xml: str | None = None
+    group: str | None = None
     programming_languages: list[str] | None = None
     is_active: bool | None = None
 
@@ -96,6 +100,8 @@ class AuditProjectSummarySchema(Schema):
     repository_url: str | None = None
     repository_type: str
     default_branch: str
+    manifest_xml: str | None = None
+    group: str | None = None
     programming_languages: list[str] = Field(default_factory=list)
     owner: UserBriefSchema
     current_role: str = 'viewer'

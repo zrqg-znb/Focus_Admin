@@ -164,7 +164,19 @@ TEXT_EXTENSIONS = {
     '.cs', '.php', '.rb', '.kt', '.swift', '.sql', '.sh', '.json', '.yml', '.yaml', '.vue', '.xml', '.html', '.mjs', '.mts', '.cts'
 }
 
-DEFAULT_EXCLUDES = ['node_modules/**', '.git/**', 'dist/**', 'build/**', '__pycache__/**', '.venv/**', 'vendor/**']
+DEFAULT_EXCLUDES = [
+    'node_modules/**',
+    '.git/**',
+    '.repo/**',
+    '.gitmm/**',
+    '.mm/**',
+    '.codehub/**',
+    'dist/**',
+    'build/**',
+    '__pycache__/**',
+    '.venv/**',
+    'vendor/**',
+]
 DEPTH_CONTEXT_RADIUS = {'quick': 1, 'standard': 2, 'deep': 4}
 DEPTH_CONFIDENCE_DELTA = {'quick': -0.05, 'standard': 0.0, 'deep': 0.08}
 

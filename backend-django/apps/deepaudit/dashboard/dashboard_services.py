@@ -24,6 +24,7 @@ from apps.deepaudit.constants import PROJECT_MEMBER_ROLE_ADMIN, PROJECT_MEMBER_R
 from apps.deepaudit.permissions import accessible_project_queryset, get_user_id, serialize_user_brief, sync_owner_membership
 from apps.deepaudit.project import project_services
 from apps.deepaudit.project.project_model import AuditProject, AuditProjectMember
+from apps.deepaudit.repo_specs import build_repository_spec, normalize_repository_type
 from apps.deepaudit.prompt_template import prompt_template_services
 from apps.deepaudit.prompt_template.prompt_template_model import PromptTemplate
 from apps.deepaudit.runtime import docker_available
@@ -513,13 +514,22 @@ def _upsert_project(item: dict[str, Any], current_user, imported: dict[str, int]
         skipped['projects'] += 1
         warnings.append(f'项目 {item.get("name") or project_id} 已存在但不属于当前用户，已跳过。')
         return None
+    repository_spec = build_repository_spec(
+        item.get('repository_url'),
+        item.get('default_branch'),
+        repository_type=normalize_repository_type(item.get('repository_type')),
+        manifest_xml=item.get('manifest_xml'),
+        group=item.get('group'),
+    )
     payload = {
         'name': str(item.get('name') or '导入项目').strip() or '导入项目',
         'description': str(item.get('description') or '').strip() or None,
         'source_type': str(item.get('source_type') or 'repository').strip() or 'repository',
-        'repository_url': str(item.get('repository_url') or '').strip() or None,
-        'repository_type': str(item.get('repository_type') or 'other').strip() or 'other',
-        'default_branch': str(item.get('default_branch') or 'main').strip() or 'main',
+        'repository_url': repository_spec['repository_url'] or None,
+        'repository_type': repository_spec['repository_type'],
+        'default_branch': repository_spec['branch_name'],
+        'manifest_xml': repository_spec['manifest_xml'] or None,
+        'group': repository_spec['group'] or None,
         'programming_languages': _normalize_languages(item.get('programming_languages')),
         'is_active': bool(item.get('is_active', True)),
     }
@@ -546,6 +556,12 @@ def _upsert_project(item: dict[str, Any], current_user, imported: dict[str, int]
 def _upsert_scan_task(task_payload: dict[str, Any], project: AuditProject, current_user) -> AuditTask:
     task_id = str(task_payload.get('id') or '').strip()
     summary_payload = dict(task_payload.get('summary') or {})
+    repository_spec = project_services.build_effective_project_repository_spec(
+        project,
+        branch_name=task_payload.get('branch_name'),
+        manifest_xml=task_payload.get('manifest_xml'),
+        group=task_payload.get('group'),
+    )
     defaults = {
         'project': project,
         'created_by': current_user,
@@ -557,7 +573,9 @@ def _upsert_scan_task(task_payload: dict[str, Any], project: AuditProject, curre
     task.created_by = current_user
     task.task_type = str(task_payload.get('task_type') or 'repository').strip() or 'repository'
     task.status = str(task_payload.get('status') or 'pending').strip() or 'pending'
-    task.branch_name = str(task_payload.get('branch_name') or '').strip() or None
+    task.branch_name = repository_spec['branch_name']
+    task.manifest_xml = repository_spec['manifest_xml'] or None
+    task.group = repository_spec['group'] or None
     task.exclude_patterns = list(task_payload.get('exclude_patterns') or [])
     task.scan_config = dict(task_payload.get('scan_config') or {})
     task.total_files = int(task_payload.get('total_files') or 0)
@@ -611,6 +629,12 @@ def _upsert_agent_task(task_payload: dict[str, Any], project: AuditProject, curr
     task_id = str(task_payload.get('id') or '').strip()
     summary_payload = dict(summary_payload or {})
     severity_distribution = dict(summary_payload.get('severity_distribution') or {})
+    repository_spec = project_services.build_effective_project_repository_spec(
+        project,
+        branch_name=task_payload.get('branch_name'),
+        manifest_xml=task_payload.get('manifest_xml'),
+        group=task_payload.get('group'),
+    )
     defaults = {
         'project': project,
         'created_by': current_user,
@@ -626,7 +650,9 @@ def _upsert_agent_task(task_payload: dict[str, Any], project: AuditProject, curr
     task.audit_scope = dict(task_payload.get('audit_scope') or {})
     task.target_vulnerabilities = list(task_payload.get('target_vulnerabilities') or [])
     task.verification_level = str(task_payload.get('verification_level') or 'sandbox').strip() or 'sandbox'
-    task.branch_name = str(task_payload.get('branch_name') or '').strip() or None
+    task.branch_name = repository_spec['branch_name']
+    task.manifest_xml = repository_spec['manifest_xml'] or None
+    task.group = repository_spec['group'] or None
     task.exclude_patterns = list(task_payload.get('exclude_patterns') or [])
     task.target_files = list(task_payload.get('target_files') or [])
     task.max_iterations = int(task_payload.get('max_iterations') or 50)

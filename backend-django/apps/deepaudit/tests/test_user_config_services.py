@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import requests
@@ -9,6 +10,21 @@ from apps.deepaudit.user_config import user_config_services
 
 
 class UserConfigServicesTestCase(SimpleTestCase):
+    @patch("apps.deepaudit.user_config.user_config_services.decrypt_value", side_effect=lambda value: value)
+    def test_serialize_user_config_maps_legacy_token_to_codehub(self, _mock_decrypt) -> None:
+        instance = SimpleNamespace(
+            user_id="user-1",
+            llm_config={},
+            other_config={"github_token": "legacy-token"},
+            sys_create_datetime=None,
+            sys_update_datetime=None,
+        )
+
+        result = user_config_services.serialize_user_config(instance)
+
+        self.assertEqual(result["other_config"]["codehub_token"], "legacy-token")
+        self.assertNotIn("github_token", result["other_config"])
+
     @patch("apps.deepaudit.user_config.user_config_services.get_user_config")
     @patch("apps.deepaudit.user_config.user_config_services.requests.post")
     def test_llm_test_uses_saved_base_url_and_model(self, mock_post, mock_get_user_config) -> None:

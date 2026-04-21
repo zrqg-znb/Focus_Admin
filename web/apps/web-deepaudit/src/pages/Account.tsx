@@ -3,47 +3,57 @@
  * Cyberpunk Terminal Aesthetic
  */
 
-import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import type { Profile } from '@/shared/types';
+
 import {
-  User,
-  Mail,
-  Phone,
-  Shield,
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { normalizeProfile } from '@/shared/api/focusAdapter';
+import { apiClient } from '@/shared/api/serverClient';
+import { useAuth } from '@/shared/context/AuthContext';
+import {
   Calendar,
-  Save,
+  GitBranch,
   KeyRound,
   LogOut,
+  Mail,
+  Phone,
+  Save,
+  Shield,
+  Terminal,
+  User,
   UserPlus,
-  GitBranch,
-  Terminal
-} from "lucide-react";
-import { apiClient } from "@/shared/api/serverClient";
-import { useAuth } from "@/shared/context/AuthContext";
-import { toast } from "sonner";
-import type { Profile } from "@/shared/types";
-import { normalizeProfile } from "@/shared/api/focusAdapter";
+} from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 
 export default function Account() {
   const { logout } = useAuth();
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const [profile, setProfile] = useState<null | Profile>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
   const [form, setForm] = useState({
-    full_name: "",
-    phone: "",
-    github_username: "",
-    gitlab_username: "",
+    full_name: '',
+    phone: '',
+    github_username: '',
+    gitlab_username: '',
   });
   const [passwordForm, setPasswordForm] = useState({
-    current_password: "",
-    new_password: "",
-    confirm_password: "",
+    current_password: '',
+    new_password: '',
+    confirm_password: '',
   });
   const [changingPassword, setChangingPassword] = useState(false);
 
@@ -58,14 +68,14 @@ export default function Account() {
       const normalized = normalizeProfile(res.data) as Profile;
       setProfile(normalized);
       setForm({
-        full_name: normalized.full_name || "",
-        phone: normalized.phone || "",
-        github_username: normalized.github_username || "",
-        gitlab_username: normalized.gitlab_username || "",
+        full_name: normalized.full_name || '',
+        phone: normalized.phone || '',
+        github_username: normalized.github_username || '',
+        gitlab_username: normalized.gitlab_username || '',
       });
     } catch (error) {
       console.error('Failed to load profile:', error);
-      toast.error("加载账号信息失败");
+      toast.error('加载账号信息失败');
     } finally {
       setLoading(false);
     }
@@ -79,10 +89,10 @@ export default function Account() {
         mobile: form.phone,
       });
       setProfile(normalizeProfile(res.data) as Profile);
-      toast.success("账号信息已更新");
+      toast.success('账号信息已更新');
     } catch (error) {
       console.error('Failed to update profile:', error);
-      toast.error("更新失败");
+      toast.error('更新失败');
     } finally {
       setSaving(false);
     }
@@ -90,15 +100,15 @@ export default function Account() {
 
   const handleChangePassword = async () => {
     if (!passwordForm.new_password || !passwordForm.confirm_password) {
-      toast.error("请填写新密码");
+      toast.error('请填写新密码');
       return;
     }
     if (passwordForm.new_password !== passwordForm.confirm_password) {
-      toast.error("两次输入的密码不一致");
+      toast.error('两次输入的密码不一致');
       return;
     }
     if (passwordForm.new_password.length < 6) {
-      toast.error("密码长度至少6位");
+      toast.error('密码长度至少6位');
       return;
     }
 
@@ -108,34 +118,38 @@ export default function Account() {
         old_password: passwordForm.current_password,
         new_password: passwordForm.new_password,
       });
-      toast.success("密码已更新");
-      setPasswordForm({ current_password: "", new_password: "", confirm_password: "" });
+      toast.success('密码已更新');
+      setPasswordForm({
+        current_password: '',
+        new_password: '',
+        confirm_password: '',
+      });
     } catch (error) {
       console.error('Failed to change password:', error);
-      toast.error("密码更新失败");
+      toast.error('密码更新失败');
     } finally {
       setChangingPassword(false);
     }
   };
 
   const formatDate = (dateString?: string) => {
-    if (!dateString) return "-";
+    if (!dateString) return '-';
     return new Date(dateString).toLocaleDateString('zh-CN', {
       year: 'numeric',
       month: 'long',
-      day: 'numeric'
+      day: 'numeric',
     });
   };
 
   const getInitials = (name?: string, email?: string) => {
     if (name) return name.charAt(0).toUpperCase();
     if (email) return email.charAt(0).toUpperCase();
-    return "U";
+    return 'U';
   };
 
   const handleLogout = () => {
     logout();
-    toast.success("已退出登录");
+    toast.success('已退出登录');
   };
 
   const handleSwitchAccount = () => {
@@ -144,74 +158,80 @@ export default function Account() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen cyber-bg-elevated">
-        <div className="text-center space-y-4">
+      <div className="cyber-bg-elevated flex min-h-screen items-center justify-center">
+        <div className="space-y-4 text-center">
           <div className="loading-spinner mx-auto" />
-          <p className="text-muted-foreground font-mono text-sm uppercase tracking-wider">加载中...</p>
+          <p className="text-muted-foreground font-mono text-sm uppercase tracking-wider">
+            加载中...
+          </p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 p-6 cyber-bg-elevated min-h-screen font-mono relative">
+    <div className="cyber-bg-elevated relative min-h-screen space-y-6 p-6 font-mono">
       {/* Grid background */}
-      <div className="absolute inset-0 cyber-grid-subtle pointer-events-none" />
+      <div className="cyber-grid-subtle pointer-events-none absolute inset-0" />
 
-      <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="relative z-10 grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Profile Card */}
         <div className="cyber-card p-0">
           <div className="cyber-card-header">
-            <User className="w-5 h-5 text-primary" />
-            <h3 className="text-lg font-bold uppercase tracking-wider text-foreground">用户信息</h3>
+            <User className="text-primary h-5 w-5" />
+            <h3 className="text-foreground text-lg font-bold uppercase tracking-wider">
+              用户信息
+            </h3>
           </div>
           <div className="p-6 text-center">
-            <div className="relative inline-block mb-4">
-              <Avatar className="w-24 h-24 border-2 border-primary/30">
+            <div className="relative mb-4 inline-block">
+              <Avatar className="border-primary/30 h-24 w-24 border-2">
                 <AvatarImage src={profile?.avatar_url} />
                 <AvatarFallback className="bg-primary/20 text-primary text-2xl font-bold">
                   {getInitials(profile?.full_name, profile?.email)}
                 </AvatarFallback>
               </Avatar>
-              <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-emerald-500 rounded-full border-2 border-background flex items-center justify-center">
-                <div className="w-2 h-2 bg-foreground rounded-full animate-pulse" />
+              <div className="border-background absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full border-2 bg-emerald-500">
+                <div className="bg-foreground h-2 w-2 animate-pulse rounded-full" />
               </div>
             </div>
-            <h4 className="text-lg font-bold text-foreground uppercase mb-1">
-              {profile?.full_name || "未设置姓名"}
+            <h4 className="text-foreground mb-1 text-lg font-bold uppercase">
+              {profile?.full_name || '未设置姓名'}
             </h4>
             <p className="text-muted-foreground text-sm">{profile?.email}</p>
 
-            <div className="mt-6 pt-6 border-t border-border space-y-3 text-left">
+            <div className="border-border mt-6 space-y-3 border-t pt-6 text-left">
               <div className="flex items-center gap-3 text-sm">
-                <Shield className="w-4 h-4 text-violet-400" />
+                <Shield className="h-4 w-4 text-violet-400" />
                 <span className="text-muted-foreground">角色:</span>
-                <span className="text-violet-400 font-bold uppercase">
+                <span className="font-bold uppercase text-violet-400">
                   {profile?.role === 'admin' ? '管理员' : '成员'}
                 </span>
               </div>
               <div className="flex items-center gap-3 text-sm">
-                <Calendar className="w-4 h-4 text-sky-400" />
+                <Calendar className="h-4 w-4 text-sky-400" />
                 <span className="text-muted-foreground">注册时间:</span>
-                <span className="text-foreground font-mono">{formatDate(profile?.created_at)}</span>
+                <span className="text-foreground font-mono">
+                  {formatDate(profile?.created_at)}
+                </span>
               </div>
             </div>
 
-            <div className="mt-6 pt-6 border-t border-border space-y-2">
+            <div className="border-border mt-6 space-y-2 border-t pt-6">
               <Button
-                variant="outline"
+                className="cyber-btn-outline h-10 w-full"
                 onClick={handleSwitchAccount}
-                className="w-full cyber-btn-outline h-10"
+                variant="outline"
               >
-                <UserPlus className="w-4 h-4 mr-2" />
+                <UserPlus className="mr-2 h-4 w-4" />
                 切换账号
               </Button>
               <Button
-                variant="destructive"
+                className="h-10 w-full border border-rose-500/30 bg-rose-500/20 text-rose-400 hover:bg-rose-500/30"
                 onClick={() => setShowLogoutDialog(true)}
-                className="w-full bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/30 h-10"
+                variant="destructive"
               >
-                <LogOut className="w-4 h-4 mr-2" />
+                <LogOut className="mr-2 h-4 w-4" />
                 退出登录
               </Button>
             </div>
@@ -219,94 +239,121 @@ export default function Account() {
         </div>
 
         {/* Edit Form */}
-        <div className="lg:col-span-2 cyber-card p-0">
+        <div className="cyber-card p-0 lg:col-span-2">
           <div className="cyber-card-header">
-            <Terminal className="w-5 h-5 text-primary" />
-            <h3 className="text-lg font-bold uppercase tracking-wider text-foreground">基本信息</h3>
+            <Terminal className="text-primary h-5 w-5" />
+            <h3 className="text-foreground text-lg font-bold uppercase tracking-wider">
+              基本信息
+            </h3>
           </div>
-          <div className="p-6 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-6 p-6">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="email" className="text-xs font-bold text-muted-foreground uppercase flex items-center gap-2">
-                  <Mail className="w-3 h-3" /> 邮箱
+                <Label
+                  className="text-muted-foreground flex items-center gap-2 text-xs font-bold uppercase"
+                  htmlFor="email"
+                >
+                  <Mail className="h-3 w-3" /> 邮箱
                 </Label>
                 <Input
-                  id="email"
-                  value={profile?.email || ""}
-                  disabled
                   className="cyber-input bg-muted text-muted-foreground cursor-not-allowed"
+                  disabled
+                  id="email"
+                  value={profile?.email || ''}
                 />
-                <p className="text-xs text-muted-foreground">邮箱不可修改</p>
+                <p className="text-muted-foreground text-xs">邮箱不可修改</p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="full_name" className="text-xs font-bold text-muted-foreground uppercase flex items-center gap-2">
-                  <User className="w-3 h-3" /> 姓名
+                <Label
+                  className="text-muted-foreground flex items-center gap-2 text-xs font-bold uppercase"
+                  htmlFor="full_name"
+                >
+                  <User className="h-3 w-3" /> 姓名
                 </Label>
                 <Input
-                  id="full_name"
-                  value={form.full_name}
-                  onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-                  placeholder="请输入姓名"
                   className="cyber-input"
+                  id="full_name"
+                  onChange={(e) =>
+                    setForm({ ...form, full_name: e.target.value })
+                  }
+                  placeholder="请输入姓名"
+                  value={form.full_name}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="phone" className="text-xs font-bold text-muted-foreground uppercase flex items-center gap-2">
-                  <Phone className="w-3 h-3" /> 手机号
+                <Label
+                  className="text-muted-foreground flex items-center gap-2 text-xs font-bold uppercase"
+                  htmlFor="phone"
+                >
+                  <Phone className="h-3 w-3" /> 手机号
                 </Label>
                 <Input
+                  className="cyber-input"
                   id="phone"
-                  value={form.phone}
                   onChange={(e) => setForm({ ...form, phone: e.target.value })}
                   placeholder="请输入手机号"
-                  className="cyber-input"
+                  value={form.phone}
                 />
               </div>
             </div>
 
-            <div className="pt-6 border-t border-border">
-              <h3 className="section-title text-sm mb-4 flex items-center gap-2">
-                <GitBranch className="w-4 h-4" />
+            <div className="border-border border-t pt-6">
+              <h3 className="section-title mb-4 flex items-center gap-2 text-sm">
+                <GitBranch className="h-4 w-4" />
                 代码托管账号
               </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="github" className="text-xs font-bold text-muted-foreground uppercase flex items-center gap-2">
-                    <GitBranch className="w-3 h-3" /> GitHub 用户名
+                  <Label
+                    className="text-muted-foreground flex items-center gap-2 text-xs font-bold uppercase"
+                    htmlFor="github"
+                  >
+                    <GitBranch className="h-3 w-3" /> CodeHub 用户名
                   </Label>
                   <Input
-                    id="github"
-                    value={form.github_username}
-                    onChange={(e) => setForm({ ...form, github_username: e.target.value })}
-                    placeholder="your-github-username"
                     className="cyber-input"
+                    id="github"
+                    onChange={(e) =>
+                      setForm({ ...form, github_username: e.target.value })
+                    }
+                    placeholder="your-codehub-username"
+                    value={form.github_username}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="gitlab" className="text-xs font-bold text-muted-foreground uppercase flex items-center gap-2">
-                    <GitBranch className="w-3 h-3" /> GitLab 用户名
+                  <Label
+                    className="text-muted-foreground flex items-center gap-2 text-xs font-bold uppercase"
+                    htmlFor="gitlab"
+                  >
+                    <GitBranch className="h-3 w-3" /> 内网 Git 备用用户名
                   </Label>
                   <Input
-                    id="gitlab"
-                    value={form.gitlab_username}
-                    onChange={(e) => setForm({ ...form, gitlab_username: e.target.value })}
-                    placeholder="your-gitlab-username"
                     className="cyber-input"
+                    id="gitlab"
+                    onChange={(e) =>
+                      setForm({ ...form, gitlab_username: e.target.value })
+                    }
+                    placeholder="optional-git-username"
+                    value={form.gitlab_username}
                   />
                 </div>
               </div>
             </div>
 
             <div className="flex justify-end pt-4">
-              <Button onClick={handleSave} disabled={saving} className="cyber-btn-primary h-10">
+              <Button
+                className="cyber-btn-primary h-10"
+                disabled={saving}
+                onClick={handleSave}
+              >
                 {saving ? (
                   <>
-                    <div className="loading-spinner w-4 h-4 mr-2" />
+                    <div className="loading-spinner mr-2 h-4 w-4" />
                     保存中...
                   </>
                 ) : (
                   <>
-                    <Save className="w-4 h-4 mr-2" />
+                    <Save className="mr-2 h-4 w-4" />
                     保存修改
                   </>
                 )}
@@ -316,49 +363,71 @@ export default function Account() {
         </div>
 
         {/* Password Change */}
-        <div className="lg:col-span-3 cyber-card p-0">
+        <div className="cyber-card p-0 lg:col-span-3">
           <div className="cyber-card-header">
-            <KeyRound className="w-5 h-5 text-amber-400" />
-            <h3 className="text-lg font-bold uppercase tracking-wider text-foreground">修改密码</h3>
+            <KeyRound className="h-5 w-5 text-amber-400" />
+            <h3 className="text-foreground text-lg font-bold uppercase tracking-wider">
+              修改密码
+            </h3>
           </div>
           <div className="p-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <div className="space-y-2">
-                <Label htmlFor="new_password" className="text-xs font-bold text-muted-foreground uppercase">新密码</Label>
+                <Label
+                  className="text-muted-foreground text-xs font-bold uppercase"
+                  htmlFor="new_password"
+                >
+                  新密码
+                </Label>
                 <Input
+                  className="cyber-input"
                   id="new_password"
+                  onChange={(e) =>
+                    setPasswordForm({
+                      ...passwordForm,
+                      new_password: e.target.value,
+                    })
+                  }
+                  placeholder="输入新密码"
                   type="password"
                   value={passwordForm.new_password}
-                  onChange={(e) => setPasswordForm({ ...passwordForm, new_password: e.target.value })}
-                  placeholder="输入新密码"
-                  className="cyber-input"
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="confirm_password" className="text-xs font-bold text-muted-foreground uppercase">确认密码</Label>
+                <Label
+                  className="text-muted-foreground text-xs font-bold uppercase"
+                  htmlFor="confirm_password"
+                >
+                  确认密码
+                </Label>
                 <Input
+                  className="cyber-input"
                   id="confirm_password"
+                  onChange={(e) =>
+                    setPasswordForm({
+                      ...passwordForm,
+                      confirm_password: e.target.value,
+                    })
+                  }
+                  placeholder="再次输入新密码"
                   type="password"
                   value={passwordForm.confirm_password}
-                  onChange={(e) => setPasswordForm({ ...passwordForm, confirm_password: e.target.value })}
-                  placeholder="再次输入新密码"
-                  className="cyber-input"
                 />
               </div>
               <div className="flex items-end">
                 <Button
-                  onClick={handleChangePassword}
-                  disabled={changingPassword}
                   className="cyber-btn-outline h-10"
+                  disabled={changingPassword}
+                  onClick={handleChangePassword}
                 >
                   {changingPassword ? (
                     <>
-                      <div className="loading-spinner w-4 h-4 mr-2" />
+                      <div className="loading-spinner mr-2 h-4 w-4" />
                       更新中...
                     </>
                   ) : (
                     <>
-                      <KeyRound className="w-4 h-4 mr-2" />
+                      <KeyRound className="mr-2 h-4 w-4" />
                       更新密码
                     </>
                   )}
@@ -370,11 +439,11 @@ export default function Account() {
       </div>
 
       {/* Logout Confirmation Dialog */}
-      <AlertDialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog}>
-        <AlertDialogContent className="cyber-card border-rose-500/30 cyber-dialog">
+      <AlertDialog onOpenChange={setShowLogoutDialog} open={showLogoutDialog}>
+        <AlertDialogContent className="cyber-card cyber-dialog border-rose-500/30">
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-lg font-bold uppercase text-foreground flex items-center gap-2">
-              <LogOut className="w-5 h-5 text-rose-400" />
+            <AlertDialogTitle className="text-foreground flex items-center gap-2 text-lg font-bold uppercase">
+              <LogOut className="h-5 w-5 text-rose-400" />
               确认退出登录？
             </AlertDialogTitle>
             <AlertDialogDescription className="text-muted-foreground">
@@ -386,8 +455,8 @@ export default function Account() {
               取消
             </AlertDialogCancel>
             <AlertDialogAction
+              className="border border-rose-500/30 bg-rose-500/20 text-rose-400 hover:bg-rose-500/30"
               onClick={handleLogout}
-              className="bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/30"
             >
               确认退出
             </AlertDialogAction>

@@ -1,4 +1,3 @@
-import { apiClient } from "./serverClient";
 import type {
   AuditIssue,
   AuditTask,
@@ -9,25 +8,28 @@ import type {
   Profile,
   Project,
   ProjectMember,
-} from "../types";
+} from '../types';
+
+import { normalizeRepositoryType } from '@/shared/utils/projectUtils';
+
 import {
   normalizeAgentTask,
   normalizeAuditIssue,
   normalizeAuditTask,
-  normalizeCodeAnalysisResult,
   normalizeInstantRecord,
   normalizeProfile,
   normalizeProject,
   normalizeUserConfig,
   normalizeZipMeta,
-} from "./focusAdapter";
+} from './focusAdapter';
+import { apiClient } from './serverClient';
 
 const DEFAULT_CONFIG = {
   llmConfig: {
-    llmProvider: "openai",
-    llmApiKey: "",
-    llmModel: "",
-    llmBaseUrl: "",
+    llmProvider: 'openai',
+    llmApiKey: '',
+    llmModel: '',
+    llmBaseUrl: '',
     llmTimeout: 150_000,
     llmTemperature: 0.1,
     llmMaxTokens: 4096,
@@ -38,22 +40,20 @@ const DEFAULT_CONFIG = {
     toolTimeout: 60,
   },
   otherConfig: {
-    githubToken: "",
-    gitlabToken: "",
-    giteaToken: "",
+    codehubToken: '',
     maxAnalyzeFiles: 0,
     llmConcurrency: 3,
     llmGapMs: 500,
-    outputLanguage: "zh-CN",
+    outputLanguage: 'zh-CN',
   },
 };
 
-function toItems<T>(payload: any, normalizer: (item: any) => T | null): T[] {
+function toItems<T>(payload: any, normalizer: (item: any) => null | T): T[] {
   const items = Array.isArray(payload) ? payload : payload?.items;
   if (!Array.isArray(items)) {
     return [];
   }
-  return items.map(normalizer).filter(Boolean) as T[];
+  return items.map((item) => normalizer(item)).filter(Boolean) as T[];
 }
 
 function toProjectMember(item: any): ProjectMember {
@@ -63,14 +63,14 @@ function toProjectMember(item: any): ProjectMember {
     user_id: item.id,
     role: item.role,
     permissions: JSON.stringify(item.permissions || {}),
-    joined_at: item.sys_create_datetime || "",
-    created_at: item.sys_create_datetime || "",
+    joined_at: item.sys_create_datetime || '',
+    created_at: item.sys_create_datetime || '',
     user: normalizeProfile(item) as any,
   };
 }
 
 function toProject(item: any): null | Project {
-  return normalizeProject(item) as Project | null;
+  return normalizeProject(item) as null | Project;
 }
 
 function getApiErrorMessage(error: any, fallback: string): string {
@@ -78,7 +78,7 @@ function getApiErrorMessage(error: any, fallback: string): string {
 }
 
 async function getProjectsList() {
-  const res = await apiClient.get("/projects/");
+  const res = await apiClient.get('/projects/');
   return toItems<Project>(res.data, toProject);
 }
 
@@ -104,9 +104,9 @@ function toAgentTaskWithProject(task: any, projectMap: Map<string, Project>) {
 }
 
 export const api = {
-  async getProfilesById(_id: string): Promise<Profile | null> {
+  async getProfilesById(_id: string): Promise<null | Profile> {
     try {
-      const res = await apiClient.get("/users/me");
+      const res = await apiClient.get('/users/me');
       return normalizeProfile(res.data) as Profile;
     } catch {
       return null;
@@ -121,8 +121,11 @@ export const api = {
     return profile as Profile;
   },
 
-  async updateProfile(_id: string, updates: Partial<Profile>): Promise<Profile> {
-    const res = await apiClient.put("/users/me", {
+  async updateProfile(
+    _id: string,
+    updates: Partial<Profile>,
+  ): Promise<Profile> {
+    const res = await apiClient.put('/users/me', {
       name: updates.full_name,
       mobile: updates.phone,
     });
@@ -130,7 +133,7 @@ export const api = {
   },
 
   async getAllProfiles(): Promise<Profile[]> {
-    const current = await this.getProfilesById("me");
+    const current = await this.getProfilesById('me');
     return current ? [current] : [];
   },
 
@@ -138,7 +141,7 @@ export const api = {
     return getProjectsList();
   },
 
-  async getProjectById(id: string): Promise<Project | null> {
+  async getProjectById(id: string): Promise<null | Project> {
     try {
       const res = await apiClient.get(`/projects/${id}`);
       return normalizeProject(res.data) as Project;
@@ -147,67 +150,108 @@ export const api = {
     }
   },
 
-  async getProjectFiles(id: string, branch?: string, excludePatterns?: string[]): Promise<Array<{ path: string; size: number }>> {
+  async getProjectFiles(
+    id: string,
+    params?: {
+      branch_name?: string;
+      exclude_patterns?: string[];
+      group?: string;
+      manifest_xml?: string;
+    },
+  ): Promise<Array<{ path: string; size: number }>> {
     try {
-      const params: Record<string, string> = {};
-      if (branch) {
-        params.branch_name = branch;
+      const query: Record<string, string> = {};
+      if (params?.branch_name) {
+        query.branch_name = params.branch_name;
       }
-      if (excludePatterns?.length) {
-        params.exclude_patterns = excludePatterns.join(",");
+      if (params?.manifest_xml) {
+        query.manifest_xml = params.manifest_xml;
       }
-      const res = await apiClient.get(`/projects/${id}/files`, { params });
+      if (params?.group) {
+        query.group = params.group;
+      }
+      if (params?.exclude_patterns?.length) {
+        query.exclude_patterns = params.exclude_patterns.join(',');
+      }
+      const res = await apiClient.get(`/projects/${id}/files`, {
+        params: query,
+      });
       return Array.isArray(res.data) ? res.data : [];
     } catch (error) {
-      throw new Error(getApiErrorMessage(error, "加载文件列表失败"));
+      throw new Error(getApiErrorMessage(error, '加载文件列表失败'));
     }
   },
 
-  async getProjectBranches(id: string): Promise<{ branches: string[]; default_branch: string; error?: string }> {
+  async getProjectBranches(
+    id: string,
+  ): Promise<{ branches: string[]; default_branch: string; error?: string }> {
     try {
       const [branchRes, project] = await Promise.all([
         apiClient.get(`/projects/${id}/branches`),
         this.getProjectById(id),
       ]);
       return {
-        branches: Array.isArray(branchRes.data) ? branchRes.data : ["main"],
-        default_branch: project?.default_branch || "main",
+        branches: Array.isArray(branchRes.data) ? branchRes.data : ['main'],
+        default_branch: project?.default_branch || 'main',
       };
     } catch (error) {
-      return { branches: ["main"], default_branch: "main", error: String(error) };
+      return {
+        branches: ['main'],
+        default_branch: 'main',
+        error: String(error),
+      };
     }
   },
 
-  async uploadProjectZip(id: string, file: File): Promise<{ message: string; original_filename: string; file_size: number }> {
+  async uploadProjectZip(
+    id: string,
+    file: File,
+  ): Promise<{
+    file_size: number;
+    message: string;
+    original_filename: string;
+  }> {
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append('file', file);
     const res = await apiClient.post(`/projects/${id}/zip`, formData, {
-      headers: { "Content-Type": "multipart/form-data" },
+      headers: { 'Content-Type': 'multipart/form-data' },
     });
     const meta = normalizeZipMeta(res.data);
     return {
-      message: "上传成功",
-      original_filename: meta.original_filename || "",
+      message: '上传成功',
+      original_filename: meta.original_filename || '',
       file_size: meta.file_size || 0,
     };
   },
 
-  async createProject(project: CreateProjectForm & { owner_id?: string }): Promise<Project> {
-    const res = await apiClient.post("/projects/", {
+  async createProject(
+    project: CreateProjectForm & { owner_id?: string },
+  ): Promise<Project> {
+    const repositoryType = normalizeRepositoryType(project.repository_type);
+    const res = await apiClient.post('/projects/', {
       name: project.name,
       description: project.description,
-      source_type: project.source_type || "repository",
+      source_type: project.source_type || 'repository',
       repository_url: project.repository_url,
-      repository_type: project.repository_type || "other",
-      default_branch: project.default_branch || "main",
+      repository_type: repositoryType,
+      default_branch: project.default_branch || 'main',
+      manifest_xml: project.manifest_xml || '',
+      group: project.group || '',
       programming_languages: project.programming_languages || [],
     });
     return normalizeProject(res.data) as Project;
   },
 
-  async updateProject(id: string, updates: Partial<CreateProjectForm>): Promise<Project> {
+  async updateProject(
+    id: string,
+    updates: Partial<CreateProjectForm>,
+  ): Promise<Project> {
+    const repositoryType = updates.repository_type
+      ? normalizeRepositoryType(updates.repository_type)
+      : undefined;
     const res = await apiClient.put(`/projects/${id}`, {
       ...updates,
+      repository_type: repositoryType,
       programming_languages: updates.programming_languages,
     });
     return normalizeProject(res.data) as Project;
@@ -218,7 +262,7 @@ export const api = {
   },
 
   async getDeletedProjects(): Promise<Project[]> {
-    const res = await apiClient.get("/projects/deleted");
+    const res = await apiClient.get('/projects/deleted');
     return toItems<Project>(res.data, toProject);
   },
 
@@ -233,13 +277,19 @@ export const api = {
   async getProjectMembers(projectId: string): Promise<ProjectMember[]> {
     try {
       const res = await apiClient.get(`/projects/${projectId}/members`);
-      return Array.isArray(res.data) ? res.data.map(toProjectMember) : [];
+      return Array.isArray(res.data)
+        ? res.data.map((item) => toProjectMember(item))
+        : [];
     } catch {
       return [];
     }
   },
 
-  async addProjectMember(projectId: string, userId: string, role: string = "member"): Promise<ProjectMember> {
+  async addProjectMember(
+    projectId: string,
+    userId: string,
+    role: string = 'member',
+  ): Promise<ProjectMember> {
     const res = await apiClient.post(`/projects/${projectId}/members`, {
       user_id: userId,
       role,
@@ -247,17 +297,22 @@ export const api = {
     return toProjectMember(res.data);
   },
 
-  async removeProjectMember(projectId: string, memberId: string): Promise<void> {
+  async removeProjectMember(
+    projectId: string,
+    memberId: string,
+  ): Promise<void> {
     await apiClient.delete(`/projects/${projectId}/members/${memberId}`);
   },
 
   async getAuditTasks(projectId?: string): Promise<AuditTask[]> {
     const params = projectId ? { project_id: projectId } : {};
     const [res, projectMap] = await Promise.all([
-      apiClient.get("/tasks/", { params }),
+      apiClient.get('/tasks/', { params }),
       getProjectMap(),
     ]);
-    return toItems<AuditTask>(res.data, (item) => toAuditTaskWithProject(item, projectMap));
+    return toItems<AuditTask>(res.data, (item) =>
+      toAuditTaskWithProject(item, projectMap),
+    );
   },
 
   async getAuditTaskById(id: string): Promise<AuditTask | null> {
@@ -276,12 +331,20 @@ export const api = {
     }
   },
 
-  async createAuditTask(task: CreateAuditTaskForm & { created_by?: string }): Promise<AuditTask> {
+  async createAuditTask(
+    task: CreateAuditTaskForm & { created_by?: string },
+  ): Promise<AuditTask> {
     const project = await this.getProjectById(task.project_id);
-    const endpoint = project?.source_type === "zip" ? "/scan/zip" : "/scan/repository";
+    const endpoint =
+      project?.source_type === 'zip' ? '/scan/zip' : '/scan/repository';
+    const branchName = task.branch_name || project?.default_branch || 'main';
+    const manifestXml = task.manifest_xml || project?.manifest_xml || '';
+    const group = task.group || project?.group || '';
     const payload = {
       project_id: task.project_id,
-      branch_name: task.branch_name || project?.default_branch || "main",
+      branch_name: branchName,
+      manifest_xml: manifestXml,
+      group,
       exclude_patterns: task.exclude_patterns || [],
       file_paths: task.scan_config?.file_paths || [],
       rule_set_id: task.rule_set_id,
@@ -289,7 +352,7 @@ export const api = {
       include_tests: Boolean(task.scan_config?.include_tests),
       include_docs: Boolean(task.scan_config?.include_docs),
       max_file_size: task.scan_config?.max_file_size,
-      analysis_depth: task.scan_config?.analysis_depth || "standard",
+      analysis_depth: task.scan_config?.analysis_depth || 'standard',
     };
     const res = await apiClient.post(endpoint, payload);
     const createdTask = normalizeAuditTask(res.data) as any;
@@ -299,8 +362,11 @@ export const api = {
     return createdTask as AuditTask;
   },
 
-  async updateAuditTask(id: string, updates: Partial<AuditTask>): Promise<AuditTask> {
-    if (updates.status === "cancelled") {
+  async updateAuditTask(
+    id: string,
+    updates: Partial<AuditTask>,
+  ): Promise<AuditTask> {
+    if (updates.status === 'cancelled') {
       await this.cancelAuditTask(id);
       const cancelledTask = await this.getAuditTaskById(id);
       if (cancelledTask) {
@@ -321,11 +387,17 @@ export const api = {
     return toItems<AuditIssue>(res.data, normalizeAuditIssue);
   },
 
-  async createAuditIssue(_issue: Omit<AuditIssue, "id" | "created_at" | "task" | "resolver">): Promise<AuditIssue> {
+  async createAuditIssue(
+    _issue: Omit<AuditIssue, 'created_at' | 'id' | 'resolver' | 'task'>,
+  ): Promise<AuditIssue> {
     return {} as AuditIssue;
   },
 
-  async updateAuditIssue(taskId: string, issueId: string, updates: Partial<AuditIssue>): Promise<AuditIssue> {
+  async updateAuditIssue(
+    taskId: string,
+    issueId: string,
+    updates: Partial<AuditIssue>,
+  ): Promise<AuditIssue> {
     const res = await apiClient.put(`/tasks/${taskId}/issues/${issueId}`, {
       status: updates.status,
     });
@@ -334,20 +406,22 @@ export const api = {
 
   async getInstantAnalyses(_userId?: string): Promise<InstantAnalysis[]> {
     try {
-      const res = await apiClient.get("/scan/instant/history");
+      const res = await apiClient.get('/scan/instant/history');
       return toItems<InstantAnalysis>(res.data, normalizeInstantRecord);
     } catch {
       return [];
     }
   },
 
-  async createInstantAnalysis(_analysis: InstantAnalysisForm & {
-    user_id: string;
-    analysis_result?: string;
-    issues_count?: number;
-    quality_score?: number;
-    analysis_time?: number;
-  }): Promise<InstantAnalysis> {
+  async createInstantAnalysis(
+    _analysis: InstantAnalysisForm & {
+      analysis_result?: string;
+      analysis_time?: number;
+      issues_count?: number;
+      quality_score?: number;
+      user_id: string;
+    },
+  ): Promise<InstantAnalysis> {
     return {} as InstantAnalysis;
   },
 
@@ -361,32 +435,39 @@ export const api = {
   },
 
   async exportTaskReportPDF(taskId: string): Promise<Blob> {
-    const res = await apiClient.get(`/tasks/${taskId}/report/pdf`, { responseType: "blob" });
+    const res = await apiClient.get(`/tasks/${taskId}/report/pdf`, {
+      responseType: 'blob',
+    });
     return res.data;
   },
 
   async exportInstantReportPDF(analysisId: string): Promise<Blob> {
-    const res = await apiClient.get(`/scan/instant/history/${analysisId}/report/pdf`, { responseType: "blob" });
+    const res = await apiClient.get(
+      `/scan/instant/history/${analysisId}/report/pdf`,
+      { responseType: 'blob' },
+    );
     return res.data;
   },
 
   async getProjectStats(): Promise<{
-    total_projects: number;
     active_projects: number;
-    total_tasks: number;
-    completed_tasks: number;
-    total_issues: number;
-    resolved_issues: number;
     avg_quality_score: number;
+    completed_tasks: number;
+    resolved_issues: number;
+    total_issues: number;
+    total_projects: number;
+    total_tasks: number;
   }> {
     try {
       const [overviewRes, tasks, agentTasks] = await Promise.all([
-        apiClient.get("/dashboard/overview"),
+        apiClient.get('/dashboard/overview'),
         this.getAuditTasks(),
         (async () => {
-          const taskRes = await apiClient.get("/agent-tasks/");
+          const taskRes = await apiClient.get('/agent-tasks/');
           const projectMap = await getProjectMap();
-          return toItems<any>(taskRes.data, (item) => toAgentTaskWithProject(item, projectMap));
+          return toItems<any>(taskRes.data, (item) =>
+            toAgentTaskWithProject(item, projectMap),
+          );
         })(),
       ]);
       const overview = overviewRes.data || {};
@@ -396,19 +477,26 @@ export const api = {
       const issueSummary = overview.issue_summary || {};
       const findingSummary = overview.finding_summary || {};
       const completedScores = [...tasks, ...agentTasks]
-        .filter((item: any) => item.completed_at && Number(item.quality_score) > 0)
+        .filter(
+          (item: any) => item.completed_at && Number(item.quality_score) > 0,
+        )
         .map((item: any) => Number(item.quality_score));
-      const avgQualityScore = completedScores.length
-        ? completedScores.reduce((sum, value) => sum + value, 0) / completedScores.length
-        : 0;
+      const avgQualityScore =
+        completedScores.length > 0
+          ? completedScores.reduce((sum, value) => sum + value, 0) /
+            completedScores.length
+          : 0;
 
       return {
         total_projects: projectSummary.total || 0,
         active_projects: projectSummary.active || 0,
-        total_tasks: (scanTaskSummary.total || 0) + (agentTaskSummary.total || 0),
-        completed_tasks: (scanTaskSummary.completed || 0) + (agentTaskSummary.completed || 0),
+        total_tasks:
+          (scanTaskSummary.total || 0) + (agentTaskSummary.total || 0),
+        completed_tasks:
+          (scanTaskSummary.completed || 0) + (agentTaskSummary.completed || 0),
         total_issues: (issueSummary.total || 0) + (findingSummary.total || 0),
-        resolved_issues: (issueSummary.resolved || 0) + (findingSummary.fixed || 0),
+        resolved_issues:
+          (issueSummary.resolved || 0) + (findingSummary.fixed || 0),
         avg_quality_score: avgQualityScore,
       };
     } catch {
@@ -430,7 +518,7 @@ export const api = {
 
   async getUserConfig() {
     try {
-      const res = await apiClient.get("/config/me");
+      const res = await apiClient.get('/config/me');
       return normalizeUserConfig(res.data);
     } catch {
       return normalizeUserConfig(DEFAULT_CONFIG);
@@ -444,7 +532,10 @@ export const api = {
         model: config.llmConfig?.llmModel,
         api_key: config.llmConfig?.llmApiKey,
         base_url: config.llmConfig?.llmBaseUrl,
-        timeout: Math.max(1, Math.round((config.llmConfig?.llmTimeout || 150_000) / 1000)),
+        timeout: Math.max(
+          1,
+          Math.round((config.llmConfig?.llmTimeout || 150_000) / 1000),
+        ),
         temperature: config.llmConfig?.llmTemperature,
         max_tokens: config.llmConfig?.llmMaxTokens,
         first_token_timeout: config.llmConfig?.llmFirstTokenTimeout,
@@ -454,9 +545,11 @@ export const api = {
         tool_timeout: config.llmConfig?.toolTimeout,
       },
       other_config: {
-        github_token: config.otherConfig?.githubToken,
-        gitlab_token: config.otherConfig?.gitlabToken,
-        gitea_token: config.otherConfig?.giteaToken,
+        codehub_token:
+          config.otherConfig?.codehubToken ||
+          config.otherConfig?.githubToken ||
+          config.otherConfig?.gitlabToken ||
+          config.otherConfig?.giteaToken,
         output_language: config.otherConfig?.outputLanguage,
         scan_config: {
           max_analyze_files: config.otherConfig?.maxAnalyzeFiles,
@@ -465,7 +558,7 @@ export const api = {
         },
       },
     };
-    const res = await apiClient.put("/config/me", payload);
+    const res = await apiClient.put('/config/me', payload);
     return normalizeUserConfig(res.data);
   },
 
@@ -474,32 +567,32 @@ export const api = {
   },
 
   async testLLMConnection(params: {
-    provider: string;
     apiKey: string;
-    model?: string;
     baseUrl?: string;
+    model?: string;
+    provider: string;
   }): Promise<{
-    success: boolean;
+    debug?: Record<string, unknown>;
     message: string;
     model?: string;
     response?: string;
-    debug?: Record<string, unknown>;
+    success: boolean;
   }> {
-    if (!params.apiKey && params.provider !== "ollama") {
+    if (!params.apiKey && params.provider !== 'ollama') {
       return {
         success: false,
-        message: "请先填写 API Key",
+        message: '请先填写 API Key',
       };
     }
-    const res = await apiClient.post("/config/test-llm", {
+    const res = await apiClient.post('/config/test-llm', {
       provider: params.provider,
       api_key: params.apiKey,
-      model: params.model || "",
-      base_url: params.baseUrl || "",
+      model: params.model || '',
+      base_url: params.baseUrl || '',
     });
     return {
       success: !!res.data?.success,
-      message: res.data?.message || "",
+      message: res.data?.message || '',
       model: res.data?.model,
       response: res.data?.response,
       debug: res.data?.debug,
@@ -509,32 +602,79 @@ export const api = {
   async getLLMProviders() {
     return {
       providers: [
-        { id: "openai", name: "内网统一入口", defaultModel: "gpt-5", models: ["gpt-5", "gpt-5.1", "gpt-4o-mini"], defaultBaseUrl: "" },
-        { id: "qwen", name: "Qwen", defaultModel: "gpt-5.4", models: ["qwen3-max-instruct", "qwen3-plus", "qwen3-8b"], defaultBaseUrl: "" },
-        { id: "deepseek", name: "DeepSeek", defaultModel: "deepseek-v3.1-terminus", models: ["deepseek-v3.1-terminus", "deepseek-chat", "deepseek-reasoner"], defaultBaseUrl: "" },
-        { id: "zhipu", name: "智谱AI (GLM)", defaultModel: "glm-4.6", models: ["glm-4.6", "glm-4.5-flash", "glm-4.5"], defaultBaseUrl: "" },
-        { id: "ollama", name: "Ollama 本地兜底", defaultModel: "llama3.3-70b", models: ["llama3.3-70b", "qwen3-8b", "deepseek-r1"], defaultBaseUrl: "" },
+        {
+          id: 'openai',
+          name: '内网统一入口',
+          defaultModel: 'gpt-5',
+          models: ['gpt-5', 'gpt-5.1', 'gpt-4o-mini'],
+          defaultBaseUrl: '',
+        },
+        {
+          id: 'qwen',
+          name: 'Qwen',
+          defaultModel: 'gpt-5.4',
+          models: ['qwen3-max-instruct', 'qwen3-plus', 'qwen3-8b'],
+          defaultBaseUrl: '',
+        },
+        {
+          id: 'deepseek',
+          name: 'DeepSeek',
+          defaultModel: 'deepseek-v3.1-terminus',
+          models: [
+            'deepseek-v3.1-terminus',
+            'deepseek-chat',
+            'deepseek-reasoner',
+          ],
+          defaultBaseUrl: '',
+        },
+        {
+          id: 'zhipu',
+          name: '智谱AI (GLM)',
+          defaultModel: 'glm-4.6',
+          models: ['glm-4.6', 'glm-4.5-flash', 'glm-4.5'],
+          defaultBaseUrl: '',
+        },
+        {
+          id: 'ollama',
+          name: 'Ollama 本地兜底',
+          defaultModel: 'llama3.3-70b',
+          models: ['llama3.3-70b', 'qwen3-8b', 'deepseek-r1'],
+          defaultBaseUrl: '',
+        },
       ],
     };
   },
 
-  async exportDatabase(): Promise<{ export_date: string; user_id: string; data: any }> {
-    const res = await apiClient.get("/database/export");
+  async exportDatabase(): Promise<{
+    data: any;
+    export_date: string;
+    user_id: string;
+  }> {
+    const res = await apiClient.get('/database/export');
     return {
       export_date: new Date().toISOString(),
-      user_id: "current-user",
+      user_id: 'current-user',
       data: res.data?.payload || {},
     };
   },
 
-  async importDatabase(file: File): Promise<{ message: string; imported: { projects: number; tasks: number; issues: number; analyses: number; config: number } }> {
+  async importDatabase(file: File): Promise<{
+    imported: {
+      analyses: number;
+      config: number;
+      issues: number;
+      projects: number;
+      tasks: number;
+    };
+    message: string;
+  }> {
     const text = await file.text();
     const parsed = JSON.parse(text);
     const payload = parsed?.data || parsed?.payload || parsed || {};
-    const res = await apiClient.post("/database/import", { payload });
+    const res = await apiClient.post('/database/import', { payload });
     const imported = res.data?.imported || {};
     return {
-      message: res.data?.message || "导入完成",
+      message: res.data?.message || '导入完成',
       imported: {
         projects: imported.projects || 0,
         tasks: imported.scan_tasks || imported.tasks || 0,
@@ -545,11 +685,20 @@ export const api = {
     };
   },
 
-  async clearDatabase(): Promise<{ message: string; deleted: { projects: number; tasks: number; issues: number; analyses: number; config: number } }> {
-    const res = await apiClient.post("/database/clear", {});
+  async clearDatabase(): Promise<{
+    deleted: {
+      analyses: number;
+      config: number;
+      issues: number;
+      projects: number;
+      tasks: number;
+    };
+    message: string;
+  }> {
+    const res = await apiClient.post('/database/clear', {});
     const deleted = res.data?.deleted || {};
     return {
-      message: res.data?.message || "清空完成",
+      message: res.data?.message || '清空完成',
       deleted: {
         projects: deleted.projects || 0,
         tasks: deleted.scan_tasks || deleted.tasks || 0,
@@ -561,28 +710,28 @@ export const api = {
   },
 
   async getDatabaseStats(): Promise<{
-    total_projects: number;
     active_projects: number;
-    total_tasks: number;
     completed_tasks: number;
-    pending_tasks: number;
-    running_tasks: number;
-    failed_tasks: number;
-    total_issues: number;
-    open_issues: number;
-    resolved_issues: number;
     critical_issues: number;
-    high_issues: number;
-    medium_issues: number;
-    low_issues: number;
-    total_analyses: number;
-    total_members: number;
+    failed_tasks: number;
     has_config: boolean;
+    high_issues: number;
+    low_issues: number;
+    medium_issues: number;
+    open_issues: number;
+    pending_tasks: number;
+    resolved_issues: number;
+    running_tasks: number;
+    total_analyses: number;
+    total_issues: number;
+    total_members: number;
+    total_projects: number;
+    total_tasks: number;
   }> {
     try {
       const [overviewRes, healthRes, config] = await Promise.all([
-        apiClient.get("/dashboard/overview"),
-        apiClient.get("/database/health"),
+        apiClient.get('/dashboard/overview'),
+        apiClient.get('/database/health'),
         this.getUserConfig(),
       ]);
       const overview = overviewRes.data || {};
@@ -596,14 +745,20 @@ export const api = {
       return {
         total_projects: projectSummary.total || 0,
         active_projects: projectSummary.active || 0,
-        total_tasks: (scanTaskSummary.total || 0) + (agentTaskSummary.total || 0),
-        completed_tasks: (scanTaskSummary.completed || 0) + (agentTaskSummary.completed || 0),
-        pending_tasks: (scanTaskSummary.pending || 0) + (agentTaskSummary.pending || 0),
-        running_tasks: (scanTaskSummary.running || 0) + (agentTaskSummary.running || 0),
-        failed_tasks: (scanTaskSummary.failed || 0) + (agentTaskSummary.failed || 0),
+        total_tasks:
+          (scanTaskSummary.total || 0) + (agentTaskSummary.total || 0),
+        completed_tasks:
+          (scanTaskSummary.completed || 0) + (agentTaskSummary.completed || 0),
+        pending_tasks:
+          (scanTaskSummary.pending || 0) + (agentTaskSummary.pending || 0),
+        running_tasks:
+          (scanTaskSummary.running || 0) + (agentTaskSummary.running || 0),
+        failed_tasks:
+          (scanTaskSummary.failed || 0) + (agentTaskSummary.failed || 0),
         total_issues: (issueSummary.total || 0) + (findingSummary.total || 0),
         open_issues: (issueSummary.open || 0) + (findingSummary.open || 0),
-        resolved_issues: (issueSummary.resolved || 0) + (findingSummary.fixed || 0),
+        resolved_issues:
+          (issueSummary.resolved || 0) + (findingSummary.fixed || 0),
         critical_issues: severity.critical || 0,
         high_issues: severity.high || 0,
         medium_issues: severity.medium || 0,
@@ -636,34 +791,43 @@ export const api = {
   },
 
   async checkDatabaseHealth(): Promise<{
-    status: "healthy" | "warning" | "error";
     database_connected: boolean;
-    total_records: number;
-    last_backup_date: string | null;
     issues: string[];
+    last_backup_date: null | string;
+    status: 'error' | 'healthy' | 'warning';
+    total_records: number;
     warnings: string[];
   }> {
     try {
-      const res = await apiClient.get("/database/health");
+      const res = await apiClient.get('/database/health');
       const data = res.data || {};
       const counts = data.counts || {};
-      const totalRecords = Object.values(counts as Record<string, unknown>).reduce<number>(
-        (sum, value) => sum + Number(value || 0),
-        0,
-      );
+      const totalRecords = Object.values(
+        counts as Record<string, unknown>,
+      ).reduce<number>((sum, value) => sum + Number(value || 0), 0);
       const issues: string[] = [];
       const warnings: string[] = [];
       if (data.docker_enabled && !data.docker_available) {
-        warnings.push("Docker 沙箱当前不可用");
+        warnings.push('Docker 沙箱当前不可用');
       }
       const missingPaths = Array.isArray(data.storage_paths)
-        ? data.storage_paths.filter((item: any) => !item.exists).map((item: any) => item.name)
+        ? data.storage_paths
+            .filter((item: any) => !item.exists)
+            .map((item: any) => item.name)
         : [];
-      if (missingPaths.length) {
-        warnings.push(`缺少存储目录: ${missingPaths.join(", ")}`);
+      if (missingPaths.length > 0) {
+        warnings.push(`缺少存储目录: ${missingPaths.join(', ')}`);
+      }
+      let status: 'error' | 'healthy' | 'warning';
+      if (issues.length > 0) {
+        status = 'error';
+      } else if (warnings.length > 0) {
+        status = 'warning';
+      } else {
+        status = 'healthy';
       }
       return {
-        status: issues.length ? "error" : warnings.length ? "warning" : "healthy",
+        status,
         database_connected: true,
         total_records: totalRecords,
         last_backup_date: null,
@@ -672,11 +836,11 @@ export const api = {
       };
     } catch {
       return {
-        status: "error",
+        status: 'error',
         database_connected: false,
         total_records: 0,
         last_backup_date: null,
-        issues: ["无法连接到 FocusAudit 数据工具接口"],
+        issues: ['无法连接到 FocusAudit 数据工具接口'],
         warnings: [],
       };
     }

@@ -3,54 +3,54 @@
  * Cyberpunk Terminal Aesthetic
  */
 
-import { useState, useEffect, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import type { Project } from '@/shared/types';
+import type { ZipFileMeta } from '@/shared/utils/zipStorage';
+
+import FileSelectionDialog from '@/components/audit/FileSelectionDialog';
+import { Badge } from '@/components/ui/badge';
+import { BranchSelector } from '@/components/ui/branch-selector';
+import { Button } from '@/components/ui/button';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { validateZipFile } from '@/features/projects/services/repoZipScan';
+import { createAgentTask } from '@/shared/api/agentTasks';
+import { api } from '@/shared/config/database';
+import { useAuth } from '@/shared/context/AuthContext';
+import { DEEPAUDIT_ACTION_CODES } from '@/shared/focus/focusPermission';
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+  getRepositoryTypeLabel,
+  isMultiRepository,
+  isRepositoryProject,
+  isZipProject,
+} from '@/shared/utils/projectUtils';
+import { getZipFileInfo } from '@/shared/utils/zipStorage';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { BranchSelector } from "@/components/ui/branch-selector";
-import {
-  Search,
+  Bot,
   ChevronRight,
+  FolderOpen,
   GitBranch,
-  Package,
   Globe,
   Loader2,
-  Bot,
-  Settings2,
+  Package,
   Play,
+  Search,
+  Settings2,
   Upload,
-  FolderOpen,
-} from "lucide-react";
-import { toast } from "sonner";
-import { api } from "@/shared/config/database";
-import { createAgentTask } from "@/shared/api/agentTasks";
-import { useAuth } from "@/shared/context/AuthContext";
-import { DEEPAUDIT_ACTION_CODES } from "@/shared/focus/focusPermission";
-import { isRepositoryProject, isZipProject } from "@/shared/utils/projectUtils";
-import { getZipFileInfo, type ZipFileMeta } from "@/shared/utils/zipStorage";
-import { validateZipFile } from "@/features/projects/services/repoZipScan";
-import type { Project } from "@/shared/types";
-import FileSelectionDialog from "@/components/audit/FileSelectionDialog";
+} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 
 interface CreateAgentTaskDialogProps {
   open: boolean;
@@ -58,11 +58,11 @@ interface CreateAgentTaskDialogProps {
 }
 
 const DEFAULT_EXCLUDES = [
-  "node_modules/**",
-  ".git/**",
-  "dist/**",
-  "build/**",
-  "*.log",
+  'node_modules/**',
+  '.git/**',
+  'dist/**',
+  'build/**',
+  '*.log',
 ];
 
 export default function CreateAgentTaskDialog({
@@ -71,14 +71,18 @@ export default function CreateAgentTaskDialog({
 }: CreateAgentTaskDialogProps) {
   const navigate = useNavigate();
   const { hasAccess } = useAuth();
-  const canCreateAgentTask = hasAccess(DEEPAUDIT_ACTION_CODES.AGENT_TASKS_CREATE);
+  const canCreateAgentTask = hasAccess(
+    DEEPAUDIT_ACTION_CODES.AGENT_TASKS_CREATE,
+  );
 
   // 状态
   const [projects, setProjects] = useState<Project[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
-  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [branch, setBranch] = useState("main");
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [branch, setBranch] = useState('main');
+  const [manifestXml, setManifestXml] = useState('');
+  const [group, setGroup] = useState('');
   const [branches, setBranches] = useState<string[]>([]);
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [excludePatterns, setExcludePatterns] = useState(DEFAULT_EXCLUDES);
@@ -87,7 +91,7 @@ export default function CreateAgentTaskDialog({
 
   // ZIP 文件状态
   const [zipFile, setZipFile] = useState<File | null>(null);
-  const [storedZipInfo, setStoredZipInfo] = useState<ZipFileMeta | null>(null);
+  const [storedZipInfo, setStoredZipInfo] = useState<null | ZipFileMeta>(null);
   const [useStoredZip, setUseStoredZip] = useState(true);
 
   // 文件选择状态
@@ -100,19 +104,22 @@ export default function CreateAgentTaskDialog({
   useEffect(() => {
     if (open) {
       setLoadingProjects(true);
-      api.getProjects()
+      api
+        .getProjects()
         .then((data) => {
           setProjects(data.filter((p: Project) => p.is_active));
         })
         .catch(() => {
-          toast.error("加载项目列表失败");
+          toast.error('加载项目列表失败');
         })
         .finally(() => setLoadingProjects(false));
 
       // 重置状态
-      setSelectedProjectId("");
-      setSearchTerm("");
-      setBranch("main");
+      setSelectedProjectId('');
+      setSearchTerm('');
+      setBranch('main');
+      setManifestXml('');
+      setGroup('');
       setExcludePatterns(DEFAULT_EXCLUDES);
       setShowAdvanced(false);
       setZipFile(null);
@@ -142,10 +149,10 @@ export default function CreateAgentTaskDialog({
         if (result.default_branch) {
           setBranch(result.default_branch);
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "未知错误";
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : '未知错误';
         toast.error(`加载分支失败: ${msg}`);
-        setBranches([project.default_branch || "main"]);
+        setBranches([project.default_branch || 'main']);
       } finally {
         setLoadingBranches(false);
       }
@@ -153,6 +160,18 @@ export default function CreateAgentTaskDialog({
 
     loadBranches();
   }, [selectedProjectId, projects]);
+
+  useEffect(() => {
+    if (!selectedProject || !isRepositoryProject(selectedProject)) {
+      setManifestXml('');
+      setGroup('');
+      return;
+    }
+
+    setBranch(selectedProject.default_branch || 'main');
+    setManifestXml(selectedProject.manifest_xml || '');
+    setGroup(selectedProject.group || '');
+  }, [selectedProject?.id]);
 
   // 加载 ZIP 文件信息
   useEffect(() => {
@@ -181,7 +200,7 @@ export default function CreateAgentTaskDialog({
     return projects.filter(
       (p) =>
         p.name.toLowerCase().includes(term) ||
-        p.description?.toLowerCase().includes(term)
+        p.description?.toLowerCase().includes(term),
     );
   }, [projects, searchTerm]);
 
@@ -191,14 +210,28 @@ export default function CreateAgentTaskDialog({
     if (isZipProject(selectedProject)) {
       return (useStoredZip && storedZipInfo?.has_file) || !!zipFile;
     }
+    if (isMultiRepository(selectedProject)) {
+      return (
+        !!selectedProject.repository_url &&
+        !!branch.trim() &&
+        !!manifestXml.trim()
+      );
+    }
     return !!selectedProject.repository_url && !!branch.trim();
-  }, [selectedProject, useStoredZip, storedZipInfo, zipFile, branch]);
+  }, [
+    selectedProject,
+    useStoredZip,
+    storedZipInfo,
+    zipFile,
+    branch,
+    manifestXml,
+  ]);
 
   // 创建任务
   const handleCreate = async () => {
     if (!selectedProject) return;
     if (!canCreateAgentTask) {
-      toast.error("当前账号没有创建 Agent 审计任务的权限");
+      toast.error('当前账号没有创建 Agent 审计任务的权限');
       return;
     }
 
@@ -208,16 +241,22 @@ export default function CreateAgentTaskDialog({
         project_id: selectedProject.id,
         name: `Agent审计-${selectedProject.name}`,
         branch_name: isRepositoryProject(selectedProject) ? branch : undefined,
+        manifest_xml: isRepositoryProject(selectedProject)
+          ? manifestXml || undefined
+          : undefined,
+        group: isRepositoryProject(selectedProject)
+          ? group || undefined
+          : undefined,
         exclude_patterns: excludePatterns,
         target_files: selectedFiles,
-        verification_level: "sandbox",
+        verification_level: 'sandbox',
       });
 
       onOpenChange(false);
-      toast.success("Agent 审计任务已创建");
+      toast.success('Agent 审计任务已创建');
       navigate(`/agent-audit/${agentTask.id}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "创建失败";
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : '创建失败';
       toast.error(msg);
     } finally {
       setCreating(false);
@@ -230,8 +269,8 @@ export default function CreateAgentTaskDialog({
     if (file) {
       const validation = validateZipFile(file);
       if (!validation.valid) {
-        toast.error(validation.error || "文件无效");
-        e.target.value = "";
+        toast.error(validation.error || '文件无效');
+        e.target.value = '';
         return;
       }
       setZipFile(file);
@@ -239,29 +278,65 @@ export default function CreateAgentTaskDialog({
     }
   };
 
+  const projectListContent = (() => {
+    if (loadingProjects) {
+      return (
+        <div className="flex h-full items-center justify-center">
+          <Loader2 className="text-primary h-5 w-5 animate-spin" />
+        </div>
+      );
+    }
+
+    if (filteredProjects.length === 0) {
+      return (
+        <div className="text-muted-foreground flex h-full flex-col items-center justify-center font-mono">
+          <Package className="mb-2 h-8 w-8 opacity-50" />
+          <span className="text-sm">
+            {searchTerm ? 'No matches' : 'No projects'}
+          </span>
+        </div>
+      );
+    }
+
+    return (
+      <div className="p-1">
+        {filteredProjects.map((project) => (
+          <ProjectItem
+            key={project.id}
+            onSelect={() => setSelectedProjectId(project.id)}
+            project={project}
+            selected={selectedProjectId === project.id}
+          />
+        ))}
+      </div>
+    );
+  })();
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!w-[min(90vw,520px)] !max-w-none max-h-[85vh] flex flex-col p-0 gap-0 cyber-dialog border border-border rounded-lg">
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="cyber-dialog border-border flex max-h-[85vh] !w-[min(90vw,520px)] !max-w-none flex-col gap-0 rounded-lg border p-0">
         {/* Header */}
-        <DialogHeader className="px-5 py-4 border-b border-border flex-shrink-0 bg-muted">
-          <DialogTitle className="flex items-center gap-3 font-mono text-foreground">
-            <div className="p-2 bg-primary/20 rounded border border-primary/30">
-              <Bot className="w-5 h-5 text-primary" />
+        <DialogHeader className="border-border bg-muted flex-shrink-0 border-b px-5 py-4">
+          <DialogTitle className="text-foreground flex items-center gap-3 font-mono">
+            <div className="bg-primary/20 border-primary/30 rounded border p-2">
+              <Bot className="text-primary h-5 w-5" />
             </div>
             <div>
-              <span className="text-base font-bold uppercase tracking-wider">New Agent Audit</span>
-              <p className="text-xs text-muted-foreground font-normal mt-0.5">
+              <span className="text-base font-bold uppercase tracking-wider">
+                New Agent Audit
+              </span>
+              <p className="text-muted-foreground mt-0.5 text-xs font-normal">
                 AI-Powered Security Analysis
               </p>
             </div>
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+        <div className="flex-1 space-y-5 overflow-y-auto p-5">
           {/* 项目选择 */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-mono font-bold uppercase text-muted-foreground">
+              <span className="text-muted-foreground font-mono text-xs font-bold uppercase">
                 Select Project
               </span>
               <Badge className="cyber-badge-muted font-mono text-xs">
@@ -271,38 +346,18 @@ export default function CreateAgentTaskDialog({
 
             {/* 搜索框 */}
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Search className="text-muted-foreground absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" />
               <Input
+                className="cyber-input h-10 !pl-9"
+                onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Search projects..."
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="!pl-9 h-10 cyber-input"
               />
             </div>
 
             {/* 项目列表 */}
-            <ScrollArea className="h-[200px] border border-border rounded bg-muted/50">
-              {loadingProjects ? (
-                <div className="flex items-center justify-center h-full">
-                  <Loader2 className="w-5 h-5 animate-spin text-primary" />
-                </div>
-              ) : filteredProjects.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-muted-foreground font-mono">
-                  <Package className="w-8 h-8 mb-2 opacity-50" />
-                  <span className="text-sm">{searchTerm ? "No matches" : "No projects"}</span>
-                </div>
-              ) : (
-                <div className="p-1">
-                  {filteredProjects.map((project) => (
-                    <ProjectItem
-                      key={project.id}
-                      project={project}
-                      selected={selectedProjectId === project.id}
-                      onSelect={() => setSelectedProjectId(project.id)}
-                    />
-                  ))}
-                </div>
-              )}
+            <ScrollArea className="border-border bg-muted/50 h-[200px] rounded border">
+              {projectListContent}
             </ScrollArea>
           </div>
 
@@ -311,46 +366,105 @@ export default function CreateAgentTaskDialog({
             <div className="space-y-4">
               {/* 仓库项目：分支选择 */}
               {isRepositoryProject(selectedProject) && (
-                <div className="flex items-center gap-3 p-3 border border-border rounded bg-blue-950/20">
-                  <GitBranch className="w-5 h-5 text-blue-400" />
-                  <span className="font-mono text-sm text-muted-foreground w-16">Branch</span>
-                  {loadingBranches ? (
-                    <div className="flex items-center gap-2 flex-1">
-                      <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
-                      <span className="text-sm text-blue-400 font-mono">Loading...</span>
-                    </div>
-                  ) : (
-                    <BranchSelector
-                      value={branch}
-                      onChange={setBranch}
-                      branches={branches}
-                      placeholder="Select branch"
-                      className="flex-1"
-                    />
+                <div className="border-border space-y-3 rounded border bg-blue-950/20 p-3">
+                  <div className="flex items-center gap-3">
+                    <GitBranch className="h-5 w-5 text-blue-400" />
+                    <span className="text-muted-foreground w-16 font-mono text-sm">
+                      Mode
+                    </span>
+                    <Badge className="cyber-badge-info font-mono text-xs">
+                      {getRepositoryTypeLabel(selectedProject.repository_type)}
+                    </Badge>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <GitBranch className="h-5 w-5 text-blue-400 opacity-0" />
+                    <span className="text-muted-foreground w-16 font-mono text-sm">
+                      Branch
+                    </span>
+                    {loadingBranches ? (
+                      <div className="flex flex-1 items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+                        <span className="font-mono text-sm text-blue-400">
+                          Loading...
+                        </span>
+                      </div>
+                    ) : (
+                      <BranchSelector
+                        branches={branches}
+                        className="flex-1"
+                        onChange={setBranch}
+                        placeholder="Select branch"
+                        value={branch}
+                      />
+                    )}
+                  </div>
+
+                  {isMultiRepository(selectedProject) && (
+                    <>
+                      <div className="flex items-center gap-3">
+                        <GitBranch className="h-5 w-5 text-blue-400 opacity-0" />
+                        <span className="text-muted-foreground w-16 font-mono text-sm">
+                          Manifest
+                        </span>
+                        <Input
+                          className="cyber-input h-10 flex-1"
+                          onChange={(e) => setManifestXml(e.target.value)}
+                          placeholder={
+                            selectedProject.manifest_xml || 'default.xml'
+                          }
+                          value={manifestXml}
+                        />
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <GitBranch className="h-5 w-5 text-blue-400 opacity-0" />
+                        <span className="text-muted-foreground w-16 font-mono text-sm">
+                          Group
+                        </span>
+                        <Input
+                          className="cyber-input h-10 flex-1"
+                          onChange={(e) => setGroup(e.target.value)}
+                          placeholder={selectedProject.group || '可选'}
+                          value={group}
+                        />
+                      </div>
+                      <p className="font-mono text-xs text-blue-300/80">
+                        多仓会按 `git mm init -u ... -b ... -m ... [-g
+                        ...]`，然后执行 `git mm sync` 拉取代码
+                      </p>
+                    </>
                   )}
                 </div>
               )}
 
               {/* ZIP 项目：文件选择 */}
               {isZipProject(selectedProject) && (
-                <div className="p-3 border border-border rounded bg-amber-950/20 space-y-3">
+                <div className="border-border space-y-3 rounded border bg-amber-950/20 p-3">
                   <div className="flex items-center gap-3">
-                    <Package className="w-5 h-5 text-amber-400" />
-                    <span className="font-mono text-sm text-muted-foreground uppercase font-bold">ZIP File</span>
+                    <Package className="h-5 w-5 text-amber-400" />
+                    <span className="text-muted-foreground font-mono text-sm font-bold uppercase">
+                      ZIP File
+                    </span>
                   </div>
 
                   {storedZipInfo?.has_file && (
                     <div
-                      className={`p-2 rounded border cursor-pointer transition-colors ${useStoredZip
+                      className={`cursor-pointer rounded border p-2 transition-colors ${
+                        useStoredZip
                           ? 'border-emerald-500/50 bg-emerald-950/30'
                           : 'border-border hover:border-border bg-muted/50'
-                        }`}
+                      }`}
                       onClick={() => setUseStoredZip(true)}
                     >
                       <div className="flex items-center gap-2">
-                        <div className={`w-3 h-3 rounded-full border-2 ${useStoredZip ? 'border-emerald-500 bg-emerald-500' : 'border-border'
-                          }`} />
-                        <span className="text-sm text-foreground font-mono">
+                        <div
+                          className={`h-3 w-3 rounded-full border-2 ${
+                            useStoredZip
+                              ? 'border-emerald-500 bg-emerald-500'
+                              : 'border-border'
+                          }`}
+                        />
+                        <span className="text-foreground font-mono text-sm">
                           {storedZipInfo.original_filename}
                         </span>
                         <Badge className="cyber-badge-success text-xs">
@@ -361,23 +475,29 @@ export default function CreateAgentTaskDialog({
                   )}
 
                   <div
-                    className={`p-2 rounded border cursor-pointer transition-colors ${!useStoredZip && zipFile
+                    className={`cursor-pointer rounded border p-2 transition-colors ${
+                      !useStoredZip && zipFile
                         ? 'border-amber-500/50 bg-amber-950/30'
                         : 'border-border hover:border-border bg-muted/50'
-                      }`}
+                    }`}
                   >
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <div className={`w-3 h-3 rounded-full border-2 ${!useStoredZip && zipFile ? 'border-amber-500 bg-amber-500' : 'border-border'
-                        }`} />
-                      <Upload className="w-4 h-4 text-muted-foreground" />
-                      <span className="text-sm text-muted-foreground font-mono">
-                        {zipFile ? zipFile.name : "Upload new file..."}
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <div
+                        className={`h-3 w-3 rounded-full border-2 ${
+                          !useStoredZip && zipFile
+                            ? 'border-amber-500 bg-amber-500'
+                            : 'border-border'
+                        }`}
+                      />
+                      <Upload className="text-muted-foreground h-4 w-4" />
+                      <span className="text-muted-foreground font-mono text-sm">
+                        {zipFile ? zipFile.name : 'Upload new file...'}
                       </span>
                       <input
-                        type="file"
                         accept=".zip"
-                        onChange={handleFileChange}
                         className="hidden"
+                        onChange={handleFileChange}
+                        type="file"
                       />
                     </label>
                   </div>
@@ -385,11 +505,13 @@ export default function CreateAgentTaskDialog({
               )}
 
               {/* 高级选项 */}
-              <Collapsible open={showAdvanced} onOpenChange={setShowAdvanced}>
-                <CollapsibleTrigger className="flex items-center gap-2 text-xs font-mono text-muted-foreground hover:text-foreground transition-colors">
-                  <ChevronRight className={`w-4 h-4 transition-transform ${showAdvanced ? "rotate-90" : ""}`} />
-                  <Settings2 className="w-4 h-4" />
-                  <span className="uppercase font-bold">Advanced Options</span>
+              <Collapsible onOpenChange={setShowAdvanced} open={showAdvanced}>
+                <CollapsibleTrigger className="text-muted-foreground hover:text-foreground flex items-center gap-2 font-mono text-xs transition-colors">
+                  <ChevronRight
+                    className={`h-4 w-4 transition-transform ${showAdvanced ? 'rotate-90' : ''}`}
+                  />
+                  <Settings2 className="h-4 w-4" />
+                  <span className="font-bold uppercase">Advanced Options</span>
                 </CollapsibleTrigger>
                 <CollapsibleContent className="mt-3 space-y-3">
                   {/* 文件选择 */}
@@ -397,39 +519,40 @@ export default function CreateAgentTaskDialog({
                     const isRepo = isRepositoryProject(selectedProject);
                     const isZip = isZipProject(selectedProject);
                     const hasStoredZip = storedZipInfo?.has_file;
-                    const canSelectFiles = isRepo || (isZip && useStoredZip && hasStoredZip);
+                    const canSelectFiles =
+                      isRepo || (isZip && useStoredZip && hasStoredZip);
 
                     return (
-                      <div className="flex items-center justify-between p-3 border border-dashed border-border rounded bg-muted/50">
+                      <div className="border-border bg-muted/50 flex items-center justify-between rounded border border-dashed p-3">
                         <div>
-                          <p className="font-mono text-xs uppercase font-bold text-muted-foreground">
+                          <p className="text-muted-foreground font-mono text-xs font-bold uppercase">
                             Scan Scope
                           </p>
-                          <p className="text-sm text-foreground font-mono font-bold mt-1">
+                          <p className="text-foreground mt-1 font-mono text-sm font-bold">
                             {selectedFiles
                               ? `${selectedFiles.length} files selected`
-                              : "All files"}
+                              : 'All files'}
                           </p>
                         </div>
                         <div className="flex gap-2">
                           {selectedFiles && canSelectFiles && (
                             <Button
+                              className="h-8 text-xs text-rose-400 hover:bg-rose-900/30 hover:text-rose-300"
+                              onClick={() => setSelectedFiles(undefined)}
                               size="sm"
                               variant="ghost"
-                              onClick={() => setSelectedFiles(undefined)}
-                              className="h-8 text-xs text-rose-400 hover:bg-rose-900/30 hover:text-rose-300"
                             >
                               Reset
                             </Button>
                           )}
                           <Button
+                            className="cyber-btn-outline h-8 font-mono text-xs font-bold disabled:opacity-50"
+                            disabled={!canSelectFiles}
+                            onClick={() => setShowFileSelection(true)}
                             size="sm"
                             variant="outline"
-                            onClick={() => setShowFileSelection(true)}
-                            disabled={!canSelectFiles}
-                            className="h-8 text-xs cyber-btn-outline font-mono font-bold disabled:opacity-50"
                           >
-                            <FolderOpen className="w-3 h-3 mr-1" />
+                            <FolderOpen className="mr-1 h-3 w-3" />
                             Select Files
                           </Button>
                         </div>
@@ -438,15 +561,15 @@ export default function CreateAgentTaskDialog({
                   })()}
 
                   {/* 排除模式 */}
-                  <div className="p-3 border border-dashed border-border rounded bg-muted/50 space-y-3">
+                  <div className="border-border bg-muted/50 space-y-3 rounded border border-dashed p-3">
                     <div className="flex items-center justify-between">
-                      <span className="font-mono text-xs uppercase font-bold text-muted-foreground">
+                      <span className="text-muted-foreground font-mono text-xs font-bold uppercase">
                         Exclude Patterns
                       </span>
                       <button
-                        type="button"
+                        className="text-primary hover:text-primary/80 font-mono text-xs"
                         onClick={() => setExcludePatterns(DEFAULT_EXCLUDES)}
-                        className="text-xs font-mono text-primary hover:text-primary/80"
+                        type="button"
                       >
                         Reset
                       </button>
@@ -455,9 +578,13 @@ export default function CreateAgentTaskDialog({
                     <div className="flex flex-wrap gap-1.5">
                       {excludePatterns.map((p) => (
                         <Badge
+                          className="bg-muted text-foreground cursor-pointer border-0 font-mono text-xs hover:bg-rose-900/50 hover:text-rose-400"
                           key={p}
-                          className="bg-muted text-foreground border-0 font-mono text-xs cursor-pointer hover:bg-rose-900/50 hover:text-rose-400"
-                          onClick={() => setExcludePatterns((prev) => prev.filter((x) => x !== p))}
+                          onClick={() =>
+                            setExcludePatterns((prev) =>
+                              prev.filter((x) => x !== p),
+                            )
+                          }
                         >
                           {p} ×
                         </Badge>
@@ -465,17 +592,17 @@ export default function CreateAgentTaskDialog({
                     </div>
 
                     <Input
-                      placeholder="Add pattern, press Enter..."
-                      className="h-8 cyber-input text-sm"
+                      className="cyber-input h-8 text-sm"
                       onKeyDown={(e) => {
-                        if (e.key === "Enter" && e.currentTarget.value) {
+                        if (e.key === 'Enter' && e.currentTarget.value) {
                           const val = e.currentTarget.value.trim();
                           if (val && !excludePatterns.includes(val)) {
                             setExcludePatterns((prev) => [...prev, val]);
                           }
-                          e.currentTarget.value = "";
+                          e.currentTarget.value = '';
                         }
                       }}
+                      placeholder="Add pattern, press Enter..."
                     />
                   </div>
                 </CollapsibleContent>
@@ -485,28 +612,28 @@ export default function CreateAgentTaskDialog({
         </div>
 
         {/* Footer */}
-        <div className="flex-shrink-0 flex justify-end gap-3 px-5 py-4 bg-muted border-t border-border">
+        <div className="bg-muted border-border flex flex-shrink-0 justify-end gap-3 border-t px-5 py-4">
           <Button
-            variant="ghost"
-            onClick={() => onOpenChange(false)}
+            className="text-muted-foreground hover:text-foreground hover:bg-muted h-10 px-4 font-mono"
             disabled={creating}
-            className="px-4 h-10 font-mono text-muted-foreground hover:text-foreground hover:bg-muted"
+            onClick={() => onOpenChange(false)}
+            variant="ghost"
           >
             Cancel
           </Button>
           <Button
-            onClick={handleCreate}
+            className="cyber-btn-primary h-10 px-5 font-mono font-bold uppercase"
             disabled={!canStart || creating || !canCreateAgentTask}
-            className="px-5 h-10 cyber-btn-primary font-mono font-bold uppercase"
+            onClick={handleCreate}
           >
             {creating ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Starting...
               </>
             ) : (
               <>
-                <Play className="w-4 h-4 mr-2" />
+                <Play className="mr-2 h-4 w-4" />
                 Start Audit
               </>
             )}
@@ -516,12 +643,15 @@ export default function CreateAgentTaskDialog({
 
       {/* 文件选择对话框 */}
       <FileSelectionDialog
-        open={showFileSelection}
-        onOpenChange={setShowFileSelection}
-        projectId={selectedProjectId}
         branch={branch}
         excludePatterns={excludePatterns}
+        group={group}
+        manifestXml={manifestXml}
         onConfirm={setSelectedFiles}
+        onOpenChange={setShowFileSelection}
+        open={showFileSelection}
+        projectId={selectedProjectId}
+        repositoryType={selectedProject?.repository_type}
       />
     </Dialog>
   );
@@ -533,51 +663,62 @@ function ProjectItem({
   selected,
   onSelect,
 }: {
+  onSelect: () => void;
   project: Project;
   selected: boolean;
-  onSelect: () => void;
 }) {
   const isRepo = isRepositoryProject(project);
 
   return (
     <div
-      className={`flex items-center gap-3 p-3 cursor-pointer rounded transition-all ${selected
-          ? "bg-primary/10 border border-primary/50"
-          : "hover:bg-muted border border-transparent"
-        }`}
+      className={`flex cursor-pointer items-center gap-3 rounded p-3 transition-all ${
+        selected
+          ? 'bg-primary/10 border-primary/50 border'
+          : 'hover:bg-muted border border-transparent'
+      }`}
       onClick={onSelect}
     >
-      <div className={`p-1.5 rounded ${isRepo ? "bg-blue-500/20" : "bg-amber-500/20"}`}>
+      <div
+        className={`rounded p-1.5 ${isRepo ? 'bg-blue-500/20' : 'bg-amber-500/20'}`}
+      >
         {isRepo ? (
-          <Globe className="w-4 h-4 text-blue-400" />
+          <Globe className="h-4 w-4 text-blue-400" />
         ) : (
-          <Package className="w-4 h-4 text-amber-400" />
+          <Package className="h-4 w-4 text-amber-400" />
         )}
       </div>
 
-      <div className="flex-1 min-w-0">
+      <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className={`font-mono text-sm truncate ${selected ? 'text-foreground font-bold' : 'text-foreground'}`}>
+          <span
+            className={`truncate font-mono text-sm ${selected ? 'text-foreground font-bold' : 'text-foreground'}`}
+          >
             {project.name}
           </span>
           <Badge
-            className={`text-xs px-1 py-0 font-mono ${isRepo
-                ? "bg-blue-500/20 text-blue-400 border-blue-500/30"
-                : "bg-amber-500/20 text-amber-400 border-amber-500/30"
-              }`}
+            className={`px-1 py-0 font-mono text-xs ${
+              isRepo
+                ? 'border-blue-500/30 bg-blue-500/20 text-blue-400'
+                : 'border-amber-500/30 bg-amber-500/20 text-amber-400'
+            }`}
           >
-            {isRepo ? "REPO" : "ZIP"}
+            {isRepo ? 'REPO' : 'ZIP'}
           </Badge>
+          {isRepo && (
+            <Badge className="cyber-badge-muted font-mono text-xs uppercase">
+              {getRepositoryTypeLabel(project.repository_type)}
+            </Badge>
+          )}
         </div>
         {project.description && (
-          <p className="text-xs text-muted-foreground mt-0.5 font-mono truncate">
+          <p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
             {project.description}
           </p>
         )}
       </div>
 
       {selected && (
-        <div className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_8px_rgba(255,107,44,0.6)]" />
+        <div className="bg-primary h-2 w-2 animate-pulse rounded-full shadow-[0_0_8px_rgba(255,107,44,0.6)]" />
       )}
     </div>
   );

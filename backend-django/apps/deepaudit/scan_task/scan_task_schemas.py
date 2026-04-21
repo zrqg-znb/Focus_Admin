@@ -33,6 +33,8 @@ class AuditIssueUpdateSchema(Schema):
 class AuditTaskCreateSchema(Schema):
     project_id: str
     branch_name: str | None = None
+    manifest_xml: str | None = None
+    group: str | None = None
     exclude_patterns: list[str] = Field(default_factory=list)
     file_paths: list[str] = Field(default_factory=list)
     rule_set_id: str | None = None
@@ -52,6 +54,8 @@ class AuditTaskSchema(Schema):
     task_type: str
     status: str
     branch_name: str | None = None
+    manifest_xml: str | None = None
+    group: str | None = None
     exclude_patterns: list[str] = Field(default_factory=list)
     scan_config: dict[str, Any] = Field(default_factory=dict)
     total_files: int = 0

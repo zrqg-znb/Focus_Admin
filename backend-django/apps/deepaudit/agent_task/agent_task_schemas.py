@@ -13,6 +13,8 @@ class AgentTaskCreateSchema(Schema):
     target_vulnerabilities: list[str] = Field(default_factory=list)
     verification_level: str = 'sandbox'
     branch_name: str | None = None
+    manifest_xml: str | None = None
+    group: str | None = None
     exclude_patterns: list[str] = Field(default_factory=list)
     target_files: list[str] = Field(default_factory=list)
     max_iterations: int = 50
@@ -39,6 +41,8 @@ class AgentTaskSchema(Schema):
     target_vulnerabilities: list[str] = Field(default_factory=list)
     verification_level: str = 'sandbox'
     branch_name: str | None = None
+    manifest_xml: str | None = None
+    group: str | None = None
     exclude_patterns: list[str] = Field(default_factory=list)
     target_files: list[str] = Field(default_factory=list)
     max_iterations: int = 0

@@ -14,6 +14,7 @@ from apps.deepaudit.git_service import (
     list_repository_files,
     repository_cache_enabled,
 )
+from apps.deepaudit.heuristics import should_exclude
 from apps.deepaudit.permissions import (
     accessible_project_queryset,
     require_project_member_manage,
@@ -25,6 +26,7 @@ from apps.deepaudit.permissions import (
 )
 from apps.deepaudit.agent_task.agent_task_model import AgentFinding, AgentTask
 from apps.deepaudit.project.project_model import AuditProject, AuditProjectMember
+from apps.deepaudit.repo_specs import build_effective_project_repository_spec, build_repository_spec, normalize_repository_type
 from apps.deepaudit.runtime import (
     cleanup_runtime_workspace,
     load_ssh_private_key,
@@ -56,6 +58,30 @@ def _normalize_languages(value) -> list[str]:
         seen.add(lowered)
         items.append(text)
     return items
+
+
+def _resolve_project_repository_spec(project: AuditProject | None, payload: dict) -> dict[str, str]:
+    repository_url = payload.get('repository_url') if 'repository_url' in payload else getattr(project, 'repository_url', '')
+    repository_type = payload.get('repository_type') if 'repository_type' in payload else getattr(project, 'repository_type', 'single')
+    default_branch = payload.get('default_branch') if 'default_branch' in payload else getattr(project, 'default_branch', 'main')
+    manifest_xml = payload.get('manifest_xml') if 'manifest_xml' in payload else getattr(project, 'manifest_xml', '')
+    group = payload.get('group') if 'group' in payload else getattr(project, 'group', '')
+    repo_type = normalize_repository_type(repository_type)
+    branch_text = str(default_branch or '').strip()
+    manifest_text = str(manifest_xml or '').strip()
+    if repo_type == 'multi':
+        if not branch_text:
+            raise HttpError(422, '多仓项目必须填写 default_branch')
+        if not manifest_text:
+            raise HttpError(422, '多仓项目必须填写 manifest_xml')
+    spec = build_repository_spec(
+        repository_url,
+        default_branch,
+        repository_type=repo_type,
+        manifest_xml=manifest_xml,
+        group=group,
+    )
+    return spec
 
 
 def _project_zip_meta(project: AuditProject) -> dict:
@@ -99,8 +125,10 @@ def serialize_project(project: AuditProject, current_role: str = 'viewer', inclu
         'description': project.description,
         'source_type': project.source_type,
         'repository_url': project.repository_url,
-        'repository_type': project.repository_type,
+        'repository_type': normalize_repository_type(project.repository_type),
         'default_branch': project.default_branch,
+        'manifest_xml': project.manifest_xml,
+        'group': project.group,
         'programming_languages': list(project.programming_languages or []),
         'owner': serialize_user_brief(project.owner),
         'current_role': current_role,
@@ -166,13 +194,16 @@ def list_projects(user, *, keyword: str = '', source_type: str = '', page: int =
 
 
 def create_project(user, payload: dict) -> AuditProject:
+    repository_spec = _resolve_project_repository_spec(None, payload)
     project = AuditProject.objects.create(
         name=str(payload.get('name') or '').strip(),
         description=str(payload.get('description') or '').strip() or None,
         source_type=str(payload.get('source_type') or 'repository').strip() or 'repository',
-        repository_url=str(payload.get('repository_url') or '').strip() or None,
-        repository_type=str(payload.get('repository_type') or 'other').strip() or 'other',
-        default_branch=str(payload.get('default_branch') or 'main').strip() or 'main',
+        repository_url=repository_spec['repository_url'] or None,
+        repository_type=repository_spec['repository_type'],
+        default_branch=repository_spec['branch_name'],
+        manifest_xml=repository_spec['manifest_xml'] or None,
+        group=repository_spec['group'] or None,
         programming_languages=_normalize_languages(payload.get('programming_languages')),
         owner=user,
         is_active=bool(payload.get('is_active', True)),
@@ -186,20 +217,41 @@ def create_project(user, payload: dict) -> AuditProject:
 def update_project(user, project_id: str, payload: dict) -> AuditProject:
     access = require_project_role(user, project_id, min_role='admin')
     project = access.project
-    cache_fields = ('source_type', 'repository_url', 'default_branch')
-    cache_before = {field: getattr(project, field) for field in cache_fields}
-    for field in ('name', 'description', 'source_type', 'repository_url', 'repository_type', 'default_branch', 'is_active'):
+    cache_fields = ('source_type', 'repository_url', 'repository_type', 'default_branch', 'manifest_xml', 'group')
+    cache_before = {
+        'source_type': str(project.source_type or '').strip(),
+        'repository_url': str(project.repository_url or '').strip(),
+        'repository_type': normalize_repository_type(project.repository_type),
+        'default_branch': str(project.default_branch or '').strip(),
+        'manifest_xml': str(project.manifest_xml or '').strip(),
+        'group': str(project.group or '').strip(),
+    }
+    repository_spec = _resolve_project_repository_spec(project, payload)
+    for field in ('name', 'description', 'source_type', 'is_active'):
         if field not in payload or payload[field] is None:
             continue
         value = payload[field]
-        if field in {'name', 'description', 'source_type', 'repository_url', 'repository_type', 'default_branch'}:
+        if field in {'name', 'description', 'source_type'}:
             value = str(value).strip() or None
         setattr(project, field, value)
+    project.repository_url = repository_spec['repository_url'] or None
+    project.repository_type = repository_spec['repository_type']
+    project.default_branch = repository_spec['branch_name']
+    project.manifest_xml = repository_spec['manifest_xml'] or None
+    project.group = repository_spec['group'] or None
     if payload.get('programming_languages') is not None:
         project.programming_languages = _normalize_languages(payload.get('programming_languages'))
     project.sys_modifier = user
     project.save()
-    if any(cache_before[field] != getattr(project, field) for field in cache_fields):
+    cache_after = {
+        'source_type': str(project.source_type or '').strip(),
+        'repository_url': str(project.repository_url or '').strip(),
+        'repository_type': normalize_repository_type(project.repository_type),
+        'default_branch': str(project.default_branch or '').strip(),
+        'manifest_xml': str(project.manifest_xml or '').strip(),
+        'group': str(project.group or '').strip(),
+    }
+    if any(cache_before[field] != cache_after[field] for field in cache_fields):
         _invalidate_project_repo_cache(project.id)
     return project
 
@@ -380,25 +432,46 @@ def list_branches(user, project_id: str) -> list[str]:
         return [project.default_branch or 'main']
 
 
-def list_files(user, project_id: str, *, branch_name: str | None = None, exclude_patterns: list[str] | None = None) -> list[dict]:
+def list_files(
+    user,
+    project_id: str,
+    *,
+    branch_name: str | None = None,
+    manifest_xml: str | None = None,
+    group: str | None = None,
+    exclude_patterns: list[str] | None = None,
+) -> list[dict]:
     access = require_project_role(user, project_id, min_role='viewer')
     project = access.project
     user_id = str(getattr(user, 'id', '') or project.owner_id)
     if project.source_type == 'repository' and repository_cache_enabled():
+        repository_spec = build_effective_project_repository_spec(
+            project,
+            branch_name=branch_name,
+            manifest_xml=manifest_xml,
+            group=group,
+        )
         user_payload = load_user_config_payload(user_id)
         ssh_private_key = load_ssh_private_key(user_id)
         try:
             cache_repo = ensure_repository_cache(
                 project,
-                project.repository_url or '',
-                branch_name or project.default_branch,
+                repository_spec['repository_url'] or '',
+                repository_spec['branch_name'],
                 user_payload,
                 ssh_private_key=ssh_private_key,
+                repository_type=repository_spec['repository_type'],
+                manifest_xml=repository_spec['manifest_xml'],
+                group=repository_spec['group'],
                 allow_stale_on_failure=True,
             )
         except GitServiceError as exc:
             raise HttpError(400, str(exc)) from exc
-        return list_repository_files(cache_repo, exclude_patterns=exclude_patterns or [])
+        return list_repository_files(
+            cache_repo,
+            exclude_patterns=exclude_patterns or [],
+            repository_type=repository_spec['repository_type'],
+        )
 
     workspace = None
     try:
@@ -406,15 +479,15 @@ def list_files(user, project_id: str, *, branch_name: str | None = None, exclude
             project,
             branch_name=branch_name,
             user_id=user_id,
+            manifest_xml=manifest_xml,
+            group=group,
         )
         rows = []
         for path in workspace.rglob('*'):
             if not path.is_file():
                 continue
             relative_path = str(path.relative_to(workspace)).replace('\\', '/')
-            if relative_path == '.git' or relative_path.startswith('.git/'):
-                continue
-            if exclude_patterns and any(pattern and pattern in relative_path for pattern in exclude_patterns):
+            if should_exclude(relative_path, exclude_patterns):
                 continue
             rows.append({'path': relative_path, 'size': path.stat().st_size})
         rows.sort(key=lambda item: item['path'])

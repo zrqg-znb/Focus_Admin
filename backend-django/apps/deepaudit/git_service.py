@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -10,11 +9,22 @@ import subprocess
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from django.conf import settings
 
 from . import storage as deepaudit_storage
+from .heuristics import should_exclude
+from .repo_specs import (
+    build_repository_spec,
+    is_multi_repository_type,
+    normalize_repository_type,
+    normalize_repo_override,
+    repository_spec_cache_key,
+    repository_spec_state,
+    repository_spec_state_matches,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,20 +70,23 @@ def build_clone_context(
     branch_name: str,
     user_config: dict,
     ssh_private_key: str | None = None,
+    *,
+    repository_type: str | None = None,
 ) -> tuple[str, dict[str, str]]:
     clone_url = repository_url
     env = os.environ.copy()
     env.setdefault('GIT_TERMINAL_PROMPT', '0')
     env.setdefault('GIT_LFS_SKIP_SMUDGE', '1')
     other_config = (user_config or {}).get('other_config', {}) if isinstance(user_config, dict) else {}
-    repo_type = getattr(project, 'repository_type', 'other')
+    repo_type = normalize_repository_type(repository_type or getattr(project, 'repository_type', 'single'))
 
-    token_map = {
-        'github': other_config.get('github_token', ''),
-        'gitlab': other_config.get('gitlab_token', ''),
-        'gitea': other_config.get('gitea_token', ''),
-    }
-    token = token_map.get(repo_type) or ''
+    token = str(
+        other_config.get('codehub_token')
+        or other_config.get('github_token')
+        or other_config.get('gitlab_token')
+        or other_config.get('gitea_token')
+        or ''
+    ).strip()
     clone_url = _inject_token(repository_url, token)
 
     if repository_url.startswith('git@') or repository_url.startswith('ssh://'):
@@ -84,6 +97,7 @@ def build_clone_context(
             key_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
             env['GIT_SSH_COMMAND'] = f'ssh -i {key_file} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
     env['DEEPAUDIT_BRANCH'] = branch_name or getattr(project, 'default_branch', 'main') or 'main'
+    env['DEEPAUDIT_REPOSITORY_TYPE'] = repo_type
     return clone_url, env
 
 
@@ -112,18 +126,34 @@ def _branch_name(project, branch_name: str | None) -> str:
     return str(branch_name or getattr(project, 'default_branch', 'main') or 'main').strip() or 'main'
 
 
-def _cache_branch_key(branch_name: str) -> str:
-    branch = str(branch_name or 'main').strip() or 'main'
-    safe_branch = ''.join(char if char.isalnum() or char in {'-', '_', '.'} else '_' for char in branch).strip('._') or 'branch'
-    branch_hash = hashlib.sha1(branch.encode('utf-8')).hexdigest()[:12]
-    return f'{safe_branch}-{branch_hash}'
+def _effective_repository_spec(
+    project,
+    repository_url: str,
+    branch_name: str | None,
+    *,
+    repository_type: str | None = None,
+    manifest_xml: str | None = None,
+    group: str | None = None,
+) -> dict[str, str]:
+    branch_override = normalize_repo_override(branch_name)
+    manifest_override = normalize_repo_override(manifest_xml)
+    group_override = normalize_repo_override(group)
+    return build_repository_spec(
+        repository_url or getattr(project, 'repository_url', ''),
+        branch_override if branch_override is not None else _branch_name(project, branch_name),
+        repository_type=repository_type or getattr(project, 'repository_type', 'single'),
+        manifest_xml=manifest_override if manifest_override is not None else getattr(project, 'manifest_xml', ''),
+        group=group_override if group_override is not None else getattr(project, 'group', ''),
+    )
 
 
-def _cache_paths(project, branch_name: str) -> dict[str, Path]:
-    cache_root = deepaudit_storage.get_project_repo_cache_root(_project_id(project)) / _cache_branch_key(branch_name)
+def _cache_paths(project, repository_spec: dict[str, Any]) -> dict[str, Path]:
+    spec_key = repository_spec_cache_key(repository_spec)
+    cache_root = deepaudit_storage.get_project_repo_cache_root(_project_id(project)) / spec_key
+    repo_dir_name = 'workspace' if is_multi_repository_type(repository_spec.get('repository_type')) else 'repo'
     return {
         'root': cache_root,
-        'repo': cache_root / 'repo',
+        'repo': cache_root / repo_dir_name,
         'state': cache_root / 'state.json',
         'lock': cache_root / 'refresh.lock',
     }
@@ -138,9 +168,10 @@ def _read_cache_state(path: Path) -> dict:
         return {}
 
 
-def _write_cache_state(path: Path, *, branch_name: str, repository_url: str) -> None:
+def _write_cache_state(path: Path, *, repository_spec: dict[str, Any], branch_name: str, repository_url: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        'repository_spec': repository_spec_state(repository_spec),
         'branch_name': branch_name,
         'repository_url': repository_url,
         'last_synced_at': int(time.time()),
@@ -161,8 +192,20 @@ def _cache_is_fresh(state: dict) -> bool:
     return (time.time() - last_synced_at) <= ttl_seconds
 
 
-def _cache_exists(cache_repo: Path) -> bool:
-    return cache_repo.exists() and (cache_repo / '.git').exists()
+def _cache_state_matches(state: dict, repository_spec: dict[str, Any]) -> bool:
+    stored_spec = state.get('repository_spec') or state
+    return repository_spec_state_matches(stored_spec, repository_spec)
+
+
+def _cache_exists(cache_repo: Path, *, repository_type: str) -> bool:
+    if not cache_repo.exists():
+        return False
+    if is_multi_repository_type(repository_type):
+        try:
+            return any(cache_repo.iterdir())
+        except OSError:
+            return False
+    return (cache_repo / '.git').exists()
 
 
 def _compact_git_error(raw_message: str) -> str:
@@ -204,6 +247,7 @@ def _run_git_command(
     project,
     branch_name: str,
     operation: str,
+    cwd: Path | None = None,
     retry_count: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
     attempts = max(1, int(retry_count or _git_retry_count()))
@@ -218,6 +262,7 @@ def _run_git_command(
                 text=True,
                 timeout=timeout,
                 env=env,
+                cwd=str(cwd) if cwd else None,
             )
             logger.info(
                 'DeepAudit %s succeeded for project %s branch %s in %.2fs (attempt %s/%s)',
@@ -287,38 +332,93 @@ def clone_repository(
     ssh_private_key: str | None = None,
     *,
     target_path: Path | None = None,
+    repository_type: str | None = None,
+    manifest_xml: str | None = None,
+    group: str | None = None,
 ) -> Path:
-    clone_url, env = build_clone_context(project, repository_url, branch_name, user_config, ssh_private_key)
     branch = _branch_name(project, branch_name)
+    repo_type = normalize_repository_type(repository_type or getattr(project, 'repository_type', 'single'))
+    repository_spec = _effective_repository_spec(
+        project,
+        repository_url,
+        branch,
+        repository_type=repo_type,
+        manifest_xml=manifest_xml,
+        group=group,
+    )
+    clone_url, env = build_clone_context(
+        project,
+        repository_spec['repository_url'],
+        repository_spec['branch_name'],
+        user_config,
+        ssh_private_key,
+        repository_type=repository_spec['repository_type'],
+    )
     workspace = target_path or deepaudit_storage.create_workspace(f'project-{project.id}')
     workspace.parent.mkdir(parents=True, exist_ok=True)
     if workspace.exists():
         shutil.rmtree(workspace, ignore_errors=True)
-    cmd = [
-        'git',
-        '-c',
-        'http.version=HTTP/1.1',
-        'clone',
-        '--depth',
-        '1',
-        '--single-branch',
-        '--no-tags',
-        '--branch',
-        branch,
-        clone_url,
-        str(workspace),
-    ]
     try:
-        _run_git_command(
-            cmd,
-            env=env,
-            timeout=_git_clone_timeout(),
-            project=project,
-            branch_name=branch,
-            operation='仓库克隆',
-        )
-        if clone_url != repository_url:
-            _scrub_origin_url(workspace, repository_url, env)
+        if repo_type == 'multi':
+            workspace.mkdir(parents=True, exist_ok=True)
+            init_cmd = [
+                'git',
+                'mm',
+                'init',
+                '-u',
+                clone_url,
+                '-b',
+                repository_spec['branch_name'],
+                '-m',
+                repository_spec['manifest_xml'],
+            ]
+            if repository_spec['group']:
+                init_cmd.extend(['-g', repository_spec['group']])
+            _run_git_command(
+                init_cmd,
+                env=env,
+                timeout=_git_clone_timeout(),
+                project=project,
+                branch_name=branch,
+                operation='多仓初始化',
+                cwd=workspace,
+            )
+            _run_git_command(
+                ['git', 'mm', 'sync'],
+                env=env,
+                timeout=_git_clone_timeout(),
+                project=project,
+                branch_name=branch,
+                operation='多仓同步',
+                cwd=workspace,
+            )
+            if clone_url != repository_spec['repository_url']:
+                _scrub_origin_url(workspace, repository_spec['repository_url'], env)
+        else:
+            cmd = [
+                'git',
+                '-c',
+                'http.version=HTTP/1.1',
+                'clone',
+                '--depth',
+                '1',
+                '--single-branch',
+                '--no-tags',
+                '--branch',
+                branch,
+                clone_url,
+                str(workspace),
+            ]
+            _run_git_command(
+                cmd,
+                env=env,
+                timeout=_git_clone_timeout(),
+                project=project,
+                branch_name=branch,
+                operation='仓库克隆',
+            )
+            if clone_url != repository_spec['repository_url']:
+                _scrub_origin_url(workspace, repository_spec['repository_url'], env)
         return workspace
     except Exception:
         if target_path is None:
@@ -433,45 +533,116 @@ def ensure_repository_cache(
     user_config: dict,
     ssh_private_key: str | None = None,
     *,
+    repository_type: str | None = None,
+    manifest_xml: str | None = None,
+    group: str | None = None,
     allow_stale_on_failure: bool = False,
 ) -> Path:
     branch = _branch_name(project, branch_name)
-    cache_paths = _cache_paths(project, branch)
-    clone_url, env = build_clone_context(project, repository_url, branch, user_config, ssh_private_key)
+    repo_type = normalize_repository_type(repository_type or getattr(project, 'repository_type', 'single'))
+    repository_spec = _effective_repository_spec(
+        project,
+        repository_url,
+        branch,
+        repository_type=repo_type,
+        manifest_xml=manifest_xml,
+        group=group,
+    )
+    cache_paths = _cache_paths(project, repository_spec)
+    cache_repo = cache_paths['repo']
+    cache_root = cache_paths['root']
+    clone_url, env = build_clone_context(
+        project,
+        repository_spec['repository_url'],
+        repository_spec['branch_name'],
+        user_config,
+        ssh_private_key,
+        repository_type=repository_spec['repository_type'],
+    )
     cache_repo = cache_paths['repo']
     cache_root = cache_paths['root']
     initial_state = _read_cache_state(cache_paths['state'])
-    initial_cache_exists = _cache_exists(cache_repo)
-    if initial_cache_exists and _cache_is_fresh(initial_state):
+    initial_cache_exists = _cache_exists(cache_repo, repository_type=repo_type)
+    if initial_cache_exists and _cache_is_fresh(initial_state) and _cache_state_matches(initial_state, repository_spec):
         return cache_repo
 
     try:
         with _repository_cache_lock(cache_paths['lock']):
             state = _read_cache_state(cache_paths['state'])
-            cache_exists = _cache_exists(cache_repo)
-            if cache_exists and _cache_is_fresh(state):
+            cache_exists = _cache_exists(cache_repo, repository_type=repo_type)
+            if cache_exists and _cache_is_fresh(state) and _cache_state_matches(state, repository_spec):
                 return cache_repo
 
             cache_root.mkdir(parents=True, exist_ok=True)
-            if not cache_exists:
+            if repo_type == 'multi':
+                refresh_target = cache_repo if not cache_exists else cache_root / f'refresh-{os.getpid()}-{int(time.time() * 1000)}'
+                if refresh_target.exists():
+                    shutil.rmtree(refresh_target, ignore_errors=True)
+                backup_repo = None
+                try:
+                    clone_repository(
+                        project,
+                        repository_spec['repository_url'],
+                        repository_spec['branch_name'],
+                        user_config,
+                        ssh_private_key=ssh_private_key,
+                        target_path=refresh_target,
+                        repository_type=repo_type,
+                        manifest_xml=repository_spec['manifest_xml'],
+                        group=repository_spec['group'],
+                    )
+                    if refresh_target != cache_repo:
+                        backup_repo = cache_root / f'backup-{os.getpid()}-{int(time.time() * 1000)}'
+                        if backup_repo.exists():
+                            shutil.rmtree(backup_repo, ignore_errors=True)
+                        if cache_repo.exists():
+                            cache_repo.rename(backup_repo)
+                        try:
+                            refresh_target.rename(cache_repo)
+                        except Exception:
+                            if backup_repo.exists():
+                                backup_repo.rename(cache_repo)
+                            raise
+                except Exception:
+                    if refresh_target != cache_repo:
+                        shutil.rmtree(refresh_target, ignore_errors=True)
+                    if backup_repo and backup_repo.exists() and not cache_repo.exists():
+                        try:
+                            backup_repo.rename(cache_repo)
+                        except Exception:
+                            logger.warning('DeepAudit failed to restore multi-repo cache backup for %s', cache_repo)
+                    if backup_repo and backup_repo.exists():
+                        shutil.rmtree(backup_repo, ignore_errors=True)
+                    raise
+                if backup_repo and backup_repo.exists():
+                    shutil.rmtree(backup_repo, ignore_errors=True)
+            elif not cache_exists:
                 clone_repository(
                     project,
-                    repository_url,
-                    branch,
+                    repository_spec['repository_url'],
+                    repository_spec['branch_name'],
                     user_config,
                     ssh_private_key=ssh_private_key,
                     target_path=cache_repo,
+                    repository_type=repo_type,
+                    manifest_xml=repository_spec['manifest_xml'],
+                    group=repository_spec['group'],
                 )
             else:
                 _update_repository_cache(
                     project,
                     cache_repo=cache_repo,
-                    repository_url=repository_url,
+                    repository_url=repository_spec['repository_url'],
                     clone_url=clone_url,
-                    branch_name=branch,
+                    branch_name=repository_spec['branch_name'],
                     env=env,
                 )
-            _write_cache_state(cache_paths['state'], branch_name=branch, repository_url=repository_url)
+            _write_cache_state(
+                cache_paths['state'],
+                repository_spec=repository_spec,
+                branch_name=repository_spec['branch_name'],
+                repository_url=repository_spec['repository_url'],
+            )
             return cache_repo
     except GitServiceError:
         if allow_stale_on_failure and initial_cache_exists:
@@ -493,6 +664,9 @@ def create_repository_workspace(
     user_config: dict,
     ssh_private_key: str | None = None,
     *,
+    repository_type: str | None = None,
+    manifest_xml: str | None = None,
+    group: str | None = None,
     allow_stale_on_failure: bool = False,
 ) -> Path:
     if not repository_cache_enabled():
@@ -502,123 +676,141 @@ def create_repository_workspace(
             branch_name,
             user_config,
             ssh_private_key=ssh_private_key,
+            repository_type=repository_type,
+            manifest_xml=manifest_xml,
+            group=group,
         )
 
     branch = _branch_name(project, branch_name)
-    cache_paths = _cache_paths(project, branch)
-    clone_url, env = build_clone_context(project, repository_url, branch, user_config, ssh_private_key)
+    repo_type = normalize_repository_type(repository_type or getattr(project, 'repository_type', 'single'))
+    cache_repo = ensure_repository_cache(
+        project,
+        repository_url,
+        branch,
+        user_config,
+        ssh_private_key=ssh_private_key,
+        repository_type=repo_type,
+        manifest_xml=manifest_xml,
+        group=group,
+        allow_stale_on_failure=allow_stale_on_failure,
+    )
+    cache_paths = _cache_paths(
+        project,
+        _effective_repository_spec(
+            project,
+            repository_url,
+            branch,
+            repository_type=repo_type,
+            manifest_xml=manifest_xml,
+            group=group,
+        ),
+    )
+    _, env = build_clone_context(
+        project,
+        repository_url,
+        branch,
+        user_config,
+        ssh_private_key,
+        repository_type=repo_type,
+    )
+
+    if repo_type == 'multi':
+        workspace = deepaudit_storage.reserve_workspace_path(f'project-{project.id}')
+        try:
+            shutil.copytree(cache_repo, workspace, dirs_exist_ok=True)
+            return workspace
+        except Exception:
+            shutil.rmtree(workspace, ignore_errors=True)
+            raise
 
     try:
-        with _repository_cache_lock(cache_paths['lock']):
-            cache_repo = cache_paths['repo']
-            state = _read_cache_state(cache_paths['state'])
-            cache_exists = _cache_exists(cache_repo)
-
-            if not cache_exists:
-                cache_paths['root'].mkdir(parents=True, exist_ok=True)
-                clone_repository(
-                    project,
-                    repository_url,
-                    branch,
-                    user_config,
-                    ssh_private_key=ssh_private_key,
-                    target_path=cache_repo,
-                )
-                _write_cache_state(cache_paths['state'], branch_name=branch, repository_url=repository_url)
-            elif not _cache_is_fresh(state):
-                try:
-                    _update_repository_cache(
-                        project,
-                        cache_repo=cache_repo,
-                        repository_url=repository_url,
-                        clone_url=clone_url,
-                        branch_name=branch,
-                        env=env,
-                    )
-                    _write_cache_state(cache_paths['state'], branch_name=branch, repository_url=repository_url)
-                except GitServiceError:
-                    if not allow_stale_on_failure:
-                        raise
-                    logger.warning(
-                        'DeepAudit using stale repository cache for workspace project %s branch %s after refresh failure',
-                        _project_id(project),
-                        branch,
-                    )
-
-            subprocess.run(
-                ['git', '-C', str(cache_repo), 'worktree', 'prune'],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=30,
+        subprocess.run(
+            ['git', '-C', str(cache_repo), 'worktree', 'prune'],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        workspace = deepaudit_storage.reserve_workspace_path(f'project-{project.id}')
+        try:
+            _run_git_command(
+                [
+                    'git',
+                    '-C',
+                    str(cache_repo),
+                    'worktree',
+                    'add',
+                    '--detach',
+                    '--force',
+                    str(workspace),
+                    'HEAD',
+                ],
                 env=env,
+                timeout=120,
+                project=project,
+                branch_name=branch,
+                operation='工作区快照创建',
+                retry_count=1,
             )
-            workspace = deepaudit_storage.reserve_workspace_path(f'project-{project.id}')
-            try:
-                _run_git_command(
-                    [
-                        'git',
-                        '-C',
-                        str(cache_repo),
-                        'worktree',
-                        'add',
-                        '--detach',
-                        '--force',
-                        str(workspace),
-                        'HEAD',
-                    ],
-                    env=env,
-                    timeout=120,
-                    project=project,
-                    branch_name=branch,
-                    operation='工作区快照创建',
-                    retry_count=1,
-                )
-                return workspace
-            except Exception:
-                shutil.rmtree(workspace, ignore_errors=True)
-                raise
+            return workspace
+        except Exception:
+            shutil.rmtree(workspace, ignore_errors=True)
+            raise
     except GitServiceError:
         if not cache_paths['repo'].exists():
             shutil.rmtree(cache_paths['root'], ignore_errors=True)
         raise
 
 
-def list_repository_files(cache_repo: Path, *, exclude_patterns: list[str] | None = None) -> list[dict]:
+def list_repository_files(
+    cache_repo: Path,
+    *,
+    exclude_patterns: list[str] | None = None,
+    repository_type: str | None = None,
+) -> list[dict]:
     rows: list[dict] = []
+    repo_type = normalize_repository_type(repository_type or 'single')
     try:
-        result = subprocess.run(
-            ['git', '-C', str(cache_repo), 'ls-tree', '-r', '-l', '-z', '--full-tree', 'HEAD'],
-            check=True,
-            capture_output=True,
-            timeout=30,
-        )
-        for entry in result.stdout.split(b'\0'):
-            if not entry:
-                continue
-            header, _, raw_path = entry.partition(b'\t')
-            if not raw_path:
-                continue
-            parts = header.decode('utf-8', errors='ignore').split()
-            if len(parts) < 4 or parts[1] != 'blob':
-                continue
-            relative_path = raw_path.decode('utf-8', errors='ignore')
-            if exclude_patterns and any(pattern and pattern in relative_path for pattern in exclude_patterns):
-                continue
-            try:
-                size = int(parts[3])
-            except (TypeError, ValueError):
-                size = 0
-            rows.append({'path': relative_path, 'size': size})
+        if repo_type != 'multi' and (cache_repo / '.git').exists():
+            result = subprocess.run(
+                ['git', '-C', str(cache_repo), 'ls-tree', '-r', '-l', '-z', '--full-tree', 'HEAD'],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            for entry in result.stdout.split(b'\0'):
+                if not entry:
+                    continue
+                header, _, raw_path = entry.partition(b'\t')
+                if not raw_path:
+                    continue
+                parts = header.decode('utf-8', errors='ignore').split()
+                if len(parts) < 4 or parts[1] != 'blob':
+                    continue
+                relative_path = raw_path.decode('utf-8', errors='ignore')
+                if should_exclude(relative_path, exclude_patterns):
+                    continue
+                try:
+                    size = int(parts[3])
+                except (TypeError, ValueError):
+                    size = 0
+                rows.append({'path': relative_path, 'size': size})
+        else:
+            for path in cache_repo.rglob('*'):
+                if not path.is_file():
+                    continue
+                relative_path = str(path.relative_to(cache_repo)).replace('\\', '/')
+                if should_exclude(relative_path, exclude_patterns):
+                    continue
+                rows.append({'path': relative_path, 'size': path.stat().st_size})
     except Exception as exc:
         logger.warning('DeepAudit falling back to filesystem file listing for %s: %s', cache_repo, exc)
         for path in cache_repo.rglob('*'):
             if not path.is_file():
                 continue
             relative_path = str(path.relative_to(cache_repo)).replace('\\', '/')
-            if relative_path == '.git' or relative_path.startswith('.git/'):
-                continue
-            if exclude_patterns and any(pattern and pattern in relative_path for pattern in exclude_patterns):
+            if should_exclude(relative_path, exclude_patterns):
                 continue
             rows.append({'path': relative_path, 'size': path.stat().st_size})
 

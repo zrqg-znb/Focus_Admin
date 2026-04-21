@@ -17,6 +17,8 @@ class AgentTask(RootModel):
     target_vulnerabilities = models.JSONField(default=list, blank=True, verbose_name='目标漏洞')
     verification_level = models.CharField(max_length=50, default='sandbox', verbose_name='验证级别')
     branch_name = models.CharField(max_length=255, blank=True, null=True, verbose_name='分支名称')
+    manifest_xml = models.CharField(max_length=1000, blank=True, null=True, verbose_name='Manifest XML')
+    group = models.CharField(max_length=255, blank=True, null=True, verbose_name='Group')
     exclude_patterns = models.JSONField(default=list, blank=True, verbose_name='排除模式')
     target_files = models.JSONField(default=list, blank=True, verbose_name='指定文件')
     agent_config = models.JSONField(default=dict, blank=True, verbose_name='Agent 配置')

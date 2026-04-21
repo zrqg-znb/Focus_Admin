@@ -3,53 +3,68 @@
  * Cyberpunk Terminal Aesthetic
  */
 
-import { useState, useRef, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import type { PromptTemplate } from '@/shared/api/prompts';
+import type {
+  CodeAnalysisResult,
+  InstantAnalysis as InstantAnalysisType,
+  Project,
+} from '@/shared/types';
 
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Progress } from "@/components/ui/progress";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import InstantExportDialog from '@/components/reports/InstantExportDialog';
+import { Badge } from '@/components/ui/badge';
+import { BranchSelector } from '@/components/ui/branch-selector';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Progress } from '@/components/ui/progress';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
+import { CodeAnalysisEngine } from '@/features/analysis/services';
+import { getPromptTemplates } from '@/shared/api/prompts';
+import { api } from '@/shared/config/database';
+import { useAuth } from '@/shared/context/AuthContext';
+import { DEEPAUDIT_ACTION_CODES } from '@/shared/focus/focusPermission';
+import { parseAIExplanation } from '@/shared/utils/aiExplanation';
+import {
+  getRepositoryTypeLabel,
+  isMultiRepository,
+} from '@/shared/utils/projectUtils';
 import {
   AlertTriangle,
   CheckCircle,
+  ChevronRight,
   Clock,
   Code,
+  Download,
   FileText,
+  FolderGit2,
+  GitBranch,
+  History,
   Info,
   Lightbulb,
+  MessageSquare,
+  Search,
   Shield,
   Target,
+  Terminal,
   TrendingUp,
   Upload,
-  Zap,
   X,
-  Download,
-  History,
-  ChevronRight,
-  MessageSquare,
-  Terminal,
-  GitBranch,
-  FolderGit2,
-  Search,
-} from "lucide-react";
-import { CodeAnalysisEngine } from "@/features/analysis/services";
-import { api } from "@/shared/config/database";
-import type { CodeAnalysisResult, InstantAnalysis as InstantAnalysisType, Project } from "@/shared/types";
-import { toast } from "sonner";
-import InstantExportDialog from "@/components/reports/InstantExportDialog";
-import { getPromptTemplates, type PromptTemplate } from "@/shared/api/prompts";
-import { useAuth } from "@/shared/context/AuthContext";
-import { DEEPAUDIT_ACTION_CODES } from "@/shared/focus/focusPermission";
-import { parseAIExplanation } from "@/shared/utils/aiExplanation";
-import { BranchSelector } from "@/components/ui/branch-selector";
+  Zap,
+} from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 
-type AnalysisMode = "snippet" | "repository";
+type AnalysisMode = 'repository' | 'snippet';
 
 function parsePatternInput(value: string) {
   return value
@@ -59,7 +74,7 @@ function parsePatternInput(value: string) {
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
-  if (typeof error === "object" && error !== null) {
+  if (typeof error === 'object' && error !== null) {
     const record = error as { message?: string };
     return record.message || fallback;
   }
@@ -69,35 +84,47 @@ function getErrorMessage(error: unknown, fallback: string) {
 export default function InstantAnalysis() {
   const navigate = useNavigate();
   const { hasAccess } = useAuth();
-  const [code, setCode] = useState("");
-  const [language, setLanguage] = useState("");
-  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("snippet");
+  const [code, setCode] = useState('');
+  const [language, setLanguage] = useState('');
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('snippet');
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState<CodeAnalysisResult | null>(null);
   const [analysisTime, setAnalysisTime] = useState(0);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
-  const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
+  const [currentAnalysisId, setCurrentAnalysisId] = useState<null | string>(
+    null,
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const loadingCardRef = useRef<HTMLDivElement>(null);
 
   // History related state
   const [showHistory, setShowHistory] = useState(false);
-  const [historyRecords, setHistoryRecords] = useState<InstantAnalysisType[]>([]);
+  const [historyRecords, setHistoryRecords] = useState<InstantAnalysisType[]>(
+    [],
+  );
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<null | string>(
+    null,
+  );
   const [repositoryProjects, setRepositoryProjects] = useState<Project[]>([]);
-  const [projectSearch, setProjectSearch] = useState("");
+  const [projectSearch, setProjectSearch] = useState('');
   const [loadingProjects, setLoadingProjects] = useState(false);
-  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState('');
   const [availableBranches, setAvailableBranches] = useState<string[]>([]);
   const [loadingBranches, setLoadingBranches] = useState(false);
-  const [selectedBranch, setSelectedBranch] = useState("");
-  const [repositoryExcludePatterns, setRepositoryExcludePatterns] = useState("");
-  const [repositoryAnalysisDepth, setRepositoryAnalysisDepth] = useState<"basic" | "standard" | "deep">("standard");
+  const [selectedBranch, setSelectedBranch] = useState('');
+  const [selectedManifestXml, setSelectedManifestXml] = useState('');
+  const [selectedGroup, setSelectedGroup] = useState('');
+  const [repositoryExcludePatterns, setRepositoryExcludePatterns] =
+    useState('');
+  const [repositoryAnalysisDepth, setRepositoryAnalysisDepth] = useState<
+    'basic' | 'deep' | 'standard'
+  >('standard');
 
   // Prompt templates
   const [promptTemplates, setPromptTemplates] = useState<PromptTemplate[]>([]);
-  const [selectedPromptTemplateId, setSelectedPromptTemplateId] = useState<string>("");
+  const [selectedPromptTemplateId, setSelectedPromptTemplateId] =
+    useState<string>('');
   const canExportReport = hasAccess(DEEPAUDIT_ACTION_CODES.REPORTS_EXPORT);
   const canCreateAuditTask = hasAccess(DEEPAUDIT_ACTION_CODES.TASKS_CREATE);
 
@@ -109,14 +136,14 @@ export default function InstantAnalysis() {
       try {
         const res = await getPromptTemplates({ is_active: true });
         setPromptTemplates(res.items);
-        const defaultTemplate = res.items.find(t => t.is_default);
+        const defaultTemplate = res.items.find((t) => t.is_default);
         if (defaultTemplate) {
           setSelectedPromptTemplateId(defaultTemplate.id);
         } else if (res.items.length > 0) {
           setSelectedPromptTemplateId(res.items[0].id);
         }
       } catch (error) {
-        console.error("加载提示词模板失败:", error);
+        console.error('加载提示词模板失败:', error);
       }
     };
     loadPromptTemplates();
@@ -128,10 +155,10 @@ export default function InstantAnalysis() {
         setLoadingProjects(true);
         const projects = await CodeAnalysisEngine.getRepositories();
         setRepositoryProjects(projects);
-        setSelectedProjectId((current) => current || projects[0]?.id || "");
+        setSelectedProjectId((current) => current || projects[0]?.id || '');
       } catch (error) {
-        console.error("加载仓库项目失败:", error);
-        toast.error("加载仓库项目失败");
+        console.error('加载仓库项目失败:', error);
+        toast.error('加载仓库项目失败');
       } finally {
         setLoadingProjects(false);
       }
@@ -142,31 +169,49 @@ export default function InstantAnalysis() {
   useEffect(() => {
     if (!selectedProjectId) {
       setAvailableBranches([]);
-      setSelectedBranch("");
+      setSelectedBranch('');
+      setSelectedManifestXml('');
+      setSelectedGroup('');
       return;
     }
     const loadBranches = async () => {
       try {
         setLoadingBranches(true);
         const payload = await CodeAnalysisEngine.getBranches(selectedProjectId);
-        const branches = payload.branches.length > 0 ? payload.branches : [payload.default_branch || "main"];
+        const branches =
+          payload.branches.length > 0
+            ? payload.branches
+            : [payload.default_branch || 'main'];
         setAvailableBranches(branches);
         setSelectedBranch((current) => {
           if (current && branches.includes(current)) {
             return current;
           }
-          return payload.default_branch || branches[0] || "main";
+          return payload.default_branch || branches[0] || 'main';
         });
       } catch (error) {
-        console.error("加载项目分支失败:", error);
-        setAvailableBranches(["main"]);
-        setSelectedBranch("main");
+        console.error('加载项目分支失败:', error);
+        setAvailableBranches(['main']);
+        setSelectedBranch('main');
       } finally {
         setLoadingBranches(false);
       }
     };
     void loadBranches();
   }, [selectedProjectId]);
+
+  useEffect(() => {
+    const project = repositoryProjects.find(
+      (item) => item.id === selectedProjectId,
+    );
+    if (!project) {
+      setSelectedManifestXml('');
+      setSelectedGroup('');
+      return;
+    }
+    setSelectedManifestXml(project.manifest_xml || '');
+    setSelectedGroup(project.group || '');
+  }, [selectedProjectId, repositoryProjects]);
 
   // Load history
   const loadHistory = async () => {
@@ -185,7 +230,9 @@ export default function InstantAnalysis() {
   // View history record details
   const viewHistoryRecord = (record: InstantAnalysisType) => {
     try {
-      const analysisResult = JSON.parse(record.analysis_result) as CodeAnalysisResult;
+      const analysisResult = JSON.parse(
+        record.analysis_result,
+      ) as CodeAnalysisResult;
       setResult(analysisResult);
       setLanguage(record.language);
       setAnalysisTime(record.analysis_time);
@@ -207,7 +254,7 @@ export default function InstantAnalysis() {
       month: '2-digit',
       day: '2-digit',
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
     });
   };
 
@@ -216,7 +263,7 @@ export default function InstantAnalysis() {
     e.stopPropagation();
     try {
       await api.deleteInstantAnalysis(recordId);
-      setHistoryRecords(prev => prev.filter(r => r.id !== recordId));
+      setHistoryRecords((prev) => prev.filter((r) => r.id !== recordId));
       if (selectedHistoryId === recordId) {
         setSelectedHistoryId(null);
         setResult(null);
@@ -230,6 +277,7 @@ export default function InstantAnalysis() {
 
   // Clear all history
   const clearAllHistory = async () => {
+    // eslint-disable-next-line no-alert
     if (!confirm('确定要清空所有历史记录吗？此操作不可恢复。')) return;
     try {
       await api.deleteAllInstantAnalyses();
@@ -258,7 +306,7 @@ export default function InstantAnalysis() {
           if (loadingCardRef.current) {
             loadingCardRef.current.scrollIntoView({
               behavior: 'smooth',
-              block: 'center'
+              block: 'center',
             });
           }
         }, 50);
@@ -320,27 +368,34 @@ public class Example {
             // 空的异常处理
         }
     }
-}`
+}`,
   };
 
   const handleAnalyze = async () => {
     if (!code.trim()) {
-      toast.error("请输入要分析的代码");
+      toast.error('请输入要分析的代码');
       return;
     }
     if (!language) {
-      toast.error("请选择编程语言");
+      toast.error('请选择编程语言');
       return;
     }
 
     try {
       setAnalyzing(true);
       setTimeout(() => {
-        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        window.scrollTo({
+          top: document.body.scrollHeight,
+          behavior: 'smooth',
+        });
       }, 100);
 
       const startTime = Date.now();
-      const analysisResult = await CodeAnalysisEngine.analyzeCode(code, language, selectedPromptTemplateId || undefined);
+      const analysisResult = await CodeAnalysisEngine.analyzeCode(
+        code,
+        language,
+        selectedPromptTemplateId || undefined,
+      );
       const endTime = Date.now();
       const duration = (endTime - startTime) / 1000;
 
@@ -351,24 +406,35 @@ public class Example {
       toast.success(`分析完成！发现 ${analysisResult.issues.length} 个问题`);
     } catch (error) {
       console.error('Analysis failed:', error);
-      toast.error(getErrorMessage(error, "分析失败，请稍后重试"));
+      toast.error(getErrorMessage(error, '分析失败，请稍后重试'));
     } finally {
       setAnalyzing(false);
-      setCode("");
+      setCode('');
     }
   };
 
   const handleRepositoryAnalyze = async () => {
     if (!canCreateAuditTask) {
-      toast.error("当前账号没有创建仓库审计任务的权限");
+      toast.error('当前账号没有创建仓库审计任务的权限');
       return;
     }
     if (!selectedProjectId) {
-      toast.error("请选择一个仓库项目");
+      toast.error('请选择一个仓库项目');
       return;
     }
     if (!selectedBranch.trim()) {
-      toast.error("请选择要分析的分支");
+      toast.error('请选择要分析的分支');
+      return;
+    }
+    const selectedProject = repositoryProjects.find(
+      (project) => project.id === selectedProjectId,
+    );
+    if (
+      selectedProject &&
+      isMultiRepository(selectedProject) &&
+      !selectedManifestXml.trim()
+    ) {
+      toast.error('多仓项目必须填写 Manifest XML');
       return;
     }
 
@@ -377,42 +443,53 @@ public class Example {
       const createdTask = await CodeAnalysisEngine.analyzeRepository({
         projectId: selectedProjectId,
         branch: selectedBranch.trim(),
+        manifestXml: selectedManifestXml.trim() || undefined,
+        group: selectedGroup.trim() || undefined,
         excludePatterns: parsePatternInput(repositoryExcludePatterns),
         promptTemplateId: selectedPromptTemplateId || undefined,
         analysisDepth: repositoryAnalysisDepth,
       });
-      toast.success("仓库审计任务已创建，正在跳转到任务详情");
+      toast.success('仓库审计任务已创建，正在跳转到任务详情');
       navigate(`/tasks/${createdTask.id}`);
     } catch (error) {
-      console.error("Repository analysis failed:", error);
-      toast.error(error instanceof Error ? error.message : "启动仓库分析失败");
+      console.error('Repository analysis failed:', error);
+      toast.error(error instanceof Error ? error.message : '启动仓库分析失败');
     } finally {
       setAnalyzing(false);
     }
   };
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const content = e.target?.result as string;
-      setCode(content);
+    const content = await file.text();
+    setCode(content);
 
-      const extension = file.name.split('.').pop()?.toLowerCase();
-      const languageMap: Record<string, string> = {
-        'js': 'javascript', 'jsx': 'javascript', 'ts': 'typescript', 'tsx': 'typescript',
-        'py': 'python', 'java': 'java', 'go': 'go', 'rs': 'rust',
-        'cpp': 'cpp', 'c': 'cpp', 'cs': 'csharp', 'php': 'php',
-        'rb': 'ruby', 'swift': 'swift', 'kt': 'kotlin'
-      };
-
-      if (extension && languageMap[extension]) {
-        setLanguage(languageMap[extension]);
-      }
+    const extension = file.name.split('.').pop()?.toLowerCase();
+    const languageMap: Record<string, string> = {
+      js: 'javascript',
+      jsx: 'javascript',
+      ts: 'typescript',
+      tsx: 'typescript',
+      py: 'python',
+      java: 'java',
+      go: 'go',
+      rs: 'rust',
+      cpp: 'cpp',
+      c: 'cpp',
+      cs: 'csharp',
+      php: 'php',
+      rb: 'ruby',
+      swift: 'swift',
+      kt: 'kotlin',
     };
-    reader.readAsText(file);
+
+    if (extension && languageMap[extension]) {
+      setLanguage(languageMap[extension]);
+    }
   };
 
   const loadExampleCode = (lang: string) => {
@@ -426,33 +503,101 @@ public class Example {
 
   const getSeverityClasses = (severity: string) => {
     switch (severity) {
-      case 'critical': return 'severity-critical';
-      case 'high': return 'severity-high';
-      case 'medium': return 'severity-medium';
-      case 'low': return 'severity-low';
-      default: return 'severity-info';
+      case 'critical': {
+        return 'severity-critical';
+      }
+      case 'high': {
+        return 'severity-high';
+      }
+      case 'low': {
+        return 'severity-low';
+      }
+      case 'medium': {
+        return 'severity-medium';
+      }
+      default: {
+        return 'severity-info';
+      }
     }
+  };
+
+  const getSeverityIconClasses = (severity: string) => {
+    switch (severity) {
+      case 'critical': {
+        return 'bg-rose-500/20 text-rose-400';
+      }
+      case 'high': {
+        return 'bg-orange-500/20 text-orange-400';
+      }
+      case 'medium': {
+        return 'bg-amber-500/20 text-amber-400';
+      }
+      default: {
+        return 'bg-sky-500/20 text-sky-400';
+      }
+    }
+  };
+
+  const getSeverityLabel = (severity: string) => {
+    switch (severity) {
+      case 'critical': {
+        return '严重';
+      }
+      case 'high': {
+        return '高';
+      }
+      case 'medium': {
+        return '中等';
+      }
+      default: {
+        return '低';
+      }
+    }
+  };
+
+  const getQualityBadgeClass = (score: number) => {
+    if (score >= 80) {
+      return 'cyber-badge-success';
+    }
+    if (score >= 60) {
+      return 'cyber-badge-warning';
+    }
+    return 'cyber-badge-danger';
   };
 
   const getTypeIcon = (type: string) => {
     switch (type) {
-      case 'security': return <Shield className="w-4 h-4" />;
-      case 'bug': return <AlertTriangle className="w-4 h-4" />;
-      case 'performance': return <Zap className="w-4 h-4" />;
-      case 'style': return <Code className="w-4 h-4" />;
-      case 'maintainability': return <FileText className="w-4 h-4" />;
-      default: return <Info className="w-4 h-4" />;
+      case 'bug': {
+        return <AlertTriangle className="h-4 w-4" />;
+      }
+      case 'maintainability': {
+        return <FileText className="h-4 w-4" />;
+      }
+      case 'performance': {
+        return <Zap className="h-4 w-4" />;
+      }
+      case 'security': {
+        return <Shield className="h-4 w-4" />;
+      }
+      case 'style': {
+        return <Code className="h-4 w-4" />;
+      }
+      default: {
+        return <Info className="h-4 w-4" />;
+      }
     }
   };
 
   const clearAnalysis = () => {
-    setCode("");
-    setLanguage("");
+    setCode('');
+    setLanguage('');
     setResult(null);
     setAnalysisTime(0);
   };
 
-  const selectedProject = repositoryProjects.find((project) => project.id === selectedProjectId) || null;
+  const selectedProject =
+    repositoryProjects.find((project) => project.id === selectedProjectId) ||
+    null;
   const filteredProjects = repositoryProjects.filter((project) => {
     const keyword = projectSearch.trim().toLowerCase();
     if (!keyword) {
@@ -465,58 +610,199 @@ public class Example {
     );
   });
 
+  const historyContent = (() => {
+    if (loadingHistory) {
+      return (
+        <div className="py-8 text-center">
+          <div className="loading-spinner mx-auto mb-4"></div>
+          <p className="text-muted-foreground font-mono">加载中...</p>
+        </div>
+      );
+    }
+
+    if (historyRecords.length === 0) {
+      return (
+        <div className="empty-state">
+          <History className="empty-state-icon" />
+          <p className="empty-state-title">暂无历史记录</p>
+          <p className="empty-state-description">
+            完成代码分析后，记录将显示在这里
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <ScrollArea className="h-[400px]">
+        <div className="space-y-3">
+          {historyRecords.map((record) => (
+            <button
+              className={`cursor-pointer rounded-lg border p-4 transition-colors ${
+                selectedHistoryId === record.id
+                  ? 'bg-primary/10 border-primary/30'
+                  : 'bg-muted/50 border-border hover:bg-muted hover:border-border'
+              } w-full text-left`}
+              key={record.id}
+              onClick={() => viewHistoryRecord(record)}
+              type="button"
+            >
+              <div className="mb-2 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Badge className="cyber-badge-muted">{record.language}</Badge>
+                  <span className="text-muted-foreground font-mono text-sm">
+                    {formatDate(record.created_at)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge
+                    className={`font-mono ${getQualityBadgeClass(record.quality_score ?? 0)}`}
+                  >
+                    评分: {(record.quality_score ?? 0).toFixed(1)}
+                  </Badge>
+                  <Button
+                    className="h-6 w-6 p-0 hover:bg-rose-500/10 hover:text-rose-400"
+                    onClick={(e) => deleteHistoryRecord(e, record.id)}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                  <ChevronRight className="text-muted-foreground h-4 w-4" />
+                </div>
+              </div>
+              <div className="text-muted-foreground flex items-center gap-4 font-mono text-xs">
+                <span className="flex items-center gap-1">
+                  <AlertTriangle className="h-3 w-3" />
+                  {record.issues_count} 个问题
+                </span>
+                <span className="flex items-center gap-1">
+                  <Clock className="h-3 w-3" />
+                  {(record.analysis_time ?? 0).toFixed(2)}s
+                </span>
+              </div>
+            </button>
+          ))}
+        </div>
+      </ScrollArea>
+    );
+  })();
+
+  const projectListContent = (() => {
+    if (loadingProjects) {
+      return (
+        <div className="cyber-card text-muted-foreground p-6 text-center font-mono text-sm">
+          加载仓库项目中...
+        </div>
+      );
+    }
+
+    if (filteredProjects.length === 0) {
+      return (
+        <div className="cyber-card text-muted-foreground p-6 text-center font-mono text-sm">
+          当前没有可用于仓库分析的项目
+        </div>
+      );
+    }
+
+    return filteredProjects.map((project) => {
+      const active = project.id === selectedProjectId;
+
+      return (
+        <button
+          className={`w-full rounded-lg border p-4 text-left transition-all ${
+            active
+              ? 'border-primary bg-primary/10 shadow-[0_0_0_1px_rgba(255,107,44,0.35)]'
+              : 'border-border bg-background hover:border-primary/40'
+          }`}
+          key={project.id}
+          onClick={() => setSelectedProjectId(project.id)}
+          type="button"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-foreground font-semibold">
+                {project.name}
+              </div>
+              <div className="text-muted-foreground mt-1 truncate font-mono text-xs">
+                {project.repository_url}
+              </div>
+            </div>
+            <Badge
+              className={`font-mono text-xs ${isMultiRepository(project) ? 'cyber-badge-info' : 'cyber-badge-muted'}`}
+            >
+              {getRepositoryTypeLabel(project.repository_type)}
+            </Badge>
+          </div>
+        </button>
+      );
+    });
+  })();
+
   // Render issue with cyberpunk style
-  const renderIssue = (issue: CodeAnalysisResult["issues"][number], index: number) => (
-    <div key={index} className="cyber-card p-4 mb-4 hover:border-border transition-all group">
-      <div className="flex items-start justify-between mb-3 pb-3 border-b border-border">
+  const renderIssue = (
+    issue: CodeAnalysisResult['issues'][number],
+    index: number,
+  ) => (
+    <div
+      className="cyber-card hover:border-border group mb-4 p-4 transition-all"
+      key={index}
+    >
+      <div className="border-border mb-3 flex items-start justify-between border-b pb-3">
         <div className="flex items-start space-x-3">
-          <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-            issue.severity === 'critical' ? 'bg-rose-500/20 text-rose-400' :
-            issue.severity === 'high' ? 'bg-orange-500/20 text-orange-400' :
-            issue.severity === 'medium' ? 'bg-amber-500/20 text-amber-400' :
-            'bg-sky-500/20 text-sky-400'
-          }`}>
+          <div
+            className={`flex h-10 w-10 items-center justify-center rounded-lg ${getSeverityIconClasses(issue.severity)}`}
+          >
             {getTypeIcon(issue.type)}
           </div>
           <div className="flex-1">
-            <h4 className="font-bold text-base text-foreground mb-1 group-hover:text-primary transition-colors uppercase">{issue.title}</h4>
-            <div className="flex items-center space-x-1 text-xs text-muted-foreground font-mono">
+            <h4 className="text-foreground group-hover:text-primary mb-1 text-base font-bold uppercase transition-colors">
+              {issue.title}
+            </h4>
+            <div className="text-muted-foreground flex items-center space-x-1 font-mono text-xs">
               <span className="text-primary">&gt;</span>
               <span>LINE: {issue.line}</span>
               {issue.column && <span>, COL: {issue.column}</span>}
             </div>
           </div>
         </div>
-        <Badge className={`${getSeverityClasses(issue.severity)} font-bold uppercase px-2 py-1 rounded text-xs`}>
-          {issue.severity === 'critical' ? '严重' :
-            issue.severity === 'high' ? '高' :
-            issue.severity === 'medium' ? '中等' : '低'}
+        <Badge
+          className={`${getSeverityClasses(issue.severity)} rounded px-2 py-1 text-xs font-bold uppercase`}
+        >
+          {getSeverityLabel(issue.severity)}
         </Badge>
       </div>
 
       {issue.description && (
-        <div className="bg-muted border border-border p-3 mb-3 rounded font-mono">
-          <div className="flex items-center mb-1 border-b border-border pb-1">
-            <Info className="w-3 h-3 text-muted-foreground mr-1" />
-            <span className="font-bold text-muted-foreground text-xs uppercase">问题详情</span>
+        <div className="bg-muted border-border mb-3 rounded border p-3 font-mono">
+          <div className="border-border mb-1 flex items-center border-b pb-1">
+            <Info className="text-muted-foreground mr-1 h-3 w-3" />
+            <span className="text-muted-foreground text-xs font-bold uppercase">
+              问题详情
+            </span>
           </div>
-          <p className="text-foreground text-xs leading-relaxed mt-1">{issue.description}</p>
+          <p className="text-foreground mt-1 text-xs leading-relaxed">
+            {issue.description}
+          </p>
         </div>
       )}
 
       {issue.code_snippet && (
-        <div className="cyber-bg-elevated p-3 mb-3 border border-border rounded">
-          <div className="flex items-center justify-between mb-2 border-b border-border pb-1">
+        <div className="cyber-bg-elevated border-border mb-3 rounded border p-3">
+          <div className="border-border mb-2 flex items-center justify-between border-b pb-1">
             <div className="flex items-center space-x-1">
-              <div className="w-4 h-4 bg-primary rounded flex items-center justify-center">
-                <Code className="w-2 h-2 text-foreground" />
+              <div className="bg-primary flex h-4 w-4 items-center justify-center rounded">
+                <Code className="text-foreground h-2 w-2" />
               </div>
-              <span className="text-emerald-600 dark:text-emerald-400 text-xs font-bold font-mono uppercase">CODE_SNIPPET</span>
+              <span className="font-mono text-xs font-bold uppercase text-emerald-600 dark:text-emerald-400">
+                CODE_SNIPPET
+              </span>
             </div>
-            <span className="text-muted-foreground text-xs font-mono">LINE: {issue.line}</span>
+            <span className="text-muted-foreground font-mono text-xs">
+              LINE: {issue.line}
+            </span>
           </div>
-          <div className="bg-slate-100 dark:bg-black/40 p-2 border border-border rounded">
-            <pre className="text-xs text-emerald-700 dark:text-emerald-400 font-mono overflow-x-auto">
+          <div className="border-border rounded border bg-slate-100 p-2 dark:bg-black/40">
+            <pre className="overflow-x-auto font-mono text-xs text-emerald-700 dark:text-emerald-400">
               <code>{issue.code_snippet}</code>
             </pre>
           </div>
@@ -525,242 +811,234 @@ public class Example {
 
       <div className="space-y-3">
         {issue.suggestion && (
-          <div className="bg-sky-500/10 border border-sky-500/30 p-3 rounded">
-            <div className="flex items-center mb-2 border-b border-sky-500/20 pb-1">
-              <div className="w-5 h-5 bg-sky-500/20 border border-sky-500/40 rounded flex items-center justify-center mr-2">
-                <Lightbulb className="w-3 h-3 text-sky-600 dark:text-sky-400" />
+          <div className="rounded border border-sky-500/30 bg-sky-500/10 p-3">
+            <div className="mb-2 flex items-center border-b border-sky-500/20 pb-1">
+              <div className="mr-2 flex h-5 w-5 items-center justify-center rounded border border-sky-500/40 bg-sky-500/20">
+                <Lightbulb className="h-3 w-3 text-sky-600 dark:text-sky-400" />
               </div>
-              <span className="font-bold text-sky-700 dark:text-sky-300 text-sm uppercase">修复建议</span>
+              <span className="text-sm font-bold uppercase text-sky-700 dark:text-sky-300">
+                修复建议
+              </span>
             </div>
-            <p className="text-sky-800 dark:text-sky-200/80 text-xs leading-relaxed font-mono">{issue.suggestion}</p>
+            <p className="font-mono text-xs leading-relaxed text-sky-800 dark:text-sky-200/80">
+              {issue.suggestion}
+            </p>
           </div>
         )}
 
-        {issue.ai_explanation && (() => {
-          const parsedExplanation = parseAIExplanation(issue.ai_explanation);
+        {issue.ai_explanation &&
+          (() => {
+            const parsedExplanation = parseAIExplanation(issue.ai_explanation);
 
-          if (!parsedExplanation) {
-            return null;
-          }
+            if (!parsedExplanation) {
+              return null;
+            }
 
-          return (
-            <div className="bg-violet-500/10 border border-violet-500/30 p-3 rounded">
-              <div className="flex items-center mb-2 border-b border-violet-500/20 pb-1">
-                <div className="w-5 h-5 bg-violet-500/20 border border-violet-500/40 rounded flex items-center justify-center mr-2">
-                  <Zap className="w-3 h-3 text-violet-600 dark:text-violet-400" />
+            if (parsedExplanation.hasStructuredContent) {
+              return (
+                <div className="rounded border border-violet-500/30 bg-violet-500/10 p-3">
+                  <div className="mb-2 flex items-center border-b border-violet-500/20 pb-1">
+                    <div className="mr-2 flex h-5 w-5 items-center justify-center rounded border border-violet-500/40 bg-violet-500/20">
+                      <Zap className="h-3 w-3 text-violet-600 dark:text-violet-400" />
+                    </div>
+                    <span className="text-sm font-bold uppercase text-violet-700 dark:text-violet-300">
+                      AI 解释
+                    </span>
+                  </div>
+
+                  <div className="space-y-2 font-mono text-xs">
+                    {parsedExplanation.what && (
+                      <div className="border-l-2 border-rose-500 pl-2">
+                        <span className="font-bold uppercase text-rose-600 dark:text-rose-400">
+                          问题：
+                        </span>
+                        <span className="text-foreground ml-1 whitespace-pre-wrap break-all">
+                          {parsedExplanation.what}
+                        </span>
+                      </div>
+                    )}
+
+                    {parsedExplanation.why && (
+                      <div className="border-l-2 border-amber-500 pl-2">
+                        <span className="font-bold uppercase text-amber-600 dark:text-amber-400">
+                          原因：
+                        </span>
+                        <span className="text-foreground ml-1 whitespace-pre-wrap break-all">
+                          {parsedExplanation.why}
+                        </span>
+                      </div>
+                    )}
+
+                    {parsedExplanation.how && (
+                      <div className="border-l-2 border-emerald-500 pl-2">
+                        <span className="font-bold uppercase text-emerald-600 dark:text-emerald-400">
+                          方案：
+                        </span>
+                        <span className="text-foreground ml-1 whitespace-pre-wrap break-all">
+                          {parsedExplanation.how}
+                        </span>
+                      </div>
+                    )}
+
+                    {parsedExplanation.learnMore && (
+                      <div className="border-l-2 border-sky-500 pl-2">
+                        <span className="font-bold uppercase text-sky-600 dark:text-sky-400">
+                          链接：
+                        </span>
+                        {(() => {
+                          if (parsedExplanation.learnMoreHref) {
+                            return (
+                              <a
+                                className="ml-1 break-all font-bold text-sky-600 hover:text-sky-500 hover:underline dark:text-sky-400 dark:hover:text-sky-300"
+                                href={parsedExplanation.learnMoreHref}
+                                rel="noopener noreferrer"
+                                target="_blank"
+                              >
+                                {parsedExplanation.learnMore}
+                              </a>
+                            );
+                          }
+
+                          return (
+                            <span className="text-foreground ml-1 whitespace-pre-wrap break-all">
+                              {parsedExplanation.learnMore}
+                            </span>
+                          );
+                        })()}
+                      </div>
+                    )}
+
+                    {parsedExplanation.extraEntries.map((entry) => (
+                      <div
+                        className="border-l-2 border-violet-500/60 pl-2"
+                        key={entry.key}
+                      >
+                        <span className="font-bold uppercase text-violet-600 dark:text-violet-400">
+                          {entry.label}：
+                        </span>
+                        <span className="text-foreground ml-1 whitespace-pre-wrap break-all">
+                          {entry.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <span className="font-bold text-violet-700 dark:text-violet-300 text-sm uppercase">AI 解释</span>
-              </div>
+              );
+            }
 
-              {parsedExplanation.hasStructuredContent ? (
-                <div className="space-y-2 text-xs font-mono">
-                  {parsedExplanation.what && (
-                    <div className="border-l-2 border-rose-500 pl-2">
-                      <span className="font-bold text-rose-600 dark:text-rose-400 uppercase">问题：</span>
-                      <span className="text-foreground ml-1 whitespace-pre-wrap break-all">{parsedExplanation.what}</span>
-                    </div>
-                  )}
-
-                  {parsedExplanation.why && (
-                    <div className="border-l-2 border-amber-500 pl-2">
-                      <span className="font-bold text-amber-600 dark:text-amber-400 uppercase">原因：</span>
-                      <span className="text-foreground ml-1 whitespace-pre-wrap break-all">{parsedExplanation.why}</span>
-                    </div>
-                  )}
-
-                  {parsedExplanation.how && (
-                    <div className="border-l-2 border-emerald-500 pl-2">
-                      <span className="font-bold text-emerald-600 dark:text-emerald-400 uppercase">方案：</span>
-                      <span className="text-foreground ml-1 whitespace-pre-wrap break-all">{parsedExplanation.how}</span>
-                    </div>
-                  )}
-
-                  {parsedExplanation.learnMore && (
-                    <div className="border-l-2 border-sky-500 pl-2">
-                      <span className="font-bold text-sky-600 dark:text-sky-400 uppercase">链接：</span>
-                      {parsedExplanation.learnMoreHref ? (
-                        <a
-                          href={parsedExplanation.learnMoreHref}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-sky-600 dark:text-sky-400 hover:text-sky-500 dark:hover:text-sky-300 hover:underline ml-1 font-bold break-all"
-                        >
-                          {parsedExplanation.learnMore}
-                        </a>
-                      ) : (
-                        <span className="text-foreground ml-1 whitespace-pre-wrap break-all">{parsedExplanation.learnMore}</span>
-                      )}
-                    </div>
-                  )}
-
-                  {parsedExplanation.extraEntries.map((entry) => (
-                    <div key={entry.key} className="border-l-2 border-violet-500/60 pl-2">
-                      <span className="font-bold text-violet-600 dark:text-violet-400 uppercase">{entry.label}：</span>
-                      <span className="text-foreground ml-1 whitespace-pre-wrap break-all">{entry.value}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : parsedExplanation.rawText ? (
-                <p className="text-foreground text-xs leading-relaxed font-mono whitespace-pre-wrap break-all">
+            if (parsedExplanation.rawText) {
+              return (
+                <p className="text-foreground whitespace-pre-wrap break-all font-mono text-xs leading-relaxed">
                   {parsedExplanation.rawText}
                 </p>
-              ) : null}
-            </div>
-          );
-        })()}
+              );
+            }
+
+            return null;
+          })()}
       </div>
     </div>
   );
 
   return (
-    <div className="space-y-6 p-6 cyber-bg-elevated min-h-screen font-mono relative">
+    <div className="cyber-bg-elevated relative min-h-screen space-y-6 p-6 font-mono">
       {/* Grid background */}
-      <div className="absolute inset-0 cyber-grid-subtle pointer-events-none" />
+      <div className="cyber-grid-subtle pointer-events-none absolute inset-0" />
 
       {/* History Panel */}
       {showHistory && (
-        <div className="cyber-card p-0 relative z-10">
+        <div className="cyber-card relative z-10 p-0">
           <div className="cyber-card-header">
-            <History className="w-5 h-5 text-primary" />
-            <h3 className="text-lg font-bold uppercase tracking-wider text-foreground">分析历史记录</h3>
+            <History className="text-primary h-5 w-5" />
+            <h3 className="text-foreground text-lg font-bold uppercase tracking-wider">
+              分析历史记录
+            </h3>
             <div className="ml-auto flex items-center gap-2">
               {historyRecords.length > 0 && (
                 <Button
-                  variant="outline"
+                  className="cyber-btn h-8 border-rose-500/30 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20"
                   onClick={clearAllHistory}
                   size="sm"
-                  className="cyber-btn bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20 h-8"
+                  variant="outline"
                 >
                   清空全部
                 </Button>
               )}
               <Button
-                variant="outline"
+                className="cyber-btn-ghost h-8 w-8 p-0"
                 onClick={() => setShowHistory(false)}
                 size="sm"
-                className="cyber-btn-ghost h-8 w-8 p-0"
+                variant="outline"
               >
-                <X className="w-4 h-4" />
+                <X className="h-4 w-4" />
               </Button>
             </div>
           </div>
-          <div className="p-4">
-            {loadingHistory ? (
-              <div className="text-center py-8">
-                <div className="loading-spinner mx-auto mb-4"></div>
-                <p className="text-muted-foreground font-mono">加载中...</p>
-              </div>
-            ) : historyRecords.length === 0 ? (
-              <div className="empty-state">
-                <History className="empty-state-icon" />
-                <p className="empty-state-title">暂无历史记录</p>
-                <p className="empty-state-description">完成代码分析后，记录将显示在这里</p>
-              </div>
-            ) : (
-              <ScrollArea className="h-[400px]">
-                <div className="space-y-3">
-                  {historyRecords.map((record) => (
-                    <button
-                      key={record.id}
-                      type="button"
-                      className={`p-4 rounded-lg border transition-colors cursor-pointer ${
-                        selectedHistoryId === record.id
-                          ? 'bg-primary/10 border-primary/30'
-                          : 'bg-muted/50 border-border hover:bg-muted hover:border-border'
-                      } w-full text-left`}
-                      onClick={() => viewHistoryRecord(record)}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <Badge className="cyber-badge-muted">{record.language}</Badge>
-                          <span className="text-sm font-mono text-muted-foreground">{formatDate(record.created_at)}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Badge className={`font-mono ${
-                            record.quality_score >= 80 ? 'cyber-badge-success' :
-                            record.quality_score >= 60 ? 'cyber-badge-warning' :
-                            'cyber-badge-danger'
-                          }`}>
-                            评分: {(record.quality_score ?? 0).toFixed(1)}
-                          </Badge>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => deleteHistoryRecord(e, record.id)}
-                            className="h-6 w-6 p-0 hover:bg-rose-500/10 hover:text-rose-400"
-                          >
-                            <X className="w-3 h-3" />
-                          </Button>
-                          <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4 text-xs font-mono text-muted-foreground">
-                        <span className="flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" />
-                          {record.issues_count} 个问题
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
-                          {(record.analysis_time ?? 0).toFixed(2)}s
-                        </span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </ScrollArea>
-            )}
-          </div>
+          <div className="p-4">{historyContent}</div>
         </div>
       )}
 
       {/* Code Input Area */}
-      <div className="cyber-card p-0 relative z-10">
+      <div className="cyber-card relative z-10 p-0">
         <div className="cyber-card-header">
-          <Terminal className="w-5 h-5 text-primary" />
-          <h3 className="text-lg font-bold uppercase tracking-wider text-foreground">
-            {analysisMode === "snippet" ? "代码分析" : "仓库分析"}
+          <Terminal className="text-primary h-5 w-5" />
+          <h3 className="text-foreground text-lg font-bold uppercase tracking-wider">
+            {analysisMode === 'snippet' ? '代码分析' : '仓库分析'}
           </h3>
           <div className="ml-auto flex items-center gap-2">
             <Button
-              variant="outline"
+              className={`h-8 ${showHistory ? 'cyber-btn-primary' : 'cyber-btn-outline'}`}
               onClick={toggleHistory}
               size="sm"
-              className={`h-8 ${showHistory ? 'cyber-btn-primary' : 'cyber-btn-outline'}`}
+              variant="outline"
             >
-              <History className="w-4 h-4 mr-2" />
+              <History className="mr-2 h-4 w-4" />
               历史记录
             </Button>
             {result && (
-              <Button variant="outline" onClick={clearAnalysis} size="sm" className="cyber-btn-outline h-8">
-                <X className="w-4 h-4 mr-2" />
+              <Button
+                className="cyber-btn-outline h-8"
+                onClick={clearAnalysis}
+                size="sm"
+                variant="outline"
+              >
+                <X className="mr-2 h-4 w-4" />
                 重新分析
               </Button>
             )}
           </div>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="space-y-4 p-6">
           <Tabs
-            value={analysisMode}
-            onValueChange={(value) => setAnalysisMode(value as AnalysisMode)}
             className="space-y-4"
+            onValueChange={(value) => setAnalysisMode(value as AnalysisMode)}
+            value={analysisMode}
           >
-            <TabsList className="grid w-full grid-cols-2 bg-muted border border-border p-1 h-auto gap-1 rounded-lg">
-              <TabsTrigger value="snippet" className="data-[state=active]:bg-primary data-[state=active]:text-foreground font-mono font-bold uppercase py-2.5 text-muted-foreground transition-all rounded text-xs flex items-center gap-2">
-                <Code className="w-3 h-3" />
+            <TabsList className="bg-muted border-border grid h-auto w-full grid-cols-2 gap-1 rounded-lg border p-1">
+              <TabsTrigger
+                className="data-[state=active]:bg-primary data-[state=active]:text-foreground text-muted-foreground flex items-center gap-2 rounded py-2.5 font-mono text-xs font-bold uppercase transition-all"
+                value="snippet"
+              >
+                <Code className="h-3 w-3" />
                 代码片段
               </TabsTrigger>
-              <TabsTrigger value="repository" className="data-[state=active]:bg-primary data-[state=active]:text-foreground font-mono font-bold uppercase py-2.5 text-muted-foreground transition-all rounded text-xs flex items-center gap-2">
-                <FolderGit2 className="w-3 h-3" />
+              <TabsTrigger
+                className="data-[state=active]:bg-primary data-[state=active]:text-foreground text-muted-foreground flex items-center gap-2 rounded py-2.5 font-mono text-xs font-bold uppercase transition-all"
+                value="repository"
+              >
+                <FolderGit2 className="h-3 w-3" />
                 仓库项目
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="snippet" className="space-y-4">
-              <div className="flex flex-col sm:flex-row gap-3">
+            <TabsContent className="space-y-4" value="snippet">
+              <div className="flex flex-col gap-3 sm:flex-row">
                 <div className="flex-1 space-y-1">
-                  <Label className="text-xs font-bold text-muted-foreground uppercase">编程语言</Label>
-                  <Select value={language} onValueChange={setLanguage}>
+                  <Label className="text-muted-foreground text-xs font-bold uppercase">
+                    编程语言
+                  </Label>
+                  <Select onValueChange={setLanguage} value={language}>
                     <SelectTrigger className="cyber-input h-10">
                       <SelectValue placeholder="选择编程语言" />
                     </SelectTrigger>
@@ -774,11 +1052,16 @@ public class Example {
                   </Select>
                 </div>
                 <div className="flex-1 space-y-1">
-                  <Label className="text-xs font-bold text-muted-foreground uppercase">提示词模板</Label>
-                  <Select value={selectedPromptTemplateId} onValueChange={setSelectedPromptTemplateId}>
+                  <Label className="text-muted-foreground text-xs font-bold uppercase">
+                    提示词模板
+                  </Label>
+                  <Select
+                    onValueChange={setSelectedPromptTemplateId}
+                    value={selectedPromptTemplateId}
+                  >
                     <SelectTrigger className="cyber-input h-10">
                       <div className="flex items-center gap-2">
-                        <MessageSquare className="w-4 h-4 text-violet-400" />
+                        <MessageSquare className="h-4 w-4 text-violet-400" />
                         <SelectValue placeholder="选择提示词模板" />
                       </div>
                     </SelectTrigger>
@@ -793,34 +1076,36 @@ public class Example {
                 </div>
                 <div className="flex items-end">
                   <Button
-                    variant="outline"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={analyzing}
                     className="cyber-btn-outline h-10"
+                    disabled={analyzing}
+                    onClick={() => fileInputRef.current?.click()}
+                    variant="outline"
                   >
-                    <Upload className="w-4 h-4 mr-2" />
+                    <Upload className="mr-2 h-4 w-4" />
                     上传文件
                   </Button>
                 </div>
                 <input
+                  accept=".js,.jsx,.ts,.tsx,.py,.java,.go,.rs,.cpp,.c,.cc,.h,.hh,.cs,.php,.rb,.swift,.kt"
+                  className="hidden"
+                  onChange={handleFileUpload}
                   ref={fileInputRef}
                   type="file"
-                  accept=".js,.jsx,.ts,.tsx,.py,.java,.go,.rs,.cpp,.c,.cc,.h,.hh,.cs,.php,.rb,.swift,.kt"
-                  onChange={handleFileUpload}
-                  className="hidden"
                 />
               </div>
 
-              <div className="flex flex-wrap gap-2 items-center p-3 bg-muted border border-border rounded">
-                <span className="text-xs font-bold uppercase text-muted-foreground mr-2">示例：</span>
+              <div className="bg-muted border-border flex flex-wrap items-center gap-2 rounded border p-3">
+                <span className="text-muted-foreground mr-2 text-xs font-bold uppercase">
+                  示例：
+                </span>
                 {['javascript', 'python', 'java'].map((lang) => (
                   <Button
-                    key={lang}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => loadExampleCode(lang)}
+                    className="cyber-btn-ghost h-7 px-2 text-xs"
                     disabled={analyzing}
-                    className="h-7 px-2 text-xs cyber-btn-ghost"
+                    key={lang}
+                    onClick={() => loadExampleCode(lang)}
+                    size="sm"
+                    variant="outline"
                   >
                     {lang.charAt(0).toUpperCase() + lang.slice(1)}
                   </Button>
@@ -828,125 +1113,139 @@ public class Example {
               </div>
 
               <div className="relative">
-                <div className="absolute top-0 right-0 bg-muted text-muted-foreground px-2 py-1 text-xs font-mono uppercase z-10 rounded-bl border-l border-b border-border">
+                <div className="bg-muted text-muted-foreground border-border absolute right-0 top-0 z-10 rounded-bl border-b border-l px-2 py-1 font-mono text-xs uppercase">
                   Editor
                 </div>
                 <Textarea
+                  className="cyber-bg-elevated border-border focus:border-primary/50 placeholder:text-muted-foreground min-h-[300px] border p-4 font-mono text-sm text-emerald-400 focus:ring-0"
+                  disabled={analyzing}
+                  onChange={(e) => setCode(e.target.value)}
                   placeholder="// 粘贴代码或上传文件..."
                   value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  className="min-h-[300px] font-mono text-sm cyber-bg-elevated text-emerald-400 border border-border p-4 focus:ring-0 focus:border-primary/50 placeholder:text-muted-foreground"
-                  disabled={analyzing}
                 />
-                <div className="text-xs text-muted-foreground mt-1 font-mono text-right">
+                <div className="text-muted-foreground mt-1 text-right font-mono text-xs">
                   {code.length} 字符，{code.split('\n').length} 行
                 </div>
               </div>
 
               <Button
-                onClick={handleAnalyze}
+                className="cyber-btn-primary h-12 w-full text-lg font-bold uppercase"
                 disabled={!code.trim() || !language || analyzing}
-                className="w-full cyber-btn-primary h-12 text-lg font-bold uppercase"
+                onClick={handleAnalyze}
               >
                 {analyzing ? (
                   <>
-                    <div className="loading-spinner w-5 h-5 mr-3"></div>
+                    <div className="loading-spinner mr-3 h-5 w-5"></div>
                     分析中...
                   </>
                 ) : (
                   <>
-                    <Zap className="w-5 h-5 mr-2" />
+                    <Zap className="mr-2 h-5 w-5" />
                     开始分析
                   </>
                 )}
               </Button>
             </TabsContent>
 
-            <TabsContent value="repository" className="space-y-4">
-              <div className="rounded-lg border border-border bg-muted/40 p-4">
-                <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                  <FolderGit2 className="w-4 h-4 text-primary" />
+            <TabsContent className="space-y-4" value="repository">
+              <div className="border-border bg-muted/40 rounded-lg border p-4">
+                <div className="text-foreground flex items-center gap-2 text-sm font-semibold">
+                  <FolderGit2 className="text-primary h-4 w-4" />
                   启动真实仓库审计任务
                 </div>
-                <p className="mt-2 text-xs leading-6 text-muted-foreground">
-                  这里会直接复用 FocusAudit 的仓库扫描后端，创建正式审计任务并跳转到任务详情，而不是走任何 mock 流程。
+                <p className="text-muted-foreground mt-2 text-xs leading-6">
+                  这里会直接复用 FocusAudit
+                  的仓库扫描后端，创建正式审计任务并跳转到任务详情，而不是走任何
+                  mock 流程。
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)] gap-4">
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
                 <div className="space-y-3">
-                  <Label className="text-xs font-bold text-muted-foreground uppercase">仓库项目</Label>
+                  <Label className="text-muted-foreground text-xs font-bold uppercase">
+                    仓库项目
+                  </Label>
                   <div className="relative">
-                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Search className="text-muted-foreground absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" />
                     <Input
-                      value={projectSearch}
+                      className="cyber-input pl-10"
                       onChange={(event) => setProjectSearch(event.target.value)}
                       placeholder="搜索项目名称或仓库地址"
-                      className="cyber-input pl-10"
+                      value={projectSearch}
                     />
                   </div>
                   <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-                    {loadingProjects ? (
-                      <div className="cyber-card p-6 text-center text-sm font-mono text-muted-foreground">加载仓库项目中...</div>
-                    ) : filteredProjects.length === 0 ? (
-                      <div className="cyber-card p-6 text-center text-sm font-mono text-muted-foreground">当前没有可用于仓库分析的项目</div>
-                    ) : (
-                      filteredProjects.map((project) => {
-                        const active = project.id === selectedProjectId;
-                        return (
-                          <button
-                            key={project.id}
-                            type="button"
-                            onClick={() => setSelectedProjectId(project.id)}
-                            className={`w-full rounded-lg border p-4 text-left transition-all ${
-                              active
-                                ? "border-primary bg-primary/10 shadow-[0_0_0_1px_rgba(255,107,44,0.35)]"
-                                : "border-border bg-background hover:border-primary/40"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="min-w-0">
-                                <div className="font-semibold text-foreground">{project.name}</div>
-                                <div className="mt-1 truncate text-xs font-mono text-muted-foreground">
-                                  {project.repository_url}
-                                </div>
-                              </div>
-                              <Badge variant="outline" className="font-mono uppercase">
-                                {project.repository_type || "other"}
-                              </Badge>
-                            </div>
-                            <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
-                              <span>默认分支: {project.default_branch || "main"}</span>
-                              {project.description && <span className="truncate">{project.description}</span>}
-                            </div>
-                          </button>
-                        );
-                      })
-                    )}
+                    {projectListContent}
                   </div>
                 </div>
 
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <Label className="text-xs font-bold text-muted-foreground uppercase">目标分支</Label>
+                    <Label className="text-muted-foreground text-xs font-bold uppercase">
+                      目标分支
+                    </Label>
                     <BranchSelector
-                      value={selectedBranch}
-                      onChange={setSelectedBranch}
                       branches={availableBranches}
-                      disabled={!selectedProjectId || loadingBranches}
                       className="h-10 w-full"
+                      disabled={!selectedProjectId || loadingBranches}
+                      onChange={setSelectedBranch}
+                      value={selectedBranch}
                     />
-                    <p className="text-xs text-muted-foreground">
-                      {loadingBranches ? "正在拉取分支列表..." : `可选分支 ${availableBranches.length || 0} 个`}
+                    <p className="text-muted-foreground text-xs">
+                      {loadingBranches
+                        ? '正在拉取分支列表...'
+                        : `可选分支 ${availableBranches.length || 0} 个`}
                     </p>
                   </div>
 
+                  {selectedProject && isMultiRepository(selectedProject) && (
+                    <>
+                      <div className="space-y-2">
+                        <Label className="text-muted-foreground text-xs font-bold uppercase">
+                          Manifest XML
+                        </Label>
+                        <Input
+                          className="cyber-input h-10"
+                          onChange={(event) =>
+                            setSelectedManifestXml(event.target.value)
+                          }
+                          placeholder={
+                            selectedProject.manifest_xml || 'default.xml'
+                          }
+                          value={selectedManifestXml}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-muted-foreground text-xs font-bold uppercase">
+                          Group
+                        </Label>
+                        <Input
+                          className="cyber-input h-10"
+                          onChange={(event) =>
+                            setSelectedGroup(event.target.value)
+                          }
+                          placeholder={selectedProject.group || '可选'}
+                          value={selectedGroup}
+                        />
+                        <p className="text-muted-foreground text-xs">
+                          多仓会按 `git mm init -u ... -b ... -m ... [-g ...]`
+                          后再执行 `git mm sync`
+                        </p>
+                      </div>
+                    </>
+                  )}
+
                   <div className="space-y-2">
-                    <Label className="text-xs font-bold text-muted-foreground uppercase">提示词模板</Label>
-                    <Select value={selectedPromptTemplateId} onValueChange={setSelectedPromptTemplateId}>
+                    <Label className="text-muted-foreground text-xs font-bold uppercase">
+                      提示词模板
+                    </Label>
+                    <Select
+                      onValueChange={setSelectedPromptTemplateId}
+                      value={selectedPromptTemplateId}
+                    >
                       <SelectTrigger className="cyber-input h-10">
                         <div className="flex items-center gap-2">
-                          <MessageSquare className="w-4 h-4 text-violet-400" />
+                          <MessageSquare className="h-4 w-4 text-violet-400" />
                           <SelectValue placeholder="选择提示词模板" />
                         </div>
                       </SelectTrigger>
@@ -961,10 +1260,14 @@ public class Example {
                   </div>
 
                   <div className="space-y-2">
-                    <Label className="text-xs font-bold text-muted-foreground uppercase">分析深度</Label>
+                    <Label className="text-muted-foreground text-xs font-bold uppercase">
+                      分析深度
+                    </Label>
                     <Select
+                      onValueChange={(value: 'basic' | 'deep' | 'standard') =>
+                        setRepositoryAnalysisDepth(value)
+                      }
                       value={repositoryAnalysisDepth}
-                      onValueChange={(value: "basic" | "standard" | "deep") => setRepositoryAnalysisDepth(value)}
                     >
                       <SelectTrigger className="cyber-input h-10">
                         <SelectValue />
@@ -978,42 +1281,75 @@ public class Example {
                   </div>
 
                   <div className="space-y-2">
-                    <Label className="text-xs font-bold text-muted-foreground uppercase">排除模式</Label>
+                    <Label className="text-muted-foreground text-xs font-bold uppercase">
+                      排除模式
+                    </Label>
                     <Textarea
-                      value={repositoryExcludePatterns}
-                      onChange={(event) => setRepositoryExcludePatterns(event.target.value)}
-                      placeholder={"每行一个，或使用逗号分隔，例如\nnode_modules/**\ndist/**\n*.min.js"}
                       className="cyber-input min-h-32 font-mono text-xs"
+                      onChange={(event) =>
+                        setRepositoryExcludePatterns(event.target.value)
+                      }
+                      placeholder={
+                        '每行一个，或使用逗号分隔，例如\nnode_modules/**\ndist/**\n*.min.js'
+                      }
+                      value={repositoryExcludePatterns}
                     />
                   </div>
 
                   {selectedProject && (
-                    <div className="rounded-lg border border-border bg-muted/30 p-4 text-xs font-mono text-muted-foreground">
-                      <div className="flex items-center gap-2 text-foreground">
-                        <GitBranch className="w-4 h-4 text-primary" />
+                    <div className="border-border bg-muted/30 text-muted-foreground rounded-lg border p-4 font-mono text-xs">
+                      <div className="text-foreground flex items-center gap-2">
+                        <GitBranch className="text-primary h-4 w-4" />
                         当前项目
                       </div>
                       <div className="mt-3 space-y-2">
                         <div>名称: {selectedProject.name}</div>
-                        <div className="break-all">仓库: {selectedProject.repository_url}</div>
-                        <div>默认分支: {selectedProject.default_branch || "main"}</div>
+                        <div className="break-all">
+                          仓库: {selectedProject.repository_url}
+                        </div>
+                        <div>
+                          模式:{' '}
+                          {getRepositoryTypeLabel(
+                            selectedProject.repository_type,
+                          )}
+                        </div>
+                        <div>
+                          默认分支: {selectedProject.default_branch || 'main'}
+                        </div>
+                        {isMultiRepository(selectedProject) && (
+                          <>
+                            <div>
+                              Manifest: {selectedManifestXml || '未设置'}
+                            </div>
+                            <div>Group: {selectedGroup || '未设置'}</div>
+                          </>
+                        )}
                       </div>
                     </div>
                   )}
 
                   <Button
+                    className="cyber-btn-primary h-12 w-full text-base font-bold uppercase"
+                    disabled={
+                      !selectedProjectId ||
+                      !selectedBranch ||
+                      (selectedProject
+                        ? isMultiRepository(selectedProject) &&
+                          !selectedManifestXml.trim()
+                        : false) ||
+                      analyzing ||
+                      !canCreateAuditTask
+                    }
                     onClick={handleRepositoryAnalyze}
-                    disabled={!selectedProjectId || !selectedBranch || analyzing || !canCreateAuditTask}
-                    className="w-full cyber-btn-primary h-12 text-base font-bold uppercase"
                   >
                     {analyzing ? (
                       <>
-                        <div className="loading-spinner w-5 h-5 mr-3"></div>
+                        <div className="loading-spinner mr-3 h-5 w-5"></div>
                         创建任务中...
                       </>
                     ) : (
                       <>
-                        <FolderGit2 className="w-5 h-5 mr-2" />
+                        <FolderGit2 className="mr-2 h-5 w-5" />
                         启动仓库审计
                       </>
                     )}
@@ -1032,25 +1368,29 @@ public class Example {
 
       {/* Analysis Results */}
       {result && (
-        <div className="space-y-6 relative z-10">
+        <div className="relative z-10 space-y-6">
           {/* Results Overview */}
           <div className="cyber-card p-0">
             <div className="cyber-card-header">
-              <CheckCircle className="w-5 h-5 text-emerald-400" />
-              <h3 className="text-lg font-bold uppercase tracking-wider text-foreground">分析结果</h3>
+              <CheckCircle className="h-5 w-5 text-emerald-400" />
+              <h3 className="text-foreground text-lg font-bold uppercase tracking-wider">
+                分析结果
+              </h3>
               <div className="ml-auto flex items-center gap-2">
                 <Badge className="cyber-badge-muted">
-                  <Clock className="w-3 h-3 mr-1" />
+                  <Clock className="mr-1 h-3 w-3" />
                   {(analysisTime ?? 0).toFixed(2)}s
                 </Badge>
-                <Badge className="cyber-badge-muted uppercase">{language}</Badge>
+                <Badge className="cyber-badge-muted uppercase">
+                  {language}
+                </Badge>
                 {canExportReport && (
                   <Button
-                    size="sm"
-                    onClick={() => setExportDialogOpen(true)}
                     className="cyber-btn-primary h-8"
+                    onClick={() => setExportDialogOpen(true)}
+                    size="sm"
                   >
-                    <Download className="w-4 h-4 mr-2" />
+                    <Download className="mr-2 h-4 w-4" />
                     导出报告
                   </Button>
                 )}
@@ -1058,69 +1398,90 @@ public class Example {
             </div>
             <div className="p-6">
               {/* Core Metrics */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+              <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <div className="cyber-card p-4 text-center">
-                  <div className="stat-icon mx-auto mb-3 text-primary">
-                    <Target className="w-6 h-6" />
+                  <div className="stat-icon text-primary mx-auto mb-3">
+                    <Target className="h-6 w-6" />
                   </div>
                   <div className="stat-value text-primary mb-1">
                     {(result.quality_score ?? 0).toFixed(1)}
                   </div>
                   <p className="stat-label mb-2">质量评分</p>
-                  <Progress value={result.quality_score ?? 0} className="h-2 bg-muted [&>div]:bg-primary" />
+                  <Progress
+                    className="bg-muted [&>div]:bg-primary h-2"
+                    value={result.quality_score ?? 0}
+                  />
                 </div>
 
                 <div className="cyber-card p-4 text-center">
                   <div className="stat-icon mx-auto mb-3 text-rose-400">
-                    <AlertTriangle className="w-6 h-6" />
+                    <AlertTriangle className="h-6 w-6" />
                   </div>
-                  <div className="stat-value text-rose-400 mb-1">
-                    {(result.summary?.critical_issues ?? 0) + (result.summary?.high_issues ?? 0)}
+                  <div className="stat-value mb-1 text-rose-400">
+                    {(result.summary?.critical_issues ?? 0) +
+                      (result.summary?.high_issues ?? 0)}
                   </div>
                   <p className="stat-label mb-1">严重问题</p>
-                  <div className="text-xs text-rose-400 uppercase">需要立即处理</div>
+                  <div className="text-xs uppercase text-rose-400">
+                    需要立即处理
+                  </div>
                 </div>
 
                 <div className="cyber-card p-4 text-center">
                   <div className="stat-icon mx-auto mb-3 text-amber-400">
-                    <Info className="w-6 h-6" />
+                    <Info className="h-6 w-6" />
                   </div>
-                  <div className="stat-value text-amber-400 mb-1">
-                    {(result.summary?.medium_issues ?? 0) + (result.summary?.low_issues ?? 0)}
+                  <div className="stat-value mb-1 text-amber-400">
+                    {(result.summary?.medium_issues ?? 0) +
+                      (result.summary?.low_issues ?? 0)}
                   </div>
                   <p className="stat-label mb-1">一般问题</p>
-                  <div className="text-xs text-amber-400 uppercase">建议优化</div>
+                  <div className="text-xs uppercase text-amber-400">
+                    建议优化
+                  </div>
                 </div>
 
                 <div className="cyber-card p-4 text-center">
                   <div className="stat-icon mx-auto mb-3 text-emerald-400">
-                    <FileText className="w-6 h-6" />
+                    <FileText className="h-6 w-6" />
                   </div>
-                  <div className="stat-value text-emerald-400 mb-1">
+                  <div className="stat-value mb-1 text-emerald-400">
                     {result.issues.length}
                   </div>
                   <p className="stat-label mb-1">总问题数</p>
-                  <div className="text-xs text-emerald-400 uppercase">已全部识别</div>
+                  <div className="text-xs uppercase text-emerald-400">
+                    已全部识别
+                  </div>
                 </div>
               </div>
 
               {/* Detailed Metrics */}
-              <div className="bg-muted border border-border p-4 rounded-lg">
-                <h3 className="section-title text-sm mb-4 flex items-center gap-2">
-                  <TrendingUp className="w-4 h-4" />
+              <div className="bg-muted border-border rounded-lg border p-4">
+                <h3 className="section-title mb-4 flex items-center gap-2 text-sm">
+                  <TrendingUp className="h-4 w-4" />
                   详细指标
                 </h3>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 font-mono">
+                <div className="grid grid-cols-2 gap-6 font-mono lg:grid-cols-4">
                   {[
                     { label: '复杂度', value: result.metrics?.complexity ?? 0 },
-                    { label: '可维护性', value: result.metrics?.maintainability ?? 0 },
+                    {
+                      label: '可维护性',
+                      value: result.metrics?.maintainability ?? 0,
+                    },
                     { label: '安全性', value: result.metrics?.security ?? 0 },
                     { label: '性能', value: result.metrics?.performance ?? 0 },
                   ].map((metric) => (
-                    <div key={metric.label} className="text-center">
-                      <div className="text-xl font-bold text-foreground mb-1">{metric.value}</div>
-                      <p className="text-xs text-muted-foreground uppercase mb-2">{metric.label}</p>
-                      <Progress value={metric.value} className="h-2 bg-muted [&>div]:bg-primary" />
+                    <div className="text-center" key={metric.label}>
+                      <div className="text-foreground mb-1 text-xl font-bold">
+                        {metric.value}
+                      </div>
+                      <p className="text-muted-foreground mb-2 text-xs uppercase">
+                        {metric.label}
+                      </p>
+                      <Progress
+                        className="bg-muted [&>div]:bg-primary h-2"
+                        value={metric.value}
+                      />
                     </div>
                   ))}
                 </div>
@@ -1131,54 +1492,113 @@ public class Example {
           {/* Issues Detail */}
           <div className="cyber-card p-0">
             <div className="cyber-card-header">
-              <Shield className="w-5 h-5 text-amber-400" />
-              <h3 className="text-lg font-bold uppercase tracking-wider text-foreground">发现的问题 ({result.issues.length})</h3>
+              <Shield className="h-5 w-5 text-amber-400" />
+              <h3 className="text-foreground text-lg font-bold uppercase tracking-wider">
+                发现的问题 ({result.issues.length})
+              </h3>
             </div>
             <div className="p-6">
               {result.issues.length > 0 ? (
-                <Tabs defaultValue="all" className="w-full">
-                  <TabsList className="grid w-full grid-cols-4 bg-muted border border-border p-1 h-auto gap-1 rounded mb-6">
-                    <TabsTrigger value="all" className="data-[state=active]:bg-primary data-[state=active]:text-foreground font-mono font-bold uppercase py-2 text-muted-foreground transition-all rounded-sm text-xs">
+                <Tabs className="w-full" defaultValue="all">
+                  <TabsList className="bg-muted border-border mb-6 grid h-auto w-full grid-cols-4 gap-1 rounded border p-1">
+                    <TabsTrigger
+                      className="data-[state=active]:bg-primary data-[state=active]:text-foreground text-muted-foreground rounded-sm py-2 font-mono text-xs font-bold uppercase transition-all"
+                      value="all"
+                    >
                       全部 ({result.issues.length})
                     </TabsTrigger>
-                    <TabsTrigger value="critical" className="data-[state=active]:bg-rose-500 data-[state=active]:text-foreground font-mono font-bold uppercase py-2 text-muted-foreground transition-all rounded-sm text-xs">
-                      严重 ({result.issues.filter(i => i.severity === 'critical').length})
+                    <TabsTrigger
+                      className="data-[state=active]:text-foreground text-muted-foreground rounded-sm py-2 font-mono text-xs font-bold uppercase transition-all data-[state=active]:bg-rose-500"
+                      value="critical"
+                    >
+                      严重 (
+                      {
+                        result.issues.filter((i) => i.severity === 'critical')
+                          .length
+                      }
+                      )
                     </TabsTrigger>
-                    <TabsTrigger value="high" className="data-[state=active]:bg-orange-500 data-[state=active]:text-foreground font-mono font-bold uppercase py-2 text-muted-foreground transition-all rounded-sm text-xs">
-                      高 ({result.issues.filter(i => i.severity === 'high').length})
+                    <TabsTrigger
+                      className="data-[state=active]:text-foreground text-muted-foreground rounded-sm py-2 font-mono text-xs font-bold uppercase transition-all data-[state=active]:bg-orange-500"
+                      value="high"
+                    >
+                      高 (
+                      {
+                        result.issues.filter((i) => i.severity === 'high')
+                          .length
+                      }
+                      )
                     </TabsTrigger>
-                    <TabsTrigger value="medium" className="data-[state=active]:bg-amber-500 data-[state=active]:text-background font-mono font-bold uppercase py-2 text-muted-foreground transition-all rounded-sm text-xs">
-                      中等 ({result.issues.filter(i => i.severity === 'medium').length})
+                    <TabsTrigger
+                      className="data-[state=active]:text-background text-muted-foreground rounded-sm py-2 font-mono text-xs font-bold uppercase transition-all data-[state=active]:bg-amber-500"
+                      value="medium"
+                    >
+                      中等 (
+                      {
+                        result.issues.filter((i) => i.severity === 'medium')
+                          .length
+                      }
+                      )
                     </TabsTrigger>
                   </TabsList>
 
-                  <TabsContent value="all" className="space-y-4 mt-0">
-                    {result.issues.map((issue, index) => renderIssue(issue, index))}
+                  <TabsContent className="mt-0 space-y-4" value="all">
+                    {result.issues.map((issue, index) =>
+                      renderIssue(issue, index),
+                    )}
                   </TabsContent>
 
-                  {['critical', 'high', 'medium'].map(severity => (
-                    <TabsContent key={severity} value={severity} className="space-y-4 mt-0">
-                      {result.issues.filter(issue => issue.severity === severity).length > 0 ? (
-                        result.issues.filter(issue => issue.severity === severity).map((issue, index) => renderIssue(issue, index))
-                      ) : (
-                        <div className="cyber-card p-12 text-center border-dashed">
-                          <CheckCircle className="w-16 h-16 text-emerald-400 mx-auto mb-4" />
-                          <h3 className="text-lg font-bold text-foreground uppercase mb-2">
-                            没有发现{severity === 'critical' ? '严重' : severity === 'high' ? '高优先级' : '中等优先级'}问题
-                          </h3>
-                          <p className="text-muted-foreground font-mono">代码在此级别的检查中表现良好</p>
-                        </div>
-                      )}
+                  {['critical', 'high', 'medium'].map((severity) => (
+                    <TabsContent
+                      className="mt-0 space-y-4"
+                      key={severity}
+                      value={severity}
+                    >
+                      {(() => {
+                        const severityLabel = (() => {
+                          if (severity === 'critical') {
+                            return '严重';
+                          }
+                          if (severity === 'high') {
+                            return '高优先级';
+                          }
+                          return '中等优先级';
+                        })();
+
+                        return result.issues.some(
+                          (issue) => issue.severity === severity,
+                        ) ? (
+                          result.issues
+                            .filter((issue) => issue.severity === severity)
+                            .map((issue, index) => renderIssue(issue, index))
+                        ) : (
+                          <div className="cyber-card border-dashed p-12 text-center">
+                            <CheckCircle className="mx-auto mb-4 h-16 w-16 text-emerald-400" />
+                            <h3 className="text-foreground mb-2 text-lg font-bold uppercase">
+                              没有发现
+                              {severityLabel}
+                              问题
+                            </h3>
+                            <p className="text-muted-foreground font-mono">
+                              代码在此级别的检查中表现良好
+                            </p>
+                          </div>
+                        );
+                      })()}
                     </TabsContent>
                   ))}
                 </Tabs>
               ) : (
-                <div className="cyber-card p-16 text-center border-dashed">
-                  <CheckCircle className="w-16 h-16 text-emerald-600 dark:text-emerald-400 mx-auto mb-4" />
-                  <h3 className="text-xl font-bold text-emerald-700 dark:text-emerald-300 mb-2 uppercase">代码质量优秀！</h3>
-                  <p className="text-emerald-600 dark:text-emerald-400/80 mb-4 font-mono">恭喜！没有发现任何问题</p>
-                  <div className="bg-emerald-500/10 border border-emerald-500/30 p-4 max-w-md mx-auto rounded">
-                    <p className="text-emerald-700 dark:text-emerald-300/80 text-sm font-mono">
+                <div className="cyber-card border-dashed p-16 text-center">
+                  <CheckCircle className="mx-auto mb-4 h-16 w-16 text-emerald-600 dark:text-emerald-400" />
+                  <h3 className="mb-2 text-xl font-bold uppercase text-emerald-700 dark:text-emerald-300">
+                    代码质量优秀！
+                  </h3>
+                  <p className="mb-4 font-mono text-emerald-600 dark:text-emerald-400/80">
+                    恭喜！没有发现任何问题
+                  </p>
+                  <div className="mx-auto max-w-md rounded border border-emerald-500/30 bg-emerald-500/10 p-4">
+                    <p className="font-mono text-sm text-emerald-700 dark:text-emerald-300/80">
                       您的代码通过了所有质量检查，包括安全性、性能、可维护性等各个方面的评估。
                     </p>
                   </div>
@@ -1191,17 +1611,24 @@ public class Example {
 
       {/* Analyzing State */}
       {analyzing && (
-        <div className="cyber-card p-0 relative z-10">
-          <div ref={loadingCardRef} className="py-16 px-6 text-center">
-            <div className="w-20 h-20 bg-primary/20 border border-primary/40 rounded-lg flex items-center justify-center mx-auto mb-6">
-              <div className="loading-spinner w-12 h-12"></div>
+        <div className="cyber-card relative z-10 p-0">
+          <div className="px-6 py-16 text-center" ref={loadingCardRef}>
+            <div className="bg-primary/20 border-primary/40 mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-lg border">
+              <div className="loading-spinner h-12 w-12"></div>
             </div>
-            <h3 className="text-2xl font-bold text-foreground uppercase mb-3">AI正在分析您的代码</h3>
-            <p className="text-muted-foreground mb-6 font-mono">请稍候，这通常需要至少30秒钟...</p>
-            <p className="text-muted-foreground text-sm mb-6 font-mono">分析时长取决于您的网络环境、代码长度以及使用的模型等因素</p>
-            <div className="bg-primary/10 border border-primary/30 p-4 max-w-md mx-auto rounded">
-              <p className="text-primary text-sm font-mono">
-                正在进行安全检测、性能分析、代码风格检查等多维度评估<br />
+            <h3 className="text-foreground mb-3 text-2xl font-bold uppercase">
+              AI正在分析您的代码
+            </h3>
+            <p className="text-muted-foreground mb-6 font-mono">
+              请稍候，这通常需要至少30秒钟...
+            </p>
+            <p className="text-muted-foreground mb-6 font-mono text-sm">
+              分析时长取决于您的网络环境、代码长度以及使用的模型等因素
+            </p>
+            <div className="bg-primary/10 border-primary/30 mx-auto max-w-md rounded border p-4">
+              <p className="text-primary font-mono text-sm">
+                正在进行安全检测、性能分析、代码风格检查等多维度评估
+                <br />
                 请勿离开页面！
               </p>
             </div>
@@ -1212,12 +1639,12 @@ public class Example {
       {/* Export Report Dialog */}
       {result && (
         <InstantExportDialog
-          open={exportDialogOpen}
-          onOpenChange={setExportDialogOpen}
           analysisId={currentAnalysisId}
           analysisResult={result}
-          language={language}
           analysisTime={analysisTime}
+          language={language}
+          onOpenChange={setExportDialogOpen}
+          open={exportDialogOpen}
         />
       )}
     </div>

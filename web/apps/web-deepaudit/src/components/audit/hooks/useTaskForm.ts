@@ -1,26 +1,29 @@
-import { useState, useEffect, useCallback } from "react";
-import type { Project, CreateAuditTaskForm } from "@/shared/types";
-import { api } from "@/shared/config/database";
-import { toast } from "sonner";
+import type { CreateAuditTaskForm, Project } from '@/shared/types';
+
+import { api } from '@/shared/config/database';
+import { useCallback, useEffect, useState } from 'react';
+import { toast } from 'sonner';
 
 const DEFAULT_EXCLUDE_PATTERNS = [
-  "node_modules/**",
-  ".git/**",
-  "dist/**",
-  "build/**",
-  "*.log",
+  'node_modules/**',
+  '.git/**',
+  'dist/**',
+  'build/**',
+  '*.log',
 ];
 
 const DEFAULT_FORM: CreateAuditTaskForm = {
-  project_id: "",
-  task_type: "repository",
-  branch_name: "main",
+  project_id: '',
+  task_type: 'repository',
+  branch_name: 'main',
+  manifest_xml: '',
+  group: '',
   exclude_patterns: DEFAULT_EXCLUDE_PATTERNS,
   scan_config: {
     include_tests: true,
     include_docs: false,
     max_file_size: 200,
-    analysis_depth: "standard",
+    analysis_depth: 'standard',
   },
 };
 
@@ -50,13 +53,13 @@ export function useTaskForm(preselectedProjectId?: string) {
   }, []);
 
   const updateScanConfig = useCallback(
-    (updates: Partial<CreateAuditTaskForm["scan_config"]>) => {
+    (updates: Partial<CreateAuditTaskForm['scan_config']>) => {
       setTaskForm((prev) => ({
         ...prev,
         scan_config: { ...prev.scan_config, ...updates },
       }));
     },
-    []
+    [],
   );
 
   const toggleExcludePattern = useCallback((pattern: string) => {
@@ -116,8 +119,8 @@ export function useProjects() {
       const data = await api.getProjects();
       setProjects(data.filter((p) => p.is_active));
     } catch (error) {
-      console.error("Failed to load projects:", error);
-      toast.error("加载项目失败");
+      console.error('Failed to load projects:', error);
+      toast.error('加载项目失败');
     } finally {
       setLoading(false);
     }

@@ -15,6 +15,7 @@ from ninja.errors import HttpError
 from apps.deepaudit import storage as deepaudit_storage
 from apps.deepaudit.git_service import GitServiceError, create_repository_workspace
 from apps.deepaudit.heuristics import build_summary, is_text_file, scan_content, should_exclude
+from apps.deepaudit.repo_specs import build_effective_project_repository_spec
 from apps.deepaudit.user_config.user_config_model import AuditSshCredential, AuditUserConfig
 from apps.deepaudit.encryption import decrypt_value
 
@@ -58,9 +59,14 @@ def load_user_config_payload(user_id: str) -> dict:
     other_config = dict(config.other_config or {})
     if llm_config.get('api_key'):
         llm_config['api_key'] = decrypt_value(llm_config['api_key'])
-    for key in ('github_token', 'gitlab_token', 'gitea_token'):
+    for key in ('codehub_token', 'github_token', 'gitlab_token', 'gitea_token'):
         if other_config.get(key):
             other_config[key] = decrypt_value(other_config[key])
+    if not other_config.get('codehub_token'):
+        for legacy_key in ('github_token', 'gitlab_token', 'gitea_token'):
+            if other_config.get(legacy_key):
+                other_config['codehub_token'] = other_config[legacy_key]
+                break
     embedding_config = dict(other_config.get('embedding_config') or {})
     if embedding_config.get('api_key'):
         embedding_config['api_key'] = decrypt_value(embedding_config['api_key'])
@@ -82,19 +88,30 @@ def prepare_workspace(
     project,
     *,
     branch_name: str | None = None,
+    manifest_xml: str | None = None,
+    group: str | None = None,
     user_id: str | None = None,
     allow_stale_on_failure: bool = False,
 ) -> tuple[Path, dict]:
     user_payload = load_user_config_payload(user_id or getattr(project.owner, 'id', '') or '')
     if project.source_type == 'repository':
         try:
+            repository_spec = build_effective_project_repository_spec(
+                project,
+                branch_name=branch_name,
+                manifest_xml=manifest_xml,
+                group=group,
+            )
             workspace = create_repository_workspace(
                 project,
-                project.repository_url or '',
-                branch_name or project.default_branch,
+                repository_spec['repository_url'] or '',
+                repository_spec['branch_name'],
                 user_payload,
                 ssh_private_key=load_ssh_private_key(user_id or str(project.owner_id)),
                 allow_stale_on_failure=allow_stale_on_failure,
+                manifest_xml=repository_spec['manifest_xml'],
+                group=repository_spec['group'],
+                repository_type=repository_spec['repository_type'],
             )
         except GitServiceError as exc:
             raise HttpError(400, str(exc)) from exc

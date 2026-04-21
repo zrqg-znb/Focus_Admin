@@ -5,15 +5,11 @@ PROJECT_SOURCE_CHOICES = [
     (PROJECT_SOURCE_ZIP, 'ZIP 项目'),
 ]
 
-REPOSITORY_TYPE_GITHUB = 'github'
-REPOSITORY_TYPE_GITLAB = 'gitlab'
-REPOSITORY_TYPE_GITEA = 'gitea'
-REPOSITORY_TYPE_OTHER = 'other'
+REPOSITORY_TYPE_SINGLE = 'single'
+REPOSITORY_TYPE_MULTI = 'multi'
 REPOSITORY_TYPE_CHOICES = [
-    (REPOSITORY_TYPE_GITHUB, 'GitHub'),
-    (REPOSITORY_TYPE_GITLAB, 'GitLab'),
-    (REPOSITORY_TYPE_GITEA, 'Gitea'),
-    (REPOSITORY_TYPE_OTHER, 'Other'),
+    (REPOSITORY_TYPE_SINGLE, '单仓'),
+    (REPOSITORY_TYPE_MULTI, '多仓'),
 ]
 
 PROJECT_MEMBER_ROLE_OWNER = 'owner'
@@ -229,9 +225,7 @@ DEFAULT_LLM_CONFIG = {
 }
 
 DEFAULT_OTHER_CONFIG = {
-    'github_token': '',
-    'gitlab_token': '',
-    'gitea_token': '',
+    'codehub_token': '',
     'output_language': 'zh-CN',
     'scan_config': {
         'max_analyze_files': 0,

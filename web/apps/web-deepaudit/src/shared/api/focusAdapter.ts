@@ -1,3 +1,5 @@
+import { normalizeRepositoryType } from '@/shared/utils/projectUtils';
+
 type JsonRecord = Record<string, any>;
 type StoragePayload = {
   accessCodes: string[];
@@ -15,11 +17,12 @@ export const APP_BASE_URL = APP_BASE_URL_RAW.endsWith('/')
   ? APP_BASE_URL_RAW
   : `${APP_BASE_URL_RAW}/`;
 
-export const APP_BASE_PATH = APP_BASE_URL === '/' ? '' : APP_BASE_URL.replace(/\/$/, '');
+export const APP_BASE_PATH =
+  APP_BASE_URL === '/' ? '' : APP_BASE_URL.replace(/\/$/, '');
 
 export const API_BASE_URL = API_BASE_URL_RAW.replace(/\/$/, '');
 
-function safeJsonParse<T>(value: string | null): null | T {
+function safeJsonParse<T>(value: null | string): null | T {
   if (!value) {
     return null;
   }
@@ -35,7 +38,9 @@ function normalizeAccessCodes(value: unknown): string[] {
     return [];
   }
   return value
-    .filter((item): item is string => typeof item === 'string' && item.length > 0)
+    .filter(
+      (item): item is string => typeof item === 'string' && item.length > 0,
+    )
     .filter((item, index, array) => array.indexOf(item) === index);
 }
 
@@ -57,7 +62,10 @@ function getStorageTokens(storage: Storage): null | {
         accessCodes: normalizeAccessCodes(parsed.accessCodes),
         accessToken: parsed.accessToken,
         raw: parsed,
-        refreshToken: typeof parsed.refreshToken === 'string' ? parsed.refreshToken : undefined,
+        refreshToken:
+          typeof parsed.refreshToken === 'string'
+            ? parsed.refreshToken
+            : undefined,
         storageKey: key,
       };
     }
@@ -66,9 +74,12 @@ function getStorageTokens(storage: Storage): null | {
 }
 
 export function getStoredFocusAccess(): StoragePayload {
-  const directAccessToken = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+  const directAccessToken =
+    localStorage.getItem('access_token') ||
+    sessionStorage.getItem('access_token');
   const directRefreshToken =
-    localStorage.getItem('refresh_token') || sessionStorage.getItem('refresh_token');
+    localStorage.getItem('refresh_token') ||
+    sessionStorage.getItem('refresh_token');
 
   const localPayload = getStorageTokens(localStorage);
   if (localPayload) {
@@ -117,13 +128,15 @@ export function getStoredAccessCodes(): string[] {
 }
 
 export function persistStoredFocusAccess(
-  patch: Partial<Pick<StoragePayload, 'accessCodes' | 'accessToken' | 'refreshToken'>>,
+  patch: Partial<
+    Pick<StoragePayload, 'accessCodes' | 'accessToken' | 'refreshToken'>
+  >,
 ) {
   const current = getStoredFocusAccess();
   const storage = current.storage || localStorage;
   const storageKey = current.storageKey || 'core-access';
   const nextRaw = {
-    ...(current.raw || {}),
+    ...current.raw,
     accessCodes: patch.accessCodes ?? current.accessCodes,
     accessToken: patch.accessToken ?? current.accessToken,
     refreshToken: patch.refreshToken ?? current.refreshToken,
@@ -156,7 +169,11 @@ export function clearStoredFocusAccess() {
       if (!key) {
         continue;
       }
-      if (key.includes('core-access') || key === 'access_token' || key === 'refresh_token') {
+      if (
+        key.includes('core-access') ||
+        key === 'access_token' ||
+        key === 'refresh_token'
+      ) {
         keysToRemove.push(key);
       }
     }
@@ -209,7 +226,9 @@ function mapTaskPath(pathname: string) {
 }
 
 function mapInstantPath(pathname: string) {
-  const reportMatch = pathname.match(/^\/scan\/instant\/history\/([^/]+)\/report\/pdf\/?$/);
+  const reportMatch = pathname.match(
+    /^\/scan\/instant\/history\/([^/]+)\/report\/pdf\/?$/,
+  );
   if (reportMatch) {
     return `/deepaudit/reports/instant/${reportMatch[1]}/pdf`;
   }
@@ -222,10 +241,14 @@ function mapAgentTaskPath(pathname: string) {
     return `/deepaudit/agent-tasks/${reportMatch[1]}/report`;
   }
   if (/^\/agent-tasks\/[^/]+\/events\/list\/?$/.test(pathname)) {
-    return pathname.replace(/^\/agent-tasks/, '/deepaudit/agent-tasks').replace(/\/events\/list\/?$/, '/events');
+    return pathname
+      .replace(/^\/agent-tasks/, '/deepaudit/agent-tasks')
+      .replace(/\/events\/list\/?$/, '/events');
   }
   if (/^\/agent-tasks\/[^/]+\/agent-tree\/?$/.test(pathname)) {
-    return pathname.replace(/^\/agent-tasks/, '/deepaudit/agent-tasks').replace(/\/agent-tree\/?$/, '/tree');
+    return pathname
+      .replace(/^\/agent-tasks/, '/deepaudit/agent-tasks')
+      .replace(/\/agent-tree\/?$/, '/tree');
   }
   return `/deepaudit${pathname.replace(/\/$/, '') || '/agent-tasks'}`;
 }
@@ -272,34 +295,47 @@ export function mapApiPath(path: string) {
   const [pathname, query = ''] = path.split('?');
   let mappedPath = pathname;
 
-  if (pathname === '/auth/login') {
-    mappedPath = '/core/login';
-  } else if (pathname === '/users/me') {
-    mappedPath = '/core/user/profile/me';
-  } else if (pathname === '/user/change-password') {
-    mappedPath = '/core/user/change-password';
-  } else if (pathname.startsWith('/projects')) {
-    mappedPath = mapProjectPath(pathname);
-  } else if (pathname.startsWith('/tasks')) {
-    mappedPath = mapTaskPath(pathname);
-  } else if (pathname.startsWith('/scan')) {
-    mappedPath = mapInstantPath(pathname);
-  } else if (pathname.startsWith('/agent-tasks')) {
-    mappedPath = mapAgentTaskPath(pathname);
-  } else if (pathname.startsWith('/rules')) {
-    mappedPath = `/deepaudit${pathname.replace(/\/$/, '') || '/rules'}`;
-  } else if (pathname.startsWith('/prompts')) {
-    mappedPath = `/deepaudit${pathname.replace(/\/$/, '') || '/prompts'}`;
-  } else if (pathname.startsWith('/embedding')) {
-    mappedPath = `/deepaudit${pathname.replace(/\/$/, '')}`;
-  } else if (pathname.startsWith('/ssh-keys')) {
-    mappedPath = `/deepaudit${pathname.replace(/\/$/, '')}`;
-  } else if (pathname.startsWith('/config')) {
-    mappedPath = mapConfigPath(pathname);
-  } else if (pathname.startsWith('/database')) {
-    mappedPath = mapDatabasePath(pathname);
-  } else if (pathname === '/dashboard/overview') {
-    mappedPath = '/deepaudit/dashboard/overview';
+  switch (pathname) {
+    case '/auth/login': {
+      mappedPath = '/core/login';
+
+      break;
+    }
+    case '/user/change-password': {
+      mappedPath = '/core/user/change-password';
+
+      break;
+    }
+    case '/users/me': {
+      mappedPath = '/core/user/profile/me';
+
+      break;
+    }
+    default: {
+      if (pathname.startsWith('/projects')) {
+        mappedPath = mapProjectPath(pathname);
+      } else if (pathname.startsWith('/tasks')) {
+        mappedPath = mapTaskPath(pathname);
+      } else if (pathname.startsWith('/scan')) {
+        mappedPath = mapInstantPath(pathname);
+      } else if (pathname.startsWith('/agent-tasks')) {
+        mappedPath = mapAgentTaskPath(pathname);
+      } else if (pathname.startsWith('/rules')) {
+        mappedPath = `/deepaudit${pathname.replace(/\/$/, '') || '/rules'}`;
+      } else if (pathname.startsWith('/prompts')) {
+        mappedPath = `/deepaudit${pathname.replace(/\/$/, '') || '/prompts'}`;
+      } else if (pathname.startsWith('/embedding')) {
+        mappedPath = `/deepaudit${pathname.replace(/\/$/, '')}`;
+      } else if (pathname.startsWith('/ssh-keys')) {
+        mappedPath = `/deepaudit${pathname.replace(/\/$/, '')}`;
+      } else if (pathname.startsWith('/config')) {
+        mappedPath = mapConfigPath(pathname);
+      } else if (pathname.startsWith('/database')) {
+        mappedPath = mapDatabasePath(pathname);
+      } else if (pathname === '/dashboard/overview') {
+        mappedPath = '/deepaudit/dashboard/overview';
+      }
+    }
   }
 
   return query ? `${mappedPath}?${query}` : mappedPath;
@@ -320,7 +356,12 @@ export function normalizeProfile(raw: JsonRecord | null | undefined) {
     return null;
   }
   const roles = Array.isArray(raw.roles) ? raw.roles : [];
-  const role = raw.role || raw.user_role || (raw.is_superuser || roles.includes('admin') || roles.includes('superadmin') ? 'admin' : 'member');
+  const role =
+    raw.role ||
+    raw.user_role ||
+    (raw.is_superuser || roles.includes('admin') || roles.includes('superadmin')
+      ? 'admin'
+      : 'member');
   return {
     id: String(raw.id || ''),
     username: raw.username || '',
@@ -354,14 +395,17 @@ export function normalizeProject(raw: JsonRecord | null | undefined) {
     return null;
   }
   const languages = normalizeLanguages(raw.programming_languages);
+  const repositoryType = normalizeRepositoryType(raw.repository_type);
   return {
     id: String(raw.id || ''),
     name: raw.name || '',
     description: raw.description || '',
     source_type: raw.source_type || 'repository',
     repository_url: raw.repository_url || '',
-    repository_type: raw.repository_type || 'other',
+    repository_type: repositoryType,
     default_branch: raw.default_branch || 'main',
+    manifest_xml: raw.manifest_xml || '',
+    group: raw.group || '',
     programming_languages: JSON.stringify(languages),
     owner_id: raw.owner_id || raw.owner?.id || '',
     is_active: raw.is_active !== false,
@@ -369,7 +413,7 @@ export function normalizeProject(raw: JsonRecord | null | undefined) {
     updated_at: raw.updated_at || raw.sys_update_datetime || '',
     owner: raw.owner
       ? {
-          ...(normalizeProfile(raw.owner) || {}),
+          ...normalizeProfile(raw.owner),
           id: String(raw.owner.id || ''),
           full_name: raw.owner.name || raw.owner.username || '',
         }
@@ -395,6 +439,9 @@ export function normalizeAuditTask(raw: JsonRecord | null | undefined) {
   if (!raw) {
     return null;
   }
+  const repositoryType = normalizeRepositoryType(
+    raw.repository_type || raw.project?.repository_type,
+  );
   const project = raw.project
     ? normalizeProject(raw.project)
     : {
@@ -403,8 +450,10 @@ export function normalizeAuditTask(raw: JsonRecord | null | undefined) {
         description: '',
         source_type: 'repository',
         repository_url: '',
-        repository_type: 'other',
+        repository_type: repositoryType,
         default_branch: raw.branch_name || 'main',
+        manifest_xml: raw.manifest_xml || '',
+        group: raw.group || '',
         programming_languages: JSON.stringify([]),
         owner_id: '',
         is_active: true,
@@ -417,6 +466,8 @@ export function normalizeAuditTask(raw: JsonRecord | null | undefined) {
     task_type: raw.task_type || 'repository',
     status: raw.status || 'pending',
     branch_name: raw.branch_name || 'main',
+    manifest_xml: raw.manifest_xml || '',
+    group: raw.group || '',
     exclude_patterns: JSON.stringify(raw.exclude_patterns || []),
     scan_config: JSON.stringify(raw.scan_config || {}),
     total_files: raw.total_files || 0,
@@ -437,9 +488,10 @@ export function normalizeAuditIssue(raw: JsonRecord | null | undefined) {
   if (!raw) {
     return null;
   }
-  const aiExplanation = typeof raw.ai_explanation === 'string'
-    ? raw.ai_explanation
-    : JSON.stringify(raw.ai_explanation || {});
+  const aiExplanation =
+    typeof raw.ai_explanation === 'string'
+      ? raw.ai_explanation
+      : JSON.stringify(raw.ai_explanation || {});
   return {
     id: String(raw.id || ''),
     task_id: String(raw.task_id || ''),
@@ -478,7 +530,9 @@ export function normalizeInstantRecord(raw: JsonRecord | null | undefined) {
   };
 }
 
-export function normalizeCodeAnalysisResult(raw: JsonRecord | null | undefined) {
+export function normalizeCodeAnalysisResult(
+  raw: JsonRecord | null | undefined,
+) {
   if (!raw) {
     return {
       analysis_id: null,
@@ -501,6 +555,9 @@ export function normalizeAgentTask(raw: JsonRecord | null | undefined) {
   if (!raw) {
     return null;
   }
+  const repositoryType = normalizeRepositoryType(
+    raw.repository_type || raw.project?.repository_type,
+  );
   return {
     ...raw,
     id: String(raw.id || ''),
@@ -510,14 +567,19 @@ export function normalizeAgentTask(raw: JsonRecord | null | undefined) {
     updated_at: raw.updated_at || raw.sys_update_datetime || '',
     started_at: raw.started_at || null,
     completed_at: raw.completed_at || null,
+    branch_name: raw.branch_name || raw.project?.default_branch || 'main',
+    manifest_xml: raw.manifest_xml || raw.project?.manifest_xml || '',
+    group: raw.group || raw.project?.group || '',
     project: {
       id: String(raw.project_id || ''),
       name: raw.project_name || '',
       description: '',
       source_type: 'repository',
       repository_url: '',
-      repository_type: 'other',
+      repository_type: repositoryType,
       default_branch: raw.branch_name || 'main',
+      manifest_xml: raw.manifest_xml || '',
+      group: raw.group || '',
       programming_languages: JSON.stringify([]),
       owner_id: '',
       is_active: true,
@@ -571,18 +633,32 @@ export function normalizeUserConfig(raw: JsonRecord | null | undefined) {
       llmTimeout: (llm.llmTimeout || llm.timeout || 150) * 1000,
       llmTemperature: llm.llmTemperature ?? llm.temperature ?? 0.1,
       llmMaxTokens: llm.llmMaxTokens || llm.maxTokens || llm.max_tokens || 4096,
-      llmFirstTokenTimeout: llm.llmFirstTokenTimeout || llm.firstTokenTimeout || llm.first_token_timeout || 90,
-      llmStreamTimeout: llm.llmStreamTimeout || llm.streamTimeout || llm.stream_timeout || 60,
+      llmFirstTokenTimeout:
+        llm.llmFirstTokenTimeout ||
+        llm.firstTokenTimeout ||
+        llm.first_token_timeout ||
+        90,
+      llmStreamTimeout:
+        llm.llmStreamTimeout || llm.streamTimeout || llm.stream_timeout || 60,
       toolTimeout: llm.toolTimeout || llm.tool_timeout || 60,
       subAgentTimeout: llm.subAgentTimeout || llm.sub_agent_timeout || 600,
       agentTimeout: llm.agentTimeout || llm.agent_timeout || 1800,
     },
     otherConfig: {
-      githubToken: other.githubToken || other.github_token || '',
-      gitlabToken: other.gitlabToken || other.gitlab_token || '',
-      giteaToken: other.giteaToken || other.gitea_token || '',
-      maxAnalyzeFiles: scanConfig.maxAnalyzeFiles ?? scanConfig.max_analyze_files ?? 0,
-      llmConcurrency: scanConfig.llmConcurrency || scanConfig.llm_concurrency || 3,
+      codehubToken:
+        other.codehubToken ||
+        other.codehub_token ||
+        other.githubToken ||
+        other.github_token ||
+        other.gitlabToken ||
+        other.gitlab_token ||
+        other.giteaToken ||
+        other.gitea_token ||
+        '',
+      maxAnalyzeFiles:
+        scanConfig.maxAnalyzeFiles ?? scanConfig.max_analyze_files ?? 0,
+      llmConcurrency:
+        scanConfig.llmConcurrency || scanConfig.llm_concurrency || 3,
       llmGapMs: scanConfig.llmGapMs || scanConfig.llm_gap_ms || 500,
       outputLanguage: other.outputLanguage || other.output_language || 'zh-CN',
     },

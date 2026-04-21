@@ -1,12 +1,15 @@
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { Search, FileText } from "lucide-react";
-import type { Project } from "@/shared/types";
+import type { Project } from '@/shared/types';
+
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
-  isRepositoryProject,
+  getRepositoryTypeBadge,
+  getRepositoryTypeLabel,
   getSourceTypeBadge,
-} from "@/shared/utils/projectUtils";
+  isRepositoryProject,
+} from '@/shared/utils/projectUtils';
+import { FileText, Search } from 'lucide-react';
 
 interface ProjectSelectorProps {
   projects: Project[];
@@ -28,48 +31,54 @@ export default function ProjectSelector({
   const filteredProjects = projects.filter(
     (p) =>
       p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.description?.toLowerCase().includes(searchTerm.toLowerCase())
+      p.description?.toLowerCase().includes(searchTerm.toLowerCase()),
   );
+
+  const projectListContent = (() => {
+    if (loading) {
+      return <LoadingSpinner />;
+    }
+
+    if (filteredProjects.length > 0) {
+      return filteredProjects.map((project) => (
+        <ProjectCard
+          isSelected={selectedId === project.id}
+          key={project.id}
+          onSelect={() => onSelect(project.id)}
+          project={project}
+        />
+      ));
+    }
+
+    return <EmptyState hasSearch={!!searchTerm} />;
+  })();
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <Label className="text-base font-bold font-mono uppercase">
+        <Label className="font-mono text-base font-bold uppercase">
           选择项目
         </Label>
         <Badge
+          className="border-border rounded-none font-mono text-xs"
           variant="outline"
-          className="text-xs rounded-none border-border font-mono"
         >
           {filteredProjects.length} 个可用项目
         </Badge>
       </div>
 
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-foreground w-4 h-4" />
+        <Search className="text-foreground absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 transform" />
         <Input
+          className="retro-input h-10 pl-10"
+          onChange={(e) => onSearchChange(e.target.value)}
           placeholder="搜索项目名称..."
           value={searchTerm}
-          onChange={(e) => onSearchChange(e.target.value)}
-          className="pl-10 retro-input h-10"
         />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-60 overflow-y-auto p-1">
-        {loading ? (
-          <LoadingSpinner />
-        ) : filteredProjects.length > 0 ? (
-          filteredProjects.map((project) => (
-            <ProjectCard
-              key={project.id}
-              project={project}
-              isSelected={selectedId === project.id}
-              onSelect={() => onSelect(project.id)}
-            />
-          ))
-        ) : (
-          <EmptyState hasSearch={!!searchTerm} />
-        )}
+      <div className="grid max-h-60 grid-cols-1 gap-3 overflow-y-auto p-1 md:grid-cols-2">
+        {projectListContent}
       </div>
     </div>
   );
@@ -80,50 +89,53 @@ function ProjectCard({
   isSelected,
   onSelect,
 }: {
-  project: Project;
   isSelected: boolean;
   onSelect: () => void;
+  project: Project;
 }) {
   const isRepo = isRepositoryProject(project);
 
   return (
     <div
-      className={`cursor-pointer transition-all border-2 p-4 relative ${
+      className={`relative cursor-pointer border-2 p-4 transition-all ${
         isSelected
-          ? "border-primary bg-blue-50 shadow-[4px_4px_0px_0px_rgba(37,99,235,1)] translate-x-[-2px] translate-y-[-2px]"
-          : "border-border bg-background hover:bg-background hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[-2px] hover:translate-y-[-2px]"
+          ? 'border-primary translate-x-[-2px] translate-y-[-2px] bg-blue-50 shadow-[4px_4px_0px_0px_rgba(37,99,235,1)]'
+          : 'border-border bg-background hover:bg-background hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]'
       }`}
       onClick={onSelect}
     >
       <div className="flex items-start justify-between">
         <div className="flex-1">
-          <h4 className="font-bold text-sm font-display uppercase">
+          <h4 className="font-display text-sm font-bold uppercase">
             {project.name}
           </h4>
           {project.description && (
-            <p className="text-xs text-muted-foreground mt-1 line-clamp-2 font-mono">
+            <p className="text-muted-foreground mt-1 line-clamp-2 font-mono text-xs">
               {project.description}
             </p>
           )}
-          <div className="flex items-center space-x-4 mt-2 text-xs text-muted-foreground font-mono font-bold">
+          <div className="text-muted-foreground mt-2 flex items-center space-x-4 font-mono text-xs font-bold">
             <span
-              className={`px-1.5 py-0.5 ${isRepo ? "bg-blue-100 text-blue-700" : "bg-amber-100 text-amber-700"}`}
+              className={`px-1.5 py-0.5 ${isRepo ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}
             >
               {getSourceTypeBadge(project.source_type)}
             </span>
             {isRepo && (
               <>
                 <span className="uppercase">
-                  {project.repository_type?.toUpperCase() || "OTHER"}
+                  {getRepositoryTypeBadge(project.repository_type)}
                 </span>
                 <span>{project.default_branch}</span>
+                {project.repository_type === 'multi' && (
+                  <span>{getRepositoryTypeLabel(project.repository_type)}</span>
+                )}
               </>
             )}
           </div>
         </div>
         {isSelected && (
-          <div className="w-5 h-5 bg-primary border-2 border-border flex items-center justify-center">
-            <div className="w-2 h-2 bg-background" />
+          <div className="bg-primary border-border flex h-5 w-5 items-center justify-center border-2">
+            <div className="bg-background h-2 w-2" />
           </div>
         )}
       </div>
@@ -134,17 +146,17 @@ function ProjectCard({
 function LoadingSpinner() {
   return (
     <div className="col-span-2 flex items-center justify-center py-8">
-      <div className="animate-spin rounded-none h-8 w-8 border-4 border-primary border-t-transparent" />
+      <div className="border-primary h-8 w-8 animate-spin rounded-none border-4 border-t-transparent" />
     </div>
   );
 }
 
 function EmptyState({ hasSearch }: { hasSearch: boolean }) {
   return (
-    <div className="col-span-2 text-center py-8 text-muted-foreground font-mono">
-      <FileText className="w-8 h-8 mx-auto mb-2 opacity-50" />
+    <div className="text-muted-foreground col-span-2 py-8 text-center font-mono">
+      <FileText className="mx-auto mb-2 h-8 w-8 opacity-50" />
       <p className="text-sm">
-        {hasSearch ? "未找到匹配的项目" : "暂无可用项目"}
+        {hasSearch ? '未找到匹配的项目' : '暂无可用项目'}
       </p>
     </div>
   );

@@ -13,6 +13,7 @@ from apps.deepaudit import git_service
 from apps.deepaudit import runtime
 from apps.deepaudit import storage as deepaudit_storage
 from apps.deepaudit.project import project_services
+from apps.deepaudit.repo_specs import build_repository_spec
 
 
 def _storage_patch(temp_root: Path):
@@ -73,7 +74,7 @@ class RuntimeRepositoryWorkspaceTestCase(SimpleTestCase):
             default_branch='main',
             source_type='repository',
             repository_url=str(origin),
-            repository_type='other',
+            repository_type='single',
             owner=SimpleNamespace(id='owner-1'),
         )
 
@@ -83,7 +84,10 @@ class RuntimeRepositoryWorkspaceTestCase(SimpleTestCase):
         ):
             workspace, _user_payload = runtime.prepare_workspace(project, branch_name='main', user_id='owner-1')
 
-        cache_repo = git_service._cache_paths(project, 'main')['repo']
+        cache_repo = git_service._cache_paths(
+            project,
+            build_repository_spec(str(origin), 'main', repository_type='single'),
+        )['repo']
         self.assertTrue((workspace / '.git').is_file())
         self.assertTrue((workspace / 'app.py').exists())
         self.assertTrue(cache_repo.exists())
@@ -92,6 +96,39 @@ class RuntimeRepositoryWorkspaceTestCase(SimpleTestCase):
 
         self.assertFalse(workspace.exists())
         self.assertTrue(cache_repo.exists())
+
+    def test_prepare_workspace_passes_multi_repo_overrides(self) -> None:
+        project = SimpleNamespace(
+            id='project-1',
+            owner_id='owner-1',
+            default_branch='main',
+            source_type='repository',
+            repository_url='https://example.com/repo.git',
+            repository_type='multi',
+            manifest_xml='default.xml',
+            group='default-group',
+            owner=SimpleNamespace(id='owner-1'),
+        )
+        workspace = self.temp_root / 'workspace'
+
+        with (
+            patch('apps.deepaudit.runtime.load_user_config_payload', return_value={'llm_config': {}, 'other_config': {}}),
+            patch('apps.deepaudit.runtime.load_ssh_private_key', return_value=None),
+            patch('apps.deepaudit.runtime.create_repository_workspace', return_value=workspace) as mock_create,
+        ):
+            result_workspace, _user_payload = runtime.prepare_workspace(
+                project,
+                branch_name='release',
+                manifest_xml='custom.xml',
+                group='team-a',
+                user_id='owner-1',
+            )
+
+        self.assertEqual(result_workspace, workspace)
+        self.assertEqual(mock_create.call_count, 1)
+        self.assertEqual(mock_create.call_args.kwargs['repository_type'], 'multi')
+        self.assertEqual(mock_create.call_args.kwargs['manifest_xml'], 'custom.xml')
+        self.assertEqual(mock_create.call_args.kwargs['group'], 'team-a')
 
 
 class ProjectRepositoryFileListingTestCase(SimpleTestCase):

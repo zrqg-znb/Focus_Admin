@@ -27,6 +27,7 @@ from apps.deepaudit.heuristics import normalize_severity_weight
 from apps.deepaudit.permissions import require_project_role, serialize_user_brief
 from apps.deepaudit.realtime import push_task_event
 from apps.deepaudit.reporting import ReportBuilder
+from apps.deepaudit.repo_specs import build_effective_project_repository_spec, normalize_repository_type
 from apps.deepaudit.runtime import cleanup_runtime_workspace, docker_available, prepare_workspace
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact
 from apps.deepaudit.serialization import format_datetime_text, normalize_json_payload
@@ -457,6 +458,8 @@ def serialize_task(instance: AgentTask) -> dict:
         'target_vulnerabilities': list(instance.target_vulnerabilities or []),
         'verification_level': instance.verification_level,
         'branch_name': instance.branch_name,
+        'manifest_xml': instance.manifest_xml,
+        'group': instance.group,
         'exclude_patterns': list(instance.exclude_patterns or []),
         'target_files': list(instance.target_files or []),
         'max_iterations': instance.max_iterations,
@@ -516,6 +519,14 @@ def get_task(user, task_id: str) -> AgentTask:
 
 def create_task(user, payload: dict) -> AgentTask:
     access = require_project_role(user, payload.get('project_id'), min_role='member')
+    repository_spec = build_effective_project_repository_spec(
+        access.project,
+        branch_name=payload.get('branch_name'),
+        manifest_xml=payload.get('manifest_xml'),
+        group=payload.get('group'),
+    )
+    if access.project.source_type == 'repository' and normalize_repository_type(access.project.repository_type) == 'multi' and not repository_spec['manifest_xml']:
+        raise HttpError(422, '多仓任务必须填写 manifest_xml')
     return AgentTask.objects.create(
         project=access.project,
         created_by=user,
@@ -524,7 +535,9 @@ def create_task(user, payload: dict) -> AgentTask:
         audit_scope=payload.get('audit_scope') or {},
         target_vulnerabilities=payload.get('target_vulnerabilities') or [],
         verification_level=payload.get('verification_level') or 'sandbox',
-        branch_name=payload.get('branch_name') or access.project.default_branch,
+        branch_name=repository_spec['branch_name'],
+        manifest_xml=repository_spec['manifest_xml'] or None,
+        group=repository_spec['group'] or None,
         exclude_patterns=payload.get('exclude_patterns') or [],
         target_files=payload.get('target_files') or [],
         agent_config=payload.get('agent_config') or {},
@@ -625,6 +638,8 @@ def resume_task_from_checkpoint(user, task_id: str, checkpoint_id: str) -> Agent
         'target_vulnerabilities': list(source_task.target_vulnerabilities or []),
         'verification_level': source_task.verification_level or 'sandbox',
         'branch_name': source_task.branch_name or source_task.project.default_branch,
+        'manifest_xml': source_task.manifest_xml,
+        'group': source_task.group,
         'exclude_patterns': list(source_task.exclude_patterns or []),
         'target_files': list(source_task.target_files or []),
         'agent_config': {
@@ -1587,7 +1602,13 @@ def execute_agent_task(task_id: str) -> None:
         )
         
         # 克隆或解压代码空间
-        workspace, user_payload = prepare_workspace(instance.project, branch_name=instance.branch_name, user_id=str(instance.created_by_id))
+        workspace, user_payload = prepare_workspace(
+            instance.project,
+            branch_name=instance.branch_name,
+            manifest_xml=instance.manifest_xml,
+            group=instance.group,
+            user_id=str(instance.created_by_id),
+        )
         
         # 准备交给 Agent 的上下文数据
         input_data = {

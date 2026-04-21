@@ -16,6 +16,7 @@ from apps.deepaudit.heuristics import detect_language_from_path
 from apps.deepaudit.llm.service import LLMService
 from apps.deepaudit.permissions import accessible_project_queryset, get_user_id, require_project_role, serialize_user_brief
 from apps.deepaudit.reporting import ReportBuilder
+from apps.deepaudit.repo_specs import build_effective_project_repository_spec, normalize_repository_type
 from apps.deepaudit.runtime import cleanup_runtime_workspace, list_project_files, prepare_workspace
 from apps.deepaudit.scan_profile import resolve_scan_profile, serialize_scan_profile
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact, AuditIssue, AuditTask, InstantAnalysisRecord
@@ -62,6 +63,8 @@ def serialize_task(task: AuditTask, include_issues: bool = False) -> dict:
         'task_type': task.task_type,
         'status': task.status,
         'branch_name': task.branch_name,
+        'manifest_xml': task.manifest_xml,
+        'group': task.group,
         'exclude_patterns': list(task.exclude_patterns or []),
         'scan_config': dict(task.scan_config or {}),
         'total_files': task.total_files,
@@ -119,6 +122,14 @@ def get_task(user, task_id: str) -> AuditTask:
 
 def create_task(user, payload: dict, *, task_type: str) -> AuditTask:
     access = require_project_role(user, payload.get('project_id'), min_role='member')
+    repository_spec = build_effective_project_repository_spec(
+        access.project,
+        branch_name=payload.get('branch_name'),
+        manifest_xml=payload.get('manifest_xml'),
+        group=payload.get('group'),
+    )
+    if access.project.source_type == 'repository' and normalize_repository_type(access.project.repository_type) == 'multi' and not repository_spec['manifest_xml']:
+        raise HttpError(422, '多仓任务必须填写 manifest_xml')
     scan_config = {
         'file_paths': payload.get('file_paths') or [],
         'rule_set_id': payload.get('rule_set_id'),
@@ -138,7 +149,9 @@ def create_task(user, payload: dict, *, task_type: str) -> AuditTask:
         created_by=user,
         task_type=task_type,
         status='pending',
-        branch_name=(payload.get('branch_name') or access.project.default_branch or 'main'),
+        branch_name=repository_spec['branch_name'],
+        manifest_xml=repository_spec['manifest_xml'] or None,
+        group=repository_spec['group'] or None,
         exclude_patterns=payload.get('exclude_patterns') or [],
         scan_config=scan_config,
         sys_creator=user,
@@ -657,7 +670,13 @@ def execute_scan_task(task_id: str) -> None:
         task.error_message = ''
         task.scan_config = scan_config
         task.save(update_fields=['status', 'started_at', 'error_message', 'scan_config', 'sys_update_datetime'])
-        workspace, user_payload = prepare_workspace(task.project, branch_name=task.branch_name, user_id=str(task.created_by_id))
+        workspace, user_payload = prepare_workspace(
+            task.project,
+            branch_name=task.branch_name,
+            user_id=str(task.created_by_id),
+            manifest_xml=task.manifest_xml,
+            group=task.group,
+        )
         runtime_scan_config = (user_payload.get('other_config') or {}).get('scan_config') or {}
         files = list_project_files(
             workspace,

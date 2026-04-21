@@ -13,6 +13,8 @@ class AuditTask(RootModel):
     task_type = models.CharField(max_length=20, choices=SCAN_TYPE_CHOICES, default='repository', verbose_name='任务类型')
     status = models.CharField(max_length=20, choices=TASK_STATUS_CHOICES, default='pending', db_index=True, verbose_name='任务状态')
     branch_name = models.CharField(max_length=255, blank=True, null=True, verbose_name='分支名称')
+    manifest_xml = models.CharField(max_length=1000, blank=True, null=True, verbose_name='Manifest XML')
+    group = models.CharField(max_length=255, blank=True, null=True, verbose_name='Group')
     exclude_patterns = models.JSONField(default=list, blank=True, verbose_name='排除模式')
     scan_config = models.JSONField(default=dict, blank=True, verbose_name='扫描配置')
     total_files = models.IntegerField(default=0, verbose_name='总文件数')
