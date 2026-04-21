@@ -53,6 +53,7 @@ import {
   formatCycleIntegerDisplay,
   formatProjectDisplay,
   resolveDtsGovernanceTagMeta,
+  resolveDtsGovernanceTagList,
   resolveSeverityMeta,
   useColumns,
 } from './data';
@@ -164,6 +165,13 @@ const GOVERNANCE_SELECT_FILTER_CONFIGS = [
     filterKey: 'dev_non_base_desc_values',
     label: '非底软说明',
     placeholder: '输入关键词筛选非底软说明',
+  },
+  {
+    columnKey: 'dev_asset_type',
+    dictKey: 'dev_asset_type',
+    filterKey: 'dev_asset_type_values',
+    label: '落地资产类型',
+    placeholder: '输入关键词筛选落地资产类型',
   },
   {
     columnKey: 'dev_status',
@@ -406,6 +414,7 @@ function createDefaultFilters(): DtsStatisticsFilters {
     dev_non_base_desc_values: [],
     dev_aar_link_keyword: '',
     dev_asset_link_keyword: '',
+    dev_asset_type_values: [],
     dev_status_values: [],
     dev_remark_keyword: '',
     test_owner_name_keyword: [],
@@ -468,6 +477,10 @@ const snapshotMeta = ref<DtsSnapshotMeta | null>(null);
 
 function resolveGovTag(field: any, raw: unknown) {
   return resolveDtsGovernanceTagMeta(dictOptions.value, field, raw);
+}
+
+function resolveGovTagList(field: any, raw: unknown) {
+  return resolveDtsGovernanceTagList(dictOptions.value, field, raw);
 }
 
 function openEdit(row: DtsMergedDefect) {
@@ -657,6 +670,9 @@ function cloneFilters(source: DtsStatisticsFilters): DtsStatisticsFilters {
     ),
     dev_aar_link_keyword: String(source.dev_aar_link_keyword || '').trim(),
     dev_asset_link_keyword: String(source.dev_asset_link_keyword || '').trim(),
+    dev_asset_type_values: normalizeStringArray(
+      source.dev_asset_type_values,
+    ),
     dev_status_values: normalizeStringArray(source.dev_status_values),
     dev_remark_keyword: String(source.dev_remark_keyword || '').trim(),
     test_owner_name_keyword: normalizeStringArray(
@@ -773,6 +789,7 @@ function buildFingerprint(payload: DtsStatisticsFilters | null) {
     ].sort(),
     dev_aar_link_keyword: payload.dev_aar_link_keyword || '',
     dev_asset_link_keyword: payload.dev_asset_link_keyword || '',
+    dev_asset_type_values: [...(payload.dev_asset_type_values || [])].sort(),
     dev_status_values: [...(payload.dev_status_values || [])].sort(),
     dev_remark_keyword: payload.dev_remark_keyword || '',
     test_owner_name_keyword: [
@@ -5408,6 +5425,42 @@ onUnmounted(() => {
                       >
                         <ElTag type="info" effect="plain" size="small">
                           +{{ (row.dev_non_base_desc || []).length - 2 }}
+                        </ElTag>
+                        </ElTooltip>
+                      </div>
+                    </template>
+
+                  <template #cell-dev_asset_type="{ row }">
+                    <span
+                      v-if="(row.dev_asset_type || []).length === 0"
+                      class="text-slate-400"
+                    >
+                      -
+                    </span>
+                    <div v-else class="dts-cell-tags">
+                      <template
+                        v-for="item in resolveGovTagList(
+                          'dev_asset_type',
+                          row.dev_asset_type,
+                        ).slice(0, 2)"
+                        :key="item.label"
+                      >
+                        <ElTag
+                          :type="item.type"
+                          effect="light"
+                          size="small"
+                        >
+                          {{ item.label }}
+                        </ElTag>
+                      </template>
+
+                      <ElTooltip
+                        v-if="(row.dev_asset_type || []).length > 2"
+                        :content="formatArrayTooltip(row.dev_asset_type)"
+                        placement="top-start"
+                      >
+                        <ElTag type="info" effect="plain" size="small">
+                          +{{ (row.dev_asset_type || []).length - 2 }}
                         </ElTag>
                       </ElTooltip>
                     </div>

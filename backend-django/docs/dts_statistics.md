@@ -459,6 +459,7 @@ Schema：`DtsStatisticsExportSchema`（不包含分页字段）
 | `dts_process_quality_type` | `process_quality_type` | 过程质量分类 |
 | `dts_dev_sub_category` | `dev_sub_category` | 开发问题小类（多选） |
 | `dts_dev_non_base_desc` | `dev_non_base_desc` | 非底软问题说明（多选） |
+| `dts_dev_asset_type` | `dev_asset_type` | 落地资产类型（多选） |
 | `dts_test_miss_reason` | `test_miss_reason` | 漏测原因（多选） |
 | `dts_action_status` | `dev_status/test_status` | 改进状态（开发/测试共用） |
 
@@ -470,6 +471,7 @@ Schema：`DtsStatisticsExportSchema`（不包含分页字段）
 
 - `backend-django/apps/project_manager/migrations/0024_seed_dts_dicts.py`
 - `backend-django/apps/project_manager/migrations/0025_dts_extension_dev_non_base_desc_dicts.py`
+- `backend-django/apps/project_manager/migrations/0045_dts_extension_dev_asset_type.py`
 
 初始化选项清单（建议）：
 
@@ -527,6 +529,15 @@ Schema：`DtsStatisticsExportSchema`（不包含分页字段）
   - 配置/环境原因
   - 需求/产品原因
   - 数据原因
+  - 其他
+- `dts_dev_asset_type`（DTS-落地资产类型）
+  - 文档
+  - 脚本
+  - 工具
+  - 组件
+  - 平台能力
+  - 规范
+  - 知识库
   - 其他
 - `dts_action_status`（DTS-改进状态）
   - open

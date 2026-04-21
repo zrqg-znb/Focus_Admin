@@ -159,6 +159,7 @@ _EXTENSION_ALLOWED_FIELDS = {
     "dev_non_base_desc",
     "dev_aar_link",
     "dev_asset_link",
+    "dev_asset_type",
     "dev_status",
     "dev_remark",
     "test_miss_reason",
@@ -175,6 +176,7 @@ _EXTENSION_LIST_FIELDS = {
     "dev_control_points",
     "dev_improvements",
     "dev_non_base_desc",
+    "dev_asset_type",
     "test_miss_reason",
     "test_improvements",
 }
@@ -279,6 +281,7 @@ _GOVERNANCE_LOCAL_FILTER_FIELD_KEYS = {
     "dev_non_base_desc",
     "dev_aar_link",
     "dev_asset_link",
+    "dev_asset_type",
     "dev_status",
     "dev_remark",
     "test_owner_name",
@@ -1461,6 +1464,7 @@ def _merge_defect_with_extension(
                 "dev_non_base_desc": [],
                 "dev_aar_link": None,
                 "dev_asset_link": None,
+                "dev_asset_type": [],
                 "dev_status": None,
                 "dev_remark": None,
                 "test_miss_reason": [],
@@ -1510,6 +1514,7 @@ def _merge_defect_with_extension(
     merged["dev_non_base_desc"] = extension.dev_non_base_desc or []
     merged["dev_aar_link"] = extension.dev_aar_link
     merged["dev_asset_link"] = extension.dev_asset_link
+    merged["dev_asset_type"] = extension.dev_asset_type or []
     merged["dev_status"] = extension.dev_status
     merged["dev_remark"] = extension.dev_remark
 
@@ -2225,6 +2230,11 @@ def _apply_local_filters(
         if "dev_asset_link" in ignored
         else _clean_text(local_filters["dev_asset_link_keyword"])
     )
+    dev_asset_type_values = set() if "dev_asset_type" in ignored else {
+        item
+        for item in _normalize_text_list(local_filters["dev_asset_type_values"])
+        if item
+    }
     dev_status_values = set() if "dev_status" in ignored else {
         item for item in _normalize_text_list(local_filters["dev_status_values"]) if item
     }
@@ -2460,6 +2470,8 @@ def _apply_local_filters(
         if not _match_keyword_like(row.get("dev_aar_link"), dev_aar_link_keyword):
             continue
         if not _match_keyword_like(row.get("dev_asset_link"), dev_asset_link_keyword):
+            continue
+        if not _match_list_intersects(row.get("dev_asset_type"), dev_asset_type_values):
             continue
         if dev_status_values and _clean_text(row.get("dev_status")) not in dev_status_values:
             continue
@@ -2744,6 +2756,8 @@ def _build_filtered_result_payload(
         local_filters["dev_aar_link_keyword"] = ""
     if "dev_asset_link" in ignored:
         local_filters["dev_asset_link_keyword"] = ""
+    if "dev_asset_type" in ignored:
+        local_filters["dev_asset_type_values"] = []
     if "dev_status" in ignored:
         local_filters["dev_status_values"] = []
     if "dev_remark" in ignored:
@@ -2890,6 +2904,9 @@ def _build_filtered_result_payload(
         "dev_aar_link_keyword": _clean_text(local_filters.get("dev_aar_link_keyword")),
         "dev_asset_link_keyword": _clean_text(
             local_filters.get("dev_asset_link_keyword")
+        ),
+        "dev_asset_type_values": _normalize_text_list(
+            local_filters.get("dev_asset_type_values")
         ),
         "dev_status_values": _normalize_text_list(local_filters.get("dev_status_values")),
         "dev_remark_keyword": _clean_text(local_filters.get("dev_remark_keyword")),
@@ -3433,6 +3450,7 @@ def _is_dev_filled(ext: DtsExtension) -> bool:
             _has_value_for_summary(ext.dev_non_base_desc),
             _has_value_for_summary(ext.dev_aar_link),
             _has_value_for_summary(ext.dev_asset_link),
+            _has_value_for_summary(ext.dev_asset_type),
             _has_value_for_summary(ext.dev_status),
             _has_value_for_summary(ext.dev_remark),
         ]
@@ -3510,6 +3528,7 @@ _EXPORT_COLUMN_SPECS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
     ("非底软说明", lambda item: _join_lines(item.get("dev_non_base_desc"))),
     ("AAR链接", lambda item: _clean_text(item.get("dev_aar_link"))),
     ("开发填报-落地资产链接", lambda item: _clean_text(item.get("dev_asset_link"))),
+    ("落地资产类型", lambda item: _join_lines(item.get("dev_asset_type"))),
     ("开发填报-改进状态", lambda item: _clean_text(item.get("dev_status"))),
     ("开发备注", lambda item: _clean_text(item.get("dev_remark"))),
     ("测试责任人", lambda item: _clean_text(item.get("test_owner_name"))),
@@ -3877,6 +3896,7 @@ def get_dts_statistics_summary(
                 "dev_non_base_desc",
                 "dev_aar_link",
                 "dev_asset_link",
+                "dev_asset_type",
                 "test_miss_reason",
                 "test_owner_id",
                 "test_standard_desc",
@@ -4076,6 +4096,7 @@ def get_dts_statistics_dict_options() -> dict[str, Any]:
         "dev_common_issue_type": "dts_dev_common_issue_type",
         "dev_control_points": "dts_dev_control_point",
         "dev_non_base_desc": "dts_dev_non_base_desc",
+        "dev_asset_type": "dts_dev_asset_type",
         "test_miss_reason": "dts_test_miss_reason",
         "action_status": "dts_action_status",
     }

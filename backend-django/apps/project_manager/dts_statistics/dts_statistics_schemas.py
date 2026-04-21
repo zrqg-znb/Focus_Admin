@@ -82,6 +82,7 @@ class DtsLocalFilterSchema(Schema):
     dev_non_base_desc_values: list[str] = Field(default_factory=list)
     dev_aar_link_keyword: str = ""
     dev_asset_link_keyword: str = ""
+    dev_asset_type_values: list[str] = Field(default_factory=list)
     dev_status_values: list[str] = Field(default_factory=list)
     dev_remark_keyword: str = ""
     test_owner_name_keyword: list[str] = Field(default_factory=list)
@@ -112,6 +113,7 @@ class DtsLocalFilterSchema(Schema):
         "dev_improvements_keyword",
         "dev_aar_link_keyword",
         "dev_asset_link_keyword",
+        "dev_asset_type_values",
         "duplicate_issue_no_keyword",
         "dev_remark_keyword",
         "test_standard_desc_keyword",
@@ -161,6 +163,7 @@ class DtsLocalFilterSchema(Schema):
         "dev_common_issue_type_values",
         "dev_control_points_values",
         "dev_non_base_desc_values",
+        "dev_asset_type_values",
         "dev_status_values",
         "dev_owner_name_keyword",
         "test_miss_reason_values",
@@ -229,6 +232,7 @@ class DtsStatisticsQuerySchema(Schema):
     dev_non_base_desc_values: list[str] = Field(default_factory=list)
     dev_aar_link_keyword: str = ""
     dev_asset_link_keyword: str = ""
+    dev_asset_type_values: list[str] = Field(default_factory=list)
     dev_status_values: list[str] = Field(default_factory=list)
     dev_remark_keyword: str = ""
     test_owner_name_keyword: list[str] = Field(default_factory=list)
@@ -277,6 +281,7 @@ class DtsStatisticsQuerySchema(Schema):
         "dev_improvements_keyword",
         "dev_aar_link_keyword",
         "dev_asset_link_keyword",
+        "dev_asset_type_values",
         "duplicate_issue_no_keyword",
         "dev_remark_keyword",
         "test_standard_desc_keyword",
@@ -339,6 +344,7 @@ class DtsStatisticsQuerySchema(Schema):
         "is_duplicate_issue_values",
         "dev_control_points_values",
         "dev_non_base_desc_values",
+        "dev_asset_type_values",
         "dev_status_values",
         "test_miss_reason_values",
         "test_status_values",
@@ -387,6 +393,7 @@ class DtsExtensionSaveSchema(Schema):
     dev_non_base_desc: list[str] = Field(default_factory=list)
     dev_aar_link: Optional[str] = None
     dev_asset_link: Optional[str] = None
+    dev_asset_type: list[str] = Field(default_factory=list)
     dev_status: Optional[str] = None
     dev_remark: Optional[str] = None
 
@@ -403,6 +410,7 @@ class DtsExtensionSaveSchema(Schema):
         "dev_control_points",
         "dev_non_base_desc",
         "dev_improvements",
+        "dev_asset_type",
         "test_miss_reason",
         "test_improvements",
         mode="before",
@@ -488,6 +496,7 @@ class DtsBatchExtensionDataSchema(Schema):
     dev_non_base_desc: Optional[list[str]] = None
     dev_aar_link: Optional[str] = None
     dev_asset_link: Optional[str] = None
+    dev_asset_type: Optional[list[str]] = None
     dev_status: Optional[str] = None
     dev_remark: Optional[str] = None
 
@@ -504,6 +513,7 @@ class DtsBatchExtensionDataSchema(Schema):
         "dev_control_points",
         "dev_non_base_desc",
         "dev_improvements",
+        "dev_asset_type",
         "test_miss_reason",
         "test_improvements",
         mode="before",
@@ -787,6 +797,7 @@ class DtsStatisticsExportSchema(Schema):
     dev_non_base_desc_values: list[str] = Field(default_factory=list)
     dev_aar_link_keyword: str = ""
     dev_asset_link_keyword: str = ""
+    dev_asset_type_values: list[str] = Field(default_factory=list)
     dev_status_values: list[str] = Field(default_factory=list)
     dev_remark_keyword: str = ""
     test_owner_name_keyword: list[str] = Field(default_factory=list)
@@ -833,6 +844,7 @@ class DtsStatisticsExportSchema(Schema):
         "dev_improvements_keyword",
         "dev_aar_link_keyword",
         "dev_asset_link_keyword",
+        "dev_asset_type_values",
         "duplicate_issue_no_keyword",
         "dev_remark_keyword",
         "test_standard_desc_keyword",
@@ -895,6 +907,7 @@ class DtsStatisticsExportSchema(Schema):
         "is_duplicate_issue_values",
         "dev_control_points_values",
         "dev_non_base_desc_values",
+        "dev_asset_type_values",
         "dev_status_values",
         "test_miss_reason_values",
         "test_status_values",
@@ -975,5 +988,6 @@ class DtsDictOptionsSchema(Schema):
     dev_common_issue_type: list[DtsDictOptionSchema] = Field(default_factory=list)
     dev_control_points: list[DtsDictOptionSchema] = Field(default_factory=list)
     dev_non_base_desc: list[DtsDictOptionSchema] = Field(default_factory=list)
+    dev_asset_type: list[DtsDictOptionSchema] = Field(default_factory=list)
     test_miss_reason: list[DtsDictOptionSchema] = Field(default_factory=list)
     action_status: list[DtsDictOptionSchema] = Field(default_factory=list)

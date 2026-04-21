@@ -71,6 +71,7 @@ function normalizeDtsDictOptions(
     ),
     dev_control_points: normalizeSelectOptions(safeBundle.dev_control_points),
     dev_non_base_desc: normalizeSelectOptions(safeBundle.dev_non_base_desc),
+    dev_asset_type: normalizeSelectOptions(safeBundle.dev_asset_type),
     test_miss_reason: normalizeSelectOptions(safeBundle.test_miss_reason),
     action_status: normalizeSelectOptions(safeBundle.action_status),
   };
@@ -125,6 +126,7 @@ export type DtsGovernanceField =
   | 'dev_issue_intro_point'
   | 'dev_issue_probability'
   | 'dev_non_base_desc'
+  | 'dev_asset_type'
   | 'dev_status'
   | 'dev_sub_category'
   | 'is_base_soft_issue'
@@ -168,6 +170,9 @@ function resolveOptionsForField(
     }
     case 'dev_non_base_desc': {
       return safeOptions.dev_non_base_desc;
+    }
+    case 'dev_asset_type': {
+      return safeOptions.dev_asset_type;
     }
     case 'dev_status': {
       return safeOptions.action_status;
@@ -303,6 +308,7 @@ export function resolveDtsGovernanceTagList(
   dictOptions: DtsDictOptions | null | undefined,
   field:
     | 'dev_control_points'
+    | 'dev_asset_type'
     | 'dev_non_base_desc'
     | 'dev_sub_category'
     | 'test_miss_reason',
@@ -724,6 +730,12 @@ export function useColumns(): Columns {
           minWidth: 200,
         },
         {
+          key: 'dev_asset_type',
+          dataKey: 'dev_asset_type',
+          title: '落地资产类型',
+          minWidth: 220,
+        },
+        {
           key: 'dev_status',
           dataKey: 'dev_status',
           title: '改进状态',
@@ -1029,6 +1041,14 @@ export const DTS_DEV_FORM_FIELDS: DtsFormFieldConfig[] = [
   },
   {
     component: 'ApiSelect',
+    fieldName: 'dev_asset_type',
+    label: '落地资产类型',
+    placeholder: '请选择落地资产类型（可多选）',
+    dictKey: 'dev_asset_type',
+    multiple: true,
+  },
+  {
+    component: 'ApiSelect',
     fieldName: 'dev_status',
     label: '改进状态(开发)',
     placeholder: '请选择改进状态',
@@ -1168,6 +1188,7 @@ export function buildDtsExtensionSubmitPayload(raw: Record<string, any>) {
     dev_sub_category: normalizeDtsStringListValue(raw.dev_sub_category),
     dev_control_points: normalizeDtsStringListValue(raw.dev_control_points),
     dev_non_base_desc: normalizeDtsStringListValue(raw.dev_non_base_desc),
+    dev_asset_type: normalizeDtsStringListValue(raw.dev_asset_type),
     dev_improvements: normalizeDtsStringListValue(raw.dev_improvements),
     test_miss_reason: normalizeDtsStringListValue(raw.test_miss_reason),
     test_improvements: normalizeDtsStringListValue(raw.test_improvements),

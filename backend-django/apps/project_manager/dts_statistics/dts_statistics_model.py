@@ -56,6 +56,7 @@ class DtsExtension(RootModel):
     dev_remark = models.TextField(null=True, blank=True, verbose_name="开发备注")
     dev_aar_link = models.CharField(max_length=512, null=True, blank=True, verbose_name="AAR链接")
     dev_asset_link = models.CharField(max_length=512, null=True, blank=True, verbose_name="落地资产链接(开发)")
+    dev_asset_type = models.JSONField(default=list, blank=True, verbose_name="落地资产类型(开发)")
     dev_status = models.CharField(max_length=32, null=True, blank=True, verbose_name="开发改进措施状态")
 
     # 底软测试填写

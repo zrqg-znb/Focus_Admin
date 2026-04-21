@@ -56,6 +56,7 @@ export interface DtsStatisticsFilters {
   dev_non_base_desc_values: string[];
   dev_aar_link_keyword: string;
   dev_asset_link_keyword: string;
+  dev_asset_type_values: string[];
   dev_status_values: string[];
   dev_remark_keyword: string;
   test_owner_name_keyword: string[];
@@ -143,6 +144,7 @@ export interface DtsMergedDefect {
   dev_non_base_desc: string[];
   dev_aar_link?: null | string;
   dev_asset_link?: null | string;
+  dev_asset_type: string[];
   dev_status?: null | string;
   dev_remark?: null | string;
 
@@ -199,6 +201,7 @@ export interface DtsExtensionSavePayload {
   dev_non_base_desc?: string[];
   dev_aar_link?: null | string;
   dev_asset_link?: null | string;
+  dev_asset_type?: string[];
   dev_status?: null | string;
   dev_remark?: null | string;
 
@@ -242,6 +245,7 @@ export interface DtsBatchExtensionPatchPayload {
   dev_non_base_desc?: null | string[];
   dev_aar_link?: null | string;
   dev_asset_link?: null | string;
+  dev_asset_type?: null | string[];
   dev_status?: null | string;
   dev_remark?: null | string;
 
@@ -357,6 +361,7 @@ export interface DtsDictOptions {
   dev_common_issue_type: DtsDictOption[];
   dev_control_points: DtsDictOption[];
   dev_non_base_desc: DtsDictOption[];
+  dev_asset_type: DtsDictOption[];
   test_miss_reason: DtsDictOption[];
   action_status: DtsDictOption[];
 }
