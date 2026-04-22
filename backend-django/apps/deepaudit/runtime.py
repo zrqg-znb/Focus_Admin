@@ -92,6 +92,8 @@ def prepare_repository_workspace(
     user_payload: dict | None = None,
     ssh_private_key: str | None = None,
     allow_stale_on_failure: bool = False,
+    force_refresh: bool = False,
+    force_multi_sync: bool = False,
     event_callback: GitEventCallback | None = None,
     log_context: dict[str, Any] | None = None,
 ) -> tuple[Path, dict]:
@@ -137,6 +139,8 @@ def prepare_repository_workspace(
             group=repository_spec['group'],
             repository_type=repository_spec['repository_type'],
             repository_spec=repository_spec,
+            force_refresh=force_refresh,
+            force_multi_sync=force_multi_sync,
             event_callback=event_callback,
             log_context=log_context,
         )
@@ -235,6 +239,34 @@ def list_project_files(
         )
     items.sort(key=lambda item: item['path'])
     return items
+
+
+def validate_selected_file_paths(
+    workspace: Path,
+    *,
+    file_paths: Iterable[str] | None = None,
+) -> dict[str, list[str]]:
+    normalized_targets: list[str] = []
+    seen: set[str] = set()
+    for item in (file_paths or []):
+        normalized = _normalize_path(str(item or ''))
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_targets.append(normalized)
+
+    if not normalized_targets:
+        return {'existing': [], 'missing': []}
+
+    existing: list[str] = []
+    missing: list[str] = []
+    for relative_path in normalized_targets:
+        target = workspace / relative_path
+        if target.exists() and target.is_file():
+            existing.append(relative_path)
+        else:
+            missing.append(relative_path)
+    return {'existing': existing, 'missing': missing}
 
 
 def run_heuristic_scan(

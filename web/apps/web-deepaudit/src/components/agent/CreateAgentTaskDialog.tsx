@@ -48,13 +48,21 @@ import {
   Settings2,
   Upload,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 interface CreateAgentTaskDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+}
+
+interface SelectedRepositorySpec {
+  branch_name?: string;
+  group?: string;
+  manifest_xml?: string;
+  repository_type?: string;
+  repository_url?: string;
 }
 
 const DEFAULT_EXCLUDES = [
@@ -96,7 +104,10 @@ export default function CreateAgentTaskDialog({
 
   // 文件选择状态
   const [selectedFiles, setSelectedFiles] = useState<string[] | undefined>();
+  const [selectedRepositorySpec, setSelectedRepositorySpec] =
+    useState<SelectedRepositorySpec>();
   const [showFileSelection, setShowFileSelection] = useState(false);
+  const selectionContextRef = useRef('');
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
 
@@ -125,6 +136,7 @@ export default function CreateAgentTaskDialog({
       setZipFile(null);
       setStoredZipInfo(null);
       setSelectedFiles(undefined);
+      setSelectedRepositorySpec(undefined);
     }
   }, [open]);
 
@@ -172,6 +184,35 @@ export default function CreateAgentTaskDialog({
     setManifestXml(selectedProject.manifest_xml || '');
     setGroup(selectedProject.group || '');
   }, [selectedProject?.id]);
+
+  useEffect(() => {
+    const nextSelectionContext = [
+      selectedProjectId,
+      selectedProject?.repository_type || '',
+      branch,
+      manifestXml,
+      group,
+      excludePatterns.join('\u0001'),
+    ].join('|');
+    if (
+      selectionContextRef.current &&
+      selectionContextRef.current !== nextSelectionContext &&
+      selectedFiles
+    ) {
+      setSelectedFiles(undefined);
+      setSelectedRepositorySpec(undefined);
+      toast.info('仓库规格或排除规则已更改，请重新选择文件');
+    }
+    selectionContextRef.current = nextSelectionContext;
+  }, [
+    branch,
+    excludePatterns,
+    group,
+    manifestXml,
+    selectedFiles,
+    selectedProject?.repository_type,
+    selectedProjectId,
+  ]);
 
   // 加载 ZIP 文件信息
   useEffect(() => {
@@ -237,19 +278,28 @@ export default function CreateAgentTaskDialog({
 
     setCreating(true);
     try {
+      const effectiveRepositorySpec = isRepositoryProject(selectedProject)
+        ? {
+            repository_type:
+              selectedRepositorySpec?.repository_type ||
+              selectedProject.repository_type,
+            repository_url:
+              selectedRepositorySpec?.repository_url ||
+              selectedProject.repository_url,
+            branch_name: selectedRepositorySpec?.branch_name || branch,
+            manifest_xml:
+              selectedRepositorySpec?.manifest_xml || manifestXml || undefined,
+            group: selectedRepositorySpec?.group || group || undefined,
+          }
+        : undefined;
       const agentTask = await createAgentTask({
         project_id: selectedProject.id,
         name: `Agent审计-${selectedProject.name}`,
-        repository_type: isRepositoryProject(selectedProject)
-          ? selectedProject.repository_type
-          : undefined,
-        branch_name: isRepositoryProject(selectedProject) ? branch : undefined,
-        manifest_xml: isRepositoryProject(selectedProject)
-          ? manifestXml || undefined
-          : undefined,
-        group: isRepositoryProject(selectedProject)
-          ? group || undefined
-          : undefined,
+        repository_url: effectiveRepositorySpec?.repository_url,
+        repository_type: effectiveRepositorySpec?.repository_type as any,
+        branch_name: effectiveRepositorySpec?.branch_name,
+        manifest_xml: effectiveRepositorySpec?.manifest_xml,
+        group: effectiveRepositorySpec?.group,
         exclude_patterns: excludePatterns,
         target_files: selectedFiles,
         verification_level: 'sandbox',
@@ -541,7 +591,10 @@ export default function CreateAgentTaskDialog({
                           {selectedFiles && canSelectFiles && (
                             <Button
                               className="h-8 text-xs text-rose-400 hover:bg-rose-900/30 hover:text-rose-300"
-                              onClick={() => setSelectedFiles(undefined)}
+                              onClick={() => {
+                                setSelectedFiles(undefined);
+                                setSelectedRepositorySpec(undefined);
+                              }}
                               size="sm"
                               variant="ghost"
                             >
@@ -650,7 +703,10 @@ export default function CreateAgentTaskDialog({
         excludePatterns={excludePatterns}
         group={group}
         manifestXml={manifestXml}
-        onConfirm={setSelectedFiles}
+        onConfirm={({ repositorySpec, selectedFiles: files }) => {
+          setSelectedFiles(files);
+          setSelectedRepositorySpec(repositorySpec);
+        }}
         onOpenChange={setShowFileSelection}
         open={showFileSelection}
         projectId={selectedProjectId}

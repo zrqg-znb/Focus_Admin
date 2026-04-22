@@ -206,7 +206,7 @@ class RuntimeRepositoryWorkspaceTestCase(SimpleTestCase):
         self.assertEqual(mock_create.call_args.kwargs['log_context'], {'task_kind': 'agent', 'task_id': 'task-1'})
 
 
-class ProjectRepositoryFileListingTestCase(SimpleTestCase):
+class ProjectRepositoryFileListingTestCase(RuntimeRepositoryWorkspaceTestCase):
     def test_list_files_uses_cached_repository_listing(self) -> None:
         user = SimpleNamespace(id='user-1')
         project_instance = SimpleNamespace(
@@ -231,3 +231,79 @@ class ProjectRepositoryFileListingTestCase(SimpleTestCase):
             rows = project_services.list_files(user, 'project-1')
 
         self.assertEqual(rows, expected_rows)
+
+    def test_browse_files_returns_paginated_directory_entries(self) -> None:
+        user = SimpleNamespace(id='user-1')
+        project_instance = SimpleNamespace(
+            id='project-1',
+            owner_id='owner-1',
+            source_type='repository',
+            repository_url='https://example.com/repo.git',
+            repository_type='multi',
+            default_branch='main',
+            manifest_xml='default.xml',
+            group='platform',
+        )
+        access = SimpleNamespace(project=project_instance)
+        cache_repo = self.temp_root / 'cache-repo'
+        (cache_repo / 'src').mkdir(parents=True, exist_ok=True)
+        (cache_repo / 'src' / 'app.py').write_text("print('ok')\n", encoding='utf-8')
+        (cache_repo / 'README.md').write_text('# demo\n', encoding='utf-8')
+
+        with (
+            patch('apps.deepaudit.project.project_services.require_project_role', return_value=access),
+            patch('apps.deepaudit.project.project_services.repository_cache_enabled', return_value=True),
+            patch('apps.deepaudit.project.project_services.load_user_config_payload', return_value={'other_config': {}}),
+            patch('apps.deepaudit.project.project_services.load_ssh_private_key', return_value=None),
+            patch('apps.deepaudit.project.project_services.ensure_repository_cache', return_value=cache_repo),
+            patch(
+                'apps.deepaudit.project.project_services.get_repository_cache_info',
+                return_value={
+                    'cache_root': cache_repo.parent,
+                    'cache_repo': cache_repo,
+                    'state_path': cache_repo.parent / 'state.json',
+                    'cache_exists': True,
+                    'last_synced_at': 1234567890,
+                    'repository_spec': build_repository_spec(
+                        'https://example.com/repo.git',
+                        'main',
+                        repository_type='multi',
+                        manifest_xml='default.xml',
+                        group='platform',
+                    ),
+                },
+            ),
+        ):
+            payload = project_services.browse_files(
+                user,
+                'project-1',
+                repository_type='multi',
+                branch_name='main',
+                manifest_xml='default.xml',
+                group='platform',
+                limit=10,
+            )
+
+        self.assertEqual(payload['total'], 2)
+        self.assertEqual(payload['items'][0]['kind'], 'directory')
+        self.assertEqual(payload['items'][0]['path'], 'src')
+        self.assertEqual(payload['items'][1]['kind'], 'file')
+        self.assertEqual(payload['items'][1]['path'], 'README.md')
+        self.assertEqual(payload['repository_spec']['repository_type'], 'multi')
+        self.assertEqual(payload['last_synced_at'], 1234567890)
+
+
+class RuntimeSelectedFilesValidationTestCase(RuntimeRepositoryWorkspaceTestCase):
+    def test_validate_selected_file_paths_splits_existing_and_missing(self) -> None:
+        workspace = self.temp_root / 'validation-workspace'
+        workspace.mkdir(parents=True, exist_ok=True)
+        (workspace / 'src').mkdir(parents=True, exist_ok=True)
+        (workspace / 'src' / 'main.c').write_text('int main(void) { return 0; }\n', encoding='utf-8')
+
+        result = runtime.validate_selected_file_paths(
+            workspace,
+            file_paths=['src/main.c', 'src/missing.c', './src/main.c'],
+        )
+
+        self.assertEqual(result['existing'], ['src/main.c'])
+        self.assertEqual(result['missing'], ['src/missing.c'])

@@ -9,6 +9,7 @@ export async function runRepositoryAudit(params: {
   manifestXml?: string;
   projectId: string;
   promptTemplateId?: string;
+  repositoryType?: string;
   repoUrl: string;
   ruleSetId?: string;
 }) {
@@ -23,6 +24,8 @@ export async function runRepositoryAudit(params: {
   const task = await api.createAuditTask({
     project_id: params.projectId,
     task_type: 'repository',
+    repository_url: params.repoUrl,
+    repository_type: params.repositoryType as any,
     branch_name: params.branch || 'main',
     manifest_xml: params.manifestXml,
     group: params.group,

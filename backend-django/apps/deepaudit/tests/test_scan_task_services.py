@@ -174,6 +174,95 @@ class ScanTaskSnapshotTestCase(TestCase):
         self.assertEqual(repository_spec['branch_name'], 'release/main')
         self.assertEqual(repository_spec['manifest_xml'], 'default.xml')
         self.assertEqual(repository_spec['group'], 'platform')
+        self.assertTrue(mock_prepare.call_args.kwargs['force_multi_sync'])
+
+    def test_execute_scan_task_fails_when_all_selected_files_disappear(self) -> None:
+        task = AuditTask.objects.create(
+            project=self.project,
+            created_by=self.user,
+            task_type='repository',
+            status='pending',
+            repository_url='https://codehub.example.com/platform/manifest.git',
+            repository_type='multi',
+            branch_name='release/main',
+            manifest_xml='default.xml',
+            group='platform',
+            scan_config={'file_paths': ['src/missing.c']},
+            sys_creator=self.user,
+            sys_modifier=self.user,
+        )
+
+        with (
+            patch('apps.deepaudit.scan_task.scan_task_services.resolve_scan_profile', return_value={}),
+            patch('apps.deepaudit.scan_task.scan_task_services.serialize_scan_profile', return_value={}),
+            patch(
+                'apps.deepaudit.scan_task.scan_task_services.prepare_repository_workspace',
+                return_value=(Path('/tmp/focusaudit-scan-workspace'), {'other_config': {}}),
+            ),
+            patch(
+                'apps.deepaudit.scan_task.scan_task_services.validate_selected_file_paths',
+                return_value={'existing': [], 'missing': ['src/missing.c']},
+            ),
+            patch('apps.deepaudit.scan_task.scan_task_services.list_project_files', side_effect=AssertionError('should not list files')),
+            patch('apps.deepaudit.scan_task.scan_task_services.cleanup_runtime_workspace'),
+        ):
+            execute_scan_task(str(task.id))
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, 'failed')
+        self.assertIn('所选文件在当前代码工作区中不存在', task.error_message or '')
+
+    def test_execute_scan_task_continues_with_remaining_selected_files(self) -> None:
+        task = AuditTask.objects.create(
+            project=self.project,
+            created_by=self.user,
+            task_type='repository',
+            status='pending',
+            repository_url='https://codehub.example.com/platform/manifest.git',
+            repository_type='multi',
+            branch_name='release/main',
+            manifest_xml='default.xml',
+            group='platform',
+            scan_config={'file_paths': ['src/keep.c', 'src/missing.c']},
+            sys_creator=self.user,
+            sys_modifier=self.user,
+        )
+
+        with (
+            patch('apps.deepaudit.scan_task.scan_task_services.resolve_scan_profile', return_value={}),
+            patch('apps.deepaudit.scan_task.scan_task_services.serialize_scan_profile', return_value={}),
+            patch(
+                'apps.deepaudit.scan_task.scan_task_services.prepare_repository_workspace',
+                return_value=(Path('/tmp/focusaudit-scan-workspace'), {'other_config': {}}),
+            ),
+            patch(
+                'apps.deepaudit.scan_task.scan_task_services.validate_selected_file_paths',
+                return_value={'existing': ['src/keep.c'], 'missing': ['src/missing.c']},
+            ),
+            patch(
+                'apps.deepaudit.scan_task.scan_task_services.list_project_files',
+                return_value=[],
+            ) as mock_list_files,
+            patch(
+                'apps.deepaudit.scan_task.scan_task_services._scan_files_with_concurrency',
+                new=AsyncMock(
+                    return_value={
+                        'cancelled': False,
+                        'scanned_files': 0,
+                        'skipped_files': 0,
+                        'failed_files': 0,
+                        'total_lines': 0,
+                        'total_issues': 0,
+                        'quality_scores': [],
+                    }
+                ),
+            ),
+            patch('apps.deepaudit.scan_task.scan_task_services._is_cancelled', return_value=False),
+            patch('apps.deepaudit.scan_task.scan_task_services.cleanup_runtime_workspace'),
+        ):
+            execute_scan_task(str(task.id))
+
+        self.assertEqual(mock_list_files.call_args.kwargs['file_paths'], ['src/keep.c'])
 
 
 class InstantAnalysisServiceTestCase(TestCase):

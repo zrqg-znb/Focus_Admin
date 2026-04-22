@@ -81,6 +81,14 @@ interface CreateTaskDialogProps {
   preselectedProjectId?: string;
 }
 
+interface SelectedRepositorySpec {
+  branch_name?: string;
+  group?: string;
+  manifest_xml?: string;
+  repository_type?: string;
+  repository_url?: string;
+}
+
 const DEFAULT_EXCLUDES = [
   'node_modules/**',
   '.git/**',
@@ -107,6 +115,8 @@ export default function CreateTaskDialog({
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [excludePatterns, setExcludePatterns] = useState(DEFAULT_EXCLUDES);
   const [selectedFiles, setSelectedFiles] = useState<string[] | undefined>();
+  const [selectedRepositorySpec, setSelectedRepositorySpec] =
+    useState<SelectedRepositorySpec>();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showFileSelection, setShowFileSelection] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -210,6 +220,8 @@ export default function CreateTaskDialog({
       setBranch('main');
       setManifestXml('');
       setGroup('');
+      setSelectedFiles(undefined);
+      setSelectedRepositorySpec(undefined);
       setShowAdvanced(false);
       const defaultRuleSet = ruleSets.find((r) => r.is_default);
       setSelectedRuleSetId(defaultRuleSet?.id || ruleSets[0]?.id || '');
@@ -241,14 +253,35 @@ export default function CreateTaskDialog({
     setGroup(selectedProject.group || '');
   }, [selectedProject?.id]);
 
-  const excludePatternsRef = useRef(excludePatterns);
+  const selectionContextRef = useRef('');
   useEffect(() => {
-    if (excludePatternsRef.current !== excludePatterns && selectedFiles) {
+    const nextSelectionContext = [
+      selectedProjectId,
+      selectedProject?.repository_type || '',
+      branch,
+      manifestXml,
+      group,
+      excludePatterns.join('\u0001'),
+    ].join('|');
+    if (
+      selectionContextRef.current &&
+      selectionContextRef.current !== nextSelectionContext &&
+      selectedFiles
+    ) {
       setSelectedFiles(undefined);
-      toast.info('排除模式已更改，请重新选择文件');
+      setSelectedRepositorySpec(undefined);
+      toast.info('仓库规格或排除规则已更改，请重新选择文件');
     }
-    excludePatternsRef.current = excludePatterns;
-  }, [excludePatterns]);
+    selectionContextRef.current = nextSelectionContext;
+  }, [
+    branch,
+    excludePatterns,
+    group,
+    manifestXml,
+    selectedFiles,
+    selectedProject?.repository_type,
+    selectedProjectId,
+  ]);
 
   const handleStartScan = async () => {
     if (!selectedProject) {
@@ -269,23 +302,30 @@ export default function CreateTaskDialog({
     try {
       setCreating(true);
       let taskId: string;
+      const effectiveRepositorySpec = isRepositoryProject(selectedProject)
+        ? {
+            repository_type:
+              selectedRepositorySpec?.repository_type ||
+              selectedProject.repository_type,
+            repository_url:
+              selectedRepositorySpec?.repository_url ||
+              selectedProject.repository_url,
+            branch_name: selectedRepositorySpec?.branch_name || branch,
+            manifest_xml:
+              selectedRepositorySpec?.manifest_xml || manifestXml || undefined,
+            group: selectedRepositorySpec?.group || group || undefined,
+          }
+        : undefined;
 
       if (auditMode === 'agent') {
         const agentTask = await createAgentTask({
           project_id: selectedProject.id,
           name: `Agent审计-${selectedProject.name}`,
-          repository_type: isRepositoryProject(selectedProject)
-            ? selectedProject.repository_type
-            : undefined,
-          branch_name: isRepositoryProject(selectedProject)
-            ? branch
-            : undefined,
-          manifest_xml: isRepositoryProject(selectedProject)
-            ? manifestXml || undefined
-            : undefined,
-          group: isRepositoryProject(selectedProject)
-            ? group || undefined
-            : undefined,
+          repository_url: effectiveRepositorySpec?.repository_url,
+          repository_type: effectiveRepositorySpec?.repository_type as any,
+          branch_name: effectiveRepositorySpec?.branch_name,
+          manifest_xml: effectiveRepositorySpec?.manifest_xml,
+          group: effectiveRepositorySpec?.group,
           exclude_patterns: excludePatterns,
           target_files: selectedFiles,
           verification_level: 'sandbox',
@@ -298,6 +338,7 @@ export default function CreateTaskDialog({
 
         setSelectedProjectId('');
         setSelectedFiles(undefined);
+        setSelectedRepositorySpec(undefined);
         setExcludePatterns(DEFAULT_EXCLUDES);
         return;
       }
@@ -332,10 +373,11 @@ export default function CreateTaskDialog({
         }
         taskId = await runRepositoryAudit({
           projectId: selectedProject.id,
-          repoUrl: selectedProject.repository_url,
-          branch,
-          manifestXml,
-          group,
+          repoUrl: effectiveRepositorySpec?.repository_url || '',
+          repositoryType: effectiveRepositorySpec?.repository_type,
+          branch: effectiveRepositorySpec?.branch_name,
+          manifestXml: effectiveRepositorySpec?.manifest_xml,
+          group: effectiveRepositorySpec?.group,
           exclude: excludePatterns,
           createdBy: 'local-user',
           filePaths: selectedFiles,
@@ -353,6 +395,7 @@ export default function CreateTaskDialog({
 
       setSelectedProjectId('');
       setSelectedFiles(undefined);
+      setSelectedRepositorySpec(undefined);
       setExcludePatterns(DEFAULT_EXCLUDES);
     } catch (error) {
       const msg = error instanceof Error ? error.message : '未知错误';
@@ -785,7 +828,10 @@ export default function CreateTaskDialog({
                             {selectedFiles && canSelectFiles && (
                               <Button
                                 className="h-8 text-xs text-rose-600 hover:bg-rose-100 hover:text-rose-700 dark:text-rose-400 dark:hover:bg-rose-900/30 dark:hover:text-rose-300"
-                                onClick={() => setSelectedFiles(undefined)}
+                                onClick={() => {
+                                  setSelectedFiles(undefined);
+                                  setSelectedRepositorySpec(undefined);
+                                }}
                                 size="sm"
                                 variant="ghost"
                               >
@@ -838,7 +884,10 @@ export default function CreateTaskDialog({
         excludePatterns={excludePatterns}
         group={group}
         manifestXml={manifestXml}
-        onConfirm={setSelectedFiles}
+        onConfirm={({ repositorySpec, selectedFiles: files }) => {
+          setSelectedFiles(files);
+          setSelectedRepositorySpec(repositorySpec);
+        }}
         onOpenChange={setShowFileSelection}
         open={showFileSelection}
         projectId={selectedProjectId}

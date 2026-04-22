@@ -64,6 +64,33 @@ class ProjectFileItemSchema(Schema):
     size: int = 0
 
 
+class ProjectRepositorySpecSchema(Schema):
+    repository_type: str = 'single'
+    repository_url: str | None = None
+    branch_name: str = 'main'
+    manifest_xml: str | None = None
+    group: str | None = None
+
+
+class ProjectFileBrowserItemSchema(Schema):
+    kind: str
+    name: str
+    path: str
+    size: int = 0
+
+
+class ProjectFileBrowserResponseSchema(Schema):
+    items: list[ProjectFileBrowserItemSchema] = Field(default_factory=list)
+    offset: int = 0
+    limit: int = 100
+    total: int = 0
+    has_more: bool = False
+    path: str = ''
+    keyword: str = ''
+    last_synced_at: int | None = None
+    repository_spec: ProjectRepositorySpecSchema = Field(default_factory=ProjectRepositorySpecSchema)
+
+
 class ProjectMemberSchema(UserBriefSchema):
     member_id: str
     project_id: str

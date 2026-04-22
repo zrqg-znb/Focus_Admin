@@ -36,6 +36,7 @@ from apps.deepaudit.repo_specs import (
     validate_repository_spec_for_execution,
 )
 from apps.deepaudit.runtime import cleanup_runtime_workspace, docker_available, prepare_repository_workspace
+from apps.deepaudit.runtime import validate_selected_file_paths
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact
 from apps.deepaudit.serialization import format_datetime_text, normalize_json_payload
 from apps.deepaudit.db_runtime import close_runtime_db_connections, ensure_runtime_db_connection, run_with_fresh_connection
@@ -557,6 +558,7 @@ def create_task(user, payload: dict) -> AgentTask:
     access = require_project_role(user, payload.get('project_id'), min_role='member')
     project_repository_type = normalize_repository_type(access.project.repository_type)
     requested_repository_type = payload.get('repository_type')
+    requested_repository_url = str(payload.get('repository_url') or '').strip()
     normalized_requested_repository_type = (
         normalize_repository_type(requested_repository_type)
         if requested_repository_type is not None
@@ -574,6 +576,14 @@ def create_task(user, payload: dict) -> AgentTask:
             getattr(user, 'id', ''),
             normalized_requested_repository_type,
             project_repository_type,
+        )
+    if requested_repository_url and requested_repository_url != str(access.project.repository_url or '').strip():
+        logger.warning(
+            'DeepAudit agent task create request repository_url mismatch: project_id=%s user_id=%s requested_repository_url=%s project_repository_url=%s',
+            access.project.id,
+            getattr(user, 'id', ''),
+            requested_repository_url,
+            str(access.project.repository_url or '').strip() or '-',
         )
     logger.debug(
         'DeepAudit agent task create payload repository hints: project_id=%s requested_repository_type=%s '
@@ -1782,6 +1792,7 @@ def execute_agent_task(task_id: str) -> None:
             instance.project,
             repository_spec=repository_spec,
             user_id=str(instance.created_by_id),
+            force_multi_sync=repository_spec['repository_type'] == 'multi',
             event_callback=repository_event_callback,
             log_context={
                 'task_kind': 'agent',
@@ -1789,6 +1800,70 @@ def execute_agent_task(task_id: str) -> None:
                 'user_id': str(instance.created_by_id),
             },
         )
+        validated_target_files = list(instance.target_files or [])
+        if validated_target_files:
+            selection_check = validate_selected_file_paths(
+                workspace,
+                file_paths=validated_target_files,
+            )
+            if selection_check['missing']:
+                metadata = {
+                    **repository_metadata,
+                    'missing_count': len(selection_check['missing']),
+                    'existing_count': len(selection_check['existing']),
+                    'missing_samples': selection_check['missing'][:5],
+                    'workspace': str(workspace),
+                }
+                if selection_check['existing']:
+                    logger.warning(
+                        'DeepAudit agent task %s found missing selected files after workspace refresh and will continue with remaining files: missing_count=%s existing_count=%s missing_samples=%s %s',
+                        instance.id,
+                        len(selection_check['missing']),
+                        len(selection_check['existing']),
+                        selection_check['missing'][:5],
+                        format_repository_spec_for_log(repository_spec),
+                    )
+                    create_event(
+                        instance,
+                        'warning',
+                        phase=instance.current_phase or AGENT_PHASE_PLANNING,
+                        message='部分目标文件在当前代码工作区中不存在，已跳过缺失文件继续审计',
+                        metadata=metadata,
+                    )
+                    validated_target_files = selection_check['existing']
+                else:
+                    message = (
+                        f'所选目标文件在当前代码工作区中均不存在，共 {len(selection_check["missing"])} 个。'
+                        f' 示例: {", ".join(selection_check["missing"][:5])}'
+                    )
+                    logger.error(
+                        'DeepAudit agent task %s failed because all selected files are missing from workspace: %s %s',
+                        instance.id,
+                        message,
+                        format_repository_spec_for_log(repository_spec),
+                    )
+                    instance.status = 'failed'
+                    instance.current_step = truncate_runtime_text('目标文件不存在')
+                    instance.error_message = message
+                    instance.completed_at = timezone.now()
+                    run_with_fresh_connection(
+                        instance.save,
+                        update_fields=[
+                            'status',
+                            'current_step',
+                            'error_message',
+                            'completed_at',
+                            'sys_update_datetime',
+                        ],
+                    )
+                    create_event(
+                        instance,
+                        'task_error',
+                        phase=instance.current_phase or AGENT_PHASE_PLANNING,
+                        message=message,
+                        metadata=metadata,
+                    )
+                    return
         
         # 准备交给 Agent 的上下文数据
         input_data = {
@@ -1801,7 +1876,7 @@ def execute_agent_task(task_id: str) -> None:
             "target_vulnerabilities": instance.target_vulnerabilities or [],
             "verification_level": effective_verification,
             "exclude_patterns": instance.exclude_patterns or [],
-            "target_files": instance.target_files or [],
+            "target_files": validated_target_files,
             "llm_config": user_payload.get("llm_config", {}),
             "other_config": user_payload.get("other_config", {}),
             "max_iterations": instance.max_iterations or 50,

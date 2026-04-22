@@ -25,6 +25,7 @@ from apps.deepaudit.repo_specs import (
     validate_repository_spec_for_execution,
 )
 from apps.deepaudit.runtime import cleanup_runtime_workspace, list_project_files, prepare_repository_workspace
+from apps.deepaudit.runtime import validate_selected_file_paths
 from apps.deepaudit.scan_profile import resolve_scan_profile, serialize_scan_profile
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact, AuditIssue, AuditTask, InstantAnalysisRecord
 from apps.deepaudit.serialization import format_datetime_text, normalize_json_payload
@@ -35,6 +36,12 @@ from apps.deepaudit.user_config import user_config_services
 ACTIVE_TASK_STATUSES = {'pending', 'running'}
 VALID_ISSUE_STATUSES = {ISSUE_STATUS_OPEN, ISSUE_STATUS_RESOLVED, ISSUE_STATUS_FALSE_POSITIVE}
 logger = logging.getLogger(__name__)
+
+
+def _selected_files_missing_message(missing: list[str]) -> str:
+    sample = ', '.join(missing[:5])
+    suffix = f' 示例: {sample}' if sample else ''
+    return f'所选文件在当前代码工作区中不存在，共 {len(missing)} 个。{suffix}'
 
 
 def serialize_issue(issue: AuditIssue) -> dict:
@@ -132,6 +139,8 @@ def get_task(user, task_id: str) -> AuditTask:
 
 def create_task(user, payload: dict, *, task_type: str) -> AuditTask:
     access = require_project_role(user, payload.get('project_id'), min_role='member')
+    requested_repository_type = payload.get('repository_type')
+    requested_repository_url = str(payload.get('repository_url') or '').strip()
     repository_spec = build_effective_project_repository_spec(
         access.project,
         repository_url=payload.get('repository_url'),
@@ -145,6 +154,26 @@ def create_task(user, payload: dict, *, task_type: str) -> AuditTask:
             raise HttpError(422, '仓库任务必须填写 repository_url')
         if normalize_repository_type(repository_spec['repository_type']) == 'multi' and not repository_spec['manifest_xml']:
             raise HttpError(422, '多仓任务必须填写 manifest_xml')
+    project_repository_type = normalize_repository_type(access.project.repository_type)
+    project_repository_url = str(access.project.repository_url or '').strip()
+    if requested_repository_type is not None and normalize_repository_type(requested_repository_type) != project_repository_type:
+        logger.warning(
+            'DeepAudit scan task create request repository_type mismatch: project_id=%s user_id=%s requested_repository_type=%s project_repository_type=%s final_repository_type=%s',
+            access.project.id,
+            getattr(user, 'id', ''),
+            normalize_repository_type(requested_repository_type),
+            project_repository_type,
+            repository_spec['repository_type'],
+        )
+    if requested_repository_url and requested_repository_url != project_repository_url:
+        logger.warning(
+            'DeepAudit scan task create request repository_url mismatch: project_id=%s user_id=%s requested_repository_url=%s project_repository_url=%s final_repository_url=%s',
+            access.project.id,
+            getattr(user, 'id', ''),
+            requested_repository_url,
+            project_repository_url or '-',
+            repository_spec['repository_url'] or '-',
+        )
     scan_config = {
         'file_paths': payload.get('file_paths') or [],
         'rule_set_id': payload.get('rule_set_id'),
@@ -173,6 +202,12 @@ def create_task(user, payload: dict, *, task_type: str) -> AuditTask:
         scan_config=scan_config,
         sys_creator=user,
         sys_modifier=user,
+    )
+    logger.info(
+        'DeepAudit scan task %s created for project %s with repository snapshot: %s',
+        task.id,
+        access.project.id,
+        format_repository_spec_for_log(repository_spec),
     )
     return task
 
@@ -726,6 +761,7 @@ def execute_scan_task(task_id: str) -> None:
             task.project,
             repository_spec=repository_spec,
             user_id=str(task.created_by_id),
+            force_multi_sync=repository_spec['repository_type'] == 'multi',
             log_context={
                 'task_kind': 'scan',
                 'task_id': str(task.id),
@@ -733,10 +769,47 @@ def execute_scan_task(task_id: str) -> None:
             },
         )
         runtime_scan_config = (user_payload.get('other_config') or {}).get('scan_config') or {}
+        validated_file_paths = scan_config.get('file_paths') or []
+        if validated_file_paths:
+            selection_check = validate_selected_file_paths(
+                workspace,
+                file_paths=validated_file_paths,
+            )
+            if selection_check['missing']:
+                if selection_check['existing']:
+                    logger.warning(
+                        'DeepAudit scan task %s found missing selected files after workspace refresh and will continue with remaining files: missing_count=%s existing_count=%s missing_samples=%s %s',
+                        task.id,
+                        len(selection_check['missing']),
+                        len(selection_check['existing']),
+                        selection_check['missing'][:5],
+                        format_repository_spec_for_log(repository_spec),
+                    )
+                    validated_file_paths = selection_check['existing']
+                else:
+                    message = _selected_files_missing_message(selection_check['missing'])
+                    logger.error(
+                        'DeepAudit scan task %s failed because all selected files are missing from workspace: %s %s',
+                        task.id,
+                        message,
+                        format_repository_spec_for_log(repository_spec),
+                    )
+                    task.status = 'failed'
+                    task.error_message = message
+                    task.completed_at = timezone.now()
+                    task.save(
+                        update_fields=[
+                            'status',
+                            'error_message',
+                            'completed_at',
+                            'sys_update_datetime',
+                        ]
+                    )
+                    return
         files = list_project_files(
             workspace,
             exclude_patterns=task.exclude_patterns or [],
-            file_paths=scan_config.get('file_paths') or [],
+            file_paths=validated_file_paths,
             include_tests=bool(scan_config.get('include_tests', False)),
             include_docs=bool(scan_config.get('include_docs', False)),
             max_file_size=scan_config.get('max_file_size') or runtime_scan_config.get('max_file_size') or 0,

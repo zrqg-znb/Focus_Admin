@@ -333,6 +333,23 @@ def _cache_paths(project, repository_spec: dict[str, Any]) -> dict[str, Path]:
     }
 
 
+def get_repository_cache_info(project, repository_spec: dict[str, Any]) -> dict[str, Any]:
+    normalized_spec = _validate_repository_spec(repository_spec)
+    cache_paths = _cache_paths(project, normalized_spec)
+    state = _read_cache_state(cache_paths['state'])
+    return {
+        'cache_root': cache_paths['root'],
+        'cache_repo': cache_paths['repo'],
+        'state_path': cache_paths['state'],
+        'cache_exists': _cache_exists(
+            cache_paths['repo'],
+            repository_type=normalized_spec['repository_type'],
+        ),
+        'last_synced_at': int(state.get('last_synced_at') or 0),
+        'repository_spec': normalized_spec,
+    }
+
+
 def _read_cache_state(path: Path) -> dict:
     if not path.exists():
         return {}
@@ -854,6 +871,39 @@ def _update_repository_cache(
         _scrub_origin_url(cache_repo, repository_url, env)
 
 
+def _update_multi_repository_cache(
+    project,
+    *,
+    cache_repo: Path,
+    branch_name: str,
+    env: dict[str, str],
+    repository_spec: dict[str, Any] | None = None,
+    log_context: dict[str, Any] | None = None,
+    event_callback: GitEventCallback | None = None,
+) -> None:
+    logger.info(
+        'DeepAudit refreshing multi-repo cache via git mm sync: project=%s cache_repo=%s %s %s',
+        _project_id(project),
+        cache_repo,
+        format_repository_spec_for_log(repository_spec or {}),
+        _format_log_context(log_context),
+    )
+    _run_git_command(
+        ['git', 'mm', 'sync'],
+        env=env,
+        timeout=_git_clone_timeout(),
+        project=project,
+        branch_name=branch_name,
+        operation='多仓缓存同步',
+        cwd=cache_repo,
+        retry_count=1,
+        repository_spec=repository_spec,
+        log_context=log_context,
+        event_callback=event_callback,
+        soft_fail=True,
+    )
+
+
 @contextmanager
 def _repository_cache_lock(lock_path: Path):
     deepaudit_storage.ensure_storage_dirs()
@@ -905,6 +955,8 @@ def ensure_repository_cache(
     manifest_xml: str | None = None,
     group: str | None = None,
     allow_stale_on_failure: bool = False,
+    force_refresh: bool = False,
+    force_multi_sync: bool = False,
     event_callback: GitEventCallback | None = None,
     log_context: dict[str, Any] | None = None,
 ) -> Path:
@@ -935,16 +987,24 @@ def ensure_repository_cache(
     cache_root = cache_paths['root']
     initial_state = _read_cache_state(cache_paths['state'])
     initial_cache_exists = _cache_exists(cache_repo, repository_type=repo_type)
+    should_force_refresh = bool(force_refresh or (repo_type == 'multi' and force_multi_sync))
     logger.debug(
-        'DeepAudit repository cache state before refresh: project=%s spec_key=%s repo_path=%s exists=%s fresh=%s matches=%s',
+        'DeepAudit repository cache state before refresh: project=%s spec_key=%s repo_path=%s exists=%s fresh=%s matches=%s force_refresh=%s force_multi_sync=%s',
         _project_id(project),
         spec_key,
         cache_repo,
         initial_cache_exists,
         _cache_is_fresh(initial_state),
         _cache_state_matches(initial_state, repository_spec),
+        force_refresh,
+        force_multi_sync,
     )
-    if initial_cache_exists and _cache_is_fresh(initial_state) and _cache_state_matches(initial_state, repository_spec):
+    if (
+        not should_force_refresh
+        and initial_cache_exists
+        and _cache_is_fresh(initial_state)
+        and _cache_state_matches(initial_state, repository_spec)
+    ):
         logger.info(
             'DeepAudit repository cache hit for project %s spec_key=%s repo_path=%s %s',
             _project_id(project),
@@ -958,7 +1018,12 @@ def ensure_repository_cache(
         with _repository_cache_lock(cache_paths['lock']):
             state = _read_cache_state(cache_paths['state'])
             cache_exists = _cache_exists(cache_repo, repository_type=repo_type)
-            if cache_exists and _cache_is_fresh(state) and _cache_state_matches(state, repository_spec):
+            if (
+                not should_force_refresh
+                and cache_exists
+                and _cache_is_fresh(state)
+                and _cache_state_matches(state, repository_spec)
+            ):
                 logger.info(
                     'DeepAudit repository cache hit after lock acquisition for project %s spec_key=%s repo_path=%s %s',
                     _project_id(project),
@@ -977,50 +1042,62 @@ def ensure_repository_cache(
                 format_repository_spec_for_log(repository_spec),
             )
             if repo_type == 'multi':
-                refresh_target = cache_repo if not cache_exists else cache_root / f'refresh-{os.getpid()}-{int(time.time() * 1000)}'
-                if refresh_target.exists():
-                    shutil.rmtree(refresh_target, ignore_errors=True)
-                backup_repo = None
-                try:
-                    clone_repository(
+                state_matches = _cache_state_matches(state, repository_spec)
+                if cache_exists and state_matches:
+                    _update_multi_repository_cache(
                         project,
-                        repository_spec['repository_url'],
-                        repository_spec['branch_name'],
-                        user_config,
-                        ssh_private_key=ssh_private_key,
-                        target_path=refresh_target,
+                        cache_repo=cache_repo,
+                        branch_name=repository_spec['branch_name'],
+                        env=env,
                         repository_spec=repository_spec,
-                        repository_type=repo_type,
-                        manifest_xml=repository_spec['manifest_xml'],
-                        group=repository_spec['group'],
-                        event_callback=event_callback,
                         log_context=log_context,
+                        event_callback=event_callback,
                     )
-                    if refresh_target != cache_repo:
-                        backup_repo = cache_root / f'backup-{os.getpid()}-{int(time.time() * 1000)}'
-                        if backup_repo.exists():
-                            shutil.rmtree(backup_repo, ignore_errors=True)
-                        if cache_repo.exists():
-                            cache_repo.rename(backup_repo)
-                        try:
-                            refresh_target.rename(cache_repo)
-                        except Exception:
-                            if backup_repo.exists():
-                                backup_repo.rename(cache_repo)
-                            raise
-                except Exception:
-                    if refresh_target != cache_repo:
+                else:
+                    refresh_target = cache_repo if not cache_exists else cache_root / f'refresh-{os.getpid()}-{int(time.time() * 1000)}'
+                    if refresh_target.exists():
                         shutil.rmtree(refresh_target, ignore_errors=True)
-                    if backup_repo and backup_repo.exists() and not cache_repo.exists():
-                        try:
-                            backup_repo.rename(cache_repo)
-                        except Exception:
-                            logger.warning('DeepAudit failed to restore multi-repo cache backup for %s', cache_repo)
+                    backup_repo = None
+                    try:
+                        clone_repository(
+                            project,
+                            repository_spec['repository_url'],
+                            repository_spec['branch_name'],
+                            user_config,
+                            ssh_private_key=ssh_private_key,
+                            target_path=refresh_target,
+                            repository_spec=repository_spec,
+                            repository_type=repo_type,
+                            manifest_xml=repository_spec['manifest_xml'],
+                            group=repository_spec['group'],
+                            event_callback=event_callback,
+                            log_context=log_context,
+                        )
+                        if refresh_target != cache_repo:
+                            backup_repo = cache_root / f'backup-{os.getpid()}-{int(time.time() * 1000)}'
+                            if backup_repo.exists():
+                                shutil.rmtree(backup_repo, ignore_errors=True)
+                            if cache_repo.exists():
+                                cache_repo.rename(backup_repo)
+                            try:
+                                refresh_target.rename(cache_repo)
+                            except Exception:
+                                if backup_repo.exists():
+                                    backup_repo.rename(cache_repo)
+                                raise
+                    except Exception:
+                        if refresh_target != cache_repo:
+                            shutil.rmtree(refresh_target, ignore_errors=True)
+                        if backup_repo and backup_repo.exists() and not cache_repo.exists():
+                            try:
+                                backup_repo.rename(cache_repo)
+                            except Exception:
+                                logger.warning('DeepAudit failed to restore multi-repo cache backup for %s', cache_repo)
+                        if backup_repo and backup_repo.exists():
+                            shutil.rmtree(backup_repo, ignore_errors=True)
+                        raise
                     if backup_repo and backup_repo.exists():
                         shutil.rmtree(backup_repo, ignore_errors=True)
-                    raise
-                if backup_repo and backup_repo.exists():
-                    shutil.rmtree(backup_repo, ignore_errors=True)
             elif not cache_exists:
                 clone_repository(
                     project,
@@ -1080,6 +1157,8 @@ def create_repository_workspace(
     manifest_xml: str | None = None,
     group: str | None = None,
     allow_stale_on_failure: bool = False,
+    force_refresh: bool = False,
+    force_multi_sync: bool = False,
     event_callback: GitEventCallback | None = None,
     log_context: dict[str, Any] | None = None,
 ) -> Path:
@@ -1120,6 +1199,8 @@ def create_repository_workspace(
         manifest_xml=manifest_xml,
         group=group,
         allow_stale_on_failure=allow_stale_on_failure,
+        force_refresh=force_refresh,
+        force_multi_sync=force_multi_sync,
         event_callback=event_callback,
         log_context=log_context,
     )

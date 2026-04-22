@@ -122,6 +122,41 @@ class GitServiceTestCase(SimpleTestCase):
 
         self.assertEqual(cache_repo, cache_paths['repo'])
 
+    @override_settings(DEEPAUDIT_REPO_CACHE_TTL_SECONDS=1800)
+    def test_ensure_repository_cache_force_multi_sync_refreshes_fresh_multi_cache(self) -> None:
+        repo_spec = self._repo_spec(
+            repository_type='multi',
+            manifest_xml='default.xml',
+            group='platform',
+        )
+        cache_paths = git_service._cache_paths(self.project, repo_spec)
+        cache_paths['repo'].mkdir(parents=True, exist_ok=True)
+        (cache_paths['repo'] / 'manifest.xml').write_text('<manifest />\n', encoding='utf-8')
+        cache_paths['state'].write_text(
+            json.dumps({'last_synced_at': int(time.time()), 'repository_spec': repo_spec}),
+            encoding='utf-8',
+        )
+        commands: list[list[str]] = []
+
+        def fake_run(cmd, **_kwargs):
+            commands.append(cmd)
+            return SimpleNamespace(stdout='sync ok', stderr='', returncode=0)
+
+        with patch('apps.deepaudit.git_service.subprocess.run', side_effect=fake_run):
+            cache_repo = git_service.ensure_repository_cache(
+                self.project,
+                repo_spec['repository_url'],
+                repo_spec['branch_name'],
+                {'other_config': {}},
+                repository_type='multi',
+                manifest_xml='default.xml',
+                group='platform',
+                force_multi_sync=True,
+            )
+
+        self.assertEqual(cache_repo, cache_paths['repo'])
+        self.assertTrue(any(cmd == ['git', 'mm', 'sync'] for cmd in commands))
+
     @override_settings(DEEPAUDIT_REPO_CACHE_TTL_SECONDS=60)
     def test_ensure_repository_cache_refreshes_expired_cache(self) -> None:
         repo_spec = self._repo_spec()

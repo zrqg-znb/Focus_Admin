@@ -123,6 +123,7 @@ export interface CreateAgentTaskRequest {
   audit_scope?: Record<string, unknown>;
   target_vulnerabilities?: string[];
   verification_level?: 'analysis_only' | 'generate_poc' | 'sandbox';
+  repository_url?: string;
   repository_type?: 'multi' | 'single';
   branch_name?: string;
   manifest_xml?: string;

@@ -65,6 +65,8 @@ export interface AuditTask {
   project_id: string;
   task_type: 'instant' | 'repository';
   status: 'cancelled' | 'completed' | 'failed' | 'pending' | 'running';
+  repository_url?: string;
+  repository_type?: RepositoryType;
   branch_name?: string;
   manifest_xml?: string;
   group?: string;
@@ -174,6 +176,8 @@ export interface CreateProjectForm {
 export interface CreateAuditTaskForm {
   project_id: string;
   task_type: 'instant' | 'repository';
+  repository_url?: string;
+  repository_type?: RepositoryType;
   branch_name?: string;
   manifest_xml?: string;
   group?: string;

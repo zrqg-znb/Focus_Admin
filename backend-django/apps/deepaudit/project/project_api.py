@@ -9,6 +9,7 @@ from .project_schemas import (
     AuditProjectUpdateSchema,
     PaginatedProjectRecycleSchema,
     PaginatedProjectSchema,
+    ProjectFileBrowserResponseSchema,
     ProjectMemberSchema,
     ProjectMemberSaveSchema,
     ProjectOwnerTransferSchema,
@@ -139,5 +140,37 @@ def list_project_files(
         branch_name=branch_name,
         manifest_xml=manifest_xml,
         group=group,
+        exclude_patterns=patterns,
+    )
+
+
+@router.get('/{project_id}/file-browser', response=ProjectFileBrowserResponseSchema, summary='分页获取项目文件浏览数据')
+def browse_project_files(
+    request,
+    project_id: str,
+    repository_type: str | None = None,
+    branch_name: str | None = None,
+    manifest_xml: str | None = None,
+    group: str | None = None,
+    path: str = '',
+    keyword: str = '',
+    offset: int = 0,
+    limit: int = 100,
+    refresh: bool = False,
+    exclude_patterns: str = '',
+):
+    patterns = [item.strip() for item in exclude_patterns.split(',') if item.strip()]
+    return project_services.browse_files(
+        request.auth,
+        project_id,
+        repository_type=repository_type,
+        branch_name=branch_name,
+        manifest_xml=manifest_xml,
+        group=group,
+        path=path,
+        keyword=keyword,
+        offset=offset,
+        limit=limit,
+        refresh=refresh,
         exclude_patterns=patterns,
     )

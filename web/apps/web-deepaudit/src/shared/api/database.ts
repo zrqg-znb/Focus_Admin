@@ -103,6 +103,33 @@ function toAgentTaskWithProject(task: any, projectMap: Map<string, Project>) {
   return normalized;
 }
 
+export interface ProjectFileBrowserItem {
+  kind: 'directory' | 'file';
+  name: string;
+  path: string;
+  size: number;
+}
+
+export interface ProjectRepositorySpec {
+  branch_name: string;
+  group?: string;
+  manifest_xml?: string;
+  repository_type: 'multi' | 'single';
+  repository_url?: string;
+}
+
+export interface ProjectFileBrowserResponse {
+  has_more: boolean;
+  items: ProjectFileBrowserItem[];
+  keyword: string;
+  last_synced_at?: null | number;
+  limit: number;
+  offset: number;
+  path: string;
+  repository_spec: ProjectRepositorySpec;
+  total: number;
+}
+
 export const api = {
   async getProfilesById(_id: string): Promise<null | Profile> {
     try {
@@ -179,6 +206,92 @@ export const api = {
       return Array.isArray(res.data) ? res.data : [];
     } catch (error) {
       throw new Error(getApiErrorMessage(error, '加载文件列表失败'));
+    }
+  },
+
+  async browseProjectFiles(
+    id: string,
+    params?: {
+      branch_name?: string;
+      exclude_patterns?: string[];
+      group?: string;
+      keyword?: string;
+      limit?: number;
+      manifest_xml?: string;
+      offset?: number;
+      path?: string;
+      refresh?: boolean;
+      repository_type?: string;
+    },
+  ): Promise<ProjectFileBrowserResponse> {
+    try {
+      const query: Record<string, boolean | number | string> = {};
+      if (params?.repository_type) {
+        query.repository_type = normalizeRepositoryType(params.repository_type);
+      }
+      if (params?.branch_name) {
+        query.branch_name = params.branch_name;
+      }
+      if (params?.manifest_xml) {
+        query.manifest_xml = params.manifest_xml;
+      }
+      if (params?.group) {
+        query.group = params.group;
+      }
+      if (params?.path) {
+        query.path = params.path;
+      }
+      if (params?.keyword) {
+        query.keyword = params.keyword;
+      }
+      if (typeof params?.offset === 'number') {
+        query.offset = params.offset;
+      }
+      if (typeof params?.limit === 'number') {
+        query.limit = params.limit;
+      }
+      if (params?.refresh) {
+        query.refresh = true;
+      }
+      if (params?.exclude_patterns?.length) {
+        query.exclude_patterns = params.exclude_patterns.join(',');
+      }
+      const res = await apiClient.get(`/projects/${id}/file-browser`, {
+        params: query,
+      });
+      const raw = res.data || {};
+      const repositorySpec = raw.repository_spec || {};
+      return {
+        items: Array.isArray(raw.items)
+          ? raw.items.map((item: any) => ({
+              kind: item.kind === 'directory' ? 'directory' : 'file',
+              name: String(item.name || ''),
+              path: String(item.path || ''),
+              size: Number(item.size || 0),
+            }))
+          : [],
+        offset: Number(raw.offset || 0),
+        limit: Number(raw.limit || params?.limit || 100),
+        total: Number(raw.total || 0),
+        has_more: Boolean(raw.has_more),
+        path: String(raw.path || ''),
+        keyword: String(raw.keyword || ''),
+        last_synced_at:
+          raw.last_synced_at === null || raw.last_synced_at === undefined
+            ? null
+            : Number(raw.last_synced_at),
+        repository_spec: {
+          repository_type: normalizeRepositoryType(
+            repositorySpec.repository_type,
+          ),
+          repository_url: repositorySpec.repository_url || '',
+          branch_name: repositorySpec.branch_name || params?.branch_name || '',
+          manifest_xml: repositorySpec.manifest_xml || '',
+          group: repositorySpec.group || '',
+        },
+      };
+    } catch (error) {
+      throw new Error(getApiErrorMessage(error, '加载文件浏览数据失败'));
     }
   },
 
@@ -342,6 +455,10 @@ export const api = {
     const group = task.group || project?.group || '';
     const payload = {
       project_id: task.project_id,
+      repository_url: task.repository_url || project?.repository_url || '',
+      repository_type: task.repository_type
+        ? normalizeRepositoryType(task.repository_type)
+        : undefined,
       branch_name: branchName,
       manifest_xml: manifestXml,
       group,

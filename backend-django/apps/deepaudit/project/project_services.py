@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from django.db.models import Count, Max, Q
@@ -10,6 +11,7 @@ from apps.deepaudit.constants import PROJECT_MEMBER_ROLE_OWNER
 from apps.deepaudit.git_service import (
     GitServiceError,
     ensure_repository_cache,
+    get_repository_cache_info,
     list_remote_branches,
     list_repository_files,
     repository_cache_enabled,
@@ -37,6 +39,8 @@ from apps.deepaudit.scan_task.scan_task_model import AuditArtifact, AuditIssue, 
 from apps.deepaudit.serialization import format_datetime_text
 from apps.deepaudit.storage import delete_project_repo_cache, delete_project_zip, get_project_zip, save_project_zip
 from core.user.user_model import User
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_languages(value) -> list[str]:
@@ -88,6 +92,89 @@ def _resolve_project_repository_spec(project: AuditProject | None, payload: dict
         group=group,
     )
     return spec
+
+
+def _normalize_browser_path(value: str | None) -> str:
+    raw = str(value or '').replace('\\', '/').strip().strip('/')
+    if not raw:
+        return ''
+    parts = [part for part in raw.split('/') if part not in {'', '.', '..'}]
+    return '/'.join(parts)
+
+
+def _build_browser_file_item(root: Path, entry: Path) -> dict:
+    relative_path = str(entry.relative_to(root)).replace('\\', '/')
+    return {
+        'kind': 'directory' if entry.is_dir() else 'file',
+        'name': entry.name,
+        'path': relative_path,
+        'size': 0 if entry.is_dir() else entry.stat().st_size,
+    }
+
+
+def _browse_directory_items(
+    root: Path,
+    *,
+    path: str = '',
+    offset: int = 0,
+    limit: int = 100,
+    exclude_patterns: list[str] | None = None,
+) -> tuple[list[dict], int]:
+    normalized_path = _normalize_browser_path(path)
+    target_dir = root / normalized_path if normalized_path else root
+    if not target_dir.exists() or not target_dir.is_dir():
+        raise HttpError(404, '目标目录不存在')
+
+    items: list[dict] = []
+    for entry in target_dir.iterdir():
+        relative_path = str(entry.relative_to(root)).replace('\\', '/')
+        if should_exclude(relative_path, exclude_patterns):
+            continue
+        items.append(_build_browser_file_item(root, entry))
+
+    items.sort(key=lambda item: (item['kind'] != 'directory', item['name'].lower(), item['path'].lower()))
+    total = len(items)
+    page_items = items[offset:offset + limit]
+    return page_items, total
+
+
+def _search_repository_items(
+    root: Path,
+    *,
+    path: str = '',
+    keyword: str,
+    offset: int = 0,
+    limit: int = 100,
+    exclude_patterns: list[str] | None = None,
+) -> tuple[list[dict], int]:
+    normalized_path = _normalize_browser_path(path)
+    search_root = root / normalized_path if normalized_path else root
+    if not search_root.exists() or not search_root.is_dir():
+        raise HttpError(404, '目标目录不存在')
+
+    keyword_text = str(keyword or '').strip().lower()
+    if not keyword_text:
+        return _browse_directory_items(
+            root,
+            path=normalized_path,
+            offset=offset,
+            limit=limit,
+            exclude_patterns=exclude_patterns,
+        )
+
+    matches: list[dict] = []
+    for entry in search_root.rglob('*'):
+        relative_path = str(entry.relative_to(root)).replace('\\', '/')
+        if should_exclude(relative_path, exclude_patterns):
+            continue
+        if keyword_text not in relative_path.lower():
+            continue
+        matches.append(_build_browser_file_item(root, entry))
+
+    matches.sort(key=lambda item: (item['kind'] != 'directory', item['path'].lower()))
+    total = len(matches)
+    page_items = matches[offset:offset + limit]
+    return page_items, total
 
 
 def _project_zip_meta(project: AuditProject) -> dict:
@@ -498,5 +585,125 @@ def list_files(
             rows.append({'path': relative_path, 'size': path.stat().st_size})
         rows.sort(key=lambda item: item['path'])
         return rows
+    finally:
+        cleanup_runtime_workspace(workspace)
+
+
+def browse_files(
+    user,
+    project_id: str,
+    *,
+    repository_type: str | None = None,
+    branch_name: str | None = None,
+    manifest_xml: str | None = None,
+    group: str | None = None,
+    path: str = '',
+    keyword: str = '',
+    offset: int = 0,
+    limit: int = 100,
+    refresh: bool = False,
+    exclude_patterns: list[str] | None = None,
+) -> dict:
+    access = require_project_role(user, project_id, min_role='viewer')
+    project = access.project
+    user_id = str(getattr(user, 'id', '') or project.owner_id)
+    normalized_offset = max(0, int(offset or 0))
+    normalized_limit = max(1, min(int(limit or 100), 500))
+    normalized_path = _normalize_browser_path(path)
+    normalized_keyword = str(keyword or '').strip()
+
+    repository_spec = build_effective_project_repository_spec(
+        project,
+        repository_type=repository_type,
+        branch_name=branch_name,
+        manifest_xml=manifest_xml,
+        group=group,
+    )
+    logger.info(
+        'DeepAudit browsing project files: project_id=%s repository_type=%s repository_url=%s branch=%s manifest=%s group=%s path=%s keyword=%s offset=%s limit=%s refresh=%s',
+        project.id,
+        repository_spec['repository_type'],
+        repository_spec['repository_url'] or '-',
+        repository_spec['branch_name'],
+        repository_spec['manifest_xml'] or '-',
+        repository_spec['group'] or '-',
+        normalized_path or '/',
+        normalized_keyword or '-',
+        normalized_offset,
+        normalized_limit,
+        refresh,
+    )
+
+    workspace = None
+    last_synced_at: int | None = None
+    try:
+        if project.source_type == 'repository' and repository_cache_enabled():
+            user_payload = load_user_config_payload(user_id)
+            ssh_private_key = load_ssh_private_key(user_id)
+            try:
+                cache_repo = ensure_repository_cache(
+                    project,
+                    repository_spec['repository_url'] or '',
+                    repository_spec['branch_name'],
+                    user_payload,
+                    ssh_private_key=ssh_private_key,
+                    repository_type=repository_spec['repository_type'],
+                    manifest_xml=repository_spec['manifest_xml'],
+                    group=repository_spec['group'],
+                    allow_stale_on_failure=True,
+                    force_refresh=bool(refresh),
+                    force_multi_sync=bool(refresh and repository_spec['repository_type'] == 'multi'),
+                )
+            except GitServiceError as exc:
+                raise HttpError(400, str(exc)) from exc
+            cache_info = get_repository_cache_info(project, repository_spec)
+            last_synced_at = cache_info['last_synced_at'] or None
+            root = cache_repo
+        else:
+            workspace, _payload = prepare_workspace(
+                project,
+                branch_name=branch_name,
+                manifest_xml=manifest_xml,
+                group=group,
+                user_id=user_id,
+                allow_stale_on_failure=True,
+            )
+            root = workspace
+
+        if normalized_keyword:
+            items, total = _search_repository_items(
+                root,
+                path=normalized_path,
+                keyword=normalized_keyword,
+                offset=normalized_offset,
+                limit=normalized_limit,
+                exclude_patterns=exclude_patterns,
+            )
+        else:
+            items, total = _browse_directory_items(
+                root,
+                path=normalized_path,
+                offset=normalized_offset,
+                limit=normalized_limit,
+                exclude_patterns=exclude_patterns,
+            )
+
+        return {
+            'items': items,
+            'offset': normalized_offset,
+            'limit': normalized_limit,
+            'total': total,
+            'has_more': normalized_offset + len(items) < total,
+            'path': normalized_path,
+            'keyword': normalized_keyword,
+            'last_synced_at': last_synced_at,
+            'repository_spec': {
+                'repository_type': repository_spec['repository_type'],
+                'repository_url': repository_spec['repository_url'] or None,
+                'branch_name': repository_spec['branch_name'],
+                'manifest_xml': repository_spec['manifest_xml'] or None,
+                'group': repository_spec['group'] or None,
+            },
+        }
     finally:
         cleanup_runtime_workspace(workspace)

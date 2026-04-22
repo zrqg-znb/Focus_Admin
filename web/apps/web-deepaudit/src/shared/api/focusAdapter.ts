@@ -465,6 +465,8 @@ export function normalizeAuditTask(raw: JsonRecord | null | undefined) {
     project_id: String(raw.project_id || ''),
     task_type: raw.task_type || 'repository',
     status: raw.status || 'pending',
+    repository_url: raw.repository_url || raw.project?.repository_url || '',
+    repository_type: repositoryType,
     branch_name: raw.branch_name || 'main',
     manifest_xml: raw.manifest_xml || '',
     group: raw.group || '',

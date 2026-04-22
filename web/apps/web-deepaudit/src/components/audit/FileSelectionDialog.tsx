@@ -1,7 +1,7 @@
-/**
- * File Selection Dialog
- * Cyberpunk Terminal Aesthetic
- */
+import type {
+  ProjectFileBrowserItem,
+  ProjectRepositorySpec,
+} from '@/shared/api/database';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,25 +15,26 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { api } from '@/shared/config/database';
-import { getRepositoryTypeLabel } from '@/shared/utils/projectUtils';
+import { useDebounce } from '@/shared/hooks';
 import {
-  CheckSquare,
-  ChevronDown,
+  getRepositoryTypeLabel,
+  normalizeRepositoryType,
+} from '@/shared/utils/projectUtils';
+import {
+  ChevronLeft,
   ChevronRight,
   File,
   FileCode,
   FileJson,
   FileText,
-  Filter,
   Folder,
   FolderOpen,
   RefreshCw,
   RotateCcw,
   Search,
-  Square,
   Terminal,
 } from 'lucide-react';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 interface FileSelectionDialogProps {
@@ -45,45 +46,38 @@ interface FileSelectionDialogProps {
   group?: string;
   repositoryType?: string;
   excludePatterns?: string[];
-  onConfirm: (selectedFiles: string[]) => void;
+  onConfirm: (payload: {
+    repositorySpec: ProjectRepositorySpec;
+    selectedFiles: string[];
+  }) => void;
 }
 
-interface FileNode {
-  path: string;
-  size: number;
-}
+const PAGE_SIZE = 200;
 
-interface FolderNode {
-  name: string;
-  path: string;
-  files: FileNode[];
-  subfolders: Map<string, FolderNode>;
-  expanded: boolean;
-}
-
-// 文件类型图标映射
 const getFileIcon = (path: string) => {
   const ext = path.split('.').pop()?.toLowerCase() || '';
   const codeExts = [
+    'c',
+    'cc',
+    'cpp',
+    'cs',
+    'go',
+    'h',
+    'hpp',
+    'java',
     'js',
+    'jsx',
+    'kt',
+    'php',
+    'py',
+    'rb',
+    'rs',
+    'sh',
+    'swift',
     'ts',
     'tsx',
-    'jsx',
-    'py',
-    'java',
-    'go',
-    'rs',
-    'cpp',
-    'c',
-    'h',
-    'cs',
-    'php',
-    'rb',
-    'swift',
-    'kt',
-    'sh',
   ];
-  const configExts = ['json', 'yml', 'yaml', 'toml', 'xml', 'ini'];
+  const configExts = ['ini', 'json', 'toml', 'xml', 'yaml', 'yml'];
 
   if (codeExts.includes(ext)) {
     return <FileCode className="h-4 w-4 text-sky-400" />;
@@ -94,53 +88,42 @@ const getFileIcon = (path: string) => {
   return <File className="text-muted-foreground h-4 w-4" />;
 };
 
-// 获取文件扩展名
-const getExtension = (path: string): string => {
-  const ext = path.split('.').pop()?.toLowerCase() || '';
-  return ext;
+const formatSize = (bytes: number) => {
+  if (bytes <= 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 };
 
-// 构建文件夹树结构
-const buildFolderTree = (files: FileNode[]): FolderNode => {
-  const root: FolderNode = {
-    name: '',
-    path: '',
-    files: [],
-    subfolders: new Map(),
-    expanded: true,
-  };
-
-  files.forEach((file) => {
-    const parts = file.path.split('/');
-    let current = root;
-
-    // 遍历路径的每个部分（除了文件名）
-    for (let i = 0; i < parts.length - 1; i++) {
-      const folderName = parts[i];
-      const folderPath = parts.slice(0, i + 1).join('/');
-
-      if (!current.subfolders.has(folderName)) {
-        current.subfolders.set(folderName, {
-          name: folderName,
-          path: folderPath,
-          files: [],
-          subfolders: new Map(),
-          expanded: true,
-        });
-      }
-      const nextFolder = current.subfolders.get(folderName);
-      if (!nextFolder) {
-        return;
-      }
-      current = nextFolder;
-    }
-
-    // 添加文件到当前文件夹
-    current.files.push(file);
+const formatSyncTime = (timestamp?: null | number) => {
+  if (!timestamp) return '';
+  return new Date(timestamp * 1000).toLocaleString('zh-CN', {
+    hour12: false,
   });
-
-  return root;
 };
+
+const getParentPath = (path: string) => {
+  if (!path) return '';
+  const parts = path.split('/');
+  parts.pop();
+  return parts.join('/');
+};
+
+const buildFallbackRepositorySpec = ({
+  branch,
+  group,
+  manifestXml,
+  repositoryType,
+}: Pick<
+  FileSelectionDialogProps,
+  'branch' | 'group' | 'manifestXml' | 'repositoryType'
+>): ProjectRepositorySpec => ({
+  repository_type: normalizeRepositoryType(repositoryType),
+  repository_url: '',
+  branch_name: branch || 'main',
+  manifest_xml: manifestXml || '',
+  group: group || '',
+});
 
 export default function FileSelectionDialog({
   open,
@@ -153,182 +136,191 @@ export default function FileSelectionDialog({
   excludePatterns,
   onConfirm,
 }: FileSelectionDialogProps) {
-  const [files, setFiles] = useState<FileNode[]>([]);
+  const [items, setItems] = useState<ProjectFileBrowserItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
-  const [searchTerm, setSearchTerm] = useState('');
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
-    new Set(),
-  );
-  const [viewMode, setViewMode] = useState<'flat' | 'tree'>('tree');
-  const [filterType, setFilterType] = useState<string>('');
+  const [searchInput, setSearchInput] = useState('');
+  const [currentPath, setCurrentPath] = useState('');
+  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [lastSyncedAt, setLastSyncedAt] = useState<null | number>(null);
+  const [sessionSpec, setSessionSpec] = useState<ProjectRepositorySpec>();
+  const requestIdRef = useRef(0);
+  const debouncedSearch = useDebounce(searchInput.trim(), 300);
 
   useEffect(() => {
-    if (open && projectId) {
-      loadFiles();
-    } else {
-      setFiles([]);
+    if (!open) {
+      setItems([]);
+      setLoading(false);
+      setLoadingMore(false);
+      setRefreshing(false);
       setSelectedFiles(new Set());
-      setSearchTerm('');
-      setExpandedFolders(new Set());
-      setFilterType('');
+      setSearchInput('');
+      setCurrentPath('');
+      setHasMore(false);
+      setTotal(0);
+      setLastSyncedAt(null);
+      setSessionSpec(undefined);
     }
-  }, [open, projectId, branch, excludePatterns]);
+  }, [open]);
 
-  const loadFiles = async () => {
-    try {
+  const loadEntries = async ({
+    append = false,
+    keyword = debouncedSearch,
+    nextOffset = 0,
+    nextPath = currentPath,
+    refresh = false,
+  }: {
+    append?: boolean;
+    keyword?: string;
+    nextOffset?: number;
+    nextPath?: string;
+    refresh?: boolean;
+  }) => {
+    if (!open || !projectId) return;
+
+    const requestId = ++requestIdRef.current;
+    if (append) {
+      setLoadingMore(true);
+    } else if (refresh) {
+      setRefreshing(true);
+    } else {
       setLoading(true);
-      const data = await api.getProjectFiles(projectId, {
+    }
+
+    try {
+      const data = await api.browseProjectFiles(projectId, {
+        repository_type: repositoryType,
         branch_name: branch,
         manifest_xml: manifestXml,
         group,
+        path: nextPath,
+        keyword,
+        offset: nextOffset,
+        limit: PAGE_SIZE,
+        refresh,
         exclude_patterns: excludePatterns,
       });
-      setFiles(data);
-      setSelectedFiles(new Set(data.map((f) => f.path)));
-      // 默认展开所有文件夹
-      const folders = new Set<string>();
-      data.forEach((f) => {
-        const parts = f.path.split('/');
-        for (let i = 1; i < parts.length; i++) {
-          folders.add(parts.slice(0, i).join('/'));
-        }
-      });
-      setExpandedFolders(folders);
+      if (requestId !== requestIdRef.current) {
+        return;
+      }
+      setItems((prev) => (append ? [...prev, ...data.items] : data.items));
+      setHasMore(data.has_more);
+      setTotal(data.total);
+      setLastSyncedAt(data.last_synced_at ?? null);
+      setSessionSpec(data.repository_spec);
     } catch (error) {
-      console.error('Failed to load files:', error);
+      if (requestId !== requestIdRef.current) {
+        return;
+      }
       const errorMessage =
-        error instanceof Error ? error.message : '加载文件列表失败';
+        error instanceof Error ? error.message : '加载文件浏览数据失败';
       toast.error(errorMessage);
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) {
+        setLoading(false);
+        setLoadingMore(false);
+        setRefreshing(false);
+      }
     }
   };
 
-  // 获取所有文件类型
-  const fileTypes = useMemo(() => {
-    const types = new Map<string, number>();
-    files.forEach((f) => {
-      const ext = getExtension(f.path);
-      if (ext) {
-        types.set(ext, (types.get(ext) || 0) + 1);
-      }
+  useEffect(() => {
+    if (!open || !projectId) {
+      return;
+    }
+    loadEntries({
+      append: false,
+      keyword: debouncedSearch,
+      nextOffset: 0,
+      nextPath: currentPath,
     });
-    return [...types.entries()].sort((a, b) => b[1] - a[1]);
-  }, [files]);
+  }, [
+    open,
+    projectId,
+    repositoryType,
+    branch,
+    manifestXml,
+    group,
+    currentPath,
+    debouncedSearch,
+    excludePatterns,
+  ]);
 
-  // 过滤后的文件
-  const filteredFiles = useMemo(() => {
-    let result = files;
-
-    // 按搜索词过滤
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      result = result.filter((f) => f.path.toLowerCase().includes(term));
-    }
-
-    // 按文件类型过滤
-    if (filterType) {
-      result = result.filter((f) => getExtension(f.path) === filterType);
-    }
-
-    return result;
-  }, [files, searchTerm, filterType]);
-
-  // 构建文件夹树
-  const folderTree = useMemo(
-    () => buildFolderTree(filteredFiles),
-    [filteredFiles],
+  const visibleFilePaths = useMemo(
+    () => items.filter((item) => item.kind === 'file').map((item) => item.path),
+    [items],
   );
 
-  const handleToggleFile = useCallback((path: string) => {
-    setSelectedFiles((prev) => {
-      const newSelected = new Set(prev);
-      if (newSelected.has(path)) {
-        newSelected.delete(path);
-      } else {
-        newSelected.add(path);
-      }
-      return newSelected;
+  const breadcrumbs = useMemo(() => {
+    const parts = currentPath ? currentPath.split('/') : [];
+    const rows = [{ label: '根目录', path: '' }];
+    let cumulative = '';
+    parts.forEach((part) => {
+      cumulative = cumulative ? `${cumulative}/${part}` : part;
+      rows.push({ label: part, path: cumulative });
     });
-  }, []);
+    return rows;
+  }, [currentPath]);
 
-  const handleToggleFolder = useCallback(
-    (folderPath: string) => {
-      // 获取该文件夹下的所有文件
-      const folderFiles = filteredFiles.filter(
-        (f) => f.path.startsWith(`${folderPath}/`) || f.path === folderPath,
-      );
-
-      setSelectedFiles((prev) => {
-        const newSelected = new Set(prev);
-        const allSelected = folderFiles.every((f) => newSelected.has(f.path));
-
-        if (allSelected) {
-          // 取消选择该文件夹下的所有文件
-          folderFiles.forEach((f) => newSelected.delete(f.path));
-        } else {
-          // 选择该文件夹下的所有文件
-          folderFiles.forEach((f) => newSelected.add(f.path));
-        }
-        return newSelected;
-      });
-    },
-    [filteredFiles],
+  const visibleSelectedCount = useMemo(
+    () => visibleFilePaths.filter((path) => selectedFiles.has(path)).length,
+    [selectedFiles, visibleFilePaths],
   );
+  let browsingHint = '浏览根目录';
+  if (debouncedSearch) {
+    browsingHint = `搜索 "${debouncedSearch}" 的结果`;
+  } else if (currentPath) {
+    browsingHint = `浏览目录: ${currentPath}`;
+  }
 
-  const handleExpandFolder = useCallback((folderPath: string) => {
-    setExpandedFolders((prev) => {
-      const newExpanded = new Set(prev);
-      if (newExpanded.has(folderPath)) {
-        newExpanded.delete(folderPath);
+  const handleToggleFile = (path: string) => {
+    setSelectedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
       } else {
-        newExpanded.add(folderPath);
+        next.add(path);
       }
-      return newExpanded;
-    });
-  }, []);
-
-  const handleExpandAll = useCallback(() => {
-    const folders = new Set<string>();
-    filteredFiles.forEach((f) => {
-      const parts = f.path.split('/');
-      for (let i = 1; i < parts.length; i++) {
-        folders.add(parts.slice(0, i).join('/'));
-      }
-    });
-    setExpandedFolders(folders);
-  }, [filteredFiles]);
-
-  const handleCollapseAll = useCallback(() => {
-    setExpandedFolders(new Set());
-  }, []);
-
-  const handleSelectAll = () => {
-    setSelectedFiles(new Set(filteredFiles.map((f) => f.path)));
-  };
-
-  const handleDeselectAll = () => {
-    const filteredPaths = new Set(filteredFiles.map((f) => f.path));
-    setSelectedFiles((prev) => {
-      const newSelected = new Set(prev);
-      filteredPaths.forEach((p) => newSelected.delete(p));
-      return newSelected;
+      return next;
     });
   };
 
-  const handleInvertSelection = () => {
-    const filteredPaths = new Set(filteredFiles.map((f) => f.path));
+  const handleSelectVisible = () => {
     setSelectedFiles((prev) => {
-      const newSelected = new Set(prev);
-      filteredPaths.forEach((p) => {
-        if (newSelected.has(p)) {
-          newSelected.delete(p);
-        } else {
-          newSelected.add(p);
-        }
-      });
-      return newSelected;
+      const next = new Set(prev);
+      visibleFilePaths.forEach((path) => next.add(path));
+      return next;
+    });
+  };
+
+  const handleClearVisible = () => {
+    setSelectedFiles((prev) => {
+      const next = new Set(prev);
+      visibleFilePaths.forEach((path) => next.delete(path));
+      return next;
+    });
+  };
+
+  const handleLoadMore = () => {
+    if (!hasMore || loadingMore) return;
+    loadEntries({
+      append: true,
+      keyword: debouncedSearch,
+      nextOffset: items.length,
+      nextPath: currentPath,
+    });
+  };
+
+  const handleRefresh = () => {
+    loadEntries({
+      append: false,
+      keyword: debouncedSearch,
+      nextOffset: 0,
+      nextPath: currentPath,
+      refresh: true,
     });
   };
 
@@ -337,175 +329,18 @@ export default function FileSelectionDialog({
       toast.error('请至少选择一个文件');
       return;
     }
-    onConfirm([...selectedFiles]);
+    onConfirm({
+      selectedFiles: [...selectedFiles].sort((a, b) => a.localeCompare(b)),
+      repositorySpec:
+        sessionSpec ||
+        buildFallbackRepositorySpec({
+          branch,
+          group,
+          manifestXml,
+          repositoryType,
+        }),
+    });
     onOpenChange(false);
-  };
-
-  const formatSize = (bytes: number) => {
-    if (bytes === 0) return '';
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  };
-
-  // 检查文件夹的选中状态
-  const getFolderSelectionState = (
-    folderPath: string,
-  ): 'all' | 'none' | 'some' => {
-    const folderFiles = filteredFiles.filter((f) =>
-      f.path.startsWith(`${folderPath}/`),
-    );
-    if (folderFiles.length === 0) return 'none';
-
-    const selectedCount = folderFiles.filter((f) =>
-      selectedFiles.has(f.path),
-    ).length;
-    if (selectedCount === 0) return 'none';
-    if (selectedCount === folderFiles.length) return 'all';
-    return 'some';
-  };
-
-  // 渲染文件夹树
-  const renderFolderTree = (node: FolderNode, depth: number = 0) => {
-    const items: React.ReactNode[] = [];
-
-    // 渲染子文件夹
-    [...node.subfolders.values()]
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .forEach((folder) => {
-        const isExpanded = expandedFolders.has(folder.path);
-        const selectionState = getFolderSelectionState(folder.path);
-
-        items.push(
-          <div key={`folder-${folder.path}`}>
-            <div
-              className="hover:bg-muted hover:border-border flex cursor-pointer items-center space-x-2 rounded border border-transparent p-2 transition-colors"
-              style={{ paddingLeft: `${depth * 16 + 8}px` }}
-            >
-              <button
-                className="hover:bg-muted rounded p-0.5"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleExpandFolder(folder.path);
-                }}
-              >
-                {isExpanded ? (
-                  <ChevronDown className="text-muted-foreground h-4 w-4" />
-                ) : (
-                  <ChevronRight className="text-muted-foreground h-4 w-4" />
-                )}
-              </button>
-              <div onClick={(e) => e.stopPropagation()}>
-                <Checkbox
-                  checked={selectionState === 'all'}
-                  className="border-border data-[state=checked]:bg-primary data-[state=checked]:border-primary data-[state=indeterminate]:bg-background0"
-                  onCheckedChange={() => handleToggleFolder(folder.path)}
-                  ref={(el) => {
-                    if (el) {
-                      let state = 'unchecked';
-                      if (selectionState === 'some') {
-                        state = 'indeterminate';
-                      } else if (selectionState === 'all') {
-                        state = 'checked';
-                      }
-                      (el as HTMLButtonElement).dataset.state = state;
-                    }
-                  }}
-                />
-              </div>
-              {isExpanded ? (
-                <FolderOpen className="h-4 w-4 text-amber-400" />
-              ) : (
-                <Folder className="h-4 w-4 text-amber-400" />
-              )}
-              <span
-                className="text-foreground flex-1 font-mono text-sm font-medium"
-                onClick={() => handleExpandFolder(folder.path)}
-              >
-                {folder.name}
-              </span>
-              <Badge className="cyber-badge-muted font-mono text-xs">
-                {
-                  filteredFiles.filter((f) =>
-                    f.path.startsWith(`${folder.path}/`),
-                  ).length
-                }
-              </Badge>
-            </div>
-            {isExpanded && renderFolderTree(folder, depth + 1)}
-          </div>,
-        );
-      });
-
-    // 渲染文件
-    node.files
-      .sort((a, b) => a.path.localeCompare(b.path))
-      .forEach((file) => {
-        const fileName = file.path.split('/').pop() || file.path;
-        items.push(
-          <div
-            className="hover:bg-muted hover:border-border flex cursor-pointer items-center space-x-3 rounded border border-transparent p-2 transition-colors"
-            key={`file-${file.path}`}
-            onClick={() => handleToggleFile(file.path)}
-            style={{ paddingLeft: `${depth * 16 + 32}px` }}
-          >
-            <div onClick={(e) => e.stopPropagation()}>
-              <Checkbox
-                checked={selectedFiles.has(file.path)}
-                className="border-border data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                onCheckedChange={() => handleToggleFile(file.path)}
-              />
-            </div>
-            {getFileIcon(file.path)}
-            <span
-              className="text-foreground min-w-0 flex-1 truncate font-mono text-sm"
-              title={file.path}
-            >
-              {fileName}
-            </span>
-            {file.size > 0 && (
-              <Badge className="cyber-badge-muted flex-shrink-0 font-mono text-xs">
-                {formatSize(file.size)}
-              </Badge>
-            )}
-          </div>,
-        );
-      });
-
-    return items;
-  };
-
-  // 渲染扁平列表
-  const renderFlatList = () => {
-    return filteredFiles.map((file) => (
-      <div
-        className="hover:bg-muted hover:border-border flex cursor-pointer items-center space-x-3 rounded border border-transparent p-2 transition-colors"
-        key={file.path}
-        onClick={() => handleToggleFile(file.path)}
-      >
-        <div onClick={(e) => e.stopPropagation()}>
-          <Checkbox
-            checked={selectedFiles.has(file.path)}
-            className="border-border data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-            onCheckedChange={() => handleToggleFile(file.path)}
-          />
-        </div>
-        {getFileIcon(file.path)}
-        <div className="min-w-0 flex-1">
-          <p
-            className="text-foreground truncate font-mono text-sm"
-            title={file.path}
-          >
-            {file.path}
-          </p>
-        </div>
-        {file.size > 0 && (
-          <Badge className="cyber-badge-muted flex-shrink-0 font-mono text-xs">
-            {formatSize(file.size)}
-          </Badge>
-        )}
-      </div>
-    ));
   };
 
   const fileListContent = (() => {
@@ -516,10 +351,10 @@ export default function FileSelectionDialog({
             <div className="loading-spinner mx-auto" />
             <div className="space-y-2">
               <p className="text-foreground text-sm font-semibold">
-                正在同步代码并读取文件列表...
+                正在同步代码并读取文件目录...
               </p>
               <p className="text-muted-foreground text-xs leading-6">
-                大型仓库首次加载可能需要更久，请稍候。
+                大仓库首次进入时只会加载当前目录或搜索结果，不再一次性展开完整代码树。
               </p>
             </div>
           </div>
@@ -527,22 +362,97 @@ export default function FileSelectionDialog({
       );
     }
 
-    if (filteredFiles.length > 0) {
-      const folderContent =
-        viewMode === 'tree' ? renderFolderTree(folderTree) : renderFlatList();
+    if (items.length === 0) {
       return (
-        <div className="custom-scrollbar h-full overflow-auto">
-          <div className="p-2">{folderContent}</div>
+        <div className="text-muted-foreground absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
+          <FileText className="mb-2 h-12 w-12 opacity-20" />
+          <p className="font-mono text-sm">
+            {debouncedSearch
+              ? '没有匹配的文件或目录'
+              : '当前目录下没有可显示的文件'}
+          </p>
         </div>
       );
     }
 
     return (
-      <div className="text-muted-foreground absolute inset-0 flex flex-col items-center justify-center">
-        <FileText className="mb-2 h-12 w-12 opacity-20" />
-        <p className="font-mono text-sm">
-          {searchTerm || filterType ? '没有匹配的文件' : '没有找到文件'}
-        </p>
+      <div className="custom-scrollbar h-full overflow-auto">
+        <div className="space-y-2 p-3">
+          {items.map((item) => {
+            const isDirectory = item.kind === 'directory';
+            const isChecked = selectedFiles.has(item.path);
+            return (
+              <div
+                className="hover:bg-muted hover:border-border flex items-center gap-3 rounded border border-transparent p-2 transition-colors"
+                key={`${item.kind}-${item.path}`}
+              >
+                {isDirectory ? (
+                  <Button
+                    className="h-8 px-2 text-xs"
+                    onClick={() => {
+                      setSearchInput('');
+                      setCurrentPath(item.path);
+                    }}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    <ChevronRight className="mr-1 h-3 w-3" />
+                    进入
+                  </Button>
+                ) : (
+                  <div onClick={(event) => event.stopPropagation()}>
+                    <Checkbox
+                      checked={isChecked}
+                      className="border-border data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                      onCheckedChange={() => handleToggleFile(item.path)}
+                    />
+                  </div>
+                )}
+
+                {isDirectory ? (
+                  currentPath === item.path ? (
+                    <FolderOpen className="h-4 w-4 text-amber-400" />
+                  ) : (
+                    <Folder className="h-4 w-4 text-amber-400" />
+                  )
+                ) : (
+                  getFileIcon(item.path)
+                )}
+
+                <div className="min-w-0 flex-1">
+                  <p
+                    className="text-foreground truncate font-mono text-sm"
+                    title={item.path}
+                  >
+                    {item.path}
+                  </p>
+                  <p className="text-muted-foreground truncate text-xs">
+                    {isDirectory ? '目录' : '文件'}
+                  </p>
+                </div>
+
+                {item.size > 0 && (
+                  <Badge className="cyber-badge-muted flex-shrink-0 font-mono text-xs">
+                    {formatSize(item.size)}
+                  </Badge>
+                )}
+              </div>
+            );
+          })}
+
+          {hasMore && (
+            <div className="flex justify-center pt-2">
+              <Button
+                className="cyber-btn-outline h-8 px-4 font-mono text-xs"
+                disabled={loadingMore}
+                onClick={handleLoadMore}
+                variant="outline"
+              >
+                {loadingMore ? '加载中...' : '加载更多'}
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
     );
   })();
@@ -558,31 +468,31 @@ export default function FileSelectionDialog({
                 选择要审计的文件
               </DialogTitle>
               <div className="text-muted-foreground flex flex-wrap gap-2 font-mono text-xs">
-                {repositoryType && (
+                <Badge className="cyber-badge-muted uppercase">
+                  {getRepositoryTypeLabel(
+                    sessionSpec?.repository_type || repositoryType,
+                  )}
+                </Badge>
+                {sessionSpec?.branch_name || branch ? (
                   <Badge className="cyber-badge-muted uppercase">
-                    {getRepositoryTypeLabel(repositoryType)}
+                    分支: {sessionSpec?.branch_name || branch}
                   </Badge>
-                )}
-                {branch && (
+                ) : null}
+                {sessionSpec?.manifest_xml || manifestXml ? (
                   <Badge className="cyber-badge-muted uppercase">
-                    分支: {branch}
+                    Manifest: {sessionSpec?.manifest_xml || manifestXml}
                   </Badge>
-                )}
-                {manifestXml && (
+                ) : null}
+                {sessionSpec?.group || group ? (
                   <Badge className="cyber-badge-muted uppercase">
-                    Manifest: {manifestXml}
+                    Group: {sessionSpec?.group || group}
                   </Badge>
-                )}
-                {group && (
-                  <Badge className="cyber-badge-muted uppercase">
-                    Group: {group}
-                  </Badge>
-                )}
-                {repositoryType === 'multi' && (
+                ) : null}
+                {lastSyncedAt ? (
                   <span className="text-muted-foreground">
-                    多仓会先执行 `git mm init` 再同步代码
+                    最近同步: {formatSyncTime(lastSyncedAt)}
                   </span>
-                )}
+                ) : null}
               </div>
             </div>
           </div>
@@ -594,144 +504,117 @@ export default function FileSelectionDialog({
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col space-y-3 overflow-y-auto p-5">
-          {/* 工具栏 */}
           <div className="flex flex-wrap items-center gap-2">
-            {/* 搜索框 */}
-            <div className="relative min-w-[200px] flex-1">
+            <div className="relative min-w-[240px] flex-1">
               <Search className="text-muted-foreground absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 transform" />
               <Input
                 className="cyber-input h-9 !pl-10"
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="搜索文件..."
-                value={searchTerm}
+                onChange={(event) => setSearchInput(event.target.value)}
+                placeholder="搜索文件名或路径..."
+                value={searchInput}
               />
             </div>
 
-            {/* 文件类型筛选 */}
-            {fileTypes.length > 0 && (
-              <div className="flex items-center gap-1">
-                <Filter className="text-muted-foreground h-4 w-4" />
-                <select
-                  className="border-border cyber-bg-elevated text-foreground h-9 rounded border px-2 py-1 font-mono text-xs"
-                  onChange={(e) => setFilterType(e.target.value)}
-                  value={filterType}
-                >
-                  <option value="">全部类型</option>
-                  {fileTypes.slice(0, 10).map(([ext, count]) => (
-                    <option key={ext} value={ext}>
-                      .{ext} ({count})
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <Button
+              className="cyber-btn-outline h-9 px-3 font-mono text-xs"
+              disabled={!currentPath}
+              onClick={() => setCurrentPath(getParentPath(currentPath))}
+              size="sm"
+              variant="outline"
+            >
+              <ChevronLeft className="mr-1 h-3 w-3" />
+              返回上级
+            </Button>
+            <Button
+              className="cyber-btn-outline h-9 px-3 font-mono text-xs"
+              disabled={refreshing}
+              onClick={handleRefresh}
+              size="sm"
+              variant="outline"
+            >
+              <RefreshCw className="mr-1 h-3 w-3" />
+              {refreshing ? '刷新中' : '刷新代码树'}
+            </Button>
+            {(searchInput || currentPath) && (
+              <Button
+                className="cyber-btn-outline text-muted-foreground h-9 px-3 font-mono text-xs"
+                onClick={() => {
+                  setSearchInput('');
+                  setCurrentPath('');
+                }}
+                size="sm"
+                variant="outline"
+              >
+                <RotateCcw className="mr-1 h-3 w-3" />
+                回到根目录
+              </Button>
             )}
-
-            {/* 视图切换 */}
-            <div className="border-border flex overflow-hidden rounded border">
-              <button
-                className={`px-3 py-1.5 font-mono text-xs uppercase ${viewMode === 'tree' ? 'bg-primary text-foreground' : 'bg-muted text-muted-foreground hover:bg-muted'}`}
-                onClick={() => setViewMode('tree')}
-              >
-                树形
-              </button>
-              <button
-                className={`border-border border-l px-3 py-1.5 font-mono text-xs uppercase ${viewMode === 'flat' ? 'bg-primary text-foreground' : 'bg-muted text-muted-foreground hover:bg-muted'}`}
-                onClick={() => setViewMode('flat')}
-              >
-                列表
-              </button>
-            </div>
           </div>
 
-          {/* 操作按钮 */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Button
-                className="cyber-btn-outline h-8 px-3 font-mono text-xs"
-                onClick={handleSelectAll}
-                size="sm"
-                variant="outline"
-              >
-                <CheckSquare className="mr-1 h-3 w-3" />
-                全选
-              </Button>
-              <Button
-                className="cyber-btn-outline h-8 px-3 font-mono text-xs"
-                onClick={handleDeselectAll}
-                size="sm"
-                variant="outline"
-              >
-                <Square className="mr-1 h-3 w-3" />
-                清空
-              </Button>
-              <Button
-                className="cyber-btn-outline h-8 px-3 font-mono text-xs"
-                onClick={handleInvertSelection}
-                size="sm"
-                variant="outline"
-              >
-                <RefreshCw className="mr-1 h-3 w-3" />
-                反选
-              </Button>
-              {viewMode === 'tree' && (
-                <>
-                  <Button
-                    className="cyber-btn-outline h-8 px-3 font-mono text-xs"
-                    onClick={handleExpandAll}
-                    size="sm"
-                    variant="outline"
-                  >
-                    <ChevronDown className="mr-1 h-3 w-3" />
-                    展开
-                  </Button>
-                  <Button
-                    className="cyber-btn-outline h-8 px-3 font-mono text-xs"
-                    onClick={handleCollapseAll}
-                    size="sm"
-                    variant="outline"
-                  >
-                    <ChevronRight className="mr-1 h-3 w-3" />
-                    折叠
-                  </Button>
-                </>
-              )}
-              {(searchTerm || filterType) && (
-                <Button
-                  className="cyber-btn-outline text-muted-foreground h-8 px-3 font-mono text-xs"
-                  onClick={() => {
-                    setSearchTerm('');
-                    setFilterType('');
-                  }}
-                  size="sm"
-                  variant="outline"
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {breadcrumbs.map((item, index) => (
+                <div
+                  className="flex items-center gap-2"
+                  key={item.path || 'root'}
                 >
-                  <RotateCcw className="mr-1 h-3 w-3" />
-                  重置筛选
-                </Button>
-              )}
+                  {index > 0 && (
+                    <ChevronRight className="text-muted-foreground h-3 w-3" />
+                  )}
+                  <button
+                    className={`font-mono text-xs ${item.path === currentPath ? 'text-foreground font-bold' : 'text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => setCurrentPath(item.path)}
+                    type="button"
+                  >
+                    {item.label}
+                  </button>
+                </div>
+              ))}
             </div>
-            <div className="text-muted-foreground font-mono text-sm">
-              {searchTerm || filterType ? (
-                <span>
-                  筛选: {filteredFiles.length}/{files.length} 个文件， 已选{' '}
-                  <span className="text-primary font-bold">
-                    {selectedFiles.size}
-                  </span>{' '}
-                  个
-                </span>
-              ) : (
-                <span>
-                  共 {files.length} 个文件，已选{' '}
-                  <span className="text-primary font-bold">
-                    {selectedFiles.size}
-                  </span>{' '}
-                  个
-                </span>
-              )}
+            <div className="text-muted-foreground font-mono text-xs">
+              当前已加载 {items.length}/{total} 项，已选{' '}
+              <span className="text-primary font-bold">
+                {selectedFiles.size}
+              </span>{' '}
+              个文件
             </div>
           </div>
 
-          {/* 文件列表 */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                className="cyber-btn-outline h-8 px-3 font-mono text-xs"
+                disabled={visibleFilePaths.length === 0}
+                onClick={handleSelectVisible}
+                size="sm"
+                variant="outline"
+              >
+                选择当前页文件
+              </Button>
+              <Button
+                className="cyber-btn-outline h-8 px-3 font-mono text-xs"
+                disabled={visibleSelectedCount === 0}
+                onClick={handleClearVisible}
+                size="sm"
+                variant="outline"
+              >
+                清空当前页选择
+              </Button>
+              <Button
+                className="cyber-btn-outline h-8 px-3 font-mono text-xs"
+                disabled={selectedFiles.size === 0}
+                onClick={() => setSelectedFiles(new Set())}
+                size="sm"
+                variant="outline"
+              >
+                清空全部选择
+              </Button>
+            </div>
+            <div className="text-muted-foreground font-mono text-xs">
+              {browsingHint}
+            </div>
+          </div>
+
           <div className="border-border cyber-bg-elevated relative h-[450px] overflow-hidden rounded border">
             {fileListContent}
           </div>
@@ -740,7 +623,7 @@ export default function FileSelectionDialog({
         <DialogFooter className="border-border bg-muted flex flex-shrink-0 justify-between border-t p-5">
           <div className="text-muted-foreground flex items-center gap-2 font-mono text-xs">
             <Terminal className="h-3 w-3" />
-            提示：点击文件夹可展开/折叠，点击文件夹复选框可批量选择
+            提示：大仓默认按目录懒加载，搜索会按关键字分页返回结果。
           </div>
           <div className="flex gap-3">
             <Button
