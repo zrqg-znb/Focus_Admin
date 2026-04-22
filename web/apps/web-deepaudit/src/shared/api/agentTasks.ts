@@ -53,6 +53,8 @@ export interface AgentTask {
   created_at: string;
   started_at: null | string;
   completed_at: null | string;
+  repository_type?: 'multi' | 'single';
+  repository_url?: null | string;
   branch_name?: null | string;
   manifest_xml?: null | string;
   group?: null | string;
@@ -121,6 +123,7 @@ export interface CreateAgentTaskRequest {
   audit_scope?: Record<string, unknown>;
   target_vulnerabilities?: string[];
   verification_level?: 'analysis_only' | 'generate_poc' | 'sandbox';
+  repository_type?: 'multi' | 'single';
   branch_name?: string;
   manifest_xml?: string;
   group?: string;

@@ -215,6 +215,7 @@ ERROR_LOGS_FILE = os.path.join(BASE_DIR, "logs", "error.log")
 LOGS_FILE = os.path.join(BASE_DIR, "logs")
 if not os.path.exists(os.path.join(BASE_DIR, "logs")):
     os.makedirs(os.path.join(BASE_DIR, "logs"))
+DEEPAUDIT_LOG_LEVEL = str(os.environ.get('DEEPAUDIT_LOG_LEVEL', 'DEBUG' if DEBUG else 'INFO')).upper()
 
 # 格式:[2020-04-22 23:33:01][micoservice.apps.ready():16] [INFO] 这是一条日志:
 # 格式:[日期][模块.函数名称():行号] [级别] 信息
@@ -240,7 +241,7 @@ LOGGING = {
     },
     "handlers": {
         "file": {
-            "level": "INFO",
+            "level": "DEBUG",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": SERVER_LOGS_FILE,
             "maxBytes": 1024 * 1024 * 10,  # 100 MB
@@ -258,7 +259,7 @@ LOGGING = {
             "encoding": "utf-8",
         },
         "console": {
-            "level": "INFO",
+            "level": "DEBUG",
             "class": "logging.StreamHandler",
             "formatter": "console",
         },
@@ -278,6 +279,11 @@ LOGGING = {
             'handlers': ["console", "error", "file"],
             'propagate': False,
             'level': "INFO"
+        },
+        "apps.deepaudit": {
+            "handlers": ["console", "error", "file"],
+            "level": DEEPAUDIT_LOG_LEVEL,
+            "propagate": False,
         },
         "uvicorn.error": {
             "level": "INFO",

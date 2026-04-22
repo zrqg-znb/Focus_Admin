@@ -57,6 +57,8 @@ DEEPAUDIT_QUEUE="${DEEPAUDIT_QUEUE:-deepaudit}"
 REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 REDIS_PASSWORD="${REDIS_PASSWORD:-}"
+DEEPAUDIT_LOG_LEVEL="${DEEPAUDIT_LOG_LEVEL:-DEBUG}"
+CELERY_LOG_LEVEL="${CELERY_LOG_LEVEL:-INFO}"
 LOG_DIR="$ROOT_DIR/logs"
 HOST_TAG="$(hostname -s 2>/dev/null || hostname || echo local)"
 HOST_TAG="${HOST_TAG//[^A-Za-z0-9._-]/-}"
@@ -107,6 +109,8 @@ print_usage() {
   DEEPAUDIT_QUEUE=deepaudit
   RUNSERVER_ADDR=0.0.0.0:8001
   WORKER_NAME=focus-local-deepaudit@your-host
+  DEEPAUDIT_LOG_LEVEL=DEBUG
+  CELERY_LOG_LEVEL=INFO
 EOF
 }
 
@@ -140,15 +144,58 @@ ensure_no_duplicate_worker() {
   return 0
 }
 
+ensure_fresh_worker_for_local_mode() {
+  cleanup_worker_pidfile
+  local pid
+  pid="$(read_worker_pid)"
+  if [[ -n "$pid" ]] && worker_process_alive "$pid"; then
+    echo "检测到已有 DeepAudit Worker，执行 fresh start: PID=$pid NAME=$WORKER_NAME"
+    run_stop
+  fi
+}
+
+worker_log_contains_nul() {
+  if [[ ! -f "$WORKER_LOG_FILE" ]]; then
+    return 1
+  fi
+  "$PYTHON_BIN" - "$WORKER_LOG_FILE" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+data = path.read_bytes() if path.exists() else b''
+raise SystemExit(0 if b'\x00' in data else 1)
+PY
+}
+
 reset_worker_log_file() {
+  if worker_log_contains_nul; then
+    echo "检测到旧的 Celery 日志包含 NUL 字节，已重建: $WORKER_LOG_FILE"
+  fi
   rm -f "$WORKER_LOG_FILE"
   : >"$WORKER_LOG_FILE"
+}
+
+write_worker_log_banner() {
+  local started_at
+  started_at="$(date '+%Y-%m-%d %H:%M:%S')"
+  printf '[%s][launcher] fresh start worker=%s queue=%s celery_log_level=%s deepaudit_log_level=%s\n' \
+    "$started_at" \
+    "$WORKER_NAME" \
+    "$DEEPAUDIT_QUEUE" \
+    "$CELERY_LOG_LEVEL" \
+    "$DEEPAUDIT_LOG_LEVEL" >>"$WORKER_LOG_FILE"
 }
 
 print_log_destinations() {
   echo "Celery 运行日志: $WORKER_LOG_FILE"
   echo "DeepAudit 业务日志: $SERVER_LOG_FILE"
   echo "错误日志: $ERROR_LOG_FILE"
+  echo "Worker 侧业务调试日志请查看: $WORKER_LOG_FILE"
+}
+
+print_worker_launch_context() {
+  echo "Worker fresh start: queue=$DEEPAUDIT_QUEUE name=$WORKER_NAME celery_log_level=$CELERY_LOG_LEVEL deepaudit_log_level=$DEEPAUDIT_LOG_LEVEL"
 }
 
 check_python_deps() {
@@ -174,6 +221,7 @@ print(f'CELERY_BROKER_URL={settings.CELERY_BROKER_URL}')
 print(f'CHANNEL_LAYER_BACKEND={settings.CHANNEL_LAYERS["default"]["BACKEND"]}')
 print(f'CHANNEL_LAYER_HOSTS={settings.CHANNEL_LAYERS["default"]["CONFIG"]["hosts"]}')
 print(f'DEEPAUDIT_QUEUE={getattr(settings, "DEEPAUDIT_QUEUE", "deepaudit")}')
+print(f'DEEPAUDIT_LOG_LEVEL={getattr(settings, "DEEPAUDIT_LOG_LEVEL", "INFO")}')
 PY
 }
 
@@ -238,7 +286,8 @@ start_uvicorn_server() {
   local host="${RUNSERVER_ADDR%:*}"
   local port="${RUNSERVER_ADDR##*:}"
   # 只监听代码目录，避免 DeepAudit 拉代码写入 media/run/logs 时触发重载。
-  exec "$PYTHON_BIN" -m uvicorn application.asgi:application --host "$host" --port "$port" "${UVICORN_RELOAD_ARGS[@]}"
+  exec env DEEPAUDIT_LOG_LEVEL="$DEEPAUDIT_LOG_LEVEL" PYTHONUNBUFFERED=1 \
+    "$PYTHON_BIN" -u -m uvicorn application.asgi:application --host "$host" --port "$port" "${UVICORN_RELOAD_ARGS[@]}"
 }
 
 run_worker() {
@@ -247,8 +296,11 @@ run_worker() {
   check_django_settings
   ensure_no_duplicate_worker || exit 0
   reset_worker_log_file
+  write_worker_log_banner
   print_log_destinations
-  exec "$PYTHON_BIN" -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l info --logfile "$WORKER_LOG_FILE"
+  print_worker_launch_context
+  exec env DEEPAUDIT_LOG_LEVEL="$DEEPAUDIT_LOG_LEVEL" CELERY_LOG_LEVEL="$CELERY_LOG_LEVEL" PYTHONUNBUFFERED=1 \
+    "$PYTHON_BIN" -u -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l "$CELERY_LOG_LEVEL" >>"$WORKER_LOG_FILE" 2>&1
 }
 
 run_stop() {
@@ -295,10 +347,13 @@ run_background_worker() {
   ensure_redis
   check_python_deps
   check_django_settings
-  ensure_no_duplicate_worker || return 0
+  ensure_fresh_worker_for_local_mode
   reset_worker_log_file
+  write_worker_log_banner
   print_log_destinations
-  "$PYTHON_BIN" -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l info --logfile "$WORKER_LOG_FILE" >/dev/null 2>&1 < /dev/null &
+  print_worker_launch_context
+  env DEEPAUDIT_LOG_LEVEL="$DEEPAUDIT_LOG_LEVEL" CELERY_LOG_LEVEL="$CELERY_LOG_LEVEL" PYTHONUNBUFFERED=1 \
+    "$PYTHON_BIN" -u -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l "$CELERY_LOG_LEVEL" >>"$WORKER_LOG_FILE" 2>&1 < /dev/null &
   local celery_pid=$!
   printf 'DeepAudit Celery Worker 已启动，PID=%s，NAME=%s\n' "$celery_pid" "$WORKER_NAME"
 }
@@ -322,10 +377,13 @@ run_all() {
     fi
   }
 
-  ensure_no_duplicate_worker || exit 0
+  ensure_fresh_worker_for_local_mode
   reset_worker_log_file
+  write_worker_log_banner
   print_log_destinations
-  "$PYTHON_BIN" -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l info --logfile "$WORKER_LOG_FILE" >/dev/null 2>&1 < /dev/null &
+  print_worker_launch_context
+  env DEEPAUDIT_LOG_LEVEL="$DEEPAUDIT_LOG_LEVEL" CELERY_LOG_LEVEL="$CELERY_LOG_LEVEL" PYTHONUNBUFFERED=1 \
+    "$PYTHON_BIN" -u -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l "$CELERY_LOG_LEVEL" >>"$WORKER_LOG_FILE" 2>&1 < /dev/null &
   celery_pid=$!
   printf 'DeepAudit Celery Worker 已启动，PID=%s，NAME=%s\n' "$celery_pid" "$WORKER_NAME"
   trap cleanup EXIT INT TERM

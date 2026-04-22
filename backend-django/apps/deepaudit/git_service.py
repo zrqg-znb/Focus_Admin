@@ -159,6 +159,40 @@ def _emit_git_event(
         logger.warning('DeepAudit failed to emit git progress event: %s', exc)
 
 
+def _guard_single_repo_path_for_multi_spec(
+    *,
+    operation: str,
+    project,
+    repository_spec: dict[str, Any],
+    log_context: dict[str, Any] | None = None,
+    event_callback: GitEventCallback | None = None,
+) -> None:
+    if not is_multi_repository_type(repository_spec.get('repository_type')):
+        return
+    metadata = {
+        'operation': operation,
+        'repository_type': normalize_repository_type(repository_spec.get('repository_type')),
+        'repository_url': str(repository_spec.get('repository_url') or '').strip(),
+        'branch_name': str(repository_spec.get('branch_name') or '').strip(),
+        'manifest_xml': str(repository_spec.get('manifest_xml') or '').strip(),
+        'group': str(repository_spec.get('group') or '').strip(),
+    }
+    logger.warning(
+        'DeepAudit detected multi-repo spec entering single-repo %s path and will abort: project=%s %s %s',
+        operation,
+        _project_id(project),
+        format_repository_spec_for_log(repository_spec),
+        _format_log_context(log_context),
+    )
+    _emit_git_event(
+        event_callback,
+        'warning',
+        f'检测到多仓仓库误入单仓{operation}分支，已阻止回退到 git clone/worktree',
+        metadata,
+    )
+    raise GitServiceError('多仓仓库初始化误入单仓执行分支，已中止执行')
+
+
 def build_clone_context(
     project,
     repository_url: str,
@@ -193,6 +227,14 @@ def build_clone_context(
             env['GIT_SSH_COMMAND'] = f'ssh -i {key_file} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
     env['DEEPAUDIT_BRANCH'] = branch_name or getattr(project, 'default_branch', 'main') or 'main'
     env['DEEPAUDIT_REPOSITORY_TYPE'] = repo_type
+    logger.debug(
+        'DeepAudit clone context prepared for project=%s repository_type=%s branch=%s repository_url=%s has_ssh_command=%s',
+        _project_id(project),
+        repo_type,
+        env['DEEPAUDIT_BRANCH'],
+        _sanitize_url_for_log(repository_url),
+        bool(env.get('GIT_SSH_COMMAND')),
+    )
     return clone_url, env
 
 
@@ -631,6 +673,12 @@ def clone_repository(
         workspace,
         format_repository_spec_for_log(repository_spec),
     )
+    logger.debug(
+        'DeepAudit clone_repository resolved workspace initialization: project=%s target=%s repository_type=%s',
+        _project_id(project),
+        workspace,
+        repo_type,
+    )
     try:
         if repo_type == 'multi':
             workspace.mkdir(parents=True, exist_ok=True)
@@ -682,6 +730,13 @@ def clone_repository(
             if clone_url != repository_spec['repository_url']:
                 _scrub_origin_url(workspace, repository_spec['repository_url'], env)
         else:
+            _guard_single_repo_path_for_multi_spec(
+                operation='克隆',
+                project=project,
+                repository_spec=repository_spec,
+                log_context=log_context,
+                event_callback=event_callback,
+            )
             logger.info(
                 'DeepAudit project %s will initialize single-repo workspace via git clone: target=%s %s',
                 _project_id(project),
@@ -736,6 +791,13 @@ def _update_repository_cache(
     log_context: dict[str, Any] | None = None,
     event_callback: GitEventCallback | None = None,
 ) -> None:
+    _guard_single_repo_path_for_multi_spec(
+        operation='缓存刷新',
+        project=project,
+        repository_spec=repository_spec or {},
+        log_context=log_context,
+        event_callback=event_callback,
+    )
     fetch_cmd = [
         'git',
         '-C',
@@ -873,6 +935,15 @@ def ensure_repository_cache(
     cache_root = cache_paths['root']
     initial_state = _read_cache_state(cache_paths['state'])
     initial_cache_exists = _cache_exists(cache_repo, repository_type=repo_type)
+    logger.debug(
+        'DeepAudit repository cache state before refresh: project=%s spec_key=%s repo_path=%s exists=%s fresh=%s matches=%s',
+        _project_id(project),
+        spec_key,
+        cache_repo,
+        initial_cache_exists,
+        _cache_is_fresh(initial_state),
+        _cache_state_matches(initial_state, repository_spec),
+    )
     if initial_cache_exists and _cache_is_fresh(initial_state) and _cache_state_matches(initial_state, repository_spec):
         logger.info(
             'DeepAudit repository cache hit for project %s spec_key=%s repo_path=%s %s',
@@ -1093,6 +1164,13 @@ def create_repository_workspace(
             raise
 
     try:
+        _guard_single_repo_path_for_multi_spec(
+            operation='工作区创建',
+            project=project,
+            repository_spec=repository_spec,
+            log_context=log_context,
+            event_callback=event_callback,
+        )
         subprocess.run(
             ['git', '-C', str(cache_repo), 'worktree', 'prune'],
             check=False,

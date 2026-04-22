@@ -257,6 +257,27 @@ class GitServiceTestCase(SimpleTestCase):
         self.assertTrue(target_path.exists())
         self.assertIn('soft-failed', '\n'.join(captured.output))
 
+    def test_update_repository_cache_refuses_multi_repo_single_path(self) -> None:
+        repo_spec = self._repo_spec(repository_type='multi', manifest_xml='default.xml', group='platform')
+
+        with (
+            patch('apps.deepaudit.git_service.subprocess.run', side_effect=AssertionError('should not run single-repo commands')),
+            self.assertLogs('apps.deepaudit.git_service', level='WARNING') as captured,
+        ):
+            with self.assertRaises(git_service.GitServiceError):
+                git_service._update_repository_cache(
+                    self.project,
+                    cache_repo=self.temp_root / 'cache-repo',
+                    repository_url=repo_spec['repository_url'],
+                    clone_url=repo_spec['repository_url'],
+                    branch_name=repo_spec['branch_name'],
+                    env={},
+                    repository_spec=repo_spec,
+                    log_context={'task_kind': 'agent', 'task_id': 'task-1'},
+                )
+
+        self.assertIn('entering single-repo 缓存刷新 path', '\n'.join(captured.output))
+
     def test_cache_paths_depend_on_effective_repository_spec(self) -> None:
         spec_a = self._repo_spec(branch_name='main', repository_type='multi', manifest_xml='a.xml', group='platform')
         spec_b = self._repo_spec(branch_name='dev', repository_type='multi', manifest_xml='b.xml', group='platform')

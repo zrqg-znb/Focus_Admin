@@ -123,6 +123,32 @@ UNSET = object()
 logger = logging.getLogger(__name__)
 
 
+def _build_repository_snapshot_metadata(
+    repository_spec: dict[str, str],
+    *,
+    task_id: str | None = None,
+    project_id: str | None = None,
+    project_repository_type: str | None = None,
+    requested_repository_type: str | None = None,
+) -> dict[str, str]:
+    metadata = {
+        'repository_type': normalize_repository_type(repository_spec.get('repository_type')),
+        'repository_url': str(repository_spec.get('repository_url') or '').strip(),
+        'branch_name': str(repository_spec.get('branch_name') or '').strip(),
+        'manifest_xml': str(repository_spec.get('manifest_xml') or '').strip(),
+        'group': str(repository_spec.get('group') or '').strip(),
+    }
+    if task_id:
+        metadata['task_id'] = str(task_id)
+    if project_id:
+        metadata['project_id'] = str(project_id)
+    if project_repository_type is not None:
+        metadata['project_repository_type'] = normalize_repository_type(project_repository_type)
+    if requested_repository_type is not None:
+        metadata['requested_repository_type'] = normalize_repository_type(requested_repository_type)
+    return metadata
+
+
 def _to_int(value, default: int = 0) -> int:
     try:
         return int(float(value))
@@ -529,10 +555,39 @@ def get_task(user, task_id: str) -> AgentTask:
 
 def create_task(user, payload: dict) -> AgentTask:
     access = require_project_role(user, payload.get('project_id'), min_role='member')
+    project_repository_type = normalize_repository_type(access.project.repository_type)
+    requested_repository_type = payload.get('repository_type')
+    normalized_requested_repository_type = (
+        normalize_repository_type(requested_repository_type)
+        if requested_repository_type is not None
+        else None
+    )
+    repository_type_mismatch = (
+        normalized_requested_repository_type is not None
+        and normalized_requested_repository_type != project_repository_type
+    )
+    if repository_type_mismatch:
+        logger.warning(
+            'DeepAudit agent task create request repository_type mismatch and will use project config: '
+            'project_id=%s user_id=%s requested_repository_type=%s project_repository_type=%s',
+            access.project.id,
+            getattr(user, 'id', ''),
+            normalized_requested_repository_type,
+            project_repository_type,
+        )
+    logger.debug(
+        'DeepAudit agent task create payload repository hints: project_id=%s requested_repository_type=%s '
+        'branch_name=%s manifest_xml=%s group=%s',
+        access.project.id,
+        normalized_requested_repository_type or '-',
+        str(payload.get('branch_name') or '').strip() or '-',
+        str(payload.get('manifest_xml') or '').strip() or '-',
+        str(payload.get('group') or '').strip() or '-',
+    )
     repository_spec = build_effective_project_repository_spec(
         access.project,
         repository_url=payload.get('repository_url'),
-        repository_type=payload.get('repository_type'),
+        repository_type=project_repository_type,
         branch_name=payload.get('branch_name'),
         manifest_xml=payload.get('manifest_xml'),
         group=payload.get('group'),
@@ -542,7 +597,7 @@ def create_task(user, payload: dict) -> AgentTask:
             raise HttpError(422, '仓库任务必须填写 repository_url')
         if normalize_repository_type(repository_spec['repository_type']) == 'multi' and not repository_spec['manifest_xml']:
             raise HttpError(422, '多仓任务必须填写 manifest_xml')
-    return AgentTask.objects.create(
+    instance = AgentTask.objects.create(
         project=access.project,
         created_by=user,
         name=payload.get('name') or f'{access.project.name} Agent 审计',
@@ -565,6 +620,35 @@ def create_task(user, payload: dict) -> AgentTask:
         sys_creator=user,
         sys_modifier=user,
     )
+    metadata = _build_repository_snapshot_metadata(
+        repository_spec,
+        task_id=str(instance.id),
+        project_id=str(access.project.id),
+        project_repository_type=project_repository_type,
+        requested_repository_type=normalized_requested_repository_type,
+    )
+    if repository_type_mismatch:
+        create_event(
+            instance,
+            'warning',
+            phase=instance.current_phase,
+            message='请求仓库类型与项目配置不一致，已按项目当前配置创建 Agent 任务',
+            metadata=metadata,
+        )
+    logger.info(
+        'DeepAudit agent task %s created with repository snapshot for project %s: %s',
+        instance.id,
+        access.project.id,
+        format_repository_spec_for_log(repository_spec),
+    )
+    create_event(
+        instance,
+        'info',
+        phase=instance.current_phase,
+        message='Agent任务已创建，仓库规格快照完成',
+        metadata=metadata,
+    )
+    return instance
 
 
 def cancel_task(user, task_id: str) -> bool:
@@ -1648,11 +1732,29 @@ def execute_agent_task(task_id: str) -> None:
         repository_spec = build_task_repository_spec(instance)
         if instance.project.source_type == 'repository':
             repository_spec = validate_repository_spec_for_execution(repository_spec)
+        repository_metadata = _build_repository_snapshot_metadata(
+            repository_spec,
+            task_id=str(instance.id),
+            project_id=str(instance.project_id),
+            project_repository_type=instance.project.repository_type,
+        )
         logger.info(
             'DeepAudit agent task %s will initialize repository workspace for project %s: %s',
             instance.id,
             instance.project_id,
             format_repository_spec_for_log(repository_spec),
+        )
+        logger.debug(
+            'DeepAudit agent task %s execution snapshot metadata: %s',
+            instance.id,
+            json.dumps(repository_metadata, ensure_ascii=False, sort_keys=True),
+        )
+        create_event(
+            instance,
+            'info',
+            phase=instance.current_phase or AGENT_PHASE_PLANNING,
+            message='开始按任务快照准备仓库工作区',
+            metadata=repository_metadata,
         )
         if (
             instance.project.source_type == 'repository'
@@ -1666,6 +1768,13 @@ def execute_agent_task(task_id: str) -> None:
                 instance.id,
                 normalize_repository_type(instance.project.repository_type),
                 str(instance.project.repository_url or '').strip() or '-',
+            )
+            create_event(
+                instance,
+                'warning',
+                phase=instance.current_phase or AGENT_PHASE_PLANNING,
+                message='任务执行将使用创建时快照的仓库规格，而不是项目当前配置',
+                metadata=repository_metadata,
             )
 
         repository_event_callback = _build_repository_event_callback(str(instance.id))

@@ -93,6 +93,29 @@ class AgentTaskServicesTestCase(TestCase):
         self.assertEqual(task.manifest_xml, 'default.xml')
         self.assertEqual(task.group, 'platform')
 
+    def test_create_task_ignores_mismatched_requested_repository_type(self) -> None:
+        access = SimpleNamespace(project=self.project, role='owner')
+
+        with (
+            patch('apps.deepaudit.agent_task.agent_task_services.require_project_role', return_value=access),
+            self.assertLogs('apps.deepaudit.agent_task.agent_task_services', level='WARNING') as captured,
+        ):
+            task = create_task(
+                self.user,
+                {
+                    'project_id': str(self.project.id),
+                    'name': 'Mismatch Agent Task',
+                    'repository_type': 'single',
+                },
+            )
+
+        self.assertEqual(task.repository_type, 'multi')
+        self.assertEqual(task.repository_url, 'https://codehub.example.com/platform/manifest.git')
+        self.assertIn('repository_type mismatch', '\n'.join(captured.output))
+        warning_event = task.events.filter(is_deleted=False, event_type='warning').latest('sequence')
+        self.assertEqual(warning_event.event_metadata.get('requested_repository_type'), 'single')
+        self.assertEqual(warning_event.event_metadata.get('project_repository_type'), 'multi')
+
     def test_execute_agent_task_uses_snapshotted_repository_spec_after_project_changes(self) -> None:
         self.task.branch_name = 'release/main'
         self.task.save(update_fields=['branch_name', 'sys_update_datetime'])
@@ -133,6 +156,9 @@ class AgentTaskServicesTestCase(TestCase):
         self.assertEqual(repository_spec['branch_name'], 'release/main')
         self.assertEqual(repository_spec['manifest_xml'], 'default.xml')
         self.assertEqual(repository_spec['group'], 'platform')
+        event_messages = list(self.task.events.filter(is_deleted=False).values_list('message', flat=True))
+        self.assertIn('开始按任务快照准备仓库工作区', event_messages)
+        self.assertIn('任务执行将使用创建时快照的仓库规格，而不是项目当前配置', event_messages)
 
     def test_execute_agent_task_persists_repository_init_events(self) -> None:
         def fake_prepare_repository_workspace(*_args, **kwargs):

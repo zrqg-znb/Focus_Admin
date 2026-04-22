@@ -240,6 +240,9 @@ export default function CreateAgentTaskDialog({
       const agentTask = await createAgentTask({
         project_id: selectedProject.id,
         name: `Agent审计-${selectedProject.name}`,
+        repository_type: isRepositoryProject(selectedProject)
+          ? selectedProject.repository_type
+          : undefined,
         branch_name: isRepositoryProject(selectedProject) ? branch : undefined,
         manifest_xml: isRepositoryProject(selectedProject)
           ? manifestXml || undefined
