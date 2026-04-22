@@ -86,6 +86,7 @@ class InstantAnalysisRequestSchema(Schema):
     code_content: str = ''
     language: str = 'python'
     file_name: str | None = None
+    prompt_template_id: str | None = None
 
 
 class InstantAnalysisRecordSchema(Schema):

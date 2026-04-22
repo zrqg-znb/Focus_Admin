@@ -43,7 +43,6 @@ def _load_prompt_template_content(
     queryset = PromptTemplate.objects.filter(
         is_deleted=False,
         is_active=True,
-        template_type='system',
     )
     template = None
     if prompt_template_id:

@@ -9,7 +9,13 @@ from django.test import SimpleTestCase, TestCase
 
 from apps.deepaudit.project.project_model import AuditProject
 from apps.deepaudit.scan_task.scan_task_model import AuditTask
-from apps.deepaudit.scan_task.scan_task_services import _scan_files_with_concurrency, create_task, execute_scan_task
+from apps.deepaudit.scan_task.scan_task_services import (
+    _scan_files_with_concurrency,
+    create_task,
+    execute_scan_task,
+    run_heuristic_scan_from_code,
+    run_instant_analysis,
+)
 from core.user.user_model import User
 
 
@@ -168,3 +174,80 @@ class ScanTaskSnapshotTestCase(TestCase):
         self.assertEqual(repository_spec['branch_name'], 'release/main')
         self.assertEqual(repository_spec['manifest_xml'], 'default.xml')
         self.assertEqual(repository_spec['group'], 'platform')
+
+
+class InstantAnalysisServiceTestCase(TestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create(
+            username='instant-owner',
+            password='not-used',
+            name='Instant Owner',
+        )
+
+    def test_run_instant_analysis_passes_prompt_template_id_and_file_name(self) -> None:
+        analysis_result = {
+            'issues': [],
+            'quality_score': 88,
+            'summary': {
+                'total_issues': 0,
+                'critical_issues': 0,
+                'high_issues': 0,
+                'medium_issues': 0,
+                'low_issues': 0,
+            },
+            'analysis_profile': {
+                'prompt_template_id': 'template-c',
+            },
+        }
+        profile = {
+            'analysis_depth': 'standard',
+            'prompt_template': None,
+            'prompt_context': {},
+            'rule_patterns': (),
+            'severity_weights': {},
+        }
+
+        with (
+            patch(
+                'apps.deepaudit.scan_task.scan_task_services.user_config_services.get_user_config',
+                return_value={'other_config': {'scan_config': {}}},
+            ),
+            patch(
+                'apps.deepaudit.scan_task.scan_task_services.resolve_scan_profile',
+                return_value=profile,
+            ) as mock_resolve_profile,
+            patch(
+                'apps.deepaudit.scan_task.scan_task_services._analyze_code_payload',
+                return_value=analysis_result,
+            ) as mock_analyze,
+        ):
+            result = run_instant_analysis(
+                self.user,
+                {
+                    'code_content': 'printf(input);',
+                    'language': 'c',
+                    'file_name': 'demo.c',
+                    'prompt_template_id': 'template-c',
+                },
+            )
+
+        self.assertEqual(result['language'], 'c')
+        self.assertEqual(
+            mock_resolve_profile.call_args.args[1]['prompt_template_id'],
+            'template-c',
+        )
+        self.assertTrue(mock_resolve_profile.call_args.kwargs['strict'])
+        self.assertEqual(mock_analyze.call_args.kwargs['file_path'], 'demo.c')
+
+
+class HeuristicScanLanguageTestCase(SimpleTestCase):
+    def test_run_heuristic_scan_from_code_uses_c_extension(self) -> None:
+        result = run_heuristic_scan_from_code(
+            '#include <stdio.h>\n#include <string.h>\nvoid f(char *s){ char buf[8]; strcpy(buf, s); printf(s); }\n',
+            'c',
+        )
+
+        self.assertGreaterEqual(result['summary']['total_issues'], 1)
+        self.assertTrue(
+            all(issue['file_path'] == 'snippet.c' for issue in result['issues'])
+        )

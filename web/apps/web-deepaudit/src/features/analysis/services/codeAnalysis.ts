@@ -44,11 +44,13 @@ export const CodeAnalysisEngine = {
     code: string,
     language: string,
     promptTemplateId?: string,
+    fileName?: string,
   ): Promise<CodeAnalysisResult> {
     try {
       const response = await apiClient.post('/scan/instant', {
         code_content: code,
         language,
+        file_name: fileName || undefined,
         prompt_template_id: promptTemplateId || undefined,
       });
       return normalizeCodeAnalysisResult(response.data) as CodeAnalysisResult;

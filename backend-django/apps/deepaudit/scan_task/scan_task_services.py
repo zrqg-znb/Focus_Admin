@@ -249,13 +249,16 @@ def run_instant_analysis(user, payload: dict) -> dict:
     code_content = str(payload.get('code_content') or '')
     language = str(payload.get('language') or 'text')
     config = user_config_services.get_user_config(user)
-    scan_config = (config.get('other_config') or {}).get('scan_config') or {}
-    profile = resolve_scan_profile(user, scan_config, strict=False)
+    scan_config = dict((config.get('other_config') or {}).get('scan_config') or {})
+    prompt_template_id = str(payload.get('prompt_template_id') or '').strip()
+    if prompt_template_id:
+        scan_config['prompt_template_id'] = prompt_template_id
+    profile = resolve_scan_profile(user, scan_config, strict=bool(prompt_template_id))
     result = _analyze_code_payload(
         config,
         code_content,
         language,
-        file_path=str(payload.get('file_name') or f'snippet.{language}'),
+        file_path=str(payload.get('file_name') or f'snippet.{_language_extension(language)}'),
         profile=profile,
     )
     record = InstantAnalysisRecord.objects.create(
@@ -272,8 +275,8 @@ def run_instant_analysis(user, payload: dict) -> dict:
     return serialize_instant_record(record, include_code=True)
 
 
-def run_heuristic_scan_from_code(code_content: str, language: str, *, profile: dict | None = None) -> dict:
-    extension = {
+def _language_extension(language: str) -> str:
+    return {
         'python': 'py',
         'typescript': 'ts',
         'javascript': 'js',
@@ -281,13 +284,23 @@ def run_heuristic_scan_from_code(code_content: str, language: str, *, profile: d
         'go': 'go',
         'rust': 'rs',
         'vue': 'vue',
-    }.get(language.lower(), 'txt')
+        'c': 'c',
+        'cpp': 'cpp',
+        'csharp': 'cs',
+        'php': 'php',
+        'ruby': 'rb',
+        'swift': 'swift',
+        'kotlin': 'kt',
+    }.get(str(language or '').strip().lower(), 'txt')
+
+
+def run_heuristic_scan_from_code(code_content: str, language: str, *, profile: dict | None = None) -> dict:
     from apps.deepaudit.heuristics import build_summary, scan_content
 
     effective_profile = dict(profile or {})
     issues = scan_content(
         code_content or '',
-        f'snippet.{extension}',
+        f'snippet.{_language_extension(language)}',
         rule_patterns=effective_profile.get('rule_patterns'),
         prompt_context=effective_profile.get('prompt_context'),
         analysis_depth=effective_profile.get('analysis_depth') or 'standard',

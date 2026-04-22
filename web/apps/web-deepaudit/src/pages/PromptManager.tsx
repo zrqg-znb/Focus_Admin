@@ -42,7 +42,11 @@ import {
   type PromptTemplate,
   type PromptTemplateCreate,
 } from '@/shared/api/prompts';
-import { TEST_CODE_SAMPLES, TEMPLATE_TEST_CODES } from './prompt-manager/testCodeSamples';
+import {
+  TEST_CODE_SAMPLES,
+  getDefaultTestLanguageForTemplate,
+  getTestCodeForTemplate,
+} from './prompt-manager/testCodeSamples';
 import { useAuth } from '@/shared/context/AuthContext';
 import { DEEPAUDIT_ACTION_CODES } from '@/shared/focus/focusPermission';
 
@@ -176,22 +180,12 @@ export default function PromptManager() {
     }
     setSelectedTemplate(template);
     setTestResult(null);
-
-    const templateCodes = TEMPLATE_TEST_CODES[template.name];
-    const defaultLang = 'python';
-    if (templateCodes && templateCodes[defaultLang]) {
-      setTestForm(prev => ({
-        ...prev,
-        language: defaultLang,
-        code: templateCodes[defaultLang]
-      }));
-    } else {
-      setTestForm(prev => ({
-        ...prev,
-        language: defaultLang,
-        code: TEST_CODE_SAMPLES[defaultLang]
-      }));
-    }
+    const defaultLang = getDefaultTestLanguageForTemplate(template.name);
+    setTestForm(prev => ({
+      ...prev,
+      language: defaultLang,
+      code: getTestCodeForTemplate(template.name, defaultLang),
+    }));
 
     setShowTestDialog(true);
   };
@@ -465,12 +459,14 @@ export default function PromptManager() {
                 <div className="space-y-2">
                   <Label className="text-xs font-bold text-muted-foreground uppercase">编程语言</Label>
                   <Select value={testForm.language} onValueChange={v => {
-                    const templateCodes = selectedTemplate ? TEMPLATE_TEST_CODES[selectedTemplate.name] : null;
-                    const code = templateCodes?.[v] || TEST_CODE_SAMPLES[v] || TEST_CODE_SAMPLES.python;
+                    const code = selectedTemplate
+                      ? getTestCodeForTemplate(selectedTemplate.name, v)
+                      : TEST_CODE_SAMPLES[v] || TEST_CODE_SAMPLES.python;
                     setTestForm({ ...testForm, language: v, code });
                   }}>
                     <SelectTrigger className="cyber-input"><SelectValue /></SelectTrigger>
                     <SelectContent className="cyber-dialog border-border">
+                      <SelectItem value="c">C</SelectItem>
                       <SelectItem value="python">Python</SelectItem>
                       <SelectItem value="javascript">JavaScript</SelectItem>
                       <SelectItem value="java">Java</SelectItem>

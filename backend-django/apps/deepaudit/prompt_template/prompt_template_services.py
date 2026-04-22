@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import time
 
+from asgiref.sync import async_to_sync
 from django.shortcuts import get_object_or_404
 from ninja.errors import HttpError
 
-from apps.deepaudit.heuristics import build_summary, scan_content
+from apps.deepaudit.llm.service import LLMService
 from apps.deepaudit.permissions import get_user_id
 from apps.deepaudit.prompt_template.prompt_template_model import PromptTemplate
 from apps.deepaudit.serialization import format_datetime_text
+from apps.deepaudit.user_config import user_config_services
 
 
 DEFAULT_PROMPT_TEMPLATES = [
@@ -29,6 +31,25 @@ DEFAULT_PROMPT_TEMPLATES = [
         'template_type': 'analysis',
         'content_zh': '请重点识别 SQL 注入、XSS、命令注入、路径遍历、SSRF、硬编码密钥等问题，并给出风险评级。',
         'content_en': 'Focus on SQLi, XSS, command injection, path traversal, SSRF and hardcoded secrets, and assign risk ratings.',
+        'variables': {'language': '编程语言', 'code': '代码内容'},
+        'is_default': False,
+        'is_system': True,
+        'is_active': True,
+    },
+    {
+        'name': 'C 语言安全审计',
+        'description': '面向 C 语言项目的内存安全与并发风险专项提示词模板',
+        'template_type': 'analysis',
+        'content_zh': (
+            '请以资深 C/C++ 安全审计专家视角审查代码，重点关注缓冲区溢出、格式化字符串、'
+            '整数溢出/截断、越界读写、空指针解引用、UAF、double free、危险标准库 API、'
+            '指针生命周期、线程共享内存与缺失同步、边界检查缺失，并给出可执行的修复建议。'
+        ),
+        'content_en': (
+            'Review the code as a senior C/C++ security auditor. Focus on buffer overflows, format-string bugs, '
+            'integer overflows or truncation, out-of-bounds access, null dereference, use-after-free, double free, '
+            'dangerous standard-library APIs, pointer lifetime, shared-memory concurrency issues, and missing bounds checks.'
+        ),
         'variables': {'language': '编程语言', 'code': '代码内容'},
         'is_default': False,
         'is_system': True,
@@ -127,17 +148,41 @@ def set_default_template(user, template_id: str) -> bool:
     return True
 
 
-def test_template(payload: dict) -> dict:
+def test_template(user, payload: dict) -> dict:
     started = time.perf_counter()
-    issues = scan_content(payload.get('code') or '', f"snippet.{payload.get('language') or 'txt'}")
-    result = build_summary(issues, (payload.get('code') or '').count('\n') + 1, 1)
-    result['issues'] = issues
-    result['prompt_excerpt'] = str(payload.get('content') or '')[:200]
-    return {
-        'success': True,
-        'result': result,
-        'execution_time': round(time.perf_counter() - started, 3),
-    }
+    content = str(payload.get('content') or '').strip()
+    code = str(payload.get('code') or '')
+    language = str(payload.get('language') or 'text').strip() or 'text'
+    output_language = str(payload.get('output_language') or 'zh').strip() or 'zh'
+    if not content:
+        return {
+            'success': False,
+            'result': {},
+            'error': '提示词内容不能为空',
+            'execution_time': round(time.perf_counter() - started, 3),
+        }
+
+    config = user_config_services.get_user_config(user)
+    service = LLMService(user_config=config)
+    try:
+        result = async_to_sync(service.analyze_code_with_custom_prompt)(
+            code,
+            language,
+            content,
+            output_language=output_language,
+        )
+        return {
+            'success': True,
+            'result': result,
+            'execution_time': round(time.perf_counter() - started, 3),
+        }
+    except Exception as exc:
+        return {
+            'success': False,
+            'result': {},
+            'error': str(exc) or '提示词测试失败',
+            'execution_time': round(time.perf_counter() - started, 3),
+        }
 
 
 def ensure_default_templates() -> int:

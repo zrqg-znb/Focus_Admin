@@ -16,6 +16,14 @@ export const TEST_CODE_SAMPLES: Record<string, string> = {
     String query = "SELECT * FROM users WHERE username = '" + username + "'";
     return jdbcTemplate.queryForObject(query, User.class);
 }`,
+  c: `#include <stdio.h>
+#include <string.h>
+
+void copy_input(char *input) {
+    char buffer[16];
+    strcpy(buffer, input);
+    printf(input);
+}`,
 };
 
 // 按模板名称分类的测试代码（针对不同审计场景）
@@ -182,6 +190,56 @@ public class VulnerableService {
     public String hashPassword(String password) {
         return DigestUtils.md5Hex(password);
     }
+}`,
+    c: `#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+void handle_request(char *input, size_t len) {
+    char buffer[32];
+    strcpy(buffer, input);            // 缓冲区溢出
+    printf(input);                    // 格式化字符串
+
+    char *payload = (char *)malloc(len);
+    memcpy(payload, input, len + 16); // 越界写
+    free(payload);
+    free(payload);                    // double free
+}
+
+int main(int argc, char **argv) {
+    if (argc > 1) {
+        handle_request(argv[1], strlen(argv[1]));
+    }
+    return 0;
+}`,
+  },
+
+  'C 语言安全审计': {
+    c: `#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static int shared_ready = 0;
+
+void *worker(void *arg) {
+    char local[32];
+    strcpy(local, (char *)arg);   // 潜在缓冲区溢出
+    printf((char *)arg);          // 潜在格式化字符串漏洞
+    shared_ready = 1;             // 无同步共享状态
+    return NULL;
+}
+
+int main(int argc, char **argv) {
+    pthread_t tid;
+    char *payload = (char *)malloc(16);
+    if (argc > 1) {
+        strcpy(payload, argv[1]);
+    }
+    pthread_create(&tid, NULL, worker, payload);
+    free(payload);                // 线程仍可能继续使用
+    pthread_join(tid, NULL);
+    return 0;
 }`,
   },
 
@@ -505,4 +563,17 @@ export function getTestCodeForTemplate(templateName: string, language: string): 
     return templateCodes[language];
   }
   return TEST_CODE_SAMPLES[language] || TEST_CODE_SAMPLES.python;
+}
+
+export function getDefaultTestLanguageForTemplate(templateName: string): string {
+  const templateCodes = TEMPLATE_TEST_CODES[templateName];
+  if (!templateCodes) {
+    return 'python';
+  }
+  const preferredLanguages = ['c', 'python', 'javascript', 'java'];
+  const matchedLanguage = preferredLanguages.find((language) => templateCodes[language]);
+  if (matchedLanguage) {
+    return matchedLanguage;
+  }
+  return Object.keys(templateCodes)[0] || 'python';
 }

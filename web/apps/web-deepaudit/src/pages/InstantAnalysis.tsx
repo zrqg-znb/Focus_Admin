@@ -37,6 +37,7 @@ import {
   getRepositoryTypeLabel,
   isMultiRepository,
 } from '@/shared/utils/projectUtils';
+import { getLanguageFromExtension } from '@/shared/utils/utils';
 import {
   AlertTriangle,
   CheckCircle,
@@ -86,6 +87,7 @@ export default function InstantAnalysis() {
   const { hasAccess } = useAuth();
   const [code, setCode] = useState('');
   const [language, setLanguage] = useState('');
+  const [uploadedFileName, setUploadedFileName] = useState('');
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('snippet');
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState<CodeAnalysisResult | null>(null);
@@ -369,6 +371,22 @@ public class Example {
         }
     }
 }`,
+    c: `#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+void process(char *input) {
+    char buffer[16];
+    strcpy(buffer, input);  // 潜在缓冲区溢出
+    printf(input);          // 潜在格式化字符串漏洞
+}
+
+int main(int argc, char **argv) {
+    if (argc > 1) {
+        process(argv[1]);
+    }
+    return 0;
+}`,
   };
 
   const handleAnalyze = async () => {
@@ -395,6 +413,7 @@ public class Example {
         code,
         language,
         selectedPromptTemplateId || undefined,
+        uploadedFileName || undefined,
       );
       const endTime = Date.now();
       const duration = (endTime - startTime) / 1000;
@@ -410,6 +429,7 @@ public class Example {
     } finally {
       setAnalyzing(false);
       setCode('');
+      setUploadedFileName('');
     }
   };
 
@@ -467,28 +487,14 @@ public class Example {
 
     const content = await file.text();
     setCode(content);
+    setUploadedFileName(file.name);
 
     const extension = file.name.split('.').pop()?.toLowerCase();
-    const languageMap: Record<string, string> = {
-      js: 'javascript',
-      jsx: 'javascript',
-      ts: 'typescript',
-      tsx: 'typescript',
-      py: 'python',
-      java: 'java',
-      go: 'go',
-      rs: 'rust',
-      cpp: 'cpp',
-      c: 'cpp',
-      cs: 'csharp',
-      php: 'php',
-      rb: 'ruby',
-      swift: 'swift',
-      kt: 'kotlin',
-    };
-
-    if (extension && languageMap[extension]) {
-      setLanguage(languageMap[extension]);
+    if (extension) {
+      const detectedLanguage = getLanguageFromExtension(extension);
+      if (detectedLanguage !== 'text') {
+        setLanguage(detectedLanguage);
+      }
     }
   };
 
@@ -497,6 +503,7 @@ public class Example {
     if (example) {
       setCode(example);
       setLanguage(lang);
+      setUploadedFileName('');
       toast.success(`已加载${lang}示例代码`);
     }
   };
@@ -591,6 +598,7 @@ public class Example {
   const clearAnalysis = () => {
     setCode('');
     setLanguage('');
+    setUploadedFileName('');
     setResult(null);
     setAnalysisTime(0);
   };
@@ -1086,7 +1094,7 @@ public class Example {
                   </Button>
                 </div>
                 <input
-                  accept=".js,.jsx,.ts,.tsx,.py,.java,.go,.rs,.cpp,.c,.cc,.h,.hh,.cs,.php,.rb,.swift,.kt"
+                  accept=".js,.jsx,.ts,.tsx,.py,.java,.go,.rs,.c,.h,.cpp,.cc,.cxx,.hh,.hpp,.hxx,.cs,.php,.rb,.swift,.kt"
                   className="hidden"
                   onChange={handleFileUpload}
                   ref={fileInputRef}
@@ -1098,7 +1106,7 @@ public class Example {
                 <span className="text-muted-foreground mr-2 text-xs font-bold uppercase">
                   示例：
                 </span>
-                {['javascript', 'python', 'java'].map((lang) => (
+                {['javascript', 'python', 'java', 'c'].map((lang) => (
                   <Button
                     className="cyber-btn-ghost h-7 px-2 text-xs"
                     disabled={analyzing}
@@ -1119,7 +1127,10 @@ public class Example {
                 <Textarea
                   className="cyber-bg-elevated border-border focus:border-primary/50 placeholder:text-muted-foreground min-h-[300px] border p-4 font-mono text-sm text-emerald-400 focus:ring-0"
                   disabled={analyzing}
-                  onChange={(e) => setCode(e.target.value)}
+                  onChange={(e) => {
+                    setCode(e.target.value);
+                    setUploadedFileName('');
+                  }}
                   placeholder="// 粘贴代码或上传文件..."
                   value={code}
                 />

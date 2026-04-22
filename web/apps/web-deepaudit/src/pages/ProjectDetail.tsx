@@ -707,13 +707,14 @@ export default function ProjectDetail() {
     if (!canUpdateProject) {
       return;
     }
-    const currentLanguages = editForm.programming_languages || [];
-    const newLanguages = currentLanguages.includes(lang)
-      ? currentLanguages.filter((l) => l !== lang)
-      : [...currentLanguages, lang];
-
     setSettingsDirty(true);
-    setEditForm({ ...editForm, programming_languages: newLanguages });
+    setEditForm((current) => {
+      const currentLanguages = current.programming_languages || [];
+      const newLanguages = currentLanguages.includes(lang)
+        ? currentLanguages.filter((language) => language !== lang)
+        : [...currentLanguages, lang];
+      return { ...current, programming_languages: newLanguages };
+    });
   };
 
   const getStatusBadge = (status: string) => {
@@ -1339,10 +1340,14 @@ export default function ProjectDetail() {
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                   {supportedLanguages.map((lang) => (
                     <div
-                      className={`flex cursor-pointer items-center space-x-2 rounded border p-3 transition-all ${
+                      className={`flex items-center space-x-2 rounded border p-3 transition-all ${
                         editForm.programming_languages?.includes(lang)
                           ? 'border-primary bg-primary/10 text-primary'
                           : 'border-border hover:border-border text-muted-foreground'
+                      } ${
+                        canUpdateProject
+                          ? 'cursor-pointer'
+                          : 'cursor-not-allowed opacity-70'
                       }`}
                       key={lang}
                       onClick={() => handleToggleLanguage(lang)}

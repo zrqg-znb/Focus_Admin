@@ -27,6 +27,11 @@ def list_prompt_templates(request, keyword: str = '', template_type: str = '', i
     )
 
 
+@router.post('/test', response=PromptTemplateTestResultSchema, summary='测试提示词模板')
+def test_prompt_template(request, data: PromptTemplateTestSchema):
+    return prompt_template_services.test_template(request.auth, data.dict())
+
+
 @router.get('/{template_id}', response=PromptTemplateSchema, summary='获取提示词模板详情')
 def get_prompt_template(request, template_id: str):
     return prompt_template_services.serialize_template(prompt_template_services.get_template(request.auth, template_id))
@@ -52,8 +57,3 @@ def delete_prompt_template(request, template_id: str):
 @router.post('/{template_id}/set-default', response=bool, summary='设置默认提示词模板')
 def set_default_prompt_template(request, template_id: str):
     return prompt_template_services.set_default_template(request.auth, template_id)
-
-
-@router.post('/test', response=PromptTemplateTestResultSchema, summary='测试提示词模板')
-def test_prompt_template(request, data: PromptTemplateTestSchema):
-    return prompt_template_services.test_template(data.dict())
