@@ -189,6 +189,20 @@ class TreeSitterParser:
             "interface": ["type_declaration"],
             "import": ["import_declaration"],
         },
+        "c": {
+            "function": ["function_definition"],
+            "struct": ["struct_specifier"],
+            "enum": ["enum_specifier"],
+            "import": ["preproc_include"],
+        },
+        "cpp": {
+            "class": ["class_specifier"],
+            "struct": ["struct_specifier"],
+            "enum": ["enum_specifier"],
+            "function": ["function_definition"],
+            "method": ["function_definition"],
+            "import": ["preproc_include"],
+        },
     }
     
     # tree-sitter-languages 支持的语言列表
@@ -201,9 +215,14 @@ class TreeSitterParser:
     def __init__(self):
         self._parsers: Dict[str, Any] = {}
         self._initialized = False
+        self._disabled = False
+        self._missing_package_logged = False
+        self._load_failures: Set[str] = set()
 
     def _ensure_initialized(self, language: str) -> bool:
         """确保语言解析器已初始化"""
+        if self._disabled:
+            return False
         if language in self._parsers:
             return True
 
@@ -220,10 +239,15 @@ class TreeSitterParser:
             return True
 
         except ImportError:
-            logger.warning("tree-sitter-languages not installed, falling back to regex parsing")
+            if not self._missing_package_logged:
+                logger.warning("tree-sitter-languages not installed, falling back to regex parsing")
+                self._missing_package_logged = True
+            self._disabled = True
             return False
         except Exception as e:
-            logger.warning(f"Failed to load tree-sitter parser for {language}: {e}")
+            if language not in self._load_failures:
+                logger.warning(f"Failed to load tree-sitter parser for {language}: {e}")
+                self._load_failures.add(language)
             return False
     
     def parse(self, code: str, language: str) -> Optional[Any]:
@@ -379,6 +403,36 @@ class CodeSplitter:
             (r"\$_GET\[", "get_input"),
             (r"\$_POST\[", "post_input"),
             (r"\$_REQUEST\[", "request_input"),
+        ],
+        "c": [
+            (r"\bstrcpy\s*\(", "strcpy"),
+            (r"\bstrcat\s*\(", "strcat"),
+            (r"\bsprintf\s*\(", "sprintf"),
+            (r"\bvsprintf\s*\(", "vsprintf"),
+            (r"\bgets\s*\(", "gets"),
+            (r"\bscanf\s*\([^)]*%s", "unsafe_scanf"),
+            (r"\bmemcpy\s*\(", "memcpy"),
+            (r"\bmemmove\s*\(", "memmove"),
+            (r"\bmalloc\s*\(", "malloc"),
+            (r"\bcalloc\s*\(", "calloc"),
+            (r"\brealloc\s*\(", "realloc"),
+            (r"\bfree\s*\(", "free"),
+            (r"\bprintf\s*\(\s*[^\"']", "format_string"),
+            (r"\bvolatile\b", "volatile"),
+            (r"\bISR\b|\binterrupt\b", "interrupt_context"),
+        ],
+        "cpp": [
+            (r"\bstrcpy\s*\(", "strcpy"),
+            (r"\bstrcat\s*\(", "strcat"),
+            (r"\bsprintf\s*\(", "sprintf"),
+            (r"\bmemcpy\s*\(", "memcpy"),
+            (r"\bmemmove\s*\(", "memmove"),
+            (r"\bnew\b", "new"),
+            (r"\bdelete\b", "delete"),
+            (r"\bstd::thread\b", "std_thread"),
+            (r"\bstd::mutex\b", "mutex"),
+            (r"\batomic\b", "atomic"),
+            (r"\bprintf\s*\(\s*[^\"']", "format_string"),
         ],
     }
     
@@ -580,6 +634,17 @@ class CodeSplitter:
                 (r"^(\s*)(?:abstract\s+)?class\s+(\w+)", ChunkType.CLASS),
                 (r"^(\s*)interface\s+(\w+)", ChunkType.INTERFACE),
                 (r"^(\s*)(?:public|private|protected)?\s*(?:static\s+)?function\s+(\w+)", ChunkType.FUNCTION),
+            ],
+            "c": [
+                (r"^(\s*)typedef\s+struct\s+(\w+)?\s*\{", ChunkType.STRUCT),
+                (r"^(\s*)struct\s+(\w+)\s*\{", ChunkType.STRUCT),
+                (r"^(\s*)enum\s+(\w+)\s*\{", ChunkType.ENUM),
+                (r"^(\s*)(?:static\s+|inline\s+|extern\s+|const\s+|volatile\s+|unsigned\s+|signed\s+|long\s+|short\s+)*[\w\*\s]+\s+(\w+)\s*\([^;]*\)\s*\{", ChunkType.FUNCTION),
+            ],
+            "cpp": [
+                (r"^(\s*)(?:template\s*<[^>]+>\s*)?(?:class|struct)\s+(\w+)", ChunkType.CLASS),
+                (r"^(\s*)enum\s+(?:class\s+)?(\w+)\s*\{", ChunkType.ENUM),
+                (r"^(\s*)(?:template\s*<[^>]+>\s*)?(?:inline\s+|static\s+|virtual\s+|constexpr\s+|friend\s+|const\s+|unsigned\s+|signed\s+|long\s+|short\s+)*[\w:\<\>\~\*&\s]+\s+(\w+)\s*\([^;]*\)\s*(?:const)?\s*(?:noexcept)?\s*\{", ChunkType.FUNCTION),
             ],
         }
         
@@ -787,6 +852,12 @@ class CodeSplitter:
             "go": [
                 r"['\"]([^'\"]+)['\"]",
             ],
+            "c": [
+                r'^\s*#\s*include\s*[<"]([^">]+)[">]',
+            ],
+            "cpp": [
+                r'^\s*#\s*include\s*[<"]([^">]+)[">]',
+            ],
         }
         
         for pattern in patterns.get(language, []):
@@ -814,6 +885,8 @@ class CodeSplitter:
             "javascript": {"if", "for", "while", "switch", "function", "return", "catch", "console", "async", "await"},
             "java": {"if", "for", "while", "switch", "return", "catch", "throw", "new"},
             "go": {"if", "for", "switch", "return", "func", "go", "defer"},
+            "c": {"if", "for", "while", "switch", "return", "sizeof"},
+            "cpp": {"if", "for", "while", "switch", "return", "sizeof", "new", "delete"},
         }
         
         lang_keywords = keywords.get(language, set())
@@ -835,6 +908,18 @@ class CodeSplitter:
                 r"function\s+(\w+)",
                 r"(?:const|let|var)\s+(\w+)",
                 r"class\s+(\w+)",
+            ],
+            "c": [
+                r"(?:typedef\s+)?struct\s+(\w+)",
+                r"enum\s+(\w+)",
+                r"(?:static\s+|inline\s+|extern\s+|const\s+|volatile\s+|unsigned\s+|signed\s+|long\s+|short\s+)*[\w\*\s]+\s+(\w+)\s*\(",
+                r"#\s*define\s+(\w+)",
+            ],
+            "cpp": [
+                r"(?:class|struct)\s+(\w+)",
+                r"enum\s+(?:class\s+)?(\w+)",
+                r"(?:template\s*<[^>]+>\s*)?(?:inline\s+|static\s+|virtual\s+|constexpr\s+|friend\s+|const\s+|unsigned\s+|signed\s+|long\s+|short\s+)*[\w:\<\>\~\*&\s]+\s+(\w+)\s*\(",
+                r"#\s*define\s+(\w+)",
             ],
         }
         

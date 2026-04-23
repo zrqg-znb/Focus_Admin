@@ -755,8 +755,8 @@ int main(int argc, char **argv) {
       className="cyber-card hover:border-border group mb-4 p-4 transition-all"
       key={index}
     >
-      <div className="border-border mb-3 flex items-start justify-between border-b pb-3">
-        <div className="flex items-start space-x-3">
+        <div className="border-border mb-3 flex items-start justify-between border-b pb-3">
+          <div className="flex items-start space-x-3">
           <div
             className={`flex h-10 w-10 items-center justify-center rounded-lg ${getSeverityIconClasses(issue.severity)}`}
           >
@@ -779,6 +779,21 @@ int main(int argc, char **argv) {
           {getSeverityLabel(issue.severity)}
         </Badge>
       </div>
+
+      {(issue.cwe_id || issue.verification_status) && (
+        <div className="mb-3 flex flex-wrap gap-2">
+          {issue.cwe_id && (
+            <Badge className="cyber-badge-muted font-mono text-[11px]">
+              {issue.cwe_id}
+            </Badge>
+          )}
+          {issue.verification_status && (
+            <Badge className="cyber-badge-info font-mono text-[11px] uppercase">
+              {issue.verification_status}
+            </Badge>
+          )}
+        </div>
+      )}
 
       {issue.description && (
         <div className="bg-muted border-border mb-3 rounded border p-3 font-mono">
@@ -1395,6 +1410,11 @@ int main(int argc, char **argv) {
                 <Badge className="cyber-badge-muted uppercase">
                   {language}
                 </Badge>
+                {result.analysis_profile?.profile_mode === 'c_family_deep' && (
+                  <Badge className="cyber-badge-info">
+                    嵌入式 C/C++ 深度审计
+                  </Badge>
+                )}
                 {canExportReport && (
                   <Button
                     className="cyber-btn-primary h-8"

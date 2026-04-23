@@ -32,6 +32,31 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+EXTRA_ISSUE_FIELD_SCHEMA = {
+    "root_cause": "string",
+    "trigger_condition": "string",
+    "impact_scenario": "string",
+    "cwe_id": "string",
+    "verification_status": "confirmed|unverified|skipped|unsupported",
+    "needs_runtime_verification": "boolean",
+}
+EXTRA_ISSUE_FIELD_HINTS_ZH = {
+    "root_cause": "问题根因（中文）",
+    "trigger_condition": "触发条件（中文）",
+    "impact_scenario": "影响场景（中文）",
+    "cwe_id": "对应的 CWE 编号，例如 CWE-120",
+    "verification_status": "验证状态，填写 confirmed/unverified/skipped/unsupported 之一",
+    "needs_runtime_verification": "是否建议进一步做运行时验证，true/false",
+}
+EXTRA_ISSUE_FIELD_HINTS_EN = {
+    "root_cause": "Root cause",
+    "trigger_condition": "Trigger condition",
+    "impact_scenario": "Impact scenario",
+    "cwe_id": "Mapped CWE identifier such as CWE-120",
+    "verification_status": "Verification status: confirmed/unverified/skipped/unsupported",
+    "needs_runtime_verification": "Whether runtime verification is recommended",
+}
+
 
 @sync_to_async
 def _load_prompt_template_content(
@@ -928,7 +953,10 @@ Please analyze the following code:
         language: str, 
         custom_prompt: str,
         rules: Optional[list] = None,
-        output_language: Optional[str] = None
+        output_language: Optional[str] = None,
+        additional_context: Optional[str] = None,
+        issue_types: Optional[list[str]] = None,
+        extra_issue_fields: Optional[list[str]] = None,
     ) -> Dict[str, Any]:
         """
         使用自定义提示词分析代码
@@ -951,6 +979,12 @@ Please analyze the following code:
             f"{i+1}| {line}" for i, line in enumerate(code.split('\n'))
         )
         
+        extra_fields = [
+            field
+            for field in (extra_issue_fields or [])
+            if field in EXTRA_ISSUE_FIELD_SCHEMA
+        ]
+
         # 构建规则提示词，并提取启用的规则类别
         rules_prompt = ""
         all_categories = ["security", "bug", "performance", "style", "maintainability"]
@@ -998,36 +1032,62 @@ Please analyze the following code:
                     enabled_names = ", ".join(category_type_map_en.get(c, c) for c in enabled_categories)
                     rules_prompt += f"\n[IMPORTANT] Only audit issues in the following categories: {enabled_names}. Do not report issues in other categories.\n"
 
-        # 动态构建 type 枚举
-        type_enum = "|".join(enabled_categories if enabled_categories else all_categories)
+        # 动态构建 type / issue_type 枚举
+        effective_issue_types = [
+            str(item).strip()
+            for item in (issue_types or [])
+            if str(item).strip()
+        ]
+        type_enum = "|".join(effective_issue_types if effective_issue_types else (enabled_categories if enabled_categories else all_categories))
+        type_field_name = "issue_type" if effective_issue_types else "type"
+        extra_issue_schema = ""
+        if extra_fields:
+            extra_issue_schema = "\n" + "\n".join(
+                f'            "{field}": "{EXTRA_ISSUE_FIELD_SCHEMA[field]}",'
+                for field in extra_fields
+            )
 
-        # JSON Schema
-        schema = """{
-    "issues": [
-        {
-            "type": \"""" + type_enum + """",
-            "severity": "critical|high|medium|low",
-            "title": "string",
-            "description": "string",
-            "suggestion": "string",
-            "line": 1,
-            "column": 1,
-            "code_snippet": "string",
-            "rule_code": "string (optional, if matched a specific rule)"
-        }
-    ],
-    "quality_score": 0-100,
-    "summary": {
-        "total_issues": number,
-        "critical_issues": number,
-        "high_issues": number,
-        "medium_issues": number,
-        "low_issues": number
-    }
-}"""
+        issue_schema_lines = [
+            f'            "{type_field_name}": "{type_enum}",',
+            '            "severity": "critical|high|medium|low",',
+            '            "title": "string",',
+            '            "description": "string",',
+            '            "suggestion": "string",',
+            '            "line": 1,',
+            '            "column": 1,',
+            '            "code_snippet": "string",',
+            '            "rule_code": "string (optional, if matched a specific rule)",',
+        ]
+        if extra_issue_schema:
+            issue_schema_lines.extend(extra_issue_schema.splitlines())
+        schema = "\n".join(
+            [
+                "{",
+                '    "issues": [',
+                "        {",
+                *issue_schema_lines,
+                "        }",
+                "    ],",
+                '    "quality_score": 0-100,',
+                '    "summary": {',
+                '        "total_issues": number,',
+                '        "critical_issues": number,',
+                '        "high_issues": number,',
+                '        "medium_issues": number,',
+                '        "low_issues": number',
+                "    }",
+                "}",
+            ]
+        )
         
         # 构建完整的系统提示词
         if is_chinese:
+            extra_field_notes = ""
+            if extra_fields:
+                extra_field_notes = "\n【额外字段要求】\n" + "\n".join(
+                    f"- {field}: {EXTRA_ISSUE_FIELD_HINTS_ZH[field]}"
+                    for field in extra_fields
+                )
             format_instruction = f"""
 
 【输出格式要求】
@@ -1037,8 +1097,14 @@ Please analyze the following code:
 4. 输出格式必须符合以下 JSON Schema：
 
 {schema}
-{rules_prompt}"""
+{rules_prompt}{extra_field_notes}"""
         else:
+            extra_field_notes = ""
+            if extra_fields:
+                extra_field_notes = "\n[Extra field requirements]\n" + "\n".join(
+                    f"- {field}: {EXTRA_ISSUE_FIELD_HINTS_EN[field]}"
+                    for field in extra_fields
+                )
             format_instruction = f"""
 
 【Output Format Requirements】
@@ -1048,7 +1114,7 @@ Please analyze the following code:
 4. Output format must conform to the following JSON Schema:
 
 {schema}
-{rules_prompt}"""
+{rules_prompt}{extra_field_notes}"""
         
         full_system_prompt = custom_prompt + format_instruction
         
@@ -1069,11 +1135,14 @@ Code is annotated with line numbers (format: lineNumber| code), please fill the 
 Please analyze the following code:
 
 {code_with_lines}"""
+        if additional_context:
+            context_label = '补充上下文' if is_chinese else 'Additional context'
+            user_prompt = f"""{user_prompt}
+
+{context_label}:
+{additional_context}"""
         
         try:
-            adapter = LLMFactory.create_adapter(self.config)
-
-            # 使用用户配置的 temperature 和 max_tokens
             request = LLMRequest(
                 messages=[
                     LLMMessage(role="system", content=full_system_prompt),
@@ -1083,7 +1152,7 @@ Please analyze the following code:
                 max_tokens=self.config.max_tokens,
             )
 
-            response = await adapter.complete(request)
+            response = await self._complete_with_fallback(request)
             content = response.content
             
             if not content or not content.strip():
@@ -1103,7 +1172,10 @@ Please analyze the following code:
         rule_set_id: Optional[str] = None,
         prompt_template_id: Optional[str] = None,
         db_session = None,
-        use_default_template: bool = True
+        use_default_template: bool = True,
+        additional_context: Optional[str] = None,
+        issue_types: Optional[list[str]] = None,
+        extra_issue_fields: Optional[list[str]] = None,
     ) -> Dict[str, Any]:
         """
         使用指定的规则集和提示词模板分析代码
@@ -1131,7 +1203,15 @@ Please analyze the following code:
         
         # 如果有自定义提示词，使用自定义分析
         if custom_prompt:
-            return await self.analyze_code_with_custom_prompt(code, language, custom_prompt, rules)
+            return await self.analyze_code_with_custom_prompt(
+                code,
+                language,
+                custom_prompt,
+                rules,
+                additional_context=additional_context,
+                issue_types=issue_types,
+                extra_issue_fields=extra_issue_fields,
+            )
         
         # 否则使用硬编码的默认分析（兜底）
         return await self.analyze_code(code, language)

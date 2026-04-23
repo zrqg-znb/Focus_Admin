@@ -1,6 +1,7 @@
 import { api } from '@/shared/config/database';
 
 export async function runRepositoryAudit(params: {
+  analysisDepth?: 'basic' | 'deep' | 'standard';
   branch?: string;
   createdBy?: string;
   exclude?: string[];
@@ -30,10 +31,11 @@ export async function runRepositoryAudit(params: {
     manifest_xml: params.manifestXml,
     group: params.group,
     exclude_patterns: params.exclude || [],
+    rule_set_id: params.ruleSetId,
+    prompt_template_id: params.promptTemplateId,
     scan_config: {
+      analysis_depth: params.analysisDepth || 'standard',
       file_paths: params.filePaths,
-      rule_set_id: params.ruleSetId,
-      prompt_template_id: params.promptTemplateId,
     },
     created_by: params.createdBy || 'unknown',
   } as any);

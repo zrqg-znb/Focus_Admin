@@ -6,6 +6,7 @@ from asgiref.sync import async_to_sync
 from django.shortcuts import get_object_or_404
 from ninja.errors import HttpError
 
+from apps.deepaudit.c_family import C_FAMILY_SYSTEM_PROMPT_TEMPLATE_NAME, get_c_family_prompt_text
 from apps.deepaudit.llm.service import LLMService
 from apps.deepaudit.permissions import get_user_id
 from apps.deepaudit.prompt_template.prompt_template_model import PromptTemplate
@@ -37,18 +38,15 @@ DEFAULT_PROMPT_TEMPLATES = [
         'is_active': True,
     },
     {
-        'name': 'C 语言安全审计',
-        'description': '面向 C 语言项目的内存安全与并发风险专项提示词模板',
-        'template_type': 'analysis',
-        'content_zh': (
-            '请以资深 C/C++ 安全审计专家视角审查代码，重点关注缓冲区溢出、格式化字符串、'
-            '整数溢出/截断、越界读写、空指针解引用、UAF、double free、危险标准库 API、'
-            '指针生命周期、线程共享内存与缺失同步、边界检查缺失，并给出可执行的修复建议。'
-        ),
+        'name': C_FAMILY_SYSTEM_PROMPT_TEMPLATE_NAME,
+        'description': '面向汽车级 MCU 嵌入式 C/C++ 项目的语义级深度审计模板',
+        'template_type': 'system',
+        'content_zh': get_c_family_prompt_text(),
         'content_en': (
-            'Review the code as a senior C/C++ security auditor. Focus on buffer overflows, format-string bugs, '
-            'integer overflows or truncation, out-of-bounds access, null dereference, use-after-free, double free, '
-            'dangerous standard-library APIs, pointer lifetime, shared-memory concurrency issues, and missing bounds checks.'
+            'Audit the current C/C++ code unit as an embedded automotive MCU security reviewer. '
+            'Focus on buffer overflows, out-of-bounds access, integer overflow or truncation, null dereference, '
+            'use-after-free, double free, uninitialized memory, resource leaks, deadlocks, race conditions, '
+            'ISR or task-context shared state, unsafe standard-library APIs, unchecked return values, and API contract violations.'
         ),
         'variables': {'language': '编程语言', 'code': '代码内容'},
         'is_default': False,

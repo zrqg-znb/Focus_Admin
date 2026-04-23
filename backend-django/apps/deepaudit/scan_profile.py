@@ -6,6 +6,12 @@ from django.db.models import Q
 from ninja.errors import HttpError
 
 from apps.deepaudit.audit_rule.audit_rule_model import AuditRule, AuditRuleSet
+from apps.deepaudit.c_family import (
+    C_FAMILY_SYSTEM_PROMPT_TEMPLATE_NAME,
+    C_FAMILY_SYSTEM_RULE_SET_NAME,
+    build_c_family_analysis_profile,
+    normalize_analysis_depth,
+)
 from apps.deepaudit.heuristics import DEFAULT_RULE_PATTERNS, RulePattern, normalize_severity_weights
 from apps.deepaudit.permissions import get_user_id
 from apps.deepaudit.prompt_template.prompt_template_model import PromptTemplate
@@ -27,6 +33,7 @@ RULE_KEYWORD_MAP = {
     'xxe': ('entity', 'xml', 'xxe'),
 }
 DEPTH_HINTS = {
+    'basic': '基础模式：优先审计高价值代码单元。',
     'quick': '快速模式：优先输出高价值结果。',
     'standard': '标准模式：平衡覆盖率和审计成本。',
     'deep': '深入模式：补充更多上下文与修复说明。',
@@ -66,6 +73,10 @@ def resolve_rule_set(user, rule_set_id: str | None, *, strict: bool = False) -> 
     )
 
 
+def resolve_named_system_rule_set(user, name: str) -> AuditRuleSet | None:
+    return _visible_rule_set_queryset(user).filter(is_system=True, name=name).first()
+
+
 def resolve_prompt_template(user, template_id: str | None, *, strict: bool = False) -> PromptTemplate | None:
     queryset = _visible_prompt_template_queryset(user)
     user_id = get_user_id(user)
@@ -79,6 +90,10 @@ def resolve_prompt_template(user, template_id: str | None, *, strict: bool = Fal
         or queryset.filter(is_system=True, is_default=True).first()
         or queryset.order_by('-is_system', 'name').first()
     )
+
+
+def resolve_named_system_prompt_template(user, name: str) -> PromptTemplate | None:
+    return _visible_prompt_template_queryset(user).filter(is_system=True, name=name).first()
 
 
 def _guess_default_rule(text: str) -> RulePattern | None:
@@ -177,12 +192,37 @@ def build_prompt_context(template: PromptTemplate | None, analysis_depth: str) -
 
 def resolve_scan_profile(user, scan_config: dict[str, Any] | None = None, *, strict: bool = False) -> dict[str, Any]:
     config = dict(scan_config or {})
-    analysis_depth = str(config.get('analysis_depth') or DEFAULT_ANALYSIS_DEPTH).strip().lower() or DEFAULT_ANALYSIS_DEPTH
-    rule_set = resolve_rule_set(user, config.get('rule_set_id'), strict=strict)
-    prompt_template = resolve_prompt_template(user, config.get('prompt_template_id'), strict=strict)
+    analysis_depth = normalize_analysis_depth(config.get('analysis_depth'))
+    language_profile = dict(config.get('language_profile') or {})
+    explicit_rule_set_id = config.get('rule_set_id')
+    explicit_prompt_template_id = config.get('prompt_template_id')
+    rule_set = resolve_rule_set(user, explicit_rule_set_id, strict=strict)
+    prompt_template = resolve_prompt_template(user, explicit_prompt_template_id, strict=strict)
+    if language_profile.get('is_c_family_dominant'):
+        if not explicit_rule_set_id:
+            rule_set = resolve_named_system_rule_set(user, C_FAMILY_SYSTEM_RULE_SET_NAME) or rule_set
+        if not explicit_prompt_template_id:
+            prompt_template = resolve_named_system_prompt_template(user, C_FAMILY_SYSTEM_PROMPT_TEMPLATE_NAME) or prompt_template
     rule_profile = build_runtime_rule_profile(rule_set)
+    analysis_profile = (
+        build_c_family_analysis_profile(
+            analysis_depth=analysis_depth,
+            language_profile=language_profile,
+            context_sources=[],
+            prompt_template_id=str(prompt_template.id) if prompt_template else None,
+            rule_set_id=str(rule_set.id) if rule_set else None,
+            engine='profile_resolver',
+        )
+        if language_profile.get('is_c_family_dominant')
+        else {
+            'analysis_depth': analysis_depth,
+            'profile_mode': 'default',
+            'language_profile': language_profile,
+        }
+    )
     return {
         'analysis_depth': analysis_depth,
+        'language_profile': language_profile,
         'rule_set': rule_set,
         'prompt_template': prompt_template,
         'rule_patterns': rule_profile['patterns'],
@@ -191,6 +231,7 @@ def resolve_scan_profile(user, scan_config: dict[str, Any] | None = None, *, str
         'enabled_rule_count': rule_profile['enabled_rule_count'],
         'rule_codes': rule_profile['rule_codes'],
         'unresolved_rules': rule_profile['unresolved_rules'],
+        'analysis_profile': analysis_profile,
     }
 
 
@@ -209,4 +250,6 @@ def serialize_scan_profile(profile: dict[str, Any]) -> dict[str, Any]:
         'unresolved_rules': list(profile.get('unresolved_rules') or []),
         'prompt_focus': list(prompt_context.get('focus') or []),
         'prompt_hint': prompt_context.get('hint'),
+        'language_profile': dict(profile.get('language_profile') or {}),
+        'profile_mode': str((profile.get('analysis_profile') or {}).get('profile_mode') or 'default'),
     }

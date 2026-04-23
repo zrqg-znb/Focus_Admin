@@ -241,6 +241,7 @@ class ReconAgent(BaseAgent):
         llm_service,
         tools: Dict[str, Any],
         event_emitter=None,
+        knowledge_modules: Optional[List[str]] = None,
     ):
         # 组合增强的系统提示词
         full_system_prompt = f"{RECON_SYSTEM_PROMPT}\n\n{TOOL_USAGE_GUIDE}"
@@ -252,7 +253,7 @@ class ReconAgent(BaseAgent):
             max_iterations=15,
             system_prompt=full_system_prompt,
         )
-        super().__init__(config, llm_service, tools, event_emitter)
+        super().__init__(config, llm_service, tools, event_emitter, knowledge_modules=knowledge_modules)
         
         self._conversation_history: List[Dict[str, str]] = []
         self._steps: List[ReconStep] = []

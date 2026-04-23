@@ -14,6 +14,7 @@ from django.utils import timezone
 from ninja.errors import HttpError
 
 from apps.deepaudit.agent_task.agent_task_model import AgentCheckpoint, AgentEvent, AgentFinding, AgentTask
+from apps.deepaudit.c_family import C_FAMILY_TARGET_VULNERABILITIES, project_likely_c_family
 from apps.deepaudit.constants import (
     AGENT_PHASE_ANALYSIS,
     AGENT_PHASE_CHOICES,
@@ -607,13 +608,19 @@ def create_task(user, payload: dict) -> AgentTask:
             raise HttpError(422, '仓库任务必须填写 repository_url')
         if normalize_repository_type(repository_spec['repository_type']) == 'multi' and not repository_spec['manifest_xml']:
             raise HttpError(422, '多仓任务必须填写 manifest_xml')
+    target_vulnerabilities = list(payload.get('target_vulnerabilities') or [])
+    if not target_vulnerabilities and project_likely_c_family(
+        access.project,
+        file_paths=payload.get('target_files') or [],
+    ):
+        target_vulnerabilities = list(C_FAMILY_TARGET_VULNERABILITIES)
     instance = AgentTask.objects.create(
         project=access.project,
         created_by=user,
         name=payload.get('name') or f'{access.project.name} Agent 审计',
         description=payload.get('description') or '',
         audit_scope=payload.get('audit_scope') or {},
-        target_vulnerabilities=payload.get('target_vulnerabilities') or [],
+        target_vulnerabilities=target_vulnerabilities,
         verification_level=payload.get('verification_level') or 'sandbox',
         repository_url=repository_spec['repository_url'] or None,
         repository_type=repository_spec['repository_type'],

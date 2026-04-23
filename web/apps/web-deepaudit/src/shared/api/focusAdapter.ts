@@ -544,12 +544,31 @@ export function normalizeCodeAnalysisResult(
     };
   }
   const result = raw.analysis_result || raw;
+  const issues = Array.isArray(result.issues)
+    ? result.issues.map((issue: JsonRecord) => {
+        const issueType =
+          issue.issue_type || issue.type || issue.vulnerability_type || 'security';
+        return {
+          ...issue,
+          type: issue.type || issueType,
+          issue_type: issue.issue_type || issueType,
+          cwe_id:
+            issue.cwe_id ||
+            issue.ai_explanation?.cwe_id ||
+            issue.ai_explanation?.verification?.cwe_id,
+          verification_status:
+            issue.verification_status ||
+            issue.ai_explanation?.verification_status,
+        };
+      })
+    : [];
   return {
     ...result,
     analysis_id: raw.id || result.analysis_id || null,
     analysis_time: raw.analysis_time || result.analysis_time || 0,
-    issues: Array.isArray(result.issues) ? result.issues : [],
+    issues,
     quality_score: result.quality_score || raw.quality_score || 0,
+    analysis_profile: result.analysis_profile || {},
   };
 }
 

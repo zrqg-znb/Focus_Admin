@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import time
+from collections import defaultdict
+from pathlib import Path
 
 from asgiref.sync import async_to_sync, sync_to_async
 from django.http import HttpResponse
@@ -12,8 +14,23 @@ from django.utils import timezone
 from ninja.errors import HttpError
 
 from apps.deepaudit.analysis_payload import get_analysis_issue_count, get_analysis_quality_score, normalize_analysis_result
+from apps.deepaudit.c_family import (
+    C_FAMILY_TARGET_VULNERABILITIES,
+    build_c_family_analysis_profile,
+    build_candidate_context,
+    build_language_profile,
+    collect_candidate_units,
+    default_max_file_size_for_depth,
+    dedupe_issue_key,
+    enrich_issue_metadata,
+    get_analysis_budget,
+    is_c_family_language,
+    is_c_family_path,
+    normalize_analysis_depth,
+)
 from apps.deepaudit.constants import ISSUE_STATUS_FALSE_POSITIVE, ISSUE_STATUS_OPEN, ISSUE_STATUS_RESOLVED
-from apps.deepaudit.heuristics import detect_language_from_path
+from apps.deepaudit.heuristics import build_summary, detect_language_from_path
+from apps.deepaudit.agent_engine.tools.run_code import RunCodeTool
 from apps.deepaudit.llm.service import LLMService
 from apps.deepaudit.permissions import accessible_project_queryset, get_user_id, require_project_role, serialize_user_brief
 from apps.deepaudit.reporting import ReportBuilder
@@ -35,6 +52,15 @@ from apps.deepaudit.user_config import user_config_services
 
 ACTIVE_TASK_STATUSES = {'pending', 'running'}
 VALID_ISSUE_STATUSES = {ISSUE_STATUS_OPEN, ISSUE_STATUS_RESOLVED, ISSUE_STATUS_FALSE_POSITIVE}
+C_FAMILY_EXTRA_ISSUE_FIELDS = [
+    'root_cause',
+    'trigger_condition',
+    'impact_scenario',
+    'cwe_id',
+    'verification_status',
+    'needs_runtime_verification',
+]
+C_FAMILY_VERIFIABLE_TYPES = {'buffer_overflow', 'format_string', 'double_free', 'use_after_free'}
 logger = logging.getLogger(__name__)
 
 
@@ -181,7 +207,7 @@ def create_task(user, payload: dict, *, task_type: str) -> AuditTask:
         'include_tests': bool(payload.get('include_tests', False)),
         'include_docs': bool(payload.get('include_docs', False)),
         'max_file_size': payload.get('max_file_size') or 0,
-        'analysis_depth': payload.get('analysis_depth') or 'standard',
+        'analysis_depth': normalize_analysis_depth(payload.get('analysis_depth')),
     }
     profile = resolve_scan_profile(user, scan_config, strict=True)
     effective_profile = serialize_scan_profile(profile)
@@ -283,19 +309,48 @@ def run_instant_analysis(user, payload: dict) -> dict:
     started = time.perf_counter()
     code_content = str(payload.get('code_content') or '')
     language = str(payload.get('language') or 'text')
+    file_name = str(payload.get('file_name') or f'snippet.{_language_extension(language)}')
     config = user_config_services.get_user_config(user)
     scan_config = dict((config.get('other_config') or {}).get('scan_config') or {})
     prompt_template_id = str(payload.get('prompt_template_id') or '').strip()
     if prompt_template_id:
         scan_config['prompt_template_id'] = prompt_template_id
-    profile = resolve_scan_profile(user, scan_config, strict=bool(prompt_template_id))
-    result = _analyze_code_payload(
-        config,
-        code_content,
-        language,
-        file_path=str(payload.get('file_name') or f'snippet.{_language_extension(language)}'),
-        profile=profile,
+    language_profile = _build_effective_language_profile(
+        [{'path': file_name}],
+        selected_file_paths=[file_name],
     )
+    scan_config['analysis_depth'] = normalize_analysis_depth(scan_config.get('analysis_depth'))
+    scan_config['language_profile'] = language_profile
+    profile = resolve_scan_profile(user, scan_config, strict=bool(prompt_template_id))
+    if _should_use_c_family_path(
+        language=language,
+        file_path=file_name,
+        language_profile=language_profile,
+    ):
+        result = async_to_sync(_analyze_c_family_candidates_async)(
+            user_payload=config,
+            files=[
+                {
+                    'path': file_name,
+                    'content': code_content,
+                    'lines': max(1, code_content.count('\n') + 1),
+                }
+            ],
+            profile=profile,
+            language_profile=language_profile,
+            workspace=Path('/tmp'),
+            llm_concurrency=1,
+            llm_gap_ms=0,
+            selected_file_paths=[file_name],
+        )
+    else:
+        result = _analyze_code_payload(
+            config,
+            code_content,
+            language,
+            file_path=file_name,
+            profile=profile,
+        )
     record = InstantAnalysisRecord.objects.create(
         user=user,
         language=language,
@@ -392,6 +447,285 @@ def _normalize_issue_payload(issue: dict, *, file_path: str, code_content: str) 
     }
 
 
+def _build_effective_language_profile(
+    files: list[dict],
+    *,
+    selected_file_paths: list[str] | None = None,
+) -> dict:
+    return build_language_profile(files, selected_file_paths=selected_file_paths)
+
+
+def _should_use_c_family_path(
+    *,
+    language: str | None = None,
+    file_path: str | None = None,
+    language_profile: dict | None = None,
+) -> bool:
+    if is_c_family_language(language) or is_c_family_path(file_path):
+        return True
+    return bool((language_profile or {}).get('is_c_family_dominant'))
+
+
+def _effective_scan_profile_for_files(user, scan_config: dict, files: list[dict]) -> tuple[dict, dict]:
+    language_profile = _build_effective_language_profile(
+        files,
+        selected_file_paths=scan_config.get('file_paths') or [],
+    )
+    runtime_scan_config = dict(scan_config or {})
+    runtime_scan_config['analysis_depth'] = normalize_analysis_depth(
+        runtime_scan_config.get('analysis_depth'),
+    )
+    runtime_scan_config['language_profile'] = language_profile
+    profile = resolve_scan_profile(user, runtime_scan_config, strict=False)
+    return profile, language_profile
+
+
+async def _verify_c_family_issue_async(
+    issue: dict,
+    *,
+    file_lookup: dict[str, dict],
+    language: str,
+) -> tuple[str, dict[str, object]]:
+    issue_type = str(issue.get('issue_type') or '').strip().lower()
+    if issue_type not in C_FAMILY_VERIFIABLE_TYPES:
+        return 'unverified', {'reason': 'verification_not_supported'}
+    if not docker_available():
+        return 'unverified', {'reason': 'sandbox_unavailable'}
+
+    file_path = str(issue.get('file_path') or '').strip()
+    file_content = str((file_lookup.get(file_path) or {}).get('content') or '')
+    if not file_content.strip():
+        return 'unverified', {'reason': 'missing_source'}
+
+    verifier = RunCodeTool(project_root='.')
+    result = await verifier.execute(
+        code=file_content,
+        language=language,
+        timeout=45,
+        description=f'FocusAudit runtime verification for {issue_type}',
+    )
+    combined_output = '\n'.join(
+        [
+            str(result.data or ''),
+            str(result.error or ''),
+        ]
+    ).lower()
+    metadata = dict(result.metadata or {})
+    metadata.update(
+        {
+            'verification_tool': 'run_code',
+            'verification_success': bool(result.success),
+        }
+    )
+    if any(
+        marker in combined_output
+        for marker in (
+            'addresssanitizer',
+            'undefinedbehaviorsanitizer',
+            'runtime error:',
+            'heap-use-after-free',
+            'double-free',
+            'stack-buffer-overflow',
+            'format string',
+        )
+    ):
+        return 'confirmed', metadata
+    if result.success:
+        return 'unverified', metadata
+    return 'unsupported', metadata
+
+
+def _strip_internal_issue_fields(issue: dict) -> dict:
+    payload = dict(issue)
+    payload.pop('_candidate_index', None)
+    payload.pop('_candidate_name', None)
+    return payload
+
+
+async def _analyze_c_family_candidates_async(
+    *,
+    user_payload: dict,
+    files: list[dict],
+    profile: dict,
+    language_profile: dict,
+    workspace: Path,
+    llm_concurrency: int,
+    llm_gap_ms: int,
+    selected_file_paths: list[str] | None = None,
+) -> dict:
+    service = LLMService(user_config=user_payload)
+    file_lookup = {str(item.get('path') or ''): item for item in files}
+    analysis_depth = normalize_analysis_depth(profile.get('analysis_depth'))
+    candidates = collect_candidate_units(
+        files,
+        analysis_depth=analysis_depth,
+        selected_file_paths=selected_file_paths,
+    )
+    if not candidates:
+        return normalize_analysis_result(
+            {
+                'issues': [],
+                **build_summary(
+                    [],
+                    sum(int(item.get('lines') or 0) for item in files),
+                    len(files),
+                    severity_weights=profile.get('severity_weights'),
+                    analysis_depth=analysis_depth,
+                    prompt_context=profile.get('prompt_context'),
+                    rule_patterns=profile.get('rule_patterns'),
+                ),
+                'analysis_profile': build_c_family_analysis_profile(
+                    analysis_depth=analysis_depth,
+                    language_profile=language_profile,
+                    context_sources=[],
+                    prompt_template_id=str(getattr(profile.get('prompt_template'), 'id', '') or '') or None,
+                    rule_set_id=str(getattr(profile.get('rule_set'), 'id', '') or '') or None,
+                ),
+            }
+        )
+
+    semaphore = asyncio.Semaphore(max(1, llm_concurrency))
+    gap_seconds = max(0.0, llm_gap_ms / 1000.0)
+    results: list[dict] = []
+    shared_context_sources: list[str] = []
+
+    async def analyze_candidate(index: int, candidate) -> dict:
+        if gap_seconds > 0:
+            await asyncio.sleep(index * gap_seconds)
+        context_text, context_sources = build_candidate_context(
+            workspace,
+            candidate,
+            all_candidates=candidates,
+            file_lookup=file_lookup,
+            analysis_depth=analysis_depth,
+        )
+        async with semaphore:
+            try:
+                result = await service.analyze_code_with_rules(
+                    candidate.content,
+                    candidate.language,
+                    rule_set_id=str(getattr(profile.get('rule_set'), 'id', '') or '') or None,
+                    prompt_template_id=str(getattr(profile.get('prompt_template'), 'id', '') or '') or None,
+                    additional_context=context_text,
+                    issue_types=list(C_FAMILY_TARGET_VULNERABILITIES),
+                    extra_issue_fields=C_FAMILY_EXTRA_ISSUE_FIELDS,
+                )
+                normalized = normalize_analysis_result(result)
+                engine = 'llm_c_family'
+            except Exception as exc:
+                logger.warning(
+                    'DeepAudit C-family candidate analysis fell back to heuristic scan: file=%s line=%s reason=%s',
+                    candidate.file_path,
+                    candidate.line_start,
+                    exc,
+                )
+                normalized = normalize_analysis_result(
+                    run_heuristic_scan_from_code(
+                        candidate.content,
+                        candidate.language,
+                        profile=profile,
+                    )
+                )
+                engine = 'heuristic_fallback'
+            return {
+                'candidate': candidate,
+                'context_sources': context_sources,
+                'normalized': normalized,
+                'engine': engine,
+            }
+
+    tasks = [
+        asyncio.create_task(analyze_candidate(index, candidate))
+        for index, candidate in enumerate(candidates)
+    ]
+    for future in asyncio.as_completed(tasks):
+        results.append(await future)
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+    issues_by_key: dict[tuple[str, int, str], dict] = {}
+    verify_budget = int(get_analysis_budget(analysis_depth).get('max_verify') or 0)
+    verifiable_queue: list[dict] = []
+
+    for result in results:
+        candidate = result['candidate']
+        context_sources = list(result.get('context_sources') or [])
+        shared_context_sources.extend(context_sources)
+        for raw_issue in list((result.get('normalized') or {}).get('issues') or []):
+            enriched = enrich_issue_metadata(
+                raw_issue,
+                candidate=candidate,
+                language_profile=language_profile,
+                context_sources=context_sources,
+                verification_status='unverified',
+            )
+            enriched['_candidate_index'] = candidates.index(candidate)
+            key = dedupe_issue_key(enriched)
+            existing = issues_by_key.get(key)
+            if existing:
+                severity_rank = {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}
+                if severity_rank.get(str(enriched.get('severity') or 'low').lower(), 0) <= severity_rank.get(
+                    str(existing.get('severity') or 'low').lower(),
+                    0,
+                ):
+                    continue
+            issues_by_key[key] = enriched
+
+    deduped_issues = list(issues_by_key.values())
+    deduped_issues.sort(
+        key=lambda item: (
+            {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}.get(str(item.get('severity') or 'low').lower(), 0),
+            1 if str(item.get('issue_type') or '') in C_FAMILY_VERIFIABLE_TYPES else 0,
+            float(item.get('confidence') or 0.0),
+        ),
+        reverse=True,
+    )
+
+    for issue in deduped_issues:
+        if verify_budget <= 0:
+            break
+        if str(issue.get('issue_type') or '') not in C_FAMILY_VERIFIABLE_TYPES:
+            continue
+        verification_status, verification_details = await _verify_c_family_issue_async(
+            issue,
+            file_lookup=file_lookup,
+            language=str((file_lookup.get(issue.get('file_path')) or {}).get('language') or detect_language_from_path(str(issue.get('file_path') or ''))),
+        )
+        issue.update(
+            enrich_issue_metadata(
+                issue,
+                candidate=candidates[int(issue.pop('_candidate_index', 0))],
+                language_profile=language_profile,
+                context_sources=issue.get('context_sources') or [],
+                verification_status=verification_status,
+                verification_details=verification_details,
+            )
+        )
+        verify_budget -= 1
+
+    final_issues = [_strip_internal_issue_fields(issue) for issue in deduped_issues]
+    summary = build_summary(
+        final_issues,
+        sum(int(item.get('lines') or 0) for item in files),
+        len(files),
+        severity_weights=profile.get('severity_weights'),
+        analysis_depth=analysis_depth,
+        prompt_context=profile.get('prompt_context'),
+        rule_patterns=profile.get('rule_patterns'),
+    )
+    payload = {
+        'issues': final_issues,
+        **summary,
+        'analysis_profile': build_c_family_analysis_profile(
+            analysis_depth=analysis_depth,
+            language_profile=language_profile,
+            context_sources=shared_context_sources,
+            prompt_template_id=str(getattr(profile.get('prompt_template'), 'id', '') or '') or None,
+            rule_set_id=str(getattr(profile.get('rule_set'), 'id', '') or '') or None,
+        ),
+    }
+    return normalize_analysis_result(payload)
+
+
 async def _analyze_code_payload_async(
     user_config: dict,
     code_content: str,
@@ -417,6 +751,7 @@ async def _analyze_code_payload_async(
             'analysis_depth': profile.get('analysis_depth') or 'standard',
             'rule_set_id': str(rule_set.id) if rule_set else None,
             'prompt_template_id': str(prompt_template.id) if prompt_template else None,
+            'language_profile': dict(profile.get('language_profile') or {}),
         }
         return normalized
     except Exception as exc:
@@ -428,6 +763,7 @@ async def _analyze_code_payload_async(
             'analysis_depth': profile.get('analysis_depth') or 'standard',
             'rule_set_id': str(rule_set.id) if rule_set else None,
             'prompt_template_id': str(prompt_template.id) if prompt_template else None,
+            'language_profile': dict(profile.get('language_profile') or {}),
         }
         return fallback
 
@@ -584,6 +920,26 @@ def _persist_scan_issues(task_id: str, created_by_id, file_path: str, code_conte
     return len(issue_models)
 
 
+def _persist_grouped_scan_issues(task_id: str, created_by_id, files: list[dict], issues: list[dict]) -> int:
+    file_lookup = {str(item.get('path') or ''): str(item.get('content') or '') for item in files}
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for issue in issues:
+        file_path = str(issue.get('file_path') or '').strip()
+        if not file_path:
+            continue
+        grouped[file_path].append(issue)
+    created = 0
+    for file_path, items in grouped.items():
+        created += _persist_scan_issues(
+            task_id,
+            created_by_id,
+            file_path,
+            file_lookup.get(file_path, ''),
+            items,
+        )
+    return created
+
+
 def _update_scan_progress(task_id: str, created_by_id, *, scanned_files: int, total_lines: int, issues_count: int, quality_score: float) -> None:
     AuditTask.objects.filter(id=task_id).update(
         scanned_files=scanned_files,
@@ -725,6 +1081,7 @@ def execute_scan_task(task_id: str) -> None:
         if task.status == 'cancelled':
             return
         scan_config = dict(task.scan_config or {})
+        scan_config['analysis_depth'] = normalize_analysis_depth(scan_config.get('analysis_depth'))
         profile = resolve_scan_profile(task.created_by, scan_config, strict=False)
         effective_profile = serialize_scan_profile(profile)
         scan_config['effective_profile'] = effective_profile
@@ -806,17 +1163,30 @@ def execute_scan_task(task_id: str) -> None:
                         ]
                     )
                     return
+        effective_max_file_size = (
+            scan_config.get('max_file_size')
+            or runtime_scan_config.get('max_file_size')
+            or default_max_file_size_for_depth(scan_config.get('analysis_depth'))
+        )
         files = list_project_files(
             workspace,
             exclude_patterns=task.exclude_patterns or [],
             file_paths=validated_file_paths,
             include_tests=bool(scan_config.get('include_tests', False)),
             include_docs=bool(scan_config.get('include_docs', False)),
-            max_file_size=scan_config.get('max_file_size') or runtime_scan_config.get('max_file_size') or 0,
+            max_file_size=effective_max_file_size,
         )
         max_analyze_files = int(runtime_scan_config.get('max_analyze_files') or 0)
         if max_analyze_files > 0:
             files = files[:max_analyze_files]
+        runtime_profile_config = dict(scan_config)
+        runtime_profile_config['file_paths'] = validated_file_paths
+        profile, language_profile = _effective_scan_profile_for_files(task.created_by, runtime_profile_config, files)
+        effective_profile = serialize_scan_profile(profile)
+        scan_config['effective_profile'] = effective_profile
+        scan_config['analysis_profile'] = dict(profile.get('analysis_profile') or {})
+        scan_config['rule_set_id'] = scan_config.get('rule_set_id') or effective_profile.get('rule_set_id')
+        scan_config['prompt_template_id'] = scan_config.get('prompt_template_id') or effective_profile.get('prompt_template_id')
         llm_concurrency = max(1, int(runtime_scan_config.get('llm_concurrency') or 1))
         llm_gap_ms = max(0, int(runtime_scan_config.get('llm_gap_ms') or 0))
         task.total_files = len(files)
@@ -828,44 +1198,74 @@ def execute_scan_task(task_id: str) -> None:
         if _is_cancelled(task.id):
             return
         task.issues.filter(is_deleted=False).delete()
-        summary = asyncio.run(
-            _scan_files_with_concurrency(
-                task_id=str(task.id),
-                created_by_id=task.created_by_id,
-                files=files,
-                user_payload=user_payload,
-                profile=profile,
-                llm_concurrency=llm_concurrency,
-                llm_gap_ms=llm_gap_ms,
+        if language_profile.get('is_c_family_dominant'):
+            analysis_result = asyncio.run(
+                _analyze_c_family_candidates_async(
+                    user_payload=user_payload,
+                    files=files,
+                    profile=profile,
+                    language_profile=language_profile,
+                    workspace=workspace,
+                    llm_concurrency=llm_concurrency,
+                    llm_gap_ms=llm_gap_ms,
+                    selected_file_paths=validated_file_paths,
+                )
             )
-        )
-        if summary.get('cancelled'):
-            return
-        total_lines = int(summary.get('total_lines') or 0)
-        total_issues = int(summary.get('total_issues') or 0)
-        scanned_files = int(summary.get('scanned_files') or 0)
-        skipped_files = int(summary.get('skipped_files') or 0)
-        failed_files = int(summary.get('failed_files') or 0)
-        quality_scores = [float(item) for item in (summary.get('quality_scores') or [])]
+            total_issues = _persist_grouped_scan_issues(
+                str(task.id),
+                task.created_by_id,
+                files,
+                list(analysis_result.get('issues') or []),
+            )
+            total_lines = int(analysis_result.get('total_lines') or sum(int(item.get('lines') or 0) for item in files))
+            scanned_files = len(files)
+            quality_score = float(analysis_result.get('quality_score') or (100.0 if scanned_files > 0 else 0.0))
+            scan_config['analysis_profile'] = dict(analysis_result.get('analysis_profile') or {})
+            task.scanned_files = scanned_files
+            task.total_lines = total_lines
+            task.issues_count = total_issues
+            task.quality_score = round(quality_score, 2)
+        else:
+            summary = asyncio.run(
+                _scan_files_with_concurrency(
+                    task_id=str(task.id),
+                    created_by_id=task.created_by_id,
+                    files=files,
+                    user_payload=user_payload,
+                    profile=profile,
+                    llm_concurrency=llm_concurrency,
+                    llm_gap_ms=llm_gap_ms,
+                )
+            )
+            if summary.get('cancelled'):
+                return
+            total_lines = int(summary.get('total_lines') or 0)
+            total_issues = int(summary.get('total_issues') or 0)
+            scanned_files = int(summary.get('scanned_files') or 0)
+            skipped_files = int(summary.get('skipped_files') or 0)
+            failed_files = int(summary.get('failed_files') or 0)
+            quality_scores = [float(item) for item in (summary.get('quality_scores') or [])]
 
-        if len(files) > 0 and scanned_files == 0 and skipped_files == len(files):
-            task.status = 'completed'
-            task.completed_at = timezone.now()
-            task.total_lines = 0
-            task.issues_count = 0
-            task.quality_score = 100.0
-            task.save(update_fields=['status', 'completed_at', 'total_lines', 'issues_count', 'quality_score', 'sys_update_datetime'])
-            return
-        if len(files) > 0 and scanned_files == 0 and failed_files > 0:
-            task.status = 'failed'
-            task.error_message = '所有文件分析均失败，请检查 LLM 配置或网络连通性'
-            task.completed_at = timezone.now()
-            task.quality_score = 0.0
-            task.save(update_fields=['status', 'error_message', 'completed_at', 'quality_score', 'sys_update_datetime'])
-            return
-        task.total_lines = total_lines
-        task.issues_count = total_issues
-        task.quality_score = round(sum(quality_scores) / len(quality_scores), 2) if quality_scores else (100.0 if scanned_files > 0 else 0.0)
+            if len(files) > 0 and scanned_files == 0 and skipped_files == len(files):
+                task.status = 'completed'
+                task.completed_at = timezone.now()
+                task.total_lines = 0
+                task.issues_count = 0
+                task.quality_score = 100.0
+                task.scan_config = scan_config
+                task.save(update_fields=['status', 'completed_at', 'total_lines', 'issues_count', 'quality_score', 'scan_config', 'sys_update_datetime'])
+                return
+            if len(files) > 0 and scanned_files == 0 and failed_files > 0:
+                task.status = 'failed'
+                task.error_message = '所有文件分析均失败，请检查 LLM 配置或网络连通性'
+                task.completed_at = timezone.now()
+                task.quality_score = 0.0
+                task.scan_config = scan_config
+                task.save(update_fields=['status', 'error_message', 'completed_at', 'quality_score', 'scan_config', 'sys_update_datetime'])
+                return
+            task.total_lines = total_lines
+            task.issues_count = total_issues
+            task.quality_score = round(sum(quality_scores) / len(quality_scores), 2) if quality_scores else (100.0 if scanned_files > 0 else 0.0)
         task.status = 'completed'
         task.completed_at = timezone.now()
         task.scan_config = scan_config

@@ -30,6 +30,7 @@ import { useAuth } from '@/shared/context/AuthContext';
 import { DEEPAUDIT_ACTION_CODES } from '@/shared/focus/focusPermission';
 import {
   getRepositoryTypeLabel,
+  isCFamilyProject,
   isMultiRepository,
   isRepositoryProject,
   isZipProject,
@@ -72,6 +73,20 @@ const DEFAULT_EXCLUDES = [
   'build/**',
   '*.log',
 ];
+const C_FAMILY_VULNERABILITY_PRESET = [
+  'buffer_overflow',
+  'out_of_bounds',
+  'integer_overflow',
+  'null_dereference',
+  'use_after_free',
+  'double_free',
+  'uninitialized_memory',
+  'resource_leak',
+  'race_condition',
+  'deadlock',
+  'format_string',
+  'api_contract_violation',
+] as const;
 
 export default function CreateAgentTaskDialog({
   open,
@@ -303,6 +318,9 @@ export default function CreateAgentTaskDialog({
         exclude_patterns: excludePatterns,
         target_files: selectedFiles,
         verification_level: 'sandbox',
+        target_vulnerabilities: isCFamilyProject(selectedProject)
+          ? [...C_FAMILY_VULNERABILITY_PRESET]
+          : undefined,
       });
 
       onOpenChange(false);
@@ -567,6 +585,17 @@ export default function CreateAgentTaskDialog({
                   <span className="font-bold uppercase">Advanced Options</span>
                 </CollapsibleTrigger>
                 <CollapsibleContent className="mt-3 space-y-3">
+                  {selectedProject && isCFamilyProject(selectedProject) && (
+                    <div className="border-border bg-muted/50 flex items-start gap-2 rounded border border-dashed p-3">
+                      <Badge className="cyber-badge-info">
+                        嵌入式 C/C++ 深度审计
+                      </Badge>
+                      <p className="text-muted-foreground text-xs leading-5">
+                        将自动附带内存、边界、并发和 API 契约类漏洞预设，并默认使用
+                        `sandbox` 验证级别。
+                      </p>
+                    </div>
+                  )}
                   {/* 文件选择 */}
                   {(() => {
                     const isRepo = isRepositoryProject(selectedProject);

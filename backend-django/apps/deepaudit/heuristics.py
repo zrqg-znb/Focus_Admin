@@ -123,17 +123,62 @@ DEFAULT_RULE_PATTERNS: tuple[RulePattern, ...] = (
     ),
     RulePattern(
         code='C_MEM',
-        issue_type='memory_corruption',
-        title='Potential memory corruption',
+        issue_type='out_of_bounds',
+        title='Potential out-of-bounds or memory corruption',
         severity=SEVERITY_HIGH,
         patterns=(r'\bmemcpy\s*\(', r'\bmemmove\s*\(', r'\bmemset\s*\(', r'\bfree\s*\(', r'\bdelete\s*\w+', r'\bdelete\[\]\s*\w+'),
         suggestion='Verify pointer validity, object lifetime, and length arguments before memory operations.',
         description='Detected manual memory-management and bulk-memory APIs that need careful bounds and lifetime checks.',
     ),
     RulePattern(
+        code='C_INT',
+        issue_type='integer_overflow',
+        title='Potential integer overflow or truncation',
+        severity=SEVERITY_HIGH,
+        patterns=(r'\b(?:int|short|char)\s+\w+\s*=\s*\w+\s*[+\-*]\s*\w+', r'\bsize_t\b', r'\bssize_t\b', r'\buint(?:8|16|32|64)_t\b', r'\bint(?:8|16|32|64)_t\b'),
+        suggestion='Use wider integer types where required and validate arithmetic and cast boundaries before buffer or index usage.',
+        description='Detected integer arithmetic and size-conversion patterns that can overflow, wrap or truncate.',
+    ),
+    RulePattern(
+        code='C_NULL',
+        issue_type='null_dereference',
+        title='Potential null dereference',
+        severity=SEVERITY_HIGH,
+        patterns=(r'->', r'\*\s*[A-Za-z_]\w*', r'\bNULL\b', r'\bnullptr\b'),
+        suggestion='Ensure pointer validity is checked before dereference on every relevant control-flow path.',
+        description='Detected pointer dereference patterns that require nullability and lifetime checks.',
+    ),
+    RulePattern(
+        code='C_UAF',
+        issue_type='use_after_free',
+        title='Potential use-after-free',
+        severity=SEVERITY_CRITICAL,
+        patterns=(r'\bfree\s*\([^)]*\).*(?:\n.*){0,6}\b\w+\s*(?:->|\.|\[)', r'\bdelete\s+\w+.*(?:\n.*){0,6}\b\w+\s*(?:->|\.|\[)'),
+        suggestion='Clear or invalidate released pointers immediately and ensure no later path dereferences freed storage.',
+        description='Detected release-then-use patterns that commonly lead to use-after-free defects.',
+    ),
+    RulePattern(
+        code='C_DFREE',
+        issue_type='double_free',
+        title='Potential double free',
+        severity=SEVERITY_CRITICAL,
+        patterns=(r'\bfree\s*\([^)]*\).*(?:\n.*){0,6}\bfree\s*\(', r'\bdelete\s+\w+.*(?:\n.*){0,6}\bdelete\s+\w+'),
+        suggestion='Guarantee each owned resource is released exactly once and null out ownership after release when appropriate.',
+        description='Detected repeated release operations that can corrupt allocator state.',
+    ),
+    RulePattern(
+        code='C_UNINIT',
+        issue_type='uninitialized_memory',
+        title='Potential uninitialized memory use',
+        severity=SEVERITY_HIGH,
+        patterns=(r'\bmalloc\s*\(', r'\bnew\s+\w+', r'\bstruct\s+\w+\s+\w+\s*;', r'\bmemcpy\s*\('),
+        suggestion='Initialize allocated storage and local aggregates before they are read or copied.',
+        description='Detected patterns where stack or heap memory may be used before explicit initialization.',
+    ),
+    RulePattern(
         code='C_LEAK',
-        issue_type='memory_leak',
-        title='Potential memory leak',
+        issue_type='resource_leak',
+        title='Potential resource leak',
         severity=SEVERITY_MEDIUM,
         patterns=(r'\bmalloc\s*\(', r'\bcalloc\s*\(', r'\brealloc\s*\(', r'\bnew\s+\w+', r'\bnew\[\]\s+\w+'),
         suggestion='Ensure every allocation has a matching free/delete on all control-flow paths.',
@@ -157,6 +202,24 @@ DEFAULT_RULE_PATTERNS: tuple[RulePattern, ...] = (
         suggestion='Always use a fixed format string and pass user data as arguments, never as the format itself.',
         description='Detected format-style functions that can mis-handle attacker-controlled format strings.',
     ),
+    RulePattern(
+        code='C_DEAD',
+        issue_type='deadlock',
+        title='Potential deadlock or lock ordering issue',
+        severity=SEVERITY_HIGH,
+        patterns=(r'\bpthread_mutex_lock\s*\(', r'\block_guard\b', r'\bstd::mutex\b', r'\btaskENTER_CRITICAL\b'),
+        suggestion='Define consistent lock ordering and ensure all lock paths release on every exit branch.',
+        description='Detected multi-lock or critical-section patterns that should be reviewed for deadlock risk.',
+    ),
+    RulePattern(
+        code='C_API',
+        issue_type='api_contract_violation',
+        title='Potential API contract violation',
+        severity=SEVERITY_MEDIUM,
+        patterns=(r'\bif\s*\([^)]*==\s*-1', r'\bif\s*\([^)]*<\s*0', r'\breturn\s*;', r'\bassert\s*\('),
+        suggestion='Check return values, propagate errors, and enforce documented preconditions and ownership contracts.',
+        description='Detected return-value, contract, or error-handling patterns that may violate API expectations.',
+    ),
 )
 
 TEXT_EXTENSIONS = {
@@ -177,8 +240,8 @@ DEFAULT_EXCLUDES = [
     '.venv/**',
     'vendor/**',
 ]
-DEPTH_CONTEXT_RADIUS = {'quick': 1, 'standard': 2, 'deep': 4}
-DEPTH_CONFIDENCE_DELTA = {'quick': -0.05, 'standard': 0.0, 'deep': 0.08}
+DEPTH_CONTEXT_RADIUS = {'basic': 1, 'quick': 1, 'standard': 2, 'deep': 4}
+DEPTH_CONFIDENCE_DELTA = {'basic': -0.05, 'quick': -0.05, 'standard': 0.0, 'deep': 0.08}
 
 
 def is_text_file(path: str) -> bool:

@@ -16,6 +16,14 @@ from .race_condition import RACE_CONDITION
 from .csrf import CSRF
 from .business_logic import BUSINESS_LOGIC, RATE_LIMITING
 from .open_redirect import OPEN_REDIRECT
+from .buffer_overflow import BUFFER_OVERFLOW
+from .use_after_free import USE_AFTER_FREE
+from .integer_overflow import INTEGER_OVERFLOW
+from .null_dereference import NULL_DEREFERENCE
+from .resource_leak import RESOURCE_LEAK
+from .deadlock import DEADLOCK
+from .embedded_concurrency import EMBEDDED_CONCURRENCY
+from .api_contract_violation import API_CONTRACT_VIOLATION
 
 # 所有漏洞知识文档
 ALL_VULNERABILITY_DOCS = [
@@ -43,6 +51,14 @@ ALL_VULNERABILITY_DOCS = [
     PATH_TRAVERSAL,
     XXE,
     RACE_CONDITION,
+    BUFFER_OVERFLOW,
+    USE_AFTER_FREE,
+    INTEGER_OVERFLOW,
+    NULL_DEREFERENCE,
+    RESOURCE_LEAK,
+    DEADLOCK,
+    EMBEDDED_CONCURRENCY,
+    API_CONTRACT_VIOLATION,
     BUSINESS_LOGIC,
     RATE_LIMITING,
     OPEN_REDIRECT,
@@ -74,8 +90,15 @@ __all__ = [
     "PATH_TRAVERSAL",
     "XXE",
     "RACE_CONDITION",
+    "BUFFER_OVERFLOW",
+    "USE_AFTER_FREE",
+    "INTEGER_OVERFLOW",
+    "NULL_DEREFERENCE",
+    "RESOURCE_LEAK",
+    "DEADLOCK",
+    "EMBEDDED_CONCURRENCY",
+    "API_CONTRACT_VIOLATION",
     "BUSINESS_LOGIC",
     "RATE_LIMITING",
     "OPEN_REDIRECT",
 ]
-

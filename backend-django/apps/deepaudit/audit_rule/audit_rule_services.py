@@ -4,6 +4,7 @@ from django.shortcuts import get_object_or_404
 from ninja.errors import HttpError
 
 from apps.deepaudit.audit_rule.audit_rule_model import AuditRule, AuditRuleSet
+from apps.deepaudit.c_family import C_FAMILY_SYSTEM_RULE_SET_NAME
 from apps.deepaudit.heuristics import DEFAULT_RULE_PATTERNS
 from apps.deepaudit.permissions import get_user_id
 from apps.deepaudit.runtime import load_rule_export
@@ -32,7 +33,47 @@ DEFAULT_RULE_SETS = [
             }
             for item in DEFAULT_RULE_PATTERNS
         ],
-    }
+    },
+    {
+        'name': C_FAMILY_SYSTEM_RULE_SET_NAME,
+        'description': '面向嵌入式 C/C++ 项目的 CERT/CWE 语义规则集',
+        'language': 'cpp',
+        'rule_type': 'builtin',
+        'severity_weights': {'critical': 18, 'high': 10, 'medium': 5, 'low': 2},
+        'is_default': False,
+        'is_system': True,
+        'is_active': True,
+        'rules': [
+            {
+                'rule_code': item.code,
+                'name': item.title,
+                'description': item.description,
+                'category': item.issue_type,
+                'severity': item.severity,
+                'fix_suggestion': item.suggestion,
+                'custom_prompt': (
+                    '请结合上下文确认根因、触发条件、影响场景、边界/生命周期约束，'
+                    '并给出 CERT/CWE 对应的修复建议。'
+                ),
+                'enabled': True,
+            }
+            for item in DEFAULT_RULE_PATTERNS
+            if item.issue_type in {
+                'buffer_overflow',
+                'out_of_bounds',
+                'integer_overflow',
+                'null_dereference',
+                'use_after_free',
+                'double_free',
+                'uninitialized_memory',
+                'resource_leak',
+                'race_condition',
+                'deadlock',
+                'format_string',
+                'api_contract_violation',
+            }
+        ],
+    },
 ]
 
 

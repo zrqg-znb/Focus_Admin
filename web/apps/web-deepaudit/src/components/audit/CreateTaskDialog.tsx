@@ -47,6 +47,7 @@ import { useAuth } from '@/shared/context/AuthContext';
 import { DEEPAUDIT_ACTION_CODES } from '@/shared/focus/focusPermission';
 import {
   getRepositoryTypeLabel,
+  isCFamilyProject,
   isMultiRepository,
   isRepositoryProject,
   isZipProject,
@@ -96,6 +97,20 @@ const DEFAULT_EXCLUDES = [
   'build/**',
   '*.log',
 ];
+const C_FAMILY_VULNERABILITY_PRESET = [
+  'buffer_overflow',
+  'out_of_bounds',
+  'integer_overflow',
+  'null_dereference',
+  'use_after_free',
+  'double_free',
+  'uninitialized_memory',
+  'resource_leak',
+  'race_condition',
+  'deadlock',
+  'format_string',
+  'api_contract_violation',
+] as const;
 
 export default function CreateTaskDialog({
   open,
@@ -329,6 +344,9 @@ export default function CreateTaskDialog({
           exclude_patterns: excludePatterns,
           target_files: selectedFiles,
           verification_level: 'sandbox',
+          target_vulnerabilities: isCFamilyProject(selectedProject)
+            ? [...C_FAMILY_VULNERABILITY_PRESET]
+            : undefined,
         });
 
         onOpenChange(false);
@@ -536,11 +554,24 @@ export default function CreateTaskDialog({
 
             {/* 审计模式选择 */}
             {selectedProject && (
-              <AgentModeSelector
-                disabled={creating}
-                onChange={setAuditMode}
-                value={auditMode}
-              />
+              <div className="space-y-2">
+                <AgentModeSelector
+                  disabled={creating}
+                  onChange={setAuditMode}
+                  value={auditMode}
+                />
+                {auditMode === 'agent' && isCFamilyProject(selectedProject) && (
+                  <div className="border-border bg-muted/50 flex items-start gap-2 rounded border border-dashed p-3">
+                    <Badge className="cyber-badge-info">
+                      嵌入式 C/C++ 深度审计预设
+                    </Badge>
+                    <p className="text-muted-foreground text-xs leading-5">
+                      当前项目会默认关注内存、边界、并发和 API 契约类问题，并优先启用
+                      `sandbox` 验证。
+                    </p>
+                  </div>
+                )}
+              </div>
             )}
 
             {/* 配置区域 */}

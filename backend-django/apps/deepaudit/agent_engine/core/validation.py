@@ -194,6 +194,10 @@ class AgentTaskInput(BaseModel):
             'sql_injection', 'xss', 'command_injection', 'path_traversal',
             'ssrf', 'xxe', 'deserialization', 'auth_bypass', 'idor',
             'csrf', 'open_redirect', 'race_condition', 'crypto',
+            'buffer_overflow', 'out_of_bounds', 'integer_overflow',
+            'null_dereference', 'use_after_free', 'double_free',
+            'uninitialized_memory', 'resource_leak', 'deadlock',
+            'format_string', 'api_contract_violation',
         }
         for vuln in v:
             if vuln.lower() not in valid_types:

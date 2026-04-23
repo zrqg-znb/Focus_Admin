@@ -22,6 +22,11 @@ from apps.deepaudit.agent_engine.agents import (
     VerificationAgent,
 )
 from apps.deepaudit.agent_engine.event_manager import AgentEventEmitter, EventManager
+from apps.deepaudit.c_family import (
+    C_FAMILY_KNOWLEDGE_MODULES,
+    C_FAMILY_TARGET_VULNERABILITIES,
+    build_language_profile,
+)
 
 if TYPE_CHECKING:
     from apps.deepaudit.agent_task.agent_task_model import AgentCheckpoint, AgentFinding
@@ -153,15 +158,24 @@ def _collect_project_info(project_root: str, input_data: Dict[str, Any]) -> Dict
 
 def _normalize_agent_input(task_id: str, input_data: Dict[str, Any], workspace: str) -> Dict[str, Any]:
     project_info = _collect_project_info(workspace, input_data)
+    target_files = list(input_data.get("target_files") or [])
+    language_profile = build_language_profile(
+        [{"path": path} for path in (project_info.get("structure", {}).get("files") or [])],
+        selected_file_paths=target_files,
+    )
+    target_vulnerabilities = list(input_data.get("target_vulnerabilities") or [])
+    if language_profile.get("is_c_family_dominant") and not target_vulnerabilities:
+        target_vulnerabilities = list(C_FAMILY_TARGET_VULNERABILITIES)
     config = {
-        "target_vulnerabilities": list(input_data.get("target_vulnerabilities") or []),
-        "verification_level": input_data.get("verification_level") or "analysis_only",
+        "target_vulnerabilities": target_vulnerabilities,
+        "verification_level": input_data.get("verification_level") or ("sandbox" if language_profile.get("is_c_family_dominant") else "analysis_only"),
         "exclude_patterns": list(input_data.get("exclude_patterns") or []),
-        "target_files": list(input_data.get("target_files") or []),
+        "target_files": target_files,
         "max_iterations": int(input_data.get("max_iterations") or 50),
+        "language_profile": language_profile,
     }
     return {
-        "project_info": project_info,
+        "project_info": {**project_info, "language_profile": language_profile},
         "config": config,
         "project_root": workspace,
         "task_id": task_id,
@@ -202,6 +216,8 @@ async def _initialize_tools(project_root: str, llm_service, input_data: Dict[str
         ValgrindTool,
         VulnerabilityValidationTool,
         XssTestTool,
+        RunCodeTool,
+        ExtractFunctionTool,
     )
     from apps.deepaudit.agent_engine.knowledge import (
         GetVulnerabilityKnowledgeTool,
@@ -246,6 +262,8 @@ async def _initialize_tools(project_root: str, llm_service, input_data: Dict[str
     rag_query_tool = RAGQueryTool(project_retriever)
     security_code_search_tool = SecurityCodeSearchTool(project_retriever)
     function_context_tool = FunctionContextTool(project_retriever)
+    run_code_tool = RunCodeTool(sandbox_manager=sandbox_manager, project_root=project_root)
+    extract_function_tool = ExtractFunctionTool(project_root=project_root)
     security_knowledge_tool = SecurityKnowledgeQueryTool()
     vulnerability_knowledge_tool = GetVulnerabilityKnowledgeTool()
 
@@ -259,6 +277,8 @@ async def _initialize_tools(project_root: str, llm_service, input_data: Dict[str
         "security_search": security_code_search_tool,
         "security_code_search": security_code_search_tool,
         "function_context": function_context_tool,
+        "run_code": run_code_tool,
+        "extract_function": extract_function_tool,
         "query_security_knowledge": security_knowledge_tool,
         "get_vulnerability_knowledge": vulnerability_knowledge_tool,
         "think": ThinkTool(),
@@ -499,6 +519,8 @@ async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any],
 
     llm_service = _build_llm_service(input_data)
     normalized_input = _normalize_agent_input(task_id, input_data, workspace)
+    language_profile = dict(normalized_input.get("config", {}).get("language_profile") or {})
+    knowledge_modules = list(C_FAMILY_KNOWLEDGE_MODULES) if language_profile.get("is_c_family_dominant") else []
     await _initialize_task_runtime_state(
         task_id,
         int(normalized_input.get("project_info", {}).get("file_count") or 0),
@@ -509,16 +531,19 @@ async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any],
         llm_service=llm_service,
         tools=tools.get("recon", {}),
         event_emitter=event_emitter,
+        knowledge_modules=knowledge_modules,
     )
     analysis_agent = AnalysisAgent(
         llm_service=llm_service,
         tools=tools.get("analysis", {}),
         event_emitter=event_emitter,
+        knowledge_modules=knowledge_modules,
     )
     verification_agent = VerificationAgent(
         llm_service=llm_service,
         tools=tools.get("verification", {}),
         event_emitter=event_emitter,
+        knowledge_modules=knowledge_modules,
     )
     orchestrator = OrchestratorAgent(
         llm_service=llm_service,
@@ -529,6 +554,7 @@ async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any],
             "analysis": analysis_agent,
             "verification": verification_agent,
         },
+        knowledge_modules=knowledge_modules,
     )
     agent_map = {
         "orchestrator": orchestrator,

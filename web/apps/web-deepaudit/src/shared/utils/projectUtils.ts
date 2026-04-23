@@ -172,3 +172,28 @@ export function validateProjectConfig(project: Project): {
     errors,
   };
 }
+
+export function isCFamilyProject(
+  project:
+    | null
+    | Pick<Project, 'programming_languages'>
+    | undefined
+    | { programming_languages?: null | string },
+): boolean {
+  const raw = String(project?.programming_languages || '').trim();
+  if (!raw) {
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.some((item) => ['c', 'cpp'].includes(String(item).trim().toLowerCase()));
+    }
+  } catch {
+    return raw
+      .toLowerCase()
+      .split(/[,\s]+/)
+      .some((item) => ['c', 'cpp'].includes(item));
+  }
+  return false;
+}

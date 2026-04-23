@@ -162,12 +162,16 @@ class CreateVulnerabilityReportTool(AgentTool):
         
         # 验证漏洞类型
         valid_types = [
-            "sql_injection", "nosql_injection", "xss", "ssrf", 
+            "sql_injection", "nosql_injection", "xss", "ssrf",
             "command_injection", "code_injection", "path_traversal",
             "file_inclusion", "idor", "auth_bypass", "broken_auth",
             "sensitive_data_exposure", "hardcoded_secret", "weak_crypto",
             "xxe", "deserialization", "race_condition", "business_logic",
-            "csrf", "open_redirect", "mass_assignment", "other"
+            "csrf", "open_redirect", "mass_assignment", "other",
+            "buffer_overflow", "out_of_bounds", "integer_overflow",
+            "null_dereference", "use_after_free", "double_free",
+            "uninitialized_memory", "resource_leak", "deadlock",
+            "format_string", "api_contract_violation",
         ]
         vulnerability_type = VULNERABILITY_TYPE_ALIASES.get(vulnerability_type.lower(), vulnerability_type.lower())
         if vulnerability_type not in valid_types:
@@ -242,6 +246,17 @@ class CreateVulnerabilityReportTool(AgentTool):
             "weak_crypto": "使用强加密算法（AES-256, SHA-256+），避免MD5/SHA1",
             "xxe": "禁用外部实体解析，使用安全的XML解析器配置",
             "deserialization": "避免反序列化不可信数据，使用JSON替代pickle/yaml",
+            "buffer_overflow": "为所有缓冲区操作添加严格边界检查，并优先使用有界 API。",
+            "out_of_bounds": "校验索引和长度参数，确保访问不会越过数组或缓冲区边界。",
+            "integer_overflow": "在算术和类型转换前后检查范围，避免截断、环绕和符号错误。",
+            "null_dereference": "在所有可能的空值路径上增加空指针检查，并明确对象生命周期。",
+            "use_after_free": "释放后立即失效所有别名引用，避免后续再次读取或写入已释放对象。",
+            "double_free": "梳理资源所有权，保证每块内存或句柄只释放一次。",
+            "uninitialized_memory": "在读取前初始化局部变量、结构体和堆内存。",
+            "resource_leak": "确保每条控制流都成对释放内存、文件句柄、锁和硬件资源。",
+            "deadlock": "统一锁顺序并保证所有异常分支都能释放锁。",
+            "format_string": "使用固定格式串，把外部输入作为参数传递，而不是直接作为格式串。",
+            "api_contract_violation": "补齐返回值检查、错误处理和前置条件验证，遵守 API 约定。",
         }
         return recommendations.get(vuln_type, "请根据具体情况修复此安全问题")
     

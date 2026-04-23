@@ -237,15 +237,23 @@ export interface PaginatedResponse<T> {
 // 代码分析结果类型
 export interface CodeAnalysisResult {
   issues: Array<{
-    ai_explanation: string;
+    ai_explanation: any;
     code_snippet: string;
     column?: number;
+    context_sources?: string[];
+    cwe_id?: string;
     description: string;
+    impact_scenario?: string;
+    issue_type?: string;
     line: number;
+    needs_runtime_verification?: boolean;
+    root_cause?: string;
     severity: string;
     suggestion: string;
     title: string;
     type: string;
+    trigger_condition?: string;
+    verification_status?: string;
     xai?: {
       how: string;
       learn_more?: string;
@@ -266,6 +274,21 @@ export interface CodeAnalysisResult {
     maintainability: number;
     performance: number;
     security: number;
+  };
+  analysis_profile?: {
+    context_sources?: string[];
+    engine?: string;
+    language_profile?: {
+      c_family_ratio?: number;
+      dominant_family?: string;
+      dominant_language?: string;
+      is_c_family_dominant?: boolean;
+      language_distribution?: Record<string, number>;
+    };
+    profile_mode?: string;
+    prompt_template_id?: null | string;
+    rule_set_id?: null | string;
+    target_vulnerabilities?: string[];
   };
   // 后端返回的额外字段
   analysis_id?: string;

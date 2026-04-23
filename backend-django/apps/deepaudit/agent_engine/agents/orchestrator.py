@@ -149,6 +149,7 @@ class OrchestratorAgent(BaseAgent):
         event_emitter=None,
         sub_agents: Optional[Dict[str, BaseAgent]] = None,
         tracer=None,
+        knowledge_modules: Optional[List[str]] = None,
     ):
         # 组合增强的系统提示词，注入多Agent协作规则和核心安全原则
         full_system_prompt = f"{ORCHESTRATOR_SYSTEM_PROMPT}\n\n{CORE_SECURITY_PRINCIPLES}\n\n{MULTI_AGENT_RULES}"
@@ -160,7 +161,7 @@ class OrchestratorAgent(BaseAgent):
             max_iterations=20,
             system_prompt=full_system_prompt,
         )
-        super().__init__(config, llm_service, tools, event_emitter)
+        super().__init__(config, llm_service, tools, event_emitter, knowledge_modules=knowledge_modules)
         
         self.sub_agents = sub_agents or {}
         self._conversation_history: List[Dict[str, str]] = []
