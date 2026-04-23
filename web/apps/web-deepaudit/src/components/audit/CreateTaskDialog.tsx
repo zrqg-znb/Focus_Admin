@@ -90,6 +90,12 @@ interface SelectedRepositorySpec {
   repository_url?: string;
 }
 
+interface SelectedScopeSummary {
+  directoryCount: number;
+  fileCount: number;
+  totalCount: number;
+}
+
 const DEFAULT_EXCLUDES = [
   'node_modules/**',
   '.git/**',
@@ -130,6 +136,8 @@ export default function CreateTaskDialog({
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [excludePatterns, setExcludePatterns] = useState(DEFAULT_EXCLUDES);
   const [selectedFiles, setSelectedFiles] = useState<string[] | undefined>();
+  const [selectedScopeSummary, setSelectedScopeSummary] =
+    useState<SelectedScopeSummary>();
   const [selectedRepositorySpec, setSelectedRepositorySpec] =
     useState<SelectedRepositorySpec>();
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -236,6 +244,7 @@ export default function CreateTaskDialog({
       setManifestXml('');
       setGroup('');
       setSelectedFiles(undefined);
+      setSelectedScopeSummary(undefined);
       setSelectedRepositorySpec(undefined);
       setShowAdvanced(false);
       const defaultRuleSet = ruleSets.find((r) => r.is_default);
@@ -284,8 +293,9 @@ export default function CreateTaskDialog({
       selectedFiles
     ) {
       setSelectedFiles(undefined);
+      setSelectedScopeSummary(undefined);
       setSelectedRepositorySpec(undefined);
-      toast.info('仓库规格或排除规则已更改，请重新选择文件');
+      toast.info('仓库规格或排除规则已更改，请重新选择文件/目录');
     }
     selectionContextRef.current = nextSelectionContext;
   }, [
@@ -356,6 +366,7 @@ export default function CreateTaskDialog({
 
         setSelectedProjectId('');
         setSelectedFiles(undefined);
+        setSelectedScopeSummary(undefined);
         setSelectedRepositorySpec(undefined);
         setExcludePatterns(DEFAULT_EXCLUDES);
         return;
@@ -413,6 +424,7 @@ export default function CreateTaskDialog({
 
       setSelectedProjectId('');
       setSelectedFiles(undefined);
+      setSelectedScopeSummary(undefined);
       setSelectedRepositorySpec(undefined);
       setExcludePatterns(DEFAULT_EXCLUDES);
     } catch (error) {
@@ -442,6 +454,19 @@ export default function CreateTaskDialog({
   }, [selectedProject, zipState, branch, manifestXml]);
   const canSubmitCurrentMode =
     auditMode === 'agent' ? canCreateAgentTask : canCreateFastTask;
+  const selectedScopeText = useMemo(() => {
+    if (!selectedFiles || !selectedScopeSummary) {
+      return '全部文件';
+    }
+    const parts: string[] = [];
+    if (selectedScopeSummary.directoryCount > 0) {
+      parts.push(`${selectedScopeSummary.directoryCount} 个目录`);
+    }
+    if (selectedScopeSummary.fileCount > 0) {
+      parts.push(`${selectedScopeSummary.fileCount} 个文件`);
+    }
+    return `已选 ${selectedScopeSummary.totalCount} 项${parts.length > 0 ? `（${parts.join('，')}）` : ''}`;
+  }, [selectedFiles, selectedScopeSummary]);
 
   const projectListContent = (() => {
     if (loading) {
@@ -566,8 +591,8 @@ export default function CreateTaskDialog({
                       嵌入式 C/C++ 深度审计预设
                     </Badge>
                     <p className="text-muted-foreground text-xs leading-5">
-                      当前项目会默认关注内存、边界、并发和 API 契约类问题，并优先启用
-                      `sandbox` 验证。
+                      当前项目会默认关注内存、边界、并发和 API
+                      契约类问题，并优先启用 `sandbox` 验证。
                     </p>
                   </div>
                 )}
@@ -850,9 +875,7 @@ export default function CreateTaskDialog({
                               扫描范围
                             </p>
                             <p className="text-foreground mt-1 text-sm font-bold">
-                              {selectedFiles
-                                ? `已选 ${selectedFiles.length} 个文件`
-                                : '全部文件'}
+                              {selectedScopeText}
                             </p>
                           </div>
                           <div className="flex gap-2">
@@ -861,6 +884,7 @@ export default function CreateTaskDialog({
                                 className="h-8 text-xs text-rose-600 hover:bg-rose-100 hover:text-rose-700 dark:text-rose-400 dark:hover:bg-rose-900/30 dark:hover:text-rose-300"
                                 onClick={() => {
                                   setSelectedFiles(undefined);
+                                  setSelectedScopeSummary(undefined);
                                   setSelectedRepositorySpec(undefined);
                                 }}
                                 size="sm"
@@ -877,7 +901,7 @@ export default function CreateTaskDialog({
                               variant="outline"
                             >
                               <FolderOpen className="mr-1 h-3 w-3" />
-                              选择文件
+                              选择文件/目录
                             </Button>
                           </div>
                         </div>
@@ -915,8 +939,13 @@ export default function CreateTaskDialog({
         excludePatterns={excludePatterns}
         group={group}
         manifestXml={manifestXml}
-        onConfirm={({ repositorySpec, selectedFiles: files }) => {
+        onConfirm={({
+          repositorySpec,
+          selectedFiles: files,
+          selectedSummary,
+        }) => {
           setSelectedFiles(files);
+          setSelectedScopeSummary(selectedSummary);
           setSelectedRepositorySpec(repositorySpec);
         }}
         onOpenChange={setShowFileSelection}

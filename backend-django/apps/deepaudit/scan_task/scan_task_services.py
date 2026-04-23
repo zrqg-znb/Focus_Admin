@@ -67,7 +67,7 @@ logger = logging.getLogger(__name__)
 def _selected_files_missing_message(missing: list[str]) -> str:
     sample = ', '.join(missing[:5])
     suffix = f' 示例: {sample}' if sample else ''
-    return f'所选文件在当前代码工作区中不存在，共 {len(missing)} 个。{suffix}'
+    return f'所选目录或文件在当前代码工作区中不存在，共 {len(missing)} 项。{suffix}'
 
 
 def serialize_issue(issue: AuditIssue) -> dict:
@@ -1135,7 +1135,7 @@ def execute_scan_task(task_id: str) -> None:
             if selection_check['missing']:
                 if selection_check['existing']:
                     logger.warning(
-                        'DeepAudit scan task %s found missing selected files after workspace refresh and will continue with remaining files: missing_count=%s existing_count=%s missing_samples=%s %s',
+                        'DeepAudit scan task %s found missing selected paths after workspace refresh and will continue with remaining paths: missing_count=%s existing_count=%s missing_samples=%s %s',
                         task.id,
                         len(selection_check['missing']),
                         len(selection_check['existing']),
@@ -1146,7 +1146,7 @@ def execute_scan_task(task_id: str) -> None:
                 else:
                     message = _selected_files_missing_message(selection_check['missing'])
                     logger.error(
-                        'DeepAudit scan task %s failed because all selected files are missing from workspace: %s %s',
+                        'DeepAudit scan task %s failed because all selected paths are missing from workspace: %s %s',
                         task.id,
                         message,
                         format_repository_spec_for_log(repository_spec),

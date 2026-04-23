@@ -203,8 +203,8 @@ class AgentTaskServicesTestCase(TestCase):
         self.assertEqual(warning_event.event_metadata.get('exit_code'), 23)
         self.assertTrue(warning_event.event_metadata.get('soft_failed'))
 
-    def test_execute_agent_task_filters_missing_target_files_before_runner(self) -> None:
-        self.task.target_files = ['src/keep.c', 'src/missing.c']
+    def test_execute_agent_task_filters_missing_target_paths_before_runner(self) -> None:
+        self.task.target_files = ['src/keep-module', 'src/missing-module']
         self.task.save(update_fields=['target_files', 'sys_update_datetime'])
 
         with (
@@ -216,7 +216,10 @@ class AgentTaskServicesTestCase(TestCase):
             ),
             patch(
                 'apps.deepaudit.agent_task.agent_task_services.validate_selected_file_paths',
-                return_value={'existing': ['src/keep.c'], 'missing': ['src/missing.c']},
+                return_value={
+                    'existing': ['src/keep-module'],
+                    'missing': ['src/missing-module'],
+                },
             ),
             patch('apps.deepaudit.agent_task.agent_runner.run_orchestrator_agent_sync') as mock_runner,
             patch('apps.deepaudit.agent_task.agent_task_services.cleanup_runtime_workspace'),
@@ -224,13 +227,13 @@ class AgentTaskServicesTestCase(TestCase):
             execute_agent_task(str(self.task.id))
 
         input_data = mock_runner.call_args.args[1]
-        self.assertEqual(input_data['target_files'], ['src/keep.c'])
+        self.assertEqual(input_data['target_files'], ['src/keep-module'])
         warning_event = self.task.events.filter(is_deleted=False, event_type='warning').latest('sequence')
         self.assertEqual(warning_event.event_metadata.get('missing_count'), 1)
         self.assertEqual(warning_event.event_metadata.get('existing_count'), 1)
 
-    def test_execute_agent_task_fails_when_all_selected_files_disappear(self) -> None:
-        self.task.target_files = ['src/missing.c']
+    def test_execute_agent_task_fails_when_all_selected_paths_disappear(self) -> None:
+        self.task.target_files = ['src/missing-module']
         self.task.save(update_fields=['target_files', 'sys_update_datetime'])
 
         with (
@@ -242,7 +245,7 @@ class AgentTaskServicesTestCase(TestCase):
             ),
             patch(
                 'apps.deepaudit.agent_task.agent_task_services.validate_selected_file_paths',
-                return_value={'existing': [], 'missing': ['src/missing.c']},
+                return_value={'existing': [], 'missing': ['src/missing-module']},
             ),
             patch('apps.deepaudit.agent_task.agent_runner.run_orchestrator_agent_sync', side_effect=AssertionError('should not run')),
             patch('apps.deepaudit.agent_task.agent_task_services.cleanup_runtime_workspace'),

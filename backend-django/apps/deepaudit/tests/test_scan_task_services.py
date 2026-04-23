@@ -176,7 +176,7 @@ class ScanTaskSnapshotTestCase(TestCase):
         self.assertEqual(repository_spec['group'], 'platform')
         self.assertTrue(mock_prepare.call_args.kwargs['force_multi_sync'])
 
-    def test_execute_scan_task_fails_when_all_selected_files_disappear(self) -> None:
+    def test_execute_scan_task_fails_when_all_selected_paths_disappear(self) -> None:
         task = AuditTask.objects.create(
             project=self.project,
             created_by=self.user,
@@ -187,7 +187,7 @@ class ScanTaskSnapshotTestCase(TestCase):
             branch_name='release/main',
             manifest_xml='default.xml',
             group='platform',
-            scan_config={'file_paths': ['src/missing.c']},
+            scan_config={'file_paths': ['src/missing-module']},
             sys_creator=self.user,
             sys_modifier=self.user,
         )
@@ -201,7 +201,7 @@ class ScanTaskSnapshotTestCase(TestCase):
             ),
             patch(
                 'apps.deepaudit.scan_task.scan_task_services.validate_selected_file_paths',
-                return_value={'existing': [], 'missing': ['src/missing.c']},
+                return_value={'existing': [], 'missing': ['src/missing-module']},
             ),
             patch('apps.deepaudit.scan_task.scan_task_services.list_project_files', side_effect=AssertionError('should not list files')),
             patch('apps.deepaudit.scan_task.scan_task_services.cleanup_runtime_workspace'),
@@ -210,9 +210,9 @@ class ScanTaskSnapshotTestCase(TestCase):
 
         task.refresh_from_db()
         self.assertEqual(task.status, 'failed')
-        self.assertIn('所选文件在当前代码工作区中不存在', task.error_message or '')
+        self.assertIn('所选目录或文件在当前代码工作区中不存在', task.error_message or '')
 
-    def test_execute_scan_task_continues_with_remaining_selected_files(self) -> None:
+    def test_execute_scan_task_continues_with_remaining_selected_paths(self) -> None:
         task = AuditTask.objects.create(
             project=self.project,
             created_by=self.user,
@@ -223,7 +223,7 @@ class ScanTaskSnapshotTestCase(TestCase):
             branch_name='release/main',
             manifest_xml='default.xml',
             group='platform',
-            scan_config={'file_paths': ['src/keep.c', 'src/missing.c']},
+            scan_config={'file_paths': ['src/keep-module', 'src/missing-module']},
             sys_creator=self.user,
             sys_modifier=self.user,
         )
@@ -237,7 +237,10 @@ class ScanTaskSnapshotTestCase(TestCase):
             ),
             patch(
                 'apps.deepaudit.scan_task.scan_task_services.validate_selected_file_paths',
-                return_value={'existing': ['src/keep.c'], 'missing': ['src/missing.c']},
+                return_value={
+                    'existing': ['src/keep-module'],
+                    'missing': ['src/missing-module'],
+                },
             ),
             patch(
                 'apps.deepaudit.scan_task.scan_task_services.list_project_files',
@@ -262,7 +265,7 @@ class ScanTaskSnapshotTestCase(TestCase):
         ):
             execute_scan_task(str(task.id))
 
-        self.assertEqual(mock_list_files.call_args.kwargs['file_paths'], ['src/keep.c'])
+        self.assertEqual(mock_list_files.call_args.kwargs['file_paths'], ['src/keep-module'])
 
 
 class InstantAnalysisServiceTestCase(TestCase):
@@ -306,7 +309,7 @@ class InstantAnalysisServiceTestCase(TestCase):
                 return_value=profile,
             ) as mock_resolve_profile,
             patch(
-                'apps.deepaudit.scan_task.scan_task_services._analyze_code_payload',
+                'apps.deepaudit.scan_task.scan_task_services._analyze_c_family_candidates_async',
                 return_value=analysis_result,
             ) as mock_analyze,
         ):
@@ -326,7 +329,11 @@ class InstantAnalysisServiceTestCase(TestCase):
             'template-c',
         )
         self.assertTrue(mock_resolve_profile.call_args.kwargs['strict'])
-        self.assertEqual(mock_analyze.call_args.kwargs['file_path'], 'demo.c')
+        self.assertEqual(mock_analyze.call_args.kwargs['files'][0]['path'], 'demo.c')
+        self.assertEqual(
+            mock_analyze.call_args.kwargs['selected_file_paths'],
+            ['demo.c'],
+        )
 
 
 class HeuristicScanLanguageTestCase(SimpleTestCase):

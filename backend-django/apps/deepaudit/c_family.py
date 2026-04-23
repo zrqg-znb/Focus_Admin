@@ -221,7 +221,7 @@ def _strip_c_family_comments(content: str) -> str:
 
 
 def _path_score_adjustment(file_path: str, *, selected_paths: set[str] | None = None) -> tuple[int, list[str]]:
-    if selected_paths and file_path in selected_paths:
+    if selected_paths and _selected_target_matches(file_path, selected_paths):
         return 0, []
 
     normalized = file_path.replace('\\', '/')
@@ -258,7 +258,7 @@ def _shape_penalty(
     chunk_type: str,
     selected_paths: set[str] | None = None,
 ) -> tuple[int, list[str]]:
-    if selected_paths and file_path in selected_paths:
+    if selected_paths and _selected_target_matches(file_path, selected_paths):
         return 0, []
 
     nonempty_lines = [line.strip() for line in content.splitlines() if line.strip()]
@@ -410,7 +410,7 @@ def _select_diversified_candidates(
     for candidate in candidates:
         if len(selected) >= max_units:
             break
-        if candidate.file_path in selected_paths:
+        if _selected_target_matches(candidate.file_path, selected_paths):
             selected.append(candidate)
             continue
 
@@ -438,6 +438,17 @@ def _select_diversified_candidates(
 def _chunk_type_name(chunk: CodeChunk | CandidateUnit) -> str:
     chunk_type = getattr(chunk, 'chunk_type', '')
     return str(getattr(chunk_type, 'value', chunk_type) or '').strip().lower()
+
+
+def _selected_target_matches(file_path: str, selected_paths: Iterable[str] | None) -> bool:
+    normalized_path = str(file_path or '').strip().replace('\\', '/')
+    if not normalized_path or not selected_paths:
+        return False
+    return any(
+        normalized_path == target or normalized_path.startswith(f'{target}/')
+        for target in selected_paths
+        if str(target or '').strip()
+    )
 
 
 def _trim_context_snippet(
@@ -656,7 +667,7 @@ def build_language_profile(
         counter[language] += 1
         if language in C_FAMILY_LANGUAGES:
             c_family_files += 1
-        if selected_paths and file_path in selected_paths and language in C_FAMILY_LANGUAGES:
+        if selected_paths and _selected_target_matches(file_path, selected_paths) and language in C_FAMILY_LANGUAGES:
             selected_c_family += 1
 
     selected_count = len(selected_paths)
@@ -754,7 +765,7 @@ def score_candidate_chunk(
     )
     score += shape_score
     signals.extend(shape_signals)
-    if selected_paths and file_path in selected_paths:
+    if selected_paths and _selected_target_matches(file_path, selected_paths):
         score += 32
         signals.append('selected_file')
     return score, list(dict.fromkeys(signals))
@@ -822,7 +833,7 @@ def collect_candidate_units(
                 file_path=file_path,
                 selected_paths=selected_paths,
             )
-            if score <= 0 and not (selected_paths and file_path in selected_paths):
+            if score <= 0 and not (selected_paths and _selected_target_matches(file_path, selected_paths)):
                 continue
             chunk_type = _chunk_type_name(chunk) or 'module'
             candidates.append(
@@ -843,7 +854,7 @@ def collect_candidate_units(
 
     candidates.sort(
         key=lambda item: (
-            1 if item.file_path in selected_paths else 0,
+            1 if _selected_target_matches(item.file_path, selected_paths) else 0,
             item.score,
             item.line_end - item.line_start,
         ),

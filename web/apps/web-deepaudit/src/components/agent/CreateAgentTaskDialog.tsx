@@ -66,6 +66,12 @@ interface SelectedRepositorySpec {
   repository_url?: string;
 }
 
+interface SelectedScopeSummary {
+  directoryCount: number;
+  fileCount: number;
+  totalCount: number;
+}
+
 const DEFAULT_EXCLUDES = [
   'node_modules/**',
   '.git/**',
@@ -119,6 +125,8 @@ export default function CreateAgentTaskDialog({
 
   // 文件选择状态
   const [selectedFiles, setSelectedFiles] = useState<string[] | undefined>();
+  const [selectedScopeSummary, setSelectedScopeSummary] =
+    useState<SelectedScopeSummary>();
   const [selectedRepositorySpec, setSelectedRepositorySpec] =
     useState<SelectedRepositorySpec>();
   const [showFileSelection, setShowFileSelection] = useState(false);
@@ -151,6 +159,7 @@ export default function CreateAgentTaskDialog({
       setZipFile(null);
       setStoredZipInfo(null);
       setSelectedFiles(undefined);
+      setSelectedScopeSummary(undefined);
       setSelectedRepositorySpec(undefined);
     }
   }, [open]);
@@ -215,8 +224,9 @@ export default function CreateAgentTaskDialog({
       selectedFiles
     ) {
       setSelectedFiles(undefined);
+      setSelectedScopeSummary(undefined);
       setSelectedRepositorySpec(undefined);
-      toast.info('仓库规格或排除规则已更改，请重新选择文件');
+      toast.info('仓库规格或排除规则已更改，请重新选择文件/目录');
     }
     selectionContextRef.current = nextSelectionContext;
   }, [
@@ -282,6 +292,20 @@ export default function CreateAgentTaskDialog({
     branch,
     manifestXml,
   ]);
+
+  const selectedScopeText = useMemo(() => {
+    if (!selectedFiles || !selectedScopeSummary) {
+      return 'All files';
+    }
+    const parts: string[] = [];
+    if (selectedScopeSummary.directoryCount > 0) {
+      parts.push(`${selectedScopeSummary.directoryCount} folders`);
+    }
+    if (selectedScopeSummary.fileCount > 0) {
+      parts.push(`${selectedScopeSummary.fileCount} files`);
+    }
+    return `${selectedScopeSummary.totalCount} items selected${parts.length > 0 ? ` (${parts.join(', ')})` : ''}`;
+  }, [selectedFiles, selectedScopeSummary]);
 
   // 创建任务
   const handleCreate = async () => {
@@ -591,8 +615,8 @@ export default function CreateAgentTaskDialog({
                         嵌入式 C/C++ 深度审计
                       </Badge>
                       <p className="text-muted-foreground text-xs leading-5">
-                        将自动附带内存、边界、并发和 API 契约类漏洞预设，并默认使用
-                        `sandbox` 验证级别。
+                        将自动附带内存、边界、并发和 API
+                        契约类漏洞预设，并默认使用 `sandbox` 验证级别。
                       </p>
                     </div>
                   )}
@@ -611,9 +635,7 @@ export default function CreateAgentTaskDialog({
                             Scan Scope
                           </p>
                           <p className="text-foreground mt-1 font-mono text-sm font-bold">
-                            {selectedFiles
-                              ? `${selectedFiles.length} files selected`
-                              : 'All files'}
+                            {selectedScopeText}
                           </p>
                         </div>
                         <div className="flex gap-2">
@@ -622,6 +644,7 @@ export default function CreateAgentTaskDialog({
                               className="h-8 text-xs text-rose-400 hover:bg-rose-900/30 hover:text-rose-300"
                               onClick={() => {
                                 setSelectedFiles(undefined);
+                                setSelectedScopeSummary(undefined);
                                 setSelectedRepositorySpec(undefined);
                               }}
                               size="sm"
@@ -638,7 +661,7 @@ export default function CreateAgentTaskDialog({
                             variant="outline"
                           >
                             <FolderOpen className="mr-1 h-3 w-3" />
-                            Select Files
+                            Select Files/Folders
                           </Button>
                         </div>
                       </div>
@@ -732,8 +755,13 @@ export default function CreateAgentTaskDialog({
         excludePatterns={excludePatterns}
         group={group}
         manifestXml={manifestXml}
-        onConfirm={({ repositorySpec, selectedFiles: files }) => {
+        onConfirm={({
+          repositorySpec,
+          selectedFiles: files,
+          selectedSummary,
+        }) => {
           setSelectedFiles(files);
+          setSelectedScopeSummary(selectedSummary);
           setSelectedRepositorySpec(repositorySpec);
         }}
         onOpenChange={setShowFileSelection}

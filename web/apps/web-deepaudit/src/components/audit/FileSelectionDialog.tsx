@@ -49,6 +49,11 @@ interface FileSelectionDialogProps {
   onConfirm: (payload: {
     repositorySpec: ProjectRepositorySpec;
     selectedFiles: string[];
+    selectedSummary: {
+      directoryCount: number;
+      fileCount: number;
+      totalCount: number;
+    };
   }) => void;
 }
 
@@ -140,7 +145,9 @@ export default function FileSelectionDialog({
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [selectedEntries, setSelectedEntries] = useState<
+    Record<string, ProjectFileBrowserItem['kind']>
+  >({});
   const [searchInput, setSearchInput] = useState('');
   const [currentPath, setCurrentPath] = useState('');
   const [hasMore, setHasMore] = useState(false);
@@ -156,7 +163,7 @@ export default function FileSelectionDialog({
       setLoading(false);
       setLoadingMore(false);
       setRefreshing(false);
-      setSelectedFiles(new Set());
+      setSelectedEntries({});
       setSearchInput('');
       setCurrentPath('');
       setHasMore(false);
@@ -249,10 +256,26 @@ export default function FileSelectionDialog({
     excludePatterns,
   ]);
 
-  const visibleFilePaths = useMemo(
-    () => items.filter((item) => item.kind === 'file').map((item) => item.path),
+  const visibleItems = useMemo(
+    () => items.map((item) => ({ kind: item.kind, path: item.path })),
     [items],
   );
+
+  const selectedPaths = useMemo(
+    () => Object.keys(selectedEntries),
+    [selectedEntries],
+  );
+
+  const selectedSummary = useMemo(() => {
+    const kinds = Object.values(selectedEntries);
+    const directoryCount = kinds.filter((kind) => kind === 'directory').length;
+    const fileCount = kinds.length - directoryCount;
+    return {
+      directoryCount,
+      fileCount,
+      totalCount: kinds.length,
+    };
+  }, [selectedEntries]);
 
   const breadcrumbs = useMemo(() => {
     const parts = currentPath ? currentPath.split('/') : [];
@@ -266,8 +289,9 @@ export default function FileSelectionDialog({
   }, [currentPath]);
 
   const visibleSelectedCount = useMemo(
-    () => visibleFilePaths.filter((path) => selectedFiles.has(path)).length,
-    [selectedFiles, visibleFilePaths],
+    () =>
+      visibleItems.filter((item) => Boolean(selectedEntries[item.path])).length,
+    [selectedEntries, visibleItems],
   );
   let browsingHint = '浏览根目录';
   if (debouncedSearch) {
@@ -276,31 +300,39 @@ export default function FileSelectionDialog({
     browsingHint = `浏览目录: ${currentPath}`;
   }
 
-  const handleToggleFile = (path: string) => {
-    setSelectedFiles((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
+  const handleToggleItem = (
+    path: string,
+    kind: ProjectFileBrowserItem['kind'],
+  ) => {
+    setSelectedEntries((prev) => {
+      if (prev[path]) {
+        const { [path]: _removed, ...rest } = prev;
+        return rest;
       }
-      return next;
+      return {
+        ...prev,
+        [path]: kind,
+      };
     });
   };
 
   const handleSelectVisible = () => {
-    setSelectedFiles((prev) => {
-      const next = new Set(prev);
-      visibleFilePaths.forEach((path) => next.add(path));
+    setSelectedEntries((prev) => {
+      const next = { ...prev };
+      visibleItems.forEach((item) => {
+        next[item.path] = item.kind;
+      });
       return next;
     });
   };
 
   const handleClearVisible = () => {
-    setSelectedFiles((prev) => {
-      const next = new Set(prev);
-      visibleFilePaths.forEach((path) => next.delete(path));
-      return next;
+    const visiblePaths = new Set(visibleItems.map((item) => item.path));
+    setSelectedEntries((prev) => {
+      const remainingEntries = Object.entries(prev).filter(
+        ([path]) => !visiblePaths.has(path),
+      );
+      return Object.fromEntries(remainingEntries);
     });
   };
 
@@ -325,12 +357,13 @@ export default function FileSelectionDialog({
   };
 
   const handleConfirm = () => {
-    if (selectedFiles.size === 0) {
-      toast.error('请至少选择一个文件');
+    if (selectedSummary.totalCount === 0) {
+      toast.error('请至少选择一个文件或目录');
       return;
     }
     onConfirm({
-      selectedFiles: [...selectedFiles].sort((a, b) => a.localeCompare(b)),
+      selectedFiles: [...selectedPaths].sort((a, b) => a.localeCompare(b)),
+      selectedSummary,
       repositorySpec:
         sessionSpec ||
         buildFallbackRepositorySpec({
@@ -380,34 +413,21 @@ export default function FileSelectionDialog({
         <div className="space-y-2 p-3">
           {items.map((item) => {
             const isDirectory = item.kind === 'directory';
-            const isChecked = selectedFiles.has(item.path);
+            const isChecked = Boolean(selectedEntries[item.path]);
             return (
               <div
                 className="hover:bg-muted hover:border-border flex items-center gap-3 rounded border border-transparent p-2 transition-colors"
                 key={`${item.kind}-${item.path}`}
               >
-                {isDirectory ? (
-                  <Button
-                    className="h-8 px-2 text-xs"
-                    onClick={() => {
-                      setSearchInput('');
-                      setCurrentPath(item.path);
-                    }}
-                    size="sm"
-                    variant="ghost"
-                  >
-                    <ChevronRight className="mr-1 h-3 w-3" />
-                    进入
-                  </Button>
-                ) : (
-                  <div onClick={(event) => event.stopPropagation()}>
-                    <Checkbox
-                      checked={isChecked}
-                      className="border-border data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                      onCheckedChange={() => handleToggleFile(item.path)}
-                    />
-                  </div>
-                )}
+                <div onClick={(event) => event.stopPropagation()}>
+                  <Checkbox
+                    checked={isChecked}
+                    className="border-border data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                    onCheckedChange={() =>
+                      handleToggleItem(item.path, item.kind)
+                    }
+                  />
+                </div>
 
                 {isDirectory ? (
                   currentPath === item.path ? (
@@ -427,9 +447,24 @@ export default function FileSelectionDialog({
                     {item.path}
                   </p>
                   <p className="text-muted-foreground truncate text-xs">
-                    {isDirectory ? '目录' : '文件'}
+                    {isDirectory ? '目录，递归包含其全部子文件' : '文件'}
                   </p>
                 </div>
+
+                {isDirectory && (
+                  <Button
+                    className="h-8 px-2 text-xs"
+                    onClick={() => {
+                      setSearchInput('');
+                      setCurrentPath(item.path);
+                    }}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    <ChevronRight className="mr-1 h-3 w-3" />
+                    进入
+                  </Button>
+                )}
 
                 {item.size > 0 && (
                   <Badge className="cyber-badge-muted flex-shrink-0 font-mono text-xs">
@@ -465,7 +500,7 @@ export default function FileSelectionDialog({
             <FolderOpen className="text-primary h-5 w-5" />
             <div className="flex flex-col gap-1">
               <DialogTitle className="text-foreground text-lg font-bold uppercase tracking-wider">
-                选择要审计的文件
+                选择要审计的文件/目录
               </DialogTitle>
               <div className="text-muted-foreground flex flex-wrap gap-2 font-mono text-xs">
                 <Badge className="cyber-badge-muted uppercase">
@@ -574,9 +609,9 @@ export default function FileSelectionDialog({
             <div className="text-muted-foreground font-mono text-xs">
               当前已加载 {items.length}/{total} 项，已选{' '}
               <span className="text-primary font-bold">
-                {selectedFiles.size}
+                {selectedSummary.totalCount}
               </span>{' '}
-              个文件
+              项
             </div>
           </div>
 
@@ -584,12 +619,12 @@ export default function FileSelectionDialog({
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 className="cyber-btn-outline h-8 px-3 font-mono text-xs"
-                disabled={visibleFilePaths.length === 0}
+                disabled={visibleItems.length === 0}
                 onClick={handleSelectVisible}
                 size="sm"
                 variant="outline"
               >
-                选择当前页文件
+                选择当前页可见项
               </Button>
               <Button
                 className="cyber-btn-outline h-8 px-3 font-mono text-xs"
@@ -602,8 +637,8 @@ export default function FileSelectionDialog({
               </Button>
               <Button
                 className="cyber-btn-outline h-8 px-3 font-mono text-xs"
-                disabled={selectedFiles.size === 0}
-                onClick={() => setSelectedFiles(new Set())}
+                disabled={selectedSummary.totalCount === 0}
+                onClick={() => setSelectedEntries({})}
                 size="sm"
                 variant="outline"
               >
@@ -623,7 +658,7 @@ export default function FileSelectionDialog({
         <DialogFooter className="border-border bg-muted flex flex-shrink-0 justify-between border-t p-5">
           <div className="text-muted-foreground flex items-center gap-2 font-mono text-xs">
             <Terminal className="h-3 w-3" />
-            提示：大仓默认按目录懒加载，搜索会按关键字分页返回结果。
+            提示：目录勾选后会递归包含全部子文件；大仓仍按懒加载和分页方式浏览。
           </div>
           <div className="flex gap-3">
             <Button
@@ -635,11 +670,11 @@ export default function FileSelectionDialog({
             </Button>
             <Button
               className="cyber-btn-primary h-10 px-5 font-mono font-bold uppercase"
-              disabled={selectedFiles.size === 0}
+              disabled={selectedSummary.totalCount === 0}
               onClick={handleConfirm}
             >
               <FileText className="mr-2 h-4 w-4" />
-              确认选择 ({selectedFiles.size})
+              确认选择 ({selectedSummary.totalCount} 项)
             </Button>
           </div>
         </DialogFooter>

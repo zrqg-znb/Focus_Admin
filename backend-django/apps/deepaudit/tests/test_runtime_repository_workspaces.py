@@ -307,3 +307,49 @@ class RuntimeSelectedFilesValidationTestCase(RuntimeRepositoryWorkspaceTestCase)
 
         self.assertEqual(result['existing'], ['src/main.c'])
         self.assertEqual(result['missing'], ['src/missing.c'])
+
+    def test_validate_selected_file_paths_accepts_directories(self) -> None:
+        workspace = self.temp_root / 'validation-directories-workspace'
+        (workspace / 'src').mkdir(parents=True, exist_ok=True)
+        (workspace / 'src' / 'module').mkdir(parents=True, exist_ok=True)
+        (workspace / 'src' / 'module' / 'main.c').write_text(
+            'int main(void) { return 0; }\n',
+            encoding='utf-8',
+        )
+
+        result = runtime.validate_selected_file_paths(
+            workspace,
+            file_paths=['src/module', './src/module', 'src/missing'],
+        )
+
+        self.assertEqual(result['existing'], ['src/module'])
+        self.assertEqual(result['missing'], ['src/missing'])
+
+    def test_list_project_files_expands_directory_targets_recursively(self) -> None:
+        workspace = self.temp_root / 'listing-workspace'
+        (workspace / 'src').mkdir(parents=True, exist_ok=True)
+        (workspace / 'src' / 'module').mkdir(parents=True, exist_ok=True)
+        (workspace / 'src' / 'module' / 'main.c').write_text(
+            'int main(void) { return 0; }\n',
+            encoding='utf-8',
+        )
+        (workspace / 'src' / 'module' / 'helper.h').write_text(
+            '#pragma once\n',
+            encoding='utf-8',
+        )
+        (workspace / 'src' / 'notes.txt').write_text(
+            'plain text note\n',
+            encoding='utf-8',
+        )
+        (workspace / 'README.md').write_text('# root\n', encoding='utf-8')
+
+        files = runtime.list_project_files(
+            workspace,
+            file_paths=['src/module', 'src/module/main.c'],
+            include_docs=True,
+        )
+
+        self.assertEqual(
+            [item['path'] for item in files],
+            ['src/module/helper.h', 'src/module/main.c'],
+        )

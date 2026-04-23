@@ -1823,7 +1823,7 @@ def execute_agent_task(task_id: str) -> None:
                 }
                 if selection_check['existing']:
                     logger.warning(
-                        'DeepAudit agent task %s found missing selected files after workspace refresh and will continue with remaining files: missing_count=%s existing_count=%s missing_samples=%s %s',
+                        'DeepAudit agent task %s found missing selected paths after workspace refresh and will continue with remaining paths: missing_count=%s existing_count=%s missing_samples=%s %s',
                         instance.id,
                         len(selection_check['missing']),
                         len(selection_check['existing']),
@@ -1834,17 +1834,17 @@ def execute_agent_task(task_id: str) -> None:
                         instance,
                         'warning',
                         phase=instance.current_phase or AGENT_PHASE_PLANNING,
-                        message='部分目标文件在当前代码工作区中不存在，已跳过缺失文件继续审计',
+                        message='部分目标目录或文件在当前代码工作区中不存在，已跳过缺失项继续审计',
                         metadata=metadata,
                     )
                     validated_target_files = selection_check['existing']
                 else:
                     message = (
-                        f'所选目标文件在当前代码工作区中均不存在，共 {len(selection_check["missing"])} 个。'
+                        f'所选目标目录或文件在当前代码工作区中均不存在，共 {len(selection_check["missing"])} 项。'
                         f' 示例: {", ".join(selection_check["missing"][:5])}'
                     )
                     logger.error(
-                        'DeepAudit agent task %s failed because all selected files are missing from workspace: %s %s',
+                        'DeepAudit agent task %s failed because all selected paths are missing from workspace: %s %s',
                         instance.id,
                         message,
                         format_repository_spec_for_log(repository_spec),

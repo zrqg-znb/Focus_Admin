@@ -30,6 +30,17 @@ def _normalize_path(path: str) -> str:
     return str(path or '').replace('\\', '/').lstrip('./')
 
 
+def _normalize_selection_target(path: str) -> str:
+    normalized = _normalize_path(path)
+    return normalized.rstrip('/')
+
+
+def _matches_selection_target(relative_path: str, target_files: set[str], target_directories: set[str]) -> bool:
+    if relative_path in target_files:
+        return True
+    return any(relative_path.startswith(f'{directory}/') for directory in target_directories)
+
+
 @lru_cache(maxsize=1)
 def docker_available() -> bool:
     if not getattr(settings, 'DEEPAUDIT_DOCKER_ENABLED', True):
@@ -204,15 +215,25 @@ def list_project_files(
     max_file_size: int | None = None,
 ) -> list[dict]:
     normalized_targets = {
-        _normalize_path(item)
+        _normalize_selection_target(str(item or ''))
         for item in (file_paths or [])
         if str(item or '').strip()
     }
+    target_files: set[str] = set()
+    target_directories: set[str] = set()
+    for target in normalized_targets:
+        if not target:
+            continue
+        resolved_target = workspace / target
+        if resolved_target.exists() and resolved_target.is_dir():
+            target_directories.add(target)
+        else:
+            target_files.add(target)
     max_bytes = int(max_file_size or 0)
     items: list[dict] = []
     for file_path in deepaudit_storage.iter_text_files(workspace):
         relative_path = _normalize_path(str(file_path.relative_to(workspace)))
-        if normalized_targets and relative_path not in normalized_targets:
+        if normalized_targets and not _matches_selection_target(relative_path, target_files, target_directories):
             continue
         if not is_text_file(relative_path):
             continue
@@ -249,7 +270,7 @@ def validate_selected_file_paths(
     normalized_targets: list[str] = []
     seen: set[str] = set()
     for item in (file_paths or []):
-        normalized = _normalize_path(str(item or ''))
+        normalized = _normalize_selection_target(str(item or ''))
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
@@ -262,7 +283,7 @@ def validate_selected_file_paths(
     missing: list[str] = []
     for relative_path in normalized_targets:
         target = workspace / relative_path
-        if target.exists() and target.is_file():
+        if target.exists() and (target.is_file() or target.is_dir()):
             existing.append(relative_path)
         else:
             missing.append(relative_path)

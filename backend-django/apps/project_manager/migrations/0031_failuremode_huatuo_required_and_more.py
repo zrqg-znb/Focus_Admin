@@ -253,6 +253,40 @@ def seed_failure_mode_statistics_fields(apps, schema_editor):
     _seed_subsystem_configs(apps)
 
 
+def _table_exists(schema_editor, table_name):
+    with schema_editor.connection.cursor() as cursor:
+        tables = schema_editor.connection.introspection.table_names(cursor)
+    return table_name in set(tables)
+
+
+def _column_exists(schema_editor, table_name, column_name):
+    if not _table_exists(schema_editor, table_name):
+        return False
+    with schema_editor.connection.cursor() as cursor:
+        columns = schema_editor.connection.introspection.get_table_description(
+            cursor,
+            table_name,
+        )
+    return any(getattr(column, 'name', column[0]) == column_name for column in columns)
+
+
+class SafeAddField(migrations.AddField):
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        to_model = to_state.apps.get_model(app_label, self.model_name)
+        field = to_model._meta.get_field(self.name)
+        if _column_exists(schema_editor, to_model._meta.db_table, field.column):
+            return
+        super().database_forwards(app_label, schema_editor, from_state, to_state)
+
+
+class SafeCreateModel(migrations.CreateModel):
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        model = to_state.apps.get_model(app_label, self.name)
+        if _table_exists(schema_editor, model._meta.db_table):
+            return
+        super().database_forwards(app_label, schema_editor, from_state, to_state)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -261,27 +295,27 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
+        SafeAddField(
             model_name='failuremode',
             name='huatuo_required',
             field=models.BooleanField(default=False, verbose_name='需要华佗诊断方案'),
         ),
-        migrations.AddField(
+        SafeAddField(
             model_name='failuremode',
             name='interception_required',
             field=models.BooleanField(default=False, verbose_name='需要产线拦截策略'),
         ),
-        migrations.AddField(
+        SafeAddField(
             model_name='failuremode',
             name='required_handling_measure_categories',
             field=models.JSONField(blank=True, default=list, verbose_name='必配故障处理措施类别'),
         ),
-        migrations.AddField(
+        SafeAddField(
             model_name='failuremode',
             name='required_observation_method_types',
             field=models.JSONField(blank=True, default=list, verbose_name='必配维测手段类型'),
         ),
-        migrations.CreateModel(
+        SafeCreateModel(
             name='FailureModeSubsystemConfig',
             fields=[
                 (
