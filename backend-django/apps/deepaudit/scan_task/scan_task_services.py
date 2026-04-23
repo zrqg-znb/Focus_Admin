@@ -42,7 +42,7 @@ from apps.deepaudit.repo_specs import (
     validate_repository_spec_for_execution,
 )
 from apps.deepaudit.runtime import cleanup_runtime_workspace, list_project_files, prepare_repository_workspace
-from apps.deepaudit.runtime import validate_selected_file_paths
+from apps.deepaudit.runtime import resolve_selected_file_paths, validate_selected_file_paths
 from apps.deepaudit.scan_profile import resolve_scan_profile, serialize_scan_profile
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact, AuditIssue, AuditTask, InstantAnalysisRecord
 from apps.deepaudit.serialization import format_datetime_text, normalize_json_payload
@@ -68,6 +68,10 @@ def _selected_files_missing_message(missing: list[str]) -> str:
     sample = ', '.join(missing[:5])
     suffix = f' 示例: {sample}' if sample else ''
     return f'所选目录或文件在当前代码工作区中不存在，共 {len(missing)} 项。{suffix}'
+
+
+def _selected_scope_empty_message() -> str:
+    return '所选目录或文件在当前过滤条件下未命中任何可扫描文本文件，请检查目录内容、排除规则或测试/文档过滤设置。'
 
 
 def serialize_issue(issue: AuditIssue) -> dict:
@@ -1168,10 +1172,48 @@ def execute_scan_task(task_id: str) -> None:
             or runtime_scan_config.get('max_file_size')
             or default_max_file_size_for_depth(scan_config.get('analysis_depth'))
         )
+        resolved_file_paths = list(validated_file_paths)
+        if validated_file_paths:
+            resolved_file_paths = resolve_selected_file_paths(
+                workspace,
+                exclude_patterns=task.exclude_patterns or [],
+                file_paths=validated_file_paths,
+                include_tests=bool(scan_config.get('include_tests', False)),
+                include_docs=bool(scan_config.get('include_docs', False)),
+                max_file_size=effective_max_file_size,
+            )
+            if not resolved_file_paths:
+                message = _selected_scope_empty_message()
+                logger.error(
+                    'DeepAudit scan task %s failed because selected targets resolved to zero scannable files: selected_count=%s %s',
+                    task.id,
+                    len(validated_file_paths),
+                    format_repository_spec_for_log(repository_spec),
+                )
+                task.status = 'failed'
+                task.error_message = message
+                task.completed_at = timezone.now()
+                task.save(
+                    update_fields=[
+                        'status',
+                        'error_message',
+                        'completed_at',
+                        'sys_update_datetime',
+                    ]
+                )
+                return
+            logger.info(
+                'DeepAudit scan task %s expanded selected targets to concrete files: selected_count=%s resolved_file_count=%s %s',
+                task.id,
+                len(validated_file_paths),
+                len(resolved_file_paths),
+                format_repository_spec_for_log(repository_spec),
+            )
+
         files = list_project_files(
             workspace,
             exclude_patterns=task.exclude_patterns or [],
-            file_paths=validated_file_paths,
+            file_paths=resolved_file_paths if validated_file_paths else None,
             include_tests=bool(scan_config.get('include_tests', False)),
             include_docs=bool(scan_config.get('include_docs', False)),
             max_file_size=effective_max_file_size,
@@ -1180,7 +1222,9 @@ def execute_scan_task(task_id: str) -> None:
         if max_analyze_files > 0:
             files = files[:max_analyze_files]
         runtime_profile_config = dict(scan_config)
-        runtime_profile_config['file_paths'] = validated_file_paths
+        runtime_profile_config['file_paths'] = (
+            resolved_file_paths if validated_file_paths else []
+        )
         profile, language_profile = _effective_scan_profile_for_files(task.created_by, runtime_profile_config, files)
         effective_profile = serialize_scan_profile(profile)
         scan_config['effective_profile'] = effective_profile
@@ -1208,7 +1252,7 @@ def execute_scan_task(task_id: str) -> None:
                     workspace=workspace,
                     llm_concurrency=llm_concurrency,
                     llm_gap_ms=llm_gap_ms,
-                    selected_file_paths=validated_file_paths,
+                    selected_file_paths=resolved_file_paths if validated_file_paths else [],
                 )
             )
             total_issues = _persist_grouped_scan_issues(

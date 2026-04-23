@@ -290,6 +290,57 @@ def validate_selected_file_paths(
     return {'existing': existing, 'missing': missing}
 
 
+def resolve_selected_file_paths(
+    workspace: Path,
+    *,
+    exclude_patterns: Iterable[str] | None = None,
+    file_paths: Iterable[str] | None = None,
+    include_tests: bool = False,
+    include_docs: bool = False,
+    max_file_size: int | None = None,
+) -> list[str]:
+    normalized_targets = {
+        _normalize_selection_target(str(item or ''))
+        for item in (file_paths or [])
+        if str(item or '').strip()
+    }
+    if not normalized_targets:
+        return []
+
+    target_files: set[str] = set()
+    target_directories: set[str] = set()
+    for target in normalized_targets:
+        if not target:
+            continue
+        resolved_target = workspace / target
+        if resolved_target.exists() and resolved_target.is_dir():
+            target_directories.add(target)
+        else:
+            target_files.add(target)
+
+    max_bytes = int(max_file_size or 0)
+    matched_paths: list[str] = []
+    for file_path in deepaudit_storage.iter_text_files(workspace):
+        relative_path = _normalize_path(str(file_path.relative_to(workspace)))
+        if not _matches_selection_target(relative_path, target_files, target_directories):
+            continue
+        if not is_text_file(relative_path):
+            continue
+        if should_exclude(relative_path, exclude_patterns):
+            continue
+        if not include_tests and any(marker in f'/{relative_path.lower()}' for marker in TEST_PATH_MARKERS):
+            continue
+        suffix = file_path.suffix.lower()
+        if not include_docs and (suffix in DOC_SUFFIXES or any(marker in f'/{relative_path.lower()}' for marker in DOC_PATH_MARKERS)):
+            continue
+        if max_bytes and file_path.stat().st_size > max_bytes:
+            continue
+        matched_paths.append(relative_path)
+
+    matched_paths.sort()
+    return matched_paths
+
+
 def run_heuristic_scan(
     workspace: Path,
     *,

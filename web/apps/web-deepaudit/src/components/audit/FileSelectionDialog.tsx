@@ -399,7 +399,7 @@ export default function FileSelectionDialog({
       return (
         <div className="text-muted-foreground absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
           <FileText className="mb-2 h-12 w-12 opacity-20" />
-          <p className="font-mono text-sm">
+          <p className="text-sm">
             {debouncedSearch
               ? '没有匹配的文件或目录'
               : '当前目录下没有可显示的文件'}
@@ -478,7 +478,7 @@ export default function FileSelectionDialog({
           {hasMore && (
             <div className="flex justify-center pt-2">
               <Button
-                className="cyber-btn-outline h-8 px-4 font-mono text-xs"
+                className="cyber-btn-outline h-8 px-4 text-xs"
                 disabled={loadingMore}
                 onClick={handleLoadMore}
                 variant="outline"
@@ -502,7 +502,7 @@ export default function FileSelectionDialog({
               <DialogTitle className="text-foreground text-lg font-bold uppercase tracking-wider">
                 选择要审计的文件/目录
               </DialogTitle>
-              <div className="text-muted-foreground flex flex-wrap gap-2 font-mono text-xs">
+              <div className="text-muted-foreground flex flex-wrap gap-2 text-xs">
                 <Badge className="cyber-badge-muted uppercase">
                   {getRepositoryTypeLabel(
                     sessionSpec?.repository_type || repositoryType,
@@ -532,7 +532,7 @@ export default function FileSelectionDialog({
             </div>
           </div>
           {excludePatterns && excludePatterns.length > 0 && (
-            <Badge className="cyber-badge-muted ml-auto font-mono text-xs">
+            <Badge className="cyber-badge-muted ml-auto text-xs">
               已排除 {excludePatterns.length} 种模式
             </Badge>
           )}
@@ -551,7 +551,7 @@ export default function FileSelectionDialog({
             </div>
 
             <Button
-              className="cyber-btn-outline h-9 px-3 font-mono text-xs"
+              className="cyber-btn-outline h-9 px-3 text-xs"
               disabled={!currentPath}
               onClick={() => setCurrentPath(getParentPath(currentPath))}
               size="sm"
@@ -561,7 +561,7 @@ export default function FileSelectionDialog({
               返回上级
             </Button>
             <Button
-              className="cyber-btn-outline h-9 px-3 font-mono text-xs"
+              className="cyber-btn-outline h-9 px-3 text-xs"
               disabled={refreshing}
               onClick={handleRefresh}
               size="sm"
@@ -572,7 +572,7 @@ export default function FileSelectionDialog({
             </Button>
             {(searchInput || currentPath) && (
               <Button
-                className="cyber-btn-outline text-muted-foreground h-9 px-3 font-mono text-xs"
+                className="cyber-btn-outline text-muted-foreground h-9 px-3 text-xs"
                 onClick={() => {
                   setSearchInput('');
                   setCurrentPath('');
@@ -606,7 +606,7 @@ export default function FileSelectionDialog({
                 </div>
               ))}
             </div>
-            <div className="text-muted-foreground font-mono text-xs">
+            <div className="text-muted-foreground text-xs">
               当前已加载 {items.length}/{total} 项，已选{' '}
               <span className="text-primary font-bold">
                 {selectedSummary.totalCount}
@@ -618,7 +618,7 @@ export default function FileSelectionDialog({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <Button
-                className="cyber-btn-outline h-8 px-3 font-mono text-xs"
+                className="cyber-btn-outline h-8 px-3 text-xs"
                 disabled={visibleItems.length === 0}
                 onClick={handleSelectVisible}
                 size="sm"
@@ -627,7 +627,7 @@ export default function FileSelectionDialog({
                 选择当前页可见项
               </Button>
               <Button
-                className="cyber-btn-outline h-8 px-3 font-mono text-xs"
+                className="cyber-btn-outline h-8 px-3 text-xs"
                 disabled={visibleSelectedCount === 0}
                 onClick={handleClearVisible}
                 size="sm"
@@ -636,7 +636,7 @@ export default function FileSelectionDialog({
                 清空当前页选择
               </Button>
               <Button
-                className="cyber-btn-outline h-8 px-3 font-mono text-xs"
+                className="cyber-btn-outline h-8 px-3 text-xs"
                 disabled={selectedSummary.totalCount === 0}
                 onClick={() => setSelectedEntries({})}
                 size="sm"
@@ -645,7 +645,7 @@ export default function FileSelectionDialog({
                 清空全部选择
               </Button>
             </div>
-            <div className="text-muted-foreground font-mono text-xs">
+            <div className="text-muted-foreground text-xs">
               {browsingHint}
             </div>
           </div>
@@ -656,20 +656,20 @@ export default function FileSelectionDialog({
         </div>
 
         <DialogFooter className="border-border bg-muted flex flex-shrink-0 justify-between border-t p-5">
-          <div className="text-muted-foreground flex items-center gap-2 font-mono text-xs">
+          <div className="text-muted-foreground flex items-center gap-2 text-xs">
             <Terminal className="h-3 w-3" />
             提示：目录勾选后会递归包含全部子文件；大仓仍按懒加载和分页方式浏览。
           </div>
           <div className="flex gap-3">
             <Button
-              className="cyber-btn-outline h-10 px-4 font-mono"
+              className="cyber-btn-outline h-10 px-4"
               onClick={() => onOpenChange(false)}
               variant="outline"
             >
               取消
             </Button>
             <Button
-              className="cyber-btn-primary h-10 px-5 font-mono font-bold uppercase"
+              className="cyber-btn-primary h-10 px-5 font-semibold uppercase"
               disabled={selectedSummary.totalCount === 0}
               onClick={handleConfirm}
             >

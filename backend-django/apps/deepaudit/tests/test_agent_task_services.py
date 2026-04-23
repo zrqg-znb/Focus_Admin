@@ -221,16 +221,49 @@ class AgentTaskServicesTestCase(TestCase):
                     'missing': ['src/missing-module'],
                 },
             ),
+            patch(
+                'apps.deepaudit.agent_task.agent_task_services.resolve_selected_file_paths',
+                return_value=['src/keep-module/main.c'],
+            ),
             patch('apps.deepaudit.agent_task.agent_runner.run_orchestrator_agent_sync') as mock_runner,
             patch('apps.deepaudit.agent_task.agent_task_services.cleanup_runtime_workspace'),
         ):
             execute_agent_task(str(self.task.id))
 
         input_data = mock_runner.call_args.args[1]
-        self.assertEqual(input_data['target_files'], ['src/keep-module'])
+        self.assertEqual(input_data['target_files'], ['src/keep-module/main.c'])
         warning_event = self.task.events.filter(is_deleted=False, event_type='warning').latest('sequence')
         self.assertEqual(warning_event.event_metadata.get('missing_count'), 1)
         self.assertEqual(warning_event.event_metadata.get('existing_count'), 1)
+
+    def test_execute_agent_task_expands_selected_directories_before_runner(self) -> None:
+        self.task.target_files = ['src/module']
+        self.task.save(update_fields=['target_files', 'sys_update_datetime'])
+
+        with (
+            patch('apps.deepaudit.agent_task.agent_task_services.close_runtime_db_connections'),
+            patch('apps.deepaudit.agent_task.agent_task_services.docker_available', return_value=True),
+            patch(
+                'apps.deepaudit.agent_task.agent_task_services.prepare_repository_workspace',
+                return_value=(Path('/tmp/focusaudit-agent-workspace'), {'llm_config': {}, 'other_config': {}}),
+            ),
+            patch(
+                'apps.deepaudit.agent_task.agent_task_services.validate_selected_file_paths',
+                return_value={'existing': ['src/module'], 'missing': []},
+            ),
+            patch(
+                'apps.deepaudit.agent_task.agent_task_services.resolve_selected_file_paths',
+                return_value=['src/module/a.c', 'src/module/b.c'],
+            ),
+            patch('apps.deepaudit.agent_task.agent_runner.run_orchestrator_agent_sync') as mock_runner,
+            patch('apps.deepaudit.agent_task.agent_task_services.cleanup_runtime_workspace'),
+        ):
+            execute_agent_task(str(self.task.id))
+
+        input_data = mock_runner.call_args.args[1]
+        self.assertEqual(input_data['target_files'], ['src/module/a.c', 'src/module/b.c'])
+        info_event = self.task.events.filter(is_deleted=False, event_type='info').latest('sequence')
+        self.assertEqual(info_event.message, '已将所选目录展开为具体文件范围')
 
     def test_execute_agent_task_fails_when_all_selected_paths_disappear(self) -> None:
         self.task.target_files = ['src/missing-module']

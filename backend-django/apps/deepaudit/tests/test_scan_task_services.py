@@ -243,6 +243,10 @@ class ScanTaskSnapshotTestCase(TestCase):
                 },
             ),
             patch(
+                'apps.deepaudit.scan_task.scan_task_services.resolve_selected_file_paths',
+                return_value=['src/keep-module/main.c'],
+            ),
+            patch(
                 'apps.deepaudit.scan_task.scan_task_services.list_project_files',
                 return_value=[],
             ) as mock_list_files,
@@ -265,7 +269,69 @@ class ScanTaskSnapshotTestCase(TestCase):
         ):
             execute_scan_task(str(task.id))
 
-        self.assertEqual(mock_list_files.call_args.kwargs['file_paths'], ['src/keep-module'])
+        self.assertEqual(
+            mock_list_files.call_args.kwargs['file_paths'],
+            ['src/keep-module/main.c'],
+        )
+
+    def test_execute_scan_task_expands_selected_directories_before_listing(self) -> None:
+        task = AuditTask.objects.create(
+            project=self.project,
+            created_by=self.user,
+            task_type='repository',
+            status='pending',
+            repository_url='https://codehub.example.com/platform/manifest.git',
+            repository_type='multi',
+            branch_name='release/main',
+            manifest_xml='default.xml',
+            group='platform',
+            scan_config={'file_paths': ['src/module']},
+            sys_creator=self.user,
+            sys_modifier=self.user,
+        )
+
+        with (
+            patch('apps.deepaudit.scan_task.scan_task_services.resolve_scan_profile', return_value={}),
+            patch('apps.deepaudit.scan_task.scan_task_services.serialize_scan_profile', return_value={}),
+            patch(
+                'apps.deepaudit.scan_task.scan_task_services.prepare_repository_workspace',
+                return_value=(Path('/tmp/focusaudit-scan-workspace'), {'other_config': {}}),
+            ),
+            patch(
+                'apps.deepaudit.scan_task.scan_task_services.validate_selected_file_paths',
+                return_value={'existing': ['src/module'], 'missing': []},
+            ),
+            patch(
+                'apps.deepaudit.scan_task.scan_task_services.resolve_selected_file_paths',
+                return_value=['src/module/a.c', 'src/module/b.c'],
+            ),
+            patch(
+                'apps.deepaudit.scan_task.scan_task_services.list_project_files',
+                return_value=[],
+            ) as mock_list_files,
+            patch(
+                'apps.deepaudit.scan_task.scan_task_services._scan_files_with_concurrency',
+                new=AsyncMock(
+                    return_value={
+                        'cancelled': False,
+                        'scanned_files': 0,
+                        'skipped_files': 0,
+                        'failed_files': 0,
+                        'total_lines': 0,
+                        'total_issues': 0,
+                        'quality_scores': [],
+                    }
+                ),
+            ),
+            patch('apps.deepaudit.scan_task.scan_task_services._is_cancelled', return_value=False),
+            patch('apps.deepaudit.scan_task.scan_task_services.cleanup_runtime_workspace'),
+        ):
+            execute_scan_task(str(task.id))
+
+        self.assertEqual(
+            mock_list_files.call_args.kwargs['file_paths'],
+            ['src/module/a.c', 'src/module/b.c'],
+        )
 
 
 class InstantAnalysisServiceTestCase(TestCase):

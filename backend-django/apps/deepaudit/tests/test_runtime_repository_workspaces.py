@@ -353,3 +353,30 @@ class RuntimeSelectedFilesValidationTestCase(RuntimeRepositoryWorkspaceTestCase)
             [item['path'] for item in files],
             ['src/module/helper.h', 'src/module/main.c'],
         )
+
+    def test_resolve_selected_file_paths_expands_directory_targets_recursively(self) -> None:
+        workspace = self.temp_root / 'resolve-selection-workspace'
+        (workspace / 'src' / 'module').mkdir(parents=True, exist_ok=True)
+        (workspace / 'src' / 'module' / 'main.c').write_text(
+            'int main(void) { return 0; }\n',
+            encoding='utf-8',
+        )
+        (workspace / 'src' / 'module' / 'helper.h').write_text(
+            '#pragma once\n',
+            encoding='utf-8',
+        )
+        (workspace / 'src' / 'module' / 'README.md').write_text(
+            '# docs\n',
+            encoding='utf-8',
+        )
+
+        files = runtime.resolve_selected_file_paths(
+            workspace,
+            file_paths=['src/module'],
+            include_docs=False,
+        )
+
+        self.assertEqual(
+            files,
+            ['src/module/helper.h', 'src/module/main.c'],
+        )

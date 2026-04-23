@@ -37,7 +37,7 @@ from apps.deepaudit.repo_specs import (
     validate_repository_spec_for_execution,
 )
 from apps.deepaudit.runtime import cleanup_runtime_workspace, docker_available, prepare_repository_workspace
-from apps.deepaudit.runtime import validate_selected_file_paths
+from apps.deepaudit.runtime import resolve_selected_file_paths, validate_selected_file_paths
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact
 from apps.deepaudit.serialization import format_datetime_text, normalize_json_payload
 from apps.deepaudit.db_runtime import close_runtime_db_connections, ensure_runtime_db_connection, run_with_fresh_connection
@@ -1871,7 +1871,72 @@ def execute_agent_task(task_id: str) -> None:
                         metadata=metadata,
                     )
                     return
-        
+        resolved_target_files = list(validated_target_files)
+        if validated_target_files:
+            resolved_target_files = resolve_selected_file_paths(
+                workspace,
+                exclude_patterns=instance.exclude_patterns or [],
+                file_paths=validated_target_files,
+                include_tests=True,
+                include_docs=True,
+            )
+            if not resolved_target_files:
+                message = '所选目标目录或文件在当前代码工作区中未命中任何可审计文本文件，请检查目录内容或排除规则。'
+                logger.error(
+                    'DeepAudit agent task %s failed because selected targets resolved to zero auditable files: selected_count=%s %s',
+                    instance.id,
+                    len(validated_target_files),
+                    format_repository_spec_for_log(repository_spec),
+                )
+                instance.status = 'failed'
+                instance.current_step = truncate_runtime_text('目标文件为空')
+                instance.error_message = message
+                instance.completed_at = timezone.now()
+                run_with_fresh_connection(
+                    instance.save,
+                    update_fields=[
+                        'status',
+                        'current_step',
+                        'error_message',
+                        'completed_at',
+                        'sys_update_datetime',
+                    ],
+                )
+                create_event(
+                    instance,
+                    'task_error',
+                    phase=instance.current_phase or AGENT_PHASE_PLANNING,
+                    message=message,
+                    metadata={
+                        **repository_metadata,
+                        'workspace': str(workspace),
+                        'selected_count': len(validated_target_files),
+                        'resolved_file_count': 0,
+                    },
+                )
+                return
+            if resolved_target_files != validated_target_files:
+                logger.info(
+                    'DeepAudit agent task %s expanded selected targets to concrete files: selected_count=%s resolved_file_count=%s %s',
+                    instance.id,
+                    len(validated_target_files),
+                    len(resolved_target_files),
+                    format_repository_spec_for_log(repository_spec),
+                )
+                create_event(
+                    instance,
+                    'info',
+                    phase=instance.current_phase or AGENT_PHASE_PLANNING,
+                    message='已将所选目录展开为具体文件范围',
+                    metadata={
+                        **repository_metadata,
+                        'workspace': str(workspace),
+                        'selected_count': len(validated_target_files),
+                        'resolved_file_count': len(resolved_target_files),
+                        'resolved_samples': resolved_target_files[:10],
+                    },
+                )
+
         # 准备交给 Agent 的上下文数据
         input_data = {
             "task_id": str(instance.id),
@@ -1883,7 +1948,7 @@ def execute_agent_task(task_id: str) -> None:
             "target_vulnerabilities": instance.target_vulnerabilities or [],
             "verification_level": effective_verification,
             "exclude_patterns": instance.exclude_patterns or [],
-            "target_files": validated_target_files,
+            "target_files": resolved_target_files,
             "llm_config": user_payload.get("llm_config", {}),
             "other_config": user_payload.get("other_config", {}),
             "max_iterations": instance.max_iterations or 50,
