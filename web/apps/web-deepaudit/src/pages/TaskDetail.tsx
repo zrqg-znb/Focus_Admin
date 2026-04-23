@@ -719,7 +719,7 @@ export default function TaskDetail() {
 
   if (!task) {
     return (
-      <div className="cyber-bg-elevated min-h-screen space-y-6 p-6 font-mono">
+      <div className="cyber-bg-elevated min-h-screen space-y-6 p-6">
         <div className="flex items-center space-x-4">
           <Link to="/audit-tasks">
             <Button
@@ -750,7 +750,7 @@ export default function TaskDetail() {
   );
 
   return (
-    <div className="cyber-bg-elevated relative min-h-screen space-y-6 p-6 font-mono">
+    <div className="cyber-bg-elevated relative min-h-screen space-y-6 p-6">
       {/* Grid background */}
       <div className="cyber-grid-subtle pointer-events-none absolute inset-0" />
 

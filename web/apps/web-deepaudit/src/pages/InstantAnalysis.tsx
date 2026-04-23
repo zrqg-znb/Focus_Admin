@@ -964,7 +964,7 @@ int main(int argc, char **argv) {
   );
 
   return (
-    <div className="cyber-bg-elevated relative min-h-screen space-y-6 p-6 font-mono">
+    <div className="cyber-bg-elevated relative min-h-screen space-y-6 p-6">
       {/* Grid background */}
       <div className="cyber-grid-subtle pointer-events-none absolute inset-0" />
 

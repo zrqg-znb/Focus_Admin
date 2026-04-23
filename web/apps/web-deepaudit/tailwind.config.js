@@ -19,7 +19,7 @@ export default {
     },
     extend: {
       fontFamily: {
-        mono: ['"JetBrains Mono"', '"Roboto Mono"', '"SFMono-Regular"', '"ArkPixel"', '"CJK Fallback"', '"Noto Sans SC"', '"PingFang SC"', '"Microsoft YaHei"', '"Courier New"', 'monospace'],
+        mono: ['"SFMono-Regular"', '"SF Mono"', '"Roboto Mono"', '"JetBrains Mono"', '"CJK Fallback"', '"Noto Sans SC"', '"PingFang SC"', '"Microsoft YaHei"', '"Courier New"', 'monospace'],
         sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', '"Helvetica Neue"', 'Arial', '"Noto Sans"', '"Noto Sans SC"', '"PingFang SC"', '"Microsoft YaHei"', 'system-ui', 'sans-serif'],
         display: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', '"Helvetica Neue"', 'Arial', '"Noto Sans"', '"Noto Sans SC"', '"PingFang SC"', '"Microsoft YaHei"', 'system-ui', 'sans-serif'],
       },

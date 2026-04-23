@@ -370,7 +370,7 @@ export default function AuditTasks() {
   }
 
   return (
-    <div className="space-y-6 p-6 cyber-bg-elevated min-h-screen font-mono relative">
+    <div className="space-y-6 p-6 cyber-bg-elevated min-h-screen relative">
       {/* Grid background */}
       <div className="absolute inset-0 cyber-grid-subtle pointer-events-none" />
 

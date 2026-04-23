@@ -199,7 +199,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="space-y-6 p-6 bg-background min-h-screen font-mono relative">
+    <div className="space-y-6 p-6 bg-background min-h-screen relative">
       {/* Grid background */}
       <div className="absolute inset-0 cyber-grid-subtle pointer-events-none" />
 

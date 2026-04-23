@@ -2,14 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-@font-face {
-  font-family: 'ArkPixel';
-  src: url('/focusaudit-app/fonts/ark-pixel-12px-monospaced-zh_cn.ttf.woff2') format('woff2');
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
-
 /* CJK fallback font with consistent weight */
 @font-face {
   font-family: 'CJK Fallback';
@@ -29,7 +21,7 @@
 @layer base {
   :root {
     --font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-    --font-family-code: "JetBrains Mono", "SFMono-Regular", "Roboto Mono", "ArkPixel", "CJK Fallback", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", monospace;
+    --font-family-code: "SFMono-Regular", "SF Mono", "Roboto Mono", "JetBrains Mono", "CJK Fallback", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", monospace;
     --background: 0 0% 100%;
     --foreground: 215 27% 17%;
     --card: 0 0% 100%;

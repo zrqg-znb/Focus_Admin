@@ -8,7 +8,7 @@ export default function Register() {
   }, []);
 
   return (
-    <div className="min-h-screen cyber-bg-elevated flex items-center justify-center font-mono">
+    <div className="min-h-screen cyber-bg-elevated flex items-center justify-center">
       <div className="text-center space-y-4">
         <div className="loading-spinner mx-auto" />
         <p className="text-muted-foreground text-sm uppercase tracking-wider">
