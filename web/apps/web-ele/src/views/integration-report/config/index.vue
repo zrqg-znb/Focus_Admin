@@ -56,6 +56,8 @@ const form = ref<ProjectConfigUpsertIn>({
   managers: [],
   enabled: true,
   code_check_task_id: '',
+  dt_bin_task_id: '',
+  cooddy_check_task_id: '',
   bin_scope_task_id: '',
   build_check_task_id: '',
   compile_check_task_id: '',
@@ -138,6 +140,8 @@ function payloadOf(r: ProjectConfigManageRow): ProjectConfigUpsertIn {
     managers: r.manager_ids || [],
     enabled: r.enabled,
     code_check_task_id: r.code_check_task_id || '',
+    dt_bin_task_id: r.dt_bin_task_id || '',
+    cooddy_check_task_id: r.cooddy_check_task_id || '',
     bin_scope_task_id: r.bin_scope_task_id || '',
     build_check_task_id: r.build_check_task_id || '',
     compile_check_task_id: r.compile_check_task_id || '',
@@ -187,6 +191,8 @@ function openCreate() {
     managers: [],
     enabled: true,
     code_check_task_id: '',
+    dt_bin_task_id: '',
+    cooddy_check_task_id: '',
     bin_scope_task_id: '',
     build_check_task_id: '',
     compile_check_task_id: '',
@@ -403,6 +409,12 @@ async function mockSendEmails() {
 
         <ElFormItem label="CodeCheck ID">
           <ElInput v-model="form.code_check_task_id" placeholder="Task ID" />
+        </ElFormItem>
+        <ElFormItem label="DT_Bin ID">
+          <ElInput v-model="form.dt_bin_task_id" placeholder="Task ID" />
+        </ElFormItem>
+        <ElFormItem label="Cooddy Check ID">
+          <ElInput v-model="form.cooddy_check_task_id" placeholder="Task ID" />
         </ElFormItem>
         <ElFormItem label="BinScope ID">
           <ElInput v-model="form.bin_scope_task_id" placeholder="Task ID" />

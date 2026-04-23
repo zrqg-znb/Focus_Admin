@@ -25,6 +25,8 @@ from .integration_email import build_daily_email_html, send_html_email
 
 CODE_KEYS = [
     "codecheck_error_num",
+    "dt_bin_error_num",
+    "cooddy_check_error_num",
     "bin_scope_error_num",
     "build_check_error_num",
     "compile_error_num",
@@ -285,6 +287,8 @@ def _fetch_code_scan_metrics(
 def ensure_default_metric_definitions():
     defaults = [
         ("code", "codecheck_error_num", "CodeCheck 错误数", "number", "", ">", 0),
+        ("code", "dt_bin_error_num", "DT_Bin错误数", "number", "", ">", 0),
+        ("code", "cooddy_check_error_num", "Cooddy Check错误数", "number", "", ">", 0),
         ("code", "bin_scope_error_num", "Bin Scope 错误数", "number", "", ">", 0),
         ("code", "build_check_error_num", "Build 检测错误数", "number", "", ">", 0),
         ("code", "compile_error_num", "Compile 错误数", "number", "", ">", 0),
@@ -293,7 +297,7 @@ def ensure_default_metric_definitions():
         ("code", "valgrind_error_num", "Valgrind 问题数", "number", "", ">", 0),
         ("code", "cppcheck_error_num", "Cppcheck 问题数", "number", "", ">", 0),
         ("code", "weggli_error_num", "Weggli 问题数", "number", "", ">", 0),
-        ("code", "cooddy_error_num", "Cooddy 问题数", "number", "", ">", 0),
+        ("code", "cooddy_error_num", "Cooddy问题数（代码扫描）", "number", "", ">", 0),
         ("code", "binexplorer_error_num", "BinExplorer 问题数", "number", "", ">", 0),
         ("code", "clang_tidy_error_num", "Clang-Tidy 问题数", "number", "", ">", 0),
         ("dt", "dt_pass_rate", "DT 通过率", "percent", "%", "<", 95),
@@ -348,7 +352,7 @@ def collect_daily_metrics(record_date: Optional[date] = None, config_ids: Option
                     "value_number": val,
                     "value_text": (
                         ""
-                        if key in SCAN_METRIC_TOOL_ALIAS_MAP
+                        if key in SCAN_METRIC_TOOL_ALIAS_MAP or val is not None or not url
                         else ("error" if val is None else "")
                     ),
                     "detail_url": url,
@@ -481,6 +485,8 @@ def list_configs_with_latest(user: User, keyword: Optional[str] = None) -> List[
                 enabled=cfg.enabled,
                 subscribed=str(cfg.id) in subscribed_ids,
                 latest_date=latest_date,
+                dt_bin_task_id=cfg.dt_bin_task_id,
+                cooddy_check_task_id=cfg.cooddy_check_task_id,
                 code_scan_project_key=cfg.code_scan_project_key,
                 valgrind_sub_modules=normalize_sub_modules(cfg.valgrind_sub_modules),
                 code_metrics=make_cells(CODE_KEYS),

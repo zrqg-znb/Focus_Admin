@@ -38,22 +38,32 @@ class IntegrationDataFetcher:
             self.config.code_check_task_id, "codecheck", lambda: float(random.choice([0, 0, 0, random.randint(1, 5)]))
         )
 
-        # 2. Bin Scope
+        # 2. DT_Bin
+        results["dt_bin_error_num"] = self._fetch_single_metric(
+            self.config.dt_bin_task_id, "dt-bin", lambda: float(random.choice([0, 0, random.randint(1, 3)]))
+        )
+
+        # 3. Cooddy Check
+        results["cooddy_check_error_num"] = self._fetch_single_metric(
+            self.config.cooddy_check_task_id, "cooddy-check", lambda: float(random.choice([0, 0, 0, random.randint(1, 4)]))
+        )
+
+        # 4. Bin Scope
         results["bin_scope_error_num"] = self._fetch_single_metric(
             self.config.bin_scope_task_id, "bin-scope", lambda: float(random.choice([0, 0, random.randint(1, 3)]))
         )
 
-        # 3. Build Check
+        # 5. Build Check
         results["build_check_error_num"] = self._fetch_single_metric(
             self.config.build_check_task_id, "build-check", lambda: float(random.choice([0, 0, random.randint(1, 2)]))
         )
 
-        # 4. Compile Check
+        # 6. Compile Check
         results["compile_error_num"] = self._fetch_single_metric(
             self.config.compile_check_task_id, "compile-check", lambda: float(random.choice([0, random.randint(1, 2)]))
         )
 
-        # 5. DT Metrics
+        # 7. DT Metrics
         dt_url = self._get_url("dt", self.config.dt_project_id)
         if not self.config.dt_project_id:
             results.update({
@@ -85,11 +95,11 @@ class IntegrationDataFetcher:
         url = self._get_url(kind, task_id)
         if not task_id:
             return None, ""
-        
+
         # 模拟偶尔获取失败
         if random.random() < 0.05:  # 5% 概率失败
             return None, url
-        
+
         try:
             return generator(), url
         except Exception:

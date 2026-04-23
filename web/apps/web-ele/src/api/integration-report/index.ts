@@ -24,6 +24,8 @@ export interface ProjectConfigOut {
   enabled: boolean;
   subscribed: boolean;
   latest_date?: null | string;
+  dt_bin_task_id: string;
+  cooddy_check_task_id: string;
   code_scan_project_key?: string;
   valgrind_sub_modules?: string[];
   code_metrics: MetricCell[];
@@ -39,6 +41,8 @@ export interface ProjectConfigManageRow {
   manager_ids: string[];
   enabled: boolean;
   code_check_task_id: string;
+  dt_bin_task_id: string;
+  cooddy_check_task_id: string;
   bin_scope_task_id: string;
   build_check_task_id: string;
   compile_check_task_id: string;
@@ -53,6 +57,8 @@ export interface ProjectConfigUpsertIn {
   managers: string[];
   enabled: boolean;
   code_check_task_id: string;
+  dt_bin_task_id: string;
+  cooddy_check_task_id: string;
   bin_scope_task_id: string;
   build_check_task_id: string;
   compile_check_task_id: string;

@@ -49,6 +49,8 @@ const hasRows = computed(() => rows.value.length > 0);
 
 const CODE_COLS = [
   { key: 'codecheck_error_num', name: 'CodeCheck 错误数' },
+  { key: 'dt_bin_error_num', name: 'DT_Bin错误数' },
+  { key: 'cooddy_check_error_num', name: 'Cooddy Check错误数' },
   { key: 'bin_scope_error_num', name: 'Bin Scope 错误数' },
   { key: 'build_check_error_num', name: 'Build 检测错误数' },
   { key: 'compile_error_num', name: 'Compile 错误数' },
@@ -57,7 +59,7 @@ const CODE_COLS = [
   { key: 'valgrind_error_num', name: 'Valgrind 问题数' },
   { key: 'cppcheck_error_num', name: 'Cppcheck 问题数' },
   { key: 'weggli_error_num', name: 'Weggli 问题数' },
-  { key: 'cooddy_error_num', name: 'Cooddy 问题数' },
+  { key: 'cooddy_error_num', name: 'Cooddy问题数（代码扫描）' },
   { key: 'binexplorer_error_num', name: 'BinExplorer 问题数' },
   { key: 'clang_tidy_error_num', name: 'Clang-Tidy 问题数' },
 ];

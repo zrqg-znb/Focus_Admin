@@ -10,6 +10,8 @@ def mock_fetch(project_name: str, record_date: date, task_ids: dict) -> dict:
         return f"https://dataplatform.example.com/{kind}?project={project_name}&date={record_date.isoformat()}"
 
     codecheck_error_num = random.choice([0, 0, 0, random.randint(1, 5)])
+    dt_bin_error_num = random.choice([0, 0, random.randint(1, 3)])
+    cooddy_check_error_num = random.choice([0, 0, 0, random.randint(1, 4)])
     bin_scope_error_num = random.choice([0, 0, random.randint(1, 3)])
     build_check_error_num = random.choice([0, 0, random.randint(1, 2)])
     compile_error_num = random.choice([0, random.randint(1, 2)])
@@ -21,6 +23,8 @@ def mock_fetch(project_name: str, record_date: date, task_ids: dict) -> dict:
 
     return {
         "codecheck_error_num": (float(codecheck_error_num), url("codecheck")),
+        "dt_bin_error_num": (float(dt_bin_error_num), url("dt-bin")),
+        "cooddy_check_error_num": (float(cooddy_check_error_num), url("cooddy-check")),
         "bin_scope_error_num": (float(bin_scope_error_num), url("bin-scope")),
         "build_check_error_num": (float(build_check_error_num), url("build-check")),
         "compile_error_num": (float(compile_error_num), url("compile-check")),
@@ -29,4 +33,3 @@ def mock_fetch(project_name: str, record_date: date, task_ids: dict) -> dict:
         "dt_line_coverage": (float(dt_line_coverage), url("dt")),
         "dt_method_coverage": (float(dt_method_coverage), url("dt")),
     }
-

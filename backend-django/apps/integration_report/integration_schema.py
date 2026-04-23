@@ -25,6 +25,8 @@ class ProjectConfigOut(Schema):
     enabled: bool
     subscribed: bool
     latest_date: Optional[date] = None
+    dt_bin_task_id: str = ""
+    cooddy_check_task_id: str = ""
     code_scan_project_key: str = ""
     valgrind_sub_modules: List[str] = []
     code_metrics: List[MetricCell] = []
@@ -37,6 +39,8 @@ class ProjectConfigUpsertIn(Schema):
     managers: List[str] = []
     enabled: bool = True
     code_check_task_id: str = ""
+    dt_bin_task_id: str = ""
+    cooddy_check_task_id: str = ""
     bin_scope_task_id: str = ""
     build_check_task_id: str = ""
     compile_check_task_id: str = ""
@@ -58,6 +62,8 @@ class ProjectConfigManageRow(Schema):
     manager_ids: List[str]
     enabled: bool
     code_check_task_id: str
+    dt_bin_task_id: str
+    cooddy_check_task_id: str
     bin_scope_task_id: str
     build_check_task_id: str
     compile_check_task_id: str

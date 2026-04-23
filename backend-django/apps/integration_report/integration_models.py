@@ -22,6 +22,8 @@ class IntegrationProjectConfig(RootModel):
     enabled = models.BooleanField(default=True, verbose_name="是否启用")
 
     code_check_task_id = models.CharField(max_length=128, blank=True, default="", verbose_name="代码检测任务ID")
+    dt_bin_task_id = models.CharField(max_length=128, blank=True, default="", verbose_name="DT_Bin任务ID")
+    cooddy_check_task_id = models.CharField(max_length=128, blank=True, default="", verbose_name="Cooddy Check任务ID")
     bin_scope_task_id = models.CharField(max_length=128, blank=True, default="", verbose_name="二进制范围任务ID")
     build_check_task_id = models.CharField(max_length=128, blank=True, default="", verbose_name="构建检测任务ID")
     compile_check_task_id = models.CharField(max_length=128, blank=True, default="", verbose_name="编译检测任务ID")

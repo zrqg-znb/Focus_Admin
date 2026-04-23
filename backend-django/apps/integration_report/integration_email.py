@@ -8,6 +8,8 @@ from .integration_schema import MetricCell
 
 CODE_COLUMNS = [
     ("codecheck_error_num", "CodeCheck 错误数"),
+    ("dt_bin_error_num", "DT_Bin错误数"),
+    ("cooddy_check_error_num", "Cooddy Check错误数"),
     ("bin_scope_error_num", "Bin Scope 错误数"),
     ("build_check_error_num", "Build 检测错误数"),
     ("compile_error_num", "Compile 错误数"),
@@ -16,7 +18,7 @@ CODE_COLUMNS = [
     ("valgrind_error_num", "Valgrind 问题数"),
     ("cppcheck_error_num", "Cppcheck 问题数"),
     ("weggli_error_num", "Weggli 问题数"),
-    ("cooddy_error_num", "Cooddy 问题数"),
+    ("cooddy_error_num", "Cooddy问题数（代码扫描）"),
     ("binexplorer_error_num", "BinExplorer 问题数"),
     ("clang_tidy_error_num", "Clang-Tidy 问题数"),
 ]
@@ -139,7 +141,7 @@ def build_daily_email_html(record_date: date, projects: List[Dict]) -> str:
             <h2 class="title">每日集成报告 · {record_date.isoformat()}</h2>
             <div class="sub">本邮件仅包含你订阅的配置；<span class="warn-note">红色指标表示预警</span>，支持点击跳转详情。</div>
           </div>
-          {_render_table("代码检测与代码扫描数据", "CODE_KEYS 大表格（含 tscan / tsan / valgrind / cppcheck / weggli / cooddy / binexplorer / clang-tidy）", projects, CODE_COLUMNS)}
+          {_render_table("代码检测与代码扫描数据", "含 CodeCheck / DT_Bin / Cooddy Check 以及代码扫描指标", projects, CODE_COLUMNS)}
           {_render_table("DT 测试数据", "覆盖率、通过率与通过数", projects, DT_COLUMNS)}
           <div class="footer">
             自动发送于每日任务，如数据缺失会显示为“-”或“0”。

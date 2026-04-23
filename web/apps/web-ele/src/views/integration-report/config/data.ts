@@ -31,6 +31,12 @@ export function useColumns(
       slots: { default: 'enabled_default' },
     },
     { field: 'code_check_task_id', title: 'CodeCheck ID', minWidth: 150 },
+    { field: 'dt_bin_task_id', title: 'DT_Bin ID', minWidth: 150 },
+    {
+      field: 'cooddy_check_task_id',
+      title: 'Cooddy Check ID',
+      minWidth: 170,
+    },
     { field: 'bin_scope_task_id', title: 'BinScope ID', minWidth: 150 },
     { field: 'build_check_task_id', title: 'BuildCheck ID', minWidth: 150 },
     { field: 'compile_check_task_id', title: 'CompileCheck ID', minWidth: 150 },

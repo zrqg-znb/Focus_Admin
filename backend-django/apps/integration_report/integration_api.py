@@ -100,6 +100,8 @@ def list_configs(request, filters: ConfigFilterSchema = Query(...)):
                 manager_ids=[str(u.id) for u in cfg.managers.all()],
                 enabled=cfg.enabled,
                 code_check_task_id=cfg.code_check_task_id,
+                dt_bin_task_id=cfg.dt_bin_task_id,
+                cooddy_check_task_id=cfg.cooddy_check_task_id,
                 bin_scope_task_id=cfg.bin_scope_task_id,
                 build_check_task_id=cfg.build_check_task_id,
                 compile_check_task_id=cfg.compile_check_task_id,
@@ -125,6 +127,8 @@ def create_config(request, payload: ProjectConfigUpsertIn):
         name=payload.name,
         enabled=payload.enabled,
         code_check_task_id=payload.code_check_task_id,
+        dt_bin_task_id=payload.dt_bin_task_id,
+        cooddy_check_task_id=payload.cooddy_check_task_id,
         bin_scope_task_id=payload.bin_scope_task_id,
         build_check_task_id=payload.build_check_task_id,
         compile_check_task_id=payload.compile_check_task_id,
@@ -156,6 +160,8 @@ def update_config(request, config_id: str, payload: ProjectConfigUpsertIn):
         cfg.managers.set(payload.managers)
     cfg.enabled = payload.enabled
     cfg.code_check_task_id = payload.code_check_task_id
+    cfg.dt_bin_task_id = payload.dt_bin_task_id
+    cfg.cooddy_check_task_id = payload.cooddy_check_task_id
     cfg.bin_scope_task_id = payload.bin_scope_task_id
     cfg.build_check_task_id = payload.build_check_task_id
     cfg.compile_check_task_id = payload.compile_check_task_id
