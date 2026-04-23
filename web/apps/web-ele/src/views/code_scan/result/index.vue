@@ -5,6 +5,7 @@ import type {
   LatestResultsQueryParams,
   LatestScanResultItem,
   ProjectOverviewItem,
+  ProjectOverviewQueryParams,
   ShieldApplyPayload,
   ShieldRecordItem,
   ShieldStatus,
@@ -15,6 +16,7 @@ import { useRoute, useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
+import { Filter } from '@element-plus/icons-vue';
 import {
   ElButton,
   ElDescriptions,
@@ -25,6 +27,9 @@ import {
   ElFormItem,
   ElInput,
   ElMessage,
+  ElPopover,
+  ElRadio,
+  ElRadioGroup,
   ElTable,
   ElTableColumn,
   ElTabPane,
@@ -41,9 +46,85 @@ import {
 import { UserSelector } from '#/components/zq-form/user-selector';
 import { useZqTable } from '#/components/zq-table';
 
-import { ALL_SCAN_TOOLS, useDetailColumns, useSummaryColumns } from './data';
+import {
+  ALL_SCAN_TOOLS,
+  SHIELD_STATUS_OPTIONS,
+  useDetailColumns,
+  useSummaryColumns,
+} from './data';
 
 defineOptions({ name: 'CodeScanResult' });
+
+type TableSortOrder = 'ascending' | 'descending' | null;
+type DetailKeywordColumnKey =
+  | 'defect_type'
+  | 'description'
+  | 'file_path'
+  | 'severity';
+type DetailKeywordParamKey =
+  | 'defect_type_keyword'
+  | 'description_keyword'
+  | 'file_path_keyword'
+  | 'severity_keyword';
+type DetailKeywordFilters = Record<DetailKeywordColumnKey, string>;
+type DetailKeywordVisibleState = Record<DetailKeywordColumnKey, boolean>;
+
+interface DetailKeywordFilterConfig {
+  columnKey: DetailKeywordColumnKey;
+  label: string;
+  paramKey: DetailKeywordParamKey;
+  placeholder: string;
+  width: number;
+}
+
+const DETAIL_KEYWORD_FILTER_CONFIGS: DetailKeywordFilterConfig[] = [
+  {
+    columnKey: 'severity',
+    label: '严重程度',
+    paramKey: 'severity_keyword',
+    placeholder: '输入关键词模糊搜索严重程度',
+    width: 220,
+  },
+  {
+    columnKey: 'defect_type',
+    label: '缺陷类型',
+    paramKey: 'defect_type_keyword',
+    placeholder: '输入关键词模糊搜索缺陷类型',
+    width: 240,
+  },
+  {
+    columnKey: 'file_path',
+    label: '文件路径',
+    paramKey: 'file_path_keyword',
+    placeholder: '输入关键词模糊搜索文件路径',
+    width: 300,
+  },
+  {
+    columnKey: 'description',
+    label: '缺陷描述',
+    paramKey: 'description_keyword',
+    placeholder: '输入关键词模糊搜索缺陷描述',
+    width: 320,
+  },
+];
+
+function createDetailKeywordFilters(): DetailKeywordFilters {
+  return {
+    severity: '',
+    defect_type: '',
+    file_path: '',
+    description: '',
+  };
+}
+
+function createDetailKeywordVisibleState(): DetailKeywordVisibleState {
+  return {
+    severity: false,
+    defect_type: false,
+    file_path: false,
+    description: false,
+  };
+}
 
 const route = useRoute();
 const router = useRouter();
@@ -78,9 +159,24 @@ const shieldForm = ref<ShieldApplyPayload>({
 const projectMissing = ref(false);
 const selectedResults = ref<LatestScanResultItem[]>([]);
 const shieldStatusFilter = ref<'' | ShieldStatus>('');
+const shieldStatusDraft = ref<'' | ShieldStatus>('');
+const shieldStatusVisible = ref(false);
 const tools = ref<string[]>([]);
 const toolCountMap = ref<Record<string, null | number>>({});
 const activeTool = ref('');
+const summarySortState = ref<{ order: TableSortOrder; prop: string }>({
+  prop: '',
+  order: null,
+});
+const detailKeywordFilters = ref<DetailKeywordFilters>(
+  createDetailKeywordFilters(),
+);
+const detailKeywordDrafts = ref<DetailKeywordFilters>(
+  createDetailKeywordFilters(),
+);
+const detailKeywordVisible = ref<DetailKeywordVisibleState>(
+  createDetailKeywordVisibleState(),
+);
 
 const expandTabMap = ref<Record<string, string>>({});
 const shieldRecordsMap = ref<Record<string, ShieldRecordItem[]>>({});
@@ -95,10 +191,19 @@ const [SummaryGrid, summaryGridApi] = useZqTable({
       autoLoad: true,
       ajax: {
         query: async ({ page }) => {
-          const res = await listProjectOverviewApi({
+          const params: ProjectOverviewQueryParams = {
             page: page.currentPage,
             pageSize: page.pageSize,
-          });
+          };
+          const sortOrder = normalizeSummarySortOrder(
+            summarySortState.value.order,
+          );
+          if (summarySortState.value.prop && sortOrder) {
+            params.sort_field = summarySortState.value.prop;
+            params.sort_order = sortOrder;
+          }
+
+          const res = await listProjectOverviewApi(params);
           const itemsData = res.items || [];
           const total = res.total || 0;
 
@@ -171,6 +276,7 @@ const [DetailGrid, detailGridApi] = useZqTable({
           if (routeSubModules.value) {
             params.sub_modules = routeSubModules.value;
           }
+          appendDetailKeywordParams(params);
           const res = await listLatestResultsApi(projectId.value, params);
           return {
             items: res.items || [],
@@ -197,12 +303,32 @@ function displayCount(value: null | number | undefined) {
   return String(value);
 }
 
-function extractSingleFilterValue(filters: Record<string, any[]>, key: string) {
-  const selected = filters[key];
-  if (!Array.isArray(selected) || selected.length === 0) {
-    return '';
+function normalizeSummarySortOrder(
+  order: TableSortOrder,
+): 'asc' | 'desc' | undefined {
+  if (order === 'ascending') return 'asc';
+  if (order === 'descending') return 'desc';
+  return undefined;
+}
+
+function buildKeywordFilterButtonText(value: string) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '筛选';
+  return normalized.length > 8 ? `${normalized.slice(0, 8)}...` : normalized;
+}
+
+function buildShieldStatusFilterButtonText(value: '' | ShieldStatus) {
+  return value || '筛选';
+}
+
+function appendDetailKeywordParams(params: LatestResultsQueryParams) {
+  const nextParams = params as LatestResultsQueryParams &
+    Record<DetailKeywordParamKey, string>;
+  for (const config of DETAIL_KEYWORD_FILTER_CONFIGS) {
+    const keyword = detailKeywordFilters.value[config.columnKey].trim();
+    if (!keyword) continue;
+    nextParams[config.paramKey] = keyword;
   }
-  return String(selected[0] || '');
 }
 
 function resetDetailPage() {
@@ -221,6 +347,21 @@ function resetDetailState() {
   shieldRecordsLoadingMap.value = {};
 }
 
+function resetDetailFilters() {
+  detailKeywordFilters.value = createDetailKeywordFilters();
+  detailKeywordDrafts.value = createDetailKeywordFilters();
+  detailKeywordVisible.value = createDetailKeywordVisibleState();
+  shieldStatusFilter.value = '';
+  shieldStatusDraft.value = '';
+  shieldStatusVisible.value = false;
+}
+
+async function reloadDetailGrid() {
+  resetDetailState();
+  resetDetailPage();
+  await detailGridApi.reload();
+}
+
 async function loadTools() {
   if (!projectId.value) return;
 
@@ -230,7 +371,7 @@ async function loadTools() {
     ALL_SCAN_TOOLS.map((tool) => [tool, null]),
   );
 
-  const params: Record<string, any> = {
+  const params: ProjectOverviewQueryParams = {
     page: 1,
     pageSize: 1,
     project_id: projectId.value,
@@ -294,20 +435,59 @@ async function refreshCurrentView() {
   summaryGridApi.reload();
 }
 
-function handleTabChange() {
-  selectedResults.value = [];
-  resetDetailPage();
-  detailGridApi.reload();
+function handleSummarySortChange(data: {
+  order: TableSortOrder;
+  prop?: string;
+}) {
+  summarySortState.value = {
+    prop: String(data.prop || ''),
+    order: data.order ?? null,
+  };
+  summaryGridApi.reload();
 }
 
-async function handleStatusHeaderFilterChange(filters: Record<string, any[]>) {
-  shieldStatusFilter.value = extractSingleFilterValue(
-    filters,
-    'shield_status',
-  ) as '' | ShieldStatus;
-  selectedResults.value = [];
-  resetDetailPage();
-  await detailGridApi.reload();
+function handleTabChange() {
+  void reloadDetailGrid();
+}
+
+function handleKeywordFilterShow(columnKey: DetailKeywordColumnKey) {
+  detailKeywordDrafts.value = {
+    ...detailKeywordDrafts.value,
+    [columnKey]: detailKeywordFilters.value[columnKey],
+  };
+}
+
+function resetKeywordFilterDraft(columnKey: DetailKeywordColumnKey) {
+  detailKeywordDrafts.value = {
+    ...detailKeywordDrafts.value,
+    [columnKey]: '',
+  };
+}
+
+async function confirmKeywordFilter(columnKey: DetailKeywordColumnKey) {
+  detailKeywordFilters.value = {
+    ...detailKeywordFilters.value,
+    [columnKey]: detailKeywordDrafts.value[columnKey].trim(),
+  };
+  detailKeywordVisible.value = {
+    ...detailKeywordVisible.value,
+    [columnKey]: false,
+  };
+  await reloadDetailGrid();
+}
+
+function handleShieldStatusFilterShow() {
+  shieldStatusDraft.value = shieldStatusFilter.value;
+}
+
+function resetShieldStatusDraft() {
+  shieldStatusDraft.value = '';
+}
+
+async function confirmShieldStatusFilter() {
+  shieldStatusFilter.value = shieldStatusDraft.value;
+  shieldStatusVisible.value = false;
+  await reloadDetailGrid();
 }
 
 function openProject(row: ProjectOverviewTableRow) {
@@ -315,6 +495,8 @@ function openProject(row: ProjectOverviewTableRow) {
 }
 
 function backToSummary() {
+  resetDetailFilters();
+  resetDetailState();
   router.push({ path: route.path, query: {} });
 }
 
@@ -424,7 +606,7 @@ watch(
     const newProjectId = String(newValues[0] || '');
     const oldProjectId = String(oldValues?.[0] || '');
     if (newProjectId !== oldProjectId) {
-      shieldStatusFilter.value = '';
+      resetDetailFilters();
       resetDetailState();
     }
     await refreshCurrentView();
@@ -448,7 +630,11 @@ watch(
     </template>
 
     <div class="flex h-full min-h-0 flex-col">
-      <SummaryGrid v-if="!isDetail" class="h-full">
+      <SummaryGrid
+        v-if="!isDetail"
+        class="code-scan-data-grid h-full"
+        @sort-change="handleSummarySortChange"
+      >
         <template #cell-project_name="{ row }">
           <ElButton link type="primary" @click="openProject(row)">
             {{ row.project_name }}
@@ -482,10 +668,135 @@ watch(
           <div class="min-h-0 flex-1 overflow-hidden">
             <DetailGrid
               :key="projectId || 'detail-grid'"
-              class="h-full"
-              @filter-change="handleStatusHeaderFilterChange"
+              class="code-scan-data-grid h-full"
               @selection-change="handleResultSelectionChange"
             >
+              <template
+                v-for="config in DETAIL_KEYWORD_FILTER_CONFIGS"
+                :key="`header-${config.columnKey}`"
+                #[`header-${config.columnKey}`]
+              >
+                <div class="code-scan-header-filter" @click.stop>
+                  <span class="code-scan-header-filter__label">
+                    {{ config.label }}
+                  </span>
+                  <ElPopover
+                    v-model:visible="detailKeywordVisible[config.columnKey]"
+                    placement="bottom-start"
+                    trigger="click"
+                    :width="config.width"
+                    popper-class="code-scan-header-filter-popper"
+                    @show="handleKeywordFilterShow(config.columnKey)"
+                  >
+                    <template #reference>
+                      <button
+                        type="button"
+                        class="code-scan-header-filter-trigger"
+                        :class="{
+                          'is-active': Boolean(
+                            detailKeywordFilters[config.columnKey].trim(),
+                          ),
+                        }"
+                      >
+                        <Filter class="code-scan-header-filter-trigger__icon" />
+                        <span class="code-scan-header-filter-trigger__text">
+                          {{
+                            buildKeywordFilterButtonText(
+                              detailKeywordFilters[config.columnKey],
+                            )
+                          }}
+                        </span>
+                      </button>
+                    </template>
+                    <div class="code-scan-header-filter-panel" @click.stop>
+                      <div class="code-scan-header-filter-panel__body">
+                        <ElInput
+                          v-model="detailKeywordDrafts[config.columnKey]"
+                          size="small"
+                          clearable
+                          class="code-scan-header-filter-panel__search"
+                          :placeholder="config.placeholder"
+                        />
+                      </div>
+                      <div class="code-scan-header-filter-panel__actions">
+                        <ElButton
+                          size="small"
+                          @click="resetKeywordFilterDraft(config.columnKey)"
+                        >
+                          重置
+                        </ElButton>
+                        <ElButton
+                          type="primary"
+                          size="small"
+                          @click="confirmKeywordFilter(config.columnKey)"
+                        >
+                          确认
+                        </ElButton>
+                      </div>
+                    </div>
+                  </ElPopover>
+                </div>
+              </template>
+
+              <template #header-shield_status>
+                <div class="code-scan-header-filter" @click.stop>
+                  <span class="code-scan-header-filter__label">状态</span>
+                  <ElPopover
+                    v-model:visible="shieldStatusVisible"
+                    placement="bottom-start"
+                    trigger="click"
+                    :width="220"
+                    popper-class="code-scan-header-filter-popper"
+                    @show="handleShieldStatusFilterShow"
+                  >
+                    <template #reference>
+                      <button
+                        type="button"
+                        class="code-scan-header-filter-trigger"
+                        :class="{ 'is-active': Boolean(shieldStatusFilter) }"
+                      >
+                        <Filter class="code-scan-header-filter-trigger__icon" />
+                        <span class="code-scan-header-filter-trigger__text">
+                          {{
+                            buildShieldStatusFilterButtonText(
+                              shieldStatusFilter,
+                            )
+                          }}
+                        </span>
+                      </button>
+                    </template>
+                    <div class="code-scan-header-filter-panel" @click.stop>
+                      <div class="code-scan-header-filter-panel__body">
+                        <ElRadioGroup
+                          v-model="shieldStatusDraft"
+                          class="code-scan-header-filter-radio-group"
+                        >
+                          <ElRadio
+                            v-for="status in SHIELD_STATUS_OPTIONS"
+                            :key="status"
+                            :value="status"
+                          >
+                            {{ status }}
+                          </ElRadio>
+                        </ElRadioGroup>
+                      </div>
+                      <div class="code-scan-header-filter-panel__actions">
+                        <ElButton size="small" @click="resetShieldStatusDraft">
+                          重置
+                        </ElButton>
+                        <ElButton
+                          type="primary"
+                          size="small"
+                          @click="confirmShieldStatusFilter"
+                        >
+                          确认
+                        </ElButton>
+                      </div>
+                    </div>
+                  </ElPopover>
+                </div>
+              </template>
+
               <template #expand_content="{ row }">
                 <div class="bg-gray-50 p-4">
                   <ElTabs
@@ -617,3 +928,107 @@ watch(
     </ElDialog>
   </Page>
 </template>
+
+<style scoped>
+.code-scan-header-filter {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.code-scan-header-filter__label {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #475569;
+  white-space: nowrap;
+}
+
+.code-scan-header-filter-trigger {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 1;
+  color: #606266;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  transition:
+    color 0.2s ease,
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.code-scan-header-filter-trigger:hover {
+  border-color: #c0c4cc;
+}
+
+.code-scan-header-filter-trigger.is-active {
+  color: #409eff;
+  background: #ecf5ff;
+  border-color: #a0cfff;
+}
+
+.code-scan-header-filter-trigger__icon {
+  width: 12px;
+  height: 12px;
+}
+
+.code-scan-header-filter-trigger__text {
+  white-space: nowrap;
+}
+
+.code-scan-header-filter-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.code-scan-header-filter-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 260px;
+  padding-right: 4px;
+  overflow: auto;
+}
+
+.code-scan-header-filter-panel__search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-bottom: 2px;
+  background: #fff;
+}
+
+.code-scan-header-filter-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.code-scan-header-filter-panel__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 10px;
+  border-top: 1px solid #ebeef5;
+}
+
+.code-scan-data-grid :deep(.zq-table-header th.el-table__cell) {
+  vertical-align: middle;
+}
+
+:deep(.code-scan-header-filter-popper.el-popper) {
+  padding: 10px 12px;
+}
+
+:deep(.code-scan-header-filter-radio-group .el-radio) {
+  margin-right: 0;
+}
+</style>

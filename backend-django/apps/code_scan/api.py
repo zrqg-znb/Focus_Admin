@@ -24,6 +24,12 @@ SHIELD_STATUS_ALIASES = {
     "shielded": "Shielded",
     "rejected": "Rejected",
 }
+SORT_ORDER_ALIASES = {
+    "asc": "asc",
+    "ascending": "asc",
+    "desc": "desc",
+    "descending": "desc",
+}
 
 
 def _normalize_sub_modules(raw_value: str | List[str] | None) -> list[str]:
@@ -57,6 +63,17 @@ def _normalize_shield_status(raw_value: str | None) -> str | None:
     if not normalized:
         return None
     return SHIELD_STATUS_ALIASES.get(normalized)
+
+
+def _normalize_sort_order(raw_value: str | None) -> str | None:
+    normalized = str(raw_value or "").strip().lower()
+    if not normalized:
+        return None
+    return SORT_ORDER_ALIASES.get(normalized)
+
+
+def _normalize_keyword(raw_value: str | None) -> str:
+    return str(raw_value or "").strip()
 
 
 def _select_latest_task_rows(
@@ -146,6 +163,58 @@ def _select_latest_task_ids(
     )
     return [str(row["id"]) for row in _select_latest_task_rows(task_rows, tool_name, sub_modules)]
 
+
+def _get_project_overview_sort_value(item: dict, sort_field: str) -> int | str | None:
+    normalized_field = str(sort_field or "").strip()
+    if not normalized_field:
+        return None
+
+    if normalized_field == "project_name":
+        return str(item.get("project_name") or "").lower()
+    if normalized_field == "total":
+        value = item.get("total")
+        return None if value is None else int(value)
+    if normalized_field == "latest_time":
+        value = item.get("latest_time")
+        return str(value) if value else None
+
+    tool_counts = item.get("tool_counts") or {}
+    if not isinstance(tool_counts, dict) or normalized_field not in tool_counts:
+        return None
+    return int(tool_counts.get(normalized_field) or 0)
+
+
+def _sort_project_overview_items(
+    items: list[dict],
+    sort_field: str | None = None,
+    sort_order: str | None = None,
+) -> list[dict]:
+    normalized_field = str(sort_field or "").strip()
+    normalized_order = _normalize_sort_order(sort_order)
+    if not normalized_field or not normalized_order or not items:
+        return items
+
+    present_items: list[tuple[int | str, dict]] = []
+    missing_items: list[dict] = []
+    for item in items:
+        sort_value = _get_project_overview_sort_value(item, normalized_field)
+        if sort_value is None:
+            missing_items.append(item)
+            continue
+        present_items.append((sort_value, item))
+
+    if not present_items:
+        return items
+
+    present_items.sort(
+        key=lambda entry: (
+            entry[0],
+            str(entry[1].get("project_name") or "").lower(),
+        ),
+        reverse=(normalized_order == "desc"),
+    )
+    return [item for _, item in present_items] + missing_items
+
 # --- 项目管理 ---
 
 @router.get("/projects", response=PaginatedScanProjectSchema, auth=BearerAuth(), summary="获取项目列表")
@@ -168,20 +237,25 @@ def list_project_overview(
     pageSize: int = 20,
     project_id: str = None,
     sub_modules: str = None,
+    sort_field: str = None,
+    sort_order: str = None,
 ):
     projects_qs = ScanProject.objects.filter(is_deleted=False)
     if project_id:
         projects_qs = projects_qs.filter(id=project_id)
     projects_qs = projects_qs.values("id", "name")
-    
+
     total = projects_qs.count()
-    start = (page - 1) * pageSize
-    end = start + pageSize
-    projects = list(projects_qs[start:end])
+    projects = list(projects_qs)
     project_ids = [p["id"] for p in projects]
 
     task_rows = list(
-        ScanTask.objects.filter(project_id__in=project_ids, is_deleted=False, status="success")
+        ScanTask.objects.filter(
+            project_id__in=project_ids,
+            is_deleted=False,
+            project__is_deleted=False,
+            status="success",
+        )
         .order_by("-sys_create_datetime")
         .values("id", "project_id", "tool_name", "sub_module", "sys_create_datetime")
     )
@@ -218,7 +292,12 @@ def list_project_overview(
         from django.db.models import Count
 
         qs = (
-            ScanResult.objects.filter(task_id__in=latest_task_ids, is_deleted=False)
+            ScanResult.objects.filter(
+                task_id__in=latest_task_ids,
+                is_deleted=False,
+                task__is_deleted=False,
+                task__project__is_deleted=False,
+            )
             .values("task_id")
             .annotate(cnt=Count("id"))
         )
@@ -254,6 +333,10 @@ def list_project_overview(
         }
         for p in projects
     ]
+    items = _sort_project_overview_items(items, sort_field, sort_order)
+    start = (page - 1) * pageSize
+    end = start + pageSize
+    items = items[start:end]
     return {"items": items, "total": total}
 
 @router.post("/projects", response=ScanProjectSchema, auth=BearerAuth(), summary="创建项目")
@@ -391,6 +474,10 @@ def list_latest_results(
     tool_name: str = None,
     shield_status: str = None,
     sub_modules: str = None,
+    severity_keyword: str = None,
+    defect_type_keyword: str = None,
+    file_path_keyword: str = None,
+    description_keyword: str = None,
     page: int = 1,
     pageSize: int = 20,
 ):
@@ -432,7 +519,17 @@ def list_latest_results(
     )
     if normalized_shield_status:
         results_qs = results_qs.filter(shield_status=normalized_shield_status)
-    
+
+    keyword_filters = {
+        "severity__icontains": _normalize_keyword(severity_keyword),
+        "defect_type__icontains": _normalize_keyword(defect_type_keyword),
+        "file_path__icontains": _normalize_keyword(file_path_keyword),
+        "description__icontains": _normalize_keyword(description_keyword),
+    }
+    for lookup, value in keyword_filters.items():
+        if value:
+            results_qs = results_qs.filter(**{lookup: value})
+
     total = results_qs.count()
     start = (page - 1) * pageSize
     end = start + pageSize

@@ -51,6 +51,8 @@ export interface ProjectOverviewQueryParams {
   pageSize?: number;
   project_id?: string;
   sub_modules?: string;
+  sort_field?: string;
+  sort_order?: 'asc' | 'desc';
 }
 
 export interface ProjectOverviewItem {
@@ -192,8 +194,12 @@ export const listResultsApi = (taskId: string) => {
 };
 
 export interface LatestResultsQueryParams {
+  defect_type_keyword?: string;
+  description_keyword?: string;
+  file_path_keyword?: string;
   page?: number;
   pageSize?: number;
+  severity_keyword?: string;
   shield_status?: ShieldStatus;
   sub_modules?: string;
   tool_name?: string;

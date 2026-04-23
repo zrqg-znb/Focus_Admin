@@ -50,12 +50,14 @@ export function useSummaryColumns(
       title: '项目',
       minWidth: 240,
       fixed: true,
+      sortable: 'custom',
     },
     {
       key: 'total',
       dataKey: 'total',
       title: '总问题数',
       width: 100,
+      sortable: 'custom',
       formatter: (row: ProjectOverviewTableRow) => formatCount(row.total),
     },
     ...toolNames.map((name) => ({
@@ -63,6 +65,7 @@ export function useSummaryColumns(
       dataKey: name,
       title: name,
       width: 120,
+      sortable: 'custom',
       formatter: (row: ProjectOverviewTableRow) =>
         formatCount(row[name] as null | number | undefined),
     })),
@@ -71,6 +74,7 @@ export function useSummaryColumns(
       dataKey: 'latest_time',
       title: '最新扫描时间',
       width: 180,
+      sortable: 'custom',
     },
   ]) as ZqTableGridOptions<ProjectOverviewTableRow>['columns'];
 }
@@ -135,12 +139,6 @@ export function useDetailColumns(): ZqTableGridOptions<LatestScanResultItem>['co
       key: 'shield_status',
       dataKey: 'shield_status',
       title: '状态',
-      columnKey: 'shield_status',
-      filterMultiple: false,
-      filters: SHIELD_STATUS_OPTIONS.map((status) => ({
-        text: status,
-        value: status,
-      })),
       width: 120,
     },
   ]) as ZqTableGridOptions<LatestScanResultItem>['columns'];
