@@ -17,12 +17,52 @@ pymysql.install_as_MySQLdb()
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(str(os.environ.get(name, default)).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(str(os.environ.get(name, default)).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_str(name: str, default: str = "") -> str:
+    value = os.environ.get(name, default)
+    return str(value or "").strip()
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() not in {'0', 'false', 'no'}
+
+
+def _env_list(name: str, default: list[str] | None = None) -> list[str]:
+    value = os.environ.get(name)
+    if value is None:
+        return list(default or [])
+
+    items = [
+        item.strip()
+        for item in str(value).replace('\n', ',').split(',')
+        if item.strip()
+    ]
+    return items or list(default or [])
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+CURRENT_ENV = _env_str('ZQ_ENV', str(globals().get('ENV', 'dev'))).lower() or 'dev'
+DEBUG = _env_bool('DEBUG', CURRENT_ENV != 'prd')
 
 # 从环境变量读取，如果没有则使用默认值，但生产环境必须设置
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-y(df$uwnha$0nrkmh5g(ri^=^#3qru3bf8$pw+t6e_wb*op7gj')
@@ -31,7 +71,11 @@ SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-y(df$uwnha$0nr
 if SECRET_KEY == 'django-insecure-y(df$uwnha$0nrkmh5g(ri^=^#3qru3bf8$pw+t6e_wb*op7gj' and not DEBUG:
     raise ValueError("DJANGO_SECRET_KEY must be set in production environment")
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = _env_list(
+    'ALLOWED_HOSTS',
+    ['*'] if DEBUG else ['127.0.0.1', 'localhost', '[::1]'],
+)
+CSRF_TRUSTED_ORIGINS = _env_list('CSRF_TRUSTED_ORIGINS', [])
 
 # Application definition
 
