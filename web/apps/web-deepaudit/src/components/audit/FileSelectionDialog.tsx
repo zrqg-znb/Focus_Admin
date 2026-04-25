@@ -48,6 +48,7 @@ interface FileSelectionDialogProps {
   excludePatterns?: string[];
   onConfirm: (payload: {
     repositorySpec: ProjectRepositorySpec;
+    repositorySignature?: string;
     selectedFiles: string[];
     selectedSummary: {
       directoryCount: number;
@@ -154,6 +155,7 @@ export default function FileSelectionDialog({
   const [total, setTotal] = useState(0);
   const [lastSyncedAt, setLastSyncedAt] = useState<null | number>(null);
   const [sessionSpec, setSessionSpec] = useState<ProjectRepositorySpec>();
+  const [sessionSignature, setSessionSignature] = useState('');
   const requestIdRef = useRef(0);
   const debouncedSearch = useDebounce(searchInput.trim(), 300);
 
@@ -170,6 +172,7 @@ export default function FileSelectionDialog({
       setTotal(0);
       setLastSyncedAt(null);
       setSessionSpec(undefined);
+      setSessionSignature('');
     }
   }, [open]);
 
@@ -218,6 +221,16 @@ export default function FileSelectionDialog({
       setTotal(data.total);
       setLastSyncedAt(data.last_synced_at ?? null);
       setSessionSpec(data.repository_spec);
+      if (
+        sessionSignature &&
+        data.repository_signature &&
+        sessionSignature !== data.repository_signature &&
+        Object.keys(selectedEntries).length > 0
+      ) {
+        setSelectedEntries({});
+        toast.warning('仓库规格已变化，请重新选择文件/目录');
+      }
+      setSessionSignature(data.repository_signature || '');
     } catch (error) {
       if (requestId !== requestIdRef.current) {
         return;
@@ -364,6 +377,7 @@ export default function FileSelectionDialog({
     onConfirm({
       selectedFiles: [...selectedPaths].sort((a, b) => a.localeCompare(b)),
       selectedSummary,
+      repositorySignature: sessionSignature || undefined,
       repositorySpec:
         sessionSpec ||
         buildFallbackRepositorySpec({

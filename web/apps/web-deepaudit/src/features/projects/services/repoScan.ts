@@ -10,6 +10,7 @@ export async function runRepositoryAudit(params: {
   manifestXml?: string;
   projectId: string;
   promptTemplateId?: string;
+  repositorySignature?: string;
   repositoryType?: string;
   repoUrl: string;
   ruleSetId?: string;
@@ -27,6 +28,7 @@ export async function runRepositoryAudit(params: {
     task_type: 'repository',
     repository_url: params.repoUrl,
     repository_type: params.repositoryType as any,
+    repository_signature: params.repositorySignature,
     branch_name: params.branch || 'main',
     manifest_xml: params.manifestXml,
     group: params.group,

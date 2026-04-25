@@ -129,6 +129,8 @@ export default function CreateAgentTaskDialog({
     useState<SelectedScopeSummary>();
   const [selectedRepositorySpec, setSelectedRepositorySpec] =
     useState<SelectedRepositorySpec>();
+  const [selectedRepositorySignature, setSelectedRepositorySignature] =
+    useState<string>();
   const [showFileSelection, setShowFileSelection] = useState(false);
   const selectionContextRef = useRef('');
 
@@ -161,6 +163,7 @@ export default function CreateAgentTaskDialog({
       setSelectedFiles(undefined);
       setSelectedScopeSummary(undefined);
       setSelectedRepositorySpec(undefined);
+      setSelectedRepositorySignature(undefined);
     }
   }, [open]);
 
@@ -213,6 +216,7 @@ export default function CreateAgentTaskDialog({
     const nextSelectionContext = [
       selectedProjectId,
       selectedProject?.repository_type || '',
+      selectedProject?.repository_url || '',
       branch,
       manifestXml,
       group,
@@ -226,6 +230,7 @@ export default function CreateAgentTaskDialog({
       setSelectedFiles(undefined);
       setSelectedScopeSummary(undefined);
       setSelectedRepositorySpec(undefined);
+      setSelectedRepositorySignature(undefined);
       toast.info('仓库规格或排除规则已更改，请重新选择文件/目录');
     }
     selectionContextRef.current = nextSelectionContext;
@@ -235,6 +240,7 @@ export default function CreateAgentTaskDialog({
     group,
     manifestXml,
     selectedFiles,
+    selectedProject?.repository_url,
     selectedProject?.repository_type,
     selectedProjectId,
   ]);
@@ -336,6 +342,7 @@ export default function CreateAgentTaskDialog({
         name: `Agent审计-${selectedProject.name}`,
         repository_url: effectiveRepositorySpec?.repository_url,
         repository_type: effectiveRepositorySpec?.repository_type as any,
+        repository_signature: selectedRepositorySignature,
         branch_name: effectiveRepositorySpec?.branch_name,
         manifest_xml: effectiveRepositorySpec?.manifest_xml,
         group: effectiveRepositorySpec?.group,
@@ -642,11 +649,12 @@ export default function CreateAgentTaskDialog({
                           {selectedFiles && canSelectFiles && (
                             <Button
                               className="h-8 text-xs text-rose-400 hover:bg-rose-900/30 hover:text-rose-300"
-                              onClick={() => {
-                                setSelectedFiles(undefined);
-                                setSelectedScopeSummary(undefined);
-                                setSelectedRepositorySpec(undefined);
-                              }}
+                                onClick={() => {
+                                  setSelectedFiles(undefined);
+                                  setSelectedScopeSummary(undefined);
+                                  setSelectedRepositorySpec(undefined);
+                                  setSelectedRepositorySignature(undefined);
+                                }}
                               size="sm"
                               variant="ghost"
                             >
@@ -757,12 +765,14 @@ export default function CreateAgentTaskDialog({
         manifestXml={manifestXml}
         onConfirm={({
           repositorySpec,
+          repositorySignature,
           selectedFiles: files,
           selectedSummary,
         }) => {
           setSelectedFiles(files);
           setSelectedScopeSummary(selectedSummary);
           setSelectedRepositorySpec(repositorySpec);
+          setSelectedRepositorySignature(repositorySignature);
         }}
         onOpenChange={setShowFileSelection}
         open={showFileSelection}

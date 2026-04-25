@@ -89,6 +89,7 @@ class ProjectFileBrowserResponseSchema(Schema):
     keyword: str = ''
     last_synced_at: int | None = None
     repository_spec: ProjectRepositorySpecSchema = Field(default_factory=ProjectRepositorySpecSchema)
+    repository_signature: str = ''
 
 
 class ProjectMemberSchema(UserBriefSchema):

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from django.test import TestCase
 from django.utils import timezone
+from ninja.errors import HttpError
 
 from apps.deepaudit.agent_task.agent_task_model import AgentCheckpoint, AgentEvent, AgentFinding, AgentTask
 from apps.deepaudit.agent_task.agent_task_services import (
@@ -33,6 +34,7 @@ from apps.deepaudit.constants import (
     AGENT_PHASE_VERIFICATION,
 )
 from apps.deepaudit.project.project_model import AuditProject
+from apps.deepaudit.repo_specs import repository_spec_signature
 from core.user.user_model import User
 
 
@@ -104,6 +106,18 @@ class AgentTaskServicesTestCase(TestCase):
         self.assertEqual(task.branch_name, 'main')
         self.assertEqual(task.manifest_xml, 'default.xml')
         self.assertEqual(task.group, 'platform')
+        self.assertEqual(
+            task.agent_config.get('repository_signature'),
+            repository_spec_signature(
+                {
+                    'repository_type': 'multi',
+                    'repository_url': 'https://codehub.example.com/platform/manifest.git',
+                    'branch_name': 'main',
+                    'manifest_xml': 'default.xml',
+                    'group': 'platform',
+                }
+            ),
+        )
 
     def test_create_task_ignores_mismatched_requested_repository_type(self) -> None:
         access = SimpleNamespace(project=self.project, role='owner')
@@ -128,20 +142,57 @@ class AgentTaskServicesTestCase(TestCase):
         self.assertEqual(warning_event.event_metadata.get('requested_repository_type'), 'single')
         self.assertEqual(warning_event.event_metadata.get('project_repository_type'), 'multi')
 
-    def test_execute_agent_task_uses_snapshotted_repository_spec_after_project_changes(self) -> None:
-        self.task.branch_name = 'release/main'
-        self.task.save(update_fields=['branch_name', 'sys_update_datetime'])
+    def test_create_task_rejects_stale_repository_signature_for_selected_files(self) -> None:
+        access = SimpleNamespace(project=self.project, role='owner')
 
-        self.project.repository_url = 'https://codehub.example.com/platform/single.git'
-        self.project.repository_type = 'single'
-        self.project.default_branch = 'develop'
-        self.project.manifest_xml = None
-        self.project.group = None
+        with (
+            patch('apps.deepaudit.agent_task.agent_task_services.require_project_role', return_value=access),
+            self.assertRaises(HttpError) as raised,
+        ):
+            create_task(
+                self.user,
+                {
+                    'project_id': str(self.project.id),
+                    'name': 'Stale Agent Task',
+                    'target_files': ['src/module'],
+                    'repository_signature': 'stale-signature',
+                },
+            )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertIn('仓库规格已变化', str(raised.exception))
+
+    def test_execute_agent_task_rebinds_pending_snapshot_after_project_changes(self) -> None:
+        self.task.status = 'pending'
+        self.task.branch_name = 'release/main'
+        self.task.agent_config = {
+            'repository_signature': repository_spec_signature(
+                {
+                    'repository_type': 'multi',
+                    'repository_url': 'https://codehub.example.com/platform/manifest.git',
+                    'branch_name': 'release/main',
+                    'manifest_xml': 'default.xml',
+                    'group': 'platform',
+                }
+            ),
+            'project_repository_signature': repository_spec_signature(
+                {
+                    'repository_type': 'multi',
+                    'repository_url': 'https://codehub.example.com/platform/manifest.git',
+                    'branch_name': 'main',
+                    'manifest_xml': 'default.xml',
+                    'group': 'platform',
+                }
+            ),
+        }
+        self.task.save(update_fields=['status', 'branch_name', 'agent_config', 'sys_update_datetime'])
+
+        self.project.default_branch = 'release/hotfix'
+        self.project.manifest_xml = 'hotfix.xml'
+        self.project.group = 'vehicle-a'
         self.project.sys_modifier = self.user
         self.project.save(
             update_fields=[
-                'repository_url',
-                'repository_type',
                 'default_branch',
                 'manifest_xml',
                 'group',
@@ -165,13 +216,17 @@ class AgentTaskServicesTestCase(TestCase):
         repository_spec = mock_prepare.call_args.kwargs['repository_spec']
         self.assertEqual(repository_spec['repository_type'], 'multi')
         self.assertEqual(repository_spec['repository_url'], 'https://codehub.example.com/platform/manifest.git')
-        self.assertEqual(repository_spec['branch_name'], 'release/main')
-        self.assertEqual(repository_spec['manifest_xml'], 'default.xml')
-        self.assertEqual(repository_spec['group'], 'platform')
+        self.assertEqual(repository_spec['branch_name'], 'release/hotfix')
+        self.assertEqual(repository_spec['manifest_xml'], 'hotfix.xml')
+        self.assertEqual(repository_spec['group'], 'vehicle-a')
         self.assertTrue(mock_prepare.call_args.kwargs['force_multi_sync'])
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.branch_name, 'release/hotfix')
+        self.assertEqual(self.task.manifest_xml, 'hotfix.xml')
+        self.assertEqual(self.task.group, 'vehicle-a')
         event_messages = list(self.task.events.filter(is_deleted=False).values_list('message', flat=True))
+        self.assertIn('检测到项目仓库规格变化，已切换到最新配置执行', event_messages)
         self.assertIn('开始按任务快照准备仓库工作区', event_messages)
-        self.assertIn('任务执行将使用创建时快照的仓库规格，而不是项目当前配置', event_messages)
 
     def test_execute_agent_task_persists_repository_init_events(self) -> None:
         def fake_prepare_repository_workspace(*_args, **kwargs):

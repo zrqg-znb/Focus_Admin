@@ -32,6 +32,7 @@ class AuditIssueUpdateSchema(Schema):
 
 class AuditTaskCreateSchema(Schema):
     project_id: str
+    repository_signature: str | None = None
     repository_url: str | None = None
     repository_type: str | None = None
     branch_name: str | None = None
@@ -57,6 +58,7 @@ class AuditTaskSchema(Schema):
     status: str
     repository_url: str | None = None
     repository_type: str = 'single'
+    repository_signature: str | None = None
     branch_name: str | None = None
     manifest_xml: str | None = None
     group: str | None = None

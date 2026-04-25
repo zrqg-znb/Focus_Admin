@@ -127,7 +127,19 @@ export interface ProjectFileBrowserResponse {
   offset: number;
   path: string;
   repository_spec: ProjectRepositorySpec;
+  repository_signature: string;
   total: number;
+}
+
+function isExistingAuditTaskLike(task: Record<string, unknown>) {
+  return Boolean(
+    task.id ||
+      task.status ||
+      task.created_at ||
+      task.completed_at ||
+      task.scanned_files ||
+      task.issues_count,
+  );
 }
 
 export const api = {
@@ -289,6 +301,7 @@ export const api = {
           manifest_xml: repositorySpec.manifest_xml || '',
           group: repositorySpec.group || '',
         },
+        repository_signature: String(raw.repository_signature || ''),
       };
     } catch (error) {
       throw new Error(getApiErrorMessage(error, '加载文件浏览数据失败'));
@@ -450,15 +463,27 @@ export const api = {
     const project = await this.getProjectById(task.project_id);
     const endpoint =
       project?.source_type === 'zip' ? '/scan/zip' : '/scan/repository';
-    const branchName = task.branch_name || project?.default_branch || 'main';
-    const manifestXml = task.manifest_xml || project?.manifest_xml || '';
-    const group = task.group || project?.group || '';
+    const inheritedTaskInput = isExistingAuditTaskLike(
+      task as unknown as Record<string, unknown>,
+    );
+    const explicitBranchName = inheritedTaskInput ? undefined : task.branch_name;
+    const explicitManifestXml = inheritedTaskInput ? undefined : task.manifest_xml;
+    const explicitGroup = inheritedTaskInput ? undefined : task.group;
+    const explicitRepositoryType = inheritedTaskInput ? undefined : task.repository_type;
+    const explicitRepositoryUrl = inheritedTaskInput ? undefined : task.repository_url;
+    const explicitRepositorySignature = inheritedTaskInput
+      ? undefined
+      : task.repository_signature;
+    const branchName = explicitBranchName || project?.default_branch || 'main';
+    const manifestXml = explicitManifestXml || project?.manifest_xml || '';
+    const group = explicitGroup || project?.group || '';
     const payload = {
       project_id: task.project_id,
-      repository_url: task.repository_url || project?.repository_url || '',
-      repository_type: task.repository_type
-        ? normalizeRepositoryType(task.repository_type)
+      repository_url: explicitRepositoryUrl || project?.repository_url || '',
+      repository_type: explicitRepositoryType
+        ? normalizeRepositoryType(explicitRepositoryType)
         : undefined,
+      repository_signature: explicitRepositorySignature || undefined,
       branch_name: branchName,
       manifest_xml: manifestXml,
       group,

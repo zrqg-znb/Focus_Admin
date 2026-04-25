@@ -13,7 +13,7 @@ from apps.deepaudit import git_service
 from apps.deepaudit import runtime
 from apps.deepaudit import storage as deepaudit_storage
 from apps.deepaudit.project import project_services
-from apps.deepaudit.repo_specs import build_repository_spec
+from apps.deepaudit.repo_specs import build_repository_spec, repository_spec_signature
 
 
 def _storage_patch(temp_root: Path):
@@ -290,6 +290,18 @@ class ProjectRepositoryFileListingTestCase(RuntimeRepositoryWorkspaceTestCase):
         self.assertEqual(payload['items'][1]['kind'], 'file')
         self.assertEqual(payload['items'][1]['path'], 'README.md')
         self.assertEqual(payload['repository_spec']['repository_type'], 'multi')
+        self.assertEqual(
+            payload['repository_signature'],
+            repository_spec_signature(
+                build_repository_spec(
+                    'https://example.com/repo.git',
+                    'main',
+                    repository_type='multi',
+                    manifest_xml='default.xml',
+                    group='platform',
+                )
+            ),
+        )
         self.assertEqual(payload['last_synced_at'], 1234567890)
 
 

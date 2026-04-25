@@ -28,7 +28,12 @@ from apps.deepaudit.permissions import (
 )
 from apps.deepaudit.agent_task.agent_task_model import AgentFinding, AgentTask
 from apps.deepaudit.project.project_model import AuditProject, AuditProjectMember
-from apps.deepaudit.repo_specs import build_effective_project_repository_spec, build_repository_spec, normalize_repository_type
+from apps.deepaudit.repo_specs import (
+    build_effective_project_repository_spec,
+    build_repository_spec,
+    normalize_repository_type,
+    repository_spec_signature,
+)
 from apps.deepaudit.runtime import (
     cleanup_runtime_workspace,
     load_ssh_private_key,
@@ -704,6 +709,7 @@ def browse_files(
                 'manifest_xml': repository_spec['manifest_xml'] or None,
                 'group': repository_spec['group'] or None,
             },
+            'repository_signature': repository_spec_signature(repository_spec),
         }
     finally:
         cleanup_runtime_workspace(workspace)

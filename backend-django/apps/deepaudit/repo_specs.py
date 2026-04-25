@@ -83,6 +83,24 @@ def build_effective_project_repository_spec(
     )
 
 
+def build_locked_project_repository_spec(
+    project,
+    *,
+    branch_name: Any = None,
+    manifest_xml: Any = None,
+    group: Any = None,
+) -> dict[str, str]:
+    current_project_spec = build_effective_project_repository_spec(project)
+    return build_effective_project_repository_spec(
+        project,
+        repository_url=current_project_spec['repository_url'],
+        repository_type=current_project_spec['repository_type'],
+        branch_name=branch_name,
+        manifest_xml=manifest_xml,
+        group=group,
+    )
+
+
 def build_task_repository_spec(task, *, fallback_project=None) -> dict[str, str]:
     project = fallback_project or getattr(task, 'project', None)
     if project is not None:
@@ -112,6 +130,7 @@ def format_repository_spec_for_log(spec: dict[str, Any]) -> str:
             f"branch={normalized.get('branch_name') or 'main'}",
             f"manifest_xml={normalized.get('manifest_xml') or '-'}",
             f"group={normalized.get('group') or '-'}",
+            f"repository_signature={repository_spec_signature(normalized)}",
         ]
     )
 
@@ -125,7 +144,7 @@ def validate_repository_spec_for_execution(spec: dict[str, Any]) -> dict[str, st
     return normalized
 
 
-def repository_spec_cache_key(spec: dict[str, Any]) -> str:
+def repository_spec_signature(spec: dict[str, Any]) -> str:
     payload = {
         'repository_type': normalize_repository_type(spec.get('repository_type')),
         'repository_url': normalize_repo_text(spec.get('repository_url')),
@@ -135,6 +154,10 @@ def repository_spec_cache_key(spec: dict[str, Any]) -> str:
     }
     serialized = json.dumps(payload, sort_keys=True, ensure_ascii=False)
     return hashlib.sha1(serialized.encode('utf-8')).hexdigest()[:16]
+
+
+def repository_spec_cache_key(spec: dict[str, Any]) -> str:
+    return repository_spec_signature(spec)
 
 
 def repository_spec_state(spec: dict[str, Any]) -> dict[str, str]:

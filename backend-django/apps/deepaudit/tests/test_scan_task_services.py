@@ -6,8 +6,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from django.test import SimpleTestCase, TestCase
+from ninja.errors import HttpError
 
 from apps.deepaudit.project.project_model import AuditProject
+from apps.deepaudit.repo_specs import repository_spec_signature
 from apps.deepaudit.scan_task.scan_task_model import AuditTask, InstantAnalysisRecord
 from apps.deepaudit.scan_task.scan_task_services import (
     _scan_files_with_concurrency,
@@ -120,8 +122,66 @@ class ScanTaskSnapshotTestCase(TestCase):
         self.assertEqual(task.branch_name, 'release/main')
         self.assertEqual(task.manifest_xml, 'default.xml')
         self.assertEqual(task.group, 'platform')
+        self.assertEqual(
+            task.scan_config.get('repository_signature'),
+            repository_spec_signature(
+                {
+                    'repository_type': 'multi',
+                    'repository_url': 'https://codehub.example.com/platform/manifest.git',
+                    'branch_name': 'release/main',
+                    'manifest_xml': 'default.xml',
+                    'group': 'platform',
+                }
+            ),
+        )
 
-    def test_execute_scan_task_uses_snapshotted_repository_spec_after_project_changes(self) -> None:
+    def test_create_task_ignores_mismatched_requested_repository_type(self) -> None:
+        access = SimpleNamespace(project=self.project, role='owner')
+
+        with (
+            patch('apps.deepaudit.scan_task.scan_task_services.require_project_role', return_value=access),
+            patch('apps.deepaudit.scan_task.scan_task_services.resolve_scan_profile', return_value={}),
+            patch('apps.deepaudit.scan_task.scan_task_services.serialize_scan_profile', return_value={}),
+            self.assertLogs('apps.deepaudit.scan_task.scan_task_services', level='WARNING') as captured,
+        ):
+            task = create_task(
+                self.user,
+                {
+                    'project_id': str(self.project.id),
+                    'repository_type': 'single',
+                },
+                task_type='repository',
+            )
+
+        self.assertEqual(task.repository_type, 'multi')
+        self.assertIn('repository_type mismatch', '\n'.join(captured.output))
+
+    def test_create_task_rejects_stale_repository_signature_for_selected_files(self) -> None:
+        access = SimpleNamespace(project=self.project, role='owner')
+
+        with (
+            patch('apps.deepaudit.scan_task.scan_task_services.require_project_role', return_value=access),
+            patch('apps.deepaudit.scan_task.scan_task_services.resolve_scan_profile', return_value={}),
+            patch('apps.deepaudit.scan_task.scan_task_services.serialize_scan_profile', return_value={}),
+            self.assertRaises(HttpError) as raised,
+        ):
+            create_task(
+                self.user,
+                {
+                    'project_id': str(self.project.id),
+                    'branch_name': 'release/main',
+                    'manifest_xml': 'default.xml',
+                    'group': 'platform',
+                    'file_paths': ['src/module'],
+                    'repository_signature': 'stale-signature',
+                },
+                task_type='repository',
+            )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertIn('仓库规格已变化', str(raised.exception))
+
+    def test_execute_scan_task_rebinds_pending_snapshot_after_project_changes(self) -> None:
         task = AuditTask.objects.create(
             project=self.project,
             created_by=self.user,
@@ -132,20 +192,35 @@ class ScanTaskSnapshotTestCase(TestCase):
             branch_name='release/main',
             manifest_xml='default.xml',
             group='platform',
-            scan_config={},
+            scan_config={
+                'repository_signature': repository_spec_signature(
+                    {
+                        'repository_type': 'multi',
+                        'repository_url': 'https://codehub.example.com/platform/manifest.git',
+                        'branch_name': 'release/main',
+                        'manifest_xml': 'default.xml',
+                        'group': 'platform',
+                    }
+                ),
+                'project_repository_signature': repository_spec_signature(
+                    {
+                        'repository_type': 'multi',
+                        'repository_url': 'https://codehub.example.com/platform/manifest.git',
+                        'branch_name': 'release/main',
+                        'manifest_xml': 'default.xml',
+                        'group': 'platform',
+                    }
+                ),
+            },
             sys_creator=self.user,
             sys_modifier=self.user,
         )
-        self.project.repository_url = 'https://codehub.example.com/platform/single.git'
-        self.project.repository_type = 'single'
-        self.project.default_branch = 'main'
-        self.project.manifest_xml = None
-        self.project.group = None
+        self.project.default_branch = 'release/hotfix'
+        self.project.manifest_xml = 'hotfix.xml'
+        self.project.group = 'vehicle-a'
         self.project.sys_modifier = self.user
         self.project.save(
             update_fields=[
-                'repository_url',
-                'repository_type',
                 'default_branch',
                 'manifest_xml',
                 'group',
@@ -184,10 +259,14 @@ class ScanTaskSnapshotTestCase(TestCase):
         repository_spec = mock_prepare.call_args.kwargs['repository_spec']
         self.assertEqual(repository_spec['repository_type'], 'multi')
         self.assertEqual(repository_spec['repository_url'], 'https://codehub.example.com/platform/manifest.git')
-        self.assertEqual(repository_spec['branch_name'], 'release/main')
-        self.assertEqual(repository_spec['manifest_xml'], 'default.xml')
-        self.assertEqual(repository_spec['group'], 'platform')
+        self.assertEqual(repository_spec['branch_name'], 'release/hotfix')
+        self.assertEqual(repository_spec['manifest_xml'], 'hotfix.xml')
+        self.assertEqual(repository_spec['group'], 'vehicle-a')
         self.assertTrue(mock_prepare.call_args.kwargs['force_multi_sync'])
+        task.refresh_from_db()
+        self.assertEqual(task.branch_name, 'release/hotfix')
+        self.assertEqual(task.manifest_xml, 'hotfix.xml')
+        self.assertEqual(task.group, 'vehicle-a')
 
     def test_execute_scan_task_fails_when_all_selected_paths_disappear(self) -> None:
         task = AuditTask.objects.create(

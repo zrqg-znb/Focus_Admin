@@ -54,6 +54,7 @@ export interface AgentTask {
   started_at: null | string;
   completed_at: null | string;
   repository_type?: 'multi' | 'single';
+  repository_signature?: string;
   repository_url?: null | string;
   branch_name?: null | string;
   manifest_xml?: null | string;
@@ -129,6 +130,7 @@ export interface CreateAgentTaskRequest {
   verification_level?: 'analysis_only' | 'generate_poc' | 'sandbox';
   repository_url?: string;
   repository_type?: 'multi' | 'single';
+  repository_signature?: string;
   branch_name?: string;
   manifest_xml?: string;
   group?: string;

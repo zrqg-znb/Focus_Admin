@@ -36,9 +36,11 @@ from apps.deepaudit.permissions import accessible_project_queryset, get_user_id,
 from apps.deepaudit.reporting import ReportBuilder
 from apps.deepaudit.repo_specs import (
     build_effective_project_repository_spec,
+    build_locked_project_repository_spec,
     build_task_repository_spec,
     format_repository_spec_for_log,
     normalize_repository_type,
+    repository_spec_signature,
     validate_repository_spec_for_execution,
 )
 from apps.deepaudit.runtime import cleanup_runtime_workspace, docker_available, list_project_files, prepare_repository_workspace
@@ -51,6 +53,7 @@ from apps.deepaudit.user_config import user_config_services
 
 
 ACTIVE_TASK_STATUSES = {'pending', 'running'}
+REPOSITORY_REBINDABLE_STATUSES = {'initializing', 'pending', 'queued'}
 VALID_ISSUE_STATUSES = {ISSUE_STATUS_OPEN, ISSUE_STATUS_RESOLVED, ISSUE_STATUS_FALSE_POSITIVE}
 C_FAMILY_EXTRA_ISSUE_FIELDS = [
     'root_cause',
@@ -77,6 +80,95 @@ def _selected_scope_empty_message() -> str:
 def _repository_runtime_metadata(user_payload: dict | None) -> dict[str, str]:
     metadata = dict((user_payload or {}).get('_repository_runtime') or {})
     return {key: str(value or '') for key, value in metadata.items()}
+
+
+def _selection_repository_signature_error() -> str:
+    return '仓库规格已变化，请重新选择文件/目录后再启动任务'
+
+
+def _validate_selection_repository_signature(
+    *,
+    selected_paths: list[str],
+    requested_signature: str,
+    effective_signature: str,
+) -> None:
+    if not selected_paths or not requested_signature:
+        return
+    if requested_signature == effective_signature:
+        return
+    raise HttpError(409, _selection_repository_signature_error())
+
+
+def _persist_repository_signature_metadata(
+    scan_config: dict,
+    *,
+    repository_signature: str,
+    project_repository_signature: str,
+) -> dict:
+    next_config = dict(scan_config or {})
+    next_config['repository_signature'] = repository_signature
+    next_config['project_repository_signature'] = project_repository_signature
+    return next_config
+
+
+def _refresh_pending_task_repository_snapshot(
+    task: AuditTask,
+    *,
+    allow_project_rebind: bool,
+) -> tuple[dict[str, str], bool]:
+    repository_spec = build_task_repository_spec(task)
+    if task.project.source_type != 'repository':
+        return repository_spec, False
+
+    project_repository_spec = build_effective_project_repository_spec(task.project)
+    repository_signature = repository_spec_signature(repository_spec)
+    project_repository_signature = repository_spec_signature(project_repository_spec)
+    scan_config = dict(task.scan_config or {})
+    stored_project_repository_signature = str(
+        scan_config.get('project_repository_signature') or ''
+    ).strip()
+    should_rebind = False
+    if allow_project_rebind:
+        if stored_project_repository_signature:
+            should_rebind = stored_project_repository_signature != project_repository_signature
+        else:
+            should_rebind = repository_signature != project_repository_signature
+
+    if should_rebind:
+        task.repository_url = project_repository_spec['repository_url'] or None
+        task.repository_type = project_repository_spec['repository_type']
+        task.branch_name = project_repository_spec['branch_name']
+        task.manifest_xml = project_repository_spec['manifest_xml'] or None
+        task.group = project_repository_spec['group'] or None
+        task.scan_config = _persist_repository_signature_metadata(
+            scan_config,
+            repository_signature=project_repository_signature,
+            project_repository_signature=project_repository_signature,
+        )
+        task.save(
+            update_fields=[
+                'repository_url',
+                'repository_type',
+                'branch_name',
+                'manifest_xml',
+                'group',
+                'scan_config',
+                'sys_update_datetime',
+            ]
+        )
+        return project_repository_spec, True
+
+    if (
+        scan_config.get('repository_signature') != repository_signature
+        or scan_config.get('project_repository_signature') != project_repository_signature
+    ):
+        task.scan_config = _persist_repository_signature_metadata(
+            scan_config,
+            repository_signature=repository_signature,
+            project_repository_signature=project_repository_signature,
+        )
+        task.save(update_fields=['scan_config', 'sys_update_datetime'])
+    return repository_spec, False
 
 
 def _assert_multi_workspace_source(
@@ -132,6 +224,10 @@ def serialize_task(task: AuditTask, include_issues: bool = False) -> dict:
         'status': task.status,
         'repository_url': task.repository_url,
         'repository_type': normalize_repository_type(task.repository_type),
+        'repository_signature': str(
+            scan_config.get('repository_signature')
+            or repository_spec_signature(build_task_repository_spec(task))
+        ),
         'branch_name': task.branch_name,
         'manifest_xml': task.manifest_xml,
         'group': task.group,
@@ -198,14 +294,15 @@ def create_task(user, payload: dict, *, task_type: str) -> AuditTask:
     access = require_project_role(user, payload.get('project_id'), min_role='member')
     requested_repository_type = payload.get('repository_type')
     requested_repository_url = str(payload.get('repository_url') or '').strip()
-    repository_spec = build_effective_project_repository_spec(
+    project_repository_spec = build_effective_project_repository_spec(access.project)
+    repository_spec = build_locked_project_repository_spec(
         access.project,
-        repository_url=payload.get('repository_url'),
-        repository_type=payload.get('repository_type'),
         branch_name=payload.get('branch_name'),
         manifest_xml=payload.get('manifest_xml'),
         group=payload.get('group'),
     )
+    repository_signature = repository_spec_signature(repository_spec)
+    project_repository_signature = repository_spec_signature(project_repository_spec)
     if access.project.source_type == 'repository':
         if not repository_spec['repository_url']:
             raise HttpError(422, '仓库任务必须填写 repository_url')
@@ -231,6 +328,11 @@ def create_task(user, payload: dict, *, task_type: str) -> AuditTask:
             project_repository_url or '-',
             repository_spec['repository_url'] or '-',
         )
+    _validate_selection_repository_signature(
+        selected_paths=list(payload.get('file_paths') or []),
+        requested_signature=str(payload.get('repository_signature') or '').strip(),
+        effective_signature=repository_signature,
+    )
     scan_config = {
         'file_paths': payload.get('file_paths') or [],
         'rule_set_id': payload.get('rule_set_id'),
@@ -245,6 +347,11 @@ def create_task(user, payload: dict, *, task_type: str) -> AuditTask:
     scan_config['rule_set_id'] = scan_config.get('rule_set_id') or effective_profile.get('rule_set_id')
     scan_config['prompt_template_id'] = scan_config.get('prompt_template_id') or effective_profile.get('prompt_template_id')
     scan_config['effective_profile'] = effective_profile
+    scan_config = _persist_repository_signature_metadata(
+        scan_config,
+        repository_signature=repository_signature,
+        project_repository_signature=project_repository_signature,
+    )
     scan_config['selection_stats'] = {
         'selected_target_count': len(scan_config['file_paths']),
         'selected_directory_count': 0,
@@ -1120,6 +1227,7 @@ def execute_scan_task(task_id: str) -> None:
     try:
         if task.status == 'cancelled':
             return
+        initial_status = str(task.status or '').strip().lower()
         scan_config = dict(task.scan_config or {})
         scan_config['analysis_depth'] = normalize_analysis_depth(scan_config.get('analysis_depth'))
         profile = resolve_scan_profile(task.created_by, scan_config, strict=False)
@@ -1132,27 +1240,31 @@ def execute_scan_task(task_id: str) -> None:
         task.error_message = ''
         task.scan_config = scan_config
         task.save(update_fields=['status', 'started_at', 'error_message', 'scan_config', 'sys_update_datetime'])
-        repository_spec = build_task_repository_spec(task)
+        repository_spec, repository_snapshot_rebound = _refresh_pending_task_repository_snapshot(
+            task,
+            allow_project_rebind=initial_status in REPOSITORY_REBINDABLE_STATUSES,
+        )
         if task.project.source_type == 'repository':
             repository_spec = validate_repository_spec_for_execution(repository_spec)
+        if repository_snapshot_rebound:
+            logger.info(
+                'DeepAudit scan task %s detected project repository spec drift before workspace init and switched to latest project config: %s',
+                task.id,
+                format_repository_spec_for_log(repository_spec),
+            )
         logger.info(
             'DeepAudit scan task %s will initialize repository workspace for project %s: %s',
             task.id,
             task.project_id,
             format_repository_spec_for_log(repository_spec),
         )
-        if (
-            task.project.source_type == 'repository'
-            and (
-                normalize_repository_type(task.project.repository_type) != repository_spec['repository_type']
-                or str(task.project.repository_url or '').strip() != repository_spec['repository_url']
-            )
-        ):
+        current_project_spec = build_effective_project_repository_spec(task.project)
+        if task.project.source_type == 'repository' and repository_spec_signature(current_project_spec) != repository_spec_signature(repository_spec):
             logger.warning(
-                'DeepAudit scan task %s is using snapshotted repository spec instead of current project config: current_repository_type=%s current_repository_url=%s',
+                'DeepAudit scan task %s is using repository spec different from current project config: task_spec=%s current_project_spec=%s',
                 task.id,
-                normalize_repository_type(task.project.repository_type),
-                str(task.project.repository_url or '').strip() or '-',
+                format_repository_spec_for_log(repository_spec),
+                format_repository_spec_for_log(current_project_spec),
             )
         workspace, user_payload = prepare_repository_workspace(
             task.project,

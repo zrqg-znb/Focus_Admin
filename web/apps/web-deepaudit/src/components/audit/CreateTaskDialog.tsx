@@ -140,6 +140,8 @@ export default function CreateTaskDialog({
     useState<SelectedScopeSummary>();
   const [selectedRepositorySpec, setSelectedRepositorySpec] =
     useState<SelectedRepositorySpec>();
+  const [selectedRepositorySignature, setSelectedRepositorySignature] =
+    useState<string>();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showFileSelection, setShowFileSelection] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -246,6 +248,7 @@ export default function CreateTaskDialog({
       setSelectedFiles(undefined);
       setSelectedScopeSummary(undefined);
       setSelectedRepositorySpec(undefined);
+      setSelectedRepositorySignature(undefined);
       setShowAdvanced(false);
       const defaultRuleSet = ruleSets.find((r) => r.is_default);
       setSelectedRuleSetId(defaultRuleSet?.id || ruleSets[0]?.id || '');
@@ -282,6 +285,7 @@ export default function CreateTaskDialog({
     const nextSelectionContext = [
       selectedProjectId,
       selectedProject?.repository_type || '',
+      selectedProject?.repository_url || '',
       branch,
       manifestXml,
       group,
@@ -295,6 +299,7 @@ export default function CreateTaskDialog({
       setSelectedFiles(undefined);
       setSelectedScopeSummary(undefined);
       setSelectedRepositorySpec(undefined);
+      setSelectedRepositorySignature(undefined);
       toast.info('仓库规格或排除规则已更改，请重新选择文件/目录');
     }
     selectionContextRef.current = nextSelectionContext;
@@ -304,6 +309,7 @@ export default function CreateTaskDialog({
     group,
     manifestXml,
     selectedFiles,
+    selectedProject?.repository_url,
     selectedProject?.repository_type,
     selectedProjectId,
   ]);
@@ -348,6 +354,7 @@ export default function CreateTaskDialog({
           name: `Agent审计-${selectedProject.name}`,
           repository_url: effectiveRepositorySpec?.repository_url,
           repository_type: effectiveRepositorySpec?.repository_type as any,
+          repository_signature: selectedRepositorySignature,
           branch_name: effectiveRepositorySpec?.branch_name,
           manifest_xml: effectiveRepositorySpec?.manifest_xml,
           group: effectiveRepositorySpec?.group,
@@ -368,6 +375,7 @@ export default function CreateTaskDialog({
         setSelectedFiles(undefined);
         setSelectedScopeSummary(undefined);
         setSelectedRepositorySpec(undefined);
+        setSelectedRepositorySignature(undefined);
         setExcludePatterns(DEFAULT_EXCLUDES);
         return;
       }
@@ -404,6 +412,7 @@ export default function CreateTaskDialog({
           projectId: selectedProject.id,
           repoUrl: effectiveRepositorySpec?.repository_url || '',
           repositoryType: effectiveRepositorySpec?.repository_type,
+          repositorySignature: selectedRepositorySignature,
           branch: effectiveRepositorySpec?.branch_name,
           manifestXml: effectiveRepositorySpec?.manifest_xml,
           group: effectiveRepositorySpec?.group,
@@ -426,6 +435,7 @@ export default function CreateTaskDialog({
       setSelectedFiles(undefined);
       setSelectedScopeSummary(undefined);
       setSelectedRepositorySpec(undefined);
+      setSelectedRepositorySignature(undefined);
       setExcludePatterns(DEFAULT_EXCLUDES);
     } catch (error) {
       const msg = error instanceof Error ? error.message : '未知错误';
@@ -886,6 +896,7 @@ export default function CreateTaskDialog({
                                   setSelectedFiles(undefined);
                                   setSelectedScopeSummary(undefined);
                                   setSelectedRepositorySpec(undefined);
+                                  setSelectedRepositorySignature(undefined);
                                 }}
                                 size="sm"
                                 variant="ghost"
@@ -941,12 +952,14 @@ export default function CreateTaskDialog({
         manifestXml={manifestXml}
         onConfirm={({
           repositorySpec,
+          repositorySignature,
           selectedFiles: files,
           selectedSummary,
         }) => {
           setSelectedFiles(files);
           setSelectedScopeSummary(selectedSummary);
           setSelectedRepositorySpec(repositorySpec);
+          setSelectedRepositorySignature(repositorySignature);
         }}
         onOpenChange={setShowFileSelection}
         open={showFileSelection}
