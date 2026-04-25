@@ -114,15 +114,33 @@ function AgentAuditPageContent() {
     }
 
     if (taskStatus === "pending" || taskStatus === "initializing") {
-      return "任务已进入队列，正在分配工作区并同步代码仓库。";
+      return "任务已入队，仓库快照已保存，正在等待 Worker 启动。";
     }
 
     if (taskStatus === "planning") {
-      return "正在准备仓库上下文并生成首轮审计计划。";
+      return "正在按任务快照准备仓库工作区并同步代码。";
     }
 
     return "大型仓库首次同步可能需要更久，请稍候。";
   }, [task?.current_phase, task?.current_step, taskStatus]);
+  const displayTotalFiles = useMemo(() => {
+    const resolved = Number(task?.resolved_file_count || 0);
+    if (resolved > 0) {
+      return resolved;
+    }
+    return Number(task?.total_files || 0);
+  }, [task?.resolved_file_count, task?.total_files]);
+  const selectedScopeHint = useMemo(() => {
+    const selectedCount = Number(task?.selected_target_count || 0);
+    if (selectedCount <= 0) {
+      return "";
+    }
+    const directoryCount = Number(task?.selected_directory_count || 0);
+    if (directoryCount > 0) {
+      return `已选 ${selectedCount} 项（${directoryCount} 个目录）`;
+    }
+    return `已选 ${selectedCount} 项`;
+  }, [task?.selected_directory_count, task?.selected_target_count]);
 
   // 🔥 当 taskId 变化时立即重置状态（新建任务时清理旧日志）
   useEffect(() => {
@@ -1035,9 +1053,17 @@ function AgentAuditPageContent() {
                 <div className="w-px h-4 bg-border" />
                 <div className="flex items-center gap-1.5">
                   <span className="text-foreground font-semibold">{task.analyzed_files}</span>
-                  <span className="text-muted-foreground">/ {task.total_files}</span>
+                  <span className="text-muted-foreground">/ {displayTotalFiles}</span>
                   <span className="text-muted-foreground text-xs">files</span>
                 </div>
+                {selectedScopeHint ? (
+                  <>
+                    <div className="w-px h-4 bg-border" />
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-muted-foreground text-xs">{selectedScopeHint}</span>
+                    </div>
+                  </>
+                ) : null}
                 <div className="w-px h-4 bg-border" />
                 <div className="flex items-center gap-1.5">
                   <span className="text-foreground font-semibold">{task.tool_calls_count || 0}</span>

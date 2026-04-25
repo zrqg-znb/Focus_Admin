@@ -530,6 +530,11 @@ export const api = {
     }
   },
 
+  async getInstantAnalysis(analysisId: string): Promise<InstantAnalysis> {
+    const res = await apiClient.get(`/scan/instant/history/${analysisId}`);
+    return normalizeInstantRecord(res.data) as InstantAnalysis;
+  },
+
   async createInstantAnalysis(
     _analysis: InstantAnalysisForm & {
       analysis_result?: string;

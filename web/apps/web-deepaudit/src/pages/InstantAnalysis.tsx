@@ -230,21 +230,24 @@ export default function InstantAnalysis() {
   };
 
   // View history record details
-  const viewHistoryRecord = (record: InstantAnalysisType) => {
+  const viewHistoryRecord = async (record: InstantAnalysisType) => {
     try {
+      const detail = await api.getInstantAnalysis(record.id);
       const analysisResult = JSON.parse(
-        record.analysis_result,
+        detail.analysis_result,
       ) as CodeAnalysisResult;
       setResult(analysisResult);
-      setLanguage(record.language);
-      setAnalysisTime(record.analysis_time);
-      setSelectedHistoryId(record.id);
-      setCurrentAnalysisId(record.id);
+      setCode(detail.code_content || '');
+      setLanguage(detail.language);
+      setAnalysisTime(detail.analysis_time);
+      setSelectedHistoryId(detail.id);
+      setCurrentAnalysisId(detail.id);
+      setUploadedFileName('');
       setShowHistory(false);
       toast.success('已加载历史分析结果');
     } catch (error) {
       console.error('Failed to parse history record:', error);
-      toast.error('解析历史记录失败');
+      toast.error('加载历史记录详情失败');
     }
   };
 
@@ -428,8 +431,6 @@ int main(int argc, char **argv) {
       toast.error(getErrorMessage(error, '分析失败，请稍后重试'));
     } finally {
       setAnalyzing(false);
-      setCode('');
-      setUploadedFileName('');
     }
   };
 
@@ -651,7 +652,7 @@ int main(int argc, char **argv) {
                   : 'bg-muted/50 border-border hover:bg-muted hover:border-border'
               } w-full text-left`}
               key={record.id}
-              onClick={() => viewHistoryRecord(record)}
+              onClick={() => void viewHistoryRecord(record)}
               type="button"
             >
               <div className="mb-2 flex items-center justify-between">

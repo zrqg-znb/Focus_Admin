@@ -77,6 +77,10 @@ export interface AuditTask {
   total_lines: number;
   issues_count: number;
   quality_score: number;
+  selected_target_count?: number;
+  selected_directory_count?: number;
+  resolved_file_count?: number;
+  workspace_source?: string;
   started_at?: string;
   completed_at?: string;
   created_by: string;

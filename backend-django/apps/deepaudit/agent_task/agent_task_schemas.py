@@ -49,6 +49,10 @@ class AgentTaskSchema(Schema):
     group: str | None = None
     exclude_patterns: list[str] = Field(default_factory=list)
     target_files: list[str] = Field(default_factory=list)
+    selected_target_count: int = 0
+    selected_directory_count: int = 0
+    resolved_file_count: int = 0
+    workspace_source: str | None = None
     max_iterations: int = 0
     timeout_seconds: int = 0
     total_files: int = 0

@@ -120,6 +120,12 @@ export const StatsPanel = memo(function StatsPanel({ task, findings }: StatsPane
   };
   const totalFindings = task.findings_count || 0;
   const progressPercent = task.progress_percentage || 0;
+  const displayTotalFiles = task.resolved_file_count && task.resolved_file_count > 0
+    ? task.resolved_file_count
+    : task.total_files || 0;
+  const selectedScopeText = task.selected_target_count && task.selected_target_count > 0
+    ? `已选 ${task.selected_target_count} 项${task.selected_directory_count && task.selected_directory_count > 0 ? ` (${task.selected_directory_count} 个目录)` : ''}`
+    : '';
 
   // Determine score color
   const getScoreColor = (score: number) => {
@@ -180,9 +186,14 @@ export const StatsPanel = memo(function StatsPanel({ task, findings }: StatsPane
               <span className="font-medium">Files scanned</span>
             </div>
             <span className="text-foreground font-mono font-bold">
-              {task.analyzed_files}<span className="text-muted-foreground font-normal"> / {task.total_files}</span>
+              {task.analyzed_files}<span className="text-muted-foreground font-normal"> / {displayTotalFiles}</span>
             </span>
           </div>
+          {selectedScopeText ? (
+            <div className="mt-2 text-xs text-muted-foreground font-medium">
+              {selectedScopeText}
+            </div>
+          ) : null}
           {/* Files with findings */}
           {task.files_with_findings > 0 && (
             <div className="flex items-center justify-between mt-2 text-sm">

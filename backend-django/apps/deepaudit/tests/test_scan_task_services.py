@@ -8,15 +8,28 @@ from unittest.mock import AsyncMock, patch
 from django.test import SimpleTestCase, TestCase
 
 from apps.deepaudit.project.project_model import AuditProject
-from apps.deepaudit.scan_task.scan_task_model import AuditTask
+from apps.deepaudit.scan_task.scan_task_model import AuditTask, InstantAnalysisRecord
 from apps.deepaudit.scan_task.scan_task_services import (
     _scan_files_with_concurrency,
     create_task,
     execute_scan_task,
+    export_instant_pdf_response,
     run_heuristic_scan_from_code,
     run_instant_analysis,
+    serialize_instant_record,
 )
 from core.user.user_model import User
+
+
+def _multi_runtime_payload() -> dict:
+    return {
+        'other_config': {},
+        '_repository_runtime': {
+            'workspace_source': 'multi_repo_cache_copy',
+            'workspace': '/tmp/focusaudit-scan-workspace',
+            'cache_repo': '/tmp/focusaudit-cache',
+        },
+    }
 
 
 class ScanTaskServicesConcurrencyTestCase(SimpleTestCase):
@@ -146,7 +159,7 @@ class ScanTaskSnapshotTestCase(TestCase):
             patch('apps.deepaudit.scan_task.scan_task_services.serialize_scan_profile', return_value={}),
             patch(
                 'apps.deepaudit.scan_task.scan_task_services.prepare_repository_workspace',
-                return_value=(Path('/tmp/focusaudit-scan-workspace'), {'other_config': {}}),
+                return_value=(Path('/tmp/focusaudit-scan-workspace'), _multi_runtime_payload()),
             ) as mock_prepare,
             patch('apps.deepaudit.scan_task.scan_task_services.list_project_files', return_value=[]),
             patch(
@@ -197,7 +210,7 @@ class ScanTaskSnapshotTestCase(TestCase):
             patch('apps.deepaudit.scan_task.scan_task_services.serialize_scan_profile', return_value={}),
             patch(
                 'apps.deepaudit.scan_task.scan_task_services.prepare_repository_workspace',
-                return_value=(Path('/tmp/focusaudit-scan-workspace'), {'other_config': {}}),
+                return_value=(Path('/tmp/focusaudit-scan-workspace'), _multi_runtime_payload()),
             ),
             patch(
                 'apps.deepaudit.scan_task.scan_task_services.validate_selected_file_paths',
@@ -233,7 +246,7 @@ class ScanTaskSnapshotTestCase(TestCase):
             patch('apps.deepaudit.scan_task.scan_task_services.serialize_scan_profile', return_value={}),
             patch(
                 'apps.deepaudit.scan_task.scan_task_services.prepare_repository_workspace',
-                return_value=(Path('/tmp/focusaudit-scan-workspace'), {'other_config': {}}),
+                return_value=(Path('/tmp/focusaudit-scan-workspace'), _multi_runtime_payload()),
             ),
             patch(
                 'apps.deepaudit.scan_task.scan_task_services.validate_selected_file_paths',
@@ -295,7 +308,7 @@ class ScanTaskSnapshotTestCase(TestCase):
             patch('apps.deepaudit.scan_task.scan_task_services.serialize_scan_profile', return_value={}),
             patch(
                 'apps.deepaudit.scan_task.scan_task_services.prepare_repository_workspace',
-                return_value=(Path('/tmp/focusaudit-scan-workspace'), {'other_config': {}}),
+                return_value=(Path('/tmp/focusaudit-scan-workspace'), _multi_runtime_payload()),
             ),
             patch(
                 'apps.deepaudit.scan_task.scan_task_services.validate_selected_file_paths',
@@ -332,6 +345,10 @@ class ScanTaskSnapshotTestCase(TestCase):
             mock_list_files.call_args.kwargs['file_paths'],
             ['src/module/a.c', 'src/module/b.c'],
         )
+        task.refresh_from_db()
+        self.assertEqual(task.total_files, 2)
+        self.assertEqual(task.scan_config.get('selection_stats', {}).get('selected_directory_count'), 1)
+        self.assertEqual(task.scan_config.get('selection_stats', {}).get('resolved_file_count'), 2)
 
 
 class InstantAnalysisServiceTestCase(TestCase):
@@ -400,6 +417,55 @@ class InstantAnalysisServiceTestCase(TestCase):
             mock_analyze.call_args.kwargs['selected_file_paths'],
             ['demo.c'],
         )
+
+    def test_serialize_instant_record_detail_includes_code_content(self) -> None:
+        record = InstantAnalysisRecord.objects.create(
+            user=self.user,
+            language='c',
+            code_content='int main(void) {\n  return 0;\n}\n',
+            analysis_result={'issues': [], 'quality_score': 100},
+            issues_count=0,
+            quality_score=100,
+            analysis_time=0.123,
+            sys_creator=self.user,
+            sys_modifier=self.user,
+        )
+
+        serialized = serialize_instant_record(record, include_code=True)
+
+        self.assertEqual(serialized['code_content'], 'int main(void) {\n  return 0;\n}\n')
+        self.assertEqual(serialized['language'], 'c')
+
+    def test_export_instant_pdf_response_returns_pdf_bytes(self) -> None:
+        record = InstantAnalysisRecord.objects.create(
+            user=self.user,
+            language='c',
+            code_content='#include <stdio.h>\nint main(void) {\n  char buf[4];\n  gets(buf);\n  return 0;\n}\n',
+            analysis_result={
+                'quality_score': 42,
+                'issues': [
+                    {
+                        'title': '潜在缓冲区溢出',
+                        'severity': 'high',
+                        'line_number': 4,
+                        'issue_type': 'buffer_overflow',
+                    }
+                ],
+            },
+            issues_count=1,
+            quality_score=42,
+            analysis_time=0.456,
+            sys_creator=self.user,
+            sys_modifier=self.user,
+        )
+
+        response = export_instant_pdf_response(self.user, str(record.id))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/pdf')
+        self.assertIn(f'instant-{record.id}.pdf', response['Content-Disposition'])
+        self.assertTrue(bytes(response.content).startswith(b'%PDF'))
+        self.assertGreater(len(response.content), 1000)
 
 
 class HeuristicScanLanguageTestCase(SimpleTestCase):

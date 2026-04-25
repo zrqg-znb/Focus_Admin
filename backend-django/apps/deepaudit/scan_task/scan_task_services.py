@@ -41,8 +41,8 @@ from apps.deepaudit.repo_specs import (
     normalize_repository_type,
     validate_repository_spec_for_execution,
 )
-from apps.deepaudit.runtime import cleanup_runtime_workspace, list_project_files, prepare_repository_workspace
-from apps.deepaudit.runtime import resolve_selected_file_paths, validate_selected_file_paths
+from apps.deepaudit.runtime import cleanup_runtime_workspace, docker_available, list_project_files, prepare_repository_workspace
+from apps.deepaudit.runtime import resolve_selected_file_paths, summarize_selected_targets, validate_selected_file_paths
 from apps.deepaudit.scan_profile import resolve_scan_profile, serialize_scan_profile
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact, AuditIssue, AuditTask, InstantAnalysisRecord
 from apps.deepaudit.serialization import format_datetime_text, normalize_json_payload
@@ -74,6 +74,26 @@ def _selected_scope_empty_message() -> str:
     return '所选目录或文件在当前过滤条件下未命中任何可扫描文本文件，请检查目录内容、排除规则或测试/文档过滤设置。'
 
 
+def _repository_runtime_metadata(user_payload: dict | None) -> dict[str, str]:
+    metadata = dict((user_payload or {}).get('_repository_runtime') or {})
+    return {key: str(value or '') for key, value in metadata.items()}
+
+
+def _assert_multi_workspace_source(
+    repository_spec: dict[str, str],
+    repository_runtime: dict[str, str],
+) -> None:
+    if normalize_repository_type(repository_spec.get('repository_type')) != 'multi':
+        return
+    workspace_source = str(repository_runtime.get('workspace_source') or '').strip()
+    if workspace_source.startswith('multi_repo_'):
+        return
+    raise RuntimeError(
+        '多仓任务工作区来源异常，当前工作区不是多仓缓存/同步产物，已中止执行。'
+        f' workspace_source={workspace_source or "-"}'
+    )
+
+
 def serialize_issue(issue: AuditIssue) -> dict:
     return {
         'id': str(issue.id),
@@ -99,6 +119,9 @@ def serialize_issue(issue: AuditIssue) -> dict:
 
 def serialize_task(task: AuditTask, include_issues: bool = False) -> dict:
     project = task.project
+    scan_config = dict(task.scan_config or {})
+    selection_stats = dict(scan_config.get('selection_stats') or {})
+    repository_runtime = dict(scan_config.get('repository_runtime') or {})
     payload = {
         'id': str(task.id),
         'project_id': str(task.project_id),
@@ -113,12 +136,16 @@ def serialize_task(task: AuditTask, include_issues: bool = False) -> dict:
         'manifest_xml': task.manifest_xml,
         'group': task.group,
         'exclude_patterns': list(task.exclude_patterns or []),
-        'scan_config': dict(task.scan_config or {}),
+        'scan_config': scan_config,
         'total_files': task.total_files,
         'scanned_files': task.scanned_files,
         'total_lines': task.total_lines,
         'issues_count': task.issues_count,
         'quality_score': task.quality_score,
+        'selected_target_count': int(selection_stats.get('selected_target_count') or len(scan_config.get('file_paths') or [])),
+        'selected_directory_count': int(selection_stats.get('selected_directory_count') or 0),
+        'resolved_file_count': int(selection_stats.get('resolved_file_count') or 0),
+        'workspace_source': str(repository_runtime.get('workspace_source') or ''),
         'started_at': format_datetime_text(task.started_at),
         'completed_at': format_datetime_text(task.completed_at),
         'error_message': task.error_message,
@@ -218,6 +245,11 @@ def create_task(user, payload: dict, *, task_type: str) -> AuditTask:
     scan_config['rule_set_id'] = scan_config.get('rule_set_id') or effective_profile.get('rule_set_id')
     scan_config['prompt_template_id'] = scan_config.get('prompt_template_id') or effective_profile.get('prompt_template_id')
     scan_config['effective_profile'] = effective_profile
+    scan_config['selection_stats'] = {
+        'selected_target_count': len(scan_config['file_paths']),
+        'selected_directory_count': 0,
+        'resolved_file_count': 0,
+    }
     task = AuditTask.objects.create(
         project=access.project,
         created_by=user,
@@ -886,7 +918,11 @@ def export_instant_json_response(user, record_id: str) -> HttpResponse:
 
 def export_instant_pdf_response(user, record_id: str) -> HttpResponse:
     record = get_instant_record(user, record_id)
-    pdf_bytes = ReportBuilder.build_instant_report(record.language, normalize_analysis_result(record.analysis_result or {}))
+    pdf_bytes = ReportBuilder.build_instant_report(
+        record.language,
+        normalize_analysis_result(record.analysis_result or {}),
+        code_content=record.code_content,
+    )
     response = HttpResponse(pdf_bytes, content_type='application/pdf')
     response['Content-Disposition'] = f'attachment; filename="instant-{record.id}.pdf"'
     return response
@@ -1129,6 +1165,8 @@ def execute_scan_task(task_id: str) -> None:
                 'user_id': str(task.created_by_id),
             },
         )
+        repository_runtime = _repository_runtime_metadata(user_payload)
+        _assert_multi_workspace_source(repository_spec, repository_runtime)
         runtime_scan_config = (user_payload.get('other_config') or {}).get('scan_config') or {}
         validated_file_paths = scan_config.get('file_paths') or []
         if validated_file_paths:
@@ -1209,6 +1247,17 @@ def execute_scan_task(task_id: str) -> None:
                 len(resolved_file_paths),
                 format_repository_spec_for_log(repository_spec),
             )
+        selection_stats = summarize_selected_targets(
+            workspace,
+            file_paths=validated_file_paths,
+            resolved_file_paths=resolved_file_paths,
+        )
+        selection_stats['resolved_file_count'] = len(resolved_file_paths) if validated_file_paths else 0
+        scan_config['selection_stats'] = selection_stats
+        scan_config['repository_runtime'] = repository_runtime
+        task.scan_config = scan_config
+        task.total_files = len(resolved_file_paths) if validated_file_paths else task.total_files
+        task.save(update_fields=['scan_config', 'total_files', 'sys_update_datetime'])
 
         files = list_project_files(
             workspace,
@@ -1233,7 +1282,7 @@ def execute_scan_task(task_id: str) -> None:
         scan_config['prompt_template_id'] = scan_config.get('prompt_template_id') or effective_profile.get('prompt_template_id')
         llm_concurrency = max(1, int(runtime_scan_config.get('llm_concurrency') or 1))
         llm_gap_ms = max(0, int(runtime_scan_config.get('llm_gap_ms') or 0))
-        task.total_files = len(files)
+        task.total_files = max(len(files), len(resolved_file_paths) if validated_file_paths else 0)
         task.scanned_files = 0
         task.total_lines = 0
         task.issues_count = 0

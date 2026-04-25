@@ -68,6 +68,10 @@ export interface AgentTask {
   verification_level: null | string;
   exclude_patterns: null | string[];
   target_files: null | string[];
+  selected_target_count?: number;
+  selected_directory_count?: number;
+  resolved_file_count?: number;
+  workspace_source?: null | string;
 
   // 错误信息
   error_message: null | string;

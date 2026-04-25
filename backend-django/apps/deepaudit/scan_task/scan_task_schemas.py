@@ -67,6 +67,10 @@ class AuditTaskSchema(Schema):
     total_lines: int = 0
     issues_count: int = 0
     quality_score: float = 0.0
+    selected_target_count: int = 0
+    selected_directory_count: int = 0
+    resolved_file_count: int = 0
+    workspace_source: str | None = None
     started_at: str | None = None
     completed_at: str | None = None
     error_message: str | None = None

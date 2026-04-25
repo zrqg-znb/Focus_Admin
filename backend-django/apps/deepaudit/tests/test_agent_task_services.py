@@ -36,6 +36,18 @@ from apps.deepaudit.project.project_model import AuditProject
 from core.user.user_model import User
 
 
+def _multi_runtime_payload() -> dict:
+    return {
+        'llm_config': {},
+        'other_config': {},
+        '_repository_runtime': {
+            'workspace_source': 'multi_repo_cache_copy',
+            'workspace': '/tmp/focusaudit-agent-workspace',
+            'cache_repo': '/tmp/focusaudit-cache',
+        },
+    }
+
+
 class AgentTaskServicesTestCase(TestCase):
     def setUp(self) -> None:
         self.user = User.objects.create(
@@ -143,7 +155,7 @@ class AgentTaskServicesTestCase(TestCase):
             patch('apps.deepaudit.agent_task.agent_task_services.docker_available', return_value=True),
             patch(
                 'apps.deepaudit.agent_task.agent_task_services.prepare_repository_workspace',
-                return_value=(Path('/tmp/focusaudit-agent-workspace'), {'llm_config': {}, 'other_config': {}}),
+                return_value=(Path('/tmp/focusaudit-agent-workspace'), _multi_runtime_payload()),
             ) as mock_prepare,
             patch('apps.deepaudit.agent_task.agent_runner.run_orchestrator_agent_sync'),
             patch('apps.deepaudit.agent_task.agent_task_services.cleanup_runtime_workspace'),
@@ -179,7 +191,7 @@ class AgentTaskServicesTestCase(TestCase):
                     'soft_failed': True,
                 },
             )
-            return Path('/tmp/focusaudit-agent-workspace'), {'llm_config': {}, 'other_config': {}}
+            return Path('/tmp/focusaudit-agent-workspace'), _multi_runtime_payload()
 
         with (
             patch('apps.deepaudit.agent_task.agent_task_services.close_runtime_db_connections'),
@@ -212,7 +224,7 @@ class AgentTaskServicesTestCase(TestCase):
             patch('apps.deepaudit.agent_task.agent_task_services.docker_available', return_value=True),
             patch(
                 'apps.deepaudit.agent_task.agent_task_services.prepare_repository_workspace',
-                return_value=(Path('/tmp/focusaudit-agent-workspace'), {'llm_config': {}, 'other_config': {}}),
+                return_value=(Path('/tmp/focusaudit-agent-workspace'), _multi_runtime_payload()),
             ),
             patch(
                 'apps.deepaudit.agent_task.agent_task_services.validate_selected_file_paths',
@@ -245,7 +257,7 @@ class AgentTaskServicesTestCase(TestCase):
             patch('apps.deepaudit.agent_task.agent_task_services.docker_available', return_value=True),
             patch(
                 'apps.deepaudit.agent_task.agent_task_services.prepare_repository_workspace',
-                return_value=(Path('/tmp/focusaudit-agent-workspace'), {'llm_config': {}, 'other_config': {}}),
+                return_value=(Path('/tmp/focusaudit-agent-workspace'), _multi_runtime_payload()),
             ),
             patch(
                 'apps.deepaudit.agent_task.agent_task_services.validate_selected_file_paths',
@@ -262,6 +274,10 @@ class AgentTaskServicesTestCase(TestCase):
 
         input_data = mock_runner.call_args.args[1]
         self.assertEqual(input_data['target_files'], ['src/module/a.c', 'src/module/b.c'])
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.total_files, 2)
+        self.assertEqual(self.task.agent_config.get('selection_stats', {}).get('selected_directory_count'), 1)
+        self.assertEqual(self.task.agent_config.get('selection_stats', {}).get('resolved_file_count'), 2)
         info_event = self.task.events.filter(is_deleted=False, event_type='info').latest('sequence')
         self.assertEqual(info_event.message, '已将所选目录展开为具体文件范围')
 
@@ -274,7 +290,7 @@ class AgentTaskServicesTestCase(TestCase):
             patch('apps.deepaudit.agent_task.agent_task_services.docker_available', return_value=True),
             patch(
                 'apps.deepaudit.agent_task.agent_task_services.prepare_repository_workspace',
-                return_value=(Path('/tmp/focusaudit-agent-workspace'), {'llm_config': {}, 'other_config': {}}),
+                return_value=(Path('/tmp/focusaudit-agent-workspace'), _multi_runtime_payload()),
             ),
             patch(
                 'apps.deepaudit.agent_task.agent_task_services.validate_selected_file_paths',

@@ -26,6 +26,7 @@ pymysql>=1.1.0
 pyodbc>=4.0.39
 alibabacloud_dysmsapi20170525==4.1.2
 gunicorn==23.0.0
+reportlab>=4.2.0
 
 # --- DeepAudit Multi-Agent Dependencies ---
 langchain>=0.1.0

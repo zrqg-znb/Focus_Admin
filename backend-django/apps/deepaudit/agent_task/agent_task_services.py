@@ -37,7 +37,7 @@ from apps.deepaudit.repo_specs import (
     validate_repository_spec_for_execution,
 )
 from apps.deepaudit.runtime import cleanup_runtime_workspace, docker_available, prepare_repository_workspace
-from apps.deepaudit.runtime import resolve_selected_file_paths, validate_selected_file_paths
+from apps.deepaudit.runtime import resolve_selected_file_paths, summarize_selected_targets, validate_selected_file_paths
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact
 from apps.deepaudit.serialization import format_datetime_text, normalize_json_payload
 from apps.deepaudit.db_runtime import close_runtime_db_connections, ensure_runtime_db_connection, run_with_fresh_connection
@@ -149,6 +149,11 @@ def _build_repository_snapshot_metadata(
     if requested_repository_type is not None:
         metadata['requested_repository_type'] = normalize_repository_type(requested_repository_type)
     return metadata
+
+
+def _repository_runtime_metadata(user_payload: dict | None) -> dict[str, str]:
+    metadata = dict((user_payload or {}).get('_repository_runtime') or {})
+    return {key: str(value or '') for key, value in metadata.items()}
 
 
 def _to_int(value, default: int = 0) -> int:
@@ -478,6 +483,9 @@ def _format_sse_event(payload: dict) -> str:
 
 
 def serialize_task(instance: AgentTask) -> dict:
+    agent_config = dict(instance.agent_config or {})
+    selection_stats = dict(agent_config.get('selection_stats') or {})
+    repository_runtime = dict(agent_config.get('repository_runtime') or {})
     return {
         'id': str(instance.id),
         'project_id': str(instance.project_id),
@@ -500,6 +508,10 @@ def serialize_task(instance: AgentTask) -> dict:
         'group': instance.group,
         'exclude_patterns': list(instance.exclude_patterns or []),
         'target_files': list(instance.target_files or []),
+        'selected_target_count': _to_int(selection_stats.get('selected_target_count'), len(instance.target_files or [])),
+        'selected_directory_count': _to_int(selection_stats.get('selected_directory_count'), 0),
+        'resolved_file_count': _to_int(selection_stats.get('resolved_file_count'), 0),
+        'workspace_source': str(repository_runtime.get('workspace_source') or ''),
         'max_iterations': instance.max_iterations,
         'timeout_seconds': instance.timeout_seconds,
         'total_files': instance.total_files,
@@ -614,6 +626,15 @@ def create_task(user, payload: dict) -> AgentTask:
         file_paths=payload.get('target_files') or [],
     ):
         target_vulnerabilities = list(C_FAMILY_TARGET_VULNERABILITIES)
+    agent_config = dict(payload.get('agent_config') or {})
+    agent_config.setdefault(
+        'selection_stats',
+        {
+            'selected_target_count': len(payload.get('target_files') or []),
+            'selected_directory_count': 0,
+            'resolved_file_count': 0,
+        },
+    )
     instance = AgentTask.objects.create(
         project=access.project,
         created_by=user,
@@ -629,7 +650,7 @@ def create_task(user, payload: dict) -> AgentTask:
         group=repository_spec['group'] or None,
         exclude_patterns=payload.get('exclude_patterns') or [],
         target_files=payload.get('target_files') or [],
-        agent_config=payload.get('agent_config') or {},
+        agent_config=agent_config,
         max_iterations=int(payload.get('max_iterations') or 50),
         timeout_seconds=int(payload.get('timeout_seconds') or 1800),
         status='pending',
@@ -662,7 +683,7 @@ def create_task(user, payload: dict) -> AgentTask:
         instance,
         'info',
         phase=instance.current_phase,
-        message='Agent任务已创建，仓库规格快照完成',
+        message='Agent任务已入队，仓库快照已保存，等待 Worker 启动',
         metadata=metadata,
     )
     return instance
@@ -957,7 +978,14 @@ def refresh_task_snapshot(
         tokens_by_agent: dict[str, int] = {}
         tools_by_agent: dict[str, int] = {}
         iterations_by_agent: dict[str, int] = {}
-        target_file_count = len(instance.target_files or [])
+        agent_config = dict(instance.agent_config or {})
+        selection_stats = dict(agent_config.get('selection_stats') or {})
+        selected_target_count = _to_int(selection_stats.get('selected_target_count'), len(instance.target_files or []))
+        selected_directory_count = _to_int(selection_stats.get('selected_directory_count'), 0)
+        resolved_file_count = _to_int(selection_stats.get('resolved_file_count'), 0)
+        target_file_count = resolved_file_count
+        if target_file_count <= 0 and selected_directory_count <= 0:
+            target_file_count = selected_target_count
         indexed_files = instance.indexed_files
         analyzed_files = instance.analyzed_files
         total_files = max(instance.total_files, target_file_count)
@@ -993,6 +1021,9 @@ def refresh_task_snapshot(
             total = max(total, hinted_total)
             if total > 0:
                 total_files = max(total_files, total)
+            resolved_hint = _to_int(metadata.get('resolved_file_count'))
+            if resolved_hint > 0:
+                total_files = max(total_files, resolved_hint)
             if event.phase == AGENT_PHASE_INDEXING and current > 0:
                 indexed_files = max(indexed_files, current)
             if event.phase == AGENT_PHASE_ANALYSIS and current > 0:
@@ -1807,6 +1838,44 @@ def execute_agent_task(task_id: str) -> None:
                 'user_id': str(instance.created_by_id),
             },
         )
+        repository_runtime = _repository_runtime_metadata(user_payload)
+        workspace_source = str(repository_runtime.get('workspace_source') or '').strip()
+        if (
+            normalize_repository_type(repository_spec.get('repository_type')) == 'multi'
+            and not workspace_source.startswith('multi_repo_')
+        ):
+            message = (
+                '多仓任务工作区来源异常，当前工作区不是多仓缓存/同步产物，已中止执行。'
+                f' workspace_source={workspace_source or "-"}'
+            )
+            logger.error(
+                'DeepAudit agent task %s failed due to invalid multi workspace source: %s %s',
+                instance.id,
+                workspace_source or '-',
+                format_repository_spec_for_log(repository_spec),
+            )
+            instance.status = 'failed'
+            instance.current_step = truncate_runtime_text('多仓工作区来源异常')
+            instance.error_message = message
+            instance.completed_at = timezone.now()
+            run_with_fresh_connection(
+                instance.save,
+                update_fields=[
+                    'status',
+                    'current_step',
+                    'error_message',
+                    'completed_at',
+                    'sys_update_datetime',
+                ],
+            )
+            create_event(
+                instance,
+                'task_error',
+                phase=instance.current_phase or AGENT_PHASE_PLANNING,
+                message=message,
+                metadata={**repository_metadata, **repository_runtime},
+            )
+            return
         validated_target_files = list(instance.target_files or [])
         if validated_target_files:
             selection_check = validate_selected_file_paths(
@@ -1936,6 +2005,22 @@ def execute_agent_task(task_id: str) -> None:
                         'resolved_samples': resolved_target_files[:10],
                     },
                 )
+        selection_stats = summarize_selected_targets(
+            workspace,
+            file_paths=validated_target_files,
+            resolved_file_paths=resolved_target_files,
+        )
+        selection_stats['resolved_file_count'] = len(resolved_target_files) if validated_target_files else 0
+        instance.agent_config = {
+            **dict(instance.agent_config or {}),
+            'selection_stats': selection_stats,
+            'repository_runtime': repository_runtime,
+        }
+        instance.total_files = len(resolved_target_files) if validated_target_files else instance.total_files
+        run_with_fresh_connection(
+            instance.save,
+            update_fields=['agent_config', 'total_files', 'sys_update_datetime'],
+        )
 
         # 准备交给 Agent 的上下文数据
         input_data = {

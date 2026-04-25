@@ -41,6 +41,57 @@ def _matches_selection_target(relative_path: str, target_files: set[str], target
     return any(relative_path.startswith(f'{directory}/') for directory in target_directories)
 
 
+def summarize_selected_targets(
+    workspace: Path,
+    *,
+    file_paths: Iterable[str] | None = None,
+    resolved_file_paths: Iterable[str] | None = None,
+) -> dict[str, int]:
+    normalized_targets: list[str] = []
+    seen: set[str] = set()
+    for item in (file_paths or []):
+        normalized = _normalize_selection_target(str(item or ''))
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_targets.append(normalized)
+
+    normalized_resolved = {
+        _normalize_path(str(item or ''))
+        for item in (resolved_file_paths or [])
+        if str(item or '').strip()
+    }
+    if normalized_resolved:
+        directory_targets = {
+            target
+            for target in normalized_targets
+            if target not in normalized_resolved
+            and any(path.startswith(f'{target}/') for path in normalized_resolved)
+        }
+        if directory_targets:
+            directory_count = len(directory_targets)
+            return {
+                'selected_target_count': len(normalized_targets),
+                'selected_directory_count': directory_count,
+                'selected_file_count': max(len(normalized_targets) - directory_count, 0),
+            }
+
+    directory_count = 0
+    file_count = 0
+    for relative_path in normalized_targets:
+        target = workspace / relative_path
+        if target.exists() and target.is_dir():
+            directory_count += 1
+        else:
+            file_count += 1
+
+    return {
+        'selected_target_count': len(normalized_targets),
+        'selected_directory_count': directory_count,
+        'selected_file_count': file_count,
+    }
+
+
 @lru_cache(maxsize=1)
 def docker_available() -> bool:
     if not getattr(settings, 'DEEPAUDIT_DOCKER_ENABLED', True):
@@ -111,6 +162,7 @@ def prepare_repository_workspace(
     resolved_user_id = str(user_id or getattr(getattr(project, 'owner', None), 'id', '') or getattr(project, 'owner_id', '') or '')
     payload = user_payload or load_user_config_payload(resolved_user_id)
     resolved_ssh_key = ssh_private_key
+    runtime_context = dict(log_context or {})
     if resolved_ssh_key is None:
         resolved_ssh_key = load_ssh_private_key(resolved_user_id or str(project.owner_id))
 
@@ -153,16 +205,34 @@ def prepare_repository_workspace(
             force_refresh=force_refresh,
             force_multi_sync=force_multi_sync,
             event_callback=event_callback,
-            log_context=log_context,
+            log_context=runtime_context,
         )
     except GitServiceError as exc:
         raise HttpError(400, str(exc)) from exc
+    repository_runtime = {
+        'workspace': str(workspace),
+        'workspace_path': str(workspace),
+        'workspace_source': str(runtime_context.get('workspace_source') or ''),
+        'cache_path': str(runtime_context.get('cache_path') or ''),
+        'cache_repo': str(runtime_context.get('cache_repo') or ''),
+        'repository_type': str(repository_spec.get('repository_type') or ''),
+        'repository_url': str(repository_spec.get('repository_url') or ''),
+        'branch_name': str(repository_spec.get('branch_name') or ''),
+        'manifest_xml': str(repository_spec.get('manifest_xml') or ''),
+        'group': str(repository_spec.get('group') or ''),
+    }
+    payload = {
+        **payload,
+        '_repository_runtime': repository_runtime,
+    }
     if event_callback is not None:
         event_callback(
             'info',
             '仓库工作区已准备完成',
             {
                 'workspace': str(workspace),
+                'workspace_source': repository_runtime.get('workspace_source'),
+                'cache_repo': repository_runtime.get('cache_repo') or repository_runtime.get('cache_path'),
                 'repository_type': repository_spec.get('repository_type'),
                 'repository_url': repository_spec.get('repository_url'),
                 'branch_name': repository_spec.get('branch_name'),

@@ -115,6 +115,24 @@ def _format_log_context(log_context: dict[str, Any] | None) -> str:
     return ' '.join(parts)
 
 
+def _record_workspace_context(
+    log_context: dict[str, Any] | None,
+    *,
+    workspace: Path | None = None,
+    workspace_source: str = '',
+    cache_repo: Path | None = None,
+) -> None:
+    if log_context is None:
+        return
+    if workspace is not None:
+        log_context['workspace_path'] = str(workspace)
+    if workspace_source:
+        log_context['workspace_source'] = workspace_source
+    if cache_repo is not None:
+        log_context['cache_repo'] = str(cache_repo)
+        log_context['cache_path'] = str(cache_repo)
+
+
 def _build_command_metadata(
     *,
     cmd: list[str],
@@ -1174,7 +1192,7 @@ def create_repository_workspace(
     branch = repository_spec['branch_name']
     repo_type = repository_spec['repository_type']
     if not repository_cache_enabled():
-        return clone_repository(
+        workspace = clone_repository(
             project,
             repository_spec['repository_url'],
             branch,
@@ -1187,6 +1205,12 @@ def create_repository_workspace(
             event_callback=event_callback,
             log_context=log_context,
         )
+        _record_workspace_context(
+            log_context,
+            workspace=workspace,
+            workspace_source='multi_repo_direct_init' if repo_type == 'multi' else 'single_repo_direct_clone',
+        )
+        return workspace
 
     cache_repo = ensure_repository_cache(
         project,
@@ -1221,6 +1245,12 @@ def create_repository_workspace(
         workspace = deepaudit_storage.reserve_workspace_path(f'project-{project.id}')
         try:
             shutil.copytree(cache_repo, workspace, dirs_exist_ok=True)
+            _record_workspace_context(
+                log_context,
+                workspace=workspace,
+                workspace_source='multi_repo_cache_copy',
+                cache_repo=cache_repo,
+            )
             logger.info(
                 'DeepAudit created workspace by copying multi-repo cache: project=%s cache_repo=%s workspace=%s %s',
                 _project_id(project),
@@ -1235,7 +1265,7 @@ def create_repository_workspace(
                 {
                     'workspace': str(workspace),
                     'cache_repo': str(cache_repo),
-                    'workspace_source': 'copied from multi-repo cache',
+                    'workspace_source': 'multi_repo_cache_copy',
                     'repository_type': repo_type,
                 },
             )
@@ -1291,6 +1321,12 @@ def create_repository_workspace(
                 log_context=log_context,
                 event_callback=event_callback,
             )
+            _record_workspace_context(
+                log_context,
+                workspace=workspace,
+                workspace_source='single_repo_git_worktree',
+                cache_repo=cache_repo,
+            )
             _emit_git_event(
                 event_callback,
                 'info',
@@ -1298,7 +1334,7 @@ def create_repository_workspace(
                 {
                     'workspace': str(workspace),
                     'cache_repo': str(cache_repo),
-                    'workspace_source': 'git worktree from single-repo cache',
+                    'workspace_source': 'single_repo_git_worktree',
                     'repository_type': repo_type,
                 },
             )
