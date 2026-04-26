@@ -186,7 +186,7 @@ high_risk_areas: ["main.rs:xx - 可能存在问题"]  <- 必须使用实际存�
 
 ## ⚠️ 关键约束 - 必须遵守！
 1. **禁止直接输出 Final Answer** - 你必须先调用工具来收集项目信息
-2. **至少调用三个工具** - 使用 rag_query 语义搜索关键入口，read_file 读取文件，list_files 仅查看根目录
+2. **至少调用三个工具** - 优先使用 rag_query 语义搜索关键入口；若 RAG 不可用或超时，立即改用 search_code + read_file + list_files
 3. **没有工具调用的侦察无效** - 不允许仅凭项目名称直接推测
 4. **先 Action 后 Final Answer** - 必须先执行工具，获取 Observation，再输出最终结论
 

@@ -182,7 +182,13 @@ def _normalize_agent_input(task_id: str, input_data: Dict[str, Any], workspace: 
     }
 
 
-async def _initialize_tools(project_root: str, llm_service, input_data: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+async def _initialize_tools(
+    project_root: str,
+    llm_service,
+    input_data: Dict[str, Any],
+    *,
+    enable_c_family_rag_fallback: bool = False,
+) -> Dict[str, Dict[str, Any]]:
     from apps.deepaudit.agent_engine.tools import (
         BanditTool,
         CodeAnalysisTool,
@@ -259,9 +265,17 @@ async def _initialize_tools(project_root: str, llm_service, input_data: Dict[str
         target_files=target_files,
     )
     pattern_match_tool = PatternMatchTool(project_root)
-    rag_query_tool = RAGQueryTool(project_retriever)
+    rag_query_tool = RAGQueryTool(
+        project_retriever,
+        search_tool=search_tool,
+        enable_keyword_fallback=enable_c_family_rag_fallback,
+    )
     security_code_search_tool = SecurityCodeSearchTool(project_retriever)
-    function_context_tool = FunctionContextTool(project_retriever)
+    function_context_tool = FunctionContextTool(
+        project_retriever,
+        search_tool=search_tool,
+        enable_keyword_fallback=enable_c_family_rag_fallback,
+    )
     run_code_tool = RunCodeTool(sandbox_manager=sandbox_manager, project_root=project_root)
     extract_function_tool = ExtractFunctionTool(project_root=project_root)
     security_knowledge_tool = SecurityKnowledgeQueryTool()
@@ -525,7 +539,12 @@ async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any],
         task_id,
         int(normalized_input.get("project_info", {}).get("file_count") or 0),
     )
-    tools = await _initialize_tools(workspace, llm_service, input_data)
+    tools = await _initialize_tools(
+        workspace,
+        llm_service,
+        input_data,
+        enable_c_family_rag_fallback=bool(language_profile.get("is_c_family_dominant")),
+    )
 
     recon_agent = ReconAgent(
         llm_service=llm_service,

@@ -300,6 +300,7 @@ class BaseAgent(ABC):
         self._cancelled = False
         self._cancel_callback = None
         self._last_input_data: Dict[str, Any] = {}
+        self._degraded_tool_notifications: set[str] = set()
 
         # 获取超时配置
         self._timeout_config = self._get_timeout_config()
@@ -876,6 +877,70 @@ class BaseAgent(ABC):
             tool_output=tool_output_dict,
             tool_duration_ms=duration_ms,
         )
+
+    async def _emit_degraded_tool_warning(self, tool_name: str, result) -> None:
+        metadata = dict(getattr(result, "metadata", {}) or {})
+        if not metadata.get("degraded") or metadata.get("degraded_tool") != "search_code":
+            return
+
+        fallback_reason = str(metadata.get("fallback_reason") or "").strip()
+        fallback_reason_category = str(metadata.get("fallback_reason_category") or "").strip()
+        fallback_keywords = list(metadata.get("fallback_keywords") or [])
+        timeout_seconds = metadata.get("timeout_seconds")
+        notification_key = json.dumps(
+            {
+                "tool_name": tool_name,
+                "reason": fallback_reason,
+                "reason_category": fallback_reason_category,
+                "keywords": fallback_keywords,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        if notification_key in self._degraded_tool_notifications:
+            return
+        self._degraded_tool_notifications.add(notification_key)
+
+        if fallback_reason_category == "timeout":
+            timeout_display = timeout_seconds or metadata.get("tool_timeout_seconds") or 60
+            message = f"RAG 查询超时 {timeout_display} 秒，已切换为关键词搜索"
+        else:
+            message = "RAG 不可用，已切换为关键词搜索"
+
+        warning_metadata = {
+            "tool_name": tool_name,
+            "degraded": True,
+            "degraded_tool": metadata.get("degraded_tool"),
+            "fallback_reason": fallback_reason,
+            "fallback_reason_category": fallback_reason_category,
+            "fallback_keywords": fallback_keywords,
+        }
+        if timeout_seconds is not None:
+            warning_metadata["timeout_seconds"] = timeout_seconds
+        await self.emit_event("warning", message, metadata=warning_metadata)
+
+    async def _run_tool_timeout_fallback(self, tool_name: str, tool, tool_input: Dict, timeout: float):
+        if tool_name not in {"rag_query", "function_context"}:
+            return None
+        fallback_executor = getattr(tool, "execute_degraded_fallback", None)
+        if not callable(fallback_executor):
+            return None
+        result = await fallback_executor(
+            reason=f"RAG 查询超时 {int(timeout)} 秒",
+            reason_category="timeout",
+            timeout_seconds=int(timeout),
+            **tool_input,
+        )
+        if result is None:
+            return None
+        metadata = dict(getattr(result, "metadata", {}) or {})
+        metadata.setdefault("degraded", True)
+        metadata.setdefault("degraded_tool", "search_code")
+        metadata.setdefault("fallback_reason", f"RAG 查询超时 {int(timeout)} 秒")
+        metadata.setdefault("fallback_reason_category", "timeout")
+        metadata.setdefault("timeout_seconds", int(timeout))
+        result.metadata = metadata
+        return result
     
     # ============ 发现相关事件 ============
 
@@ -1264,10 +1329,15 @@ class BaseAgent(ABC):
             # 🔥 使用用户配置的默认工具超时时间
             default_tool_timeout = self._timeout_config.get('tool_timeout', 60)
             timeout = tool_timeouts.get(tool_name, default_tool_timeout)
+            if tool_name in {"rag_query", "function_context"}:
+                timeout = min(float(timeout), 60.0)
+
+            execute_task: Optional[asyncio.Task] = None
 
             # 🔥 使用 asyncio.wait_for 添加超时控制，同时支持取消
             async def execute_with_cancel_check():
                 """包装工具执行，定期检查取消状态"""
+                nonlocal execute_task
                 # 创建工具执行任务
                 execute_task = asyncio.create_task(tool.execute(**tool_input))
 
@@ -1303,9 +1373,21 @@ class BaseAgent(ABC):
                     timeout=timeout
                 )
             except asyncio.TimeoutError:
-                duration_ms = int((time.time() - start) * 1000)
-                await self.emit_tool_result(tool_name, f"超时 ({timeout}s)", duration_ms)
-                return f"⚠️ 工具 '{tool_name}' 执行超时 ({timeout}秒)，请尝试其他方法或减小操作范围。"
+                if execute_task and not execute_task.done():
+                    execute_task.cancel()
+                    try:
+                        await execute_task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        pass
+                fallback_result = await self._run_tool_timeout_fallback(tool_name, tool, tool_input, timeout)
+                if fallback_result is not None:
+                    result = fallback_result
+                else:
+                    duration_ms = int((time.time() - start) * 1000)
+                    await self.emit_tool_result(tool_name, f"超时 ({timeout}s)", duration_ms)
+                    return f"⚠️ 工具 '{tool_name}' 执行超时 ({timeout}秒)，请尝试其他方法或减小操作范围。"
             except asyncio.CancelledError:
                 duration_ms = int((time.time() - start) * 1000)
                 await self.emit_tool_result(tool_name, "已取消", duration_ms)
@@ -1315,6 +1397,7 @@ class BaseAgent(ABC):
             # 🔥 修复：确保传递有意义的结果字符串，避免 "None"
             result_preview = str(result.data)[:200] if result.data is not None else (result.error[:200] if result.error else "")
             await self.emit_tool_result(tool_name, result_preview, duration_ms)
+            await self._emit_degraded_tool_warning(tool_name, result)
 
             # 🔥 工具执行后再次检查取消
             if self.is_cancelled:

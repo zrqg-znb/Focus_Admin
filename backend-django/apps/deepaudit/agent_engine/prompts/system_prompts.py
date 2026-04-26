@@ -200,15 +200,15 @@ TOOL_USAGE_GUIDE = """
 | `dataflow_analysis` | 数据流追踪验证 |
 | `code_analysis` | 代码结构分析 |
 
-#### 辅助工具（RAG 优先！）
+#### 辅助工具（RAG 优先，可降级）
 | 工具 | 用途 |
 |------|------|
-| `rag_query` | **🔥 首选代码搜索工具** - 语义搜索，查找业务逻辑和漏洞上下文 |
+| `rag_query` | **🔥 首选代码搜索工具** - 语义搜索，查找业务逻辑和漏洞上下文；若 unavailable/degraded/timeout，立即切到 `search_code + read_file + list_files` |
 | `security_search` | **🔥 首选安全搜索工具** - 查找特定的安全敏感代码模式 |
-| `function_context` | **🔥 理解代码结构** - 获取函数调用关系和定义 |
+| `function_context` | **🔥 理解代码结构** - 获取函数调用关系和定义；若 unavailable/degraded/timeout，同样立即改用关键词搜索和读文件 |
 | `read_file` | 读取文件内容验证发现 |
 | `list_files` | ⚠️ **仅用于** 了解根目录结构，**严禁** 用于遍历代码查找内容 |
-| `search_code` | ⚠️ **仅用于** 查找非常具体的字符串常量，**严禁** 作为主要代码搜索手段 |
+| `search_code` | ⚠️ 默认用于查找非常具体的字符串常量；但在 C/C++ 项目 RAG 降级时，可用于搜索内存、并发、中断等关键字 |
 | `query_security_knowledge` | 查询安全知识库 |
 
 ### 🔍 代码搜索工具对比
@@ -217,16 +217,16 @@ TOOL_USAGE_GUIDE = """
 | `rag_query` | **🔥 语义搜索**，理解代码含义 | **首选！** 查找"处理用户输入的函数"、"数据库查询逻辑" |
 | `security_search` | **🔥 安全专用搜索** | **首选！** 查找"SQL注入相关代码"、"认证授权代码" |
 | `function_context` | **🔥 函数上下文** | 查找某函数的调用者和被调用者 |
-| `search_code` | **❌ 关键词搜索**，仅精确匹配 | **不推荐**，仅用于查找确定的常量或变量名 |
+| `search_code` | **❌ 关键词搜索**，默认仅精确匹配 | **通常不推荐**，但在 C/C++ 项目 RAG 降级时应立即接管搜索 |
 
 **❌ 严禁行为**：
 1. **不要** 使用 `list_files` 递归列出所有文件来查找代码
-2. **不要** 使用 `search_code` 搜索通用关键词（如 "function", "user"），这会产生大量无用结果
+2. **不要** 在非降级场景使用 `search_code` 搜索通用关键词（如 "function", "user"），这会产生大量无用结果
 
 **✅ 推荐行为**：
 1. **始终优先使用 RAG 工具** (`rag_query`, `security_search`)
 2. `rag_query` 可以理解自然语言，如 "Show me the login function"
-3. 仅在确实需要精确匹配特定字符串时才使用 `search_code`
+3. 若 `rag_query` / `function_context` unavailable、degraded 或 timeout，尤其是 C/C++ 项目，立即改用 `search_code + read_file + list_files`
 
 ### 📋 推荐分析流程
 

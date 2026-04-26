@@ -731,11 +731,62 @@ class AgentTaskServicesTestCase(TestCase):
         self.assertEqual(resumed.audit_scope.get('resume_from_task_id'), task.id)
         self.assertEqual(resumed.agent_config.get('resume', {}).get('requested_checkpoint_id'), str(checkpoint.id))
         self.assertEqual(resumed.agent_config.get('resume', {}).get('resume_checkpoint_id'), str(restorable.id))
-        self.assertEqual(resumed.repository_url, task.repository_url)
-        self.assertEqual(resumed.repository_type, task.repository_type)
-        self.assertEqual(resumed.branch_name, task.branch_name)
-        self.assertEqual(resumed.manifest_xml, task.manifest_xml)
-        self.assertEqual(resumed.group, task.group)
+        self.assertEqual(resumed.repository_url, self.project.repository_url)
+        self.assertEqual(resumed.repository_type, self.project.repository_type)
+        self.assertEqual(resumed.branch_name, self.project.default_branch)
+        self.assertEqual(resumed.manifest_xml, self.project.manifest_xml)
+        self.assertEqual(resumed.group, self.project.group)
+        mock_dispatch.assert_called_once()
+
+    @patch("apps.deepaudit.agent_task.agent_task_services.dispatch_deepaudit_task", return_value=None)
+    def test_resume_task_from_checkpoint_rebuilds_multi_repository_spec_from_project(self, mock_dispatch) -> None:
+        task = self._seed_completed_runtime(self.task)
+        assert task is not None
+        task.repository_type = 'single'
+        task.repository_url = 'https://codehub.example.com/platform/single.git'
+        task.branch_name = 'legacy-branch'
+        task.manifest_xml = None
+        task.group = None
+        task.save(
+            update_fields=[
+                'repository_type',
+                'repository_url',
+                'branch_name',
+                'manifest_xml',
+                'group',
+                'sys_update_datetime',
+            ]
+        )
+        restorable = self._create_restorable_checkpoint(task)
+        checkpoint = persist_checkpoint(
+            task.id,
+            checkpoint_type='final',
+            checkpoint_name='报告生成完成',
+            phase=AGENT_PHASE_REPORTING,
+            sequence=15,
+        )
+        assert checkpoint is not None
+
+        resumed = resume_task_from_checkpoint(self.user, task.id, str(checkpoint.id))
+
+        self.assertEqual(resumed.audit_scope.get('resume_from_checkpoint_id'), str(restorable.id))
+        self.assertEqual(resumed.repository_type, 'multi')
+        self.assertEqual(resumed.repository_url, self.project.repository_url)
+        self.assertEqual(resumed.branch_name, self.project.default_branch)
+        self.assertEqual(resumed.manifest_xml, self.project.manifest_xml)
+        self.assertEqual(resumed.group, self.project.group)
+        self.assertEqual(
+            resumed.agent_config.get('repository_signature'),
+            repository_spec_signature(
+                {
+                    'repository_type': 'multi',
+                    'repository_url': self.project.repository_url,
+                    'branch_name': self.project.default_branch,
+                    'manifest_xml': self.project.manifest_xml,
+                    'group': self.project.group,
+                }
+            ),
+        )
         mock_dispatch.assert_called_once()
 
     def test_refresh_task_snapshot_preserves_last_real_phase_on_failure(self) -> None:

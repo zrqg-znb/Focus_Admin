@@ -888,11 +888,6 @@ def resume_task_from_checkpoint(user, task_id: str, checkpoint_id: str) -> Agent
         },
         'target_vulnerabilities': list(source_task.target_vulnerabilities or []),
         'verification_level': source_task.verification_level or 'sandbox',
-        'repository_url': source_task.repository_url,
-        'repository_type': source_task.repository_type,
-        'branch_name': source_task.branch_name or source_task.project.default_branch,
-        'manifest_xml': source_task.manifest_xml,
-        'group': source_task.group,
         'exclude_patterns': list(source_task.exclude_patterns or []),
         'target_files': list(source_task.target_files or []),
         'agent_config': {
@@ -914,7 +909,10 @@ def resume_task_from_checkpoint(user, task_id: str, checkpoint_id: str) -> Agent
         f"{resumed_task.description}\n\nResumed from checkpoint {resume_checkpoint.id} ({resume_checkpoint.checkpoint_name or resume_checkpoint.checkpoint_type})."
     ).strip()
     resumed_task.audit_scope = payload['audit_scope']
-    resumed_task.agent_config = payload['agent_config']
+    resumed_task.agent_config = {
+        **dict(resumed_task.agent_config or {}),
+        **dict(payload['agent_config'] or {}),
+    }
     resumed_task.sys_modifier = user
     resumed_task.save(update_fields=['description', 'audit_scope', 'agent_config', 'sys_modifier', 'sys_update_datetime'])
     dispatch_error = dispatch_deepaudit_task(run_agent_task, str(resumed_task.id))

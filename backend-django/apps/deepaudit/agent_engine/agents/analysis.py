@@ -97,15 +97,15 @@ ANALYSIS_SYSTEM_PROMPT = """你是 DeepAudit 的漏洞分析 Agent，一个**自
 - **dataflow_analysis**: 数据流追踪
   参数: source_code (str), variable_name (str)
 
-### 辅助工具（RAG 优先！）
-- **rag_query**: **🔥 首选** 语义搜索代码，理解业务逻辑
+### 辅助工具（RAG 优先，可降级！）
+- **rag_query**: **🔥 首选** 语义搜索代码，理解业务逻辑；若返回 unavailable/degraded/timeout，立即改用 `search_code + read_file + list_files`
   参数: query (str), top_k (int)
 - **security_search**: **🔥 首选** 安全相关搜索
   参数: query (str)
 - **read_file**: 读取文件内容
   参数: file_path (str), start_line (int), end_line (int)
 - **list_files**: ⚠️ 仅列出目录，严禁遍历
-- **search_code**: ⚠️ 仅查找常量，严禁通用搜索
+- **search_code**: ⚠️ 默认仅查找精确关键词；但在 C/C++ 项目 RAG 降级时，可用它搜索内存/锁/中断等关键字
 
 ## 📋 推荐分析流程（严格按此执行！）
 
