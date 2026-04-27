@@ -90,6 +90,12 @@ def _apply_audit_fields(instance, user, *, is_create: bool = False):
         instance.sys_modifier = user
 
 
+def _is_daily_overview_abnormal(batch: DailyExecutionBatch) -> bool:
+    total_count = max(batch.total_count or 0, 0)
+    success_count = max(batch.success_count or 0, 0)
+    return not (total_count > 0 and success_count == total_count)
+
+
 def list_platforms():
     queryset = McuPlatform.objects.filter(is_deleted=False).order_by('-sort', 'name')
     return [serialize_platform(item) for item in queryset]
@@ -659,7 +665,7 @@ def get_daily_overview(query) -> DailyOverviewResponse:
 
     for vehicle in vehicles:
         batch = recalculate_daily_batch(vehicle.id, query.execute_date)
-        is_abnormal = batch.failed_count > 0 or batch.timeout_count > 0
+        is_abnormal = _is_daily_overview_abnormal(batch)
         if query.abnormal_only and not is_abnormal:
             continue
 
