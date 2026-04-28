@@ -3,7 +3,7 @@
   "pptx": "/Users/zrq/CodeSpace/PythonProjects/Focus_Admin/tmp/presentations/deepaudit-report/output/output.pptx",
   "checks": {
     "pptx_package": {
-      "slide_count": 9,
+      "slide_count": 10,
       "media_count": 2,
       "chart_count": 0,
       "zero_byte_media": [],
