@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 
-import { Plus, Trash2 } from 'lucide-vue-next';
-
 import { ElButton, ElInput, ElInputNumber } from 'element-plus';
+import { Plus, Trash2 } from 'lucide-vue-next';
 
 import { UserSelector } from '#/components/zq-form/user-selector';
 
@@ -44,8 +43,13 @@ function remove(index: number) {
 }
 
 function onUserChange(val: string | string[] | undefined, index: number) {
-  const ids = Array.isArray(val) ? val : (val ? [val] : []);
-  list.value[index].user_ids = ids;
+  const ids = Array.isArray(val) ? val : [];
+  if (!Array.isArray(val) && val) {
+    ids.push(val);
+  }
+  const item = list.value[index];
+  if (!item) return;
+  item.user_ids = ids;
   update();
 }
 </script>

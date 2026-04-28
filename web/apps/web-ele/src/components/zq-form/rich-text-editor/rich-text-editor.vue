@@ -5,7 +5,7 @@ import type {
   ToolbarGroup,
 } from './types';
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 
 import Color from '@tiptap/extension-color';
 import Highlight from '@tiptap/extension-highlight';
@@ -93,7 +93,10 @@ const emit = defineEmits<RichTextEditorEmits>();
 // 链接弹窗
 const linkPopoverVisible = ref(false);
 const linkUrl = ref('');
-const linkButtonRef = ref<HTMLElement | null>(null);
+const linkInputRef = ref<null | { focus: () => void; select?: () => void }>(
+  null,
+);
+const linkInputPrimed = ref(false);
 
 // 图片弹窗
 const imagePopoverVisible = ref(false);
@@ -141,6 +144,8 @@ const editor = useEditor({
       openOnClick: false,
       HTMLAttributes: {
         class: 'text-[var(--el-color-primary)] underline cursor-pointer',
+        rel: 'noopener noreferrer',
+        target: '_blank',
       },
     }),
     ResizableImage.configure({
@@ -277,20 +282,114 @@ const setHighlight = (color: null | string) => {
 };
 
 const setLink = () => {
-  if (linkUrl.value) {
-    editor.value?.chain().focus().setLink({ href: linkUrl.value }).run();
+  const rawUrl = linkUrl.value.trim();
+  const normalizedUrl = normalizeLinkUrl(rawUrl);
+
+  if (rawUrl && !normalizedUrl) {
+    ElMessage.warning('请输入有效的链接地址');
+    return;
+  }
+
+  if (normalizedUrl) {
+    editor.value
+      ?.chain()
+      .focus()
+      .extendMarkRange('link')
+      .setLink({ href: normalizedUrl })
+      .run();
   } else {
-    editor.value?.chain().focus().unsetLink().run();
+    editor.value?.chain().focus().extendMarkRange('link').unsetLink().run();
   }
   linkPopoverVisible.value = false;
   linkUrl.value = '';
 };
 
-const openLinkPopover = () => {
-  const previousUrl = editor.value?.getAttributes('link').href;
-  linkUrl.value = previousUrl || '';
-  linkPopoverVisible.value = true;
+const prepareLinkPopover = () => {
+  // 打开时保持输入框空白，避免把旧 URL 当作续写内容；需要改链接时直接重新输入。
+  linkUrl.value = '';
 };
+
+const normalizeLinkUrl = (value: string) => {
+  if (!value) return '';
+
+  if (
+    /^[a-z][a-z\d+\-.]*:/i.test(value) ||
+    value.startsWith('//') ||
+    value.startsWith('/') ||
+    value.startsWith('#') ||
+    value.startsWith('?') ||
+    value.startsWith('./') ||
+    value.startsWith('../')
+  ) {
+    return value;
+  }
+
+  if (
+    /^(?:localhost|(?:\d{1,3}\.){3}\d{1,3})(?::\d+)?(?:[/?#].*)?$/.test(
+      value,
+    ) ||
+    /^[\w-]+(?:\.[\w-]+)+(?:[/?#].*)?$/.test(value)
+  ) {
+    return `https://${value}`;
+  }
+
+  return '';
+};
+
+const handleLinkInputFocus = () => {
+  requestAnimationFrame(() => {
+    linkInputRef.value?.select?.();
+  });
+};
+
+const clearPrimedLinkInput = () => {
+  if (!linkInputPrimed.value) return;
+  if (linkUrl.value) {
+    linkUrl.value = '';
+  }
+  linkInputPrimed.value = false;
+};
+
+const handleLinkInputKeydown = (event: Event | KeyboardEvent) => {
+  if (!(event instanceof KeyboardEvent)) return;
+  if (!linkInputPrimed.value) return;
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  if (
+    event.key === 'Tab' ||
+    event.key === 'Shift' ||
+    event.key === 'Escape' ||
+    event.key === 'ArrowLeft' ||
+    event.key === 'ArrowRight' ||
+    event.key === 'ArrowUp' ||
+    event.key === 'ArrowDown'
+  ) {
+    return;
+  }
+
+  if (
+    event.key.length === 1 ||
+    event.key === 'Backspace' ||
+    event.key === 'Delete'
+  ) {
+    clearPrimedLinkInput();
+  }
+};
+
+const handleLinkInputPaste = () => {
+  clearPrimedLinkInput();
+};
+
+watch(linkPopoverVisible, async (visible) => {
+  if (!visible) {
+    linkUrl.value = '';
+    linkInputPrimed.value = false;
+    return;
+  }
+
+  linkInputPrimed.value = true;
+  await nextTick();
+  linkInputRef.value?.focus();
+});
 
 // 插入图片的通用方法
 const insertImage = (src: string) => {
@@ -902,12 +1001,12 @@ defineExpose({
         >
           <template #reference>
             <ElButton
-              ref="linkButtonRef"
               text
               size="small"
               :class="{ 'is-active': isActive('link') }"
               title="链接"
-              @click="openLinkPopover"
+              @mousedown.prevent="prepareLinkPopover"
+              @click="prepareLinkPopover"
             >
               <Link class="h-4 w-4" />
             </ElButton>
@@ -915,10 +1014,15 @@ defineExpose({
           <div class="link-panel">
             <div class="mb-2 text-sm font-medium">插入链接</div>
             <ElInput
+              ref="linkInputRef"
               v-model="linkUrl"
               placeholder="请输入链接地址"
               size="small"
-              @keyup.enter="setLink"
+              @focus="handleLinkInputFocus"
+              @keydown="handleLinkInputKeydown"
+              @paste="handleLinkInputPaste"
+              @keydown.enter.prevent.stop="setLink"
+              @keydown.esc.prevent.stop="linkPopoverVisible = false"
             />
             <div class="mt-2 flex justify-end gap-2">
               <ElButton size="small" @click="linkPopoverVisible = false">

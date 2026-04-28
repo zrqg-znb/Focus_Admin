@@ -28,6 +28,10 @@ const positions = ref<{ name: string; sort?: number; user_ids: string[] }[]>(
 );
 const submitLoading = ref(false);
 
+function normalizeDescription(value: unknown) {
+  return typeof value === 'string' ? value : '';
+}
+
 const [Form, formApi] = useVbenForm({
   commonConfig: { colon: true, componentProps: { class: 'w-full' } },
   schema: useNodeFormSchema(),
@@ -41,6 +45,7 @@ watch(
       formApi.setValues({
         ...props.node,
         parent_id: props.node.parent_id || null,
+        description: normalizeDescription(props.node.description),
       });
       // Map positions
       positions.value = props.node.positions
@@ -63,6 +68,7 @@ watch(
       formApi.resetForm();
       formApi.setValues({
         parent_id: props.parentNode?.id || null,
+        description: '',
       });
       positions.value = [];
       // Clear currentNodeId
@@ -89,15 +95,20 @@ async function onSubmit() {
   submitLoading.value = true;
 
   try {
+    const description = normalizeDescription(data.description);
     if (props.isEdit && props.node) {
       // Update Node
-      await updateNode(props.node.id, data);
+      await updateNode(props.node.id, {
+        ...data,
+        description,
+      });
       // Update Positions - 始终调用，无论是否为根节点
       await updateNodePositions(props.node.id, positions.value);
     } else {
       // Create
       const payload = {
         ...data,
+        description,
         parent_id: data.parent_id || null,
         positions: positions.value,
       } as any;

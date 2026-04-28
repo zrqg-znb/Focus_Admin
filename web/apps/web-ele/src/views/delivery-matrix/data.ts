@@ -1,5 +1,7 @@
 import type { VbenFormSchema } from '#/adapter/form';
+
 import { listProjectsApi } from '#/api/project-manager/project';
+
 import ParentNodeSelect from './admin/modules/ParentNodeSelect.vue';
 
 export function useNodeFormSchema(): VbenFormSchema[] {
@@ -52,13 +54,24 @@ export function useNodeFormSchema(): VbenFormSchema[] {
       },
     },
     {
-      component: 'Input',
+      component: 'RichTextEditor',
       fieldName: 'description',
       label: '描述',
+      defaultValue: '',
+      formItemClass: 'xl:col-span-2',
       componentProps: {
-        placeholder: '请输入节点描述信息',
-        type: 'textarea',
-        rows: 3,
+        placeholder: '请输入节点描述，可插入超链接和富文本内容',
+        minHeight: 240,
+        maxHeight: 420,
+        toolbarConfig: {
+          insert: {
+            attachment: false,
+            image: false,
+            link: true,
+            table: false,
+            video: false,
+          },
+        },
       },
     },
   ];
