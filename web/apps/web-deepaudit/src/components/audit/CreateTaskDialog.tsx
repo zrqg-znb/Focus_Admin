@@ -46,6 +46,8 @@ import { api } from '@/shared/config/database';
 import { useAuth } from '@/shared/context/AuthContext';
 import { DEEPAUDIT_ACTION_CODES } from '@/shared/focus/focusPermission';
 import {
+  buildEffectiveRepositorySpec,
+  hasValidRepositorySelectionSignature,
   getRepositoryTypeLabel,
   isCFamilyProject,
   isMultiRepository,
@@ -334,19 +336,25 @@ export default function CreateTaskDialog({
       setCreating(true);
       let taskId: string;
       const effectiveRepositorySpec = isRepositoryProject(selectedProject)
-        ? {
-            repository_type:
-              selectedRepositorySpec?.repository_type ||
-              selectedProject.repository_type,
-            repository_url:
-              selectedRepositorySpec?.repository_url ||
-              selectedProject.repository_url,
+        ? buildEffectiveRepositorySpec(selectedProject, {
+            repository_type: selectedRepositorySpec?.repository_type,
+            repository_url: selectedRepositorySpec?.repository_url,
             branch_name: selectedRepositorySpec?.branch_name || branch,
             manifest_xml:
               selectedRepositorySpec?.manifest_xml || manifestXml || undefined,
             group: selectedRepositorySpec?.group || group || undefined,
-          }
+          })
         : undefined;
+      if (
+        isRepositoryProject(selectedProject) &&
+        !hasValidRepositorySelectionSignature(
+          selectedFiles,
+          selectedRepositorySignature,
+        )
+      ) {
+        toast.error('仓库规格已变化，请重新选择文件/目录后再启动任务');
+        return;
+      }
 
       if (auditMode === 'agent') {
         const agentTask = await createAgentTask({
@@ -457,11 +465,29 @@ export default function CreateTaskDialog({
       return (
         !!selectedProject.repository_url &&
         !!branch.trim() &&
-        !!manifestXml.trim()
+        !!manifestXml.trim() &&
+        hasValidRepositorySelectionSignature(
+          selectedFiles,
+          selectedRepositorySignature,
+        )
       );
     }
-    return !!selectedProject.repository_url && !!branch.trim();
-  }, [selectedProject, zipState, branch, manifestXml]);
+    return (
+      !!selectedProject.repository_url &&
+      !!branch.trim() &&
+      hasValidRepositorySelectionSignature(
+        selectedFiles,
+        selectedRepositorySignature,
+      )
+    );
+  }, [
+    selectedFiles,
+    selectedProject,
+    selectedRepositorySignature,
+    zipState,
+    branch,
+    manifestXml,
+  ]);
   const canSubmitCurrentMode =
     auditMode === 'agent' ? canCreateAgentTask : canCreateFastTask;
   const selectedScopeText = useMemo(() => {

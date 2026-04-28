@@ -175,6 +175,12 @@ export interface AgentTaskSummary {
 export async function createAgentTask(
   data: CreateAgentTaskRequest,
 ): Promise<AgentTask> {
+  if (
+    data.target_files?.length &&
+    !String(data.repository_signature || '').trim()
+  ) {
+    throw new Error('仓库规格已变化，请重新选择文件/目录后再启动任务');
+  }
   const response = await apiClient.post('/agent-tasks/', data);
   return normalizeAgentTask(response.data) as unknown as AgentTask;
 }

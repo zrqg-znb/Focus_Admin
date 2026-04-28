@@ -181,6 +181,57 @@ class ScanTaskSnapshotTestCase(TestCase):
         self.assertEqual(raised.exception.status_code, 409)
         self.assertIn('仓库规格已变化', str(raised.exception))
 
+    def test_create_task_requires_repository_signature_for_selected_files(self) -> None:
+        access = SimpleNamespace(project=self.project, role='owner')
+
+        with (
+            patch('apps.deepaudit.scan_task.scan_task_services.require_project_role', return_value=access),
+            patch('apps.deepaudit.scan_task.scan_task_services.resolve_scan_profile', return_value={}),
+            patch('apps.deepaudit.scan_task.scan_task_services.serialize_scan_profile', return_value={}),
+            self.assertRaises(HttpError) as raised,
+        ):
+            create_task(
+                self.user,
+                {
+                    'project_id': str(self.project.id),
+                    'file_paths': ['src/module'],
+                },
+                task_type='repository',
+            )
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertIn('文件选择会话未绑定仓库规格', str(raised.exception))
+
+    def test_create_zip_task_allows_selected_files_without_repository_signature(self) -> None:
+        zip_project = AuditProject.objects.create(
+            name='FocusAudit ZIP Project',
+            owner=self.user,
+            source_type='zip',
+            repository_url='',
+            repository_type='single',
+            default_branch='main',
+            sys_creator=self.user,
+            sys_modifier=self.user,
+        )
+        access = SimpleNamespace(project=zip_project, role='owner')
+
+        with (
+            patch('apps.deepaudit.scan_task.scan_task_services.require_project_role', return_value=access),
+            patch('apps.deepaudit.scan_task.scan_task_services.resolve_scan_profile', return_value={}),
+            patch('apps.deepaudit.scan_task.scan_task_services.serialize_scan_profile', return_value={}),
+        ):
+            task = create_task(
+                self.user,
+                {
+                    'project_id': str(zip_project.id),
+                    'file_paths': ['src/module'],
+                },
+                task_type='zip',
+            )
+
+        self.assertEqual(task.task_type, 'zip')
+        self.assertEqual(task.scan_config.get('file_paths'), ['src/module'])
+
     def test_execute_scan_task_rebinds_pending_snapshot_after_project_changes(self) -> None:
         task = AuditTask.objects.create(
             project=self.project,

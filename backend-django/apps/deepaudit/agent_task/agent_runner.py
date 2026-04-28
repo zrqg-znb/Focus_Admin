@@ -104,12 +104,69 @@ def _build_llm_service(input_data: Dict[str, Any]):
     return LLMService(user_config=input_data)
 
 
+def _normalize_target_file_path(path: Any) -> str:
+    raw = str(path or "").strip().replace("\\", "/")
+    if not raw:
+        return ""
+    normalized = os.path.normpath(raw).replace("\\", "/")
+    if normalized in {"", "."}:
+        return ""
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized.lstrip("/")
+
+
+def _effective_target_files_from_input(input_data: Dict[str, Any]) -> list[str]:
+    agent_config = dict(input_data.get("agent_config") or {})
+    selection_runtime = dict(agent_config.get("selection_runtime") or {})
+    candidates = selection_runtime.get("resolved_target_files")
+    if not isinstance(candidates, list):
+        candidates = input_data.get("target_files") or []
+    normalized_targets: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        normalized = _normalize_target_file_path(item)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_targets.append(normalized)
+    return normalized_targets
+
+
+def _validate_runtime_target_files(project_root: str, target_files: list[str]) -> Dict[str, Any]:
+    real_root = os.path.realpath(project_root)
+    valid_files: list[str] = []
+    missing_files: list[str] = []
+    directory_targets: list[str] = []
+    outside_targets: list[str] = []
+
+    for item in target_files:
+        normalized = _normalize_target_file_path(item)
+        if not normalized:
+            continue
+        full_path = os.path.realpath(os.path.join(real_root, normalized))
+        if not full_path.startswith(real_root):
+            outside_targets.append(normalized)
+            continue
+        if not os.path.exists(full_path):
+            missing_files.append(normalized)
+            continue
+        if not os.path.isfile(full_path):
+            directory_targets.append(normalized)
+            continue
+        resolved_relative_path = os.path.relpath(full_path, real_root).replace("\\", "/")
+        valid_files.append(resolved_relative_path)
+
+    return {
+        "valid_files": valid_files,
+        "missing_files": missing_files,
+        "directory_targets": directory_targets,
+        "outside_targets": outside_targets,
+    }
+
+
 def _collect_project_info(project_root: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
-    target_files = [
-        str(item).strip()
-        for item in (input_data.get("target_files") or [])
-        if str(item).strip()
-    ]
+    target_files = _effective_target_files_from_input(input_data)
     file_count = 0
     languages: set[str] = set()
     collected_files: list[str] = []
@@ -158,7 +215,7 @@ def _collect_project_info(project_root: str, input_data: Dict[str, Any]) -> Dict
 
 def _normalize_agent_input(task_id: str, input_data: Dict[str, Any], workspace: str) -> Dict[str, Any]:
     project_info = _collect_project_info(workspace, input_data)
-    target_files = list(input_data.get("target_files") or [])
+    target_files = _effective_target_files_from_input(input_data)
     language_profile = build_language_profile(
         [{"path": path} for path in (project_info.get("structure", {}).get("files") or [])],
         selected_file_paths=target_files,
@@ -232,7 +289,7 @@ async def _initialize_tools(
     from apps.deepaudit.rag import ProjectCodeRetriever
 
     exclude_patterns = list(input_data.get("exclude_patterns") or [])
-    target_files = list(input_data.get("target_files") or [])
+    target_files = _effective_target_files_from_input(input_data)
 
     sandbox_manager = SandboxManager()
     await sandbox_manager.initialize()
@@ -530,6 +587,77 @@ async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any],
     event_manager = EventManager(task_id=task_id)
     await event_manager.init_sequence()
     event_emitter = AgentEventEmitter(task_id, event_manager)
+
+    runtime_target_files = _effective_target_files_from_input(input_data)
+    if runtime_target_files:
+        validation_result = _validate_runtime_target_files(workspace, runtime_target_files)
+        valid_target_files = list(validation_result.get("valid_files") or [])
+        directory_targets = list(validation_result.get("directory_targets") or [])
+        missing_targets = list(validation_result.get("missing_files") or [])
+        outside_targets = list(validation_result.get("outside_targets") or [])
+        filtered_count = (
+            len(directory_targets)
+            + len(missing_targets)
+            + len(outside_targets)
+        )
+        if filtered_count > 0:
+            logger.warning(
+                "DeepAudit Agent runner filtered invalid target scope before orchestrator start: task_id=%s valid_count=%s directory_count=%s missing_count=%s outside_count=%s directory_samples=%s missing_samples=%s outside_samples=%s",
+                task_id,
+                len(valid_target_files),
+                len(directory_targets),
+                len(missing_targets),
+                len(outside_targets),
+                directory_targets[:5],
+                missing_targets[:5],
+                outside_targets[:5],
+            )
+            await event_manager.emit(
+                event_type="warning",
+                phase=AGENT_PHASE_PLANNING,
+                message="检测到目标范围中含目录或无效路径，已在启动前按真实文件范围纠偏",
+                event_metadata={
+                    "degraded_scope": True,
+                    "valid_count": len(valid_target_files),
+                    "directory_count": len(directory_targets),
+                    "missing_count": len(missing_targets),
+                    "outside_count": len(outside_targets),
+                    "directory_samples": directory_targets[:10],
+                    "missing_samples": missing_targets[:10],
+                    "outside_samples": outside_targets[:10],
+                    "resolved_samples": valid_target_files[:10],
+                },
+            )
+        if not valid_target_files:
+            message = "指定的目标目录或文件未解析为当前工作区中的有效文件，已中止 Agent 审计。"
+            await event_manager.emit(
+                event_type="task_error",
+                phase=AGENT_PHASE_PLANNING,
+                message=message,
+                event_metadata={
+                    "directory_count": len(directory_targets),
+                    "missing_count": len(missing_targets),
+                    "outside_count": len(outside_targets),
+                },
+            )
+            raise RuntimeError(message)
+        agent_config = dict(input_data.get("agent_config") or {})
+        selection_runtime = dict(agent_config.get("selection_runtime") or {})
+        selection_runtime.update(
+            {
+                "resolved_target_files": valid_target_files,
+                "resolved_file_count": len(valid_target_files),
+                "resolved_samples": valid_target_files[:10],
+            }
+        )
+        input_data = {
+            **input_data,
+            "target_files": valid_target_files,
+            "agent_config": {
+                **agent_config,
+                "selection_runtime": selection_runtime,
+            },
+        }
 
     llm_service = _build_llm_service(input_data)
     normalized_input = _normalize_agent_input(task_id, input_data, workspace)

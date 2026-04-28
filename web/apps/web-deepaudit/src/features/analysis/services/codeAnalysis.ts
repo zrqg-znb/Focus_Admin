@@ -17,6 +17,7 @@ type RepositoryAnalysisParams = {
   maxFileSize?: number;
   projectId: string;
   promptTemplateId?: string;
+  repositoryType?: 'multi' | 'single';
   ruleSetId?: string;
 };
 
@@ -67,6 +68,7 @@ export const CodeAnalysisEngine = {
       return await api.createAuditTask({
         project_id: params.projectId,
         task_type: 'repository',
+        repository_type: params.repositoryType,
         branch_name: params.branch,
         manifest_xml: params.manifestXml,
         group: params.group,

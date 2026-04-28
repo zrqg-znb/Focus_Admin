@@ -25,12 +25,24 @@ router = Router(tags=['DeepAudit-RAG'])
 
 
 @router.get('/projects/{project_id}/status', response=RagStatusSchema, summary='获取项目 RAG 索引状态')
-def get_project_rag_status(request, project_id: str, branch_name: str = '', exclude_patterns: str = '', target_files: str = ''):
+def get_project_rag_status(
+    request,
+    project_id: str,
+    branch_name: str = '',
+    repository_type: str = '',
+    manifest_xml: str = '',
+    group: str = '',
+    exclude_patterns: str = '',
+    target_files: str = '',
+):
     return rag_services.get_project_rag_status(
         request.auth,
         project_id,
         {
             'branch_name': branch_name,
+            'repository_type': repository_type,
+            'manifest_xml': manifest_xml,
+            'group': group,
             'exclude_patterns': [item.strip() for item in exclude_patterns.split(',') if item.strip()],
             'target_files': [item.strip() for item in target_files.split(',') if item.strip()],
         },

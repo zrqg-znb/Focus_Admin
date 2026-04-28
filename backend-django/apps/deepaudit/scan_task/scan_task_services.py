@@ -36,7 +36,8 @@ from apps.deepaudit.permissions import accessible_project_queryset, get_user_id,
 from apps.deepaudit.reporting import ReportBuilder
 from apps.deepaudit.repo_specs import (
     build_effective_project_repository_spec,
-    build_locked_project_repository_spec,
+    build_project_repository_binding,
+    build_task_repository_binding,
     build_task_repository_spec,
     format_repository_spec_for_log,
     normalize_repository_type,
@@ -86,14 +87,20 @@ def _selection_repository_signature_error() -> str:
     return '仓库规格已变化，请重新选择文件/目录后再启动任务'
 
 
+def _missing_selection_repository_signature_error() -> str:
+    return '已选择文件或目录，但当前文件选择会话未绑定仓库规格，请重新选择文件/目录后再启动任务'
+
+
 def _validate_selection_repository_signature(
     *,
     selected_paths: list[str],
     requested_signature: str,
     effective_signature: str,
 ) -> None:
-    if not selected_paths or not requested_signature:
+    if not selected_paths:
         return
+    if not requested_signature:
+        raise HttpError(422, _missing_selection_repository_signature_error())
     if requested_signature == effective_signature:
         return
     raise HttpError(409, _selection_repository_signature_error())
@@ -116,13 +123,14 @@ def _refresh_pending_task_repository_snapshot(
     *,
     allow_project_rebind: bool,
 ) -> tuple[dict[str, str], bool]:
-    repository_spec = build_task_repository_spec(task)
+    repository_binding = build_task_repository_binding(task)
+    repository_spec = repository_binding['repository_spec']
     if task.project.source_type != 'repository':
         return repository_spec, False
 
-    project_repository_spec = build_effective_project_repository_spec(task.project)
-    repository_signature = repository_spec_signature(repository_spec)
-    project_repository_signature = repository_spec_signature(project_repository_spec)
+    project_repository_spec = repository_binding['project_repository_spec']
+    repository_signature = str(repository_binding['repository_signature'])
+    project_repository_signature = str(repository_binding['project_repository_signature'])
     scan_config = dict(task.scan_config or {})
     stored_project_repository_signature = str(
         scan_config.get('project_repository_signature') or ''
@@ -294,20 +302,26 @@ def create_task(user, payload: dict, *, task_type: str) -> AuditTask:
     access = require_project_role(user, payload.get('project_id'), min_role='member')
     requested_repository_type = payload.get('repository_type')
     requested_repository_url = str(payload.get('repository_url') or '').strip()
-    project_repository_spec = build_effective_project_repository_spec(access.project)
-    repository_spec = build_locked_project_repository_spec(
+    repository_binding = build_project_repository_binding(
         access.project,
         branch_name=payload.get('branch_name'),
         manifest_xml=payload.get('manifest_xml'),
         group=payload.get('group'),
     )
-    repository_signature = repository_spec_signature(repository_spec)
-    project_repository_signature = repository_spec_signature(project_repository_spec)
+    repository_spec = repository_binding['repository_spec']
+    project_repository_spec = repository_binding['project_repository_spec']
+    repository_signature = str(repository_binding['repository_signature'])
+    project_repository_signature = str(repository_binding['project_repository_signature'])
     if access.project.source_type == 'repository':
         if not repository_spec['repository_url']:
             raise HttpError(422, '仓库任务必须填写 repository_url')
         if normalize_repository_type(repository_spec['repository_type']) == 'multi' and not repository_spec['manifest_xml']:
             raise HttpError(422, '多仓任务必须填写 manifest_xml')
+        _validate_selection_repository_signature(
+            selected_paths=list(payload.get('file_paths') or []),
+            requested_signature=str(payload.get('repository_signature') or '').strip(),
+            effective_signature=repository_signature,
+        )
     project_repository_type = normalize_repository_type(access.project.repository_type)
     project_repository_url = str(access.project.repository_url or '').strip()
     if requested_repository_type is not None and normalize_repository_type(requested_repository_type) != project_repository_type:
@@ -328,11 +342,6 @@ def create_task(user, payload: dict, *, task_type: str) -> AuditTask:
             project_repository_url or '-',
             repository_spec['repository_url'] or '-',
         )
-    _validate_selection_repository_signature(
-        selected_paths=list(payload.get('file_paths') or []),
-        requested_signature=str(payload.get('repository_signature') or '').strip(),
-        effective_signature=repository_signature,
-    )
     scan_config = {
         'file_paths': payload.get('file_paths') or [],
         'rule_set_id': payload.get('rule_set_id'),

@@ -31,7 +31,8 @@ from apps.deepaudit.realtime import push_task_event
 from apps.deepaudit.reporting import ReportBuilder
 from apps.deepaudit.repo_specs import (
     build_effective_project_repository_spec,
-    build_locked_project_repository_spec,
+    build_project_repository_binding,
+    build_task_repository_binding,
     build_task_repository_spec,
     format_repository_spec_for_log,
     normalize_repository_type,
@@ -164,14 +165,20 @@ def _selection_repository_signature_error() -> str:
     return '仓库规格已变化，请重新选择文件/目录后再启动任务'
 
 
+def _missing_selection_repository_signature_error() -> str:
+    return '已选择文件或目录，但当前文件选择会话未绑定仓库规格，请重新选择文件/目录后再启动任务'
+
+
 def _validate_selection_repository_signature(
     *,
     selected_paths: list[str],
     requested_signature: str,
     effective_signature: str,
 ) -> None:
-    if not selected_paths or not requested_signature:
+    if not selected_paths:
         return
+    if not requested_signature:
+        raise HttpError(422, _missing_selection_repository_signature_error())
     if requested_signature == effective_signature:
         return
     raise HttpError(409, _selection_repository_signature_error())
@@ -194,13 +201,14 @@ def _refresh_pending_task_repository_snapshot(
     *,
     allow_project_rebind: bool,
 ) -> tuple[dict[str, str], bool]:
-    repository_spec = build_task_repository_spec(instance)
+    repository_binding = build_task_repository_binding(instance)
+    repository_spec = repository_binding['repository_spec']
     if instance.project.source_type != 'repository':
         return repository_spec, False
 
-    project_repository_spec = build_effective_project_repository_spec(instance.project)
-    repository_signature = repository_spec_signature(repository_spec)
-    project_repository_signature = repository_spec_signature(project_repository_spec)
+    project_repository_spec = repository_binding['project_repository_spec']
+    repository_signature = str(repository_binding['repository_signature'])
+    project_repository_signature = str(repository_binding['project_repository_signature'])
     agent_config = dict(instance.agent_config or {})
     stored_project_repository_signature = str(
         agent_config.get('project_repository_signature') or ''
@@ -708,25 +716,26 @@ def create_task(user, payload: dict) -> AgentTask:
         str(payload.get('manifest_xml') or '').strip() or '-',
         str(payload.get('group') or '').strip() or '-',
     )
-    project_repository_spec = build_effective_project_repository_spec(access.project)
-    repository_spec = build_locked_project_repository_spec(
+    repository_binding = build_project_repository_binding(
         access.project,
         branch_name=payload.get('branch_name'),
         manifest_xml=payload.get('manifest_xml'),
         group=payload.get('group'),
     )
-    repository_signature = repository_spec_signature(repository_spec)
-    project_repository_signature = repository_spec_signature(project_repository_spec)
+    repository_spec = repository_binding['repository_spec']
+    project_repository_spec = repository_binding['project_repository_spec']
+    repository_signature = str(repository_binding['repository_signature'])
+    project_repository_signature = str(repository_binding['project_repository_signature'])
     if access.project.source_type == 'repository':
         if not repository_spec['repository_url']:
             raise HttpError(422, '仓库任务必须填写 repository_url')
         if normalize_repository_type(repository_spec['repository_type']) == 'multi' and not repository_spec['manifest_xml']:
             raise HttpError(422, '多仓任务必须填写 manifest_xml')
-    _validate_selection_repository_signature(
-        selected_paths=list(payload.get('target_files') or []),
-        requested_signature=str(payload.get('repository_signature') or '').strip(),
-        effective_signature=repository_signature,
-    )
+        _validate_selection_repository_signature(
+            selected_paths=list(payload.get('target_files') or []),
+            requested_signature=str(payload.get('repository_signature') or '').strip(),
+            effective_signature=repository_signature,
+        )
     target_vulnerabilities = list(payload.get('target_vulnerabilities') or [])
     if not target_vulnerabilities and project_likely_c_family(
         access.project,
@@ -2136,9 +2145,34 @@ def execute_agent_task(task_id: str) -> None:
             resolved_file_paths=resolved_target_files,
         )
         selection_stats['resolved_file_count'] = len(resolved_target_files) if validated_target_files else 0
+        resolved_target_prefixes = {f'{path}/' for path in resolved_target_files}
+        selected_directory_samples = [
+            path
+            for path in validated_target_files
+            if any(prefix.startswith(f'{path}/') for prefix in resolved_target_prefixes)
+        ]
+        selection_runtime = {
+            'validated_target_files': list(validated_target_files),
+            'selected_directory_count': len(selected_directory_samples),
+            'selected_directory_samples': selected_directory_samples[:10],
+            'resolved_target_files': list(resolved_target_files),
+            'resolved_file_count': len(resolved_target_files) if validated_target_files else 0,
+            'resolved_samples': resolved_target_files[:10],
+        }
+        logger.info(
+            'DeepAudit agent task %s prepared resolved target scope before runner: selected_count=%s directory_count=%s resolved_file_count=%s directory_samples=%s resolved_samples=%s %s',
+            instance.id,
+            len(validated_target_files),
+            len(selected_directory_samples),
+            len(resolved_target_files),
+            selected_directory_samples[:5],
+            resolved_target_files[:5],
+            format_repository_spec_for_log(repository_spec),
+        )
         instance.agent_config = {
             **dict(instance.agent_config or {}),
             'selection_stats': selection_stats,
+            'selection_runtime': selection_runtime,
             'repository_runtime': repository_runtime,
         }
         instance.total_files = len(resolved_target_files) if validated_target_files else instance.total_files

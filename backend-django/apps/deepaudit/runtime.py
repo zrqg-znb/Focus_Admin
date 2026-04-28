@@ -15,7 +15,11 @@ from ninja.errors import HttpError
 from apps.deepaudit import storage as deepaudit_storage
 from apps.deepaudit.git_service import GitEventCallback, GitServiceError, create_repository_workspace
 from apps.deepaudit.heuristics import build_summary, is_text_file, scan_content, should_exclude
-from apps.deepaudit.repo_specs import build_effective_project_repository_spec, format_repository_spec_for_log
+from apps.deepaudit.repo_specs import (
+    build_locked_project_repository_spec,
+    format_repository_spec_for_log,
+    normalize_repository_type,
+)
 from apps.deepaudit.user_config.user_config_model import AuditSshCredential, AuditUserConfig
 from apps.deepaudit.encryption import decrypt_value
 
@@ -244,6 +248,8 @@ def prepare_repository_workspace(
 def prepare_workspace(
     project,
     *,
+    repository_spec: dict[str, str] | None = None,
+    repository_type: str | None = None,
     branch_name: str | None = None,
     manifest_xml: str | None = None,
     group: str | None = None,
@@ -251,15 +257,29 @@ def prepare_workspace(
     allow_stale_on_failure: bool = False,
 ) -> tuple[Path, dict]:
     if project.source_type == 'repository':
-        repository_spec = build_effective_project_repository_spec(
-            project,
-            branch_name=branch_name,
-            manifest_xml=manifest_xml,
-            group=group,
+        if repository_type is not None:
+            requested_repository_type = normalize_repository_type(repository_type)
+            project_repository_type = normalize_repository_type(getattr(project, 'repository_type', 'single'))
+            if requested_repository_type != project_repository_type:
+                logger.warning(
+                    'DeepAudit prepare_workspace ignored repository_type override and kept project repository_type: '
+                    'project=%s requested_repository_type=%s project_repository_type=%s',
+                    getattr(project, 'id', ''),
+                    requested_repository_type,
+                    project_repository_type,
+                )
+        effective_repository_spec = (
+            repository_spec
+            or build_locked_project_repository_spec(
+                project,
+                branch_name=branch_name,
+                manifest_xml=manifest_xml,
+                group=group,
+            )
         )
         return prepare_repository_workspace(
             project,
-            repository_spec=repository_spec,
+            repository_spec=effective_repository_spec,
             user_id=user_id,
             allow_stale_on_failure=allow_stale_on_failure,
         )

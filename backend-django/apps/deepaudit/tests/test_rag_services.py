@@ -9,6 +9,7 @@ from django.test import TestCase
 from ninja.errors import HttpError
 
 from apps.deepaudit.agent_engine.knowledge.rag_knowledge import security_knowledge_rag
+from apps.deepaudit.project.project_model import AuditProject
 from apps.deepaudit.rag import rag_services
 from core.user.user_model import User
 
@@ -183,3 +184,71 @@ class RagKnowledgeServicesTestCase(TestCase):
 
         self.assertEqual(context.exception.status_code, 403)
         self.assertIn('其他用户占用', str(context.exception))
+
+
+class RagRepositoryScopeTestCase(TestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create(
+            username='rag-owner',
+            password='not-used',
+            name='RAG Owner',
+        )
+        self.project = AuditProject.objects.create(
+            name='RAG Multi Repo',
+            owner=self.user,
+            source_type='repository',
+            repository_url='https://codehub.example.com/platform/manifest.git',
+            repository_type='multi',
+            default_branch='release/main',
+            manifest_xml='default.xml',
+            group='platform',
+            sys_creator=self.user,
+            sys_modifier=self.user,
+        )
+
+    def test_query_project_rag_ignores_repository_type_override_for_multi_project(self) -> None:
+        access = type('Access', (), {'project': self.project})()
+        workspace = Path(tempfile.mkdtemp(prefix='deepaudit-rag-workspace-'))
+        self.addCleanup(lambda: shutil.rmtree(workspace, ignore_errors=True))
+
+        retriever = type(
+            'Retriever',
+            (),
+            {
+                'collection_name': 'deepaudit_rag_scope',
+                'get_unavailable_reason': lambda self: 'embedding unavailable',
+                '_embedding_unavailable_reason': lambda self: 'embedding unavailable',
+            },
+        )()
+
+        with (
+            patch('apps.deepaudit.rag.rag_services.require_project_role', return_value=access),
+            patch(
+                'apps.deepaudit.rag.rag_services.prepare_workspace',
+                return_value=(workspace, {'other_config': {}}),
+            ) as mock_prepare,
+            patch('apps.deepaudit.rag.rag_services.ProjectCodeRetriever', return_value=retriever),
+            self.assertLogs('apps.deepaudit.rag.rag_services', level='WARNING') as captured,
+        ):
+            result = rag_services.query_project_rag(
+                self.user,
+                str(self.project.id),
+                {
+                    'query': 'find memcpy usage',
+                    'repository_type': 'single',
+                    'branch_name': 'release/hotfix',
+                    'manifest_xml': 'vehicle.xml',
+                    'group': 'vehicle-a',
+                },
+            )
+
+        repository_spec = mock_prepare.call_args.kwargs['repository_spec']
+        self.assertEqual(repository_spec['repository_type'], 'multi')
+        self.assertEqual(repository_spec['repository_url'], self.project.repository_url)
+        self.assertEqual(repository_spec['branch_name'], 'release/hotfix')
+        self.assertEqual(repository_spec['manifest_xml'], 'vehicle.xml')
+        self.assertEqual(repository_spec['group'], 'vehicle-a')
+        self.assertEqual(result['count'], 0)
+        self.assertEqual(result['results'], [])
+        self.assertEqual(result['unavailable_reason'], 'embedding unavailable')
+        self.assertIn('ignored repository_type override', '\n'.join(captured.output))

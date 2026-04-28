@@ -197,3 +197,48 @@ export function isCFamilyProject(
   }
   return false;
 }
+
+export type RepositorySpecLike = {
+  default_branch?: null | string;
+  group?: null | string;
+  manifest_xml?: null | string;
+  repository_type?: null | string;
+  repository_url?: null | string;
+};
+
+export function buildEffectiveRepositorySpec(
+  project: null | RepositorySpecLike | undefined,
+  overrides?: {
+    branch_name?: null | string;
+    group?: null | string;
+    manifest_xml?: null | string;
+    repository_type?: null | string;
+    repository_url?: null | string;
+  },
+) {
+  return {
+    repository_type: normalizeRepositoryType(
+      overrides?.repository_type ?? project?.repository_type,
+    ),
+    repository_url: String(
+      overrides?.repository_url ?? project?.repository_url ?? '',
+    ).trim(),
+    branch_name: String(
+      overrides?.branch_name ?? project?.default_branch ?? 'main',
+    ).trim(),
+    manifest_xml: String(
+      overrides?.manifest_xml ?? project?.manifest_xml ?? '',
+    ).trim(),
+    group: String(overrides?.group ?? project?.group ?? '').trim(),
+  };
+}
+
+export function hasValidRepositorySelectionSignature(
+  selectedPaths?: string[],
+  repositorySignature?: null | string,
+): boolean {
+  if (!selectedPaths?.length) {
+    return true;
+  }
+  return Boolean(String(repositorySignature || '').trim());
+}

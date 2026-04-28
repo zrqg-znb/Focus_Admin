@@ -30,6 +30,7 @@ from apps.deepaudit.agent_task.agent_task_model import AgentFinding, AgentTask
 from apps.deepaudit.project.project_model import AuditProject, AuditProjectMember
 from apps.deepaudit.repo_specs import (
     build_effective_project_repository_spec,
+    build_locked_project_repository_spec,
     build_repository_spec,
     normalize_repository_type,
     repository_spec_signature,
@@ -543,7 +544,7 @@ def list_files(
     project = access.project
     user_id = str(getattr(user, 'id', '') or project.owner_id)
     if project.source_type == 'repository' and repository_cache_enabled():
-        repository_spec = build_effective_project_repository_spec(
+        repository_spec = build_locked_project_repository_spec(
             project,
             branch_name=branch_name,
             manifest_xml=manifest_xml,
@@ -558,6 +559,7 @@ def list_files(
                 repository_spec['branch_name'],
                 user_payload,
                 ssh_private_key=ssh_private_key,
+                repository_spec=repository_spec,
                 repository_type=repository_spec['repository_type'],
                 manifest_xml=repository_spec['manifest_xml'],
                 group=repository_spec['group'],
@@ -573,12 +575,16 @@ def list_files(
 
     workspace = None
     try:
-        workspace, _payload = prepare_workspace(
+        repository_spec = build_effective_project_repository_spec(
             project,
             branch_name=branch_name,
-            user_id=user_id,
             manifest_xml=manifest_xml,
             group=group,
+        )
+        workspace, _payload = prepare_workspace(
+            project,
+            repository_spec=repository_spec,
+            user_id=user_id,
         )
         rows = []
         for path in workspace.rglob('*'):
@@ -617,9 +623,20 @@ def browse_files(
     normalized_path = _normalize_browser_path(path)
     normalized_keyword = str(keyword or '').strip()
 
-    repository_spec = build_effective_project_repository_spec(
+    if repository_type is not None:
+        requested_repository_type = normalize_repository_type(repository_type)
+        project_repository_type = normalize_repository_type(project.repository_type)
+        if requested_repository_type != project_repository_type:
+            logger.warning(
+                'DeepAudit browse_files ignored repository_type override and kept project repository_type: '
+                'project_id=%s requested_repository_type=%s project_repository_type=%s',
+                project.id,
+                requested_repository_type,
+                project_repository_type,
+            )
+
+    repository_spec = build_locked_project_repository_spec(
         project,
-        repository_type=repository_type,
         branch_name=branch_name,
         manifest_xml=manifest_xml,
         group=group,
@@ -652,6 +669,7 @@ def browse_files(
                     repository_spec['branch_name'],
                     user_payload,
                     ssh_private_key=ssh_private_key,
+                    repository_spec=repository_spec,
                     repository_type=repository_spec['repository_type'],
                     manifest_xml=repository_spec['manifest_xml'],
                     group=repository_spec['group'],
@@ -667,9 +685,7 @@ def browse_files(
         else:
             workspace, _payload = prepare_workspace(
                 project,
-                branch_name=branch_name,
-                manifest_xml=manifest_xml,
-                group=group,
+                repository_spec=repository_spec,
                 user_id=user_id,
                 allow_stale_on_failure=True,
             )

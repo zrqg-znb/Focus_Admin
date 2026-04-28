@@ -3,6 +3,7 @@
 读取和搜索代码文件
 """
 
+import logging
 import os
 import re
 import fnmatch
@@ -11,6 +12,63 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 from .base import AgentTool, ToolResult
+
+
+logger = logging.getLogger(__name__)
+
+
+def _normalize_target_file_scope(
+    project_root: str,
+    target_files: Optional[List[str]],
+    *,
+    tool_name: str,
+) -> Optional[set[str]]:
+    if not target_files:
+        return None
+
+    real_root = os.path.realpath(project_root)
+    valid_files: set[str] = set()
+    missing_targets: list[str] = []
+    directory_targets: list[str] = []
+    outside_targets: list[str] = []
+
+    for item in target_files:
+        raw = str(item or '').strip().replace('\\', '/')
+        if not raw:
+            continue
+        normalized = os.path.normpath(raw).replace('\\', '/')
+        if normalized in {'', '.'}:
+            continue
+        while normalized.startswith('./'):
+            normalized = normalized[2:]
+        normalized = normalized.lstrip('/')
+        full_path = os.path.realpath(os.path.join(real_root, normalized))
+        if not full_path.startswith(real_root):
+            outside_targets.append(normalized)
+            continue
+        if not os.path.exists(full_path):
+            missing_targets.append(normalized)
+            continue
+        if not os.path.isfile(full_path):
+            directory_targets.append(normalized)
+            continue
+        valid_files.add(os.path.relpath(full_path, real_root).replace('\\', '/'))
+
+    invalid_count = len(missing_targets) + len(directory_targets) + len(outside_targets)
+    if invalid_count > 0:
+        logger.warning(
+            'DeepAudit %s filtered invalid target scope entries: valid_count=%s directory_count=%s missing_count=%s outside_count=%s directory_samples=%s missing_samples=%s outside_samples=%s',
+            tool_name,
+            len(valid_files),
+            len(directory_targets),
+            len(missing_targets),
+            len(outside_targets),
+            directory_targets[:5],
+            missing_targets[:5],
+            outside_targets[:5],
+        )
+
+    return valid_files
 
 
 class FileReadInput(BaseModel):
@@ -44,7 +102,11 @@ class FileReadTool(AgentTool):
         super().__init__()
         self.project_root = project_root
         self.exclude_patterns = exclude_patterns or []
-        self.target_files = set(target_files) if target_files else None
+        self.target_files = _normalize_target_file_scope(
+            project_root,
+            target_files,
+            tool_name='FileReadTool',
+        )
 
     @staticmethod
     def _read_file_lines_sync(file_path: str, start_idx: int, end_idx: int) -> tuple:
@@ -273,7 +335,11 @@ class FileSearchTool(AgentTool):
         super().__init__()
         self.project_root = project_root
         self.exclude_patterns = exclude_patterns or []
-        self.target_files = set(target_files) if target_files else None
+        self.target_files = _normalize_target_file_scope(
+            project_root,
+            target_files,
+            tool_name='FileSearchTool',
+        )
 
         # 从 exclude_patterns 中提取目录排除
         self.exclude_dirs = set(self.DEFAULT_EXCLUDE_DIRS)
@@ -482,7 +548,11 @@ class ListFilesTool(AgentTool):
         super().__init__()
         self.project_root = project_root
         self.exclude_patterns = exclude_patterns or []
-        self.target_files = set(target_files) if target_files else None
+        self.target_files = _normalize_target_file_scope(
+            project_root,
+            target_files,
+            tool_name='ListFilesTool',
+        )
         
         # 从 exclude_patterns 中提取目录排除
         self.exclude_dirs = set(self.DEFAULT_EXCLUDE_DIRS)
@@ -688,4 +758,3 @@ class ListFilesTool(AgentTool):
                 success=False,
                 error=f"列出文件失败: {str(e)}",
             )
-

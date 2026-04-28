@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 from pathlib import Path
 
@@ -13,12 +14,15 @@ from apps.deepaudit.config_resolver import resolve_embedding_config
 from apps.deepaudit.agent_engine.knowledge import knowledge_loader, security_knowledge_rag
 from apps.deepaudit.agent_engine.knowledge.base import KnowledgeCategory
 from apps.deepaudit.permissions import get_user_id, require_project_role
+from apps.deepaudit.repo_specs import build_locked_project_repository_spec, normalize_repository_type
 from apps.deepaudit.rag.embeddings import EmbeddingService
 from apps.deepaudit.rag.indexer import CodeIndexer
 from apps.deepaudit.rag.project_retriever import ProjectCodeRetriever
 from apps.deepaudit.rag.retriever import CodeRetriever
 from apps.deepaudit.runtime import cleanup_runtime_workspace, prepare_workspace
 from apps.deepaudit.storage import VECTOR_DB_DIR, ensure_storage_dirs
+
+logger = logging.getLogger(__name__)
 
 
 ALLOWED_KNOWLEDGE_UPLOAD_SUFFIXES = {'.json', '.md', '.markdown', '.txt'}
@@ -30,9 +34,32 @@ def _normalize_scope(payload: dict | None = None) -> dict:
     data = dict(payload or {})
     return {
         'branch_name': str(data.get('branch_name') or '').strip() or None,
+        'repository_type': str(data.get('repository_type') or '').strip() or None,
+        'manifest_xml': str(data.get('manifest_xml') or '').strip() or None,
+        'group': str(data.get('group') or '').strip() or None,
         'exclude_patterns': [str(item).strip() for item in (data.get('exclude_patterns') or []) if str(item).strip()],
         'target_files': [str(item).strip() for item in (data.get('target_files') or []) if str(item).strip()],
     }
+
+
+def _resolve_repository_scope(project, scope: dict) -> dict:
+    if scope.get('repository_type') is not None:
+        requested_repository_type = normalize_repository_type(scope['repository_type'])
+        project_repository_type = normalize_repository_type(getattr(project, 'repository_type', 'single'))
+        if requested_repository_type != project_repository_type:
+            logger.warning(
+                'DeepAudit RAG scope ignored repository_type override and kept project repository_type: '
+                'project_id=%s requested_repository_type=%s project_repository_type=%s',
+                getattr(project, 'id', ''),
+                requested_repository_type,
+                project_repository_type,
+            )
+    return build_locked_project_repository_spec(
+        project,
+        branch_name=scope['branch_name'] or getattr(project, 'default_branch', 'main'),
+        manifest_xml=scope['manifest_xml'],
+        group=scope['group'],
+    )
 
 
 def _build_collection_name(project_id: str, project_name: str, *, exclude_patterns: list[str], target_files: list[str]) -> str:
@@ -171,9 +198,10 @@ def get_project_rag_status(user, project_id: str, payload: dict | None = None) -
     ensure_storage_dirs()
     workspace = None
     try:
+        repository_spec = _resolve_repository_scope(access.project, scope)
         workspace, user_payload = prepare_workspace(
             access.project,
-            branch_name=scope['branch_name'] or access.project.default_branch,
+            repository_spec=repository_spec,
             user_id=str(getattr(user, 'id', '') or ''),
             allow_stale_on_failure=True,
         )
@@ -206,9 +234,10 @@ def rebuild_project_rag_index(user, project_id: str, payload: dict | None = None
     scope = _normalize_scope(payload)
     workspace = None
     try:
+        repository_spec = _resolve_repository_scope(access.project, scope)
         workspace, user_payload = prepare_workspace(
             access.project,
-            branch_name=scope['branch_name'] or access.project.default_branch,
+            repository_spec=repository_spec,
             user_id=str(getattr(user, 'id', '') or ''),
         )
         embedding_service, embedding_config = _build_embedding_service(user_payload)
@@ -263,9 +292,10 @@ def query_project_rag(user, project_id: str, payload: dict) -> dict:
     top_k = max(1, min(int(payload.get('top_k') or 10), 50))
     workspace = None
     try:
+        repository_spec = _resolve_repository_scope(access.project, scope)
         workspace, user_payload = prepare_workspace(
             access.project,
-            branch_name=scope['branch_name'] or access.project.default_branch,
+            repository_spec=repository_spec,
             user_id=str(getattr(user, 'id', '') or ''),
             allow_stale_on_failure=True,
         )

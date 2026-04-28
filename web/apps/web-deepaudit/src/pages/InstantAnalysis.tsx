@@ -466,6 +466,7 @@ int main(int argc, char **argv) {
         branch: selectedBranch.trim(),
         manifestXml: selectedManifestXml.trim() || undefined,
         group: selectedGroup.trim() || undefined,
+        repositoryType: selectedProject?.repository_type || 'single',
         excludePatterns: parsePatternInput(repositoryExcludePatterns),
         promptTemplateId: selectedPromptTemplateId || undefined,
         analysisDepth: repositoryAnalysisDepth,

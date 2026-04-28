@@ -474,21 +474,29 @@ export const api = {
     const explicitRepositorySignature = inheritedTaskInput
       ? undefined
       : task.repository_signature;
+    const selectedFilePaths = task.scan_config?.file_paths || [];
+    if (
+      project?.source_type === 'repository' &&
+      selectedFilePaths.length > 0 &&
+      !String(explicitRepositorySignature || '').trim()
+    ) {
+      throw new Error('仓库规格已变化，请重新选择文件/目录后再启动任务');
+    }
     const branchName = explicitBranchName || project?.default_branch || 'main';
     const manifestXml = explicitManifestXml || project?.manifest_xml || '';
     const group = explicitGroup || project?.group || '';
     const payload = {
       project_id: task.project_id,
       repository_url: explicitRepositoryUrl || project?.repository_url || '',
-      repository_type: explicitRepositoryType
-        ? normalizeRepositoryType(explicitRepositoryType)
-        : undefined,
+      repository_type: normalizeRepositoryType(
+        explicitRepositoryType || project?.repository_type,
+      ),
       repository_signature: explicitRepositorySignature || undefined,
       branch_name: branchName,
       manifest_xml: manifestXml,
       group,
       exclude_patterns: task.exclude_patterns || [],
-      file_paths: task.scan_config?.file_paths || [],
+      file_paths: selectedFilePaths,
       rule_set_id: task.rule_set_id,
       prompt_template_id: task.prompt_template_id,
       include_tests: Boolean(task.scan_config?.include_tests),

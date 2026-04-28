@@ -162,6 +162,51 @@ class AgentTaskServicesTestCase(TestCase):
         self.assertEqual(raised.exception.status_code, 409)
         self.assertIn('仓库规格已变化', str(raised.exception))
 
+    def test_create_task_requires_repository_signature_for_selected_files(self) -> None:
+        access = SimpleNamespace(project=self.project, role='owner')
+
+        with (
+            patch('apps.deepaudit.agent_task.agent_task_services.require_project_role', return_value=access),
+            self.assertRaises(HttpError) as raised,
+        ):
+            create_task(
+                self.user,
+                {
+                    'project_id': str(self.project.id),
+                    'name': 'Missing Signature Agent Task',
+                    'target_files': ['src/module'],
+                },
+            )
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertIn('文件选择会话未绑定仓库规格', str(raised.exception))
+
+    def test_create_task_allows_zip_targets_without_repository_signature(self) -> None:
+        zip_project = AuditProject.objects.create(
+            name='Agent ZIP Project',
+            owner=self.user,
+            source_type='zip',
+            repository_url='',
+            repository_type='single',
+            default_branch='main',
+            sys_creator=self.user,
+            sys_modifier=self.user,
+        )
+        access = SimpleNamespace(project=zip_project, role='owner')
+
+        with patch('apps.deepaudit.agent_task.agent_task_services.require_project_role', return_value=access):
+            task = create_task(
+                self.user,
+                {
+                    'project_id': str(zip_project.id),
+                    'name': 'ZIP Agent Task',
+                    'target_files': ['src/module'],
+                },
+            )
+
+        self.assertEqual(task.project_id, zip_project.id)
+        self.assertEqual(task.target_files, ['src/module'])
+
     def test_execute_agent_task_rebinds_pending_snapshot_after_project_changes(self) -> None:
         self.task.status = 'pending'
         self.task.branch_name = 'release/main'
@@ -329,10 +374,22 @@ class AgentTaskServicesTestCase(TestCase):
 
         input_data = mock_runner.call_args.args[1]
         self.assertEqual(input_data['target_files'], ['src/module/a.c', 'src/module/b.c'])
+        self.assertEqual(
+            input_data['agent_config'].get('selection_runtime', {}).get('resolved_target_files'),
+            ['src/module/a.c', 'src/module/b.c'],
+        )
         self.task.refresh_from_db()
         self.assertEqual(self.task.total_files, 2)
         self.assertEqual(self.task.agent_config.get('selection_stats', {}).get('selected_directory_count'), 1)
         self.assertEqual(self.task.agent_config.get('selection_stats', {}).get('resolved_file_count'), 2)
+        self.assertEqual(
+            self.task.agent_config.get('selection_runtime', {}).get('selected_directory_samples'),
+            ['src/module'],
+        )
+        self.assertEqual(
+            self.task.agent_config.get('selection_runtime', {}).get('resolved_target_files'),
+            ['src/module/a.c', 'src/module/b.c'],
+        )
         info_event = self.task.events.filter(is_deleted=False, event_type='info').latest('sequence')
         self.assertEqual(info_event.message, '已将所选目录展开为具体文件范围')
 

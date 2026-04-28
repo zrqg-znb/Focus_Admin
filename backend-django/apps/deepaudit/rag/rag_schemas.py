@@ -7,6 +7,9 @@ from ninja import Field, Schema
 
 class RagScopeSchema(Schema):
     branch_name: str | None = None
+    repository_type: str | None = None
+    manifest_xml: str | None = None
+    group: str | None = None
     exclude_patterns: list[str] = Field(default_factory=list)
     target_files: list[str] = Field(default_factory=list)
 

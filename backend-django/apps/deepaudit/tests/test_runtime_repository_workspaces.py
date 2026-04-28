@@ -130,6 +130,44 @@ class RuntimeRepositoryWorkspaceTestCase(SimpleTestCase):
         self.assertEqual(mock_create.call_args.kwargs['manifest_xml'], 'custom.xml')
         self.assertEqual(mock_create.call_args.kwargs['group'], 'team-a')
 
+    def test_prepare_workspace_ignores_repository_type_override_for_multi_project(self) -> None:
+        project = SimpleNamespace(
+            id='project-1',
+            owner_id='owner-1',
+            default_branch='main',
+            source_type='repository',
+            repository_url='https://example.com/manifest.git',
+            repository_type='multi',
+            manifest_xml='default.xml',
+            group='platform',
+            owner=SimpleNamespace(id='owner-1'),
+        )
+        workspace = self.temp_root / 'workspace'
+
+        with (
+            patch('apps.deepaudit.runtime.load_user_config_payload', return_value={'llm_config': {}, 'other_config': {}}),
+            patch('apps.deepaudit.runtime.load_ssh_private_key', return_value=None),
+            patch('apps.deepaudit.runtime.create_repository_workspace', return_value=workspace) as mock_create,
+            self.assertLogs('apps.deepaudit.runtime', level='WARNING') as captured,
+        ):
+            runtime.prepare_workspace(
+                project,
+                repository_type='single',
+                branch_name='release/main',
+                manifest_xml='vehicle.xml',
+                group='vehicle-a',
+                user_id='owner-1',
+            )
+
+        repository_spec = mock_create.call_args.kwargs['repository_spec']
+        self.assertEqual(mock_create.call_args.kwargs['repository_type'], 'multi')
+        self.assertEqual(repository_spec['repository_type'], 'multi')
+        self.assertEqual(repository_spec['repository_url'], 'https://example.com/manifest.git')
+        self.assertEqual(repository_spec['branch_name'], 'release/main')
+        self.assertEqual(repository_spec['manifest_xml'], 'vehicle.xml')
+        self.assertEqual(repository_spec['group'], 'vehicle-a')
+        self.assertIn('ignored repository_type override', '\n'.join(captured.output))
+
     def test_prepare_repository_workspace_uses_explicit_repository_spec(self) -> None:
         project = SimpleNamespace(
             id='project-1',
@@ -166,6 +204,41 @@ class RuntimeRepositoryWorkspaceTestCase(SimpleTestCase):
         self.assertEqual(mock_create.call_args.kwargs['repository_type'], 'multi')
         self.assertEqual(mock_create.call_args.kwargs['manifest_xml'], 'default.xml')
         self.assertEqual(mock_create.call_args.kwargs['group'], 'platform')
+
+    def test_prepare_workspace_reuses_explicit_repository_spec(self) -> None:
+        project = SimpleNamespace(
+            id='project-1',
+            owner_id='owner-1',
+            source_type='repository',
+            repository_url='https://example.com/single.git',
+            repository_type='single',
+            default_branch='main',
+            owner=SimpleNamespace(id='owner-1'),
+        )
+        repository_spec = build_repository_spec(
+            'https://example.com/manifest.git',
+            'release/main',
+            repository_type='multi',
+            manifest_xml='default.xml',
+            group='platform',
+        )
+        workspace = self.temp_root / 'workspace'
+
+        with (
+            patch('apps.deepaudit.runtime.load_user_config_payload', return_value={'llm_config': {}, 'other_config': {}}),
+            patch('apps.deepaudit.runtime.load_ssh_private_key', return_value=None),
+            patch('apps.deepaudit.runtime.create_repository_workspace', return_value=workspace) as mock_create,
+        ):
+            result_workspace, _user_payload = runtime.prepare_workspace(
+                project,
+                repository_spec=repository_spec,
+                user_id='owner-1',
+            )
+
+        self.assertEqual(result_workspace, workspace)
+        self.assertEqual(mock_create.call_count, 1)
+        self.assertEqual(mock_create.call_args.kwargs['repository_spec'], repository_spec)
+        self.assertEqual(mock_create.call_args.kwargs['repository_type'], 'multi')
 
     def test_prepare_repository_workspace_forwards_event_callback(self) -> None:
         project = SimpleNamespace(
@@ -303,6 +376,65 @@ class ProjectRepositoryFileListingTestCase(RuntimeRepositoryWorkspaceTestCase):
             ),
         )
         self.assertEqual(payload['last_synced_at'], 1234567890)
+
+    def test_browse_files_ignores_repository_type_override_for_multi_project(self) -> None:
+        user = SimpleNamespace(id='user-1')
+        project_instance = SimpleNamespace(
+            id='project-1',
+            owner_id='owner-1',
+            source_type='repository',
+            repository_url='https://example.com/manifest.git',
+            repository_type='multi',
+            default_branch='release/main',
+            manifest_xml='default.xml',
+            group='platform',
+        )
+        access = SimpleNamespace(project=project_instance)
+        cache_repo = self.temp_root / 'cache-override-repo'
+        cache_repo.mkdir(parents=True, exist_ok=True)
+
+        with (
+            patch('apps.deepaudit.project.project_services.require_project_role', return_value=access),
+            patch('apps.deepaudit.project.project_services.repository_cache_enabled', return_value=True),
+            patch('apps.deepaudit.project.project_services.load_user_config_payload', return_value={'other_config': {}}),
+            patch('apps.deepaudit.project.project_services.load_ssh_private_key', return_value=None),
+            patch('apps.deepaudit.project.project_services.ensure_repository_cache', return_value=cache_repo) as mock_cache,
+            patch(
+                'apps.deepaudit.project.project_services.get_repository_cache_info',
+                return_value={
+                    'cache_root': cache_repo.parent,
+                    'cache_repo': cache_repo,
+                    'state_path': cache_repo.parent / 'state.json',
+                    'cache_exists': True,
+                    'last_synced_at': 1234567890,
+                    'repository_spec': build_repository_spec(
+                        'https://example.com/manifest.git',
+                        'release/main',
+                        repository_type='multi',
+                        manifest_xml='default.xml',
+                        group='platform',
+                    ),
+                },
+            ),
+            self.assertLogs('apps.deepaudit.project.project_services', level='WARNING') as captured,
+        ):
+            project_services.browse_files(
+                user,
+                'project-1',
+                repository_type='single',
+                branch_name='release/hotfix',
+                manifest_xml='vehicle.xml',
+                group='vehicle-a',
+                limit=10,
+            )
+
+        repository_spec = mock_cache.call_args.kwargs['repository_spec']
+        self.assertEqual(repository_spec['repository_type'], 'multi')
+        self.assertEqual(repository_spec['repository_url'], 'https://example.com/manifest.git')
+        self.assertEqual(repository_spec['branch_name'], 'release/hotfix')
+        self.assertEqual(repository_spec['manifest_xml'], 'vehicle.xml')
+        self.assertEqual(repository_spec['group'], 'vehicle-a')
+        self.assertIn('ignored repository_type override', '\n'.join(captured.output))
 
 
 class RuntimeSelectedFilesValidationTestCase(RuntimeRepositoryWorkspaceTestCase):

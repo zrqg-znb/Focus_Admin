@@ -101,6 +101,28 @@ def build_locked_project_repository_spec(
     )
 
 
+def build_project_repository_binding(
+    project,
+    *,
+    branch_name: Any = None,
+    manifest_xml: Any = None,
+    group: Any = None,
+) -> dict[str, dict[str, str] | str]:
+    project_repository_spec = build_effective_project_repository_spec(project)
+    repository_spec = build_locked_project_repository_spec(
+        project,
+        branch_name=branch_name,
+        manifest_xml=manifest_xml,
+        group=group,
+    )
+    return {
+        'project_repository_spec': project_repository_spec,
+        'repository_spec': repository_spec,
+        'project_repository_signature': repository_spec_signature(project_repository_spec),
+        'repository_signature': repository_spec_signature(repository_spec),
+    }
+
+
 def build_task_repository_spec(task, *, fallback_project=None) -> dict[str, str]:
     project = fallback_project or getattr(task, 'project', None)
     if project is not None:
@@ -119,6 +141,22 @@ def build_task_repository_spec(task, *, fallback_project=None) -> dict[str, str]
         manifest_xml=getattr(task, 'manifest_xml', ''),
         group=getattr(task, 'group', ''),
     )
+
+
+def build_task_repository_binding(task, *, fallback_project=None) -> dict[str, dict[str, str] | str]:
+    project = fallback_project or getattr(task, 'project', None)
+    repository_spec = build_task_repository_spec(task, fallback_project=project)
+    project_repository_spec = (
+        build_effective_project_repository_spec(project)
+        if project is not None
+        else repository_spec
+    )
+    return {
+        'project_repository_spec': project_repository_spec,
+        'repository_spec': repository_spec,
+        'project_repository_signature': repository_spec_signature(project_repository_spec),
+        'repository_signature': repository_spec_signature(repository_spec),
+    }
 
 
 def format_repository_spec_for_log(spec: dict[str, Any]) -> str:
