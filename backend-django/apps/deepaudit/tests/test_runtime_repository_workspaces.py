@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.test import SimpleTestCase, override_settings
+from ninja.errors import HttpError
 
 from apps.deepaudit import git_service
 from apps.deepaudit import runtime
@@ -435,6 +436,47 @@ class ProjectRepositoryFileListingTestCase(RuntimeRepositoryWorkspaceTestCase):
         self.assertEqual(repository_spec['manifest_xml'], 'vehicle.xml')
         self.assertEqual(repository_spec['group'], 'vehicle-a')
         self.assertIn('ignored repository_type override', '\n'.join(captured.output))
+
+    def test_browse_files_refresh_disables_stale_cache_fallback(self) -> None:
+        user = SimpleNamespace(id='user-1')
+        project_instance = SimpleNamespace(
+            id='project-1',
+            owner_id='owner-1',
+            source_type='repository',
+            repository_url='https://example.com/manifest.git',
+            repository_type='multi',
+            default_branch='release/main',
+            manifest_xml='default.xml',
+            group='platform',
+        )
+        access = SimpleNamespace(project=project_instance)
+
+        with (
+            patch('apps.deepaudit.project.project_services.require_project_role', return_value=access),
+            patch('apps.deepaudit.project.project_services.repository_cache_enabled', return_value=True),
+            patch('apps.deepaudit.project.project_services.load_user_config_payload', return_value={'other_config': {}}),
+            patch('apps.deepaudit.project.project_services.load_ssh_private_key', return_value=None),
+            patch(
+                'apps.deepaudit.project.project_services.ensure_repository_cache',
+                side_effect=git_service.GitServiceError('multi repo sync failed'),
+            ) as mock_cache,
+        ):
+            with self.assertRaises(HttpError) as raised:
+                project_services.browse_files(
+                    user,
+                    'project-1',
+                    repository_type='multi',
+                    branch_name='release/main',
+                    manifest_xml='default.xml',
+                    group='platform',
+                    refresh=True,
+                )
+
+        self.assertEqual(raised.exception.status_code, 400)
+        self.assertIn('multi repo sync failed', str(raised.exception))
+        self.assertFalse(mock_cache.call_args.kwargs['allow_stale_on_failure'])
+        self.assertTrue(mock_cache.call_args.kwargs['force_refresh'])
+        self.assertTrue(mock_cache.call_args.kwargs['force_multi_sync'])
 
 
 class RuntimeSelectedFilesValidationTestCase(RuntimeRepositoryWorkspaceTestCase):

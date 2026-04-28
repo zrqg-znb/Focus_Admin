@@ -157,7 +157,19 @@ export default function FileSelectionDialog({
   const [sessionSpec, setSessionSpec] = useState<ProjectRepositorySpec>();
   const [sessionSignature, setSessionSignature] = useState('');
   const requestIdRef = useRef(0);
+  const lastRepositorySessionKeyRef = useRef('');
   const debouncedSearch = useDebounce(searchInput.trim(), 300);
+  const repositorySessionKey = useMemo(
+    () =>
+      [
+        projectId,
+        normalizeRepositoryType(repositoryType),
+        branch || '',
+        manifestXml || '',
+        group || '',
+      ].join('::'),
+    [branch, group, manifestXml, projectId, repositoryType],
+  );
 
   useEffect(() => {
     if (!open) {
@@ -173,6 +185,7 @@ export default function FileSelectionDialog({
       setLastSyncedAt(null);
       setSessionSpec(undefined);
       setSessionSignature('');
+      lastRepositorySessionKeyRef.current = '';
     }
   }, [open]);
 
@@ -251,11 +264,20 @@ export default function FileSelectionDialog({
     if (!open || !projectId) {
       return;
     }
+    const hasSeenCurrentRepositorySession =
+      lastRepositorySessionKeyRef.current === repositorySessionKey;
+    const shouldAutoRefresh =
+      normalizeRepositoryType(repositoryType) === 'multi' &&
+      !hasSeenCurrentRepositorySession;
+    if (!hasSeenCurrentRepositorySession) {
+      lastRepositorySessionKeyRef.current = repositorySessionKey;
+    }
     loadEntries({
       append: false,
       keyword: debouncedSearch,
       nextOffset: 0,
       nextPath: currentPath,
+      refresh: shouldAutoRefresh,
     });
   }, [
     open,
@@ -264,6 +286,7 @@ export default function FileSelectionDialog({
     branch,
     manifestXml,
     group,
+    repositorySessionKey,
     currentPath,
     debouncedSearch,
     excludePatterns,

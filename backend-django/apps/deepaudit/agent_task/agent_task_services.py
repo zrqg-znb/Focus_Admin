@@ -1960,6 +1960,7 @@ def execute_agent_task(task_id: str) -> None:
             )
 
         repository_event_callback = _build_repository_event_callback(str(instance.id))
+        # repository_* 只锁定任务规格；多仓执行仍需要重新同步缓存，最终工作区来源看 workspace_source。
         workspace, user_payload = prepare_repository_workspace(
             instance.project,
             repository_spec=repository_spec,

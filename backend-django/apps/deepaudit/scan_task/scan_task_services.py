@@ -1275,6 +1275,7 @@ def execute_scan_task(task_id: str) -> None:
                 format_repository_spec_for_log(repository_spec),
                 format_repository_spec_for_log(current_project_spec),
             )
+        # repository_* 是任务快照；多仓工作区实际来源由 workspace_source 决定，这里仍要强制刷新缓存。
         workspace, user_payload = prepare_repository_workspace(
             task.project,
             repository_spec=repository_spec,

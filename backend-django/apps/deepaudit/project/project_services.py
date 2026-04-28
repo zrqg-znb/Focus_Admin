@@ -673,7 +673,8 @@ def browse_files(
                     repository_type=repository_spec['repository_type'],
                     manifest_xml=repository_spec['manifest_xml'],
                     group=repository_spec['group'],
-                    allow_stale_on_failure=True,
+                    # refresh=true is the strict "pull latest" path; do not fall back to stale cache.
+                    allow_stale_on_failure=not refresh,
                     force_refresh=bool(refresh),
                     force_multi_sync=bool(refresh and repository_spec['repository_type'] == 'multi'),
                 )
