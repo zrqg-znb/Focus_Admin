@@ -37,22 +37,22 @@ const FONT_SANS = '"PingFang SC"';
 const FONT_MONO = '"Menlo"';
 
 const C = {
-  bg: '#0b0d12',
-  bg2: '#101520',
-  panel: '#121824',
-  panel2: '#171d2a',
-  line: '#273042',
-  lineSoft: 'rgba(141,153,173,0.22)',
-  text: '#f5f7fb',
-  muted: '#a0a9ba',
-  faint: '#6b7384',
-  accent: '#ff6a2a',
-  accentSoft: 'rgba(255,106,42,0.14)',
-  accentLine: 'rgba(255,106,42,0.42)',
-  accentGlow: 'rgba(255,106,42,0.18)',
-  green: '#61d98f',
-  cyan: '#5ccfe6',
-  warm: '#f7c66b',
+  bg: '#ffffff',
+  bg2: '#f6f7f9',
+  panel: '#f6f7f9',
+  panel2: '#eef1f5',
+  line: '#d9dee7',
+  lineSoft: 'rgba(16,24,40,0.10)',
+  text: '#101828',
+  muted: '#475467',
+  faint: '#98a2b3',
+  accent: '#E60012',
+  accentSoft: 'rgba(230,0,18,0.08)',
+  accentLine: 'rgba(230,0,18,0.30)',
+  accentGlow: 'rgba(230,0,18,0.10)',
+  green: '#2E9F5A',
+  cyan: '#0F8BB7',
+  warm: '#B37700',
 };
 
 const S = {
@@ -123,8 +123,8 @@ function bullet(textValue, detail = '', accent = C.accent) {
 }
 
 function chip(label, { accent = false } = {}) {
-  const fillColor = accent ? C.accentSoft : 'rgba(255,255,255,0.04)';
-  const lineColor = accent ? C.accentLine : 'rgba(255,255,255,0.10)';
+  const fillColor = accent ? C.accentSoft : 'rgba(16,24,40,0.04)';
+  const lineColor = accent ? C.accentLine : 'rgba(16,24,40,0.10)';
   const textColor = accent ? C.accent : C.text;
   return panel(
     {
@@ -174,8 +174,8 @@ function flowNode(title, subtitle, label, accent = false) {
       name: `flow-node-${slug(title)}`,
       width: 176,
       padding: [14, 14, 16, 14],
-      fill: paint(accent ? 'rgba(255,106,42,0.10)' : 'rgba(255,255,255,0.03)'),
-      line: stroke(`1px ${accent ? 'rgba(255,106,42,0.35)' : 'rgba(255,255,255,0.12)'}`),
+      fill: paint(accent ? 'rgba(230,0,18,0.10)' : 'rgba(16,24,40,0.03)'),
+      line: stroke(`1px ${accent ? 'rgba(230,0,18,0.28)' : 'rgba(16,24,40,0.12)'}`),
       align: 'start',
       justify: 'start',
     },
@@ -215,52 +215,51 @@ function apiItem(pathText, descText) {
 
 function buildCover(slide) {
   slide.background.fill = paint(C.bg);
-  slide.images.add({
-    blob: ASSETS.home,
-    contentType: 'image/png',
-    position: { left: 0, top: 0, width: W, height: H },
-    fit: 'cover',
-  });
   slide.compose(
-    layers({ name: 'cover-root', width: W, height: H, alignItems: 'stretch', justifyItems: 'stretch' }, [
-      shape({
-        name: 'cover-scrim',
-        geometry: 'rect',
-        width: 520,
-        height: H,
-        fill: paint('rgba(7,9,14,0.80)'),
-        line: stroke('none'),
-      }),
-      shape({
-        name: 'cover-glow',
-        geometry: 'ellipse',
-        width: 340,
-        height: 340,
-        fill: paint(C.accentGlow),
-        line: stroke('none'),
-      }),
-      column({
-        name: 'cover-copy',
-        width: 460,
-        gap: 18,
-        padding: [72, 0, 60, 66],
-        align: 'start',
-        justify: 'start',
-      }, [
-        tx('部门汇报 · 15 分钟', S.coverLead, { name: 'cover-lead' }),
-        tx('DeepAudit', S.coverTitleA, { name: 'cover-title-a' }),
-        tx('智能审计平台', S.coverTitleB, { name: 'cover-title-b' }),
-        tx('LLM + RAG + 多智能体，把“项目接入 → 分析 → 验证 → 报告”做成闭环', S.coverSubtitle, { name: 'cover-subtitle', width: 420 }),
-        headingUnderline(180),
-        row({ name: 'cover-tags', gap: 10, width: 'fill', align: 'start' }, [
-          chip('项目演示', { accent: true }),
-          chip('架构设计'),
-          chip('实现方法'),
+    column({ name: 'cover-shell', width: W, height: H, padding: [64, 72, 56, 72], gap: 18, align: 'start', justify: 'start' }, [
+      tx('部门汇报 · 15 分钟', S.coverLead, { name: 'cover-lead' }),
+      row({ name: 'cover-main', width: 'fill', gap: 34, align: 'start' }, [
+        column({
+          name: 'cover-copy',
+          width: 500,
+          gap: 18,
+          align: 'start',
+          justify: 'start',
+        }, [
+          tx('DeepAudit', S.coverTitleA, { name: 'cover-title-a' }),
+          tx('智能审计平台', S.coverTitleB, { name: 'cover-title-b' }),
+          tx('LLM + RAG + 多智能体，把“项目接入 → 分析 → 验证 → 报告”做成闭环', S.coverSubtitle, { name: 'cover-subtitle', width: 430 }),
+          headingUnderline(180),
+          row({ name: 'cover-tags', gap: 10, width: 'fill', align: 'start' }, [
+            chip('项目演示', { accent: true }),
+            chip('架构设计'),
+            chip('实现方法'),
+          ]),
+          tx('Focus 平台内的独立智能审计子系统', S.coverMeta, { name: 'cover-meta' }),
+          tx('白底红色版 · 领导汇报 / 项目演示', `font: 14px ${FONT_MONO}; weight: 700; color: ${C.faint}; wrap: none;`, { name: 'cover-footnote' }),
         ]),
-        tx('Focus 平台内的独立智能审计子系统', S.coverMeta, { name: 'cover-meta' }),
+        column({ name: 'cover-visual', width: 'fill', gap: 12, align: 'start' }, [
+          tx('主页预览 / 演示入口', S.sectionTiny, { name: 'cover-visual-kicker' }),
+          panel({
+            name: 'cover-card',
+            width: 'fill',
+            height: 360,
+            padding: 14,
+            fill: paint(C.bg2),
+            line: stroke(`1px ${C.accentLine}`),
+            align: 'start',
+            justify: 'start',
+          }),
+        ]),
       ]),
     ])
   );
+  slide.images.add({
+    blob: ASSETS.home,
+    contentType: 'image/png',
+    position: { left: 650, top: 188, width: 500, height: 282 },
+    fit: 'contain',
+  });
   notes(slide, `今天我汇报的是 DeepAudit 智能审计平台。先给一个结论：它已经不是单点扫描工具，而是一套把“项目接入、分析、验证、报告交付”串成闭环的审计平台。
 
 今天我会从四个部分展开：为什么要做、现在已经做成了什么、背后的架构和实现方法，以及现场怎么演示。整场汇报我会尽量少讲概念，多讲结果和能力，也会把现场演示和技术实现对应起来，方便大家更直观地看到 DeepAudit 已经具备的完整链路。`);
@@ -392,8 +391,8 @@ function buildAgentArchitecture(slide) {
             {
               width: 'fill',
               padding: 16,
-              fill: paint('rgba(255,255,255,0.03)'),
-              line: stroke('1px rgba(255,255,255,0.12)'),
+              fill: paint('rgba(16,24,40,0.03)'),
+              line: stroke('1px rgba(16,24,40,0.12)'),
             },
             column({ gap: 10, width: 'fill' }, [
               tx('LLM Output 示例', S.monoMuted),
@@ -441,8 +440,8 @@ function buildSandboxAndTools(slide) {
             {
               width: 'fill',
               padding: 16,
-              fill: paint('rgba(255,106,42,0.05)'),
-              line: stroke('1px rgba(255,106,42,0.2)'),
+              fill: paint('rgba(230,0,18,0.05)'),
+              line: stroke('1px rgba(230,0,18,0.2)'),
             },
             tx('验证结果使得安全报告的准确率大幅提升，真正做到“可解释、可验证”。', S.calloutMuted)
           ),
@@ -534,8 +533,8 @@ function buildImplementation(slide) {
               name: 'impl-orch-panel',
               width: 'fill',
               padding: [14, 14, 14, 14],
-              fill: paint('rgba(255,255,255,0.03)'),
-              line: stroke('1px rgba(255,255,255,0.12)'),
+              fill: paint('rgba(16,24,40,0.03)'),
+              line: stroke('1px rgba(16,24,40,0.12)'),
               align: 'start',
               justify: 'start',
             },
@@ -633,8 +632,8 @@ function buildDemo(slide) {
             width: 'fill',
             height: 430,
             padding: 14,
-            fill: paint('#0f1218'),
-            line: stroke('1px #263041'),
+            fill: paint('#f7f8fa'),
+            line: stroke('1px rgba(16,24,40,0.12)'),
             align: 'start',
             justify: 'start',
           }),
@@ -764,8 +763,8 @@ function buildAppendixOps(slide) {
               name: 'ops-callout',
               width: 'fill',
               padding: [14, 14, 14, 14],
-              fill: paint('rgba(255,106,42,0.10)'),
-              line: stroke('1px rgba(255,106,42,0.30)'),
+              fill: paint('rgba(230,0,18,0.10)'),
+              line: stroke('1px rgba(230,0,18,0.30)'),
               align: 'start',
               justify: 'start',
             },
