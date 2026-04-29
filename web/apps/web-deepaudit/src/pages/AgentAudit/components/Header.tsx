@@ -9,6 +9,22 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "./StatusBadge";
 import type { HeaderProps } from "../types";
 
+function formatWorkspaceTimestamp(value?: null | number) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return '';
+  }
+  const date = new Date(timestamp * 1000);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  const pad = (num: number) => String(num).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 export function Header({
   task,
   canCancel,
@@ -22,8 +38,13 @@ export function Header({
   onExport,
   onNewAudit
 }: HeaderProps) {
+  const workspaceSource = String(task?.workspace_source || '').trim();
+  const workspacePath = String(task?.workspace_path || '').trim();
+  const cacheRepo = String(task?.cache_repo || '').trim();
+  const lastSyncedAt = formatWorkspaceTimestamp(task?.last_synced_at);
+
   return (
-    <header className="flex-shrink-0 h-16 border-b border-border/50 flex items-center justify-between px-6 bg-card/80 backdrop-blur-md relative overflow-hidden">
+    <header className="flex-shrink-0 min-h-[6.5rem] border-b border-border/50 flex items-center justify-between px-6 py-3 bg-card/80 backdrop-blur-md relative overflow-hidden">
       {/* Animated gradient line at top */}
       <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
       {/* Subtle glow effect */}
@@ -56,17 +77,52 @@ export function Header({
 
         {/* Task info with enhanced styling */}
         {task && (
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-muted/50 border border-border/50">
-              <Radio className="w-3 h-3 text-muted-foreground" />
-              <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Task</span>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-muted/50 border border-border/50">
+                <Radio className="w-3 h-3 text-muted-foreground" />
+                <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Task</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-foreground text-sm font-mono truncate max-w-[200px] font-medium">
+                  {task.name || task.id.slice(0, 8)}
+                </span>
+                <StatusBadge status={task.status} />
+              </div>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-foreground text-sm font-mono truncate max-w-[200px] font-medium">
-                {task.name || task.id.slice(0, 8)}
+            <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono tracking-wide">
+              <span className="rounded-md border border-border/60 bg-muted/60 px-2 py-1 text-muted-foreground">
+                repository_* 只锁定任务规格
               </span>
-              <StatusBadge status={task.status} />
+              {workspaceSource && (
+                <span
+                  className="rounded-md border border-cyan-500/20 bg-cyan-500/10 px-2 py-1 text-cyan-700 dark:text-cyan-200"
+                  title={workspacePath || cacheRepo || workspaceSource}
+                >
+                  workspace_source: {workspaceSource}
+                </span>
+              )}
+              {lastSyncedAt && (
+                <span className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-emerald-700 dark:text-emerald-200">
+                  last_synced_at: {lastSyncedAt}
+                </span>
+              )}
             </div>
+            {(workspacePath || cacheRepo) && (
+              <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-muted-foreground/80">
+                {workspacePath && (
+                  <span className="max-w-[24rem] truncate" title={workspacePath}>
+                    workspace_path: {workspacePath}
+                  </span>
+                )}
+                {workspacePath && cacheRepo && <span>·</span>}
+                {cacheRepo && (
+                  <span className="max-w-[24rem] truncate" title={cacheRepo}>
+                    cache_repo: {cacheRepo}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

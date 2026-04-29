@@ -78,9 +78,21 @@ def _selected_scope_empty_message() -> str:
     return '所选目录或文件在当前过滤条件下未命中任何可扫描文本文件，请检查目录内容、排除规则或测试/文档过滤设置。'
 
 
-def _repository_runtime_metadata(user_payload: dict | None) -> dict[str, str]:
+def _repository_runtime_metadata(user_payload: dict | None) -> dict[str, object]:
     metadata = dict((user_payload or {}).get('_repository_runtime') or {})
-    return {key: str(value or '') for key, value in metadata.items()}
+    normalized: dict[str, object] = {}
+    for key, value in metadata.items():
+        if key == 'last_synced_at':
+            if value in (None, ''):
+                normalized[key] = None
+                continue
+            try:
+                normalized[key] = int(value)
+            except (TypeError, ValueError):
+                normalized[key] = None
+            continue
+        normalized[key] = str(value or '')
+    return normalized
 
 
 def _selection_repository_signature_error() -> str:

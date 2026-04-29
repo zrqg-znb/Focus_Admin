@@ -269,6 +269,14 @@ function mapConfigPath(pathname: string) {
   return pathname;
 }
 
+function normalizeOptionalTimestamp(value: unknown): null | number {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const timestamp = Number(value);
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
+}
+
 function mapDatabasePath(pathname: string) {
   if (/^\/database\/health\/?$/.test(pathname)) {
     return '/deepaudit/data-tools/health';
@@ -601,6 +609,9 @@ export function normalizeAgentTask(raw: JsonRecord | null | undefined) {
     selected_directory_count: raw.selected_directory_count || 0,
     resolved_file_count: raw.resolved_file_count || 0,
     workspace_source: raw.workspace_source || '',
+    workspace_path: raw.workspace_path || raw.workspace || '',
+    cache_repo: raw.cache_repo || raw.cache_path || '',
+    last_synced_at: normalizeOptionalTimestamp(raw.last_synced_at),
     project: {
       id: String(raw.project_id || ''),
       name: raw.project_name || '',

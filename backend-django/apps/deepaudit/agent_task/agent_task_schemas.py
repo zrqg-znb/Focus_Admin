@@ -55,6 +55,9 @@ class AgentTaskSchema(Schema):
     selected_directory_count: int = 0
     resolved_file_count: int = 0
     workspace_source: str | None = None
+    workspace_path: str | None = None
+    cache_repo: str | None = None
+    last_synced_at: int | None = None
     max_iterations: int = 0
     timeout_seconds: int = 0
     total_files: int = 0

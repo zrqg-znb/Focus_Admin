@@ -59,6 +59,22 @@ const LIVE_PROGRESS_PATTERNS: { pattern: RegExp; key: string }[] = [
   { pattern: /分析进度[:：]?\s*\d+/, key: 'analyze_progress' },
 ];
 
+function formatWorkspaceTimestamp(value?: null | number) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return '';
+  }
+  const date = new Date(timestamp * 1000);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  const pad = (num: number) => String(num).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 function AgentAuditPageContent() {
   const { taskId } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
@@ -113,8 +129,16 @@ function AgentAuditPageContent() {
       return `当前阶段：${PHASE_LABEL_MAP[currentPhase] || currentPhase}`;
     }
 
+    const workspaceSource = String(task?.workspace_source || "").trim();
+    const lastSyncedAt = formatWorkspaceTimestamp(task?.last_synced_at);
+    if (workspaceSource) {
+      return lastSyncedAt
+        ? `workspace_source=${workspaceSource} · last_synced_at=${lastSyncedAt}`
+        : `workspace_source=${workspaceSource}`;
+    }
+
     if (taskStatus === "pending" || taskStatus === "initializing") {
-      return "任务已入队，仓库快照已保存，正在等待 Worker 启动。";
+      return "Agent任务已入队，仓库规格快照已保存；本地 repo_cache/workspace 还未建立，等待 Worker 启动。";
     }
 
     if (taskStatus === "planning") {
@@ -122,7 +146,7 @@ function AgentAuditPageContent() {
     }
 
     return "大型仓库首次同步可能需要更久，请稍候。";
-  }, [task?.current_phase, task?.current_step, taskStatus]);
+  }, [task?.current_phase, task?.current_step, task?.last_synced_at, task?.workspace_source, taskStatus]);
   const displayTotalFiles = useMemo(() => {
     const resolved = Number(task?.resolved_file_count || 0);
     if (resolved > 0) {

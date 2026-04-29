@@ -286,7 +286,7 @@ LOGGING = {
     "handlers": {
         "file": {
             "level": "DEBUG",
-            "class": "logging.handlers.RotatingFileHandler",
+            "class": "application.logging_handlers.ProcessAwareRotatingFileHandler",
             "filename": SERVER_LOGS_FILE,
             "maxBytes": 1024 * 1024 * 10,  # 100 MB
             "backupCount": 5,  # 最多备份5个
@@ -306,8 +306,14 @@ LOGGING = {
             "level": "DEBUG",
             "class": "logging.StreamHandler",
             "formatter": "console",
+            "filters": ["non_worker_console"],
         },
 
+    },
+    "filters": {
+        "non_worker_console": {
+            "()": "application.logging_handlers.NonWorkerConsoleFilter",
+        },
     },
     "loggers": {
         "": {

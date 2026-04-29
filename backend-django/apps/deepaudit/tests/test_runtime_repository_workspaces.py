@@ -279,6 +279,68 @@ class RuntimeRepositoryWorkspaceTestCase(SimpleTestCase):
         self.assertIs(mock_create.call_args.kwargs['event_callback'], event_callback)
         self.assertEqual(mock_create.call_args.kwargs['log_context'], {'task_kind': 'agent', 'task_id': 'task-1'})
 
+    def test_prepare_repository_workspace_persists_runtime_metadata(self) -> None:
+        project = SimpleNamespace(
+            id='project-1',
+            owner_id='owner-1',
+            source_type='repository',
+            repository_url='https://example.com/repo.git',
+            repository_type='multi',
+            default_branch='main',
+            manifest_xml='default.xml',
+            group='platform',
+            owner=SimpleNamespace(id='owner-1'),
+        )
+        repository_spec = build_repository_spec(
+            'https://example.com/repo.git',
+            'release/main',
+            repository_type='multi',
+            manifest_xml='default.xml',
+            group='platform',
+        )
+        workspace = self.temp_root / 'workspace'
+        cache_repo = self.temp_root / 'repo-cache' / 'workspace'
+
+        def _create_workspace(*_args, **kwargs):
+            log_context = kwargs['log_context']
+            log_context['workspace_source'] = 'multi_repo_cache_copy'
+            log_context['workspace_path'] = str(workspace)
+            log_context['cache_repo'] = str(cache_repo)
+            log_context['cache_path'] = str(cache_repo)
+            return workspace
+
+        with (
+            patch('apps.deepaudit.runtime.load_user_config_payload', return_value={'llm_config': {}, 'other_config': {}}),
+            patch('apps.deepaudit.runtime.load_ssh_private_key', return_value=None),
+            patch('apps.deepaudit.runtime.create_repository_workspace', side_effect=_create_workspace) as mock_create,
+            patch(
+                'apps.deepaudit.runtime.get_repository_cache_info',
+                return_value={
+                    'cache_root': cache_repo.parent,
+                    'cache_repo': cache_repo,
+                    'state_path': cache_repo.parent / 'state.json',
+                    'cache_exists': True,
+                    'last_synced_at': 1710000000,
+                    'repository_spec': repository_spec,
+                },
+            ) as mock_cache_info,
+        ):
+            result_workspace, user_payload = runtime.prepare_repository_workspace(
+                project,
+                repository_spec=repository_spec,
+                user_id='owner-1',
+            )
+
+        runtime_metadata = user_payload['_repository_runtime']
+        self.assertEqual(result_workspace, workspace)
+        self.assertEqual(runtime_metadata['workspace_source'], 'multi_repo_cache_copy')
+        self.assertEqual(runtime_metadata['workspace_path'], str(workspace))
+        self.assertEqual(runtime_metadata['cache_repo'], str(cache_repo))
+        self.assertEqual(runtime_metadata['cache_path'], str(cache_repo))
+        self.assertEqual(runtime_metadata['last_synced_at'], 1710000000)
+        self.assertEqual(mock_create.call_count, 1)
+        self.assertEqual(mock_cache_info.call_count, 1)
+
 
 class ProjectRepositoryFileListingTestCase(RuntimeRepositoryWorkspaceTestCase):
     def test_list_files_uses_cached_repository_listing(self) -> None:

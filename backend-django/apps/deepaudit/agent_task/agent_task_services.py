@@ -156,9 +156,21 @@ def _build_repository_snapshot_metadata(
     return metadata
 
 
-def _repository_runtime_metadata(user_payload: dict | None) -> dict[str, str]:
+def _repository_runtime_metadata(user_payload: dict | None) -> dict[str, Any]:
     metadata = dict((user_payload or {}).get('_repository_runtime') or {})
-    return {key: str(value or '') for key, value in metadata.items()}
+    normalized: dict[str, Any] = {}
+    for key, value in metadata.items():
+        if key == 'last_synced_at':
+            if value in (None, ''):
+                normalized[key] = None
+                continue
+            try:
+                normalized[key] = int(value)
+            except (TypeError, ValueError):
+                normalized[key] = None
+            continue
+        normalized[key] = str(value or '')
+    return normalized
 
 
 def _selection_repository_signature_error() -> str:
@@ -621,6 +633,9 @@ def serialize_task(instance: AgentTask) -> dict:
         'selected_directory_count': _to_int(selection_stats.get('selected_directory_count'), 0),
         'resolved_file_count': _to_int(selection_stats.get('resolved_file_count'), 0),
         'workspace_source': str(repository_runtime.get('workspace_source') or ''),
+        'workspace_path': str(repository_runtime.get('workspace_path') or repository_runtime.get('workspace') or ''),
+        'cache_repo': str(repository_runtime.get('cache_repo') or repository_runtime.get('cache_path') or ''),
+        'last_synced_at': _to_int(repository_runtime.get('last_synced_at'), 0) or None,
         'max_iterations': instance.max_iterations,
         'timeout_seconds': instance.timeout_seconds,
         'total_files': instance.total_files,
@@ -804,7 +819,7 @@ def create_task(user, payload: dict) -> AgentTask:
         instance,
         'info',
         phase=instance.current_phase,
-        message='Agent任务已入队，仓库快照已保存，等待 Worker 启动',
+        message='Agent任务已入队，仓库规格快照已保存，等待 Worker 启动后初始化 workspace',
         metadata=metadata,
     )
     return instance

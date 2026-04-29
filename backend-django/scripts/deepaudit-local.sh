@@ -286,7 +286,11 @@ start_uvicorn_server() {
   local host="${RUNSERVER_ADDR%:*}"
   local port="${RUNSERVER_ADDR##*:}"
   # 只监听代码目录，避免 DeepAudit 拉代码写入 media/run/logs 时触发重载。
-  exec env DEEPAUDIT_LOG_LEVEL="$DEEPAUDIT_LOG_LEVEL" PYTHONUNBUFFERED=1 \
+  exec env \
+    DEEPAUDIT_LOG_LEVEL="$DEEPAUDIT_LOG_LEVEL" \
+    DEEPAUDIT_LOG_TARGET=server \
+    DEEPAUDIT_LOG_FILE="$SERVER_LOG_FILE" \
+    PYTHONUNBUFFERED=1 \
     "$PYTHON_BIN" -u -m uvicorn application.asgi:application --host "$host" --port "$port" "${UVICORN_RELOAD_ARGS[@]}"
 }
 
@@ -299,7 +303,12 @@ run_worker() {
   write_worker_log_banner
   print_log_destinations
   print_worker_launch_context
-  exec env DEEPAUDIT_LOG_LEVEL="$DEEPAUDIT_LOG_LEVEL" CELERY_LOG_LEVEL="$CELERY_LOG_LEVEL" PYTHONUNBUFFERED=1 \
+  exec env \
+    DEEPAUDIT_LOG_LEVEL="$DEEPAUDIT_LOG_LEVEL" \
+    DEEPAUDIT_LOG_TARGET=worker \
+    DEEPAUDIT_LOG_FILE="$WORKER_LOG_FILE" \
+    CELERY_LOG_LEVEL="$CELERY_LOG_LEVEL" \
+    PYTHONUNBUFFERED=1 \
     "$PYTHON_BIN" -u -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l "$CELERY_LOG_LEVEL" >>"$WORKER_LOG_FILE" 2>&1
 }
 
@@ -352,7 +361,12 @@ run_background_worker() {
   write_worker_log_banner
   print_log_destinations
   print_worker_launch_context
-  env DEEPAUDIT_LOG_LEVEL="$DEEPAUDIT_LOG_LEVEL" CELERY_LOG_LEVEL="$CELERY_LOG_LEVEL" PYTHONUNBUFFERED=1 \
+  env \
+    DEEPAUDIT_LOG_LEVEL="$DEEPAUDIT_LOG_LEVEL" \
+    DEEPAUDIT_LOG_TARGET=worker \
+    DEEPAUDIT_LOG_FILE="$WORKER_LOG_FILE" \
+    CELERY_LOG_LEVEL="$CELERY_LOG_LEVEL" \
+    PYTHONUNBUFFERED=1 \
     "$PYTHON_BIN" -u -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l "$CELERY_LOG_LEVEL" >>"$WORKER_LOG_FILE" 2>&1 < /dev/null &
   local celery_pid=$!
   printf 'DeepAudit Celery Worker 已启动，PID=%s，NAME=%s\n' "$celery_pid" "$WORKER_NAME"
@@ -382,7 +396,12 @@ run_all() {
   write_worker_log_banner
   print_log_destinations
   print_worker_launch_context
-  env DEEPAUDIT_LOG_LEVEL="$DEEPAUDIT_LOG_LEVEL" CELERY_LOG_LEVEL="$CELERY_LOG_LEVEL" PYTHONUNBUFFERED=1 \
+  env \
+    DEEPAUDIT_LOG_LEVEL="$DEEPAUDIT_LOG_LEVEL" \
+    DEEPAUDIT_LOG_TARGET=worker \
+    DEEPAUDIT_LOG_FILE="$WORKER_LOG_FILE" \
+    CELERY_LOG_LEVEL="$CELERY_LOG_LEVEL" \
+    PYTHONUNBUFFERED=1 \
     "$PYTHON_BIN" -u -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l "$CELERY_LOG_LEVEL" >>"$WORKER_LOG_FILE" 2>&1 < /dev/null &
   celery_pid=$!
   printf 'DeepAudit Celery Worker 已启动，PID=%s，NAME=%s\n' "$celery_pid" "$WORKER_NAME"

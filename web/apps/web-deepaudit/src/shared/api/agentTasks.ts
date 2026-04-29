@@ -59,6 +59,9 @@ export interface AgentTask {
   branch_name?: null | string;
   manifest_xml?: null | string;
   group?: null | string;
+  workspace_path?: null | string;
+  cache_repo?: null | string;
+  last_synced_at?: null | number;
 
   // 进度
   progress_percentage: number;

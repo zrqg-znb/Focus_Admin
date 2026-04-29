@@ -261,7 +261,9 @@ function buildCover(slide) {
       ]),
     ])
   );
-  notes(slide, '今天我汇报 DeepAudit 智能审计平台。先给结论：它已经不是单点扫描，而是从项目接入、分析、验证到报告的完整闭环。后面我按价值、架构、实现和演示四部分展开。');
+  notes(slide, `今天我汇报的是 DeepAudit 智能审计平台。先给一个结论：它已经不是单点扫描工具，而是一套把“项目接入、分析、验证、报告交付”串成闭环的审计平台。
+
+今天我会从四个部分展开：为什么要做、现在已经做成了什么、背后的架构和实现方法，以及现场怎么演示。整场汇报我会尽量少讲概念，多讲结果和能力，也会把现场演示和技术实现对应起来，方便大家更直观地看到 DeepAudit 已经具备的完整链路。`);
 }
 
 function buildWhy(slide) {
@@ -301,7 +303,9 @@ function buildWhy(slide) {
       ]),
     ])
   );
-  notes(slide, '这一页先讲为什么要做。传统扫描能发现问题，但解释、验证和交付都偏弱，所以我们把目标放在审计工作台，而不是另一个扫描器。');
+  notes(slide, `我们之所以做 DeepAudit，核心原因是传统扫描工具虽然能发现问题，但普遍存在三个短板：第一，结果解释弱，很多时候只能告诉你“有问题”，但不能很好地说明“为什么是问题”；第二，验证弱，很多发现停留在静态扫描层面，缺少动态验证和上下文判断；第三，交付弱，结果往往碎片化，难以直接形成标准化报告，也不利于复盘和沉淀。
+
+所以 DeepAudit 的定位不是“再做一个扫描器”，而是把审计升级成一个可运行、可追踪、可复用的工作台。它要解决的不是单次发现，而是把项目接入之后的分析、验证和报告形成一个完整闭环，让审计结果真正能用于汇报、留档和后续治理。换句话说，DeepAudit 的价值不是多扫几个漏洞，而是把安全审计从“工具输出”变成“流程化交付”。`);
 }
 
 function buildPanorama(slide) {
@@ -354,7 +358,11 @@ function buildPanorama(slide) {
       ]),
     ])
   );
-  notes(slide, '这一页汇总现有能力。重点不是页面多少，而是已经把项目接入、审计能力、策略治理和结果交付串成了一条完整链路。');
+  notes(slide, `这一页我想重点说明，DeepAudit 现在已经不是一些零散功能点，而是形成了“接入—分析—治理—交付”的完整链路。
+
+在项目接入层面，我们支持仓库、ZIP、分支、成员、回收站等对象，项目的权限和上下文都已经可以统一管理；在审计能力层面，既支持传统扫描，也支持 Agent 审计和即时分析；在策略治理层面，规则集、提示词模板、RAG 知识库和系统配置都已经对象化管理；在结果交付层面，Dashboard、任务详情、PDF 和 JSON 报告也已经串通。
+
+如果把它抽象成对象模型，可以理解为以 AuditProject 作为上下文根对象，下面挂着 AuditTask、AgentTask、AgentFinding、AuditArtifact、Report 这些核心对象。这样做的好处是，项目、任务、策略、知识和报告都围绕同一个主链来组织，既便于追踪，也便于回放和复用。`);
 }
 
 function buildAgentArchitecture(slide) {
@@ -399,7 +407,13 @@ function buildAgentArchitecture(slide) {
       ]),
     ])
   );
-  notes(slide, '这里详细介绍多智能体架构。核心是 Orchestrator 通过 ReAct 循环进行决策。Recon、Analysis、Verification 各司其职。');
+  notes(slide, `这一页讲的是多智能体编排架构。DeepAudit 不是让一个大模型一把梭，而是让 Orchestrator 先做规划，再把任务拆给不同角色的 Agent 去执行。
+
+Orchestrator 的职责是判断当前审计阶段应该先做什么，再决定是走侦察、分析还是验证。它采用的不是静态流程图，而是基于 ReAct 的循环决策：先思考，再调用工具或派发子任务，再根据观察结果继续收敛。这样做的好处是，面对不同项目、不同代码结构、不同风险类型时，系统可以动态调整策略，而不是被固定规则限制住。
+
+下面这三个子 Agent 的分工也很清晰：Recon 负责识别项目结构、技术栈和高危入口；Analysis 负责结合工具和上下文做深层漏洞挖掘；Verification 负责减少误报，并在必要时做更进一步的验证。它们之间不是并列摆设，而是通过 TaskHandoff 协议传递上下文、证据和高优先级区域。
+
+所以这一页的核心信息是：DeepAudit 的智能不是“一个模型说了算”，而是“编排、分工、交接、验证”共同形成的。`);
 }
 
 function buildSandboxAndTools(slide) {
@@ -419,7 +433,7 @@ function buildSandboxAndTools(slide) {
         ]),
         column({ name: 'sandbox-col', width: 'fill', gap: 12, align: 'start' }, [
           tx('沙箱验证层', S.sectionTiny),
-          tx('从“发现”到“确认”', S.titleSmall),
+          tx('从发现到确认', S.titleSmall),
           bullet('PoC 自动生成', 'LLM 根据漏洞上下文，自动编写概念验证（Exploit/PoC）代码。', C.green),
           bullet('Docker 隔离执行', '限制网络出站、内存(512MB)、CPU，通过 seccomp 限制系统调用。', C.accent),
           bullet('置信度打分', '根据沙箱执行的 Observation，动态计算漏洞的可利用性与置信度。', C.warm),
@@ -436,7 +450,13 @@ function buildSandboxAndTools(slide) {
       ]),
     ])
   );
-  notes(slide, '这一页补充工具链和沙箱。AST 提供精准的上下文，外部工具提供覆盖面，而沙箱让我们能运行 PoC 确认漏洞，这是区别于传统 SAST 的关键。');
+  notes(slide, `这一页继续讲工具链和沙箱验证。DeepAudit 的思路不是只依赖模型，而是先把专业工具链接进来，用工具负责事实面的覆盖，再由模型负责解释和收敛。
+
+工具层里，像 Semgrep、Bandit、Gitleaks、OSV-Scanner 这些外部工具先承担广覆盖扫描；同时我们也保留 AST 和代码语义能力，帮助模型更准确地理解函数、类、调用链和数据流。这样做的好处是，模型不会只看到文本片段，而是能拿到更完整的上下文。
+
+更关键的是验证层。对于有条件进一步确认的漏洞，DeepAudit 会把上下文交给沙箱环境，自动生成 PoC 或验证逻辑，再在隔离环境中执行。这样就能把“疑似问题”往“可利用问题”推进，减少传统静态扫描里最常见的误报和歧义。
+
+所以这一页想强调的是：DeepAudit 不是只会发现问题，而是尽量把问题确认到可解释、可验证的程度。`);
 }
 
 function buildArchitecture(slide) {
@@ -484,7 +504,11 @@ function buildArchitecture(slide) {
       ]),
     ])
   );
-  notes(slide, '这一页讲架构。我会重点强调前后端分离、业务域拆分，以及 SSE / WebSocket 为什么必须和 ASGI、Redis、Nginx 一起看。');
+  notes(slide, `架构上，DeepAudit 采用的是独立前端加后端聚合服务的方式。前端是单独的 /deepaudit-app/，主要负责交互、展示和实时渲染；后端统一挂在 /api/deepaudit/*，按业务域拆分，不是一个大接口包打天下；长任务则交给 Celery 和 AgentRunner 去执行，实时结果再通过 SSE 和 WebSocket 回传到前端。
+
+这里最关键的不是“接口多不多”，而是“执行”和“回传”被拆开了。这样长任务就不会把页面卡死，前端也能持续看到过程，而不是只能等一个最终结果。整条链路里，ASGI、Redis、Channels 和 Nginx 都不是背景板，而是整个实时链路成立的基础。
+
+从运行方式上看，我们其实是把 DeepAudit 做成了一个可观测的异步系统：用户看到的是界面，系统内部跑的是任务编排、状态传递和事件流推送。这样既能支撑现场演示，也能支撑后续正式部署。`);
 }
 
 function buildImplementation(slide) {
@@ -536,7 +560,13 @@ function buildImplementation(slide) {
       tx('核心思路是“工具覆盖 + 模型解释 + 检查点恢复 + 事件流回传”，而不是只给一个静态最终结果。', S.bodySmall, { name: 'impl-note', width: 1080 }),
     ])
   );
-  notes(slide, '这一页讲实现方法。核心思路是工具先行、模型编排、检查点恢复、事件流回传，说明 DeepAudit 不是只给一个最终结论。');
+  notes(slide, `实现方法上，DeepAudit 的核心思路可以概括成一句话：先工具、再推理；先收敛、再验证；先回传、再报告。
+
+在任务入口层，我们把项目任务、传统扫描任务和 Agent 审计任务分成不同的服务域来处理，避免一套逻辑覆盖所有场景。工作区准备阶段会统一处理 workspace、git worktree、ZIP、SSH 和目录清理，这样不管是仓库、压缩包还是远程访问，都能进入同一条分析链。
+
+在编排层，Orchestrator 负责先决定审计范围，再调度 recon、analysis、verification、reporting 这些阶段。这里不是一上来就让模型直接下结论，而是先让工具跑起来，再让模型做语义收敛和解释。像 Semgrep、Bandit、Gitleaks、OSV-Scanner 这些外部工具，会先帮我们把事实面的问题筛出来；随后模型再结合上下文做归因、解释和建议。
+
+在实时层，我们把 thinking、tool_call、finding、checkpoint 这些中间状态都持续回传出来，前端也支持断点续传和重连。这样一来，DeepAudit 展示给领导的不是一个静态终稿，而是一个过程可见、结果可复核、任务可恢复的审计系统。`);
 }
 
 function buildKnowledge(slide) {
@@ -572,7 +602,13 @@ function buildKnowledge(slide) {
       ]),
     ])
   );
-  notes(slide, '这一页讲知识库和模型配置。重点是把通用知识、项目知识和用户级模型配置拆开，确保经验能沉淀、模型能管控。');
+  notes(slide, `这一页的重点是：我们把“经验”和“事实”分开管理了。
+
+通用漏洞知识、项目专项知识和项目代码 RAG 三层分别承担不同职责。共享基线知识负责通用漏洞模式和长期稳定规则；项目专项知识负责团队经验、误报边界和内部规范；项目 RAG 则负责把当前仓库里的事实找出来，也就是“这个项目现在到底有什么”。这样设计之后，DeepAudit 就不会把知识、规则和项目上下文混在一起，减少经验散落和重复维护。
+
+在配置上，LLM 和 Embedding 都可以通过内网网关访问，LLM_BASE_URL 和 EMBEDDING_BASE_URL 都可以指向受控地址，避免生产流量直接出网；首 token 超时和流式超时也都有独立控制；tiktoken 还能走本地缓存，保证离线或内网环境也能稳定运行。同时，用户级配置还能覆盖系统默认值，这样不同团队、不同模型策略都能按自己的方式接入。
+
+所以这部分的本质是：知识库负责经验，RAG 负责事实，模型配置负责边界。三者一起，DeepAudit 才能稳定地做出可解释、可控的审计结果。`);
 }
 
 function buildDemo(slide) {
@@ -612,7 +648,11 @@ function buildDemo(slide) {
     position: { left: 553, top: 189, width: 574, height: 484 },
     fit: 'contain',
   });
-  notes(slide, '这一页是现场演示节奏说明。按 Dashboard、项目、Agent、报告页的顺序走，让领导先看到闭环，再看过程。');
+  notes(slide, `这一页我建议按固定顺序演示，这样领导能先看到结果，再看到过程。
+
+第一步先看 Dashboard，让大家先建立整体印象：总览、最近项目、任务数量、规则和模板统计都能一眼看到。第二步进入项目管理，看看仓库、ZIP、分支、成员和项目详情，确认项目接入本身是完整的。第三步打开一个 Agent 审计任务，重点看实时事件流、任务树、Finding 和 Checkpoint，让大家看到它不是一次性出结果，而是边分析边回传。第四步打开报告页，展示问题定位、修复建议，以及 PDF / JSON 的导出。
+
+如果现场实时流比较稳定，就尽量让大家看到完整过程；如果实时流临时不稳定，也不要硬撑，直接切到报告页或截图兜底，因为今天要证明的不是某个按钮，而是“项目接入 + 分析 + 报告”这条主线已经跑通。演示时我会特别强调：DeepAudit 的价值不是把页面点一遍，而是把一个项目从接入到交付的闭环完整跑出来。`);
 }
 
 function buildResults(slide) {
@@ -660,7 +700,11 @@ function buildResults(slide) {
       ]),
     ])
   );
-  notes(slide, '这一页讲阶段成果和下一步。当前闭环已经跑通，接下来要把知识库、规则覆盖、部署监控和运营指标补齐。');
+  notes(slide, `这一页我想传达两个信息。第一，DeepAudit 的主线闭环已经成型，项目接入、智能分析、实时回传和报告交付都已经跑通；第二，现在已经不是“有没有”的问题，而是“怎么持续运营、怎么沉淀价值”的问题。
+
+所以接下来我们的重点会放在四件事上：一是继续补充知识库，把更多真实场景、误报边界和修复建议沉淀进去；二是扩展规则覆盖，让更多语言、框架和项目类型都能更稳定地支持；三是完善部署监控，把 ASGI、Redis、Nginx 和日志告警这些基础设施补齐；四是补真实运营指标。
+
+这页里预留的几个指标位，比如审计任务数、有效发现数、报告导出数、知识库条目数，建议现场前再补真实数据，避免在 PPT 里硬编数字。所以这一页的结论很简单：平台已经跑通，下一步是把能力沉淀成可持续运营的能力。`);
 }
 
 function buildAppendixApis(slide) {
@@ -693,7 +737,13 @@ function buildAppendixApis(slide) {
       ]),
     ])
   );
-  notes(slide, '这一页是技术备份，用来回答页面和接口怎么对应，重点看前端路由、后端分域和实时链路文件。');
+  notes(slide, `这页主要是给领导和现场问答做技术备份，方便快速对上“页面怎么进、接口怎么挂”。
+
+前端这边，/ 是 Agent 审计工作台，/dashboard 是仪表盘，/projects 是项目管理，/instant-analysis 是即时分析，/audit-tasks 是传统任务，/audit-rules、/prompts、/admin、/recycle-bin 则对应策略治理和回收站。这样做的好处是，页面和业务域是一一对应的，不会混在一起。
+
+后端这边，接口按业务域拆分：项目、成员、扫描、Agent 任务、规则、提示词、配置、RAG、数据工具、看板和报告都各有入口，不是单一大接口。前端实时链路则由 agentStream.ts、useResilientStream.ts 和相关适配层一起支撑，整体通过 SSE 和 WebSocket 回传。
+
+如果现场有人问“为什么要这么拆”，你可以直接回答：因为这样更利于维护、更利于扩展，也更利于把一个大平台拆成清晰的业务边界。`);
 }
 
 function buildAppendixOps(slide) {
@@ -748,7 +798,13 @@ function buildAppendixOps(slide) {
       ]),
     ])
   );
-  notes(slide, '这一页是兜底说明，尤其是当实时流不稳定时，如何保住演示主线，以及部署前要先确认哪些基础依赖。');
+  notes(slide, `这页是现场兜底说明，主要解决两个问题：如果实时流不稳怎么办，以及正式演示前要先确认哪些基础依赖。
+
+第一，演示时如果 SSE 或 WebSocket 不稳定，我们就先保主线，再切截图兜底。只要“项目接入 + 分析 + 报告”能跑通，主线就成立，实时流是加分项，不是唯一证明方式。第二，部署前要先确认 ASGI、Celery、Redis、Channels、Nginx 这些基础依赖都正常，特别是流式输出不要被代理缓冲。
+
+常见故障可以这么排查：如果页面能打开但不刷新，优先查 SSE、WebSocket、buffering 和 Nginx 配置；如果接口返回 401 或 404，先看 token、baseURL 和 /basic-api/api 是否对齐；如果日志里有任务但 UI 没事件，通常是 Redis、Channels 或 worker 没起来。
+
+所以现场演示的原则很简单：先保主线，再看细节；先看结果，再解释过程。最后就可以进入 Q&A。`);
 }
 
 function buildDeck() {

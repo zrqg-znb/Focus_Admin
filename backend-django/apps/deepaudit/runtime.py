@@ -13,7 +13,13 @@ from django.db.models import QuerySet
 from ninja.errors import HttpError
 
 from apps.deepaudit import storage as deepaudit_storage
-from apps.deepaudit.git_service import GitEventCallback, GitServiceError, create_repository_workspace
+from apps.deepaudit.git_service import (
+    GitEventCallback,
+    GitServiceError,
+    create_repository_workspace,
+    get_repository_cache_info,
+    repository_cache_enabled,
+)
 from apps.deepaudit.heuristics import build_summary, is_text_file, scan_content, should_exclude
 from apps.deepaudit.repo_specs import (
     build_locked_project_repository_spec,
@@ -150,6 +156,12 @@ def load_ssh_private_key(user_id: str) -> str | None:
     return decrypt_value(credential.private_key_encrypted)
 
 
+def _default_workspace_source(repository_type: str) -> str:
+    if normalize_repository_type(repository_type) == 'multi':
+        return 'multi_repo_cache_copy' if repository_cache_enabled() else 'multi_repo_direct_init'
+    return 'single_repo_git_worktree' if repository_cache_enabled() else 'single_repo_direct_clone'
+
+
 def prepare_repository_workspace(
     project,
     *,
@@ -211,14 +223,26 @@ def prepare_repository_workspace(
             event_callback=event_callback,
             log_context=runtime_context,
         )
+        cache_info = get_repository_cache_info(project, repository_spec)
     except GitServiceError as exc:
         raise HttpError(400, str(exc)) from exc
+    workspace_source = str(runtime_context.get('workspace_source') or '').strip() or _default_workspace_source(
+        repository_spec['repository_type'],
+    )
+    cache_repo = str(
+        runtime_context.get('cache_repo')
+        or runtime_context.get('cache_path')
+        or '',
+    )
+    workspace_path = str(runtime_context.get('workspace_path') or workspace or '')
+    last_synced_at = int(cache_info.get('last_synced_at') or 0) or None
     repository_runtime = {
         'workspace': str(workspace),
-        'workspace_path': str(workspace),
-        'workspace_source': str(runtime_context.get('workspace_source') or ''),
-        'cache_path': str(runtime_context.get('cache_path') or ''),
-        'cache_repo': str(runtime_context.get('cache_repo') or ''),
+        'workspace_path': workspace_path,
+        'workspace_source': workspace_source,
+        'cache_path': cache_repo,
+        'cache_repo': cache_repo,
+        'last_synced_at': last_synced_at,
         'repository_type': str(repository_spec.get('repository_type') or ''),
         'repository_url': str(repository_spec.get('repository_url') or ''),
         'branch_name': str(repository_spec.get('branch_name') or ''),
@@ -235,8 +259,11 @@ def prepare_repository_workspace(
             '仓库工作区已准备完成',
             {
                 'workspace': str(workspace),
+                'workspace_path': workspace_path,
                 'workspace_source': repository_runtime.get('workspace_source'),
                 'cache_repo': repository_runtime.get('cache_repo') or repository_runtime.get('cache_path'),
+                'cache_path': repository_runtime.get('cache_path'),
+                'last_synced_at': repository_runtime.get('last_synced_at'),
                 'repository_type': repository_spec.get('repository_type'),
                 'repository_url': repository_spec.get('repository_url'),
                 'branch_name': repository_spec.get('branch_name'),

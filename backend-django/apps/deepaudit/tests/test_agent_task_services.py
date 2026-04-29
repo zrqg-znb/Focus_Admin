@@ -25,6 +25,7 @@ from apps.deepaudit.agent_task.agent_task_services import (
     persist_checkpoint,
     refresh_task_snapshot,
     resume_task_from_checkpoint,
+    serialize_task,
 )
 from apps.deepaudit.constants import (
     AGENT_PHASE_ANALYSIS,
@@ -118,6 +119,9 @@ class AgentTaskServicesTestCase(TestCase):
                 }
             ),
         )
+        event = task.events.filter(is_deleted=False).latest('sequence')
+        self.assertIn('仓库规格快照已保存', event.message)
+        self.assertIn('Worker 启动', event.message)
 
     def test_create_task_ignores_mismatched_requested_repository_type(self) -> None:
         access = SimpleNamespace(project=self.project, role='owner')
@@ -206,6 +210,39 @@ class AgentTaskServicesTestCase(TestCase):
 
         self.assertEqual(task.project_id, zip_project.id)
         self.assertEqual(task.target_files, ['src/module'])
+
+    def test_serialize_task_includes_repository_runtime_metadata(self) -> None:
+        task = self._create_task(name='Runtime Metadata Task')
+        task.agent_config = {
+            'repository_signature': repository_spec_signature(
+                {
+                    'repository_type': 'multi',
+                    'repository_url': 'https://codehub.example.com/platform/manifest.git',
+                    'branch_name': 'main',
+                    'manifest_xml': 'default.xml',
+                    'group': 'platform',
+                }
+            ),
+            'selection_stats': {
+                'selected_target_count': 2,
+                'selected_directory_count': 1,
+                'resolved_file_count': 3,
+            },
+            'repository_runtime': {
+                'workspace_source': 'multi_repo_cache_copy',
+                'workspace_path': '/tmp/focusaudit-workspace',
+                'cache_repo': '/tmp/focusaudit-cache',
+                'cache_path': '/tmp/focusaudit-cache',
+                'last_synced_at': 1710000000,
+            },
+        }
+
+        payload = serialize_task(task)
+
+        self.assertEqual(payload['workspace_source'], 'multi_repo_cache_copy')
+        self.assertEqual(payload['workspace_path'], '/tmp/focusaudit-workspace')
+        self.assertEqual(payload['cache_repo'], '/tmp/focusaudit-cache')
+        self.assertEqual(payload['last_synced_at'], 1710000000)
 
     def test_execute_agent_task_rebinds_pending_snapshot_after_project_changes(self) -> None:
         self.task.status = 'pending'
