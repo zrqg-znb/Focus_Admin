@@ -189,9 +189,9 @@ write_worker_log_banner() {
 
 print_log_destinations() {
   echo "Celery 运行日志: $WORKER_LOG_FILE"
-  echo "DeepAudit 业务日志: $SERVER_LOG_FILE"
+  echo "DeepAudit Server/路由日志: $SERVER_LOG_FILE"
   echo "错误日志: $ERROR_LOG_FILE"
-  echo "Worker 侧业务调试日志请查看: $WORKER_LOG_FILE"
+  echo "仓库初始化/同步/任务执行日志请查看 Worker 日志: $WORKER_LOG_FILE"
 }
 
 print_worker_launch_context() {

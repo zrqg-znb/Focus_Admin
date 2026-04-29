@@ -103,6 +103,8 @@ Worker 日志默认输出到：
 backend-django/logs/celery-deepaudit.log
 ```
 
+仓库初始化、`git mm init`、`git mm sync` 以及 DeepAudit 任务执行过程中的业务日志，都会写到这个 Worker 日志里；`server.log` 主要保留 Django / 路由 / WebSocket 这类服务端日志。
+
 ## 5. 验证链路
 
 ### Redis
