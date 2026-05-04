@@ -104,7 +104,8 @@ function AgentAuditPageContent() {
   const previousTaskIdRef = useRef<string | undefined>(undefined);
   const disconnectStreamRef = useRef<(() => void) | null>(null);
   const lastEventSequenceRef = useRef<number>(0);
-  const hasConnectedRef = useRef<boolean>(false); // 🔥 追踪是否已连接 SSE
+  const connectedStreamKeyRef = useRef<string | null>(null); // 记录已连接的 taskId + afterSequence
+  const streamBootstrapReadyRef = useRef<boolean>(false); // 当前 task 的历史事件 bootstrap 是否已完成
   const hasLoadedHistoricalEventsRef = useRef<boolean>(false); // 🔥 追踪是否已加载历史事件
   // 🔥 使用 state 来标记历史事件加载状态和触发 streamOptions 重新计算
   const [afterSequence, setAfterSequence] = useState<number>(0);
@@ -181,7 +182,8 @@ function AgentAuditPageContent() {
       setShowCheckpointDialog(false);
       // 3. 重置事件序列号和加载状态
       lastEventSequenceRef.current = 0;
-      hasConnectedRef.current = false; // 🔥 重置 SSE 连接标志
+      connectedStreamKeyRef.current = null; // 重置连接 key，允许新任务重新建立 SSE
+      streamBootstrapReadyRef.current = false;
       hasLoadedHistoricalEventsRef.current = false; // 🔥 重置历史事件加载标志
       setHistoricalEventsLoaded(false); // 🔥 重置历史事件加载状态
       setAfterSequence(0); // 🔥 重置 afterSequence state
@@ -536,6 +538,8 @@ function AgentAuditPageContent() {
 
   // ============ Stream Event Handling ============
 
+  const currentStreamKey = taskId ? `${taskId}:${afterSequence}` : null;
+
   const streamOptions = useMemo(() => ({
     includeThinking: true,
     includeToolCalls: true,
@@ -789,9 +793,11 @@ function AgentAuditPageContent() {
         console.log(`[AgentAudit] Loaded ${eventsLoaded} historical events for task ${taskId}`);
 
         // 标记历史事件已加载完成 (setAfterSequence 已在 loadHistoricalEvents 中调用)
+        streamBootstrapReadyRef.current = true;
         setHistoricalEventsLoaded(true);
       } catch (error) {
         console.error('[AgentAudit] Failed to load data:', error);
+        streamBootstrapReadyRef.current = true;
         setHistoricalEventsLoaded(true); // 即使出错也标记为完成，避免无限等待
       } finally {
         setLoading(false);
@@ -803,28 +809,25 @@ function AgentAuditPageContent() {
 
   // Stream connection - 🔥 在历史事件加载完成后连接
   useEffect(() => {
-    // 等待历史事件加载完成，且任务正在运行
-    if (!taskId || !task?.status || !ACTIVE_TASK_STATUSES.has(String(task.status).toLowerCase())) return;
+    // 等待历史事件加载完成，且任务仍处于可连接状态
+    if (
+      !taskId ||
+      !isRunning ||
+      !historicalEventsLoaded ||
+      !streamBootstrapReadyRef.current ||
+      !currentStreamKey
+    ) {
+      return;
+    }
 
-    // 🔥 使用 state 变量确保在历史事件加载完成后才连接
-    if (!historicalEventsLoaded) return;
+    // 只在 taskId + afterSequence 变化时重新建立连接，避免任务状态轮询误触发断流
+    if (connectedStreamKeyRef.current === currentStreamKey) return;
 
-    // 🔥 避免重复连接 - 只连接一次
-    if (hasConnectedRef.current) return;
-
-    hasConnectedRef.current = true;
-    console.log(`[AgentAudit] Connecting to stream (afterSequence will be passed via streamOptions)`);
+    connectedStreamKeyRef.current = currentStreamKey;
+    console.log(`[AgentAudit] Connecting to stream (key=${currentStreamKey})`);
     connectStream();
-
-    return () => {
-      console.log('[AgentAudit] Cleanup: disconnecting stream');
-      disconnectStream();
-    };
-    // 🔥 CRITICAL FIX: 移除 afterSequence 依赖！
-    // afterSequence 通过 streamOptions 传递，不需要在这里触发重连
-    // 如果包含它，当 loadHistoricalEvents 更新 afterSequence 时会触发断开重连
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId, task?.status, historicalEventsLoaded, connectStream, disconnectStream, dispatch]);
+    // task 切换时和组件卸载时由显式 reset / hook cleanup 负责断开
+  }, [taskId, isRunning, historicalEventsLoaded, currentStreamKey, connectStream]);
 
   // Polling
   useEffect(() => {

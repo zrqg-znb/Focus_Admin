@@ -6,7 +6,6 @@
  */
 
 import { useState, useEffect, useCallback, memo, useMemo, useRef } from "react";
-import { marked } from "marked";
 import {
   Dialog,
   DialogContent,
@@ -42,11 +41,16 @@ import {
   Keyboard,
   FileDown,
   Zap,
-  TrendingUp,
   Clock,
 } from "lucide-react";
 import { apiClient } from "@/shared/api/serverClient";
 import type { AgentTask, AgentFinding } from "@/shared/api/agentTasks";
+import {
+  DEFAULT_REPORT_EXPORT_OPTIONS,
+  generateAgentAuditHtmlReport,
+  serializeReportExportOptions,
+  type ReportExportOptions,
+} from "../reportHtml";
 
 // ============ Types ============
 
@@ -66,12 +70,7 @@ interface ReportPreview {
   error: string | null;
 }
 
-interface ExportOptions {
-  includeCodeSnippets: boolean;
-  includeRemediation: boolean;
-  includeMetadata: boolean;
-  compactMode: boolean;
-}
+type ExportOptions = ReportExportOptions;
 
 // ============ Constants ============
 
@@ -104,21 +103,13 @@ const FORMAT_CONFIG: Record<ReportFormat, {
   },
   html: {
     label: "HTML",
-    description: "网页展示格式",
+    description: "浅色汇报格式",
     icon: <FileCode className="w-5 h-5" />,
     extension: ".html",
     mime: "text/html",
     color: "text-emerald-600 dark:text-emerald-400",
     bgColor: "bg-emerald-100 dark:bg-emerald-500/10 border-emerald-300 dark:border-emerald-500/30",
   },
-};
-
-// 默认导出选项
-const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
-  includeCodeSnippets: true,
-  includeRemediation: true,
-  includeMetadata: true,
-  compactMode: false,
 };
 
 // ============ Helper Functions ============
@@ -355,10 +346,10 @@ const ExportOptionsPanel = memo(function ExportOptionsPanel({
   onToggle: () => void;
 }) {
   const optionItems = [
-    { key: "includeCodeSnippets", label: "包含代码片段", description: "导出相关的代码示例" },
-    { key: "includeRemediation", label: "包含修复建议", description: "导出漏洞修复方案" },
-    { key: "includeMetadata", label: "包含元数据", description: "导出任务和文件信息" },
-    { key: "compactMode", label: "紧凑模式", description: "减少空白和间距" },
+    { key: "includeCodeSnippets", label: "包含代码片段", description: "在重点发现中展示代码片段" },
+    { key: "includeRemediation", label: "包含修复建议", description: "在重点发现中展示整改建议" },
+    { key: "includeMetadata", label: "包含元数据", description: "显示任务上下文和执行统计" },
+    { key: "compactMode", label: "紧凑模式", description: "减少卡片间距与留白" },
   ];
 
   return (
@@ -764,11 +755,11 @@ export const ReportExportDialog = memo(function ReportExportDialog({
 
   // 增强功能状态
   const [searchQuery, setSearchQuery] = useState("");
-  const [exportOptions, setExportOptions] = useState<ExportOptions>(DEFAULT_EXPORT_OPTIONS);
+  const [exportOptions, setExportOptions] = useState<ExportOptions>(DEFAULT_REPORT_EXPORT_OPTIONS);
   const [optionsExpanded, setOptionsExpanded] = useState(false);
 
   // 预览缓存
-  const previewCache = useRef<Map<ReportFormat, string>>(new Map());
+  const previewCache = useRef<Map<string, string>>(new Map());
 
   // 计算搜索匹配数
   const searchMatchCount = useMemo(() => {
@@ -778,13 +769,22 @@ export const ReportExportDialog = memo(function ReportExportDialog({
   }, [searchQuery, preview.content]);
 
   // Fetch report content for preview
+  const getPreviewCacheKey = useCallback((format: ReportFormat) => {
+    const taskKey = task?.id || "unknown-task";
+    if (format !== "html") {
+      return `${taskKey}:${format}`;
+    }
+    return `${taskKey}:${format}:${serializeReportExportOptions(exportOptions)}`;
+  }, [task?.id, exportOptions]);
+
   const fetchPreview = useCallback(async (format: ReportFormat, forceRefresh = false) => {
     if (!task) return;
+    const cacheKey = getPreviewCacheKey(format);
 
     // 检查缓存
-    if (!forceRefresh && previewCache.current.has(format)) {
+    if (!forceRefresh && previewCache.current.has(cacheKey)) {
       setPreview({
-        content: previewCache.current.get(format)!,
+        content: previewCache.current.get(cacheKey)!,
         format,
         loading: false,
         error: null,
@@ -792,7 +792,7 @@ export const ReportExportDialog = memo(function ReportExportDialog({
       return;
     }
 
-    setPreview(prev => ({ ...prev, loading: true, error: null }));
+    setPreview((prev) => ({ ...prev, loading: true, error: null }));
 
     try {
       let content = "";
@@ -807,7 +807,7 @@ export const ReportExportDialog = memo(function ReportExportDialog({
           params: { format: "markdown" },
           responseType: "text",
         });
-        content = await generateHtmlReport(mdResponse.data, task);
+        content = await generateAgentAuditHtmlReport(mdResponse.data, task, findings, exportOptions);
       } else {
         const response = await apiClient.get(`/agent-tasks/${task.id}/report`, {
           params: { format: "markdown" },
@@ -817,7 +817,7 @@ export const ReportExportDialog = memo(function ReportExportDialog({
       }
 
       // 缓存结果
-      previewCache.current.set(format, content);
+      previewCache.current.set(cacheKey, content);
 
       setPreview({
         content,
@@ -827,674 +827,13 @@ export const ReportExportDialog = memo(function ReportExportDialog({
       });
     } catch (err) {
       console.error("Failed to fetch report preview:", err);
-      setPreview(prev => ({
+      setPreview((prev) => ({
         ...prev,
         loading: false,
         error: "加载预览失败，请重试",
       }));
     }
-  }, [task]);
-
-  // Generate HTML report from markdown
-  const generateHtmlReport = async (markdown: string, task: AgentTask): Promise<string> => {
-    const contentHtml = await marked.parse(markdown);
-    const score = task.security_score || 0;
-    const scoreDisplay = score.toFixed(0);
-    const totalFindings = task.findings_count || 0;
-    const criticalCount = task.critical_count || 0;
-    const highCount = task.high_count || 0;
-    const mediumCount = task.medium_count || 0;
-    const lowCount = task.low_count || 0;
-    const verifiedCount = task.verified_count || 0;
-    const taskName = task.name || `Task ${task.id.slice(0, 8)}`;
-    const generateDate = new Date().toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-
-    // 计算评分等级和颜色
-    const getScoreGrade = (s: number) => {
-      if (s >= 90) return { grade: 'A', color: '#10b981', bg: 'rgba(16, 185, 129, 0.1)' };
-      if (s >= 80) return { grade: 'B', color: '#22c55e', bg: 'rgba(34, 197, 94, 0.1)' };
-      if (s >= 70) return { grade: 'C', color: '#eab308', bg: 'rgba(234, 179, 8, 0.1)' };
-      if (s >= 60) return { grade: 'D', color: '#f97316', bg: 'rgba(249, 115, 22, 0.1)' };
-      return { grade: 'F', color: '#ef4444', bg: 'rgba(239, 68, 68, 0.1)' };
-    };
-    const scoreInfo = getScoreGrade(score);
-
-    // SVG 圆环进度条
-    const circumference = 2 * Math.PI * 40; // r=40 (smaller)
-    const strokeDashoffset = circumference - (score / 100) * circumference;
-
-    return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>安全审计报告 - ${taskName}</title>
-  <style>
-    :root {
-      --bg-body: #06060a;
-      --bg-primary: #0a0a0f;
-      --bg-secondary: #0f0f15;
-      --bg-tertiary: #16161f;
-      --bg-card: #12121a;
-      --text-primary: #f8fafc;
-      --text-secondary: #94a3b8;
-      --text-muted: #64748b;
-      --accent: #ff6b2c;
-      --accent-glow: rgba(255, 107, 44, 0.2);
-      --border: #1e293b;
-      --border-light: #334155;
-      --success: #10b981;
-      --critical: #dc2626;
-      --critical-bg: rgba(220, 38, 38, 0.12);
-      --high: #f97316;
-      --high-bg: rgba(249, 115, 22, 0.1);
-      --medium: #eab308;
-      --medium-bg: rgba(234, 179, 8, 0.08);
-      --low: #3b82f6;
-      --low-bg: rgba(59, 130, 246, 0.08);
-      --info: #6366f1;
-      --info-bg: rgba(99, 102, 241, 0.08);
-      --code-bg: #0d1117;
-    }
-
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html { scroll-behavior: smooth; }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: var(--bg-body);
-      color: var(--text-secondary);
-      line-height: 1.6;
-      font-size: 14px;
-    }
-
-    .container { max-width: 900px; margin: 0 auto; padding: 0 1.5rem; }
-
-    /* Header */
-    .header {
-      background: linear-gradient(135deg, var(--bg-primary), var(--bg-secondary));
-      border-bottom: 1px solid var(--border);
-      padding: 1.25rem 0;
-      position: relative;
-    }
-
-    .header::before {
-      content: "";
-      position: absolute;
-      top: -50%;
-      right: -10%;
-      width: 300px;
-      height: 300px;
-      background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
-      pointer-events: none;
-    }
-
-    .header-content {
-      position: relative;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-    }
-
-    .brand-logo {
-      width: 28px;
-      height: 28px;
-      background: linear-gradient(135deg, var(--accent), #ff8f5a);
-      border-radius: 6px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 800;
-      font-size: 0.9rem;
-      color: white;
-    }
-
-    .brand-text { font-size: 1rem; font-weight: 700; color: var(--text-primary); }
-
-    .header-title {
-      font-size: 1.25rem;
-      font-weight: 700;
-      color: var(--text-primary);
-      text-align: center;
-      flex: 1;
-      margin: 0 1rem;
-    }
-
-    .header-meta {
-      text-align: right;
-      font-size: 0.7rem;
-      color: var(--text-muted);
-    }
-
-    /* Stats Section */
-    .stats-section {
-      padding: 1rem 0;
-      background: var(--bg-primary);
-      border-bottom: 1px solid var(--border);
-    }
-
-    .stats-grid {
-      display: flex;
-      align-items: center;
-      gap: 1.25rem;
-    }
-
-    .score-ring-container {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      padding: 0.75rem 1rem;
-      background: var(--bg-card);
-      border-radius: 12px;
-      border: 1px solid var(--border);
-    }
-
-    .score-ring {
-      position: relative;
-      width: 56px;
-      height: 56px;
-    }
-
-    .score-ring svg {
-      transform: rotate(-90deg);
-      width: 56px;
-      height: 56px;
-    }
-
-    .score-ring-bg { fill: none; stroke: var(--border); stroke-width: 5; }
-    .score-ring-progress {
-      fill: none;
-      stroke: ${scoreInfo.color};
-      stroke-width: 5;
-      stroke-linecap: round;
-      stroke-dasharray: ${circumference};
-      stroke-dashoffset: ${strokeDashoffset};
-      filter: drop-shadow(0 0 4px ${scoreInfo.color}40);
-    }
-
-    .score-ring-content {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .score-value {
-      font-size: 1.1rem;
-      font-weight: 800;
-      color: ${scoreInfo.color};
-      line-height: 1;
-      font-family: 'SF Mono', monospace;
-    }
-
-    .score-grade {
-      font-size: 0.55rem;
-      font-weight: 600;
-      color: ${scoreInfo.color};
-      background: ${scoreInfo.bg};
-      padding: 0.1rem 0.3rem;
-      border-radius: 3px;
-      margin-top: 0.15rem;
-    }
-
-    .score-label {
-      font-size: 0.65rem;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-
-    .stats-cards {
-      display: flex;
-      gap: 0.5rem;
-      flex: 1;
-    }
-
-    .stat-card {
-      flex: 1;
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 0.6rem 0.75rem;
-    }
-
-    .stat-card-header {
-      display: flex;
-      align-items: center;
-      gap: 0.4rem;
-      margin-bottom: 0.25rem;
-    }
-
-    .stat-card-icon {
-      width: 18px;
-      height: 18px;
-      border-radius: 4px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.65rem;
-      font-weight: 700;
-    }
-
-    .stat-card-icon.critical { background: var(--critical-bg); color: var(--critical); }
-    .stat-card-icon.high { background: var(--high-bg); color: var(--high); }
-    .stat-card-icon.total { background: var(--info-bg); color: var(--info); }
-    .stat-card-icon.verified { background: rgba(16,185,129,0.1); color: var(--success); }
-
-    .stat-card-label { font-size: 0.6rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
-    .stat-card-value { font-size: 1.25rem; font-weight: 700; color: var(--text-primary); font-family: 'SF Mono', monospace; line-height: 1; }
-    .stat-card-value.critical { color: var(--critical); }
-    .stat-card-value.high { color: var(--high); }
-
-    /* Severity Bar */
-    .severity-section {
-      padding: 0.75rem 0;
-      background: var(--bg-primary);
-    }
-
-    .severity-bar-wrap {
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-    }
-
-    .severity-bar-title {
-      font-size: 0.65rem;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      white-space: nowrap;
-    }
-
-    .severity-bar {
-      flex: 1;
-      display: flex;
-      height: 6px;
-      border-radius: 3px;
-      overflow: hidden;
-      background: var(--border);
-    }
-
-    .severity-segment { height: 100%; }
-    .severity-segment.critical { background: var(--critical); }
-    .severity-segment.high { background: var(--high); }
-    .severity-segment.medium { background: var(--medium); }
-    .severity-segment.low { background: var(--low); }
-
-    .severity-legend {
-      display: flex;
-      gap: 0.75rem;
-    }
-
-    .severity-legend-item {
-      display: flex;
-      align-items: center;
-      gap: 0.25rem;
-      font-size: 0.6rem;
-      color: var(--text-muted);
-    }
-
-    .severity-dot { width: 6px; height: 6px; border-radius: 50%; }
-    .severity-dot.critical { background: var(--critical); }
-    .severity-dot.high { background: var(--high); }
-    .severity-dot.medium { background: var(--medium); }
-    .severity-dot.low { background: var(--low); }
-
-    /* Main Content */
-    .main-content {
-      padding: 1.5rem 0;
-      background: var(--bg-body);
-    }
-
-    .content-wrapper {
-      background: var(--bg-primary);
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      padding: 1.5rem;
-    }
-
-    /* Typography */
-    h1, h2, h3, h4 {
-      color: var(--text-primary);
-      font-weight: 600;
-      letter-spacing: -0.01em;
-    }
-
-    h1 {
-      font-size: 1.25rem;
-      margin: 1.5rem 0 0.75rem;
-      padding-bottom: 0.5rem;
-      border-bottom: 2px solid var(--accent);
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-    }
-
-    h1::before { content: "§"; color: var(--accent); font-weight: 400; }
-
-    h2 {
-      font-size: 1.1rem;
-      margin: 1.25rem 0 0.5rem;
-      padding-bottom: 0.35rem;
-      border-bottom: 1px solid var(--border);
-    }
-
-    h2::before { content: "//"; color: var(--accent); margin-right: 0.35rem; font-weight: 400; opacity: 0.7; }
-
-    h3 {
-      font-size: 1rem;
-      margin: 1rem 0 0.4rem;
-      padding-left: 0.75rem;
-      border-left: 2px solid var(--accent);
-    }
-
-    h4 { font-size: 0.9rem; margin: 0.75rem 0 0.35rem; color: var(--text-secondary); }
-
-    p { margin-bottom: 0.6rem; font-size: 0.875rem; }
-
-    /* Code Blocks */
-    pre {
-      background: var(--code-bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      margin: 0.75rem 0;
-      overflow: hidden;
-      font-size: 0.8rem;
-    }
-
-    pre::before {
-      content: "CODE";
-      display: block;
-      background: var(--bg-tertiary);
-      padding: 0.35rem 0.75rem;
-      font-size: 0.6rem;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      border-bottom: 1px solid var(--border);
-    }
-
-    pre code {
-      display: block;
-      padding: 0.75rem;
-      overflow-x: auto;
-      line-height: 1.5;
-    }
-
-    code {
-      font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
-      font-size: 0.85em;
-      color: #e2e8f0;
-    }
-
-    p code, li code, td code {
-      background: var(--bg-tertiary);
-      color: var(--accent);
-      padding: 0.15em 0.35em;
-      border-radius: 4px;
-      font-size: 0.8em;
-      border: 1px solid var(--border);
-    }
-
-    /* Tables */
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin: 0.75rem 0;
-      background: var(--bg-card);
-      border-radius: 8px;
-      overflow: hidden;
-      border: 1px solid var(--border);
-      font-size: 0.8rem;
-    }
-
-    th {
-      padding: 0.6rem 0.75rem;
-      text-align: left;
-      font-weight: 600;
-      font-size: 0.65rem;
-      color: var(--text-secondary);
-      text-transform: uppercase;
-      background: var(--bg-tertiary);
-      border-bottom: 1px solid var(--border);
-    }
-
-    td {
-      padding: 0.5rem 0.75rem;
-      border-bottom: 1px solid var(--border);
-    }
-
-    tr:last-child td { border-bottom: none; }
-    tr:hover td { background: rgba(255, 255, 255, 0.02); }
-
-    /* Lists */
-    ul, ol { margin: 0.5rem 0 0.5rem 1.25rem; }
-    li { margin-bottom: 0.25rem; font-size: 0.875rem; }
-    li::marker { color: var(--accent); }
-
-    /* Blockquotes */
-    blockquote {
-      margin: 0.75rem 0;
-      padding: 0.6rem 1rem;
-      background: var(--bg-card);
-      border-left: 3px solid var(--accent);
-      border-radius: 0 8px 8px 0;
-      font-size: 0.85rem;
-    }
-
-    blockquote p:last-child { margin-bottom: 0; }
-
-    /* Links */
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-
-    /* HR */
-    hr {
-      border: none;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, var(--border), transparent);
-      margin: 1.5rem 0;
-    }
-
-    strong { color: var(--text-primary); font-weight: 600; }
-    em { color: var(--text-muted); }
-
-    /* Footer */
-    .report-footer {
-      padding: 1rem 0;
-      background: var(--bg-primary);
-      border-top: 1px solid var(--border);
-      text-align: center;
-    }
-
-    .footer-content {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.5rem;
-      font-size: 0.7rem;
-      color: var(--text-muted);
-    }
-
-    .footer-brand {
-      display: flex;
-      align-items: center;
-      gap: 0.35rem;
-      color: var(--text-secondary);
-      font-weight: 600;
-    }
-
-    .footer-brand-icon {
-      width: 16px;
-      height: 16px;
-      background: linear-gradient(135deg, var(--accent), #ff8f5a);
-      border-radius: 4px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.6rem;
-      color: white;
-      font-weight: 800;
-    }
-
-    /* Responsive */
-    @media (max-width: 768px) {
-      .container { padding: 0 1rem; }
-      .stats-grid { flex-direction: column; gap: 0.75rem; }
-      .score-ring-container { width: 100%; justify-content: center; }
-      .stats-cards { flex-wrap: wrap; }
-      .stat-card { min-width: calc(50% - 0.25rem); }
-      .severity-bar-wrap { flex-direction: column; align-items: stretch; gap: 0.5rem; }
-      .severity-legend { justify-content: center; }
-      .content-wrapper { padding: 1rem; }
-    }
-
-    /* Print */
-    @media print {
-      :root {
-        --bg-body: #fff;
-        --bg-primary: #fff;
-        --bg-secondary: #f8fafc;
-        --bg-tertiary: #f1f5f9;
-        --bg-card: #fff;
-        --text-primary: #0f172a;
-        --text-secondary: #475569;
-        --text-muted: #64748b;
-        --border: #e2e8f0;
-        --code-bg: #f8fafc;
-      }
-      body { background: white; font-size: 11pt; }
-      .header::before { display: none; }
-      .content-wrapper { border: none; padding: 0; }
-      pre { break-inside: avoid; }
-      code { color: #1e293b; }
-      p code, li code { background: #f1f5f9; color: #c2410c; }
-      a { color: #2563eb; }
-    }
-  </style>
-</head>
-<body>
-  <header class="header">
-    <div class="container">
-      <div class="header-content">
-        <div class="brand">
-          <div class="brand-logo">F</div>
-          <span class="brand-text">FocusAudit</span>
-        </div>
-        <h1 class="header-title">${taskName}</h1>
-        <div class="header-meta">${generateDate}</div>
-      </div>
-    </div>
-  </header>
-
-  <section class="stats-section">
-    <div class="container">
-      <div class="stats-grid">
-        <div class="score-ring-container">
-          <div class="score-ring">
-            <svg viewBox="0 0 56 56">
-              <circle class="score-ring-bg" cx="28" cy="28" r="23"></circle>
-              <circle class="score-ring-progress" cx="28" cy="28" r="23"></circle>
-            </svg>
-            <div class="score-ring-content">
-              <span class="score-value">${scoreDisplay}</span>
-              <span class="score-grade">${scoreInfo.grade}</span>
-            </div>
-          </div>
-          <span class="score-label">安全评分</span>
-        </div>
-        <div class="stats-cards">
-          <div class="stat-card">
-            <div class="stat-card-header">
-              <div class="stat-card-icon total">∑</div>
-              <span class="stat-card-label">总数</span>
-            </div>
-            <div class="stat-card-value">${totalFindings}</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-card-header">
-              <div class="stat-card-icon critical">!</div>
-              <span class="stat-card-label">严重</span>
-            </div>
-            <div class="stat-card-value critical">${criticalCount}</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-card-header">
-              <div class="stat-card-icon high">▲</div>
-              <span class="stat-card-label">高危</span>
-            </div>
-            <div class="stat-card-value high">${highCount}</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-card-header">
-              <div class="stat-card-icon verified">✓</div>
-              <span class="stat-card-label">验证</span>
-            </div>
-            <div class="stat-card-value" style="color:var(--success)">${verifiedCount}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="severity-section">
-    <div class="container">
-      <div class="severity-bar-wrap">
-        <span class="severity-bar-title">分布</span>
-        <div class="severity-bar">
-          ${totalFindings > 0 ? `
-            <div class="severity-segment critical" style="width:${(criticalCount/totalFindings)*100}%"></div>
-            <div class="severity-segment high" style="width:${(highCount/totalFindings)*100}%"></div>
-            <div class="severity-segment medium" style="width:${(mediumCount/totalFindings)*100}%"></div>
-            <div class="severity-segment low" style="width:${(lowCount/totalFindings)*100}%"></div>
-          ` : ''}
-        </div>
-        <div class="severity-legend">
-          <div class="severity-legend-item"><div class="severity-dot critical"></div>${criticalCount}</div>
-          <div class="severity-legend-item"><div class="severity-dot high"></div>${highCount}</div>
-          <div class="severity-legend-item"><div class="severity-dot medium"></div>${mediumCount}</div>
-          <div class="severity-legend-item"><div class="severity-dot low"></div>${lowCount}</div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <main class="main-content">
-    <div class="container">
-      <div class="content-wrapper">
-        ${contentHtml}
-      </div>
-    </div>
-  </main>
-
-  <footer class="report-footer">
-    <div class="container">
-      <div class="footer-content">
-        <div class="footer-brand">
-          <div class="footer-brand-icon">F</div>
-          FocusAudit
-        </div>
-        <span>·</span>
-        <span>${generateDate}</span>
-      </div>
-    </div>
-  </footer>
-</body>
-</html>`;
-  };
+  }, [task, findings, exportOptions, getPreviewCacheKey]);
 
   // Load preview when format changes or dialog opens
   useEffect(() => {
@@ -1566,19 +905,19 @@ export const ReportExportDialog = memo(function ReportExportDialog({
       let filename = `audit_report_${task.name || task.id.substring(0, 8)}_${new Date().toISOString().slice(0, 10)}`;
       const config = FORMAT_CONFIG[activeFormat];
 
-      // 如果预览内容为空，重新获取
-      if (!content) {
+      // HTML 报告始终重新生成，确保使用最新摘要与导出选项
+      if (activeFormat === "html") {
+        const mdResponse = await apiClient.get(`/agent-tasks/${task.id}/report`, {
+          params: { format: "markdown" },
+          responseType: "text",
+        });
+        content = await generateAgentAuditHtmlReport(mdResponse.data, task, findings, exportOptions);
+      } else if (!content) {
         if (activeFormat === "json") {
           const response = await apiClient.get(`/agent-tasks/${task.id}/report`, {
             params: { format: "json" },
           });
           content = JSON.stringify(response.data, null, 2);
-        } else if (activeFormat === "html") {
-          const mdResponse = await apiClient.get(`/agent-tasks/${task.id}/report`, {
-            params: { format: "markdown" },
-            responseType: "text",
-          });
-          content = await generateHtmlReport(mdResponse.data, task);
         } else {
           const response = await apiClient.get(`/agent-tasks/${task.id}/report`, {
             params: { format: "markdown" },
