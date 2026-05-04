@@ -103,7 +103,7 @@ const FORMAT_CONFIG: Record<ReportFormat, {
   },
   html: {
     label: "HTML",
-    description: "浅色汇报格式",
+    description: "单文件文档格式",
     icon: <FileCode className="w-5 h-5" />,
     extension: ".html",
     mime: "text/html",
@@ -346,9 +346,9 @@ const ExportOptionsPanel = memo(function ExportOptionsPanel({
   onToggle: () => void;
 }) {
   const optionItems = [
-    { key: "includeCodeSnippets", label: "包含代码片段", description: "在重点发现中展示代码片段" },
-    { key: "includeRemediation", label: "包含修复建议", description: "在重点发现中展示整改建议" },
-    { key: "includeMetadata", label: "包含元数据", description: "显示任务上下文和执行统计" },
+    { key: "includeCodeSnippets", label: "包含代码片段", description: "在 HTML 正文中保留代码片段" },
+    { key: "includeRemediation", label: "包含修复建议", description: "在摘要和正文中保留整改建议" },
+    { key: "includeMetadata", label: "包含元数据", description: "保留任务元数据字段" },
     { key: "compactMode", label: "紧凑模式", description: "减少卡片间距与留白" },
   ];
 
@@ -1039,7 +1039,7 @@ export const ReportExportDialog = memo(function ReportExportDialog({
                 <p className="text-xs text-muted-foreground leading-relaxed">
                   {activeFormat === "markdown" && "Markdown格式便于编辑和版本控制，可用任何文本编辑器打开。"}
                   {activeFormat === "json" && "JSON格式包含完整的结构化数据，适合程序处理和数据分析。"}
-                  {activeFormat === "html" && "HTML格式可直接在浏览器中查看，包含完整样式和布局。"}
+                  {activeFormat === "html" && "HTML 格式是单文件文档，可直接在浏览器中查看与分享。"}
                 </p>
               </div>
             </div>

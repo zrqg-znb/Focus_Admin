@@ -74,7 +74,7 @@ export interface AgentAuditReportModel {
 	heroBadges: Array<{ label: string; tone: ReportTone }>;
 	summaryCards: ReportMetricCard[];
 	summaryBullets: Array<{ tone: ReportTone; text: string }>;
-	reportInfoGroups: ReportInfoGroup[];
+	sidebarGroups: ReportInfoGroup[];
 	severityDistribution: ReportDistributionItem[];
 	typeDistribution: ReportDistributionItem[];
 	recommendations: Array<{ tone: ReportTone; text: string }>;
@@ -157,10 +157,7 @@ const FIXED_TOC_ENTRIES: Array<{
 	level: number;
 	fixed: true;
 }> = [
-	{ id: "executive-summary", label: "执行摘要", level: 1, fixed: true },
-	{ id: "report-info", label: "报告信息", level: 1, fixed: true },
-	{ id: "risk-overview", label: "风险总览", level: 1, fixed: true },
-	{ id: "key-findings", label: "重点发现", level: 1, fixed: true },
+	{ id: "summary", label: "摘要", level: 1, fixed: true },
 	{ id: "report-body", label: "正文", level: 1, fixed: true },
 ];
 
@@ -245,6 +242,21 @@ function truncateMultiline(
 		return limitedLength;
 	}
 	return `${lines.slice(0, maxLines).join("\n")}\n…`;
+}
+
+function stripCodeBlocksFromHtml(html: string): string {
+	if (!html.trim()) {
+		return html;
+	}
+
+	if (typeof document === "undefined") {
+		return html.replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, "");
+	}
+
+	const wrapper = document.createElement("template");
+	wrapper.innerHTML = html;
+	wrapper.content.querySelectorAll("pre").forEach((node) => node.remove());
+	return wrapper.innerHTML;
 }
 
 function formatDateTime(value?: string | null): string {
@@ -681,6 +693,7 @@ function buildSummaryBullets(
 	findings: AgentFinding[],
 	severityCounts: Record<string, number>,
 	scoreLabel: string,
+	includeRemediation: boolean,
 ): Array<{ tone: ReportTone; text: string }> {
 	const totalFindings = findings.length || Number(task.findings_count || 0);
 	const highRiskCount =
@@ -698,7 +711,7 @@ function buildSummaryBullets(
 	const elapsedLabel = duration === "—" ? "未记录耗时" : duration;
 
 	if (totalFindings === 0) {
-		return [
+		const bullets: Array<{ tone: ReportTone; text: string }> = [
 			{
 				tone: "success",
 				text: `本次审计未产出可展示的结构化问题项，当前安全评分 ${Number(task.security_score || 0).toFixed(0)}/100，整体风险偏低。`,
@@ -710,14 +723,19 @@ function buildSummaryBullets(
 						? `审计覆盖 ${coverageLabel} 个文件（总计 ${totalFiles} 个），耗时 ${elapsedLabel}。`
 						: `审计耗时 ${elapsedLabel}，当前尚未提供完整文件总量信息。`,
 			},
-			{
-				tone: "warning",
-				text: `建议在汇报前复核覆盖范围与关键结论，确保后续补测或回归时可以快速定位。`,
-			},
 		];
+
+		if (includeRemediation) {
+			bullets.push({
+				tone: "warning",
+				text: `建议在交付前复核覆盖范围与关键结论，确保后续补测或回归时可以快速定位。`,
+			});
+		}
+
+		return bullets;
 	}
 
-	return [
+	const bullets: Array<{ tone: ReportTone; text: string }> = [
 		{
 			tone: highRiskCount > 0 ? "danger" : "success",
 			text: `本次审计共识别 ${totalFindings} 个问题，其中 ${Number(severityCounts.critical || 0)} 个严重、${Number(severityCounts.high || 0)} 个高危，安全评分 ${Number(task.security_score || 0).toFixed(0)}/100（${scoreLabel}）。`,
@@ -729,14 +747,16 @@ function buildSummaryBullets(
 		{
 			tone: highRiskCount > 0 ? "warning" : "info",
 			text:
-				highRiskCount > 0
-					? `建议优先处理 ${highRiskCount} 个高优先级问题，并对 ${Number(new Set(findings.map((item) => String(item.file_path || "").trim()).filter(Boolean)).size)} 个受影响文件进行回归验证。`
-					: `当前未发现高优先级问题，建议继续关注修复建议的一致性和回归验证结果。`,
+			highRiskCount > 0
+				? `建议优先处理 ${highRiskCount} 个高优先级问题，并对 ${Number(new Set(findings.map((item) => String(item.file_path || "").trim()).filter(Boolean)).size)} 个受影响文件进行回归验证。`
+				: `当前未发现高优先级问题，建议继续关注修复建议的一致性和回归验证结果。`,
 		},
 	];
+
+	return includeRemediation ? bullets : bullets.slice(0, 2);
 }
 
-function buildReportInfoGroups(
+function buildSidebarGroups(
 	task: AgentTask,
 	findings: AgentFinding[],
 	severityCounts: Record<string, number>,
@@ -745,21 +765,12 @@ function buildReportInfoGroups(
 		task.analyzed_files || task.resolved_file_count || task.indexed_files || 0,
 	);
 	const totalFiles = Number(task.total_files || 0);
-	const verifiedCount = findings.length
-		? findings.filter((item) => item.is_verified).length
-		: Number(task.verified_count || 0);
 	const totalFindings = findings.length || Number(task.findings_count || 0);
-	const affectedFilesCount = findings.length
-		? new Set(
-				findings
-					.map((item) => String(item.file_path || "").trim())
-					.filter(Boolean),
-			).size
-		: Number(task.files_with_findings || 0);
+	const scoreValue = Number(task.security_score || 0);
 
 	return [
 		{
-			title: "任务概况",
+			title: "任务信息",
 			cards: [
 				{ label: "任务 ID", value: task.id || "—" },
 				{ label: "项目 ID", value: task.project_id || "—" },
@@ -786,7 +797,6 @@ function buildReportInfoGroups(
 		{
 			title: "执行统计",
 			cards: [
-				{ label: "创建时间", value: formatDateTime(task.created_at) },
 				{ label: "开始时间", value: formatDateTime(task.started_at) },
 				{ label: "完成时间", value: formatDateTime(task.completed_at) },
 				{ label: "耗时", value: formatDuration(getTaskDurationMs(task)) },
@@ -799,46 +809,27 @@ function buildReportInfoGroups(
 							: undefined,
 				},
 				{
-					label: "问题文件",
-					value: `${affectedFilesCount || 0}`,
+					label: "问题总数",
+					value: `${totalFindings || 0}`,
 					detail:
 						totalFindings > 0
-							? `命中 ${totalFindings} 条问题 · 严重 ${Number(severityCounts.critical || 0)} / 高危 ${Number(severityCounts.high || 0)}`
-							: undefined,
+							? `严重 ${Number(severityCounts.critical || 0)} · 高危 ${Number(severityCounts.high || 0)}`
+							: "暂无发现",
 				},
 				{
-					label: "验证数",
-					value: `${verifiedCount}`,
-					detail:
-						totalFindings > 0
-							? `${formatPercent(verifiedCount, totalFindings)} 已验证`
-							: undefined,
+					label: "安全评分",
+					value: `${scoreValue.toFixed(0)}/100`,
+					detail: getScoreMeta(scoreValue).label,
 				},
 				{
-					label: "误报数",
-					value: `${Number(task.false_positive_count || 0)}`,
-					detail:
-						Number(task.false_positive_count || 0) > 0 ? "已标记" : "暂无",
-				},
-				{
-					label: "总迭代",
-					value: `${Number(task.total_iterations || 0)}`,
-					detail: `${Number(task.tool_calls_count || 0)} 次工具调用`,
+					label: "工具调用",
+					value: `${Number(task.tool_calls_count || 0)}`,
+					detail: `${Number(task.total_iterations || 0)} 次迭代`,
 				},
 				{
 					label: "tokens",
 					value: `${Number(task.tokens_used || 0)}`,
 					detail: Number(task.tokens_used || 0) > 0 ? "累计消耗" : "暂无数据",
-				},
-				{
-					label: "安全评分",
-					value: `${Number(task.security_score || 0).toFixed(0)}/100`,
-					detail: getScoreMeta(Number(task.security_score || 0)).label,
-				},
-				{
-					label: "质量评分",
-					value: `${Number(task.quality_score || 0).toFixed(0)}/100`,
-					detail: "执行质量",
 				},
 			],
 		},
@@ -917,7 +908,7 @@ function buildRecommendations(
 
 	items.push({
 		tone: "info",
-		text: `结合重点发现中的代码片段和修复建议，梳理可复用的整改模式，避免同类问题再次出现。`,
+		text: `结合问题项中的代码片段和修复建议，梳理可复用的整改模式，避免同类问题再次出现。`,
 	});
 
 	if (verifiedCount > 0 || falsePositiveCount > 0) {
@@ -938,12 +929,12 @@ function buildRecommendations(
 	return items.slice(0, 3);
 }
 
-function renderMetricCards(cards: ReportMetricCard[]): string {
+function renderMetricCards(cards: ReportMetricCard[], compact = false): string {
 	return cards
 		.map((card) => {
 			const theme = TONE_THEME[card.tone];
 			return `
-        <article class="summary-card" style="--card-color:${theme.color};--card-soft:${theme.soft};--card-border:${theme.border};">
+        <article class="summary-card ${compact ? "summary-card--compact" : ""}" data-tone="${card.tone}" style="--card-color:${theme.color};--card-soft:${theme.soft};--card-border:${theme.border};">
           <div class="summary-card__label">${escapeHtml(card.label)}</div>
           <div class="summary-card__value">${escapeHtml(card.value)}</div>
           ${card.detail ? `<div class="summary-card__detail">${escapeHtml(card.detail)}</div>` : ""}
@@ -968,16 +959,16 @@ function renderInfoGroups(groups: ReportInfoGroup[]): string {
 	return groups
 		.map((group) => {
 			return `
-        <section class="info-group">
-          <div class="info-group__title">${escapeHtml(group.title)}</div>
-          <div class="info-grid">
+        <section class="sidebar-group">
+          <div class="sidebar-group__title">${escapeHtml(group.title)}</div>
+          <div class="sidebar-fact-list">
             ${group.cards
 							.map((card) => {
 								return `
-                  <article class="info-card">
-                    <div class="info-card__label">${escapeHtml(card.label)}</div>
-                    <div class="info-card__value">${escapeHtml(card.value)}</div>
-                    ${card.detail ? `<div class="info-card__detail">${escapeHtml(card.detail)}</div>` : ""}
+                  <article class="sidebar-fact">
+                    <div class="sidebar-fact__label">${escapeHtml(card.label)}</div>
+                    <div class="sidebar-fact__value">${escapeHtml(card.value)}</div>
+                    ${card.detail ? `<div class="sidebar-fact__detail">${escapeHtml(card.detail)}</div>` : ""}
                   </article>
                 `;
 							})
@@ -1085,7 +1076,7 @@ function renderFindings(
 	if (findings.length === 0) {
 		return `
       <div class="empty-state">
-        <div class="empty-state__title">暂无可展示的重点发现</div>
+        <div class="empty-state__title">暂无可展示的问题项</div>
         <div class="empty-state__text">当前报告没有结构化问题项，说明本次审计未识别出可单独列出的 Findings。</div>
       </div>
     `;
@@ -1175,39 +1166,9 @@ function buildBodyClass(options: ReportExportOptions): string {
 }
 
 function renderHtmlDocument(model: AgentAuditReportModel): string {
-	const summaryCards = renderMetricCards(model.summaryCards);
 	const summaryBullets = renderSummaryBullets(model.summaryBullets);
-	const reportInfo = model.includeMetadata
-		? renderInfoGroups(model.reportInfoGroups)
-		: "";
-	const severityLegend = renderDistributionLegend(model.severityDistribution);
-	const severityBar = renderDistributionBar(
-		model.severityDistribution,
-		"severity",
-	);
-	const typePills = renderTypePills(model.typeDistribution);
-	const recommendations = renderRecommendations(model.recommendations);
-	const findings = renderFindings(model.topFindings, {
-		includeCodeSnippets: model.includeCodeSnippets,
-		includeRemediation: model.includeRemediation,
-		includeMetadata: model.includeMetadata,
-		compactMode: model.compactMode,
-	});
 	const toc = renderToc(model.tocEntries);
 	const body = renderMarkdownBody(model.bodyHtml);
-	const scoreMeter = buildScoreMeter(
-		model.scoreValue,
-		model.scoreTone,
-		model.scoreLabel,
-	);
-	const metadataStrip = model.includeMetadata
-		? `
-      <div class="hero-meta-strip">
-        <span class="meta-chip">生成时间 ${escapeHtml(model.generatedAt)}</span>
-        <span class="meta-chip">状态 ${escapeHtml(model.statusLabel)}</span>
-      </div>
-    `
-		: "";
 
 	return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1216,7 +1177,7 @@ function renderHtmlDocument(model: AgentAuditReportModel): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#f8fbff">
-  <title>安全审计报告 - ${escapeHtml(model.title)}</title>
+  <title>AgentAudit Report - ${escapeHtml(model.title)}</title>
   <style>
     :root {
       --page-bg: #eef2f7;
@@ -1266,6 +1227,242 @@ function renderHtmlDocument(model: AgentAuditReportModel): string {
 
     a:hover {
       text-decoration: underline;
+    }
+
+    .report-layout {
+      max-width: 1320px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+      gap: 20px;
+      align-items: start;
+    }
+
+    .report-sidebar {
+      position: sticky;
+      top: 24px;
+      align-self: start;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      max-height: calc(100vh - 48px);
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .report-main {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .sidebar-panel,
+    .report-header {
+      background: rgba(255, 255, 255, 0.94);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(219, 226, 234, 0.95);
+      box-shadow: var(--shadow);
+      border-radius: var(--radius-xl);
+    }
+
+    .sidebar-panel {
+      padding: 16px;
+      overflow-x: hidden;
+    }
+
+    .sidebar-panel__header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .sidebar-panel__title {
+      margin: 0;
+      color: var(--text-primary);
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .sidebar-panel__hint {
+      color: var(--text-muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .sidebar-brand {
+      padding: 18px;
+      background:
+        radial-gradient(circle at top right, rgba(37, 99, 235, 0.12), transparent 24%),
+        radial-gradient(circle at bottom left, rgba(14, 165, 233, 0.08), transparent 22%),
+        rgba(255, 255, 255, 0.96);
+    }
+
+    .sidebar-brand__eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .sidebar-brand__title {
+      margin: 12px 0 8px;
+      color: var(--text-primary);
+      font-size: 20px;
+      line-height: 1.2;
+      letter-spacing: -0.03em;
+    }
+
+    .sidebar-brand__subtitle {
+      margin: 0;
+      color: var(--text-secondary);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .sidebar-brand__chips,
+    .sidebar-brand__meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .sidebar-brand__meta {
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    .sidebar-brand__score {
+      margin-top: 14px;
+    }
+
+    .summary-grid--compact {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .summary-card--compact {
+      padding: 12px;
+      border-radius: 14px;
+    }
+
+    .summary-card--compact .summary-card__label {
+      margin-bottom: 6px;
+      font-size: 10px;
+    }
+
+    .summary-card--compact .summary-card__value {
+      font-size: 20px;
+    }
+
+    .summary-card--compact .summary-card__detail {
+      margin-top: 6px;
+      font-size: 11px;
+    }
+
+    .sidebar-group {
+      display: grid;
+      gap: 10px;
+      padding: 14px 0 0;
+    }
+
+    .sidebar-group + .sidebar-group {
+      border-top: 1px solid #e2e8f0;
+      padding-top: 14px;
+    }
+
+    .sidebar-group__title {
+      color: var(--text-primary);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+
+    .sidebar-fact-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .sidebar-fact {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+      min-width: 0;
+    }
+
+    .sidebar-fact__label {
+      color: var(--text-muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+      font-weight: 700;
+    }
+
+    .sidebar-fact__value {
+      color: var(--text-primary);
+      font-size: 13px;
+      font-weight: 700;
+      word-break: break-word;
+    }
+
+    .sidebar-fact__detail {
+      margin-top: 4px;
+      color: var(--text-muted);
+      font-size: 11px;
+      word-break: break-word;
+    }
+
+    .report-header {
+      padding: 24px;
+    }
+
+    .report-header__eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-size: 11px;
+    }
+
+    .report-header__title {
+      margin: 14px 0 10px;
+      font-size: clamp(28px, 3vw, 40px);
+      line-height: 1.12;
+      color: var(--text-primary);
+      letter-spacing: -0.03em;
+    }
+
+    .report-header__subtitle {
+      margin: 0;
+      max-width: 860px;
+      font-size: 15px;
+      color: var(--text-secondary);
+    }
+
+    .report-header__chips,
+    .report-header__meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
     }
 
     .report-shell {
@@ -1808,10 +2005,15 @@ function renderHtmlDocument(model: AgentAuditReportModel): string {
     .toc-list {
       display: grid;
       gap: 8px;
+      width: 100%;
+      min-width: 0;
     }
 
     .toc-item {
       display: flex;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
       align-items: center;
       gap: 10px;
       padding: 10px 12px;
@@ -1859,8 +2061,9 @@ function renderHtmlDocument(model: AgentAuditReportModel): string {
     }
 
     .toc-item__label {
-      color: var(--text-primary);
+      flex: 1 1 auto;
       min-width: 0;
+      color: var(--text-primary);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -2146,6 +2349,17 @@ function renderHtmlDocument(model: AgentAuditReportModel): string {
     }
 
     @media (max-width: 1100px) {
+      .report-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .report-sidebar {
+        position: static;
+        max-height: none;
+        overflow: visible;
+        padding-right: 0;
+      }
+
       .hero-layout,
       .section-grid--two {
         grid-template-columns: 1fr;
@@ -2178,8 +2392,18 @@ function renderHtmlDocument(model: AgentAuditReportModel): string {
 
       .hero-kpis,
       .summary-grid,
+      .summary-grid--compact,
       .info-grid {
         grid-template-columns: 1fr;
+      }
+
+      .report-layout {
+        gap: 14px;
+      }
+
+      .report-header__chips,
+      .sidebar-brand__meta {
+        gap: 8px;
       }
 
       .section-head,
@@ -2213,185 +2437,93 @@ function renderHtmlDocument(model: AgentAuditReportModel): string {
         padding: 0;
       }
 
-      .report-page {
-        gap: 12px;
+      .report-layout {
+        display: block;
         max-width: none;
+        gap: 12px;
       }
 
-      .report-hero,
+      .report-sidebar {
+        position: static;
+        max-height: none;
+        overflow: visible;
+        margin-bottom: 12px;
+        padding-right: 0;
+      }
+
+      .report-header,
       .report-section,
-      .report-footer,
-      .finding-card,
-      .info-card,
-      .summary-card,
-      .panel,
-      .toc-item {
+      .sidebar-panel,
+      .toc-item,
+      .summary-bullet {
         break-inside: avoid;
         box-shadow: none;
-      }
-
-      .report-hero::before,
-      .report-hero::after {
-        display: none;
       }
 
       a {
         color: #1d4ed8;
       }
 
-      .report-footer {
+      .report-header,
+      .report-section,
+      .sidebar-panel {
         border: 1px solid var(--border);
       }
     }
   </style>
 </head>
 <body class="${buildBodyClass(model)}">
-  <main class="report-page">
-    <section class="report-hero" id="report-header">
-      <div class="hero-layout">
-        <div class="hero-copy">
-          <div class="hero-eyebrow">DeepAudit · AgentAudit 汇报版 HTML</div>
-          <h1 class="hero-title">${escapeHtml(model.title)}</h1>
-          <p class="hero-subtitle">${escapeHtml(model.subtitle)}</p>
-          <div class="hero-badges">
-            ${model.heroBadges
-							.map(
-								(badge) =>
-									`<span class="hero-chip" data-tone="${badge.tone}">${escapeHtml(badge.label)}</span>`,
-							)
-							.join("")}
-          </div>
-          ${metadataStrip}
+  <main class="report-layout">
+    <aside class="report-sidebar" aria-label="报告侧栏">
+      <section class="sidebar-panel">
+        <div class="sidebar-panel__header">
+          <h2 class="sidebar-panel__title">目录</h2>
+          <div class="sidebar-panel__hint">${model.hasBodyHeadings ? `${Math.max(0, model.tocEntries.length - 2)} 个标题` : "仅摘要与正文"}</div>
         </div>
-        <div class="hero-aside">
-          ${scoreMeter}
-          <div class="hero-kpis">
-            <div class="hero-kpi">
-              <span class="hero-kpi__label">生成于</span>
-              <div class="hero-kpi__value">${escapeHtml(model.generatedAt)}</div>
-            </div>
-            <div class="hero-kpi">
-              <span class="hero-kpi__label">状态</span>
-              <div class="hero-kpi__value">${escapeHtml(model.statusLabel)}</div>
-            </div>
-            <div class="hero-kpi">
-              <span class="hero-kpi__label">安全</span>
-              <div class="hero-kpi__value">${escapeHtml(model.scoreLabel)}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
+        ${toc}
+      </section>
+    </aside>
 
-    <section class="report-section" id="executive-summary">
-      <div class="section-head">
-        <div>
-          <h2 class="section-title">执行摘要</h2>
-          <p class="section-subtitle">先看结论，再看风险，再看正文。</p>
+    <article class="report-main">
+      <header class="report-header" id="report-header">
+        <div class="report-header__eyebrow">AgentAudit Report</div>
+        <h1 class="report-header__title">${escapeHtml(model.title)}</h1>
+        <p class="report-header__subtitle">${escapeHtml(model.subtitle)}</p>
+        <div class="report-header__chips">
+          ${model.heroBadges
+						.map(
+							(badge) =>
+								`<span class="hero-chip" data-tone="${badge.tone}">${escapeHtml(badge.label)}</span>`,
+						)
+						.join("")}
         </div>
-        <div class="section-kicker">Executive Summary</div>
-      </div>
-      <div class="summary-grid">${summaryCards}</div>
-      <div class="summary-notes">
-        <div class="summary-notes__title">摘要要点</div>
-        <ul class="summary-notes__list">${summaryBullets}</ul>
-      </div>
-    </section>
+      </header>
 
-    ${
-			model.includeMetadata
-				? `
-      <section class="report-section" id="report-info">
+      <section class="report-section" id="summary">
         <div class="section-head">
           <div>
-            <h2 class="section-title">报告信息</h2>
-            <p class="section-subtitle">任务上下文、执行统计和报告元数据。</p>
+            <h2 class="section-title">摘要</h2>
+            <p class="section-subtitle">简要结论、覆盖范围与交付提示。</p>
           </div>
-          <div class="section-kicker">Report Info</div>
+          <div class="section-kicker">Summary</div>
         </div>
-        <div class="section-grid">${reportInfo}</div>
+        <div class="summary-notes">
+          <div class="summary-notes__title">摘要要点</div>
+          <ul class="summary-notes__list">${summaryBullets}</ul>
+        </div>
       </section>
-    `
-				: ""
-		}
 
-    <section class="report-section" id="risk-overview">
-      <div class="section-head">
-        <div>
-          <h2 class="section-title">风险总览</h2>
-          <p class="section-subtitle">严重度分布、问题类型分布和建议优先级。</p>
+      <section class="report-section" id="report-body">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">正文</h2>
+            <p class="section-subtitle">保留 Markdown 结构和自动锚点，便于继续查阅细节。</p>
+          </div>
+          <div class="section-kicker">Body</div>
         </div>
-        <div class="section-kicker">Risk Overview</div>
-      </div>
-      <div class="section-grid section-grid--two">
-        <section class="panel">
-          <div class="panel__head">
-            <h3 class="panel__title">严重程度分布</h3>
-            <div class="panel__meta">共 ${model.severityDistribution.reduce((sum, item) => sum + item.count, 0)} 条</div>
-          </div>
-          ${severityBar}
-          <div class="distribution-legend">${severityLegend}</div>
-        </section>
-        <section class="panel">
-          <div class="panel__head">
-            <h3 class="panel__title">问题类型分布</h3>
-            <div class="panel__meta">Top ${model.typeDistribution.length}</div>
-          </div>
-          <div class="type-grid">${typePills}</div>
-        </section>
-      </div>
-      <section class="summary-notes" style="margin-top:14px;">
-        <div class="summary-notes__title">整改建议</div>
-        <ul class="recommendation-list">${recommendations}</ul>
+        ${body}
       </section>
-    </section>
-
-    <section class="report-section" id="key-findings">
-      <div class="section-head">
-        <div>
-          <h2 class="section-title">重点发现</h2>
-          <p class="section-subtitle">仅展示优先级最高的前 5 条，便于汇报和整改跟踪。</p>
-        </div>
-        <div class="section-kicker">Top Findings</div>
-      </div>
-      <div class="finding-list">${findings}</div>
-    </section>
-
-    <section class="report-section" id="report-outline">
-      <div class="section-head">
-        <div>
-          <h2 class="section-title">目录</h2>
-          <p class="section-subtitle">点击即可跳转到对应章节或正文内的 Markdown 标题。</p>
-        </div>
-        <div class="section-kicker">Outline</div>
-      </div>
-      ${toc}
-    </section>
-
-    <section class="report-section" id="report-body">
-      <div class="section-head">
-        <div>
-          <h2 class="section-title">正文</h2>
-          <p class="section-subtitle">保留原始 Markdown 结构，便于继续查阅细节和证据。</p>
-        </div>
-        <div class="section-kicker">Body</div>
-      </div>
-      ${body}
-    </section>
-
-    <footer class="report-footer">
-      <div class="report-footer__inner">
-        <div class="report-footer__brand">
-          <span class="report-footer__brand-mark">F</span>
-          <span>FocusAudit Report</span>
-        </div>
-        <div class="report-footer__meta">
-          <span class="footer-chip">生成时间 ${escapeHtml(model.generatedAt)}</span>
-          <span class="footer-chip">状态 ${escapeHtml(model.statusLabel)}</span>
-          <span class="footer-chip">安全评分 ${escapeHtml(`${model.scoreValue.toFixed(0)}/100`)}</span>
-        </div>
-      </div>
-    </footer>
+    </article>
   </main>
 </body>
 </html>`;
@@ -2416,7 +2548,7 @@ export async function buildAgentAuditReportModel(
 	const subtitleParts = [
 		task.description
 			? truncateText(task.description.trim(), 180)
-			: "Agent 审计汇报版 HTML 报告",
+			: "Agent 审计报告",
 		task.branch_name ? `分支：${task.branch_name}` : null,
 		task.workspace_source ? `来源：${task.workspace_source}` : null,
 	].filter(Boolean);
@@ -2429,9 +2561,10 @@ export async function buildAgentAuditReportModel(
 		safeFindings,
 		severityCounts,
 		scoreMeta.label,
+		normalizedOptions.includeRemediation,
 	);
-	const reportInfoGroups = normalizedOptions.includeMetadata
-		? buildReportInfoGroups(task, safeFindings, severityCounts)
+	const sidebarGroups = normalizedOptions.includeMetadata
+		? buildSidebarGroups(task, safeFindings, severityCounts)
 		: [];
 	const recommendations = buildRecommendations(
 		task,
@@ -2440,10 +2573,7 @@ export async function buildAgentAuditReportModel(
 	);
 	const tocHeadings = extractMarkdownHeadings(markdown);
 	const tocEntries: ReportTocEntry[] = [
-		...FIXED_TOC_ENTRIES.filter(
-			(entry) =>
-				normalizedOptions.includeMetadata || entry.id !== "report-info",
-		),
+		...FIXED_TOC_ENTRIES,
 		...tocHeadings.map((heading) => ({
 			id: heading.id,
 			label: heading.label,
@@ -2457,6 +2587,9 @@ export async function buildAgentAuditReportModel(
 		String(markdownHtml || ""),
 		tocHeadings,
 	);
+	const finalBodyHtml = normalizedOptions.includeCodeSnippets
+		? bodyHtml
+		: stripCodeBlocksFromHtml(bodyHtml);
 
 	return {
 		title,
@@ -2478,7 +2611,7 @@ export async function buildAgentAuditReportModel(
 		],
 		summaryCards,
 		summaryBullets,
-		reportInfoGroups,
+		sidebarGroups,
 		severityDistribution: buildDistributionItems(
 			severityCounts,
 			["critical", "high", "medium", "low"],
@@ -2489,7 +2622,7 @@ export async function buildAgentAuditReportModel(
 		recommendations,
 		topFindings,
 		tocEntries,
-		bodyHtml,
+		bodyHtml: finalBodyHtml,
 		hasBodyHeadings: tocHeadings.length > 0,
 		includeMetadata: normalizedOptions.includeMetadata,
 		includeCodeSnippets: normalizedOptions.includeCodeSnippets,

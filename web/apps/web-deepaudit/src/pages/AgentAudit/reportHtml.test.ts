@@ -132,7 +132,7 @@ function createFindings(): AgentFinding[] {
 }
 
 describe("AgentAudit HTML report generation", () => {
-	it("renders a light reporting shell with summary, metadata, risk overview and anchors", async () => {
+	it("renders a docs-style layout with a clean sidebar and heading anchors", async () => {
 		const task = createTask();
 		const findings = createFindings();
 		const markdown = [
@@ -146,41 +146,21 @@ describe("AgentAudit HTML report generation", () => {
 		].join("\n");
 
 		const model = await buildAgentAuditReportModel(markdown, task, findings);
+		const html = await generateAgentAuditHtmlReport(markdown, task, findings);
 
 		expect(model.title).toBe("支付链路审计");
-		expect(model.summaryCards).toHaveLength(4);
-		expect(model.reportInfoGroups).toHaveLength(2);
-		expect(model.reportInfoGroups[0].cards).toEqual(
+		expect(model.sidebarGroups).toHaveLength(2);
+		expect(model.sidebarGroups[0].title).toBe("任务信息");
+		expect(model.sidebarGroups[1].title).toBe("执行统计");
+		expect(model.sidebarGroups[0].cards).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({ label: "任务 ID", value: "task-1" }),
 				expect.objectContaining({ label: "项目 ID", value: "project-1" }),
 			]),
 		);
-		expect(model.reportInfoGroups[1].cards).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					label: "问题文件",
-					detail: expect.stringContaining("严重 1 / 高危 1"),
-				}),
-				expect.objectContaining({ label: "验证数", value: "1" }),
-			]),
-		);
-		expect(model.severityDistribution.map((item) => item.count)).toEqual([
-			1, 1, 1, 0,
-		]);
-		expect(model.topFindings[0]).toEqual(
-			expect.objectContaining({
-				severity: "critical",
-				title: "SQL injection in query builder",
-				location: "src/services/user.ts:42-48",
-			}),
-		);
 		expect(model.tocEntries.map((entry) => entry.id)).toEqual(
 			expect.arrayContaining([
-				"executive-summary",
-				"report-info",
-				"risk-overview",
-				"key-findings",
+				"summary",
 				"report-body",
 				"总览",
 				"风险分析",
@@ -189,30 +169,31 @@ describe("AgentAudit HTML report generation", () => {
 		);
 		expect(model.hasBodyHeadings).toBe(true);
 
-		const html = await generateAgentAuditHtmlReport(markdown, task, findings);
-
-		expect(html).toContain('meta name="color-scheme" content="light"');
-		expect(html).toContain("color-scheme: light");
-		expect(html).toContain("--page-bg: #eef2f7");
-		expect(html).toContain("执行摘要");
-		expect(html).toContain("报告信息");
-		expect(html).toContain("风险总览");
-		expect(html).toContain("重点发现");
-		expect(html).toContain("目录");
-		expect(html).toContain("正文");
-		expect(html).toContain("本次审计共识别 3 个问题");
-		expect(html).toContain("命中 3 条问题 · 严重 1 / 高危 1");
-		expect(html).toContain("Sql Injection");
+		expect(html).toContain("AgentAudit Report");
+		expect(html).toContain('class="report-layout"');
+		expect(html).toContain('class="report-sidebar"');
+		expect(html).toContain('class="report-main"');
+		expect(html).toContain('id="summary"');
+		expect(html).toContain('href="#summary"');
+		expect(html).toContain('id="report-body"');
+		expect(html).toContain('href="#report-body"');
 		expect(html).toContain('id="总览"');
 		expect(html).toContain('id="风险分析"');
 		expect(html).toContain('id="证据"');
 		expect(html).toContain('href="#总览"');
 		expect(html).toContain('href="#风险分析"');
 		expect(html).toContain('href="#证据"');
-		expect(html).toContain('id="report-info"');
+		expect(html).toContain("@media (max-width: 1100px)");
+		expect(html).toContain(".report-sidebar");
+		expect(html).not.toContain("任务上下文");
+		expect(html).not.toContain("执行统计");
+		expect(html).not.toContain("汇报版");
+		expect(html).not.toContain("报告信息");
+		expect(html).not.toContain("风险总览");
+		expect(html).not.toContain("重点发现");
 	});
 
-	it("hides metadata and renders empty states when no findings are available", async () => {
+	it("hides metadata and strips code blocks when export options disable them", async () => {
 		const task = createTask({
 			findings_count: 0,
 			verified_count: 0,
@@ -234,7 +215,13 @@ describe("AgentAudit HTML report generation", () => {
 			files_with_findings: 0,
 			resolved_file_count: 0,
 		});
-		const markdown = ["# 结果", "", "暂无更多内容。"].join("\n");
+		const markdown = [
+			"报告正文说明。",
+			"",
+			"```ts",
+			"console.log('skip this code block');",
+			"```",
+		].join("\n");
 
 		const model = await buildAgentAuditReportModel(markdown, task, [], {
 			includeMetadata: false,
@@ -242,25 +229,31 @@ describe("AgentAudit HTML report generation", () => {
 			includeRemediation: false,
 		});
 
-		expect(model.includeMetadata).toBe(false);
-		expect(model.reportInfoGroups).toHaveLength(0);
-		expect(model.tocEntries.some((entry) => entry.id === "report-info")).toBe(
-			false,
-		);
-		expect(model.topFindings).toHaveLength(0);
-
 		const html = await generateAgentAuditHtmlReport(markdown, task, [], {
 			includeMetadata: false,
 			includeCodeSnippets: false,
 			includeRemediation: false,
 		});
 
-		expect(html).not.toContain('id="report-info"');
+		expect(model.includeMetadata).toBe(false);
+		expect(model.sidebarGroups).toHaveLength(0);
+		expect(model.hasBodyHeadings).toBe(false);
+		expect(model.tocEntries.map((entry) => entry.id)).toEqual([
+			"summary",
+			"report-body",
+		]);
+		expect(model.summaryBullets).toHaveLength(2);
+
+		expect(html).toContain('id="summary"');
+		expect(html).toContain('id="report-body"');
+		expect(html).toContain("报告正文说明。");
+		expect(html).not.toContain("<pre");
+		expect(html).not.toContain("console.log('skip this code block');");
+		expect(html).not.toContain("任务上下文");
+		expect(html).not.toContain("执行统计");
+		expect(html).not.toContain("汇报版");
 		expect(html).not.toContain("报告信息");
-		expect(html).toContain("暂无可展示的重点发现");
-		expect(html).toContain("暂无数据");
-		expect(html).toContain("本次审计未产出可展示的结构化问题项");
-		expect(html).toContain("—");
-		expect(html).toContain("color-scheme: light");
+		expect(html).not.toContain("风险总览");
+		expect(html).not.toContain("重点发现");
 	});
 });
