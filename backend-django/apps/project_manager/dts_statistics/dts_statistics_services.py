@@ -3532,25 +3532,28 @@ def _resolve_process_days_bucket(value: float | None) -> str:
     return "30天以上"
 
 
-def _build_team_severity_matrix(defects: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_pl_group_severity_matrix(defects: list[dict[str, Any]]) -> dict[str, Any]:
     severity_columns = ["关键", "严重", "一般", "提示", "未填写"]
-    team_counter: Counter[str] = Counter()
+    pl_group_counter: Counter[str] = Counter()
     matrix_counter: dict[str, Counter[str]] = defaultdict(Counter)
 
     for defect in defects:
-        team_label = _clean_text(defect.get("sDeptOneNoName")) or "未识别团队"
+        pl_group_label = _clean_text(defect.get("auto_pl_group_name")) or "未识别PL领域"
         severity_label = _clean_text(defect.get("serverityNoName"))
         if severity_label not in severity_columns[:-1]:
             severity_label = "未填写"
-        team_counter[team_label] += 1
-        matrix_counter[team_label][severity_label] += 1
+        pl_group_counter[pl_group_label] += 1
+        matrix_counter[pl_group_label][severity_label] += 1
 
     rows = []
-    for team_label, _ in team_counter.most_common(8):
+    for pl_group_label, _ in pl_group_counter.most_common(8):
         rows.append(
             {
-                "label": team_label,
-                "values": [int(matrix_counter[team_label].get(column, 0)) for column in severity_columns],
+                "label": pl_group_label,
+                "values": [
+                    int(matrix_counter[pl_group_label].get(column, 0))
+                    for column in severity_columns
+                ],
             }
         )
 
@@ -4162,7 +4165,7 @@ def get_dts_statistics_summary(
         round(test_filled_count / total_count, 4) if total_count else 0.0
     )
     update_trend = _build_update_trend(defects, query)
-    team_severity_matrix = _build_team_severity_matrix(defects)
+    pl_group_severity_matrix = _build_pl_group_severity_matrix(defects)
 
     return {
         "total_count": total_count,
@@ -4202,7 +4205,7 @@ def get_dts_statistics_summary(
         "project_dist": _distribution(project_counter),
         "action_status_dist": _distribution(action_status_counter),
         "update_trend": update_trend,
-        "team_severity_matrix": team_severity_matrix,
+        "pl_group_severity_matrix": pl_group_severity_matrix,
         "snapshot": snapshot,
     }
 

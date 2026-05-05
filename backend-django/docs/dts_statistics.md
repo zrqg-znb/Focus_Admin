@@ -376,14 +376,14 @@ Schema：`DtsStatisticsQuerySchema`（不依赖分页字段）
 
 扩展字段统计：
 
-- 从 `pm_dts_extension` 批量加载：计算 QA/开发/测试完成率与各类分布（QA类目/PL组/措施状态/开发小类/漏测原因）
+- 从 `pm_dts_extension` 批量加载：计算 QA/开发/测试完成率与各类分布（QA类目/PL领域/措施状态/开发小类/漏测原因）
 - 统计看板返回值已补充趋势与治理视角：
   - `flow_type_dist`：流程类型分布，口径改为 `sConfigFlowType`
   - `update_trend`：按 `updateAt` 聚合的更新时间趋势，短跨度按天、长跨度按周，并返回总量 / 已关闭 / 严重问题 / 关键问题序列
   - `process_days_bucket_dist`：处理时长固定分桶
   - `issue_intro_stage_dist`：问题引入阶段分布
   - `dev_action_status_dist` / `test_action_status_dist`：开发/测试措施状态拆分统计
-  - `team_severity_matrix`：团队 × 严重度热力矩阵，用于热点团队识别
+  - `pl_group_severity_matrix`：PL领域 × 严重度热力矩阵，用于热点领域识别
 - 旧的 `stage_dist` 已移除，避免与流程类型口径重复
 
 项目分布（`project_dist`）：

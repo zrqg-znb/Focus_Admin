@@ -473,7 +473,7 @@ function createEmptySummary(): DtsSummary {
     project_dist: [],
     action_status_dist: [],
     update_trend: null,
-    team_severity_matrix: null,
+    pl_group_severity_matrix: null,
     snapshot: null,
   };
 }
@@ -2535,11 +2535,11 @@ type SummaryDistributionRow = {
 };
 
 type SummaryTrend = NonNullable<DtsSummary['update_trend']>;
-type SummaryHeatmapMatrix = NonNullable<DtsSummary['team_severity_matrix']>;
-type SummaryRankMode = 'handler' | 'pl_group' | 'project' | 'team';
+type SummaryHeatmapMatrix = NonNullable<DtsSummary['pl_group_severity_matrix']>;
+type SummaryRankMode = 'handler' | 'pl_group' | 'project';
 type SummaryTreemapMode = 'dev_sub_category' | 'test_miss_reason';
 
-const SUMMARY_RANK_MODE_OPTIONS = ['项目', '团队', '处理人', 'PL组'];
+const SUMMARY_RANK_MODE_OPTIONS = ['PL领域', '项目', '处理人'];
 
 const SUMMARY_TREEMAP_MODE_OPTIONS = ['开发问题小类', '漏测原因'];
 
@@ -2590,17 +2590,15 @@ const { renderEcharts: renderOrganizationRankChart } =
   useEcharts(organizationRankChartRef);
 
 const governanceTreemapMode = ref<SummaryTreemapMode>('dev_sub_category');
-const organizationRankMode = ref<SummaryRankMode>('project');
+const organizationRankMode = ref<SummaryRankMode>('pl_group');
 
 const organizationRankSegmentValue = computed<string>({
   get: () => {
     switch (organizationRankMode.value) {
-      case 'team':
-        return '团队';
       case 'handler':
         return '处理人';
       case 'pl_group':
-        return 'PL组';
+        return 'PL领域';
       case 'project':
       default:
         return '项目';
@@ -2608,13 +2606,10 @@ const organizationRankSegmentValue = computed<string>({
   },
   set: (value) => {
     switch (value) {
-      case '团队':
-        organizationRankMode.value = 'team';
-        break;
       case '处理人':
         organizationRankMode.value = 'handler';
         break;
-      case 'PL组':
+      case 'PL领域':
         organizationRankMode.value = 'pl_group';
         break;
       case '项目':
@@ -3370,8 +3365,6 @@ function watchDashboardChart(source: () => unknown, render: () => void) {
 
 function getRankRows(mode: SummaryRankMode): SummaryDistributionRow[] {
   switch (mode) {
-    case 'team':
-      return normalizeChartRows(summary.value.team_dist);
     case 'handler':
       return normalizeChartRows(summary.value.handler_dist);
     case 'pl_group':
@@ -3394,12 +3387,10 @@ function getTreemapRows(mode: SummaryTreemapMode): SummaryDistributionRow[] {
 
 const organizationRankTitle = computed(() => {
   switch (organizationRankMode.value) {
-    case 'team':
-      return '团队分布';
     case 'handler':
       return '处理人 Top';
     case 'pl_group':
-      return 'PL组分布';
+      return 'PL领域排名';
     case 'project':
     default:
       return '项目分布';
@@ -3492,7 +3483,7 @@ watchDashboardChart(
     renderRankBar(
       renderPlGroupChart,
       summary.value.auto_pl_group_dist,
-      'PL组排名',
+      'PL领域排名',
       getChartTheme().success,
     ),
 );
@@ -3520,19 +3511,18 @@ watchDashboardChart(
     ),
 );
 watchDashboardChart(
-  () => summary.value.team_severity_matrix,
+  () => summary.value.pl_group_severity_matrix,
   () =>
     renderHeatmap(
       renderOrganizationHeatmapChart,
-      summary.value.team_severity_matrix,
-      '团队 × 严重度热点',
+      summary.value.pl_group_severity_matrix,
+      'PL领域 × 严重度热点',
     ),
 );
 watchDashboardChart(
   () => [
     organizationRankMode.value,
     summary.value.project_dist,
-    summary.value.team_dist,
     summary.value.handler_dist,
     summary.value.auto_pl_group_dist,
   ],
@@ -6570,7 +6560,7 @@ onUnmounted(() => {
                     <div>
                       <div class="summary-section-card__title">组织热点</div>
                       <div class="summary-section-card__desc">
-                        从团队严重度热点与多维排名视角观察问题聚集区，辅助定位高压团队和高频归属。
+                        聚焦各 PL 领域的严重度热点与归属排名，辅助识别高压领域和高频责任区。
                       </div>
                     </div>
                     <ElTag
@@ -6578,7 +6568,7 @@ onUnmounted(() => {
                       type="success"
                       effect="plain"
                     >
-                      {{ summary.team_severity_matrix?.rows.length || 0 }} 个团队
+                      {{ summary.pl_group_severity_matrix?.rows.length || 0 }} 个PL领域
                     </ElTag>
                   </div>
                 </template>
@@ -6586,9 +6576,9 @@ onUnmounted(() => {
                   <ElCard shadow="never" class="dts-chart-card">
                     <template #header>
                       <div class="dts-chart-card__header">
-                        <div class="dts-chart-card__title">团队 × 严重度热点</div>
+                        <div class="dts-chart-card__title">PL领域 × 严重度热点</div>
                         <ElTag type="danger" effect="plain">
-                          {{ summary.team_severity_matrix?.columns.length || 0 }} 个严重度维度
+                          {{ summary.pl_group_severity_matrix?.columns.length || 0 }} 个严重度维度
                         </ElTag>
                       </div>
                     </template>
@@ -6601,7 +6591,7 @@ onUnmounted(() => {
                         <div>
                           <div class="dts-chart-card__title">{{ organizationRankTitle }}</div>
                           <div class="dts-chart-card__desc">
-                            使用分段切换项目、团队、处理人与 PL 组视角。
+                            使用分段切换 PL 领域、项目与处理人视角。
                           </div>
                         </div>
                         <ElSegmented
@@ -6623,7 +6613,7 @@ onUnmounted(() => {
                     <div>
                       <div class="summary-section-card__title">来源与归属</div>
                       <div class="summary-section-card__desc">
-                        观察提单来源与责任 PL 组归属，辅助判断问题是如何进入系统以及大致落在哪个组织单元。
+                        观察提单来源与责任 PL 领域归属，辅助判断问题如何进入系统以及主要落在哪个责任领域。
                       </div>
                     </div>
                     <ElTag
@@ -6651,9 +6641,9 @@ onUnmounted(() => {
                   <ElCard shadow="never" class="dts-chart-card">
                     <template #header>
                       <div class="dts-chart-card__header">
-                        <div class="dts-chart-card__title">PL 组排名</div>
+                        <div class="dts-chart-card__title">PL领域排名</div>
                         <ElTag type="success" effect="plain">
-                          {{ summary.auto_pl_group_dist.length }} 组
+                          {{ summary.auto_pl_group_dist.length }} 个PL领域
                         </ElTag>
                       </div>
                     </template>

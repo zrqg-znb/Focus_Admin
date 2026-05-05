@@ -755,7 +755,7 @@ class DtsSummarySchema(Schema):
     project_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     action_status_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     update_trend: Optional[DtsTrendSummarySchema] = None
-    team_severity_matrix: Optional[DtsHeatmapMatrixSchema] = None
+    pl_group_severity_matrix: Optional[DtsHeatmapMatrixSchema] = None
     snapshot: Optional[DtsSnapshotMetaSchema] = None
 
 

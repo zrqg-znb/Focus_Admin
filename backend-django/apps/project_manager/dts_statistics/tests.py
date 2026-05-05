@@ -263,29 +263,29 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
     @mock.patch(
         "apps.project_manager.dts_statistics.dts_statistics_services._resolve_runtime_defects"
     )
-    def test_summary_team_severity_matrix_top_8_and_severity_columns(
+    def test_summary_pl_group_severity_matrix_top_8_and_severity_columns(
         self,
         mocked_resolve,
     ):
         severity_cycle = ["关键", "严重", "一般", "提示", "未知"]
-        team_specs = [
-            ("Team-A", 9),
-            ("Team-B", 8),
-            ("Team-C", 7),
-            ("Team-D", 6),
-            ("Team-E", 5),
-            ("Team-F", 4),
-            ("Team-G", 3),
-            ("Team-H", 2),
-            ("Team-I", 1),
+        pl_group_specs = [
+            ("PL-A", 9),
+            ("PL-B", 8),
+            ("PL-C", 7),
+            ("PL-D", 6),
+            ("PL-E", 5),
+            ("PL-F", 4),
+            ("PL-G", 3),
+            ("PL-H", 2),
+            ("PL-I", 1),
         ]
         defects: list[dict[str, str]] = []
-        for team, count in team_specs:
+        for pl_group, count in pl_group_specs:
             for index in range(count):
                 defects.append(
                     self._defect(
-                        f"{team}-{index}",
-                        team=team,
+                        f"{pl_group}-{index}",
+                        pl_group=pl_group,
                         severity=severity_cycle[index % len(severity_cycle)],
                         status="已关闭" if index % 2 == 0 else "处理中",
                         update_at=f"2026-05-{(index % 5) + 1:02d} 09:00:00",
@@ -296,12 +296,12 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
         summary = dts_statistics_services.get_dts_statistics_summary(
             self._query(self._ms(2026, 5, 1), self._ms(2026, 5, 31, 23, 59))
         )
-        matrix = summary["team_severity_matrix"]
+        matrix = summary["pl_group_severity_matrix"]
 
         self.assertEqual(matrix["columns"], ["关键", "严重", "一般", "提示", "未填写"])
         self.assertEqual(len(matrix["rows"]), 8)
-        self.assertEqual(matrix["rows"][0]["label"], "Team-A")
+        self.assertEqual(matrix["rows"][0]["label"], "PL-A")
         self.assertEqual(matrix["rows"][0]["values"], [2, 2, 2, 2, 1])
-        self.assertEqual(matrix["rows"][1]["label"], "Team-B")
+        self.assertEqual(matrix["rows"][1]["label"], "PL-B")
         self.assertEqual(matrix["rows"][1]["values"], [2, 2, 2, 1, 1])
-        self.assertNotIn("Team-I", [row["label"] for row in matrix["rows"]])
+        self.assertNotIn("PL-I", [row["label"] for row in matrix["rows"]])

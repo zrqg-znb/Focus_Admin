@@ -329,7 +329,7 @@ export interface DtsSummary {
   project_dist: DtsDistributionItem[];
   action_status_dist: DtsDistributionItem[];
   update_trend: DtsTrendSummary | null;
-  team_severity_matrix: DtsHeatmapMatrix | null;
+  pl_group_severity_matrix: DtsHeatmapMatrix | null;
   snapshot?: DtsSnapshotMeta | null;
 }
 
