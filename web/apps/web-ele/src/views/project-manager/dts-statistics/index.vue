@@ -2737,7 +2737,7 @@ function renderTrendCombo(
   const theme = getChartTheme();
   const rotateLabel = trend.labels.some((label) => label.length > 10);
   render({
-    color: [theme.primary, theme.success, theme.danger],
+    color: [theme.primary, theme.success, theme.warning, theme.danger],
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
@@ -2815,6 +2815,18 @@ function renderTrendCombo(
         z: 3,
       },
       {
+        name: '严重问题',
+        type: 'line',
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 8,
+        data: trend.major_values,
+        lineStyle: { color: theme.warning, width: 3 },
+        itemStyle: { color: theme.warning },
+        areaStyle: { color: 'rgba(245, 158, 11, 0.08)' },
+        z: 4,
+      },
+      {
         name: '关键问题',
         type: 'line',
         smooth: true,
@@ -2823,7 +2835,7 @@ function renderTrendCombo(
         data: trend.critical_values,
         lineStyle: { color: theme.danger, width: 3, type: 'dashed' },
         itemStyle: { color: theme.danger },
-        z: 4,
+        z: 5,
       },
     ],
   });

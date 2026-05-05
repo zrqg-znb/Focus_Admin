@@ -711,6 +711,7 @@ class DtsTrendSummarySchema(Schema):
     labels: list[str] = Field(default_factory=list)
     total_values: list[int] = Field(default_factory=list)
     closed_values: list[int] = Field(default_factory=list)
+    major_values: list[int] = Field(default_factory=list)
     critical_values: list[int] = Field(default_factory=list)
 
 

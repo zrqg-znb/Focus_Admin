@@ -132,6 +132,7 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
         )
         self.assertEqual(trend["total_values"], [2, 0, 1])
         self.assertEqual(trend["closed_values"], [1, 0, 1])
+        self.assertEqual(trend["major_values"], [0, 0, 0])
         self.assertEqual(trend["critical_values"], [1, 0, 1])
 
     @mock.patch(
@@ -161,6 +162,8 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
         self.assertEqual(trend["total_values"][2], 1)
         self.assertEqual(trend["closed_values"][1], 1)
         self.assertEqual(trend["closed_values"][2], 1)
+        self.assertEqual(trend["major_values"][1], 1)
+        self.assertEqual(trend["major_values"][2], 0)
         self.assertEqual(trend["critical_values"][1], 1)
         self.assertEqual(trend["critical_values"][2], 0)
 

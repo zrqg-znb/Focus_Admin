@@ -379,7 +379,7 @@ Schema：`DtsStatisticsQuerySchema`（不依赖分页字段）
 - 从 `pm_dts_extension` 批量加载：计算 QA/开发/测试完成率与各类分布（QA类目/PL组/措施状态/开发小类/漏测原因）
 - 统计看板返回值已补充趋势与治理视角：
   - `flow_type_dist`：流程类型分布，口径改为 `sConfigFlowType`
-  - `update_trend`：按 `updateAt` 聚合的更新时间趋势，短跨度按天、长跨度按周
+  - `update_trend`：按 `updateAt` 聚合的更新时间趋势，短跨度按天、长跨度按周，并返回总量 / 已关闭 / 严重问题 / 关键问题序列
   - `process_days_bucket_dist`：处理时长固定分桶
   - `issue_intro_stage_dist`：问题引入阶段分布
   - `dev_action_status_dist` / `test_action_status_dist`：开发/测试措施状态拆分统计

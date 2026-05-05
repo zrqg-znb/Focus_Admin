@@ -285,6 +285,7 @@ export interface DtsTrendSummary {
   labels: string[];
   total_values: number[];
   closed_values: number[];
+  major_values: number[];
   critical_values: number[];
 }
 

@@ -3460,6 +3460,7 @@ def _build_update_trend(
 
     total_values = [0 for _ in bucket_labels]
     closed_values = [0 for _ in bucket_labels]
+    major_values = [0 for _ in bucket_labels]
     critical_values = [0 for _ in bucket_labels]
 
     for defect in defects:
@@ -3481,6 +3482,8 @@ def _build_update_trend(
         total_values[bucket_index] += 1
         if _is_closed(defect):
             closed_values[bucket_index] += 1
+        if _clean_text(defect.get("serverityNoName")) == "严重":
+            major_values[bucket_index] += 1
         if _clean_text(defect.get("serverityNoName")) == "关键":
             critical_values[bucket_index] += 1
 
@@ -3489,6 +3492,7 @@ def _build_update_trend(
         "labels": bucket_labels,
         "total_values": total_values,
         "closed_values": closed_values,
+        "major_values": major_values,
         "critical_values": critical_values,
     }
 
