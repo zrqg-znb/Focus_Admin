@@ -29,7 +29,7 @@ import {
   ElMessageBox,
   ElOption,
   ElPopover,
-  ElProgress,
+  ElSegmented,
   ElSelect,
   ElTabPane,
   ElTabs,
@@ -443,31 +443,42 @@ const filters = ref<DtsStatisticsFilters>(createDefaultFilters());
 
 const appliedFilters = ref<DtsStatisticsFilters | null>(null);
 const summaryFingerprint = ref('');
-const summary = ref<DtsSummary>({
-  total_count: 0,
-  open_count: 0,
-  closed_count: 0,
-  avg_process_days: 0,
-  qa_filled_count: 0,
-  qa_completion_rate: 0,
-  dev_filled_count: 0,
-  dev_completion_rate: 0,
-  test_filled_count: 0,
-  test_completion_rate: 0,
-  severity_dist: [],
-  status_dist: [],
-  team_dist: [],
-  stage_dist: [],
-  close_type_dist: [],
-  source_dist: [],
-  auto_pl_group_dist: [],
-  handler_dist: [],
-  dev_sub_category_dist: [],
-  test_miss_reason_dist: [],
-  project_dist: [],
-  action_status_dist: [],
-  snapshot: null,
-});
+
+function createEmptySummary(): DtsSummary {
+  return {
+    total_count: 0,
+    open_count: 0,
+    closed_count: 0,
+    avg_process_days: 0,
+    qa_filled_count: 0,
+    qa_completion_rate: 0,
+    dev_filled_count: 0,
+    dev_completion_rate: 0,
+    test_filled_count: 0,
+    test_completion_rate: 0,
+    severity_dist: [],
+    status_dist: [],
+    flow_type_dist: [],
+    team_dist: [],
+    close_type_dist: [],
+    source_dist: [],
+    auto_pl_group_dist: [],
+    handler_dist: [],
+    process_days_bucket_dist: [],
+    issue_intro_stage_dist: [],
+    dev_action_status_dist: [],
+    test_action_status_dist: [],
+    dev_sub_category_dist: [],
+    test_miss_reason_dist: [],
+    project_dist: [],
+    action_status_dist: [],
+    update_trend: null,
+    team_severity_matrix: null,
+    snapshot: null,
+  };
+}
+
+const summary = ref<DtsSummary>(createEmptySummary());
 const summaryLoading = ref(false);
 const queryLoading = ref(false);
 const exportPreparing = ref(false);
@@ -905,32 +916,7 @@ const hasAppliedFilters = computed(() => Boolean(appliedFilters.value));
 
 async function fetchSummary(force = false) {
   if (!appliedFilters.value) {
-    summary.value = {
-      ...summary.value,
-      total_count: 0,
-      open_count: 0,
-      closed_count: 0,
-      avg_process_days: 0,
-      qa_filled_count: 0,
-      qa_completion_rate: 0,
-      dev_filled_count: 0,
-      dev_completion_rate: 0,
-      test_filled_count: 0,
-      test_completion_rate: 0,
-      severity_dist: [],
-      status_dist: [],
-      team_dist: [],
-      stage_dist: [],
-      close_type_dist: [],
-      source_dist: [],
-      auto_pl_group_dist: [],
-      handler_dist: [],
-      dev_sub_category_dist: [],
-      test_miss_reason_dist: [],
-      project_dist: [],
-      action_status_dist: [],
-      snapshot: null,
-    };
+    summary.value = createEmptySummary();
     summaryFingerprint.value = '';
     snapshotMeta.value = null;
     return;
@@ -2543,36 +2529,181 @@ function takeFirstTwo(value: unknown): string[] {
   return value.slice(0, 2).map((item) => String(item || '').trim());
 }
 
+type SummaryDistributionRow = {
+  label: string;
+  value: number;
+};
+
+type SummaryTrend = NonNullable<DtsSummary['update_trend']>;
+type SummaryHeatmapMatrix = NonNullable<DtsSummary['team_severity_matrix']>;
+type SummaryRankMode = 'handler' | 'pl_group' | 'project' | 'team';
+type SummaryTreemapMode = 'dev_sub_category' | 'test_miss_reason';
+
+const SUMMARY_RANK_MODE_OPTIONS = ['项目', '团队', '处理人', 'PL组'];
+
+const SUMMARY_TREEMAP_MODE_OPTIONS = ['开发问题小类', '漏测原因'];
+
+const TREEMAP_PALETTE = [
+  '#2563eb',
+  '#16a34a',
+  '#f59e0b',
+  '#ef4444',
+  '#06b6d4',
+  '#8b5cf6',
+  '#14b8a6',
+  '#ec4899',
+];
+
+const trendChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderTrendChart } = useEcharts(trendChartRef);
+const processDaysChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderProcessDaysChart } = useEcharts(processDaysChartRef);
+const completionRadarChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderCompletionRadarChart } =
+  useEcharts(completionRadarChartRef);
 const severityChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderSeverityChart } = useEcharts(severityChartRef);
 const statusChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderStatusChart } = useEcharts(statusChartRef);
-const teamChartRef = ref<EchartsUIType>();
-const { renderEcharts: renderTeamChart } = useEcharts(teamChartRef);
-const stageChartRef = ref<EchartsUIType>();
-const { renderEcharts: renderStageChart } = useEcharts(stageChartRef);
+const flowTypeChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderFlowTypeChart } = useEcharts(flowTypeChartRef);
 const closeTypeChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderCloseTypeChart } = useEcharts(closeTypeChartRef);
 const sourceChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderSourceChart } = useEcharts(sourceChartRef);
-const autoPlGroupChartRef = ref<EchartsUIType>();
-const { renderEcharts: renderAutoPlGroupChart } =
-  useEcharts(autoPlGroupChartRef);
-const handlerChartRef = ref<EchartsUIType>();
-const { renderEcharts: renderHandlerChart } = useEcharts(handlerChartRef);
-const projectChartRef = ref<EchartsUIType>();
-const { renderEcharts: renderProjectChart } = useEcharts(projectChartRef);
+const plGroupChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderPlGroupChart } = useEcharts(plGroupChartRef);
 const actionStatusChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderActionStatusChart } =
   useEcharts(actionStatusChartRef);
-const devSubCategoryChartRef = ref<EchartsUIType>();
-const { renderEcharts: renderDevSubCategoryChart } = useEcharts(
-  devSubCategoryChartRef,
+const issueIntroStageChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderIssueIntroStageChart } =
+  useEcharts(issueIntroStageChartRef);
+const governanceTreemapChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderGovernanceTreemapChart } =
+  useEcharts(governanceTreemapChartRef);
+const organizationHeatmapChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderOrganizationHeatmapChart } =
+  useEcharts(organizationHeatmapChartRef);
+const organizationRankChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderOrganizationRankChart } =
+  useEcharts(organizationRankChartRef);
+
+const governanceTreemapMode = ref<SummaryTreemapMode>('dev_sub_category');
+const organizationRankMode = ref<SummaryRankMode>('project');
+
+const organizationRankSegmentValue = computed<string>({
+  get: () => {
+    switch (organizationRankMode.value) {
+      case 'team':
+        return '团队';
+      case 'handler':
+        return '处理人';
+      case 'pl_group':
+        return 'PL组';
+      case 'project':
+      default:
+        return '项目';
+    }
+  },
+  set: (value) => {
+    switch (value) {
+      case '团队':
+        organizationRankMode.value = 'team';
+        break;
+      case '处理人':
+        organizationRankMode.value = 'handler';
+        break;
+      case 'PL组':
+        organizationRankMode.value = 'pl_group';
+        break;
+      case '项目':
+      default:
+        organizationRankMode.value = 'project';
+        break;
+    }
+  },
+});
+
+const governanceTreemapSegmentValue = computed<string>({
+  get: () =>
+    governanceTreemapMode.value === 'test_miss_reason'
+      ? '漏测原因'
+      : '开发问题小类',
+  set: (value) => {
+    governanceTreemapMode.value =
+      value === '漏测原因' ? 'test_miss_reason' : 'dev_sub_category';
+  },
+});
+
+const dashboardReady = computed(
+  () =>
+    activeTab.value === 'dashboard' &&
+    hasAppliedFilters.value &&
+    summary.value.total_count > 0,
 );
-const testMissReasonChartRef = ref<EchartsUIType>();
-const { renderEcharts: renderTestMissReasonChart } = useEcharts(
-  testMissReasonChartRef,
-);
+
+function resolveCssVar(name: string, fallback: string) {
+  if (typeof window === 'undefined') {
+    return fallback;
+  }
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim();
+  return value || fallback;
+}
+
+function getChartTheme() {
+  return {
+    primary: resolveCssVar('--el-color-primary', '#2563eb'),
+    primaryLight: resolveCssVar('--el-color-primary-light-3', '#93c5fd'),
+    primaryLighter: resolveCssVar('--el-color-primary-light-5', '#bfdbfe'),
+    success: resolveCssVar('--el-color-success', '#16a34a'),
+    successLight: resolveCssVar('--el-color-success-light-3', '#86efac'),
+    warning: resolveCssVar('--el-color-warning', '#f59e0b'),
+    warningLight: resolveCssVar('--el-color-warning-light-3', '#fcd34d'),
+    danger: resolveCssVar('--el-color-danger', '#ef4444'),
+    dangerLight: resolveCssVar('--el-color-danger-light-3', '#fca5a5'),
+    info: resolveCssVar('--el-color-info', '#64748b'),
+    text: '#475569',
+    muted: '#94a3b8',
+    border: '#e2e8f0',
+    background: '#f8fafc',
+  };
+}
+
+function createVerticalGradient(top: string, bottom: string) {
+  return {
+    type: 'linear',
+    x: 0,
+    y: 0,
+    x2: 0,
+    y2: 1,
+    colorStops: [
+      { offset: 0, color: top },
+      { offset: 1, color: bottom },
+    ],
+  };
+}
+
+function normalizeChartRows(
+  rows?: SummaryDistributionRow[] | null,
+): SummaryDistributionRow[] {
+  return (rows || [])
+    .map((item) => ({
+      label: String(item?.label || '').trim(),
+      value: Number(item?.value || 0),
+    }))
+    .filter((item) => item.label);
+}
+
+function formatShare(value: number, total: number) {
+  if (!total) {
+    return String(value);
+  }
+  const share = ((value / total) * 100).toFixed(1);
+  return `${value} (${share}%)`;
+}
 
 function renderEmptyChart(
   render: (options: Record<string, any>) => void,
@@ -2595,117 +2726,184 @@ function renderEmptyChart(
   });
 }
 
-function renderDistBar(
+function renderTrendCombo(
   render: (options: Record<string, any>) => void,
-  rows: Array<{ label: string; value: number }>,
-  title: string,
-  color: string,
+  trend: SummaryTrend | null,
 ) {
-  if (!rows || rows.length === 0) {
-    renderEmptyChart(render, `暂无${title}`);
+  if (!trend || trend.labels.length === 0) {
+    renderEmptyChart(render, '暂无更新时间趋势');
     return;
   }
-  const labels = rows.map((item) => item.label);
-  const values = rows.map((item) => item.value);
-  const total = values.reduce(
-    (sum, value) => sum + (Number.isFinite(value) ? value : 0),
-    0,
-  );
-  const enableZoom = labels.length > 12;
-
-  const formatRate = (value: number) => {
-    if (!total) {
-      return '';
-    }
-    return `${((value / total) * 100).toFixed(1)}%`;
-  };
-
+  const theme = getChartTheme();
+  const rotateLabel = trend.labels.some((label) => label.length > 10);
   render({
+    color: [theme.primary, theme.success, theme.danger],
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
-      formatter: (params: any) => {
-        const first = Array.isArray(params) ? params[0] : params;
-        const name = String(first?.axisValue ?? first?.name ?? '');
-        const value = Number(first?.value ?? 0);
-        const rate = formatRate(value);
-        return rate ? `${name}<br/>${value} (${rate})` : `${name}<br/>${value}`;
-      },
+    },
+    legend: {
+      top: 0,
+      itemWidth: 10,
+      itemHeight: 10,
+      textStyle: { color: theme.text, fontSize: 12 },
     },
     grid: {
-      left: 12,
-      right: enableZoom ? 40 : 12,
-      top: 16,
-      bottom: 12,
+      left: 16,
+      right: 16,
+      top: 48,
+      bottom: trend.labels.length > 12 ? 56 : 24,
       containLabel: true,
     },
-    dataZoom: enableZoom
+    dataZoom: trend.labels.length > 12
       ? [
           {
             type: 'slider',
-            yAxisIndex: 0,
-            orient: 'vertical',
-            right: 8,
-            top: 56,
-            bottom: 12,
+            xAxisIndex: 0,
+            bottom: 10,
+            height: 10,
             start: 0,
             end: 100,
-            width: 10,
           },
           {
             type: 'inside',
-            yAxisIndex: 0,
-            orient: 'vertical',
+            xAxisIndex: 0,
             start: 0,
             end: 100,
           },
         ]
       : [],
     xAxis: {
-      type: 'value',
-      axisLabel: { color: '#94a3b8', fontSize: 11 },
-      axisLine: { lineStyle: { color: '#e2e8f0' } },
+      type: 'category',
+      data: trend.labels,
+      axisLabel: {
+        color: theme.muted,
+        fontSize: 11,
+        rotate: rotateLabel ? 20 : 0,
+      },
+      axisLine: { lineStyle: { color: theme.border } },
       axisTick: { show: false },
-      splitLine: { lineStyle: { color: '#e2e8f0' } },
     },
     yAxis: {
-      type: 'category',
-      data: labels,
-      axisLabel: { color: '#64748b', fontSize: 11 },
-      axisLine: { lineStyle: { color: '#e2e8f0' } },
-      axisTick: { show: false },
+      type: 'value',
+      minInterval: 1,
+      axisLabel: { color: theme.muted, fontSize: 11 },
+      axisLine: { lineStyle: { color: theme.border } },
+      splitLine: { lineStyle: { color: theme.border } },
     },
     series: [
       {
+        name: '总量',
         type: 'bar',
-        data: values,
-        barMaxWidth: 18,
-        itemStyle: { color },
-        label: {
-          show: true,
-          position: 'right',
-          color: '#475569',
-          formatter: (params: any) => {
-            const value = Number(params?.value ?? 0);
-            const rate = formatRate(value);
-            return rate ? `${value} (${rate})` : String(value);
-          },
+        barMaxWidth: 20,
+        data: trend.total_values,
+        itemStyle: {
+          borderRadius: [8, 8, 0, 0],
+          color: createVerticalGradient(theme.primaryLight, theme.primary),
         },
+      },
+      {
+        name: '已关闭',
+        type: 'line',
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 8,
+        data: trend.closed_values,
+        lineStyle: { color: theme.success, width: 3 },
+        itemStyle: { color: theme.success },
+        areaStyle: { color: 'rgba(34, 197, 94, 0.08)' },
+        z: 3,
+      },
+      {
+        name: '关键问题',
+        type: 'line',
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 8,
+        data: trend.critical_values,
+        lineStyle: { color: theme.danger, width: 3, type: 'dashed' },
+        itemStyle: { color: theme.danger },
+        z: 4,
       },
     ],
   });
 }
 
-function renderDistPie(
+function renderCompletionRadar(
   render: (options: Record<string, any>) => void,
-  rows: Array<{ label: string; value: number }>,
+) {
+  const theme = getChartTheme();
+  const qaRate = Math.round((summary.value.qa_completion_rate || 0) * 100);
+  const devRate = Math.round((summary.value.dev_completion_rate || 0) * 100);
+  const testRate = Math.round((summary.value.test_completion_rate || 0) * 100);
+  render({
+    color: [theme.primary],
+    tooltip: {
+      trigger: 'item',
+      formatter: () => [
+        `QA：${qaRate}%`,
+        `开发：${devRate}%`,
+        `测试：${testRate}%`,
+      ].join('<br/>'),
+    },
+    radar: {
+      center: ['50%', '50%'],
+      radius: '64%',
+      splitNumber: 5,
+      axisName: { color: theme.text, fontSize: 12 },
+      splitLine: { lineStyle: { color: theme.border } },
+      splitArea: {
+        areaStyle: {
+          color: ['rgba(248, 250, 252, 0.9)', 'rgba(255, 255, 255, 1)'],
+        },
+      },
+      indicator: [
+        { name: 'QA', max: 100 },
+        { name: '开发', max: 100 },
+        { name: '测试', max: 100 },
+      ],
+    },
+    series: [
+      {
+        name: '填报完成度',
+        type: 'radar',
+        symbol: 'circle',
+        symbolSize: 7,
+        data: [
+          {
+            value: [qaRate, devRate, testRate],
+            name: '完成率',
+            areaStyle: { color: 'rgba(37, 99, 235, 0.18)' },
+            lineStyle: { color: theme.primary, width: 3 },
+            itemStyle: { color: theme.primary },
+          },
+        ],
+      },
+    ],
+  });
+}
+
+function renderRosePie(
+  render: (options: Record<string, any>) => void,
+  rows: SummaryDistributionRow[],
   title: string,
 ) {
-  if (!rows || rows.length === 0) {
+  const chartRows = normalizeChartRows(rows);
+  if (chartRows.length === 0) {
     renderEmptyChart(render, `暂无${title}`);
     return;
   }
+  const theme = getChartTheme();
   render({
+    color: [
+      theme.danger,
+      theme.warning,
+      theme.primary,
+      theme.success,
+      theme.info,
+      theme.primaryLight,
+      theme.successLight,
+    ],
     tooltip: {
       trigger: 'item',
       formatter: (params: any) => {
@@ -2716,29 +2914,34 @@ function renderDistPie(
       },
     },
     legend: {
+      type: 'scroll',
       bottom: 0,
       icon: 'circle',
       itemWidth: 8,
       itemHeight: 8,
-      textStyle: { color: '#64748b', fontSize: 11 },
+      textStyle: { color: theme.text, fontSize: 11 },
     },
     series: [
       {
         type: 'pie',
-        radius: ['38%', '68%'],
+        roseType: 'radius',
+        radius: ['28%', '70%'],
         center: ['50%', '44%'],
-        avoidLabelOverlap: true,
         label: {
           show: true,
-          color: '#475569',
-          formatter: '{b}\n{c} ({d}%)',
+          color: theme.text,
           fontSize: 11,
+          formatter: '{b}\n{c} ({d}%)',
         },
         labelLine: {
           length: 10,
           length2: 12,
         },
-        data: rows.map((item) => ({
+        itemStyle: {
+          borderColor: '#fff',
+          borderWidth: 2,
+        },
+        data: chartRows.map((item) => ({
           name: item.label,
           value: item.value,
         })),
@@ -2747,115 +2950,600 @@ function renderDistPie(
   });
 }
 
-const canRenderCharts = computed(
+function renderVerticalBar(
+  render: (options: Record<string, any>) => void,
+  rows: SummaryDistributionRow[],
+  title: string,
+  color: string,
+) {
+  const chartRows = normalizeChartRows(rows);
+  if (chartRows.length === 0) {
+    renderEmptyChart(render, `暂无${title}`);
+    return;
+  }
+  const theme = getChartTheme();
+  const total = chartRows.reduce((sum, item) => sum + item.value, 0);
+  const rotateLabel = chartRows.some((item) => item.label.length > 6);
+  render({
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params: any) => {
+        const first = Array.isArray(params) ? params[0] : params;
+        const value = Number(first?.value ?? 0);
+        const name = String(first?.axisValue ?? first?.name ?? '');
+        return `${name}<br/>${formatShare(value, total)}`;
+      },
+    },
+    grid: {
+      left: 16,
+      right: 16,
+      top: 12,
+      bottom: 20,
+      containLabel: true,
+    },
+    xAxis: {
+      type: 'category',
+      data: chartRows.map((item) => item.label),
+      axisLabel: {
+        color: theme.muted,
+        fontSize: 11,
+        interval: 0,
+        rotate: rotateLabel ? 20 : 0,
+      },
+      axisLine: { lineStyle: { color: theme.border } },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value',
+      minInterval: 1,
+      axisLabel: { color: theme.muted, fontSize: 11 },
+      axisLine: { lineStyle: { color: theme.border } },
+      splitLine: { lineStyle: { color: theme.border } },
+    },
+    series: [
+      {
+        type: 'bar',
+        barMaxWidth: 28,
+        data: chartRows.map((item) => item.value),
+        itemStyle: {
+          borderRadius: [8, 8, 0, 0],
+          color: createVerticalGradient(color, theme.primaryLight),
+        },
+        label: {
+          show: true,
+          position: 'top',
+          color: theme.text,
+          fontSize: 11,
+          formatter: (params: any) => {
+            const value = Number(params?.value ?? 0);
+            return formatShare(value, total);
+          },
+        },
+      },
+    ],
+  });
+}
+
+function renderRankBar(
+  render: (options: Record<string, any>) => void,
+  rows: SummaryDistributionRow[],
+  title: string,
+  color: string,
+) {
+  const chartRows = normalizeChartRows(rows).slice(0, 10);
+  if (chartRows.length === 0) {
+    renderEmptyChart(render, `暂无${title}`);
+    return;
+  }
+  const theme = getChartTheme();
+  const total = chartRows.reduce((sum, item) => sum + item.value, 0);
+  render({
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params: any) => {
+        const first = Array.isArray(params) ? params[0] : params;
+        const name = String(first?.axisValue ?? first?.name ?? '');
+        const value = Number(first?.value ?? 0);
+        return `${name}<br/>${formatShare(value, total)}`;
+      },
+    },
+    grid: {
+      left: 18,
+      right: 18,
+      top: 12,
+      bottom: 16,
+      containLabel: true,
+    },
+    xAxis: {
+      type: 'value',
+      minInterval: 1,
+      axisLabel: { color: theme.muted, fontSize: 11 },
+      axisLine: { lineStyle: { color: theme.border } },
+      splitLine: { lineStyle: { color: theme.border } },
+    },
+    yAxis: {
+      type: 'category',
+      inverse: true,
+      data: chartRows.map((item) => item.label),
+      axisLabel: {
+        color: theme.text,
+        fontSize: 11,
+        width: 120,
+        overflow: 'truncate',
+      },
+      axisLine: { lineStyle: { color: theme.border } },
+      axisTick: { show: false },
+    },
+    series: [
+      {
+        type: 'bar',
+        barMaxWidth: 18,
+        data: chartRows.map((item) => item.value),
+        itemStyle: {
+          borderRadius: [0, 8, 8, 0],
+          color: createVerticalGradient(theme.primaryLight, color),
+        },
+        label: {
+          show: true,
+          position: 'right',
+          color: theme.text,
+          fontSize: 11,
+          formatter: (params: any) => {
+            const value = Number(params?.value ?? 0);
+            return formatShare(value, total);
+          },
+        },
+      },
+    ],
+  });
+}
+
+function renderGroupedBar(
+  render: (options: Record<string, any>) => void,
+  leftRows: SummaryDistributionRow[],
+  rightRows: SummaryDistributionRow[],
+  leftLabel: string,
+  rightLabel: string,
+  leftColor: string,
+  rightColor: string,
+) {
+  const theme = getChartTheme();
+  const left = normalizeChartRows(leftRows);
+  const right = normalizeChartRows(rightRows);
+  const labels = Array.from(
+    new Set([...left.map((item) => item.label), ...right.map((item) => item.label)]),
+  ).sort((a, b) => {
+    const leftTotal =
+      (left.find((item) => item.label === b)?.value || 0) +
+      (right.find((item) => item.label === b)?.value || 0);
+    const rightTotal =
+      (left.find((item) => item.label === a)?.value || 0) +
+      (right.find((item) => item.label === a)?.value || 0);
+    return rightTotal - leftTotal;
+  });
+  if (labels.length === 0) {
+    renderEmptyChart(render, '暂无措施状态对比');
+    return;
+  }
+  render({
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+    },
+    legend: {
+      top: 0,
+      itemWidth: 10,
+      itemHeight: 10,
+      textStyle: { color: theme.text, fontSize: 12 },
+    },
+    grid: {
+      left: 16,
+      right: 16,
+      top: 44,
+      bottom: 16,
+      containLabel: true,
+    },
+    xAxis: {
+      type: 'category',
+      data: labels,
+      axisLabel: {
+        color: theme.muted,
+        fontSize: 11,
+        interval: 0,
+        rotate: labels.some((label) => label.length > 6) ? 20 : 0,
+      },
+      axisLine: { lineStyle: { color: theme.border } },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value',
+      minInterval: 1,
+      axisLabel: { color: theme.muted, fontSize: 11 },
+      axisLine: { lineStyle: { color: theme.border } },
+      splitLine: { lineStyle: { color: theme.border } },
+    },
+    series: [
+      {
+        name: leftLabel,
+        type: 'bar',
+        barMaxWidth: 18,
+        data: labels.map(
+          (label) => left.find((item) => item.label === label)?.value || 0,
+        ),
+        itemStyle: {
+          borderRadius: [8, 8, 0, 0],
+          color: createVerticalGradient(leftColor, theme.primaryLight),
+        },
+      },
+      {
+        name: rightLabel,
+        type: 'bar',
+        barMaxWidth: 18,
+        data: labels.map(
+          (label) => right.find((item) => item.label === label)?.value || 0,
+        ),
+        itemStyle: {
+          borderRadius: [8, 8, 0, 0],
+          color: createVerticalGradient(rightColor, theme.successLight),
+        },
+      },
+    ],
+  });
+}
+
+function renderHeatmap(
+  render: (options: Record<string, any>) => void,
+  matrix: SummaryHeatmapMatrix | null,
+  title: string,
+) {
+  const safeMatrix = matrix;
+  const columns = safeMatrix?.columns || [];
+  const rows = safeMatrix?.rows || [];
+  if (columns.length === 0 || rows.length === 0) {
+    renderEmptyChart(render, `暂无${title}`);
+    return;
+  }
+  const theme = getChartTheme();
+  const data = rows.flatMap((row, rowIndex) =>
+    columns.map((_column, columnIndex) => [
+      columnIndex,
+      rowIndex,
+      Number(row.values[columnIndex] || 0),
+    ]),
+  );
+  const maxValue = Math.max(...data.map((item) => Number(item[2] || 0)), 1);
+  render({
+    tooltip: {
+      position: 'top',
+      formatter: (params: any) => {
+        const row = rows[Number(params?.data?.[1] ?? 0)];
+        const column = columns[Number(params?.data?.[0] ?? 0)];
+        const value = Number(params?.data?.[2] ?? 0);
+        return `${row?.label || ''}<br/>${column || ''}：${value}`;
+      },
+    },
+    grid: {
+      left: 12,
+      right: 12,
+      top: 12,
+      bottom: 28,
+      containLabel: true,
+    },
+    xAxis: {
+      type: 'category',
+      data: columns,
+      splitArea: { show: true },
+      axisLabel: { color: theme.text, fontSize: 11 },
+      axisLine: { lineStyle: { color: theme.border } },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'category',
+      data: rows.map((row) => row.label),
+      splitArea: { show: true },
+      axisLabel: {
+        color: theme.text,
+        fontSize: 11,
+        width: 96,
+        overflow: 'truncate',
+      },
+      axisLine: { lineStyle: { color: theme.border } },
+      axisTick: { show: false },
+    },
+    visualMap: {
+      min: 0,
+      max: maxValue,
+      calculable: false,
+      orient: 'horizontal',
+      left: 'center',
+      bottom: 0,
+      textStyle: { color: theme.text },
+      inRange: {
+        color: [theme.primaryLighter, theme.primary],
+      },
+    },
+    series: [
+      {
+        type: 'heatmap',
+        data,
+        label: {
+          show: true,
+          color: '#0f172a',
+          fontSize: 11,
+        },
+        emphasis: {
+          itemStyle: {
+            shadowBlur: 10,
+            shadowColor: 'rgba(15, 23, 42, 0.2)',
+          },
+        },
+      },
+    ],
+  });
+}
+
+function renderTreemap(
+  render: (options: Record<string, any>) => void,
+  rows: SummaryDistributionRow[],
+  title: string,
+) {
+  const chartRows = normalizeChartRows(rows).slice(0, 12);
+  if (chartRows.length === 0) {
+    renderEmptyChart(render, `暂无${title}`);
+    return;
+  }
+  render({
+    color: TREEMAP_PALETTE,
+    tooltip: {
+      formatter: (params: any) => {
+        const name = String(params?.name ?? '');
+        const value = Number(params?.value ?? 0);
+        return `${name}<br/>${value}`;
+      },
+    },
+    series: [
+      {
+        type: 'treemap',
+        data: chartRows.map((item, index) => ({
+          name: item.label,
+          value: item.value,
+          itemStyle: {
+            borderColor: '#fff',
+            borderWidth: 2,
+            borderRadius: 8,
+            color: TREEMAP_PALETTE[index % TREEMAP_PALETTE.length],
+          },
+        })),
+        roam: false,
+        nodeClick: false,
+        breadcrumb: { show: false },
+        upperLabel: { show: false },
+        label: {
+          show: true,
+          color: '#fff',
+          fontSize: 11,
+          fontWeight: 700,
+          formatter: '{b}\n{c}',
+          overflow: 'truncate',
+        },
+        itemStyle: {
+          gapWidth: 2,
+          borderWidth: 2,
+        },
+        emphasis: {
+          itemStyle: {
+            shadowBlur: 10,
+            shadowColor: 'rgba(15, 23, 42, 0.18)',
+          },
+        },
+      },
+    ],
+  });
+}
+
+function watchDashboardChart(source: () => unknown, render: () => void) {
+  watch(
+    [dashboardReady, source] as const,
+    ([ready]) => {
+      if (!ready) {
+        return;
+      }
+      render();
+    },
+    { deep: true, immediate: true },
+  );
+}
+
+function getRankRows(mode: SummaryRankMode): SummaryDistributionRow[] {
+  switch (mode) {
+    case 'team':
+      return normalizeChartRows(summary.value.team_dist);
+    case 'handler':
+      return normalizeChartRows(summary.value.handler_dist);
+    case 'pl_group':
+      return normalizeChartRows(summary.value.auto_pl_group_dist);
+    case 'project':
+    default:
+      return normalizeChartRows(summary.value.project_dist);
+  }
+}
+
+function getTreemapRows(mode: SummaryTreemapMode): SummaryDistributionRow[] {
+  switch (mode) {
+    case 'test_miss_reason':
+      return normalizeChartRows(summary.value.test_miss_reason_dist);
+    case 'dev_sub_category':
+    default:
+      return normalizeChartRows(summary.value.dev_sub_category_dist);
+  }
+}
+
+const organizationRankTitle = computed(() => {
+  switch (organizationRankMode.value) {
+    case 'team':
+      return '团队分布';
+    case 'handler':
+      return '处理人 Top';
+    case 'pl_group':
+      return 'PL组分布';
+    case 'project':
+    default:
+      return '项目分布';
+  }
+});
+
+const governanceTreemapTitle = computed(() => {
+  switch (governanceTreemapMode.value) {
+    case 'test_miss_reason':
+      return '漏测原因 Top';
+    case 'dev_sub_category':
+    default:
+      return '开发问题小类 Top';
+  }
+});
+
+watchDashboardChart(
+  () => summary.value.update_trend,
+  () => renderTrendCombo(renderTrendChart, summary.value.update_trend),
+);
+watchDashboardChart(
+  () => summary.value.process_days_bucket_dist,
   () =>
-    activeTab.value === 'dashboard' &&
-    hasAppliedFilters.value &&
-    summary.value.total_count > 0,
+    renderVerticalBar(
+      renderProcessDaysChart,
+      summary.value.process_days_bucket_dist,
+      '处理时长分布',
+      getChartTheme().warning,
+    ),
 );
-
-watch(
-  [canRenderCharts, () => summary.value.severity_dist] as const,
-  ([ready, rows]) => {
-    if (!ready) return;
-    renderDistBar(renderSeverityChart, rows, '严重程度分布', '#f87171');
-  },
-  { deep: true, immediate: true },
+watchDashboardChart(
+  () => [
+    summary.value.qa_completion_rate,
+    summary.value.dev_completion_rate,
+    summary.value.test_completion_rate,
+  ],
+  () => renderCompletionRadar(renderCompletionRadarChart),
 );
-watch(
-  [canRenderCharts, () => summary.value.status_dist] as const,
-  ([ready, rows]) => {
-    if (!ready) return;
-    renderDistBar(renderStatusChart, rows, '状态分布', '#60a5fa');
-  },
-  { deep: true, immediate: true },
+watchDashboardChart(
+  () => summary.value.severity_dist,
+  () =>
+    renderRosePie(
+      renderSeverityChart,
+      summary.value.severity_dist,
+      '严重程度分布',
+    ),
 );
-watch(
-  [canRenderCharts, () => summary.value.stage_dist] as const,
-  ([ready, rows]) => {
-    if (!ready) return;
-    renderDistBar(renderStageChart, rows, '阶段分布', '#94a3b8');
-  },
-  { deep: true, immediate: true },
+watchDashboardChart(
+  () => summary.value.status_dist,
+  () =>
+    renderVerticalBar(
+      renderStatusChart,
+      summary.value.status_dist,
+      '状态分布',
+      getChartTheme().primary,
+    ),
 );
-watch(
-  [canRenderCharts, () => summary.value.close_type_dist] as const,
-  ([ready, rows]) => {
-    if (!ready) return;
-    renderDistBar(renderCloseTypeChart, rows, '关闭类型分布', '#f97316');
-  },
-  { deep: true, immediate: true },
+watchDashboardChart(
+  () => summary.value.flow_type_dist,
+  () =>
+    renderVerticalBar(
+      renderFlowTypeChart,
+      summary.value.flow_type_dist,
+      '流程类型分布',
+      getChartTheme().info,
+    ),
 );
-watch(
-  [canRenderCharts, () => summary.value.source_dist] as const,
-  ([ready, rows]) => {
-    if (!ready) return;
-    renderDistPie(renderSourceChart, rows, '提单来源分布');
-  },
-  { deep: true, immediate: true },
+watchDashboardChart(
+  () => summary.value.close_type_dist,
+  () =>
+    renderVerticalBar(
+      renderCloseTypeChart,
+      summary.value.close_type_dist,
+      '关闭类型分布',
+      getChartTheme().warning,
+    ),
 );
-watch(
-  [canRenderCharts, () => summary.value.auto_pl_group_dist] as const,
-  ([ready, rows]) => {
-    if (!ready) return;
-    renderDistBar(renderAutoPlGroupChart, rows, '自动责任PL组分布', '#14b8a6');
-  },
-  { deep: true, immediate: true },
+watchDashboardChart(
+  () => summary.value.source_dist,
+  () =>
+    renderRosePie(
+      renderSourceChart,
+      summary.value.source_dist,
+      '提单来源分布',
+    ),
 );
-
-watch(
-  [canRenderCharts, () => summary.value.project_dist] as const,
-  ([ready, rows]) => {
-    if (!ready) return;
-    renderDistBar(renderProjectChart, rows, '项目分布', '#fbbf24');
-  },
-  { deep: true, immediate: true },
+watchDashboardChart(
+  () => summary.value.auto_pl_group_dist,
+  () =>
+    renderRankBar(
+      renderPlGroupChart,
+      summary.value.auto_pl_group_dist,
+      'PL组排名',
+      getChartTheme().success,
+    ),
 );
-watch(
-  [canRenderCharts, () => summary.value.team_dist] as const,
-  ([ready, rows]) => {
-    if (!ready) return;
-    renderDistBar(renderTeamChart, rows, '团队分布', '#22c55e');
-  },
-  { deep: true, immediate: true },
+watchDashboardChart(
+  () => [summary.value.dev_action_status_dist, summary.value.test_action_status_dist],
+  () =>
+    renderGroupedBar(
+      renderActionStatusChart,
+      summary.value.dev_action_status_dist,
+      summary.value.test_action_status_dist,
+      '开发',
+      '测试',
+      getChartTheme().primary,
+      getChartTheme().success,
+    ),
 );
-watch(
-  [canRenderCharts, () => summary.value.handler_dist] as const,
-  ([ready, rows]) => {
-    if (!ready) return;
-    renderDistBar(renderHandlerChart, rows, '处理人 Top', '#8b5cf6');
-  },
-  { deep: true, immediate: true },
+watchDashboardChart(
+  () => summary.value.issue_intro_stage_dist,
+  () =>
+    renderVerticalBar(
+      renderIssueIntroStageChart,
+      summary.value.issue_intro_stage_dist,
+      '问题引入阶段分布',
+      getChartTheme().info,
+    ),
 );
-
-watch(
-  [canRenderCharts, () => summary.value.action_status_dist] as const,
-  ([ready, rows]) => {
-    if (!ready) return;
-    renderDistBar(renderActionStatusChart, rows, '措施状态分布', '#fb7185');
-  },
-  { deep: true, immediate: true },
+watchDashboardChart(
+  () => summary.value.team_severity_matrix,
+  () =>
+    renderHeatmap(
+      renderOrganizationHeatmapChart,
+      summary.value.team_severity_matrix,
+      '团队 × 严重度热点',
+    ),
 );
-watch(
-  [canRenderCharts, () => summary.value.dev_sub_category_dist] as const,
-  ([ready, rows]) => {
-    if (!ready) return;
-    renderDistBar(
-      renderDevSubCategoryChart,
-      rows,
-      '开发问题小类 Top',
-      '#38bdf8',
-    );
-  },
-  { deep: true, immediate: true },
+watchDashboardChart(
+  () => [
+    organizationRankMode.value,
+    summary.value.project_dist,
+    summary.value.team_dist,
+    summary.value.handler_dist,
+    summary.value.auto_pl_group_dist,
+  ],
+  () =>
+    renderRankBar(
+      renderOrganizationRankChart,
+      getRankRows(organizationRankMode.value),
+      organizationRankTitle.value,
+      getChartTheme().primary,
+    ),
 );
-watch(
-  [canRenderCharts, () => summary.value.test_miss_reason_dist] as const,
-  ([ready, rows]) => {
-    if (!ready) return;
-    renderDistBar(renderTestMissReasonChart, rows, '漏测原因 Top', '#4ade80');
-  },
-  { deep: true, immediate: true },
+watchDashboardChart(
+  () => [
+    governanceTreemapMode.value,
+    summary.value.dev_sub_category_dist,
+    summary.value.test_miss_reason_dist,
+  ],
+  () =>
+    renderTreemap(
+      renderGovernanceTreemapChart,
+      getTreemapRows(governanceTreemapMode.value),
+      governanceTreemapTitle.value,
+    ),
 );
 
 onMounted(() => {
@@ -5713,92 +6401,95 @@ onUnmounted(() => {
                     </ElTag>
                   </div>
 
-                  <div class="dense-completion-grid">
-                    <div
-                      class="dense-completion-panel dense-completion-panel--qa"
-                    >
-                      <div class="dense-completion-panel__title">QA填写率</div>
-                      <div class="dense-completion-panel__headline">
-                        {{
-                          Math.round((summary.qa_completion_rate || 0) * 100)
-                        }}%
-                      </div>
-                      <ElProgress
-                        :percentage="
-                          Math.round((summary.qa_completion_rate || 0) * 100)
-                        "
-                        :stroke-width="10"
-                      />
-                      <div class="dense-completion-panel__meta">
-                        <span>
-                          {{ summary.qa_filled_count }} /
-                          {{ summary.total_count }}
-                        </span>
-                      </div>
+                  <div class="completion-radar-panel">
+                    <div class="completion-radar-panel__chart">
+                      <EchartsUI ref="completionRadarChartRef" height="260px" />
                     </div>
-
-                    <div
-                      class="dense-completion-panel dense-completion-panel--dev"
-                    >
-                      <div class="dense-completion-panel__title">
-                        开发填报完整率
+                    <div class="completion-kpi-grid">
+                      <div class="completion-kpi-card completion-kpi-card--qa">
+                        <div class="completion-kpi-card__label">QA 填报率</div>
+                        <div class="completion-kpi-card__value">
+                          {{ Math.round((summary.qa_completion_rate || 0) * 100) }}%
+                        </div>
+                        <div class="completion-kpi-card__meta">
+                          {{ summary.qa_filled_count }} / {{ summary.total_count }}
+                        </div>
                       </div>
-                      <div class="dense-completion-panel__headline">
-                        {{
-                          Math.round((summary.dev_completion_rate || 0) * 100)
-                        }}%
+                      <div class="completion-kpi-card completion-kpi-card--dev">
+                        <div class="completion-kpi-card__label">开发填报率</div>
+                        <div class="completion-kpi-card__value">
+                          {{ Math.round((summary.dev_completion_rate || 0) * 100) }}%
+                        </div>
+                        <div class="completion-kpi-card__meta">
+                          {{ summary.dev_filled_count }} / {{ summary.total_count }}
+                        </div>
                       </div>
-                      <ElProgress
-                        status="success"
-                        :percentage="
-                          Math.round((summary.dev_completion_rate || 0) * 100)
-                        "
-                        :stroke-width="10"
-                      />
-                      <div class="dense-completion-panel__meta">
-                        <span>
-                          {{ summary.dev_filled_count }} /
-                          {{ summary.total_count }}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div
-                      class="dense-completion-panel dense-completion-panel--test"
-                    >
-                      <div class="dense-completion-panel__title">
-                        测试填报完整率
-                      </div>
-                      <div class="dense-completion-panel__headline">
-                        {{
-                          Math.round((summary.test_completion_rate || 0) * 100)
-                        }}%
-                      </div>
-                      <ElProgress
-                        status="success"
-                        :percentage="
-                          Math.round((summary.test_completion_rate || 0) * 100)
-                        "
-                        :stroke-width="10"
-                      />
-                      <div class="dense-completion-panel__meta">
-                        <span>
-                          {{ summary.test_filled_count }} /
-                          {{ summary.total_count }}
-                        </span>
+                      <div class="completion-kpi-card completion-kpi-card--test">
+                        <div class="completion-kpi-card__label">测试填报率</div>
+                        <div class="completion-kpi-card__value">
+                          {{ Math.round((summary.test_completion_rate || 0) * 100) }}%
+                        </div>
+                        <div class="completion-kpi-card__meta">
+                          {{ summary.test_filled_count }} / {{ summary.total_count }}
+                        </div>
                       </div>
                     </div>
                   </div>
                 </ElCard>
               </div>
 
+              <ElCard shadow="never" class="summary-section-card summary-section-card--trend">
+                <template #header>
+                  <div class="summary-section-card__header">
+                    <div>
+                      <div class="summary-section-card__title">趋势与效率</div>
+                      <div class="summary-section-card__desc">
+                        观察当前筛选下的更新时间走势与处理时长分桶，快速判断问题波动和处理效率。
+                      </div>
+                    </div>
+                    <ElTag
+                      class="summary-section-card__tag"
+                      type="primary"
+                      effect="plain"
+                    >
+                      {{ summary.update_trend?.granularity === 'week' ? '按周聚合' : '按天聚合' }}
+                    </ElTag>
+                  </div>
+                </template>
+                <div class="dts-trend-grid">
+                  <ElCard shadow="never" class="dts-chart-card">
+                    <template #header>
+                      <div class="dts-chart-card__header">
+                        <div class="dts-chart-card__title">更新时间趋势</div>
+                        <ElTag type="primary" effect="plain">
+                          {{ summary.update_trend?.labels.length || 0 }} 个区间
+                        </ElTag>
+                      </div>
+                    </template>
+                    <EchartsUI ref="trendChartRef" height="320px" />
+                  </ElCard>
+
+                  <ElCard shadow="never" class="dts-chart-card">
+                    <template #header>
+                      <div class="dts-chart-card__header">
+                        <div class="dts-chart-card__title">处理时长分布</div>
+                        <ElTag type="warning" effect="plain">
+                          6 个分桶
+                        </ElTag>
+                      </div>
+                    </template>
+                    <EchartsUI ref="processDaysChartRef" height="320px" />
+                  </ElCard>
+                </div>
+              </ElCard>
+
               <ElCard shadow="never" class="summary-section-card">
                 <template #header>
                   <div class="summary-section-card__header">
                     <div>
-                      <div class="summary-section-card__title">缺陷属性</div>
+                      <div class="summary-section-card__title">缺陷结构</div>
                       <div class="summary-section-card__desc">
-                        从严重程度、状态、阶段与关闭类型维度观察当前筛选下的分布。
+                        从严重程度、状态、流程类型与关闭类型维度观察当前筛选下的结构特征。
                       </div>
                     </div>
                     <ElTag
@@ -5838,13 +6529,13 @@ onUnmounted(() => {
                   <ElCard shadow="never" class="dts-chart-card">
                     <template #header>
                       <div class="dts-chart-card__header">
-                        <div class="dts-chart-card__title">阶段分布</div>
+                        <div class="dts-chart-card__title">流程类型分布</div>
                         <ElTag type="info" effect="plain">
-                          {{ summary.stage_dist.length }} 类
+                          {{ summary.flow_type_dist.length }} 类
                         </ElTag>
                       </div>
                     </template>
-                    <EchartsUI ref="stageChartRef" height="320px" />
+                    <EchartsUI ref="flowTypeChartRef" height="320px" />
                   </ElCard>
 
                   <ElCard shadow="never" class="dts-chart-card">
@@ -5865,9 +6556,9 @@ onUnmounted(() => {
                 <template #header>
                   <div class="summary-section-card__header">
                     <div>
-                      <div class="summary-section-card__title">组织维度</div>
+                      <div class="summary-section-card__title">组织热点</div>
                       <div class="summary-section-card__desc">
-                        按项目、团队与处理人维度查看问题单集中情况，帮助定位重点投入方向。
+                        从团队严重度热点与多维排名视角观察问题聚集区，辅助定位高压团队和高频归属。
                       </div>
                     </div>
                     <ElTag
@@ -5875,48 +6566,41 @@ onUnmounted(() => {
                       type="success"
                       effect="plain"
                     >
-                      {{ summary.team_dist.length }} 个团队
+                      {{ summary.team_severity_matrix?.rows.length || 0 }} 个团队
                     </ElTag>
                   </div>
                 </template>
-                <div class="dts-charts-grid">
+                <div class="dts-hotspot-grid">
                   <ElCard shadow="never" class="dts-chart-card">
                     <template #header>
                       <div class="dts-chart-card__header">
-                        <div class="dts-chart-card__title">项目分布</div>
-                        <ElTag type="warning" effect="plain">
-                          {{ summary.project_dist.length }} 项
+                        <div class="dts-chart-card__title">团队 × 严重度热点</div>
+                        <ElTag type="danger" effect="plain">
+                          {{ summary.team_severity_matrix?.columns.length || 0 }} 个严重度维度
                         </ElTag>
                       </div>
                     </template>
-                    <EchartsUI ref="projectChartRef" height="320px" />
+                    <EchartsUI ref="organizationHeatmapChartRef" height="360px" />
                   </ElCard>
 
                   <ElCard shadow="never" class="dts-chart-card">
                     <template #header>
-                      <div class="dts-chart-card__header">
-                        <div class="dts-chart-card__title">团队分布</div>
-                        <ElTag type="success" effect="plain">
-                          {{ summary.team_dist.length }} 团队
-                        </ElTag>
+                      <div class="dts-chart-card__header dts-chart-card__header--stacked">
+                        <div>
+                          <div class="dts-chart-card__title">{{ organizationRankTitle }}</div>
+                          <div class="dts-chart-card__desc">
+                            使用分段切换项目、团队、处理人与 PL 组视角。
+                          </div>
+                        </div>
+                        <ElSegmented
+                          v-model="organizationRankSegmentValue"
+                          class="dts-segmented"
+                          :options="SUMMARY_RANK_MODE_OPTIONS"
+                          size="small"
+                        />
                       </div>
                     </template>
-                    <EchartsUI ref="teamChartRef" height="320px" />
-                  </ElCard>
-
-                  <ElCard
-                    shadow="never"
-                    class="dts-chart-card dts-chart-card--wide"
-                  >
-                    <template #header>
-                      <div class="dts-chart-card__header">
-                        <div class="dts-chart-card__title">处理人 Top</div>
-                        <ElTag type="primary" effect="plain">
-                          {{ summary.handler_dist.length }} 人
-                        </ElTag>
-                      </div>
-                    </template>
-                    <EchartsUI ref="handlerChartRef" height="340px" />
+                    <EchartsUI ref="organizationRankChartRef" height="360px" />
                   </ElCard>
                 </div>
               </ElCard>
@@ -5925,10 +6609,9 @@ onUnmounted(() => {
                 <template #header>
                   <div class="summary-section-card__header">
                     <div>
-                      <div class="summary-section-card__title">自动识别</div>
+                      <div class="summary-section-card__title">来源与归属</div>
                       <div class="summary-section-card__desc">
-                        基于过滤后的 DTS 快照，自动识别提单来源与责任 PL
-                        组，辅助快速观察问题归属。
+                        观察提单来源与责任 PL 组归属，辅助判断问题是如何进入系统以及大致落在哪个组织单元。
                       </div>
                     </div>
                     <ElTag
@@ -5940,7 +6623,7 @@ onUnmounted(() => {
                     </ElTag>
                   </div>
                 </template>
-                <div class="dts-charts-grid">
+                <div class="dts-attribution-grid">
                   <ElCard shadow="never" class="dts-chart-card">
                     <template #header>
                       <div class="dts-chart-card__header">
@@ -5953,21 +6636,16 @@ onUnmounted(() => {
                     <EchartsUI ref="sourceChartRef" height="320px" />
                   </ElCard>
 
-                  <ElCard
-                    shadow="never"
-                    class="dts-chart-card dts-chart-card--wide"
-                  >
+                  <ElCard shadow="never" class="dts-chart-card">
                     <template #header>
                       <div class="dts-chart-card__header">
-                        <div class="dts-chart-card__title">
-                          自动责任PL组分布
-                        </div>
+                        <div class="dts-chart-card__title">PL 组排名</div>
                         <ElTag type="success" effect="plain">
                           {{ summary.auto_pl_group_dist.length }} 组
                         </ElTag>
                       </div>
                     </template>
-                    <EchartsUI ref="autoPlGroupChartRef" height="340px" />
+                    <EchartsUI ref="plGroupChartRef" height="340px" />
                   </ElCard>
                 </div>
               </ElCard>
@@ -5976,9 +6654,9 @@ onUnmounted(() => {
                 <template #header>
                   <div class="summary-section-card__header">
                     <div>
-                      <div class="summary-section-card__title">治理填报</div>
+                      <div class="summary-section-card__title">治理质量</div>
                       <div class="summary-section-card__desc">
-                        查看措施状态与开发/测试原因分布，辅助后续治理与复盘。
+                        将开发、测试和引入阶段拆开观察，同时保留问题分类的切换入口，方便做治理复盘。
                       </div>
                     </div>
                     <ElTag
@@ -5991,13 +6669,13 @@ onUnmounted(() => {
                   </div>
                 </template>
 
-                <div class="dts-charts-grid">
+                <div class="dts-governance-grid">
                   <ElCard shadow="never" class="dts-chart-card">
                     <template #header>
                       <div class="dts-chart-card__header">
-                        <div class="dts-chart-card__title">措施状态分布</div>
+                        <div class="dts-chart-card__title">开发 / 测试措施状态对比</div>
                         <ElTag type="danger" effect="plain">
-                          {{ summary.action_status_dist.length }} 类
+                          {{ summary.dev_action_status_dist.length + summary.test_action_status_dist.length }} 个状态项
                         </ElTag>
                       </div>
                     </template>
@@ -6007,15 +6685,13 @@ onUnmounted(() => {
                   <ElCard shadow="never" class="dts-chart-card">
                     <template #header>
                       <div class="dts-chart-card__header">
-                        <div class="dts-chart-card__title">
-                          开发问题小类 Top
-                        </div>
+                        <div class="dts-chart-card__title">问题引入阶段分布</div>
                         <ElTag type="info" effect="plain">
-                          {{ summary.dev_sub_category_dist.length }} 类
+                          {{ summary.issue_intro_stage_dist.length }} 类
                         </ElTag>
                       </div>
                     </template>
-                    <EchartsUI ref="devSubCategoryChartRef" height="320px" />
+                    <EchartsUI ref="issueIntroStageChartRef" height="320px" />
                   </ElCard>
 
                   <ElCard
@@ -6023,14 +6699,22 @@ onUnmounted(() => {
                     class="dts-chart-card dts-chart-card--wide"
                   >
                     <template #header>
-                      <div class="dts-chart-card__header">
-                        <div class="dts-chart-card__title">漏测原因 Top</div>
-                        <ElTag type="success" effect="plain">
-                          {{ summary.test_miss_reason_dist.length }} 类
-                        </ElTag>
+                      <div class="dts-chart-card__header dts-chart-card__header--stacked">
+                        <div>
+                          <div class="dts-chart-card__title">{{ governanceTreemapTitle }}</div>
+                          <div class="dts-chart-card__desc">
+                            在开发问题小类和漏测原因之间切换，查看高频治理分类。
+                          </div>
+                        </div>
+                        <ElSegmented
+                          v-model="governanceTreemapSegmentValue"
+                          class="dts-segmented"
+                          :options="SUMMARY_TREEMAP_MODE_OPTIONS"
+                          size="small"
+                        />
                       </div>
                     </template>
-                    <EchartsUI ref="testMissReasonChartRef" height="340px" />
+                    <EchartsUI ref="governanceTreemapChartRef" height="340px" />
                   </ElCard>
                 </div>
               </ElCard>
@@ -6719,6 +7403,109 @@ onUnmounted(() => {
   grid-column: 1 / -1;
 }
 
+.completion-radar-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.completion-radar-panel__chart {
+  min-height: 240px;
+}
+
+.completion-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.completion-kpi-card {
+  padding: 14px 16px;
+  background: linear-gradient(180deg, #fff 0%, #f8fafc 100%);
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+}
+
+.completion-kpi-card--qa {
+  background: linear-gradient(180deg, #eff6ff 0%, #fff 100%);
+  border-color: #bfdbfe;
+}
+
+.completion-kpi-card--dev {
+  background: linear-gradient(180deg, #f0fdf4 0%, #fff 100%);
+  border-color: #86efac;
+}
+
+.completion-kpi-card--test {
+  background: linear-gradient(180deg, #fff7ed 0%, #fff 100%);
+  border-color: #fdba74;
+}
+
+.completion-kpi-card__label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.completion-kpi-card__value {
+  margin-top: 8px;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.1;
+  color: #0f172a;
+}
+
+.completion-kpi-card__meta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.dts-trend-grid,
+.dts-attribution-grid,
+.dts-governance-grid,
+.dts-hotspot-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.dts-trend-grid {
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.9fr);
+}
+
+.dts-attribution-grid {
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+}
+
+.dts-governance-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dts-hotspot-grid {
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+}
+
+.dts-chart-card__header--stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.dts-chart-card__desc {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #64748b;
+}
+
+.dts-segmented {
+  align-self: flex-start;
+}
+
+.summary-section-card--trend {
+  background: linear-gradient(180deg, #fff 0%, #f8fbff 100%);
+}
+
 @media (max-width: 1024px) {
   .dense-overview-card__metric-grid--three {
     grid-template-columns: repeat(1, minmax(0, 1fr));
@@ -6750,6 +7537,14 @@ onUnmounted(() => {
   }
 
   .dts-charts-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .completion-kpi-grid,
+  .dts-trend-grid,
+  .dts-attribution-grid,
+  .dts-governance-grid,
+  .dts-hotspot-grid {
     grid-template-columns: 1fr;
   }
 }

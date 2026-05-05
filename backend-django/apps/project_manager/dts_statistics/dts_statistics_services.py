@@ -1685,6 +1685,9 @@ def _resolve_local_runtime_filters(
         "dev_asset_link_keyword": _clean_text(
             getattr(query, "dev_asset_link_keyword", "")
         ),
+        "dev_asset_type_values": _normalize_text_list(
+            getattr(query, "dev_asset_type_values", [])
+        ),
         "dev_status_values": _normalize_text_list(
             getattr(query, "dev_status_values", [])
         ),
@@ -3365,6 +3368,194 @@ def _distribution(counter: Counter[str], *, top_n: int | None = None) -> list[di
     return [{"label": label, "value": int(value)} for label, value in items if label]
 
 
+def _timestamp_ms_to_datetime(value: Any) -> datetime.datetime | None:
+    try:
+        timestamp_ms = int(value or 0)
+    except Exception:
+        return None
+    if timestamp_ms <= 0:
+        return None
+    try:
+        dt = datetime.datetime.fromtimestamp(
+            timestamp_ms / 1000,
+            tz=timezone.get_current_timezone() if settings.USE_TZ else None,
+        )
+        return _normalize_runtime_datetime(dt)
+    except Exception:
+        return None
+
+
+def _floor_datetime_to_day(dt: datetime.datetime) -> datetime.datetime:
+    return dt.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _floor_datetime_to_week(dt: datetime.datetime) -> datetime.datetime:
+    day_start = _floor_datetime_to_day(dt)
+    return day_start - datetime.timedelta(days=day_start.weekday())
+
+
+def _format_day_label(dt: datetime.datetime) -> str:
+    return dt.strftime("%Y-%m-%d")
+
+
+def _format_week_label(start_dt: datetime.datetime, end_dt: datetime.datetime) -> str:
+    return f"{start_dt.strftime('%Y-%m-%d')}~{end_dt.strftime('%Y-%m-%d')}"
+
+
+def _resolve_update_trend_window(
+    defects: list[dict[str, Any]],
+    query: DtsStatisticsQuerySchema,
+) -> tuple[datetime.datetime | None, datetime.datetime | None, str]:
+    query_begin = _timestamp_ms_to_datetime(getattr(query, "updateTimeBegin", 0))
+    query_end = _timestamp_ms_to_datetime(getattr(query, "updateTimeEnd", 0))
+    parsed_updates = [
+        parsed
+        for parsed in (_parse_datetime(item.get("updateAt")) for item in defects)
+        if parsed is not None
+    ]
+
+    begin_dt = query_begin or (min(parsed_updates) if parsed_updates else None)
+    end_dt = query_end or (max(parsed_updates) if parsed_updates else None)
+    if begin_dt is None and end_dt is None:
+        return None, None, "day"
+    if begin_dt is None:
+        begin_dt = end_dt
+    if end_dt is None:
+        end_dt = begin_dt
+    if begin_dt > end_dt:
+        begin_dt, end_dt = end_dt, begin_dt
+
+    span_days = max((end_dt - begin_dt).total_seconds() / 86400, 0.0)
+    granularity = "day" if span_days <= 31 else "week"
+    return begin_dt, end_dt, granularity
+
+
+def _build_update_trend(
+    defects: list[dict[str, Any]],
+    query: DtsStatisticsQuerySchema,
+) -> dict[str, Any] | None:
+    begin_dt, end_dt, granularity = _resolve_update_trend_window(defects, query)
+    if begin_dt is None or end_dt is None:
+        return None
+
+    bucket_labels: list[str] = []
+    bucket_index_map: dict[str, int] = {}
+    current = _floor_datetime_to_day(begin_dt)
+    if granularity == "week":
+        current = _floor_datetime_to_week(begin_dt)
+        last = _floor_datetime_to_week(end_dt) + datetime.timedelta(days=6)
+        while current <= last:
+            bucket_end = current + datetime.timedelta(days=6)
+            label = _format_week_label(current, bucket_end)
+            bucket_index_map[label] = len(bucket_labels)
+            bucket_labels.append(label)
+            current += datetime.timedelta(days=7)
+    else:
+        last = _floor_datetime_to_day(end_dt)
+        while current <= last:
+            label = _format_day_label(current)
+            bucket_index_map[label] = len(bucket_labels)
+            bucket_labels.append(label)
+            current += datetime.timedelta(days=1)
+
+    total_values = [0 for _ in bucket_labels]
+    closed_values = [0 for _ in bucket_labels]
+    critical_values = [0 for _ in bucket_labels]
+
+    for defect in defects:
+        update_dt = _parse_datetime(defect.get("updateAt"))
+        if update_dt is None:
+            continue
+        if granularity == "week":
+            bucket_start = _floor_datetime_to_week(update_dt)
+            label = _format_week_label(
+                bucket_start,
+                bucket_start + datetime.timedelta(days=6),
+            )
+        else:
+            bucket_start = _floor_datetime_to_day(update_dt)
+            label = _format_day_label(bucket_start)
+        bucket_index = bucket_index_map.get(label)
+        if bucket_index is None:
+            continue
+        total_values[bucket_index] += 1
+        if _is_closed(defect):
+            closed_values[bucket_index] += 1
+        if _clean_text(defect.get("serverityNoName")) == "关键":
+            critical_values[bucket_index] += 1
+
+    return {
+        "granularity": granularity,
+        "labels": bucket_labels,
+        "total_values": total_values,
+        "closed_values": closed_values,
+        "critical_values": critical_values,
+    }
+
+
+def _resolve_process_days_value(defect: dict[str, Any]) -> float | None:
+    raw_value = _clean_text(defect.get("iNumOfCloseDays"))
+    if raw_value:
+        try:
+            parsed = float(raw_value)
+            if parsed >= 0:
+                return parsed
+        except Exception:
+            pass
+    fallback = _compute_process_days(defect.get("createAt"), defect.get("dCloseTime"))
+    if not fallback:
+        return None
+    try:
+        parsed = float(fallback)
+        if parsed >= 0:
+            return parsed
+    except Exception:
+        return None
+    return None
+
+
+def _resolve_process_days_bucket(value: float | None) -> str:
+    if value is None:
+        return "未填写"
+    if value <= 3:
+        return "0-3天"
+    if value <= 7:
+        return "4-7天"
+    if value <= 14:
+        return "8-14天"
+    if value <= 30:
+        return "15-30天"
+    return "30天以上"
+
+
+def _build_team_severity_matrix(defects: list[dict[str, Any]]) -> dict[str, Any]:
+    severity_columns = ["关键", "严重", "一般", "提示", "未填写"]
+    team_counter: Counter[str] = Counter()
+    matrix_counter: dict[str, Counter[str]] = defaultdict(Counter)
+
+    for defect in defects:
+        team_label = _clean_text(defect.get("sDeptOneNoName")) or "未识别团队"
+        severity_label = _clean_text(defect.get("serverityNoName"))
+        if severity_label not in severity_columns[:-1]:
+            severity_label = "未填写"
+        team_counter[team_label] += 1
+        matrix_counter[team_label][severity_label] += 1
+
+    rows = []
+    for team_label, _ in team_counter.most_common(8):
+        rows.append(
+            {
+                "label": team_label,
+                "values": [int(matrix_counter[team_label].get(column, 0)) for column in severity_columns],
+            }
+        )
+
+    return {
+        "columns": severity_columns,
+        "rows": rows,
+    }
+
+
 def _iter_chunks(values: list[str], chunk_size: int = 2000) -> Iterable[list[str]]:
     if chunk_size <= 0:
         chunk_size = 2000
@@ -3808,13 +3999,23 @@ def get_dts_statistics_summary(
 
     severity_counter: Counter[str] = Counter()
     status_counter: Counter[str] = Counter()
+    flow_type_counter: Counter[str] = Counter()
     team_counter: Counter[str] = Counter()
-    stage_counter: Counter[str] = Counter()
     close_type_counter: Counter[str] = Counter()
     source_counter: Counter[str] = Counter()
     auto_pl_group_counter: Counter[str] = Counter()
     handler_counter: Counter[str] = Counter()
     project_counter: Counter[str] = Counter()
+    process_days_bucket_counter: Counter[str] = Counter(
+        {
+            "0-3天": 0,
+            "4-7天": 0,
+            "8-14天": 0,
+            "15-30天": 0,
+            "30天以上": 0,
+            "未填写": 0,
+        }
+    )
 
     open_count = 0
     closed_count = 0
@@ -3825,7 +4026,6 @@ def get_dts_statistics_summary(
         severity_counter[_clean_text(defect.get("serverityNoName"))] += 1
         status_counter[_clean_text(defect.get("dtsStatusName"))] += 1
         team_counter[_clean_text(defect.get("sDeptOneNoName"))] += 1
-        stage_counter[_clean_text(defect.get("dtsStatusName"))] += 1
         close_type_label = _clean_text(defect.get("uQbiCloseTypeName"))
         if close_type_label:
             close_type_counter[close_type_label] += 1
@@ -3865,6 +4065,9 @@ def get_dts_statistics_summary(
     test_filled_count = 0
     dev_sub_category_counter: Counter[str] = Counter()
     test_miss_reason_counter: Counter[str] = Counter()
+    issue_intro_stage_counter: Counter[str] = Counter()
+    dev_action_status_counter: Counter[str] = Counter()
+    test_action_status_counter: Counter[str] = Counter()
     action_status_counter: Counter[str] = Counter()
 
     for chunk in _iter_chunks(defect_nos):
@@ -3918,16 +4121,34 @@ def get_dts_statistics_summary(
             if _is_test_filled(ext):
                 test_filled_count += 1
 
+            issue_intro_stage = _clean_text(ext.issue_intro_stage)
+            if issue_intro_stage:
+                issue_intro_stage_counter[issue_intro_stage] += 1
+
             for item in ext.dev_sub_category or []:
                 dev_sub_category_counter[_clean_text(item)] += 1
             for item in ext.test_miss_reason or []:
                 test_miss_reason_counter[_clean_text(item)] += 1
 
-            action_status = (
-                _clean_text(ext.dev_status) or _clean_text(ext.test_status) or ""
-            )
+            dev_action_status = _clean_text(ext.dev_status)
+            if dev_action_status:
+                dev_action_status_counter[dev_action_status] += 1
+            test_action_status = _clean_text(ext.test_status)
+            if test_action_status:
+                test_action_status_counter[test_action_status] += 1
+
+            action_status = dev_action_status or test_action_status or ""
             if action_status:
                 action_status_counter[action_status] += 1
+
+    for defect in defects:
+        flow_type = _clean_text(defect.get("sConfigFlowType"))
+        if flow_type:
+            flow_type_counter[flow_type] += 1
+
+        process_days = _resolve_process_days_value(defect)
+        bucket_label = _resolve_process_days_bucket(process_days)
+        process_days_bucket_counter[bucket_label] += 1
 
     qa_completion_rate = round(qa_filled_count / total_count, 4) if total_count else 0.0
     dev_completion_rate = (
@@ -3936,6 +4157,8 @@ def get_dts_statistics_summary(
     test_completion_rate = (
         round(test_filled_count / total_count, 4) if total_count else 0.0
     )
+    update_trend = _build_update_trend(defects, query)
+    team_severity_matrix = _build_team_severity_matrix(defects)
 
     return {
         "total_count": total_count,
@@ -3950,16 +4173,32 @@ def get_dts_statistics_summary(
         "test_completion_rate": test_completion_rate,
         "severity_dist": _distribution(severity_counter),
         "status_dist": _distribution(status_counter),
+        "flow_type_dist": _distribution(flow_type_counter),
         "team_dist": _distribution(team_counter, top_n=30),
-        "stage_dist": _distribution(stage_counter),
         "close_type_dist": _distribution(close_type_counter),
         "source_dist": _distribution(source_counter),
         "auto_pl_group_dist": _distribution(auto_pl_group_counter, top_n=20),
         "handler_dist": _distribution(handler_counter, top_n=20),
+        "process_days_bucket_dist": [
+            {"label": label, "value": int(process_days_bucket_counter.get(label, 0))}
+            for label in [
+                "0-3天",
+                "4-7天",
+                "8-14天",
+                "15-30天",
+                "30天以上",
+                "未填写",
+            ]
+        ],
+        "issue_intro_stage_dist": _distribution(issue_intro_stage_counter),
+        "dev_action_status_dist": _distribution(dev_action_status_counter),
+        "test_action_status_dist": _distribution(test_action_status_counter),
         "dev_sub_category_dist": _distribution(dev_sub_category_counter, top_n=20),
         "test_miss_reason_dist": _distribution(test_miss_reason_counter, top_n=20),
         "project_dist": _distribution(project_counter),
         "action_status_dist": _distribution(action_status_counter),
+        "update_trend": update_trend,
+        "team_severity_matrix": team_severity_matrix,
         "snapshot": snapshot,
     }
 

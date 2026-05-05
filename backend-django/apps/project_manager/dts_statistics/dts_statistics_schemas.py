@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from ninja import Field, Schema
 from pydantic import field_validator
@@ -706,6 +706,24 @@ class DtsDistributionItemSchema(Schema):
     value: int
 
 
+class DtsTrendSummarySchema(Schema):
+    granularity: Literal["day", "week"]
+    labels: list[str] = Field(default_factory=list)
+    total_values: list[int] = Field(default_factory=list)
+    closed_values: list[int] = Field(default_factory=list)
+    critical_values: list[int] = Field(default_factory=list)
+
+
+class DtsHeatmapRowSchema(Schema):
+    label: str
+    values: list[int] = Field(default_factory=list)
+
+
+class DtsHeatmapMatrixSchema(Schema):
+    columns: list[str] = Field(default_factory=list)
+    rows: list[DtsHeatmapRowSchema] = Field(default_factory=list)
+
+
 class DtsSummarySchema(Schema):
     total_count: int
     open_count: int
@@ -721,16 +739,22 @@ class DtsSummarySchema(Schema):
 
     severity_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     status_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
+    flow_type_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     team_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
-    stage_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     close_type_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     source_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     auto_pl_group_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     handler_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
+    process_days_bucket_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
+    issue_intro_stage_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
+    dev_action_status_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
+    test_action_status_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     dev_sub_category_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     test_miss_reason_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     project_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     action_status_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
+    update_trend: Optional[DtsTrendSummarySchema] = None
+    team_severity_matrix: Optional[DtsHeatmapMatrixSchema] = None
     snapshot: Optional[DtsSnapshotMetaSchema] = None
 
 

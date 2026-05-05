@@ -280,6 +280,24 @@ export interface DtsDistributionItem {
   value: number;
 }
 
+export interface DtsTrendSummary {
+  granularity: 'day' | 'week';
+  labels: string[];
+  total_values: number[];
+  closed_values: number[];
+  critical_values: number[];
+}
+
+export interface DtsHeatmapRow {
+  label: string;
+  values: number[];
+}
+
+export interface DtsHeatmapMatrix {
+  columns: string[];
+  rows: DtsHeatmapRow[];
+}
+
 export interface DtsSummary {
   total_count: number;
   open_count: number;
@@ -295,16 +313,22 @@ export interface DtsSummary {
 
   severity_dist: DtsDistributionItem[];
   status_dist: DtsDistributionItem[];
+  flow_type_dist: DtsDistributionItem[];
   team_dist: DtsDistributionItem[];
-  stage_dist: DtsDistributionItem[];
   close_type_dist: DtsDistributionItem[];
   source_dist: DtsDistributionItem[];
   auto_pl_group_dist: DtsDistributionItem[];
   handler_dist: DtsDistributionItem[];
+  process_days_bucket_dist: DtsDistributionItem[];
+  issue_intro_stage_dist: DtsDistributionItem[];
+  dev_action_status_dist: DtsDistributionItem[];
+  test_action_status_dist: DtsDistributionItem[];
   dev_sub_category_dist: DtsDistributionItem[];
   test_miss_reason_dist: DtsDistributionItem[];
   project_dist: DtsDistributionItem[];
   action_status_dist: DtsDistributionItem[];
+  update_trend: DtsTrendSummary | null;
+  team_severity_matrix: DtsHeatmapMatrix | null;
   snapshot?: DtsSnapshotMeta | null;
 }
 
