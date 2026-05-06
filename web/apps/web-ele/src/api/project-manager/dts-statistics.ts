@@ -280,6 +280,13 @@ export interface DtsDistributionItem {
   value: number;
 }
 
+export interface DtsPlGroupCompletionItem {
+  label: string;
+  filled_count: number;
+  total_count: number;
+  filled_rate: number;
+}
+
 export interface DtsTrendSummary {
   granularity: 'day' | 'week';
   labels: string[];
@@ -319,6 +326,7 @@ export interface DtsSummary {
   close_type_dist: DtsDistributionItem[];
   source_dist: DtsDistributionItem[];
   auto_pl_group_dist: DtsDistributionItem[];
+  pl_group_dev_completion_dist: DtsPlGroupCompletionItem[];
   handler_dist: DtsDistributionItem[];
   process_days_bucket_dist: DtsDistributionItem[];
   issue_intro_stage_dist: DtsDistributionItem[];

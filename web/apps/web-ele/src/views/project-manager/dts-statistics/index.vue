@@ -8,6 +8,7 @@ import type {
   DtsMergedDefect,
   DtsSnapshotMeta,
   DtsStatisticsFilters,
+  DtsPlGroupCompletionItem,
   DtsSummary,
 } from '#/api/project-manager/dts-statistics';
 
@@ -463,6 +464,7 @@ function createEmptySummary(): DtsSummary {
     close_type_dist: [],
     source_dist: [],
     auto_pl_group_dist: [],
+    pl_group_dev_completion_dist: [],
     handler_dist: [],
     process_days_bucket_dist: [],
     issue_intro_stage_dist: [],
@@ -2536,6 +2538,7 @@ type SummaryDistributionRow = {
 
 type SummaryTrend = NonNullable<DtsSummary['update_trend']>;
 type SummaryHeatmapMatrix = NonNullable<DtsSummary['pl_group_severity_matrix']>;
+type SummaryPlGroupCompletionRow = DtsPlGroupCompletionItem;
 type SummaryRankMode = 'handler' | 'pl_group' | 'project';
 type SummaryTreemapMode = 'dev_sub_category' | 'test_miss_reason';
 
@@ -2573,6 +2576,10 @@ const sourceChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderSourceChart } = useEcharts(sourceChartRef);
 const plGroupChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderPlGroupChart } = useEcharts(plGroupChartRef);
+const plGroupCompletionChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderPlGroupCompletionChart } = useEcharts(
+  plGroupCompletionChartRef,
+);
 const actionStatusChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderActionStatusChart } =
   useEcharts(actionStatusChartRef);
@@ -2682,12 +2689,25 @@ function createVerticalGradient(top: string, bottom: string) {
 }
 
 function normalizeChartRows(
-  rows?: SummaryDistributionRow[] | null,
+  rows?: null | SummaryDistributionRow[],
 ): SummaryDistributionRow[] {
   return (rows || [])
     .map((item) => ({
       label: String(item?.label || '').trim(),
       value: Number(item?.value || 0),
+    }))
+    .filter((item) => item.label);
+}
+
+function normalizePlGroupCompletionRows(
+  rows?: null | SummaryPlGroupCompletionRow[],
+): SummaryPlGroupCompletionRow[] {
+  return (rows || [])
+    .map((item) => ({
+      label: String(item?.label || '').trim(),
+      filled_count: Number(item?.filled_count || 0),
+      total_count: Number(item?.total_count || 0),
+      filled_rate: Number(item?.filled_rate || 0),
     }))
     .filter((item) => item.label);
 }
@@ -3107,6 +3127,120 @@ function renderRankBar(
   });
 }
 
+function renderPlGroupCompletionBar(
+  render: (options: Record<string, any>) => void,
+  rows?: null | SummaryPlGroupCompletionRow[],
+  title: string,
+) {
+  const chartRows = normalizePlGroupCompletionRows(rows).sort((left, right) => {
+    if (right.filled_rate !== left.filled_rate) {
+      return right.filled_rate - left.filled_rate;
+    }
+    if (right.filled_count !== left.filled_count) {
+      return right.filled_count - left.filled_count;
+    }
+    if (right.total_count !== left.total_count) {
+      return right.total_count - left.total_count;
+    }
+    return left.label.localeCompare(right.label);
+  });
+  if (chartRows.length === 0) {
+    renderEmptyChart(render, `暂无${title}`);
+    return;
+  }
+  const theme = getChartTheme();
+  const rotateLabel = chartRows.some((item) => item.label.length > 8);
+  const rateValues = chartRows.map((item) =>
+    Number((item.filled_rate * 100).toFixed(1)),
+  );
+  render({
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params: any) => {
+        const first = Array.isArray(params) ? params[0] : params;
+        const row = chartRows[Number(first?.dataIndex ?? 0)];
+        if (!row) {
+          return '';
+        }
+        return `${row.label}<br/>已填报 ${row.filled_count} / ${row.total_count}<br/>完成率 ${(row.filled_rate * 100).toFixed(1)}%`;
+      },
+    },
+    grid: {
+      left: 16,
+      right: 16,
+      top: 16,
+      bottom: chartRows.length > 12 ? 48 : 24,
+      containLabel: true,
+    },
+    dataZoom:
+      chartRows.length > 12
+        ? [
+            {
+              type: 'slider',
+              xAxisIndex: 0,
+              bottom: 10,
+              height: 10,
+              start: 0,
+              end: 100,
+            },
+            {
+              type: 'inside',
+              xAxisIndex: 0,
+              start: 0,
+              end: 100,
+            },
+          ]
+        : [],
+    xAxis: {
+      type: 'category',
+      data: chartRows.map((item) => item.label),
+      axisLabel: {
+        color: theme.muted,
+        fontSize: 11,
+        interval: 0,
+        rotate: rotateLabel ? 20 : 0,
+      },
+      axisLine: { lineStyle: { color: theme.border } },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value',
+      min: 0,
+      max: 100,
+      splitNumber: 5,
+      axisLabel: {
+        color: theme.muted,
+        fontSize: 11,
+        formatter: (value: number) => `${value}%`,
+      },
+      axisLine: { lineStyle: { color: theme.border } },
+      splitLine: { lineStyle: { color: theme.border } },
+    },
+    series: [
+      {
+        type: 'bar',
+        barMaxWidth: 28,
+        data: rateValues,
+        itemStyle: {
+          borderRadius: [8, 8, 0, 0],
+          color: createVerticalGradient(theme.successLight, theme.success),
+        },
+        label: {
+          show: true,
+          position: 'top',
+          color: theme.text,
+          fontSize: 11,
+          formatter: (params: any) => {
+            const value = Number(params?.value ?? 0);
+            return `${value.toFixed(1)}%`;
+          },
+        },
+      },
+    ],
+  });
+}
+
 function renderGroupedBar(
   render: (options: Record<string, any>) => void,
   leftRows: SummaryDistributionRow[],
@@ -3485,6 +3619,15 @@ watchDashboardChart(
       summary.value.auto_pl_group_dist,
       'PL领域排名',
       getChartTheme().success,
+    ),
+);
+watchDashboardChart(
+  () => summary.value.pl_group_dev_completion_dist,
+  () =>
+    renderPlGroupCompletionBar(
+      renderPlGroupCompletionChart,
+      summary.value.pl_group_dev_completion_dist,
+      'PL 组开发填报完成率',
     ),
 );
 watchDashboardChart(
@@ -6439,6 +6582,26 @@ onUnmounted(() => {
                   </div>
                 </ElCard>
               </div>
+
+              <ElCard
+                shadow="never"
+                class="dts-chart-card dts-chart-card--wide"
+              >
+                <template #header>
+                  <div class="dts-chart-card__header dts-chart-card__header--stacked">
+                    <div>
+                      <div class="dts-chart-card__title">PL 组开发填报完成率</div>
+                      <div class="dts-chart-card__desc">
+                        有开发责任人即视为已填报，按完成率从高到低展示各 PL 组的填报情况。
+                      </div>
+                    </div>
+                    <ElTag type="success" effect="plain">
+                      {{ summary.pl_group_dev_completion_dist.length }} 个PL组
+                    </ElTag>
+                  </div>
+                </template>
+                <EchartsUI ref="plGroupCompletionChartRef" height="360px" />
+              </ElCard>
 
               <ElCard shadow="never" class="summary-section-card summary-section-card--trend">
                 <template #header>

@@ -706,6 +706,13 @@ class DtsDistributionItemSchema(Schema):
     value: int
 
 
+class DtsPlGroupCompletionItemSchema(Schema):
+    label: str
+    filled_count: int
+    total_count: int
+    filled_rate: float
+
+
 class DtsTrendSummarySchema(Schema):
     granularity: Literal["day", "week"]
     labels: list[str] = Field(default_factory=list)
@@ -745,6 +752,9 @@ class DtsSummarySchema(Schema):
     close_type_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     source_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     auto_pl_group_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
+    pl_group_dev_completion_dist: list[DtsPlGroupCompletionItemSchema] = Field(
+        default_factory=list
+    )
     handler_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     process_days_bucket_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     issue_intro_stage_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)

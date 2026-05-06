@@ -3563,6 +3563,42 @@ def _build_pl_group_severity_matrix(defects: list[dict[str, Any]]) -> dict[str, 
     }
 
 
+def _build_pl_group_dev_completion_dist(defects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    pl_group_total_counter: Counter[str] = Counter()
+    pl_group_filled_counter: Counter[str] = Counter()
+
+    for defect in defects:
+        pl_group_label = _clean_text(defect.get("auto_pl_group_name")) or "未识别PL领域"
+        pl_group_total_counter[pl_group_label] += 1
+        if _has_value_for_summary(defect.get("dev_owner_name")) or _has_value_for_summary(
+            defect.get("dev_owner_id")
+        ):
+            pl_group_filled_counter[pl_group_label] += 1
+
+    rows: list[dict[str, Any]] = []
+    for pl_group_label, total_count in pl_group_total_counter.items():
+        filled_count = int(pl_group_filled_counter.get(pl_group_label, 0))
+        filled_rate = round((filled_count / total_count) if total_count else 0.0, 4)
+        rows.append(
+            {
+                "label": pl_group_label,
+                "filled_count": filled_count,
+                "total_count": int(total_count),
+                "filled_rate": filled_rate,
+            }
+        )
+
+    rows.sort(
+        key=lambda item: (
+            -float(item.get("filled_rate") or 0.0),
+            -int(item.get("filled_count") or 0),
+            -int(item.get("total_count") or 0),
+            str(item.get("label") or ""),
+        )
+    )
+    return rows
+
+
 def _iter_chunks(values: list[str], chunk_size: int = 2000) -> Iterable[list[str]]:
     if chunk_size <= 0:
         chunk_size = 2000
@@ -4166,6 +4202,7 @@ def get_dts_statistics_summary(
     )
     update_trend = _build_update_trend(defects, query)
     pl_group_severity_matrix = _build_pl_group_severity_matrix(defects)
+    pl_group_dev_completion_dist = _build_pl_group_dev_completion_dist(defects)
 
     return {
         "total_count": total_count,
@@ -4206,6 +4243,7 @@ def get_dts_statistics_summary(
         "action_status_dist": _distribution(action_status_counter),
         "update_trend": update_trend,
         "pl_group_severity_matrix": pl_group_severity_matrix,
+        "pl_group_dev_completion_dist": pl_group_dev_completion_dist,
         "snapshot": snapshot,
     }
 

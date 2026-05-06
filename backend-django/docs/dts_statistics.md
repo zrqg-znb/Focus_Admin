@@ -384,6 +384,7 @@ Schema：`DtsStatisticsQuerySchema`（不依赖分页字段）
   - `issue_intro_stage_dist`：问题引入阶段分布
   - `dev_action_status_dist` / `test_action_status_dist`：开发/测试措施状态拆分统计
   - `pl_group_severity_matrix`：PL领域 × 严重度热力矩阵，用于热点领域识别
+  - `pl_group_dev_completion_dist`：各 PL 组开发填报完成率，按 `auto_pl_group_name` 分组，`dev_owner_name` 非空视为已填报
 - 旧的 `stage_dist` 已移除，避免与流程类型口径重复
 
 项目分布（`project_dist`）：

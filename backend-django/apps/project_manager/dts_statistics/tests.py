@@ -47,6 +47,8 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
         handler: str = "张三",
         project_name: str = "座舱项目",
         pl_group: str = "PL-A",
+        dev_owner_name: str = "",
+        dev_status: str = "处理中",
         update_at: str = "2026-05-01 10:00:00",
         create_at: str = "2026-04-25 10:00:00",
         close_time: str = "",
@@ -64,10 +66,12 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
             "sDeptOneNoName": team,
             "auto_source_type": source,
             "auto_pl_group_name": pl_group,
+            "dev_owner_name": dev_owner_name,
             "currentHandler": handler,
             "projectName": project_name,
             "sProdCName": project_name,
             "sConfigFlowType": flow_type,
+            "dev_status": dev_status,
             "iNumOfCloseDays": close_days,
         }
 
@@ -305,3 +309,78 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
         self.assertEqual(matrix["rows"][1]["label"], "PL-B")
         self.assertEqual(matrix["rows"][1]["values"], [2, 2, 2, 1, 1])
         self.assertNotIn("PL-I", [row["label"] for row in matrix["rows"]])
+
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services._resolve_runtime_defects"
+    )
+    def test_summary_pl_group_dev_completion_dist_uses_dev_owner_name_only(
+        self,
+        mocked_resolve,
+    ):
+        defects = [
+            self._defect(
+                "D-1",
+                pl_group="PL-A",
+                dev_owner_name="张三",
+                dev_status="",
+            ),
+            self._defect(
+                "D-2",
+                pl_group="PL-A",
+                dev_owner_name="",
+                dev_status="已完成",
+            ),
+            self._defect(
+                "D-3",
+                pl_group="PL-A",
+                dev_owner_name="",
+                dev_status="待处理",
+            ),
+            self._defect(
+                "D-4",
+                pl_group="PL-B",
+                dev_owner_name="李四",
+                dev_status="待处理",
+            ),
+            self._defect(
+                "D-5",
+                pl_group="",
+                dev_owner_name="王五",
+                dev_status="",
+            ),
+            self._defect(
+                "D-6",
+                pl_group="",
+                dev_owner_name="",
+                dev_status="已完成",
+            ),
+        ]
+        mocked_resolve.return_value = (defects, None)
+
+        summary = dts_statistics_services.get_dts_statistics_summary(
+            self._query(self._ms(2026, 5, 1), self._ms(2026, 5, 10))
+        )
+
+        self.assertEqual(
+            summary["pl_group_dev_completion_dist"],
+            [
+                {
+                    "label": "PL-B",
+                    "filled_count": 1,
+                    "total_count": 1,
+                    "filled_rate": 1.0,
+                },
+                {
+                    "label": "未识别PL领域",
+                    "filled_count": 1,
+                    "total_count": 2,
+                    "filled_rate": 0.5,
+                },
+                {
+                    "label": "PL-A",
+                    "filled_count": 1,
+                    "total_count": 3,
+                    "filled_rate": 0.3333,
+                },
+            ],
+        )
