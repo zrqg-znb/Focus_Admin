@@ -41,6 +41,7 @@ import {
 import { useZqTable } from '#/components/zq-table';
 
 import DomainSwitcher from '../components/domain-switcher.vue';
+import { setAutoTestReportDailyResultsState } from '../shared/daily-results-state';
 import {
   AUTO_TEST_REPORT_VIU_CODES,
   useAutoTestReportDomain,
@@ -49,8 +50,8 @@ import { useVehicleColumns, useVehicleSearchSchema } from './data';
 
 defineOptions({ name: 'AutoTestVehicleConfig' });
 
+const { domain, domainMeta } = useAutoTestReportDomain();
 const router = useRouter();
-const { domain, domainMeta, ensureDomainQuery } = useAutoTestReportDomain();
 const platformList = ref<McuPlatformItem[]>([]);
 const activePlatformId = ref('');
 
@@ -267,10 +268,11 @@ async function removeVehicle(row: VehicleItem) {
 }
 
 function goDailyResults(row: VehicleItem) {
-  router.push({
-    path: '/auto-test-report/daily-results',
-    query: { vehicleId: row.id, domain: domain.value },
+  setAutoTestReportDailyResultsState(domain.value, {
+    activeView: 'vehicle',
+    vehicleId: row.id,
   });
+  router.push('/auto-test-report/daily-results');
 }
 
 watch(
@@ -287,7 +289,6 @@ watch(
 );
 
 onMounted(async () => {
-  ensureDomainQuery();
   vehicleGridApi.setLoading(true);
   try {
     await loadPlatforms();

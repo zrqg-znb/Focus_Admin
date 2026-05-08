@@ -55,7 +55,7 @@ type TestCaseFormState = Omit<TestCasePayload, 'vehicle_id'> & {
   vehicle_path: string[];
 };
 
-const { domain, domainMeta, ensureDomainQuery } = useAutoTestReportDomain();
+const { domain, domainMeta } = useAutoTestReportDomain();
 const vehicleOptions = ref<VehicleOption[]>([]);
 const cascaderOptions = ref<any[]>([]);
 const selectedVehiclePaths = ref<string[][]>([]);
@@ -459,7 +459,6 @@ watch(
 );
 
 onMounted(async () => {
-  ensureDomainQuery();
   gridApi.setLoading(true);
   try {
     await reloadVehicleOptions();

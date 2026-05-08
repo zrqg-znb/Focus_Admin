@@ -1,6 +1,9 @@
 <script lang="ts" setup>
 import type { EchartsUIType } from '@vben/plugins/echarts';
 
+import type { AutoTestReportDailyResultsView } from '../shared/daily-results-state';
+import type { AutoTestReportDomain } from '../shared/domain';
+
 import type {
   DailyOverviewResponse,
   DailyOverviewRow,
@@ -10,7 +13,6 @@ import type {
 } from '#/api/auto-test-report';
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
@@ -32,10 +34,9 @@ import {
   ElMessage,
   ElOption,
   ElPopover,
+  ElSegmented,
   ElSelect,
   ElSwitch,
-  ElTabPane,
-  ElTabs,
   ElTag,
 } from 'element-plus';
 
@@ -50,6 +51,12 @@ import { useZqTable } from '#/components/zq-table';
 
 import DomainSwitcher from '../components/domain-switcher.vue';
 import TestCaseHistoryDrawer from '../components/test-case-history-drawer.vue';
+import {
+  getAutoTestReportDailyResultsState,
+  setAutoTestReportDailyResultsState,
+  setAutoTestReportDailyResultsVehicleId,
+  setAutoTestReportDailyResultsView,
+} from '../shared/daily-results-state';
 import { useAutoTestReportDomain } from '../shared/domain';
 import {
   formatDuration,
@@ -61,16 +68,27 @@ import {
 
 defineOptions({ name: 'AutoTestDailyResults' });
 
-const route = useRoute();
-const router = useRouter();
-const { domain, domainMeta, ensureDomainQuery } = useAutoTestReportDomain();
+const { domain, domainMeta } = useAutoTestReportDomain();
 const overviewChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderOverviewChart } = useEcharts(overviewChartRef);
 
 const vehicleChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderVehicleChart } = useEcharts(vehicleChartRef);
 
-const activeView = ref<'overview' | 'vehicle'>('overview');
+const activeView = ref<AutoTestReportDailyResultsView>(
+  getAutoTestReportDailyResultsState(domain.value).activeView,
+);
+const viewOptions = [
+  { label: '全量', value: 'overview' },
+  { label: '车型', value: 'vehicle' },
+];
+const activeViewModel = computed<AutoTestReportDailyResultsView>({
+  get: () => activeView.value,
+  set: (next) => {
+    void handleViewChange(next);
+  },
+});
+
 const vehicleOptions = ref<VehicleOption[]>([]);
 const cascaderOptions = ref<any[]>([]);
 const selectedVehiclePaths = ref<string[]>([]);
@@ -97,65 +115,6 @@ const detailSortState = ref<null | {
   prop: string;
 }>(null);
 
-const activeViewReloadPaused = ref(false);
-let activeViewReloadTimer: null | number = null;
-let activeViewReloadInFlight = false;
-let activeViewReloadQueued = false;
-
-function scheduleActiveViewReload() {
-  if (activeViewReloadPaused.value) {
-    activeViewReloadQueued = true;
-    return;
-  }
-  if (activeViewReloadTimer !== null || activeViewReloadInFlight) {
-    activeViewReloadQueued = true;
-    return;
-  }
-  activeViewReloadTimer = window.setTimeout(async () => {
-    activeViewReloadTimer = null;
-    if (activeViewReloadPaused.value) {
-      activeViewReloadQueued = true;
-      return;
-    }
-    activeViewReloadQueued = false;
-    activeViewReloadInFlight = true;
-    try {
-      await loadActiveView();
-    } finally {
-      activeViewReloadInFlight = false;
-      if (activeViewReloadQueued) {
-        activeViewReloadQueued = false;
-        scheduleActiveViewReload();
-      }
-    }
-  }, 0);
-}
-
-function flushQueuedActiveViewReload() {
-  if (!activeViewReloadQueued) {
-    return false;
-  }
-  activeViewReloadQueued = false;
-  scheduleActiveViewReload();
-  return true;
-}
-
-async function runWithActiveViewReloadPaused(task: () => Promise<void> | void) {
-  activeViewReloadPaused.value = true;
-  try {
-    await task();
-  } finally {
-    activeViewReloadPaused.value = false;
-  }
-}
-
-function getFirstQueryValue(value?: string | string[]) {
-  if (Array.isArray(value)) {
-    return value[0];
-  }
-  return value;
-}
-
 const selectedVehicleId = computed(() => selectedVehiclePaths.value[1] || '');
 const platformOptions = computed(() => {
   const map = new Map<string, { label: string; value: string }>();
@@ -173,6 +132,43 @@ const statusOptions = Object.keys(RESULT_LABEL_MAP).map((key) => ({
   value: key,
   label: RESULT_LABEL_MAP[key],
 }));
+
+let overviewLoadSeq = 0;
+let detailLoadSeq = 0;
+let vehicleOptionsLoadSeq = 0;
+let vehicleOptionsLoadPromise: null | Promise<void> = null;
+let vehicleOptionsLoadedDomain: AutoTestReportDomain | null = null;
+
+function cancelInactiveViewLoads(nextView: AutoTestReportDailyResultsView) {
+  if (nextView === 'overview') {
+    detailLoadSeq += 1;
+    detailLoading.value = false;
+    return;
+  }
+
+  overviewLoadSeq += 1;
+  overviewLoading.value = false;
+}
+
+function resetDomainScopedVehicleOptions() {
+  vehicleOptionsLoadSeq += 1;
+  vehicleOptionsLoadPromise = null;
+  vehicleOptionsLoadedDomain = null;
+  vehicleOptions.value = [];
+  cascaderOptions.value = [];
+}
+
+function getVehiclePath(vehicleId: string) {
+  const matchedVehicle = vehicleOptions.value.find((v) => v.id === vehicleId);
+  return matchedVehicle ? [matchedVehicle.platform_id, matchedVehicle.id] : [];
+}
+
+function resetVehicleDetailFilters() {
+  selectedStatus.value = [];
+  draftStatus.value = [];
+  detailSortState.value = null;
+  statusPopoverVisible.value = false;
+}
 
 function canEditFailureReason(row: DailyResultItem) {
   return Boolean(row.result_id && ['failed', 'timeout'].includes(row.status));
@@ -344,10 +340,10 @@ function renderChart(
   stats: Array<{ count: number; label: string }>,
 ) {
   const statusColors: Record<string, string> = {
-    成功: '#10b981', // 绿色
-    失败: '#ef4444', // 红色
-    超时: '#f59e0b', // 黄色
-    跳过: '#94a3b8', // 灰色
+    成功: '#10b981',
+    失败: '#ef4444',
+    超时: '#f59e0b',
+    跳过: '#94a3b8',
   };
 
   renderFn({
@@ -372,87 +368,230 @@ function renderChart(
 }
 
 async function loadVehicleOptions() {
-  vehicleOptions.value = (await listVehicleOptionsApi(domain.value)) || [];
-  rebuildCascaderOptions();
-
-  const currentPlatformIds = new Set(
-    platformOptions.value.map((item) => item.value),
-  );
-  if (
-    selectedPlatformId.value &&
-    !currentPlatformIds.has(selectedPlatformId.value)
-  ) {
-    selectedPlatformId.value = '';
+  if (vehicleOptionsLoadPromise) {
+    return vehicleOptionsLoadPromise;
   }
 
-  const routeVehicleId = getFirstQueryValue(
-    route.query.vehicleId as string | string[] | undefined,
-  );
-  const matched = vehicleOptions.value.find(
-    (item) => item.id === (routeVehicleId || ''),
-  );
-  if (matched) {
-    selectedVehiclePaths.value = [matched.platform_id, matched.id];
-    activeView.value = 'vehicle';
-  } else {
-    const currentVehicleExists = vehicleOptions.value.some(
-      (item) => item.id === selectedVehicleId.value,
-    );
-    if (!currentVehicleExists) {
-      if (vehicleOptions.value.length > 0) {
-        const first = vehicleOptions.value[0]!;
-        selectedVehiclePaths.value = [first.platform_id, first.id];
-      } else {
-        selectedVehiclePaths.value = [];
+  const requestSeq = ++vehicleOptionsLoadSeq;
+  const requestDomain = domain.value;
+
+  const requestPromise = (async () => {
+    try {
+      const nextVehicleOptions =
+        (await listVehicleOptionsApi(requestDomain)) || [];
+      if (
+        requestSeq !== vehicleOptionsLoadSeq ||
+        requestDomain !== domain.value
+      ) {
+        return;
       }
+      vehicleOptions.value = nextVehicleOptions;
+    } catch (error) {
+      if (
+        requestSeq !== vehicleOptionsLoadSeq ||
+        requestDomain !== domain.value
+      ) {
+        return;
+      }
+      console.error(error);
+      ElMessage.error('车型列表加载失败');
+      vehicleOptions.value = [];
+    }
+
+    if (
+      requestSeq !== vehicleOptionsLoadSeq ||
+      requestDomain !== domain.value
+    ) {
+      return;
+    }
+
+    vehicleOptionsLoadedDomain = requestDomain;
+    rebuildCascaderOptions();
+
+    const currentPlatformIds = new Set(
+      platformOptions.value.map((item) => item.value),
+    );
+    if (
+      selectedPlatformId.value &&
+      !currentPlatformIds.has(selectedPlatformId.value)
+    ) {
+      selectedPlatformId.value = '';
+    }
+
+    const storedState = getAutoTestReportDailyResultsState(requestDomain);
+    const matchedVehicle = vehicleOptions.value.find(
+      (item) => item.id === storedState.vehicleId,
+    );
+
+    if (matchedVehicle) {
+      selectedVehiclePaths.value = getVehiclePath(matchedVehicle.id);
+      setAutoTestReportDailyResultsVehicleId(requestDomain, matchedVehicle.id);
+      return;
+    }
+
+    if (vehicleOptions.value.length > 0) {
+      const first = vehicleOptions.value[0]!;
+      selectedVehiclePaths.value = [first.platform_id, first.id];
+      setAutoTestReportDailyResultsVehicleId(requestDomain, first.id);
+      return;
+    }
+
+    selectedVehiclePaths.value = [];
+    setAutoTestReportDailyResultsVehicleId(requestDomain, '');
+    if (activeView.value === 'vehicle' && requestDomain === domain.value) {
+      activeView.value = 'overview';
+      setAutoTestReportDailyResultsView(requestDomain, 'overview');
+    }
+  })();
+
+  vehicleOptionsLoadPromise = requestPromise;
+  try {
+    await requestPromise;
+  } finally {
+    if (vehicleOptionsLoadPromise === requestPromise) {
+      vehicleOptionsLoadPromise = null;
     }
   }
 }
 
+async function ensureVehicleOptionsLoaded() {
+  if (vehicleOptionsLoadedDomain === domain.value) {
+    return;
+  }
+
+  if (vehicleOptionsLoadPromise) {
+    await vehicleOptionsLoadPromise;
+    return;
+  }
+
+  await loadVehicleOptions();
+}
+
 async function loadOverview() {
+  const requestSeq = ++overviewLoadSeq;
   overviewLoading.value = true;
   try {
-    overviewData.value = await getDailyOverviewApi({
+    const data = await getDailyOverviewApi({
       domain: domain.value,
       execute_date: selectedDate.value,
       platform_id: selectedPlatformId.value || undefined,
       abnormal_only: abnormalOnly.value || undefined,
     });
+    if (requestSeq !== overviewLoadSeq) {
+      return;
+    }
+    overviewData.value = data;
     await overviewGridApi.reload();
+    if (requestSeq !== overviewLoadSeq) {
+      return;
+    }
     await nextTick();
-    renderChart(renderOverviewChart, overviewData.value.summary.stats);
+    if (requestSeq !== overviewLoadSeq) {
+      return;
+    }
+    renderChart(renderOverviewChart, data.summary.stats);
+  } catch (error) {
+    if (requestSeq === overviewLoadSeq) {
+      console.error(error);
+      ElMessage.error('全量数据加载失败');
+    }
   } finally {
-    overviewLoading.value = false;
+    if (requestSeq === overviewLoadSeq) {
+      overviewLoading.value = false;
+    }
   }
 }
 
 async function loadVehicleView() {
+  const requestSeq = ++detailLoadSeq;
   if (!selectedVehicleId.value) {
     summary.value = null;
     await detailGridApi.reload();
     return;
   }
+
   detailLoading.value = true;
   try {
-    summary.value = await getDailySummaryApi(
+    const nextSummary = await getDailySummaryApi(
       selectedVehicleId.value,
       selectedDate.value,
       domain.value,
     );
+    if (requestSeq !== detailLoadSeq) {
+      return;
+    }
+    summary.value = nextSummary;
     await detailGridApi.reload();
+    if (requestSeq !== detailLoadSeq) {
+      return;
+    }
     await nextTick();
-    renderChart(renderVehicleChart, summary.value.stats);
+    if (requestSeq !== detailLoadSeq) {
+      return;
+    }
+    renderChart(renderVehicleChart, nextSummary.stats);
+  } catch (error) {
+    if (requestSeq === detailLoadSeq) {
+      console.error(error);
+      ElMessage.error('车型数据加载失败');
+    }
   } finally {
-    detailLoading.value = false;
+    if (requestSeq === detailLoadSeq) {
+      detailLoading.value = false;
+    }
   }
 }
 
-async function loadActiveView() {
+async function loadCurrentView() {
+  if (activeView.value === 'overview') {
+    await loadOverview();
+    return;
+  }
+  await ensureVehicleOptionsLoaded();
   if (activeView.value === 'overview') {
     await loadOverview();
     return;
   }
   await loadVehicleView();
+}
+
+async function handleViewChange(next: AutoTestReportDailyResultsView) {
+  if (next === activeView.value) {
+    return;
+  }
+  activeView.value = next;
+  setAutoTestReportDailyResultsView(domain.value, next);
+  if (next !== 'vehicle') {
+    historyVisible.value = false;
+    historyTitle.value = '';
+    currentCaseId.value = '';
+    cancelFailureReasonEdit();
+  }
+  cancelInactiveViewLoads(next);
+  await loadCurrentView();
+}
+
+function handleOverviewFilterChange() {
+  if (activeView.value !== 'overview') {
+    return;
+  }
+  setAutoTestReportDailyResultsView(domain.value, 'overview');
+  void loadOverview();
+}
+
+function handleVehicleSelectionChange() {
+  resetVehicleDetailFilters();
+  setAutoTestReportDailyResultsVehicleId(domain.value, selectedVehicleId.value);
+  if (activeView.value === 'vehicle') {
+    void loadVehicleView();
+  }
+}
+
+function handleVehicleDateChange() {
+  resetVehicleDetailFilters();
+  if (activeView.value === 'vehicle') {
+    void loadVehicleView();
+  }
 }
 
 function openHistory(row: DailyResultItem) {
@@ -465,15 +604,21 @@ function handleStatusFilterShow() {
   draftStatus.value = [...selectedStatus.value];
 }
 
-function confirmStatusFilter() {
+async function confirmStatusFilter() {
   selectedStatus.value = [...draftStatus.value];
   statusPopoverVisible.value = false;
+  if (activeView.value === 'vehicle') {
+    await loadVehicleView();
+  }
 }
 
-function resetStatusFilter() {
+async function resetStatusFilter() {
   draftStatus.value = [];
   selectedStatus.value = [];
   statusPopoverVisible.value = false;
+  if (activeView.value === 'vehicle') {
+    await loadVehicleView();
+  }
 }
 
 function handleDetailSortChange(data: {
@@ -483,11 +628,19 @@ function handleDetailSortChange(data: {
   detailSortState.value = data.prop
     ? { order: data.order, prop: data.prop }
     : null;
+  if (activeView.value === 'vehicle') {
+    void loadVehicleView();
+  }
 }
 
 async function jumpToVehicle(row: DailyOverviewRow) {
   selectedVehiclePaths.value = [row.platform_id, row.vehicle_id];
-  activeView.value = 'vehicle';
+  resetVehicleDetailFilters();
+  setAutoTestReportDailyResultsState(domain.value, {
+    activeView: 'vehicle',
+    vehicleId: row.vehicle_id,
+  });
+  await handleViewChange('vehicle');
 }
 
 watch(vehicleKeyword, () => {
@@ -495,105 +648,43 @@ watch(vehicleKeyword, () => {
 });
 
 watch(
-  selectedVehicleId,
-  (next) => {
-    if (activeView.value !== 'vehicle' || !next) {
-      return;
-    }
-    if (
-      getFirstQueryValue(
-        route.query.vehicleId as string | string[] | undefined,
-      ) === next
-    ) {
-      return;
-    }
-    router.replace({
-      path: route.path,
-      query: {
-        ...route.query,
-        domain: domain.value,
-        vehicleId: next,
-      },
-    });
-  },
-  { flush: 'post' },
-);
-
-watch(
-  activeView,
-  () => {
-    scheduleActiveViewReload();
-  },
-  { flush: 'post' },
-);
-
-watch(
-  [selectedDate, selectedPlatformId, abnormalOnly],
-  () => {
-    if (activeView.value === 'overview') {
-      scheduleActiveViewReload();
-    }
-  },
-  { flush: 'post' },
-);
-
-watch(
-  [selectedVehicleId, selectedDate, selectedStatus, detailSortState],
-  () => {
-    if (activeView.value === 'vehicle') {
-      scheduleActiveViewReload();
-    }
-  },
-  { flush: 'post' },
-);
-
-watch(
-  [selectedVehicleId, selectedDate],
-  ([nextVehicleId, nextDate], [prevVehicleId, prevDate] = []) => {
-    if (activeView.value !== 'vehicle') {
-      return;
-    }
-    if (nextVehicleId !== prevVehicleId || nextDate !== prevDate) {
-      selectedStatus.value = [];
-      draftStatus.value = [];
-      detailSortState.value = null;
-    }
-  },
-  { flush: 'post' },
-);
-
-watch(
   domain,
-  async () => {
-    await runWithActiveViewReloadPaused(async () => {
-      selectedPlatformId.value = '';
-      selectedVehiclePaths.value = [];
-      selectedStatus.value = [];
-      draftStatus.value = [];
-      detailSortState.value = null;
-      overviewGridApi.setGridOptions({
-        columns: useOverviewColumns(domain.value),
-      });
-      detailGridApi.setGridOptions({
-        columns: useResultColumns(domain.value),
-      });
-      await loadVehicleOptions();
+  () => {
+    activeView.value = 'overview';
+    setAutoTestReportDailyResultsView(domain.value, 'overview');
+    overviewData.value = null;
+    summary.value = null;
+    selectedPlatformId.value = '';
+    selectedVehiclePaths.value = [];
+    vehicleKeyword.value = '';
+    historyVisible.value = false;
+    historyTitle.value = '';
+    currentCaseId.value = '';
+    cancelFailureReasonEdit();
+    resetVehicleDetailFilters();
+    resetDomainScopedVehicleOptions();
+    cancelInactiveViewLoads('overview');
+    overviewGridApi.setGridOptions({
+      columns: useOverviewColumns(domain.value),
     });
-    if (!flushQueuedActiveViewReload()) {
-      scheduleActiveViewReload();
-    }
+    detailGridApi.setGridOptions({
+      columns: useResultColumns(domain.value),
+    });
+    void loadVehicleOptions();
+    void loadCurrentView();
   },
   { immediate: false },
 );
 
 onMounted(async () => {
-  ensureDomainQuery();
-  await runWithActiveViewReloadPaused(async () => {
-    await loadVehicleOptions();
-  });
-  if (!flushQueuedActiveViewReload()) {
-    scheduleActiveViewReload();
+  if (activeView.value === 'overview') {
+    void loadVehicleOptions();
+    await loadCurrentView();
+    return;
   }
+
+  await loadVehicleOptions();
+  await loadCurrentView();
 });
 </script>
 
@@ -610,62 +701,126 @@ onMounted(async () => {
               先看全量异常，再下钻到单车型明细。
             </div>
           </div>
-          <DomainSwitcher />
+          <div class="flex flex-wrap items-center gap-3">
+            <DomainSwitcher />
+            <div
+              class="flex items-center gap-2 rounded-full bg-gray-50 px-3 py-2"
+            >
+              <span class="text-sm text-gray-500">查看模式</span>
+              <ElSegmented
+                v-model="activeViewModel"
+                :options="viewOptions"
+                size="default"
+              />
+            </div>
+          </div>
         </div>
-      </div>
 
-      <div class="shrink-0 rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm">
-        <ElTabs v-model="activeView" class="auto-test-result-tabs">
-          <ElTabPane label="全量视图" name="overview" />
-          <ElTabPane label="车型视图" name="vehicle" />
-        </ElTabs>
+        <div class="mt-4 rounded-xl bg-gray-50/60 px-4 py-3">
+          <template v-if="activeView === 'overview'">
+            <div class="flex flex-wrap items-center gap-3">
+              <ElForm
+                :inline="true"
+                class="flex flex-wrap items-center gap-3"
+                @submit.prevent
+              >
+                <ElFormItem label="执行日期" class="!mb-0">
+                  <ElDatePicker
+                    v-model="selectedDate"
+                    class="!w-[160px]"
+                    type="date"
+                    value-format="YYYY-MM-DD"
+                    @change="handleOverviewFilterChange"
+                  />
+                </ElFormItem>
+                <ElFormItem :label="domainMeta.platformLabel" class="!mb-0">
+                  <ElSelect
+                    v-model="selectedPlatformId"
+                    clearable
+                    class="!w-[220px]"
+                    :placeholder="`全部${domainMeta.platformLabel}`"
+                    @change="handleOverviewFilterChange"
+                  >
+                    <ElOption
+                      v-for="item in platformOptions"
+                      :key="item.value"
+                      :label="item.label"
+                      :value="item.value"
+                    />
+                  </ElSelect>
+                </ElFormItem>
+                <ElFormItem label="仅看异常" class="!mb-0">
+                  <ElSwitch
+                    v-model="abnormalOnly"
+                    @change="handleOverviewFilterChange"
+                  />
+                </ElFormItem>
+              </ElForm>
+              <div class="ml-auto">
+                <ElButton
+                  :loading="overviewLoading"
+                  type="primary"
+                  @click="loadOverview"
+                >
+                  刷新
+                </ElButton>
+              </div>
+            </div>
+          </template>
+
+          <template v-else>
+            <div class="flex flex-wrap items-center gap-3">
+              <ElForm
+                :inline="true"
+                class="flex flex-wrap items-center gap-3"
+                @submit.prevent
+              >
+                <ElFormItem :label="domainMeta.selectorLabel" class="!mb-0">
+                  <ElCascader
+                    v-model="selectedVehiclePaths"
+                    class="w-[320px]"
+                    clearable
+                    filterable
+                    :placeholder="domainMeta.selectorPlaceholder"
+                    :options="cascaderOptions"
+                    :props="{ emitPath: true }"
+                    @change="handleVehicleSelectionChange"
+                  />
+                </ElFormItem>
+                <ElFormItem label="车型关键词" class="!mb-0">
+                  <ElInput
+                    v-model="vehicleKeyword"
+                    class="w-[180px]"
+                    clearable
+                    placeholder="按关键词筛选"
+                  />
+                </ElFormItem>
+                <ElFormItem label="执行日期" class="!mb-0">
+                  <ElDatePicker
+                    v-model="selectedDate"
+                    class="!w-[160px]"
+                    placeholder="选择日期"
+                    type="date"
+                    value-format="YYYY-MM-DD"
+                    @change="handleVehicleDateChange"
+                  />
+                </ElFormItem>
+              </ElForm>
+              <div class="ml-auto flex items-center gap-2">
+                <ElButton
+                  :loading="detailLoading"
+                  type="primary"
+                  @click="loadVehicleView"
+                >
+                  刷新
+                </ElButton>
+              </div>
+            </div>
+          </template>
+        </div>
       </div>
 
       <template v-if="activeView === 'overview'">
-        <div class="shrink-0 rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm">
-          <ElForm
-            :inline="true"
-            class="flex flex-wrap items-center gap-4"
-            @submit.prevent
-          >
-            <ElFormItem label="执行日期" class="!mb-0">
-              <ElDatePicker
-                v-model="selectedDate"
-                type="date"
-                value-format="YYYY-MM-DD"
-                class="!w-[160px]"
-              />
-            </ElFormItem>
-            <ElFormItem :label="domainMeta.platformLabel" class="!mb-0">
-              <ElSelect
-                v-model="selectedPlatformId"
-                class="!w-[220px]"
-                clearable
-                :placeholder="`全部${domainMeta.platformLabel}`"
-              >
-                <ElOption
-                  v-for="item in platformOptions"
-                  :key="item.value"
-                  :label="item.label"
-                  :value="item.value"
-                />
-              </ElSelect>
-            </ElFormItem>
-            <ElFormItem label="仅看异常" class="!mb-0">
-              <ElSwitch v-model="abnormalOnly" />
-            </ElFormItem>
-            <ElFormItem class="!mb-0">
-              <ElButton
-                :loading="overviewLoading"
-                type="primary"
-                @click="loadOverview"
-              >
-                刷新
-              </ElButton>
-            </ElFormItem>
-          </ElForm>
-        </div>
-
         <div
           v-loading="overviewLoading"
           class="grid min-h-0 flex-1 grid-cols-[1fr_400px] gap-4"
@@ -743,52 +898,6 @@ onMounted(async () => {
       </template>
 
       <template v-else>
-        <div class="shrink-0 rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm">
-          <ElForm
-            :inline="true"
-            class="flex flex-wrap items-center gap-4"
-            @submit.prevent
-          >
-            <ElFormItem :label="domainMeta.selectorLabel" class="!mb-0">
-              <ElCascader
-                v-model="selectedVehiclePaths"
-                class="w-[320px]"
-                clearable
-                filterable
-                :placeholder="domainMeta.selectorPlaceholder"
-                :options="cascaderOptions"
-                :props="{ emitPath: true }"
-              />
-            </ElFormItem>
-            <ElFormItem label="车型关键词" class="!mb-0">
-              <ElInput
-                v-model="vehicleKeyword"
-                class="w-[180px]"
-                clearable
-                placeholder="按关键词筛选"
-              />
-            </ElFormItem>
-            <ElFormItem label="执行日期" class="!mb-0">
-              <ElDatePicker
-                v-model="selectedDate"
-                placeholder="选择日期"
-                type="date"
-                value-format="YYYY-MM-DD"
-                class="!w-[160px]"
-              />
-            </ElFormItem>
-            <ElFormItem class="!mb-0">
-              <ElButton
-                :loading="detailLoading"
-                type="primary"
-                @click="loadVehicleView"
-              >
-                刷新
-              </ElButton>
-            </ElFormItem>
-          </ElForm>
-        </div>
-
         <div
           v-loading="detailLoading"
           class="flex min-h-0 flex-1 flex-col gap-4"

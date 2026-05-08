@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { OrgNode } from '#/api/delivery-matrix';
+import type { OrgNode, PositionStaff } from '#/api/delivery-matrix';
 
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
@@ -24,6 +24,10 @@ interface MatrixNode extends OrgNode {
   description_html?: string;
   children?: MatrixNode[];
 }
+
+type PositionUser = PositionStaff['users_info'][number];
+
+const HIGHLIGHT_POSITION_NAMES = new Set(['pl', 'xm']);
 
 const router = useRouter();
 const matrixData = ref<MatrixNode[]>([]);
@@ -88,9 +92,20 @@ function decorateMatrixNodes(nodes: OrgNode[]): MatrixNode[] {
   }));
 }
 
+function normalizePositionName(name: unknown) {
+  return String(name ?? '')
+    .trim()
+    .toLowerCase();
+}
+
+function isHighlightedPosition(name: unknown) {
+  return HIGHLIGHT_POSITION_NAMES.has(normalizePositionName(name));
+}
+
 const filteredData = computed<MatrixNode[]>(() => {
-  if (!searchQuery.value.trim()) return matrixData.value;
-  const query = searchQuery.value.toLowerCase();
+  const normalizedQuery = searchQuery.value.trim();
+  if (!normalizedQuery) return matrixData.value;
+  const query = normalizedQuery.toLowerCase();
 
   return matrixData.value
     .map((domain) => {
@@ -187,6 +202,10 @@ function takeUsers(users: any[], max: number) {
   const list = Array.isArray(users) ? users : [];
   if (list.length <= max) return { shown: list, more: 0 };
   return { shown: list.slice(0, max), more: list.length - max };
+}
+
+function takePositionUsers(users: PositionUser[], max: number) {
+  return takeUsers(users, max);
 }
 
 function goToProjectReport() {
@@ -517,42 +536,120 @@ function goToAdmin() {
                         >
                           <div
                             v-for="pos in comp.positions"
-                            :key="pos.name"
-                            class="flex items-center gap-2"
+                            :key="pos.id || pos.name"
+                            class="min-w-0"
                           >
-                            <span
-                              class="text-muted-foreground text-xs font-medium"
-                              >{{ pos.name }}</span
-                            >
-                            <div class="flex items-center gap-1.5">
-                              <template v-if="pos.users_info.length > 0">
-                                <ElTooltip
-                                  v-for="u in takeUsers(pos.users_info, 3)
-                                    .shown"
-                                  :key="u.id"
-                                  :content="u.name"
-                                  placement="top"
-                                >
-                                  <UserAvatar
-                                    :user-id="u.id"
-                                    :name="u.name"
-                                    :size="24"
-                                    :font-size="10"
-                                    :shadow="false"
-                                    :show-popover="false"
-                                  />
-                                </ElTooltip>
-                                <span
-                                  v-if="takeUsers(pos.users_info, 3).more"
-                                  class="text-muted-foreground ml-1 text-xs"
-                                >
-                                  +{{ takeUsers(pos.users_info, 3).more }}
-                                </span>
-                              </template>
-                              <span v-else class="text-muted-foreground text-xs"
-                                >-</span
+                            <template v-if="isHighlightedPosition(pos.name)">
+                              <div
+                                class="border-primary/20 bg-primary/5 flex min-w-0 flex-col gap-2 rounded-xl border px-3 py-2 shadow-sm"
                               >
-                            </div>
+                                <div class="flex items-center gap-2">
+                                  <IconifyIcon
+                                    icon="carbon:user-role"
+                                    class="text-primary text-sm"
+                                  />
+                                  <span
+                                    class="text-foreground text-xs font-bold"
+                                  >
+                                    {{ pos.name }}
+                                  </span>
+                                </div>
+
+                                <div
+                                  class="flex flex-wrap items-center gap-1.5"
+                                >
+                                  <template v-if="pos.users_info.length > 0">
+                                    <ElTooltip
+                                      v-for="u in takePositionUsers(
+                                        pos.users_info,
+                                        3,
+                                      ).shown"
+                                      :key="u.id"
+                                      :content="u.name"
+                                      placement="top"
+                                    >
+                                      <div
+                                        class="border-border bg-background/80 flex items-center gap-2 rounded-full border px-2.5 py-1"
+                                      >
+                                        <UserAvatar
+                                          :user-id="u.id"
+                                          :name="u.name"
+                                          :size="20"
+                                          :font-size="9"
+                                          :shadow="false"
+                                          :show-popover="false"
+                                        />
+                                        <span
+                                          class="text-foreground max-w-[96px] truncate text-xs font-bold"
+                                          >{{ u.name }}</span
+                                        >
+                                      </div>
+                                    </ElTooltip>
+                                    <span
+                                      v-if="
+                                        takePositionUsers(pos.users_info, 3)
+                                          .more
+                                      "
+                                      class="border-border bg-background/50 text-muted-foreground rounded-full border border-dashed px-2 py-1 text-xs font-medium"
+                                    >
+                                      +{{
+                                        takePositionUsers(pos.users_info, 3)
+                                          .more
+                                      }}
+                                    </span>
+                                  </template>
+                                  <span
+                                    v-else
+                                    class="border-border bg-background/20 text-muted-foreground rounded-full border border-dashed px-2 py-1 text-xs font-medium"
+                                  >
+                                    未配置
+                                  </span>
+                                </div>
+                              </div>
+                            </template>
+                            <template v-else>
+                              <div class="flex items-center gap-2">
+                                <IconifyIcon
+                                  icon="carbon:user-role"
+                                  class="text-muted-foreground text-sm"
+                                />
+                                <span
+                                  class="text-muted-foreground text-xs font-medium"
+                                  >{{ pos.name }}</span
+                                >
+                                <div class="flex items-center gap-1.5">
+                                  <template v-if="pos.users_info.length > 0">
+                                    <ElTooltip
+                                      v-for="u in takeUsers(pos.users_info, 3)
+                                        .shown"
+                                      :key="u.id"
+                                      :content="u.name"
+                                      placement="top"
+                                    >
+                                      <UserAvatar
+                                        :user-id="u.id"
+                                        :name="u.name"
+                                        :size="24"
+                                        :font-size="10"
+                                        :shadow="false"
+                                        :show-popover="false"
+                                      />
+                                    </ElTooltip>
+                                    <span
+                                      v-if="takeUsers(pos.users_info, 3).more"
+                                      class="text-muted-foreground ml-1 text-xs"
+                                    >
+                                      +{{ takeUsers(pos.users_info, 3).more }}
+                                    </span>
+                                  </template>
+                                  <span
+                                    v-else
+                                    class="text-muted-foreground text-xs"
+                                    >-</span
+                                  >
+                                </div>
+                              </div>
+                            </template>
                           </div>
                         </div>
 

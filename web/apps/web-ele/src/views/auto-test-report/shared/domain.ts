@@ -1,5 +1,4 @@
-import { computed, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { computed, ref } from 'vue';
 
 export type AutoTestReportDomain = 'cockpit' | 'vehicle';
 
@@ -55,14 +54,18 @@ export const AUTO_TEST_REPORT_DOMAIN_OPTIONS = AUTO_TEST_REPORT_DOMAINS.map(
   }),
 );
 
-const sharedDomain = ref<AutoTestReportDomain>('cockpit');
+const AUTO_TEST_REPORT_DOMAIN_STORAGE_KEY = 'auto-test-report-domain';
 
-function getFirstQueryValue(value?: string | string[]) {
-  if (Array.isArray(value)) {
-    return value[0];
+function getStoredDomain(): AutoTestReportDomain {
+  if (typeof window === 'undefined') {
+    return 'cockpit';
   }
-  return value;
+  return normalizeAutoTestReportDomain(
+    window.sessionStorage.getItem(AUTO_TEST_REPORT_DOMAIN_STORAGE_KEY),
+  );
 }
+
+const sharedDomain = ref<AutoTestReportDomain>(getStoredDomain());
 
 export function normalizeAutoTestReportDomain(
   value?: null | string,
@@ -78,68 +81,27 @@ export function getAutoTestReportDomainMeta(domain: AutoTestReportDomain) {
 }
 
 export function useAutoTestReportDomain() {
-  const route = useRoute();
-  const router = useRouter();
-
-  const routeDomain = computed(() =>
-    normalizeAutoTestReportDomain(
-      getFirstQueryValue(route.query.domain as string | string[] | undefined),
-    ),
-  );
   const domainMeta = computed(() =>
     getAutoTestReportDomainMeta(sharedDomain.value),
   );
 
-  watch(
-    routeDomain,
-    (next) => {
-      sharedDomain.value = next;
-    },
-    { immediate: true },
-  );
-
-  function ensureDomainQuery() {
-    if (
-      normalizeAutoTestReportDomain(
-        getFirstQueryValue(route.query.domain as string | string[] | undefined),
-      ) === sharedDomain.value
-    ) {
-      return;
-    }
-    router.replace({
-      path: route.path,
-      query: {
-        ...route.query,
-        domain: sharedDomain.value,
-      },
-    });
-  }
-
   function setDomain(next: AutoTestReportDomain) {
     const normalized = normalizeAutoTestReportDomain(next);
-    if (
-      normalized === sharedDomain.value &&
-      normalizeAutoTestReportDomain(
-        getFirstQueryValue(route.query.domain as string | string[] | undefined),
-      ) === normalized
-    ) {
+    if (normalized === sharedDomain.value) {
       return;
     }
     sharedDomain.value = normalized;
-    router.replace({
-      path: route.path,
-      query: {
-        ...route.query,
-        domain: normalized,
-      },
-    });
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.setItem(
+        AUTO_TEST_REPORT_DOMAIN_STORAGE_KEY,
+        normalized,
+      );
+    }
   }
 
   return {
     domain: sharedDomain,
     domainMeta,
-    ensureDomainQuery,
-    routeDomain,
     setDomain,
   };
 }
