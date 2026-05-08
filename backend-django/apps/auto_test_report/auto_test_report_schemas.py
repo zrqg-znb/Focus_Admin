@@ -1,12 +1,13 @@
 from datetime import date, datetime
 from typing import List, Optional
 
-from ninja import Schema
+from ninja import Field, Schema
 
 
 class PlatformIn(Schema):
     name: str
     version_code: str
+    domain: str = 'cockpit'
     sort: int = 0
     is_active: bool = True
     remark: Optional[str] = None
@@ -25,6 +26,7 @@ class VehicleIn(Schema):
     vehicle_code: str
     cdc_platform: str
     execution_machine: str
+    viu_codes: List[str] = Field(default_factory=list)
     sort: int = 0
     is_active: bool = True
     remark: Optional[str] = None
@@ -43,10 +45,12 @@ class VehicleOption(Schema):
     vehicle_code: str
     platform_id: str
     platform_name: str
+    viu_codes: List[str] = Field(default_factory=list)
 
 
 class TestCaseIn(Schema):
     vehicle_id: str
+    viu_code: str = ''
     case_no: str
     case_name: str
     remark: Optional[str] = None
@@ -65,13 +69,16 @@ class TestCaseOut(TestCaseIn):
 
 
 class TestCaseFilter(Schema):
+    domain: Optional[str] = None
     platform_id: Optional[str] = None
     vehicle_id: Optional[str] = None
+    viu_code: Optional[str] = None
     keyword: Optional[str] = None
     is_active: Optional[bool] = None
 
 
 class ImportCaseRow(Schema):
+    viu_code: Optional[str] = None
     case_no: str
     case_name: str
     remark: Optional[str] = None
@@ -97,6 +104,7 @@ class ImportResultOut(Schema):
 class DailyResultItemOut(Schema):
     result_id: Optional[str] = None
     case_id: str
+    viu_code: str = ''
     case_no: str
     case_name: str
     remark: Optional[str] = None
@@ -138,6 +146,7 @@ class DailySummaryOut(Schema):
 class DailyHistoryRow(Schema):
     id: str
     execute_date: date
+    viu_code: str = ''
     status: str
     failure_reason: Optional[str] = None
     start_time: Optional[datetime] = None
@@ -154,6 +163,7 @@ class DailyHistoryPage(Schema):
 
 
 class ReportResultItemIn(Schema):
+    viu_code: Optional[str] = None
     case_no: str
     start_time: datetime
     duration_seconds: int
@@ -177,10 +187,12 @@ class ReportDailyResultsOut(Schema):
 class DailyResultQuery(Schema):
     vehicle_id: str
     execute_date: date
+    domain: Optional[str] = None
 
 
 class DailyOverviewQuery(Schema):
     execute_date: date
+    domain: Optional[str] = None
     platform_id: Optional[str] = None
     abnormal_only: bool = False
 

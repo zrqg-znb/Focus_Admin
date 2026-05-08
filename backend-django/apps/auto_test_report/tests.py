@@ -9,11 +9,20 @@ from apps.auto_test_report.auto_test_report_model import (
     McuPlatform,
     TestCase as AutoTestCase,
     VehicleModel,
+    DOMAIN_COCKPIT,
+    DOMAIN_VEHICLE,
     RESULT_FAILED,
     RESULT_SUCCESS,
     RESULT_TIMEOUT,
 )
-from apps.auto_test_report.auto_test_report_schemas import DailyOverviewQuery
+from apps.auto_test_report.auto_test_report_schemas import (
+    DailyOverviewQuery,
+    ImportCasePayload,
+    ImportCaseRow,
+    ReportDailyResultsIn,
+    ReportResultItemIn,
+    TestCaseFilter,
+)
 
 
 class AutoTestReportOverviewTests(TestCase):
@@ -22,16 +31,24 @@ class AutoTestReportOverviewTests(TestCase):
         self.platform = McuPlatform.objects.create(
             name='Test Platform',
             version_code='test-platform',
+            domain=DOMAIN_COCKPIT,
             is_active=True,
         )
 
-    def _create_vehicle(self, suffix: str) -> VehicleModel:
+    def _create_vehicle(
+        self,
+        suffix: str,
+        *,
+        domain: str = DOMAIN_COCKPIT,
+        viu_codes: list[str] | None = None,
+    ) -> VehicleModel:
         return VehicleModel.objects.create(
             platform=self.platform,
             name=f'Vehicle {suffix}',
             vehicle_code=f'VEH-{suffix}',
             cdc_platform='CDC',
             execution_machine=f'machine-{suffix}',
+            viu_codes=viu_codes or [],
             is_active=True,
         )
 
@@ -171,3 +188,123 @@ class AutoTestReportOverviewTests(TestCase):
         )
         self.assertEqual(overview.summary.vehicle_count, 3)
         self.assertEqual(overview.summary.abnormal_vehicle_count, 3)
+
+    def test_vehicle_domain_report_uses_viu_code_to_match_cases(self):
+        vehicle_platform = McuPlatform.objects.create(
+            name='Vehicle Platform',
+            version_code='vehicle-platform',
+            domain=DOMAIN_VEHICLE,
+            is_active=True,
+        )
+        vehicle = VehicleModel.objects.create(
+            platform=vehicle_platform,
+            name='Vehicle domain model',
+            vehicle_code='VEH-VIU',
+            cdc_platform='CDC',
+            execution_machine='machine-viu',
+            viu_codes=['viu0', 'viu1'],
+            is_active=True,
+        )
+        case0 = AutoTestCase.objects.create(
+            vehicle=vehicle,
+            viu_code='viu0',
+            case_no='CASE-001',
+            case_name='Case 1',
+            is_active=True,
+        )
+        case1 = AutoTestCase.objects.create(
+            vehicle=vehicle,
+            viu_code='viu1',
+            case_no='CASE-001',
+            case_name='Case 2',
+            is_active=True,
+        )
+
+        payload = ReportDailyResultsIn(
+            vehicle_code=vehicle.vehicle_code,
+            execute_date=self.execute_date,
+            results=[
+                ReportResultItemIn(
+                    viu_code='viu0',
+                    case_no='CASE-001',
+                    start_time=timezone.now(),
+                    duration_seconds=60,
+                    result=RESULT_SUCCESS,
+                ),
+                ReportResultItemIn(
+                    viu_code='viu1',
+                    case_no='CASE-001',
+                    start_time=timezone.now() + timedelta(minutes=1),
+                    duration_seconds=90,
+                    result=RESULT_FAILED,
+                ),
+            ],
+        )
+
+        result = services.report_daily_results(payload)
+        self.assertEqual(result['created_count'], 2)
+
+        items = services.list_daily_results(
+            vehicle.id,
+            self.execute_date,
+            DOMAIN_VEHICLE,
+        )
+        self.assertEqual(len(items), 2)
+        self.assertEqual({item.viu_code for item in items}, {'viu0', 'viu1'})
+
+        summary = services.get_daily_summary(
+            vehicle.id,
+            self.execute_date,
+            DOMAIN_VEHICLE,
+        )
+        self.assertEqual(summary.total_count, 2)
+        self.assertEqual(summary.failed_count, 1)
+
+        overview = services.get_daily_overview(
+            DailyOverviewQuery(
+                execute_date=self.execute_date,
+                domain=DOMAIN_VEHICLE,
+            )
+        )
+        row = self._get_row(overview, vehicle)
+        self.assertEqual(row.total_count, 2)
+        self.assertEqual(row.failed_count, 1)
+        self.assertTrue(row.is_abnormal)
+
+        self.assertEqual(case0.viu_code, 'viu0')
+        self.assertEqual(case1.viu_code, 'viu1')
+
+    def test_vehicle_domain_import_supports_duplicate_case_no_across_viu_codes(self):
+        vehicle_platform = McuPlatform.objects.create(
+            name='Vehicle Import Platform',
+            version_code='vehicle-import-platform',
+            domain=DOMAIN_VEHICLE,
+            is_active=True,
+        )
+        vehicle = VehicleModel.objects.create(
+            platform=vehicle_platform,
+            name='Vehicle import model',
+            vehicle_code='VEH-IMPORT',
+            cdc_platform='CDC',
+            execution_machine='machine-import',
+            viu_codes=['viu0', 'viu1'],
+            is_active=True,
+        )
+
+        payload = ImportCasePayload(
+            vehicle_id=str(vehicle.id),
+            rows=[
+                ImportCaseRow(viu_code='viu0', case_no='CASE-001', case_name='Case A'),
+                ImportCaseRow(viu_code='viu1', case_no='CASE-001', case_name='Case B'),
+            ],
+        )
+        result = services.import_test_cases(None, payload)
+
+        self.assertEqual(result.created_count, 2)
+        self.assertEqual(result.updated_count, 0)
+        self.assertEqual(result.ignored_count, 0)
+        rows = services.list_test_cases(
+            TestCaseFilter(domain=DOMAIN_VEHICLE, vehicle_id=str(vehicle.id))
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({item['viu_code'] for item in rows}, {'viu0', 'viu1'})

@@ -1,5 +1,9 @@
+import type { AutoTestReportDomain } from '../shared/domain';
+
 import type { DailyOverviewRow, DailyResultItem } from '#/api/auto-test-report';
 import type { ZqTableGridOptions } from '#/components/zq-table';
+
+import { getAutoTestReportDomainMeta } from '../shared/domain';
 
 export const RESULT_LABEL_MAP: Record<string, string> = {
   success: '成功',
@@ -10,7 +14,7 @@ export const RESULT_LABEL_MAP: Record<string, string> = {
 
 export const RESULT_TAG_MAP: Record<
   string,
-  '' | 'danger' | 'info' | 'success' | 'warning'
+  'danger' | 'info' | 'success' | 'warning'
 > = {
   success: 'success',
   failed: 'danger',
@@ -32,8 +36,10 @@ export function formatDuration(seconds?: number) {
   return `${second}s`;
 }
 
-export function useResultColumns(): ZqTableGridOptions<DailyResultItem>['columns'] {
-  return [
+export function useResultColumns(
+  domain: AutoTestReportDomain,
+): ZqTableGridOptions<DailyResultItem>['columns'] {
+  const columns: ZqTableGridOptions<DailyResultItem>['columns'] = [
     {
       key: 'case_no',
       dataKey: 'case_no',
@@ -50,6 +56,20 @@ export function useResultColumns(): ZqTableGridOptions<DailyResultItem>['columns
       align: 'center',
       headerAlign: 'center',
     },
+  ];
+
+  if (domain === 'vehicle') {
+    columns.push({
+      key: 'viu_code',
+      dataKey: 'viu_code',
+      title: 'VIU编号',
+      width: 120,
+      align: 'center',
+      headerAlign: 'center',
+    });
+  }
+
+  columns.push(
     {
       key: 'remark',
       dataKey: 'remark',
@@ -82,7 +102,7 @@ export function useResultColumns(): ZqTableGridOptions<DailyResultItem>['columns
       width: 180,
       align: 'center',
       headerAlign: 'center',
-      sortable: 'custom',
+      sortable: true,
     },
     {
       key: 'duration_seconds',
@@ -109,15 +129,20 @@ export function useResultColumns(): ZqTableGridOptions<DailyResultItem>['columns
       headerAlign: 'center',
       showOverflowTooltip: false,
     },
-  ];
+  );
+
+  return columns;
 }
 
-export function useOverviewColumns(): ZqTableGridOptions<DailyOverviewRow>['columns'] {
+export function useOverviewColumns(
+  domain: AutoTestReportDomain,
+): ZqTableGridOptions<DailyOverviewRow>['columns'] {
+  const domainMeta = getAutoTestReportDomainMeta(domain);
   return [
     {
       key: 'platform_name',
       dataKey: 'platform_name',
-      title: 'MCU平台',
+      title: domainMeta.platformLabel,
       width: 140,
       align: 'center',
       headerAlign: 'center',

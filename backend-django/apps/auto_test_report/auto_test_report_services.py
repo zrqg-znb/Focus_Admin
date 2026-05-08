@@ -11,11 +11,14 @@ from django.http import HttpResponse
 from ninja.errors import HttpError
 
 from .auto_test_report_model import (
+    DOMAIN_COCKPIT,
+    DOMAIN_VEHICLE,
     DailyExecutionBatch,
     DailyExecutionResult,
     McuPlatform,
     TestCase,
     VehicleModel,
+    VIU_CODE_VALUES,
     RESULT_FAILED,
     RESULT_SUCCESS,
     RESULT_TIMEOUT,
@@ -42,6 +45,7 @@ RESULT_LABELS = {
     RESULT_SKIP: '跳过',
 }
 MANUAL_REASON_RESULTS = {RESULT_FAILED, RESULT_TIMEOUT}
+VALID_DOMAINS = {DOMAIN_COCKPIT, DOMAIN_VEHICLE}
 
 
 def _get_latest_result_order_by():
@@ -96,8 +100,58 @@ def _is_daily_overview_abnormal(batch: DailyExecutionBatch) -> bool:
     return not (total_count > 0 and success_count == total_count)
 
 
-def list_platforms():
-    queryset = McuPlatform.objects.filter(is_deleted=False).order_by('-sort', 'name')
+def _parse_domain_filter(domain: Optional[str]):
+    value = (domain or '').strip().lower()
+    if not value:
+        return None
+    if value not in VALID_DOMAINS:
+        raise HttpError(422, '领域仅支持 cockpit 或 vehicle')
+    return value
+
+
+def _resolve_domain_value(domain: Optional[str], *, default: str = DOMAIN_COCKPIT):
+    value = (domain or '').strip().lower()
+    if not value:
+        return default
+    if value not in VALID_DOMAINS:
+        raise HttpError(422, '领域仅支持 cockpit 或 vehicle')
+    return value
+
+
+def _normalize_viu_codes(viu_codes, *, require_non_empty: bool = False):
+    normalized = []
+    for raw_code in viu_codes or []:
+        code = str(raw_code or '').strip().lower()
+        if not code:
+            continue
+        if code not in VIU_CODE_VALUES:
+            raise HttpError(422, f'VIU编号仅支持: {", ".join(VIU_CODE_VALUES)}')
+        if code not in normalized:
+            normalized.append(code)
+    if require_non_empty and not normalized:
+        raise HttpError(422, '车控车型至少需要配置一个VIU编号')
+    return normalized
+
+
+def _normalize_case_viu_code(vehicle: VehicleModel, viu_code: Optional[str]):
+    domain = vehicle.platform.domain
+    if domain == DOMAIN_COCKPIT:
+        return ''
+    normalized = (viu_code or '').strip().lower()
+    if not normalized:
+        raise HttpError(422, '车控领域用例必须配置VIU编号')
+    allowed_viu_codes = set(vehicle.viu_codes or [])
+    if normalized not in allowed_viu_codes:
+        raise HttpError(422, f'车型 {vehicle.name} 未配置 VIU 编号: {normalized}')
+    return normalized
+
+
+def list_platforms(domain: Optional[str] = None):
+    queryset = McuPlatform.objects.filter(is_deleted=False)
+    parsed_domain = _parse_domain_filter(domain)
+    if parsed_domain:
+        queryset = queryset.filter(domain=parsed_domain)
+    queryset = queryset.order_by('domain', '-sort', 'name')
     return [serialize_platform(item) for item in queryset]
 
 
@@ -106,6 +160,7 @@ def serialize_platform(item: McuPlatform):
         'id': str(item.id),
         'name': item.name,
         'version_code': item.version_code,
+        'domain': item.domain,
         'sort': item.sort,
         'is_active': item.is_active,
         'remark': item.remark,
@@ -119,6 +174,7 @@ def create_platform(user, payload):
     instance = McuPlatform(
         name=payload.name.strip(),
         version_code=payload.version_code.strip(),
+        domain=_resolve_domain_value(getattr(payload, 'domain', None)),
         sort=payload.sort,
         is_active=payload.is_active,
         remark=(payload.remark or '').strip() or None,
@@ -132,6 +188,10 @@ def update_platform(user, platform_id: str, payload):
     instance = get_platform(platform_id)
     instance.name = payload.name.strip()
     instance.version_code = payload.version_code.strip()
+    instance.domain = _resolve_domain_value(
+        getattr(payload, 'domain', None),
+        default=instance.domain,
+    )
     instance.sort = payload.sort
     instance.is_active = payload.is_active
     instance.remark = (payload.remark or '').strip() or None
@@ -155,8 +215,11 @@ def get_platform(platform_id: str) -> McuPlatform:
     return instance
 
 
-def list_vehicles(platform_id: Optional[str] = None, keyword: str = ''):
+def list_vehicles(domain: Optional[str] = None, platform_id: Optional[str] = None, keyword: str = ''):
     queryset = VehicleModel.objects.select_related('platform').filter(is_deleted=False)
+    parsed_domain = _parse_domain_filter(domain)
+    if parsed_domain:
+        queryset = queryset.filter(platform__domain=parsed_domain)
     if platform_id:
         queryset = queryset.filter(platform_id=platform_id)
     keyword = (keyword or '').strip()
@@ -176,6 +239,7 @@ def serialize_vehicle(item: VehicleModel):
         'id': str(item.id),
         'platform_id': str(item.platform_id),
         'platform_name': item.platform.name,
+        'viu_codes': list(item.viu_codes or []),
         'name': item.name,
         'vehicle_code': item.vehicle_code,
         'cdc_platform': item.cdc_platform,
@@ -188,13 +252,16 @@ def serialize_vehicle(item: VehicleModel):
     }
 
 
-def list_vehicle_options():
+def list_vehicle_options(domain: Optional[str] = None):
     queryset = VehicleModel.objects.select_related('platform').filter(
         is_deleted=False,
         is_active=True,
         platform__is_deleted=False,
         platform__is_active=True,
     ).order_by('platform__sort', 'platform__name', 'name')
+    parsed_domain = _parse_domain_filter(domain)
+    if parsed_domain:
+        queryset = queryset.filter(platform__domain=parsed_domain)
     return [
         {
             'id': str(item.id),
@@ -202,6 +269,7 @@ def list_vehicle_options():
             'vehicle_code': item.vehicle_code,
             'platform_id': str(item.platform_id),
             'platform_name': item.platform.name,
+            'viu_codes': list(item.viu_codes or []),
         }
         for item in queryset
     ]
@@ -209,12 +277,16 @@ def list_vehicle_options():
 
 def create_vehicle(user, payload):
     platform = get_platform(payload.platform_id)
+    parsed_viu_codes = _normalize_viu_codes(payload.viu_codes, require_non_empty=platform.domain == DOMAIN_VEHICLE)
+    if platform.domain == DOMAIN_COCKPIT:
+        parsed_viu_codes = []
     instance = VehicleModel(
         platform=platform,
         name=payload.name.strip(),
         vehicle_code=payload.vehicle_code.strip(),
         cdc_platform=payload.cdc_platform.strip(),
         execution_machine=payload.execution_machine.strip(),
+        viu_codes=parsed_viu_codes,
         sort=payload.sort,
         is_active=payload.is_active,
         remark=(payload.remark or '').strip() or None,
@@ -227,10 +299,17 @@ def create_vehicle(user, payload):
 def update_vehicle(user, vehicle_id: str, payload):
     instance = get_vehicle(vehicle_id)
     instance.platform = get_platform(payload.platform_id)
+    parsed_viu_codes = _normalize_viu_codes(
+        payload.viu_codes,
+        require_non_empty=instance.platform.domain == DOMAIN_VEHICLE,
+    )
+    if instance.platform.domain == DOMAIN_COCKPIT:
+        parsed_viu_codes = []
     instance.name = payload.name.strip()
     instance.vehicle_code = payload.vehicle_code.strip()
     instance.cdc_platform = payload.cdc_platform.strip()
     instance.execution_machine = payload.execution_machine.strip()
+    instance.viu_codes = parsed_viu_codes
     instance.sort = payload.sort
     instance.is_active = payload.is_active
     instance.remark = (payload.remark or '').strip() or None
@@ -271,10 +350,15 @@ def list_test_cases(filters):
         .filter(is_deleted=False, vehicle__is_deleted=False)
         .annotate(latest_execute_time=Subquery(latest_execute_time_subquery))
     )
+    parsed_domain = _parse_domain_filter(getattr(filters, 'domain', None))
+    if parsed_domain:
+        queryset = queryset.filter(vehicle__platform__domain=parsed_domain)
     if filters.platform_id:
         queryset = queryset.filter(vehicle__platform_id=filters.platform_id)
     if filters.vehicle_id:
         queryset = queryset.filter(vehicle_id=filters.vehicle_id)
+    if filters.viu_code:
+        queryset = queryset.filter(viu_code=(filters.viu_code or '').strip().lower())
     if filters.is_active is not None:
         queryset = queryset.filter(is_active=filters.is_active)
     keyword = (filters.keyword or '').strip()
@@ -283,8 +367,9 @@ def list_test_cases(filters):
             Q(case_no__icontains=keyword)
             | Q(case_name__icontains=keyword)
             | Q(remark__icontains=keyword)
+            | Q(viu_code__icontains=keyword)
         )
-    queryset = queryset.order_by('-sort', 'case_no')
+    queryset = queryset.order_by('-sort', 'viu_code', 'case_no')
     return [serialize_test_case(item) for item in queryset]
 
 
@@ -308,6 +393,7 @@ def serialize_test_case(item: TestCase):
         'vehicle_name': item.vehicle.name,
         'vehicle_code': item.vehicle.vehicle_code,
         'platform_name': item.vehicle.platform.name,
+        'viu_code': item.viu_code,
         'case_no': item.case_no,
         'case_name': item.case_name,
         'remark': item.remark,
@@ -321,8 +407,10 @@ def serialize_test_case(item: TestCase):
 
 def create_test_case(user, payload):
     vehicle = get_vehicle(payload.vehicle_id)
+    viu_code = _normalize_case_viu_code(vehicle, getattr(payload, 'viu_code', None))
     instance = TestCase(
         vehicle=vehicle,
+        viu_code=viu_code,
         case_no=payload.case_no.strip(),
         case_name=payload.case_name.strip(),
         remark=(payload.remark or '').strip() or None,
@@ -336,7 +424,9 @@ def create_test_case(user, payload):
 
 def update_test_case(user, case_id: str, payload):
     instance = get_test_case(case_id)
-    instance.vehicle = get_vehicle(payload.vehicle_id)
+    vehicle = get_vehicle(payload.vehicle_id)
+    instance.vehicle = vehicle
+    instance.viu_code = _normalize_case_viu_code(vehicle, getattr(payload, 'viu_code', None))
     instance.case_no = payload.case_no.strip()
     instance.case_name = payload.case_name.strip()
     instance.remark = (payload.remark or '').strip() or None
@@ -380,13 +470,22 @@ def get_test_case(case_id: str) -> TestCase:
 @transaction.atomic
 def import_test_cases(user, payload) -> ImportResultOut:
     vehicle = get_vehicle(payload.vehicle_id)
+    require_viu_code = vehicle.platform.domain == DOMAIN_VEHICLE
     created_count = 0
     updated_count = 0
     ignored_count = 0
     errors = []
-    seen_case_nos = set()
+    seen_case_keys = set()
 
     for index, row in enumerate(payload.rows, start=1):
+        raw_viu_code = (row.viu_code or '').strip().lower()
+        if require_viu_code and not raw_viu_code:
+            errors.append(ImportErrorRow(row_no=index, message='车控车型导入时VIU编号不能为空'))
+            continue
+        if require_viu_code and raw_viu_code not in set(vehicle.viu_codes or []):
+            errors.append(ImportErrorRow(row_no=index, message=f'车型 {vehicle.name} 未配置 VIU 编号: {raw_viu_code}'))
+            continue
+        viu_code = raw_viu_code if require_viu_code else ''
         case_no = (row.case_no or '').strip()
         case_name = (row.case_name or '').strip()
         remark = (row.remark or '').strip() or None
@@ -396,15 +495,22 @@ def import_test_cases(user, payload) -> ImportResultOut:
         if not case_name:
             errors.append(ImportErrorRow(row_no=index, message='用例名称不能为空'))
             continue
-        if case_no in seen_case_nos:
-            errors.append(ImportErrorRow(row_no=index, message='Excel 内用例编号重复'))
+        case_key = (viu_code, case_no)
+        if case_key in seen_case_keys:
+            errors.append(ImportErrorRow(row_no=index, message='Excel 内VIU编号+用例编号重复'))
             continue
-        seen_case_nos.add(case_no)
+        seen_case_keys.add(case_key)
 
-        instance = TestCase.objects.filter(vehicle=vehicle, case_no=case_no, is_deleted=False).first()
+        instance = TestCase.objects.filter(
+            vehicle=vehicle,
+            viu_code=viu_code,
+            case_no=case_no,
+            is_deleted=False,
+        ).first()
         if not instance:
             instance = TestCase(
                 vehicle=vehicle,
+                viu_code=viu_code,
                 case_no=case_no,
                 case_name=case_name,
                 remark=remark,
@@ -431,7 +537,7 @@ def import_test_cases(user, payload) -> ImportResultOut:
     )
 
 
-def parse_excel_rows(file_obj) -> list[dict]:
+def parse_excel_rows(file_obj, *, require_viu_code: bool = False) -> list[dict]:
     try:
         content = file_obj.read()
         workbook = openpyxl.load_workbook(
@@ -453,6 +559,9 @@ def parse_excel_rows(file_obj) -> list[dict]:
         case_name_index = header.index('用例名称')
     except ValueError:
         raise HttpError(400, 'Excel 模板缺少必填列：用例编号、用例名称')
+    viu_code_index = header.index('VIU编号') if 'VIU编号' in header else None
+    if require_viu_code and viu_code_index is None:
+        raise HttpError(400, 'Excel 模板缺少必填列：VIU编号')
     remark_index = header.index('备注') if '备注' in header else None
 
     parsed_rows = []
@@ -464,6 +573,7 @@ def parse_excel_rows(file_obj) -> list[dict]:
         if not case_no and not case_name:
             continue
         parsed_rows.append({
+            'viu_code': str(row[viu_code_index] or '').strip() if viu_code_index is not None else '',
             'case_no': case_no,
             'case_name': case_name,
             'remark': str(row[remark_index] or '').strip() if remark_index is not None else '',
@@ -471,17 +581,22 @@ def parse_excel_rows(file_obj) -> list[dict]:
     return parsed_rows
 
 
-def build_test_case_template_response():
+def build_test_case_template_response(domain: Optional[str] = None):
+    parsed_domain = _parse_domain_filter(domain) or DOMAIN_COCKPIT
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = '测试用例模板'
-    sheet.append(['用例编号', '用例名称', '备注'])
-    sheet.append(['CASE-001', '示例自动化用例', '固定备注示例'])
+    if parsed_domain == DOMAIN_VEHICLE:
+        sheet.append(['VIU编号', '用例编号', '用例名称', '备注'])
+        sheet.append(['viu0', 'CASE-001', '示例车控用例', '固定备注示例'])
+    else:
+        sheet.append(['用例编号', '用例名称', '备注'])
+        sheet.append(['CASE-001', '示例自动化用例', '固定备注示例'])
     response = HttpResponse(
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
     response['Content-Disposition'] = (
-        "attachment; filename*=UTF-8''auto_test_case_template.xlsx"
+        f"attachment; filename*=UTF-8''auto_test_case_template_{parsed_domain}.xlsx"
     )
     workbook.save(response)
     return response
@@ -489,34 +604,48 @@ def build_test_case_template_response():
 
 def build_test_case_export_response(filters):
     rows = list_test_cases(filters)
+    parsed_domain = _parse_domain_filter(getattr(filters, 'domain', None))
+    include_viu_code = parsed_domain == DOMAIN_VEHICLE or any(
+        (item.get('viu_code') or '').strip() for item in rows
+    )
     workbook = openpyxl.Workbook(write_only=True)
     sheet = workbook.create_sheet('测试用例')
-    sheet.append([
-        'MCU平台',
+    header = [
+        '平台',
         '车型',
         '车型编号',
+    ]
+    if include_viu_code:
+        header.append('VIU编号')
+    header.extend([
         '用例编号',
         '用例名称',
         '备注',
         '最近执行时间',
         '更新时间',
     ])
+    sheet.append(header)
     for item in rows:
-        sheet.append([
+        row = [
             item['platform_name'],
             item['vehicle_name'],
             item['vehicle_code'],
+        ]
+        if include_viu_code:
+            row.append(item.get('viu_code') or '')
+        row.extend([
             item['case_no'],
             item['case_name'],
             item.get('remark') or '',
             item.get('latest_execute_time') or '',
             item.get('sys_update_datetime') or '',
         ])
+        sheet.append(row)
     response = HttpResponse(
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
     response['Content-Disposition'] = (
-        "attachment; filename*=UTF-8''auto_test_cases.xlsx"
+        f"attachment; filename*=UTF-8''auto_test_cases_{(parsed_domain or 'all')}.xlsx"
     )
     workbook.save(response)
     return response
@@ -532,8 +661,9 @@ def report_daily_results(payload):
     if not vehicle:
         raise HttpError(404, '车型不存在')
 
+    vehicle_domain = vehicle.platform.domain
     active_cases = {
-        item.case_no: item
+        (item.viu_code or '', item.case_no): item
         for item in TestCase.objects.filter(vehicle=vehicle, is_deleted=False, is_active=True)
     }
     if not active_cases:
@@ -543,7 +673,12 @@ def report_daily_results(payload):
     now = datetime.now()
     for item in payload.results:
         case_no = (item.case_no or '').strip()
-        test_case = active_cases.get(case_no)
+        viu_code = (item.viu_code or '').strip().lower()
+        if vehicle_domain == DOMAIN_VEHICLE and not viu_code:
+            raise HttpError(400, '车控领域上报结果需要填写VIU编号')
+        if vehicle_domain == DOMAIN_COCKPIT:
+            viu_code = ''
+        test_case = active_cases.get((viu_code, case_no))
         if not test_case:
             raise HttpError(400, f'未找到用例编号: {case_no}')
         DailyExecutionResult.objects.create(
@@ -613,8 +748,11 @@ def get_suggested_failure_reason(vehicle_id: str, test_case_id: str, execute_dat
     return item.failure_reason if item else None
 
 
-def get_daily_summary(vehicle_id: str, execute_date) -> DailySummaryOut:
+def get_daily_summary(vehicle_id: str, execute_date, domain: Optional[str] = None) -> DailySummaryOut:
     vehicle = get_vehicle(vehicle_id)
+    parsed_domain = _parse_domain_filter(domain)
+    if parsed_domain and vehicle.platform.domain != parsed_domain:
+        raise HttpError(404, '车型不存在')
     batch = recalculate_daily_batch(vehicle.id, execute_date)
     total = max(batch.total_count, 0)
 
@@ -650,6 +788,9 @@ def get_daily_overview(query) -> DailyOverviewResponse:
         platform__is_deleted=False,
         platform__is_active=True,
     )
+    parsed_domain = _parse_domain_filter(getattr(query, 'domain', None))
+    if parsed_domain:
+        vehicles = vehicles.filter(platform__domain=parsed_domain)
     if query.platform_id:
         vehicles = vehicles.filter(platform_id=query.platform_id)
 
@@ -733,10 +874,13 @@ def get_daily_overview(query) -> DailyOverviewResponse:
     return DailyOverviewResponse(items=rows, summary=summary)
 
 
-def list_daily_results(vehicle_id: str, execute_date):
+def list_daily_results(vehicle_id: str, execute_date, domain: Optional[str] = None):
     vehicle = get_vehicle(vehicle_id)
+    parsed_domain = _parse_domain_filter(domain)
+    if parsed_domain and vehicle.platform.domain != parsed_domain:
+        raise HttpError(404, '车型不存在')
     cases = list(
-        TestCase.objects.filter(vehicle=vehicle, is_deleted=False, is_active=True).order_by('-sort', 'case_no')
+        TestCase.objects.filter(vehicle=vehicle, is_deleted=False, is_active=True).order_by('-sort', 'viu_code', 'case_no')
     )
     result_map = {
         item.test_case_id: item
@@ -752,6 +896,7 @@ def list_daily_results(vehicle_id: str, execute_date):
             DailyResultItemOut(
                 result_id=str(result.id) if result else None,
                 case_id=str(case.id),
+                viu_code=case.viu_code,
                 case_no=case.case_no,
                 case_name=case.case_name,
                 remark=case.remark,
@@ -801,6 +946,7 @@ def get_test_case_history(case_id: str, page: int = 1, page_size: int = 10) -> D
         DailyHistoryRow(
             id=str(item.id),
             execute_date=item.execute_date,
+            viu_code=item.test_case.viu_code,
             status=item.result,
             failure_reason=item.failure_reason,
             start_time=item.start_time,

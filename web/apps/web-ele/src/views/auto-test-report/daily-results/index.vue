@@ -10,7 +10,7 @@ import type {
 } from '#/api/auto-test-report';
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
@@ -48,7 +48,9 @@ import {
 } from '#/api/auto-test-report';
 import { useZqTable } from '#/components/zq-table';
 
+import DomainSwitcher from '../components/domain-switcher.vue';
 import TestCaseHistoryDrawer from '../components/test-case-history-drawer.vue';
+import { useAutoTestReportDomain } from '../shared/domain';
 import {
   formatDuration,
   RESULT_LABEL_MAP,
@@ -60,6 +62,8 @@ import {
 defineOptions({ name: 'AutoTestDailyResults' });
 
 const route = useRoute();
+const router = useRouter();
+const { domain, domainMeta, ensureDomainQuery } = useAutoTestReportDomain();
 const overviewChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderOverviewChart } = useEcharts(overviewChartRef);
 
@@ -92,6 +96,65 @@ const detailSortState = ref<null | {
   order: 'ascending' | 'descending' | null;
   prop: string;
 }>(null);
+
+const activeViewReloadPaused = ref(false);
+let activeViewReloadTimer: null | number = null;
+let activeViewReloadInFlight = false;
+let activeViewReloadQueued = false;
+
+function scheduleActiveViewReload() {
+  if (activeViewReloadPaused.value) {
+    activeViewReloadQueued = true;
+    return;
+  }
+  if (activeViewReloadTimer !== null || activeViewReloadInFlight) {
+    activeViewReloadQueued = true;
+    return;
+  }
+  activeViewReloadTimer = window.setTimeout(async () => {
+    activeViewReloadTimer = null;
+    if (activeViewReloadPaused.value) {
+      activeViewReloadQueued = true;
+      return;
+    }
+    activeViewReloadQueued = false;
+    activeViewReloadInFlight = true;
+    try {
+      await loadActiveView();
+    } finally {
+      activeViewReloadInFlight = false;
+      if (activeViewReloadQueued) {
+        activeViewReloadQueued = false;
+        scheduleActiveViewReload();
+      }
+    }
+  }, 0);
+}
+
+function flushQueuedActiveViewReload() {
+  if (!activeViewReloadQueued) {
+    return false;
+  }
+  activeViewReloadQueued = false;
+  scheduleActiveViewReload();
+  return true;
+}
+
+async function runWithActiveViewReloadPaused(task: () => Promise<void> | void) {
+  activeViewReloadPaused.value = true;
+  try {
+    await task();
+  } finally {
+    activeViewReloadPaused.value = false;
+  }
+}
+
+function getFirstQueryValue(value?: string | string[]) {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+  return value;
+}
 
 const selectedVehicleId = computed(() => selectedVehiclePaths.value[1] || '');
 const platformOptions = computed(() => {
@@ -168,13 +231,17 @@ async function applySuggestedFailureReason(row: DailyResultItem) {
 const [OverviewGrid, overviewGridApi] = useZqTable({
   tableTitle: '全量车型执行概览',
   gridOptions: {
-    columns: useOverviewColumns(),
+    columns: useOverviewColumns(domain.value),
     border: true,
     stripe: true,
     proxyConfig: {
       autoLoad: false,
       ajax: {
-        query: async ({ page }) => {
+        query: async ({
+          page,
+        }: {
+          page: { currentPage: number; pageSize: number };
+        }) => {
           const rows = overviewData.value?.items || [];
           const start = (page.currentPage - 1) * page.pageSize;
           const end = start + page.pageSize;
@@ -194,13 +261,17 @@ const [OverviewGrid, overviewGridApi] = useZqTable({
 const [DetailGrid, detailGridApi] = useZqTable({
   tableTitle: '车型执行明细',
   gridOptions: {
-    columns: useResultColumns(),
+    columns: useResultColumns(domain.value),
     border: true,
     stripe: true,
     proxyConfig: {
       autoLoad: false,
       ajax: {
-        query: async ({ page }) => {
+        query: async ({
+          page,
+        }: {
+          page: { currentPage: number; pageSize: number };
+        }) => {
           if (!selectedVehicleId.value) {
             return { items: [], total: 0 };
           }
@@ -208,6 +279,7 @@ const [DetailGrid, detailGridApi] = useZqTable({
             (await listDailyResultsApi(
               selectedVehicleId.value,
               selectedDate.value,
+              domain.value,
             )) || [];
           let filtered = items;
           if (selectedStatus.value.length > 0) {
@@ -300,18 +372,40 @@ function renderChart(
 }
 
 async function loadVehicleOptions() {
-  vehicleOptions.value = (await listVehicleOptionsApi()) || [];
+  vehicleOptions.value = (await listVehicleOptionsApi(domain.value)) || [];
   rebuildCascaderOptions();
-  const routeVehicleId = String(route.query.vehicleId || '');
+
+  const currentPlatformIds = new Set(
+    platformOptions.value.map((item) => item.value),
+  );
+  if (
+    selectedPlatformId.value &&
+    !currentPlatformIds.has(selectedPlatformId.value)
+  ) {
+    selectedPlatformId.value = '';
+  }
+
+  const routeVehicleId = getFirstQueryValue(
+    route.query.vehicleId as string | string[] | undefined,
+  );
   const matched = vehicleOptions.value.find(
-    (item) => item.id === routeVehicleId,
+    (item) => item.id === (routeVehicleId || ''),
   );
   if (matched) {
     selectedVehiclePaths.value = [matched.platform_id, matched.id];
     activeView.value = 'vehicle';
-  } else if (vehicleOptions.value.length > 0 && !selectedVehicleId.value) {
-    const first = vehicleOptions.value[0]!;
-    selectedVehiclePaths.value = [first.platform_id, first.id];
+  } else {
+    const currentVehicleExists = vehicleOptions.value.some(
+      (item) => item.id === selectedVehicleId.value,
+    );
+    if (!currentVehicleExists) {
+      if (vehicleOptions.value.length > 0) {
+        const first = vehicleOptions.value[0]!;
+        selectedVehiclePaths.value = [first.platform_id, first.id];
+      } else {
+        selectedVehiclePaths.value = [];
+      }
+    }
   }
 }
 
@@ -319,6 +413,7 @@ async function loadOverview() {
   overviewLoading.value = true;
   try {
     overviewData.value = await getDailyOverviewApi({
+      domain: domain.value,
       execute_date: selectedDate.value,
       platform_id: selectedPlatformId.value || undefined,
       abnormal_only: abnormalOnly.value || undefined,
@@ -342,6 +437,7 @@ async function loadVehicleView() {
     summary.value = await getDailySummaryApi(
       selectedVehicleId.value,
       selectedDate.value,
+      domain.value,
     );
     await detailGridApi.reload();
     await nextTick();
@@ -361,7 +457,7 @@ async function loadActiveView() {
 
 function openHistory(row: DailyResultItem) {
   currentCaseId.value = row.case_id;
-  historyTitle.value = `${row.case_no} / ${row.case_name}`;
+  historyTitle.value = `${row.case_no}${row.viu_code ? ` / ${row.viu_code}` : ''} / ${row.case_name}`;
   historyVisible.value = true;
 }
 
@@ -372,14 +468,12 @@ function handleStatusFilterShow() {
 function confirmStatusFilter() {
   selectedStatus.value = [...draftStatus.value];
   statusPopoverVisible.value = false;
-  detailGridApi.reload();
 }
 
 function resetStatusFilter() {
   draftStatus.value = [];
   selectedStatus.value = [];
   statusPopoverVisible.value = false;
-  detailGridApi.reload();
 }
 
 function handleDetailSortChange(data: {
@@ -389,62 +483,142 @@ function handleDetailSortChange(data: {
   detailSortState.value = data.prop
     ? { order: data.order, prop: data.prop }
     : null;
-  detailGridApi.reload();
 }
 
 async function jumpToVehicle(row: DailyOverviewRow) {
   selectedVehiclePaths.value = [row.platform_id, row.vehicle_id];
   activeView.value = 'vehicle';
-  await loadVehicleView();
 }
 
 watch(vehicleKeyword, () => {
   rebuildCascaderOptions();
 });
 
-watch([selectedDate, selectedPlatformId, abnormalOnly], () => {
-  if (activeView.value === 'overview') {
-    loadOverview();
-  }
-});
+watch(
+  selectedVehicleId,
+  (next) => {
+    if (activeView.value !== 'vehicle' || !next) {
+      return;
+    }
+    if (
+      getFirstQueryValue(
+        route.query.vehicleId as string | string[] | undefined,
+      ) === next
+    ) {
+      return;
+    }
+    router.replace({
+      path: route.path,
+      query: {
+        ...route.query,
+        domain: domain.value,
+        vehicleId: next,
+      },
+    });
+  },
+  { flush: 'post' },
+);
 
-watch([selectedVehicleId, selectedDate], () => {
-  if (activeView.value === 'vehicle') {
-    selectedStatus.value = [];
-    draftStatus.value = [];
-    detailSortState.value = null;
-    loadVehicleView();
-  }
-});
+watch(
+  activeView,
+  () => {
+    scheduleActiveViewReload();
+  },
+  { flush: 'post' },
+);
 
-watch(activeView, () => {
-  loadActiveView();
-});
+watch(
+  [selectedDate, selectedPlatformId, abnormalOnly],
+  () => {
+    if (activeView.value === 'overview') {
+      scheduleActiveViewReload();
+    }
+  },
+  { flush: 'post' },
+);
+
+watch(
+  [selectedVehicleId, selectedDate, selectedStatus, detailSortState],
+  () => {
+    if (activeView.value === 'vehicle') {
+      scheduleActiveViewReload();
+    }
+  },
+  { flush: 'post' },
+);
+
+watch(
+  [selectedVehicleId, selectedDate],
+  ([nextVehicleId, nextDate], [prevVehicleId, prevDate] = []) => {
+    if (activeView.value !== 'vehicle') {
+      return;
+    }
+    if (nextVehicleId !== prevVehicleId || nextDate !== prevDate) {
+      selectedStatus.value = [];
+      draftStatus.value = [];
+      detailSortState.value = null;
+    }
+  },
+  { flush: 'post' },
+);
+
+watch(
+  domain,
+  async () => {
+    await runWithActiveViewReloadPaused(async () => {
+      selectedPlatformId.value = '';
+      selectedVehiclePaths.value = [];
+      selectedStatus.value = [];
+      draftStatus.value = [];
+      detailSortState.value = null;
+      overviewGridApi.setGridOptions({
+        columns: useOverviewColumns(domain.value),
+      });
+      detailGridApi.setGridOptions({
+        columns: useResultColumns(domain.value),
+      });
+      await loadVehicleOptions();
+    });
+    if (!flushQueuedActiveViewReload()) {
+      scheduleActiveViewReload();
+    }
+  },
+  { immediate: false },
+);
 
 onMounted(async () => {
-  await loadVehicleOptions();
-  await loadActiveView();
+  ensureDomainQuery();
+  await runWithActiveViewReloadPaused(async () => {
+    await loadVehicleOptions();
+  });
+  if (!flushQueuedActiveViewReload()) {
+    scheduleActiveViewReload();
+  }
 });
 </script>
 
 <template>
-  <Page auto-content-height>
-    <div class="flex h-full min-h-0 flex-col gap-4">
+  <Page auto-content-height content-class="flex min-w-0 flex-col">
+    <div class="flex h-full min-h-0 min-w-0 flex-col gap-4">
       <div class="shrink-0 rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm">
-        <div class="flex items-center justify-between gap-4">
+        <div class="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div class="text-base font-semibold text-gray-900">
-              每日执行结果
+              {{ domainMeta.badge }} · 每日执行结果
             </div>
             <div class="text-sm text-gray-500">
               先看全量异常，再下钻到单车型明细。
             </div>
           </div>
-          <ElTabs v-model="activeView" class="auto-test-result-tabs">
-            <ElTabPane label="全量视图" name="overview" />
-            <ElTabPane label="车型视图" name="vehicle" />
-          </ElTabs>
+          <DomainSwitcher />
         </div>
+      </div>
+
+      <div class="shrink-0 rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm">
+        <ElTabs v-model="activeView" class="auto-test-result-tabs">
+          <ElTabPane label="全量视图" name="overview" />
+          <ElTabPane label="车型视图" name="vehicle" />
+        </ElTabs>
       </div>
 
       <template v-if="activeView === 'overview'">
@@ -462,12 +636,12 @@ onMounted(async () => {
                 class="!w-[160px]"
               />
             </ElFormItem>
-            <ElFormItem label="MCU 平台" class="!mb-0">
+            <ElFormItem :label="domainMeta.platformLabel" class="!mb-0">
               <ElSelect
                 v-model="selectedPlatformId"
                 class="!w-[220px]"
                 clearable
-                placeholder="全部平台"
+                :placeholder="`全部${domainMeta.platformLabel}`"
               >
                 <ElOption
                   v-for="item in platformOptions"
@@ -575,13 +749,13 @@ onMounted(async () => {
             class="flex flex-wrap items-center gap-4"
             @submit.prevent
           >
-            <ElFormItem label="MCU 平台 / 车型" class="!mb-0">
+            <ElFormItem :label="domainMeta.selectorLabel" class="!mb-0">
               <ElCascader
                 v-model="selectedVehiclePaths"
                 class="w-[320px]"
                 clearable
                 filterable
-                placeholder="选择 MCU 平台 / 车型"
+                :placeholder="domainMeta.selectorPlaceholder"
                 :options="cascaderOptions"
                 :props="{ emitPath: true }"
               />
@@ -682,7 +856,7 @@ onMounted(async () => {
                     </div>
                   </template>
                   <template #cell-status="{ row }">
-                    <ElTag :type="RESULT_TAG_MAP[row.status]">
+                    <ElTag :type="RESULT_TAG_MAP[row.status] || 'info'">
                       {{ RESULT_LABEL_MAP[row.status] }}
                     </ElTag>
                   </template>

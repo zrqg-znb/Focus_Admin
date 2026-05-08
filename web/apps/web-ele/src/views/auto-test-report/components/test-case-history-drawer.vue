@@ -71,11 +71,12 @@ watch(
       >
         <div class="mb-2 flex items-center justify-between">
           <div class="text-base font-semibold">{{ item.execute_date }}</div>
-          <ElTag :type="RESULT_TAG_MAP[item.status]">
+          <ElTag :type="RESULT_TAG_MAP[item.status] || 'info'">
             {{ RESULT_LABEL_MAP[item.status] }}
           </ElTag>
         </div>
         <div class="grid grid-cols-2 gap-2 text-sm text-gray-500">
+          <div>VIU编号：{{ item.viu_code || '-' }}</div>
           <div>开始时间：{{ item.start_time || '-' }}</div>
           <div>执行时长：{{ formatDuration(item.duration_seconds) }}</div>
           <div>上报时间：{{ item.reported_at || '-' }}</div>

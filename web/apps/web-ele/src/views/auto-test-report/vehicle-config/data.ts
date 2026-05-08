@@ -1,13 +1,20 @@
+import type { AutoTestReportDomain } from '../shared/domain';
+
 import type { VbenFormSchema } from '#/adapter/form';
 import type { McuPlatformItem, VehicleItem } from '#/api/auto-test-report';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
-export function usePlatformColumns(): ZqTableGridOptions<McuPlatformItem>['columns'] {
+import { getAutoTestReportDomainMeta } from '../shared/domain';
+
+export function usePlatformColumns(
+  domain: AutoTestReportDomain,
+): ZqTableGridOptions<McuPlatformItem>['columns'] {
+  const domainMeta = getAutoTestReportDomainMeta(domain);
   return [
     {
       key: 'name',
       dataKey: 'name',
-      title: '平台名称',
+      title: domainMeta.platformLabel,
       width: 180,
       align: 'center',
       headerAlign: 'center',
@@ -48,8 +55,10 @@ export function usePlatformColumns(): ZqTableGridOptions<McuPlatformItem>['colum
   ];
 }
 
-export function useVehicleColumns(): ZqTableGridOptions<VehicleItem>['columns'] {
-  return [
+export function useVehicleColumns(
+  domain: AutoTestReportDomain,
+): ZqTableGridOptions<VehicleItem>['columns'] {
+  const columns: ZqTableGridOptions<VehicleItem>['columns'] = [
     {
       key: 'name',
       dataKey: 'name',
@@ -66,22 +75,40 @@ export function useVehicleColumns(): ZqTableGridOptions<VehicleItem>['columns'] 
       align: 'center',
       headerAlign: 'center',
     },
-    {
+  ];
+
+  if (domain === 'cockpit') {
+    columns.push({
       key: 'cdc_platform',
       dataKey: 'cdc_platform',
       title: 'CDC平台',
       width: 160,
       align: 'center',
       headerAlign: 'center',
-    },
-    {
-      key: 'execution_machine',
-      dataKey: 'execution_machine',
-      title: '执行机器',
-      width: 200,
+    });
+  }
+
+  columns.push({
+    key: 'execution_machine',
+    dataKey: 'execution_machine',
+    title: '执行机器',
+    width: 200,
+    align: 'center',
+    headerAlign: 'center',
+  });
+
+  if (domain === 'vehicle') {
+    columns.push({
+      key: 'viu_codes',
+      dataKey: 'viu_codes',
+      title: '可用 VIU 编号',
+      width: 180,
       align: 'center',
       headerAlign: 'center',
-    },
+    });
+  }
+
+  columns.push(
     {
       key: 'sys_update_datetime',
       dataKey: 'sys_update_datetime',
@@ -99,7 +126,9 @@ export function useVehicleColumns(): ZqTableGridOptions<VehicleItem>['columns'] 
       headerAlign: 'center',
       showOverflowTooltip: false,
     },
-  ];
+  );
+
+  return columns;
 }
 
 export function useVehicleSearchSchema(): VbenFormSchema[] {

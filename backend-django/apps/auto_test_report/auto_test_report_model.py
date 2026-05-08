@@ -3,6 +3,17 @@ from django.db import models
 from common.fu_model import RootModel
 
 
+DOMAIN_COCKPIT = 'cockpit'
+DOMAIN_VEHICLE = 'vehicle'
+DOMAIN_CHOICES = [
+    (DOMAIN_COCKPIT, '座舱'),
+    (DOMAIN_VEHICLE, '车控'),
+]
+
+VIU_CODE_VALUES = ['viu0', 'viu1', 'viu2', 'viu3', 'viu4']
+VIU_CODE_CHOICES = [(value, value) for value in VIU_CODE_VALUES]
+
+
 RESULT_SUCCESS = 'success'
 RESULT_FAILED = 'failed'
 RESULT_TIMEOUT = 'timeout'
@@ -17,6 +28,13 @@ RESULT_CHOICES = [
 class McuPlatform(RootModel):
     name = models.CharField(max_length=128, unique=True, verbose_name='平台名称')
     version_code = models.CharField(max_length=64, unique=True, verbose_name='版本标识')
+    domain = models.CharField(
+        max_length=16,
+        choices=DOMAIN_CHOICES,
+        default=DOMAIN_COCKPIT,
+        db_index=True,
+        verbose_name='领域',
+    )
     is_active = models.BooleanField(default=True, verbose_name='是否启用')
     remark = models.TextField(null=True, blank=True, verbose_name='备注')
 
@@ -37,6 +55,7 @@ class VehicleModel(RootModel):
     vehicle_code = models.CharField(max_length=64, unique=True, verbose_name='车型编号')
     cdc_platform = models.CharField(max_length=128, verbose_name='CDC平台')
     execution_machine = models.CharField(max_length=255, verbose_name='执行机器')
+    viu_codes = models.JSONField(default=list, blank=True, verbose_name='可用VIU编号')
     is_active = models.BooleanField(default=True, verbose_name='是否启用')
     remark = models.TextField(null=True, blank=True, verbose_name='备注')
 
@@ -59,6 +78,7 @@ class TestCase(RootModel):
         related_name='test_cases',
         verbose_name='车型',
     )
+    viu_code = models.CharField(max_length=16, default='', blank=True, verbose_name='VIU编号')
     case_no = models.CharField(max_length=128, verbose_name='用例编号')
     case_name = models.CharField(max_length=255, verbose_name='用例名称')
     remark = models.TextField(null=True, blank=True, verbose_name='备注')
@@ -70,8 +90,8 @@ class TestCase(RootModel):
         verbose_name_plural = verbose_name
         constraints = [
             models.UniqueConstraint(
-                fields=['vehicle', 'case_no'],
-                name='uniq_atr_vehicle_case_no',
+                fields=['vehicle', 'viu_code', 'case_no'],
+                name='uniq_atr_vehicle_viu_case_no',
             ),
         ]
 

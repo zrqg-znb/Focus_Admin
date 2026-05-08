@@ -7,7 +7,7 @@ import type {
   VehicleOption,
 } from '#/api/auto-test-report';
 
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
@@ -21,6 +21,8 @@ import {
   ElInputNumber,
   ElMessage,
   ElMessageBox,
+  ElOption,
+  ElSelect,
   ElSwitch,
   ElTooltip,
 } from 'element-plus';
@@ -38,29 +40,43 @@ import {
 } from '#/api/auto-test-report';
 import { useZqTable } from '#/components/zq-table';
 
+import DomainSwitcher from '../components/domain-switcher.vue';
 import TestCaseHistoryDrawer from '../components/test-case-history-drawer.vue';
+import {
+  AUTO_TEST_REPORT_VIU_CODES,
+  useAutoTestReportDomain,
+} from '../shared/domain';
 import { useCaseColumns } from './data';
 
 defineOptions({ name: 'AutoTestCaseList' });
 
+type TestCaseFormState = Omit<TestCasePayload, 'vehicle_id'> & {
+  id?: string;
+  vehicle_path: string[];
+};
+
+const { domain, domainMeta, ensureDomainQuery } = useAutoTestReportDomain();
 const vehicleOptions = ref<VehicleOption[]>([]);
 const cascaderOptions = ref<any[]>([]);
 const selectedVehiclePaths = ref<string[][]>([]);
+const selectedViuCode = ref('');
 const vehicleKeyword = ref('');
 const keyword = ref('');
 const selectedIds = ref<string[]>([]);
+const excelInputRef = ref<HTMLInputElement | null>(null);
 
 const caseDialogVisible = ref(false);
 const caseDialogMode = ref<'create' | 'edit'>('create');
 const caseDialogSaving = ref(false);
 const caseFormRef = ref<FormInstance>();
-const caseForm = ref<TestCasePayload & { id?: string }>({
-  vehicle_id: '',
+const caseForm = ref<TestCaseFormState>({
   case_no: '',
   case_name: '',
+  viu_code: '',
   remark: '',
   sort: 0,
   is_active: true,
+  vehicle_path: [],
 });
 
 const importLoading = ref(false);
@@ -80,20 +96,59 @@ const currentVehicleId = computed(
   () => selectedVehicleIds.value[0] || vehicleOptions.value[0]?.id || '',
 );
 
+const currentVehicle = computed(
+  () =>
+    vehicleOptions.value.find((item) => item.id === currentVehicleId.value) ||
+    null,
+);
+
+const vehicleViuOptions = computed(() =>
+  [...AUTO_TEST_REPORT_VIU_CODES].map((code) => ({
+    label: code,
+    value: code,
+  })),
+);
+
+const currentVehicleViuCodes = computed(() => {
+  if (domain.value !== 'vehicle') {
+    return [];
+  }
+  return currentVehicle.value?.viu_codes?.length
+    ? [...currentVehicle.value.viu_codes]
+    : [];
+});
+
+const selectedVehicleViuOptions = computed(() =>
+  currentVehicleViuCodes.value.map((code) => ({
+    label: code,
+    value: code,
+  })),
+);
+
 const [Grid, gridApi] = useZqTable({
   tableTitle: '测试用例列表',
   gridOptions: {
-    columns: useCaseColumns(),
+    columns: useCaseColumns(domain.value),
     border: true,
     stripe: true,
     rowKey: 'id',
     proxyConfig: {
       autoLoad: false,
       ajax: {
-        query: async ({ page }) => {
+        query: async ({
+          page,
+        }: {
+          page: { currentPage: number; pageSize: number };
+        }) => {
           const items =
-            (await listTestCasesApi({ keyword: keyword.value || undefined })) ||
-            [];
+            (await listTestCasesApi({
+              domain: domain.value,
+              keyword: keyword.value || undefined,
+              viu_code:
+                domain.value === 'vehicle'
+                  ? selectedViuCode.value || undefined
+                  : undefined,
+            })) || [];
           const filtered = items.filter((item) => {
             if (
               selectedVehicleIds.value.length > 0 &&
@@ -125,6 +180,11 @@ const [Grid, gridApi] = useZqTable({
   showSearchForm: false,
 });
 
+function getVehiclePath(vehicleId: string) {
+  const matchedVehicle = vehicleOptions.value.find((v) => v.id === vehicleId);
+  return matchedVehicle ? [matchedVehicle.platform_id, matchedVehicle.id] : [];
+}
+
 function rebuildCascaderOptions() {
   const platformMap = new Map<string, any>();
   for (const item of vehicleOptions.value) {
@@ -144,8 +204,23 @@ function rebuildCascaderOptions() {
 }
 
 async function reloadVehicleOptions() {
-  vehicleOptions.value = (await listVehicleOptionsApi()) || [];
+  vehicleOptions.value = (await listVehicleOptionsApi(domain.value)) || [];
   rebuildCascaderOptions();
+
+  const validVehicleIds = new Set(vehicleOptions.value.map((item) => item.id));
+  selectedVehiclePaths.value = selectedVehiclePaths.value.filter((path) =>
+    validVehicleIds.has(path[path.length - 1] || ''),
+  );
+
+  if (
+    domain.value === 'vehicle' &&
+    selectedViuCode.value &&
+    !vehicleViuOptions.value.some(
+      (item) => item.value === selectedViuCode.value,
+    )
+  ) {
+    selectedViuCode.value = '';
+  }
 }
 
 async function refreshGrid() {
@@ -155,21 +230,27 @@ async function refreshGrid() {
 function openCreate() {
   caseDialogMode.value = 'create';
 
-  // Try to find the platform_id for the currentVehicleId to pre-fill the cascader
-  const matchedVehicle = vehicleOptions.value.find(
-    (v) => v.id === currentVehicleId.value,
-  );
-  const initialPath = matchedVehicle
-    ? [matchedVehicle.platform_id, matchedVehicle.id]
-    : [];
+  const initialPath = getVehiclePath(currentVehicleId.value);
+  if (
+    domain.value === 'vehicle' &&
+    selectedVehicleViuOptions.value.length === 0
+  ) {
+    ElMessage.warning('当前车型未配置可用 VIU 编号，请先维护车型配置');
+    return;
+  }
 
   caseForm.value = {
-    vehicle_id: initialPath as any, // Temporary store the array here, will extract id on submit
+    vehicle_path: initialPath,
     case_no: '',
     case_name: '',
+    viu_code:
+      domain.value === 'vehicle'
+        ? selectedVehicleViuOptions.value[0]?.value || ''
+        : '',
     remark: '',
     sort: 0,
     is_active: true,
+    id: undefined,
   };
   caseDialogVisible.value = true;
 }
@@ -177,19 +258,12 @@ function openCreate() {
 function openEdit(row: TestCaseItem) {
   caseDialogMode.value = 'edit';
 
-  // Find the platform_id to pre-fill the cascader
-  const matchedVehicle = vehicleOptions.value.find(
-    (v) => v.id === row.vehicle_id,
-  );
-  const initialPath = matchedVehicle
-    ? [matchedVehicle.platform_id, matchedVehicle.id]
-    : [];
-
   caseForm.value = {
     id: row.id,
-    vehicle_id: initialPath as any, // Temporary store the array here, will extract id on submit
+    vehicle_path: getVehiclePath(row.vehicle_id),
     case_no: row.case_no,
     case_name: row.case_name,
+    viu_code: row.viu_code || '',
     remark: row.remark || '',
     sort: row.sort,
     is_active: row.is_active,
@@ -201,27 +275,33 @@ async function submitCase() {
   await caseFormRef.value?.validate();
   caseDialogSaving.value = true;
   try {
-    // Extract the actual vehicle_id from the cascader path array
-    const cascaderValue = caseForm.value.vehicle_id as unknown as string[];
-    const actualVehicleId = Array.isArray(cascaderValue)
-      ? cascaderValue[cascaderValue.length - 1]
-      : cascaderValue;
+    const cascaderValue = caseForm.value.vehicle_path || [];
+    const actualVehicleId = cascaderValue[cascaderValue.length - 1] || '';
 
     if (!actualVehicleId) {
-      ElMessage.warning('请选择归属车型');
+      ElMessage.warning(`请选择${domainMeta.value.selectorLabel}`);
+      return;
+    }
+    if (domain.value === 'vehicle' && !caseForm.value.viu_code) {
+      ElMessage.warning('请先选择 VIU 编号');
       return;
     }
 
-    const payload = {
-      ...caseForm.value,
+    const payload: TestCasePayload = {
       vehicle_id: actualVehicleId,
+      viu_code: domain.value === 'vehicle' ? caseForm.value.viu_code : '',
+      case_no: caseForm.value.case_no,
+      case_name: caseForm.value.case_name,
+      remark: caseForm.value.remark,
+      sort: caseForm.value.sort,
+      is_active: caseForm.value.is_active,
     };
 
     if (caseDialogMode.value === 'create') {
       await createTestCaseApi(payload);
       ElMessage.success('用例创建成功');
     } else {
-      await updateTestCaseApi(payload.id!, payload);
+      await updateTestCaseApi(caseForm.value.id!, payload);
       ElMessage.success('用例更新成功');
     }
     caseDialogVisible.value = false;
@@ -258,7 +338,14 @@ async function removeSelected() {
 
 async function onImportFile(file?: File | null) {
   if (!currentVehicleId.value) {
-    ElMessage.warning('请先通过级联选择一个车型');
+    ElMessage.warning(`请先通过级联选择一个${domainMeta.value.selectorLabel}`);
+    return false;
+  }
+  if (
+    domain.value === 'vehicle' &&
+    (currentVehicle.value?.viu_codes?.length || 0) === 0
+  ) {
+    ElMessage.warning('当前车型未配置可用 VIU 编号，请先维护车型配置');
     return false;
   }
   if (!file) {
@@ -295,7 +382,9 @@ function handleSelectionChange(rows: TestCaseItem[]) {
 
 function openHistory(row: TestCaseItem) {
   currentCaseId.value = row.id;
-  historyTitle.value = `${row.case_no} / ${row.case_name}`;
+  historyTitle.value = `${row.case_no}${
+    row.viu_code ? ` / ${row.viu_code}` : ''
+  } / ${row.case_name}`;
   historyVisible.value = true;
 }
 
@@ -314,8 +403,8 @@ function downloadBlob(data: any, fileName: string) {
 async function downloadTemplate() {
   templateLoading.value = true;
   try {
-    const res = await downloadTestCaseTemplateApi();
-    downloadBlob(res, 'auto_test_case_template.xlsx');
+    const res = await downloadTestCaseTemplateApi(domain.value);
+    downloadBlob(res, `auto_test_case_template_${domain.value}.xlsx`);
   } catch (error) {
     ElMessage.error('下载模板失败');
     console.error(error);
@@ -328,13 +417,18 @@ async function exportCases() {
   exportLoading.value = true;
   try {
     const res = await downloadTestCaseExportApi({
+      domain: domain.value,
       keyword: keyword.value || undefined,
       vehicle_id:
         selectedVehicleIds.value.length === 1
           ? selectedVehicleIds.value[0]
           : undefined,
+      viu_code:
+        domain.value === 'vehicle'
+          ? selectedViuCode.value || undefined
+          : undefined,
     });
-    downloadBlob(res, 'auto_test_cases.xlsx');
+    downloadBlob(res, `auto_test_cases_${domain.value}.xlsx`);
   } catch (error) {
     ElMessage.error('导出失败');
     console.error(error);
@@ -343,7 +437,29 @@ async function exportCases() {
   }
 }
 
+function handleExcelInputChange(event: Event) {
+  const target = event.target as HTMLInputElement | null;
+  void onImportFile(target?.files?.[0] || null);
+}
+
+watch(
+  domain,
+  async () => {
+    selectedVehiclePaths.value = [];
+    selectedViuCode.value = '';
+    selectedIds.value = [];
+    vehicleKeyword.value = '';
+    gridApi.setGridOptions({
+      columns: useCaseColumns(domain.value),
+    });
+    await reloadVehicleOptions();
+    await refreshGrid();
+  },
+  { immediate: false },
+);
+
 onMounted(async () => {
+  ensureDomainQuery();
   gridApi.setLoading(true);
   try {
     await reloadVehicleOptions();
@@ -356,13 +472,27 @@ onMounted(async () => {
 
 <template>
   <Page auto-content-height content-class="flex flex-col">
+    <div class="mb-4 rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div class="text-base font-semibold">
+            {{ domainMeta.platformPanelTitle }}
+          </div>
+          <div class="mt-1 text-sm text-gray-500">
+            {{ domainMeta.platformPanelHint }}
+          </div>
+        </div>
+        <DomainSwitcher />
+      </div>
+    </div>
+
     <div class="mb-4 shrink-0 rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm">
       <ElForm
         :inline="true"
         class="flex flex-wrap items-center gap-4"
         @submit.prevent
       >
-        <ElFormItem label="MCU 平台 / 车型" class="!mb-0">
+        <ElFormItem :label="domainMeta.selectorLabel" class="!mb-0">
           <ElCascader
             v-model="selectedVehiclePaths"
             class="w-[420px]"
@@ -371,7 +501,7 @@ onMounted(async () => {
             collapse-tags-tooltip
             filterable
             multiple
-            placeholder="选择 MCU 平台 / 车型（支持多选）"
+            :placeholder="`${domainMeta.selectorPlaceholder}（支持多选）`"
             :max-collapse-tags="1"
             :options="cascaderOptions"
             :props="{ multiple: true, emitPath: true, checkStrictly: false }"
@@ -396,6 +526,22 @@ onMounted(async () => {
             @change="refreshGrid"
           />
         </ElFormItem>
+        <ElFormItem v-if="domain === 'vehicle'" label="VIU编号" class="!mb-0">
+          <ElSelect
+            v-model="selectedViuCode"
+            class="w-[180px]"
+            clearable
+            placeholder="全部 VIU 编号"
+            @change="refreshGrid"
+          >
+            <ElOption
+              v-for="item in vehicleViuOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </ElSelect>
+        </ElFormItem>
         <ElFormItem class="!mb-0">
           <ElButton type="primary" @click="refreshGrid">查询</ElButton>
         </ElFormItem>
@@ -406,23 +552,22 @@ onMounted(async () => {
       <Grid class="h-full" @selection-change="handleSelectionChange">
         <template #toolbar-actions>
           <div class="flex items-center gap-2">
-            <ElButton type="primary" @click="openCreate">新增用例</ElButton>
+            <ElButton type="primary" @click="openCreate">
+              {{ domain === 'vehicle' ? '新增车控用例' : '新增座舱用例' }}
+            </ElButton>
             <ElButton type="danger" @click="removeSelected">批量删除</ElButton>
             <ElButton :loading="templateLoading" @click="downloadTemplate">
               下载模板
             </ElButton>
-            <ElButton
-              :loading="importLoading"
-              @click="$refs.excelInput?.click()"
-            >
+            <ElButton :loading="importLoading" @click="excelInputRef?.click()">
               导入 Excel
             </ElButton>
             <input
-              ref="excelInput"
+              ref="excelInputRef"
               class="hidden"
               type="file"
               accept=".xlsx,.xls"
-              @change="(event) => onImportFile(event.target.files?.[0] || null)"
+              @change="handleExcelInputChange"
             />
             <ElButton :loading="exportLoading" @click="exportCases">
               导出用例
@@ -458,20 +603,53 @@ onMounted(async () => {
 
     <ElDialog
       v-model="caseDialogVisible"
-      :title="caseDialogMode === 'create' ? '新增用例' : '编辑用例'"
+      :title="
+        caseDialogMode === 'create'
+          ? domain === 'vehicle'
+            ? '新增车控用例'
+            : '新增座舱用例'
+          : domain === 'vehicle'
+            ? '编辑车控用例'
+            : '编辑座舱用例'
+      "
       width="560px"
     >
       <ElForm ref="caseFormRef" :model="caseForm" label-width="110px">
-        <ElFormItem label="归属车型" prop="vehicle_id" required>
+        <ElFormItem
+          :label="domainMeta.selectorLabel"
+          prop="vehicle_path"
+          required
+        >
           <ElCascader
-            v-model="caseForm.vehicle_id"
+            v-model="caseForm.vehicle_path"
             class="w-full"
             clearable
             filterable
-            placeholder="选择 MCU 平台 / 车型"
+            :placeholder="domainMeta.selectorPlaceholder"
             :options="cascaderOptions"
             :props="{ emitPath: true }"
+            @change="caseForm.viu_code = ''"
           />
+        </ElFormItem>
+        <ElFormItem
+          v-if="domain === 'vehicle'"
+          label="VIU编号"
+          prop="viu_code"
+          required
+        >
+          <ElSelect
+            v-model="caseForm.viu_code"
+            class="w-full"
+            clearable
+            placeholder="选择 VIU 编号"
+          >
+            <ElOption
+              v-for="item in selectedVehicleViuOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </ElSelect>
         </ElFormItem>
         <ElFormItem label="用例编号" prop="case_no" required>
           <ElInput v-model="caseForm.case_no" />

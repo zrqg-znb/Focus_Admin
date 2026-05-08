@@ -1,3 +1,5 @@
+import type { AutoTestReportDomain } from '#/views/auto-test-report/shared/domain';
+
 import { requestClient } from '#/api/request';
 
 export type ResultStatus = 'failed' | 'skip' | 'success' | 'timeout';
@@ -6,6 +8,7 @@ export interface McuPlatformItem {
   id: string;
   name: string;
   version_code: string;
+  domain: AutoTestReportDomain;
   sort: number;
   is_active: boolean;
   remark?: string;
@@ -17,6 +20,7 @@ export interface McuPlatformItem {
 export interface PlatformPayload {
   name: string;
   version_code: string;
+  domain: AutoTestReportDomain;
   sort: number;
   is_active: boolean;
   remark?: string;
@@ -30,6 +34,7 @@ export interface VehicleItem {
   vehicle_code: string;
   cdc_platform: string;
   execution_machine: string;
+  viu_codes: string[];
   sort: number;
   is_active: boolean;
   remark?: string;
@@ -43,6 +48,7 @@ export interface VehiclePayload {
   vehicle_code: string;
   cdc_platform: string;
   execution_machine: string;
+  viu_codes: string[];
   sort: number;
   is_active: boolean;
   remark?: string;
@@ -54,6 +60,7 @@ export interface VehicleOption {
   vehicle_code: string;
   platform_id: string;
   platform_name: string;
+  viu_codes: string[];
 }
 
 export interface TestCaseItem {
@@ -62,6 +69,7 @@ export interface TestCaseItem {
   vehicle_name: string;
   vehicle_code: string;
   platform_name: string;
+  viu_code: string;
   case_no: string;
   case_name: string;
   remark?: string;
@@ -74,6 +82,7 @@ export interface TestCaseItem {
 
 export interface TestCasePayload {
   vehicle_id: string;
+  viu_code: string;
   case_no: string;
   case_name: string;
   remark?: string;
@@ -82,9 +91,19 @@ export interface TestCasePayload {
 }
 
 export interface ImportCaseRow {
+  viu_code?: string;
   case_no: string;
   case_name: string;
   remark?: string;
+}
+
+export interface TestCaseQueryParams {
+  domain?: AutoTestReportDomain;
+  is_active?: boolean;
+  keyword?: string;
+  platform_id?: string;
+  vehicle_id?: string;
+  viu_code?: string;
 }
 
 export interface ImportErrorRow {
@@ -159,6 +178,7 @@ export interface DailyOverviewResponse {
 export interface DailyResultItem {
   result_id?: string;
   case_id: string;
+  viu_code: string;
   case_no: string;
   case_name: string;
   remark?: string;
@@ -174,6 +194,7 @@ export interface DailyResultItem {
 export interface TestCaseHistoryRow {
   id: string;
   execute_date: string;
+  viu_code: string;
   status: ResultStatus;
   failure_reason?: string;
   start_time?: string;
@@ -191,8 +212,10 @@ export interface TestCaseHistoryPage {
 
 const base = '/api/auto-test-report';
 
-export async function listPlatformsApi() {
-  return requestClient.get<McuPlatformItem[]>(`${base}/platforms`);
+export async function listPlatformsApi(params?: {
+  domain?: AutoTestReportDomain;
+}) {
+  return requestClient.get<McuPlatformItem[]>(`${base}/platforms`, { params });
 }
 
 export async function createPlatformApi(data: PlatformPayload) {
@@ -208,14 +231,17 @@ export async function deletePlatformApi(id: string) {
 }
 
 export async function listVehiclesApi(params?: {
+  domain?: AutoTestReportDomain;
   keyword?: string;
   platform_id?: string;
 }) {
   return requestClient.get<VehicleItem[]>(`${base}/vehicles`, { params });
 }
 
-export async function listVehicleOptionsApi() {
-  return requestClient.get<VehicleOption[]>(`${base}/vehicle-options`);
+export async function listVehicleOptionsApi(domain?: AutoTestReportDomain) {
+  return requestClient.get<VehicleOption[]>(`${base}/vehicle-options`, {
+    params: { domain },
+  });
 }
 
 export async function createVehicleApi(data: VehiclePayload) {
@@ -230,12 +256,7 @@ export async function deleteVehicleApi(id: string) {
   return requestClient.delete<boolean>(`${base}/vehicles/${id}`);
 }
 
-export async function listTestCasesApi(params?: {
-  is_active?: boolean;
-  keyword?: string;
-  platform_id?: string;
-  vehicle_id?: string;
-}) {
+export async function listTestCasesApi(params?: TestCaseQueryParams) {
   return requestClient.get<TestCaseItem[]>(`${base}/test-cases`, { params });
 }
 
@@ -276,13 +297,16 @@ export async function importTestCasesExcelApi(vehicle_id: string, file: File) {
   );
 }
 
-export async function downloadTestCaseTemplateApi() {
+export async function downloadTestCaseTemplateApi(
+  domain?: AutoTestReportDomain,
+) {
   return requestClient.get(`${base}/test-cases/template`, {
+    params: { domain },
     responseType: 'blob',
   });
 }
 
-export async function downloadTestCaseExportApi(params?: Record<string, any>) {
+export async function downloadTestCaseExportApi(params?: TestCaseQueryParams) {
   return requestClient.get(`${base}/test-cases/export`, {
     params,
     responseType: 'blob',
@@ -292,14 +316,16 @@ export async function downloadTestCaseExportApi(params?: Record<string, any>) {
 export async function getDailySummaryApi(
   vehicle_id: string,
   execute_date: string,
+  domain?: AutoTestReportDomain,
 ) {
   return requestClient.get<DailySummary>(`${base}/daily-results/summary`, {
-    params: { vehicle_id, execute_date },
+    params: { vehicle_id, execute_date, domain },
   });
 }
 
 export async function getDailyOverviewApi(params: {
   abnormal_only?: boolean;
+  domain?: AutoTestReportDomain;
   execute_date: string;
   platform_id?: string;
 }) {
@@ -314,9 +340,10 @@ export async function getDailyOverviewApi(params: {
 export async function listDailyResultsApi(
   vehicle_id: string,
   execute_date: string,
+  domain?: AutoTestReportDomain,
 ) {
   return requestClient.get<DailyResultItem[]>(`${base}/daily-results/list`, {
-    params: { vehicle_id, execute_date },
+    params: { vehicle_id, execute_date, domain },
   });
 }
 

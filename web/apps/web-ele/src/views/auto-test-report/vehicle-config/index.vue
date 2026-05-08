@@ -8,13 +8,15 @@ import type {
   VehiclePayload,
 } from '#/api/auto-test-report';
 
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
 import {
   ElButton,
+  ElCheckbox,
+  ElCheckboxGroup,
   ElDialog,
   ElForm,
   ElFormItem,
@@ -38,11 +40,17 @@ import {
 } from '#/api/auto-test-report';
 import { useZqTable } from '#/components/zq-table';
 
+import DomainSwitcher from '../components/domain-switcher.vue';
+import {
+  AUTO_TEST_REPORT_VIU_CODES,
+  useAutoTestReportDomain,
+} from '../shared/domain';
 import { useVehicleColumns, useVehicleSearchSchema } from './data';
 
 defineOptions({ name: 'AutoTestVehicleConfig' });
 
 const router = useRouter();
+const { domain, domainMeta, ensureDomainQuery } = useAutoTestReportDomain();
 const platformList = ref<McuPlatformItem[]>([]);
 const activePlatformId = ref('');
 
@@ -53,6 +61,7 @@ const platformFormRef = ref<FormInstance>();
 const platformForm = ref<PlatformPayload & { id?: string }>({
   name: '',
   version_code: '',
+  domain: domain.value,
   sort: 0,
   is_active: true,
   remark: '',
@@ -68,22 +77,29 @@ const vehicleForm = ref<VehiclePayload & { id?: string }>({
   vehicle_code: '',
   cdc_platform: '',
   execution_machine: '',
+  viu_codes: [],
   sort: 0,
   is_active: true,
   remark: '',
 });
 
 async function loadPlatforms() {
-  platformList.value = (await listPlatformsApi()) || [];
-  if (!activePlatformId.value && platformList.value.length > 0) {
+  platformList.value = (await listPlatformsApi({ domain: domain.value })) || [];
+  if (
+    !platformList.value.some((item) => item.id === activePlatformId.value) &&
+    platformList.value.length > 0
+  ) {
     activePlatformId.value = platformList.value[0]?.id || '';
+  }
+  if (platformList.value.length === 0) {
+    activePlatformId.value = '';
   }
 }
 
 const [VehicleGrid, vehicleGridApi] = useZqTable({
   tableTitle: '车型配置',
   gridOptions: {
-    columns: useVehicleColumns(),
+    columns: useVehicleColumns(domain.value),
     border: true,
     stripe: true,
     proxyConfig: {
@@ -92,6 +108,7 @@ const [VehicleGrid, vehicleGridApi] = useZqTable({
         query: async ({ form }: { form?: Record<string, any> }) => {
           const items =
             (await listVehiclesApi({
+              domain: domain.value,
               platform_id: activePlatformId.value || undefined,
               keyword: form?.keyword || '',
             })) || [];
@@ -124,6 +141,7 @@ function openPlatformCreate() {
   platformForm.value = {
     name: '',
     version_code: '',
+    domain: domain.value,
     sort: 0,
     is_active: true,
     remark: '',
@@ -137,6 +155,7 @@ function openPlatformEdit(row: McuPlatformItem) {
     id: row.id,
     name: row.name,
     version_code: row.version_code,
+    domain: row.domain,
     sort: row.sort,
     is_active: row.is_active,
     remark: row.remark || '',
@@ -148,6 +167,7 @@ async function submitPlatform() {
   await platformFormRef.value?.validate();
   platformDialogSaving.value = true;
   try {
+    platformForm.value.domain = domain.value;
     if (platformDialogMode.value === 'create') {
       await createPlatformApi(platformForm.value);
       ElMessage.success('平台创建成功');
@@ -184,6 +204,7 @@ function openVehicleCreate() {
     vehicle_code: '',
     cdc_platform: '',
     execution_machine: '',
+    viu_codes: [],
     sort: 0,
     is_active: true,
     remark: '',
@@ -200,6 +221,7 @@ function openVehicleEdit(row: VehicleItem) {
     vehicle_code: row.vehicle_code,
     cdc_platform: row.cdc_platform,
     execution_machine: row.execution_machine,
+    viu_codes: row.viu_codes || [],
     sort: row.sort,
     is_active: row.is_active,
     remark: row.remark || '',
@@ -211,11 +233,19 @@ async function submitVehicle() {
   await vehicleFormRef.value?.validate();
   vehicleDialogSaving.value = true;
   try {
+    const payload = {
+      ...vehicleForm.value,
+      viu_codes: domain.value === 'vehicle' ? vehicleForm.value.viu_codes : [],
+    };
+    if (domain.value === 'vehicle' && payload.viu_codes.length === 0) {
+      ElMessage.warning('车控车型至少需要选择一个可用 VIU 编号');
+      return;
+    }
     if (vehicleDialogMode.value === 'create') {
-      await createVehicleApi(vehicleForm.value);
+      await createVehicleApi(payload);
       ElMessage.success('车型创建成功');
     } else {
-      await updateVehicleApi(vehicleForm.value.id!, vehicleForm.value);
+      await updateVehicleApi(vehicleForm.value.id!, payload);
       ElMessage.success('车型更新成功');
     }
     vehicleDialogVisible.value = false;
@@ -239,11 +269,25 @@ async function removeVehicle(row: VehicleItem) {
 function goDailyResults(row: VehicleItem) {
   router.push({
     path: '/auto-test-report/daily-results',
-    query: { vehicleId: row.id },
+    query: { vehicleId: row.id, domain: domain.value },
   });
 }
 
+watch(
+  domain,
+  async () => {
+    platformForm.value.domain = domain.value;
+    vehicleGridApi.setGridOptions({
+      columns: useVehicleColumns(domain.value),
+    });
+    await loadPlatforms();
+    await refreshVehicles();
+  },
+  { immediate: false },
+);
+
 onMounted(async () => {
+  ensureDomainQuery();
   vehicleGridApi.setLoading(true);
   try {
     await loadPlatforms();
@@ -255,18 +299,34 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page auto-content-height content-class="flex flex-col">
-    <div class="flex h-full min-h-0 gap-4">
+  <Page auto-content-height content-class="flex min-w-0 flex-col">
+    <div class="mb-4 rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div class="text-base font-semibold">
+            {{ domainMeta.platformPanelTitle }}
+          </div>
+          <div class="mt-1 text-sm text-gray-500">
+            {{ domainMeta.platformPanelHint }}
+          </div>
+        </div>
+        <DomainSwitcher />
+      </div>
+    </div>
+
+    <div class="flex h-full min-h-0 min-w-0 gap-4 overflow-hidden">
       <div
-        class="w-[320px] shrink-0 flex flex-col rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm min-h-0"
+        class="flex min-h-0 w-[320px] shrink-0 flex-col rounded-lg bg-[var(--el-bg-color)] p-4 shadow-sm"
       >
         <div class="mb-3 flex shrink-0 items-center justify-between">
-          <div class="text-base font-semibold">MCU平台</div>
+          <div class="text-base font-semibold">
+            {{ domainMeta.platformLabel }}
+          </div>
           <ElButton type="primary" @click="openPlatformCreate">
-            新增平台
+            新增{{ domainMeta.platformLabel }}
           </ElButton>
         </div>
-        <div class="space-y-2 overflow-y-auto flex-1 min-h-0 pr-2">
+        <div class="min-h-0 flex-1 space-y-2 overflow-y-auto pr-2">
           <div
             v-for="item in platformList"
             :key="item.id"
@@ -306,19 +366,21 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div class="min-h-0 flex-1">
-        <VehicleGrid class="h-full">
+      <div class="min-h-0 min-w-0 flex-1">
+        <VehicleGrid class="h-full w-full min-w-0">
           <template #toolbar-actions>
             <div class="flex items-center gap-2">
               <div class="text-sm text-gray-500">
-                当前平台：{{ activePlatform?.name || '全部' }}
+                当前{{ domainMeta.platformLabel }}：{{
+                  activePlatform?.name || '全部'
+                }}
               </div>
               <ElButton
                 type="primary"
                 :disabled="!activePlatformId"
                 @click="openVehicleCreate"
               >
-                新增车型
+                新增{{ domain === 'vehicle' ? '车控车型' : '座舱车型' }}
               </ElButton>
             </div>
           </template>
@@ -327,6 +389,12 @@ onMounted(async () => {
             <ElButton link type="primary" @click="goDailyResults(row)">
               {{ row.name }}
             </ElButton>
+          </template>
+
+          <template #cell-viu_codes="{ row }">
+            <span>{{
+              row.viu_codes?.length ? row.viu_codes.join(' / ') : '-'
+            }}</span>
           </template>
 
           <template #cell-actions="{ row }">
@@ -354,11 +422,19 @@ onMounted(async () => {
 
     <ElDialog
       v-model="platformDialogVisible"
-      :title="platformDialogMode === 'create' ? '新增平台' : '编辑平台'"
+      :title="
+        platformDialogMode === 'create'
+          ? `新增${domainMeta.platformLabel}`
+          : `编辑${domainMeta.platformLabel}`
+      "
       width="520px"
     >
       <ElForm ref="platformFormRef" :model="platformForm" label-width="96px">
-        <ElFormItem label="平台名称" prop="name" required>
+        <ElFormItem
+          :label="`${domainMeta.platformLabel}名称`"
+          prop="name"
+          required
+        >
           <ElInput v-model="platformForm.name" />
         </ElFormItem>
         <ElFormItem label="版本标识" prop="version_code" required>
@@ -388,7 +464,15 @@ onMounted(async () => {
 
     <ElDialog
       v-model="vehicleDialogVisible"
-      :title="vehicleDialogMode === 'create' ? '新增车型' : '编辑车型'"
+      :title="
+        vehicleDialogMode === 'create'
+          ? domain === 'vehicle'
+            ? '新增车控车型'
+            : '新增座舱车型'
+          : domain === 'vehicle'
+            ? '编辑车控车型'
+            : '编辑座舱车型'
+      "
       width="560px"
     >
       <ElForm ref="vehicleFormRef" :model="vehicleForm" label-width="110px">
@@ -398,11 +482,31 @@ onMounted(async () => {
         <ElFormItem label="车型编号" prop="vehicle_code" required>
           <ElInput v-model="vehicleForm.vehicle_code" />
         </ElFormItem>
-        <ElFormItem label="CDC平台" prop="cdc_platform" required>
+        <ElFormItem
+          v-if="domain === 'cockpit'"
+          label="CDC平台"
+          prop="cdc_platform"
+          required
+        >
           <ElInput v-model="vehicleForm.cdc_platform" />
         </ElFormItem>
         <ElFormItem label="执行机器" prop="execution_machine" required>
           <ElInput v-model="vehicleForm.execution_machine" />
+        </ElFormItem>
+        <ElFormItem v-if="domain === 'vehicle'" label="可用 VIU 编号">
+          <ElCheckboxGroup
+            v-model="vehicleForm.viu_codes"
+            class="flex flex-wrap gap-3"
+          >
+            <ElCheckbox
+              v-for="code in AUTO_TEST_REPORT_VIU_CODES"
+              :key="code"
+              :label="code"
+              :value="code"
+            >
+              {{ code }}
+            </ElCheckbox>
+          </ElCheckboxGroup>
         </ElFormItem>
         <ElFormItem label="排序">
           <ElInputNumber v-model="vehicleForm.sort" class="w-full" />

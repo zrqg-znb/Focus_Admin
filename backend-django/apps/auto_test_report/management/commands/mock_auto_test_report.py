@@ -5,6 +5,8 @@ from django.core.management.base import BaseCommand
 
 from core.user.user_model import User
 from apps.auto_test_report.auto_test_report_model import (
+    DOMAIN_COCKPIT,
+    DOMAIN_VEHICLE,
     DailyExecutionResult,
     McuPlatform,
     TestCase,
@@ -28,19 +30,26 @@ class Command(BaseCommand):
         random.seed(20260407)
 
         platforms = [
-            ('MCU 2.0', 'mcu20'),
-            ('MCU 2.2', 'mcu22'),
-            ('MCU 3.0', 'mcu30'),
+            (DOMAIN_COCKPIT, 'MCU 2.0', 'mcu20'),
+            (DOMAIN_COCKPIT, 'MCU 2.2', 'mcu22'),
+            (DOMAIN_VEHICLE, 'VIU 2.0', 'viu20'),
+            (DOMAIN_VEHICLE, 'VIU 2.2', 'viu22'),
+        ]
+        viu_sets = [
+            ['viu0', 'viu1', 'viu2'],
+            ['viu0', 'viu1', 'viu2', 'viu3'],
+            ['viu0', 'viu1', 'viu2', 'viu3', 'viu4'],
         ]
         results = [RESULT_SUCCESS, RESULT_FAILED, RESULT_TIMEOUT]
         created_vehicle_count = 0
         created_case_count = 0
 
-        for index, (name, code) in enumerate(platforms, start=1):
-            platform, _ = McuPlatform.objects.get_or_create(
+        for index, (domain, name, code) in enumerate(platforms, start=1):
+            platform, created_platform = McuPlatform.objects.get_or_create(
                 version_code=code,
                 defaults={
                     'name': name,
+                    'domain': domain,
                     'sort': 100 - index,
                     'is_active': True,
                     'remark': 'mock 平台数据',
@@ -48,22 +57,37 @@ class Command(BaseCommand):
                     'sys_modifier': operator,
                 },
             )
+            if not created_platform and platform.domain != domain:
+                platform.domain = domain
+                platform.save(update_fields=['domain', 'sys_update_datetime'])
+
             for vehicle_index in range(1, 3):
                 vehicle_code = f'{code}-veh-{vehicle_index}'
-                vehicle, created = VehicleModel.objects.get_or_create(
+                viu_codes = (
+                    viu_sets[(index + vehicle_index - 2) % len(viu_sets)]
+                    if domain == DOMAIN_VEHICLE
+                    else []
+                )
+                vehicle, created_vehicle = VehicleModel.objects.get_or_create(
                     vehicle_code=vehicle_code,
                     defaults={
                         'platform': platform,
                         'name': f'{name} 车型{vehicle_index}',
                         'cdc_platform': f'CDC-{vehicle_index}',
                         'execution_machine': f'10.10.{index}.{vehicle_index}',
+                        'viu_codes': viu_codes,
                         'is_active': True,
                         'remark': 'mock 车型数据',
                         'sys_creator': operator,
                         'sys_modifier': operator,
                     },
                 )
-                created_vehicle_count += int(created)
+                if not created_vehicle:
+                    vehicle.platform = platform
+                    vehicle.viu_codes = viu_codes
+                    vehicle.save(update_fields=['platform', 'viu_codes', 'sys_update_datetime'])
+                created_vehicle_count += int(created_vehicle)
+
                 target_dates = [
                     date.today() - timedelta(days=day_offset)
                     for day_offset in range(days)
@@ -75,9 +99,12 @@ class Command(BaseCommand):
 
                 cases = []
                 for case_index in range(1, 11):
-                    case, case_created = TestCase.objects.get_or_create(
+                    case_no = f'CASE-{vehicle_index:02d}-{case_index:03d}'
+                    case_viu_code = viu_codes[(case_index - 1) % len(viu_codes)] if viu_codes else ''
+                    case, created_case = TestCase.objects.get_or_create(
                         vehicle=vehicle,
-                        case_no=f'CASE-{vehicle_index:02d}-{case_index:03d}',
+                        viu_code=case_viu_code,
+                        case_no=case_no,
                         defaults={
                             'case_name': f'自动化用例 {vehicle_index}-{case_index}',
                             'is_active': True,
@@ -86,7 +113,7 @@ class Command(BaseCommand):
                             'sys_modifier': operator,
                         },
                     )
-                    created_case_count += int(case_created)
+                    created_case_count += int(created_case)
                     cases.append(case)
 
                 for day_offset in range(days):

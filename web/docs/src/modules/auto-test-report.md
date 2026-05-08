@@ -12,23 +12,23 @@ const apis = [
   {
     consumer: '平台与车型配置页',
     method: 'GET / POST / PUT / DELETE',
-    params: 'platform / vehicle payload',
+    params: 'domain, platform / vehicle payload',
     path: '/api/auto-test-report/platforms / /api/auto-test-report/vehicles',
-    purpose: '维护 MCU 平台与车型主数据',
+    purpose: '维护座舱 / 车控平台与车型主数据',
     returns: 'PlatformOut / VehicleOut',
   },
   {
     consumer: '用例管理页',
     method: 'GET / POST / PUT / DELETE / PATCH',
-    params: 'vehicle_id, case rows, file, remark',
+    params: 'domain, vehicle_id, viu_code, case rows, file, remark',
     path: '/api/auto-test-report/test-cases',
-    purpose: '维护、导入、导出测试用例与备注',
+    purpose: '维护、导入、导出测试用例与备注，车控领域按 VIU 编号解析',
     returns: 'TestCaseOut / ImportResultOut',
   },
   {
     consumer: '测试环境上报',
     method: 'POST',
-    params: 'vehicle_code, execute_date, results[]',
+    params: 'vehicle_code, execute_date, results[] (车控含 viu_code)',
     path: '/api/auto-test-report/report/daily-results',
     purpose: '由测试环境上报每日执行结果并触发汇总重算',
     returns: 'ReportDailyResultsOut',
@@ -36,17 +36,17 @@ const apis = [
   {
     consumer: '日报汇总与总览',
     method: 'GET',
-    params: 'vehicle_id, execute_date / 平台、状态筛选',
+    params: 'domain, vehicle_id, execute_date / 平台、状态筛选',
     path: '/api/auto-test-report/daily-results/summary / /api/auto-test-report/daily-results/overview',
-    purpose: '返回单车型汇总和全量车型执行概览',
+    purpose: '返回单车型汇总和全量车型执行概览，按领域展示对应数据',
     returns: 'DailySummary / DailyOverviewResponse',
   },
   {
     consumer: '日报明细与历史',
     method: 'GET / PATCH',
-    params: 'vehicle_id, execute_date / result_id, failure_reason / case_id',
+    params: 'domain, vehicle_id, execute_date / result_id, failure_reason / case_id',
     path: '/api/auto-test-report/daily-results/list / /api/auto-test-report/daily-results/{result_id}/failure-reason / /api/auto-test-report/test-cases/{case_id}/history',
-    purpose: '查看每日执行明细、补充异常原因、查询用例历史执行',
+    purpose: '查看每日执行明细、补充异常原因、查询用例历史执行，车控领域明细显示 VIU 编号',
     returns: 'DailyResultItem[] / bool / DailyHistoryPage',
   },
 ];
@@ -67,7 +67,12 @@ const apis = [
 - 某一天这些用例跑出了什么结果
 - 如何从明细回溯到历史趋势和异常原因
 
-因此这是一个“主数据 + 日执行明细 + 日汇总视图”组合模块。
+现在这套主链又被扩展成双领域结构：
+
+- 座舱领域沿用 `MCU 平台 -> 车型 -> 用例 -> 日报`
+- 车控领域补入 `VIU 平台 -> 车型 -> VIU 编号 -> 用例 -> 日报`
+
+因此这是一个“主数据 + 日执行明细 + 日汇总视图”组合模块，同时也承担领域切换和结构适配的职责。
 
 </FocusModuleSection>
 
@@ -89,6 +94,7 @@ erDiagram
         uuid id PK
         string name
         string version_code
+        string domain
         bool is_active
         text remark
     }
@@ -100,6 +106,7 @@ erDiagram
         string vehicle_code UK
         string cdc_platform
         string execution_machine
+        json viu_codes
         bool is_active
         text remark
     }
@@ -107,6 +114,7 @@ erDiagram
     TEST_CASE {
         uuid id PK
         uuid vehicle_id FK
+        string viu_code
         string case_no
         string case_name
         text remark
@@ -144,10 +152,11 @@ erDiagram
 
 ### `McuPlatform`
 
-平台主数据层，区分 MCU 平台，关键字段包括：
+平台主数据层，区分座舱 / 车控两个领域，关键字段包括：
 
 - `name`
 - `version_code`
+- `domain`
 - `is_active`
 - `remark`
 
@@ -163,6 +172,8 @@ erDiagram
   座舱平台信息
 - `execution_machine`
   执行机器
+- `viu_codes`
+  车控车型可用的 VIU 编号子集，固定取值为 `viu0` ~ `viu4`
 
 这里同时有两个唯一性约束：
 
@@ -175,6 +186,8 @@ erDiagram
 
 - `vehicle`
   归属车型
+- `viu_code`
+  车控领域下与 `case_no` 共同唯一；座舱领域保持空值
 - `case_no`
   用例编号
 - `case_name`
@@ -184,7 +197,7 @@ erDiagram
 - `is_active`
   是否启用
 
-同一车型下 `case_no` 唯一。
+同一车型下 `vehicle + viu_code + case_no` 唯一；座舱领域因为 `viu_code` 为空，行为与旧模型一致。
 
 ### `DailyExecutionResult` 与 `DailyExecutionBatch`
 
@@ -265,13 +278,17 @@ erDiagram
   每日执行概览、明细、异常原因编辑
 - `web/apps/web-ele/src/views/auto-test-report/components/test-case-history-drawer.vue`
   查看单用例历史执行记录
+- `web/apps/web-ele/src/views/auto-test-report/components/domain-switcher.vue`
+  统一领域切换器
 
 对应 API 位于 `web/apps/web-ele/src/api/auto-test-report/index.ts`。
 
 其中：
 
 - 车型配置页可以跳转到日报页
-- 日报页会展示总览、车型级汇总和用例级明细三层信息
+- 页面内提供全局领域切换器，座舱 / 车控三页共用同一状态和路由 query
+- 车控视图下，车型配置页会维护 VIU 编号子集，用例页和日报页会展示 `viu_code`
+- 日报页仍按车型汇总，明细和历史抽屉只在车控领域补充 VIU 维度
 - 失败/超时结果允许在前端补录 `failure_reason`
 
 </FocusModuleSection>
@@ -293,12 +310,12 @@ sequenceDiagram
 
     Client->>ReportAPI: POST /auto-test-report/report/daily-results
     ReportAPI->>Service: report_daily_results
-    Service->>Result: 为每条结果写入执行明细
+    Service->>Result: 按 vehicle_code + case_no / viu_code 写入执行明细
     Service->>Batch: recalculate_daily_batch
     ReportAPI-->>Client: 返回 created_count / execute_date
 
     UI->>Service: get_daily_overview / get_daily_summary / list_daily_results
-    Service-->>UI: 返回车型汇总、全量概览、用例明细
+    Service-->>UI: 返回车型汇总、全量概览、用例明细（车控领域含 VIU）
     UI->>Service: PATCH failure_reason
     Service->>Result: 更新异常原因并保留历史建议逻辑
 ```
@@ -312,13 +329,13 @@ sequenceDiagram
 >
 
 - 上游输入
-  测试环境上报的 `vehicle_code + results[]`
+  测试环境上报的 `vehicle_code + results[]`，车控领域结果额外携带 `viu_code`
 - 上游依赖
-  平台、车型、测试用例主数据
+  平台、车型、测试用例主数据，以及车型级 VIU 子集配置
 - 下游消费
   每日执行概览、车型明细、异常原因补录、历史回溯
 - 结构特征
-  明细与汇总双表并存，汇总由明细重算而来
+  明细与汇总双表并存，汇总由明细重算而来，日报仍按车型聚合
 
 </FocusModuleSection>
 

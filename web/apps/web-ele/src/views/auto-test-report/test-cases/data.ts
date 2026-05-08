@@ -1,19 +1,26 @@
+import type { AutoTestReportDomain } from '../shared/domain';
+
 import type { TestCaseItem } from '#/api/auto-test-report';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
-export function useCaseColumns(): ZqTableGridOptions<TestCaseItem>['columns'] {
-  return [
+import { getAutoTestReportDomainMeta } from '../shared/domain';
+
+export function useCaseColumns(
+  domain: AutoTestReportDomain,
+): NonNullable<ZqTableGridOptions<TestCaseItem>['columns']> {
+  const domainMeta = getAutoTestReportDomainMeta(domain);
+  const columns: NonNullable<ZqTableGridOptions<TestCaseItem>['columns']> = [
     {
       type: 'selection',
       width: 60,
-      fixed: 'left',
+      fixed: true,
       align: 'center',
       headerAlign: 'center',
     },
     {
       key: 'platform_name',
       dataKey: 'platform_name',
-      title: 'MCU平台',
+      title: domainMeta.platformLabel,
       width: 140,
       align: 'center',
       headerAlign: 'center',
@@ -26,6 +33,20 @@ export function useCaseColumns(): ZqTableGridOptions<TestCaseItem>['columns'] {
       align: 'center',
       headerAlign: 'center',
     },
+  ];
+
+  if (domain === 'vehicle') {
+    columns.push({
+      key: 'viu_code',
+      dataKey: 'viu_code',
+      title: 'VIU编号',
+      width: 120,
+      align: 'center',
+      headerAlign: 'center',
+    });
+  }
+
+  columns.push(
     {
       key: 'case_no',
       dataKey: 'case_no',
@@ -75,5 +96,7 @@ export function useCaseColumns(): ZqTableGridOptions<TestCaseItem>['columns'] {
       headerAlign: 'center',
       showOverflowTooltip: false,
     },
-  ];
+  );
+
+  return columns;
 }

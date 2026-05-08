@@ -35,6 +35,7 @@ report_router = Router(tags=['AutoTestReporter'])
 
 
 class VehicleListQuery(Schema):
+    domain: str = ''
     platform_id: str = ''
     keyword: str = ''
 
@@ -44,8 +45,8 @@ class BatchDeleteIn(Schema):
 
 
 @router.get('/platforms', response=List[PlatformOut], summary='平台列表')
-def list_platforms(request):
-    return services.list_platforms()
+def list_platforms(request, domain: str = Query('')):
+    return services.list_platforms(domain)
 
 
 @router.post('/platforms', response=PlatformOut, summary='新建平台')
@@ -65,12 +66,12 @@ def delete_platform(request, platform_id: str):
 
 @router.get('/vehicles', response=List[VehicleOut], summary='车型列表')
 def list_vehicles(request, filters: VehicleListQuery = Query(...)):
-    return services.list_vehicles(filters.platform_id, filters.keyword)
+    return services.list_vehicles(filters.domain, filters.platform_id, filters.keyword)
 
 
 @router.get('/vehicle-options', response=List[VehicleOption], summary='车型选项')
-def list_vehicle_options(request):
-    return services.list_vehicle_options()
+def list_vehicle_options(request, domain: str = Query('')):
+    return services.list_vehicle_options(domain)
 
 
 @router.post('/vehicles', response=VehicleOut, summary='新建车型')
@@ -114,14 +115,18 @@ def import_test_cases_excel(
     vehicle_id: str = Form(...),
     file: UploadedFile = File(...),
 ):
-    rows = services.parse_excel_rows(file)
+    vehicle = services.get_vehicle(vehicle_id)
+    rows = services.parse_excel_rows(
+        file,
+        require_viu_code=vehicle.platform.domain == services.DOMAIN_VEHICLE,
+    )
     payload = ImportCasePayload(vehicle_id=vehicle_id, rows=rows)
     return services.import_test_cases(request.auth, payload)
 
 
 @router.get('/test-cases/template', summary='下载测试用例导入模板')
-def download_test_case_template(request):
-    return services.build_test_case_template_response()
+def download_test_case_template(request, domain: str = Query('')):
+    return services.build_test_case_template_response(domain)
 
 
 @router.get('/test-cases/export', summary='导出测试用例')
@@ -146,7 +151,7 @@ def delete_test_case(request, case_id: str):
 
 @router.get('/daily-results/summary', response=DailySummaryOut, summary='每日执行汇总')
 def get_daily_summary(request, query: DailyResultQuery = Query(...)):
-    return services.get_daily_summary(query.vehicle_id, query.execute_date)
+    return services.get_daily_summary(query.vehicle_id, query.execute_date, query.domain)
 
 
 @router.get('/daily-results/overview', response=DailyOverviewResponse, summary='全量每日执行概览')
@@ -156,7 +161,7 @@ def get_daily_overview(request, query: DailyOverviewQuery = Query(...)):
 
 @router.get('/daily-results/list', response=List[DailyResultItemOut], summary='每日执行结果列表')
 def list_daily_results(request, query: DailyResultQuery = Query(...)):
-    return services.list_daily_results(query.vehicle_id, query.execute_date)
+    return services.list_daily_results(query.vehicle_id, query.execute_date, query.domain)
 
 
 @router.patch('/daily-results/{result_id}/failure-reason', response=bool, summary='更新异常原因')
