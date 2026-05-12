@@ -81,19 +81,37 @@ const DEFAULT_EXCLUDES = [
   'build/**',
   '*.log',
 ];
-const C_FAMILY_VULNERABILITY_PRESET = [
-  'buffer_overflow',
-  'out_of_bounds',
-  'integer_overflow',
-  'null_dereference',
-  'use_after_free',
-  'double_free',
-  'uninitialized_memory',
-  'resource_leak',
-  'race_condition',
-  'deadlock',
-  'format_string',
-  'api_contract_violation',
+const SCENARIO_PRESETS = [
+  {
+    key: 'auto',
+    label: '自动',
+    name: '沿用默认行为',
+    description: '保持当前默认审计逻辑，并在 C/C++ 项目上保留兼容预设。',
+  },
+  {
+    key: 'concurrency',
+    label: 'A',
+    name: '并发资源访问排查',
+    description: '聚焦竞态、死锁、信号量、互斥锁与临界区。',
+  },
+  {
+    key: 'api_chain',
+    label: 'B',
+    name: '高危 API 调用链梳理',
+    description: '聚焦 strcpy / malloc / free / printf 等高危调用链。',
+  },
+  {
+    key: 'critical_section',
+    label: 'C',
+    name: '临界区与硬件访问检查',
+    description: '聚焦 ISR、DMA、寄存器访问和 API 契约。',
+  },
+  {
+    key: 'general',
+    label: 'D',
+    name: '通用审计',
+    description: '使用通用安全审计预设，不注入场景特化内容。',
+  },
 ] as const;
 
 export default function CreateAgentTaskDialog({
@@ -117,6 +135,7 @@ export default function CreateAgentTaskDialog({
   const [branches, setBranches] = useState<string[]>([]);
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [excludePatterns, setExcludePatterns] = useState(DEFAULT_EXCLUDES);
+  const [selectedScenarioKey, setSelectedScenarioKey] = useState('auto');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [creating, setCreating] = useState(false);
 
@@ -137,6 +156,12 @@ export default function CreateAgentTaskDialog({
   const selectionContextRef = useRef('');
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
+  const selectedScenario = useMemo(
+    () =>
+      SCENARIO_PRESETS.find((scenario) => scenario.key === selectedScenarioKey) ??
+      SCENARIO_PRESETS[0],
+    [selectedScenarioKey],
+  );
 
   // 加载项目列表
   useEffect(() => {
@@ -159,6 +184,7 @@ export default function CreateAgentTaskDialog({
       setManifestXml('');
       setGroup('');
       setExcludePatterns(DEFAULT_EXCLUDES);
+      setSelectedScenarioKey('auto');
       setShowAdvanced(false);
       setZipFile(null);
       setStoredZipInfo(null);
@@ -369,10 +395,10 @@ export default function CreateAgentTaskDialog({
         group: effectiveRepositorySpec?.group,
         exclude_patterns: excludePatterns,
         target_files: selectedFiles,
+        audit_scope: {
+          scenario_key: selectedScenarioKey,
+        },
         verification_level: 'sandbox',
-        target_vulnerabilities: isCFamilyProject(selectedProject)
-          ? [...C_FAMILY_VULNERABILITY_PRESET]
-          : undefined,
       });
 
       onOpenChange(false);
@@ -487,6 +513,60 @@ export default function CreateAgentTaskDialog({
           {/* 配置区域 */}
           {selectedProject && (
             <div className="space-y-4">
+              <div className="border-border space-y-3 rounded border bg-muted/40 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-muted-foreground font-mono text-xs font-bold uppercase">
+                      Scenario Profile
+                    </p>
+                    <p className="text-foreground mt-1 text-sm font-medium">
+                      选择一个审计场景，自动联动提示词、规则和知识注入
+                    </p>
+                  </div>
+                  <Badge className="cyber-badge-muted font-mono text-xs">
+                    {selectedScenario.label}
+                  </Badge>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {SCENARIO_PRESETS.map((scenario) => {
+                    const active = selectedScenarioKey === scenario.key;
+                    return (
+                      <Button
+                        aria-pressed={active}
+                        className={`h-auto flex-col items-start justify-start gap-1 whitespace-normal rounded-md px-3 py-2 text-left ${
+                          active
+                            ? 'border-primary/50 bg-primary/10 text-foreground'
+                            : 'border-border bg-background/70 text-foreground hover:bg-muted/70'
+                        }`}
+                        key={scenario.key}
+                        onClick={() => setSelectedScenarioKey(scenario.key)}
+                        type="button"
+                        variant="outline"
+                      >
+                        <div className="flex w-full items-center justify-between gap-2">
+                          <span className="font-mono text-xs font-bold uppercase tracking-widest">
+                            {scenario.label}
+                          </span>
+                          <span className="truncate text-sm font-semibold">
+                            {scenario.name}
+                          </span>
+                        </div>
+                        <span className="text-muted-foreground text-xs leading-5">
+                          {scenario.description}
+                        </span>
+                      </Button>
+                    );
+                  })}
+                </div>
+
+                {selectedScenarioKey === 'auto' && isCFamilyProject(selectedProject) && (
+                  <p className="text-muted-foreground font-mono text-xs leading-5">
+                    当前项目属于 C/C++ / embedded 范围，自动场景会保留兼容预设；如需通用审计请切换到 D。
+                  </p>
+                )}
+              </div>
+
               {/* 仓库项目：分支选择 */}
               {isRepositoryProject(selectedProject) && (
                 <div className="border-border space-y-3 rounded border bg-blue-950/20 p-3">
@@ -640,11 +720,10 @@ export default function CreateAgentTaskDialog({
                   {selectedProject && isCFamilyProject(selectedProject) && (
                     <div className="border-border bg-muted/50 flex items-start gap-2 rounded border border-dashed p-3">
                       <Badge className="cyber-badge-info">
-                        嵌入式 C/C++ 深度审计
+                        C/C++ / embedded
                       </Badge>
                       <p className="text-muted-foreground text-xs leading-5">
-                        将自动附带内存、边界、并发和 API
-                        契约类漏洞预设，并默认使用 `sandbox` 验证级别。
+                        自动场景会保留兼容预设；如果选择 D，则仅使用通用审计逻辑。
                       </p>
                     </div>
                   )}

@@ -454,11 +454,35 @@ class SubAgentExecutor:
             return {"success": False, "error": f"Unknown agent type: {agent_type}"}
         
         # 准备输入数据
+        task_context_payload: Dict[str, Any] = dict(context or {}) if isinstance(context, dict) else {"task_context": str(context or "")}
+        scenario_profile = dict(
+            dict(task_context_payload.get("config") or {}).get("scenario_profile")
+            or dict(task_context_payload.get("audit_scope") or {}).get("effective_profile")
+            or {}
+        )
+        if scenario_profile:
+            from apps.deepaudit.scenario_profile import build_scenario_task_block
+
+            scenario_task_block = build_scenario_task_block(scenario_profile, agent_type)
+            existing_task_context = str(task_context_payload.get("task_context") or "").strip()
+            if scenario_task_block and "<scenario_profile>" not in existing_task_context:
+                task_context_payload["task_context"] = (
+                    f"{scenario_task_block}\n\n{existing_task_context}".strip()
+                    if existing_task_context
+                    else scenario_task_block
+                )
+            else:
+                task_context_payload["task_context"] = existing_task_context
+            config_payload = dict(task_context_payload.get("config") or {})
+            config_payload.setdefault("scenario_profile", scenario_profile)
+            task_context_payload["config"] = config_payload
+
         input_data = {
             "task": task,
-            "task_context": context or {},
-            "project_info": context.get("project_info", {}) if context else {},
-            "config": context.get("config", {}) if context else {},
+            "task_context": task_context_payload.get("task_context", ""),
+            "task_context_data": task_context_payload,
+            "project_info": task_context_payload.get("project_info", {}),
+            "config": task_context_payload.get("config", {}),
         }
         
         # 如果父 Agent 有 handoff，传递给子 Agent

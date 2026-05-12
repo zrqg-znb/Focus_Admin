@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import time
 
 from asgiref.sync import async_to_sync
@@ -10,6 +11,7 @@ from apps.deepaudit.c_family import C_FAMILY_SYSTEM_PROMPT_TEMPLATE_NAME, get_c_
 from apps.deepaudit.llm.service import LLMService
 from apps.deepaudit.permissions import get_user_id
 from apps.deepaudit.prompt_template.prompt_template_model import PromptTemplate
+from apps.deepaudit.scenario_profile import SCENARIO_PROMPT_TEMPLATE_SEEDS
 from apps.deepaudit.serialization import format_datetime_text
 from apps.deepaudit.user_config import user_config_services
 
@@ -53,6 +55,7 @@ DEFAULT_PROMPT_TEMPLATES = [
         'is_system': True,
         'is_active': True,
     },
+    *[copy.deepcopy(item) for item in SCENARIO_PROMPT_TEMPLATE_SEEDS],
 ]
 
 

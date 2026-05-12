@@ -11,8 +11,16 @@ from pydantic import BaseModel, Field
 from .base import AgentTool, ToolResult
 from ..core.registry import agent_registry
 from ..core.message import message_bus, MessageType, MessagePriority
+from apps.deepaudit.scenario_profile import build_scenario_task_block
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_parent_scenario_profile(context: Dict[str, Any] | None) -> Dict[str, Any]:
+    payload = dict(context or {})
+    config = dict(payload.get("config") or payload.get("agent_config") or {})
+    scenario_profile = config.get("scenario_profile") or dict(payload.get("audit_scope") or {}).get("effective_profile") or {}
+    return dict(scenario_profile or {})
 
 
 class CreateAgentInput(BaseModel):
@@ -140,6 +148,24 @@ class CreateSubAgentTool(AgentTool):
                     success=False,
                     error="知识模块数量不能超过5个"
                 )
+
+        parent_agent = agent_registry.get_agent(self.parent_agent_id)
+        parent_context = dict(getattr(parent_agent, "_last_input_data", {}) or {}) if parent_agent else {}
+        scenario_profile = _extract_parent_scenario_profile(parent_context)
+        context_payload = dict(context or {})
+        if scenario_profile:
+            context_config = dict(context_payload.get("config") or {})
+            context_config.setdefault("scenario_profile", scenario_profile)
+            context_payload["config"] = context_config
+            if not modules:
+                modules = list(scenario_profile.get("knowledge_modules") or [])
+            scenario_task_block = build_scenario_task_block(scenario_profile, agent_type)
+            existing_task_context = str(context_payload.get("task_context") or "").strip()
+            context_payload["task_context"] = (
+                f"{scenario_task_block}\n\n{existing_task_context}".strip()
+                if existing_task_context and scenario_task_block
+                else scenario_task_block or existing_task_context
+            )
         
         # 验证知识模块（如果有）
         if modules:
@@ -176,7 +202,7 @@ class CreateSubAgentTool(AgentTool):
             executor = self._get_executor()
             if executor:
                 # 准备上下文
-                exec_context = context or {}
+                exec_context = dict(context_payload or {})
                 exec_context["knowledge_modules"] = modules
                 
                 # 执行子Agent
@@ -623,16 +649,31 @@ class RunSubAgentsTool(AgentTool):
             tools=self.tools,
             event_emitter=self.event_emitter,
         )
+        parent_agent = agent_registry.get_agent(self.parent_agent_id)
+        parent_context = dict(getattr(parent_agent, "_last_input_data", {}) or {}) if parent_agent else {}
+        scenario_profile = _extract_parent_scenario_profile(parent_context)
         
         tasks = []
         for node in valid_agents:
+            node_modules = list(node.get("knowledge_modules") or [])
+            if not node_modules:
+                node_modules = list(scenario_profile.get("knowledge_modules") or [])
+            task_context: Dict[str, Any] = {
+                "knowledge_modules": node_modules,
+            }
+            if scenario_profile:
+                task_context["config"] = {
+                    **dict(parent_context.get("config") or {}),
+                    "scenario_profile": scenario_profile,
+                }
+                task_context["task_context"] = build_scenario_task_block(scenario_profile, node.get("type") or "analysis")
+            if parent_context.get("project_info"):
+                task_context["project_info"] = dict(parent_context.get("project_info") or {})
             task = ExecutionTask(
                 agent_id=node["id"],
                 agent_type=node["type"],
                 task=node["task"],
-                context={
-                    "knowledge_modules": node.get("knowledge_modules", []),
-                },
+                context=task_context,
             )
             tasks.append(task)
         
@@ -653,7 +694,9 @@ class RunSubAgentsTool(AgentTool):
                 agent_config={},
                 input_data={
                     "task": task.task,
-                    "task_context": task.context,
+                    "task_context": task.context.get("task_context", ""),
+                    "project_info": task.context.get("project_info", {}),
+                    "config": task.context.get("config", {}),
                 },
                 parent_id=self.parent_agent_id,
                 knowledge_modules=task.context.get("knowledge_modules"),

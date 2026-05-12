@@ -13,11 +13,14 @@ from apps.deepaudit.agent_engine.tools.file_tool import (
 )
 from apps.deepaudit.agent_task.agent_runner import (
     _effective_target_files_from_input,
+    _normalize_agent_input,
     _validate_runtime_target_files,
 )
 
 
 class AgentRunnerScopeTestCase(SimpleTestCase):
+    databases = {"default"}
+
     def setUp(self) -> None:
         self.workspace = Path(tempfile.mkdtemp(prefix='focusaudit-agent-runner-'))
         (self.workspace / 'src').mkdir(parents=True, exist_ok=True)
@@ -52,6 +55,25 @@ class AgentRunnerScopeTestCase(SimpleTestCase):
         self.assertEqual(validation['directory_targets'], ['src/module'])
         self.assertEqual(validation['missing_files'], ['src/missing.c'])
         self.assertEqual(validation['outside_targets'], [])
+
+    def test_normalize_agent_input_preserves_explicit_general_scenario(self) -> None:
+        normalized = _normalize_agent_input(
+            'task-1',
+            {
+                'target_files': ['src/module/main.c'],
+                'audit_scope': {
+                    'scenario_key': 'general',
+                },
+                'project_name': 'Demo Project',
+            },
+            str(self.workspace),
+        )
+
+        scenario_profile = normalized['config']['scenario_profile']
+        self.assertEqual(scenario_profile['scenario_key'], 'general')
+        self.assertFalse(scenario_profile['legacy_c_family'])
+        self.assertEqual(normalized['config']['verification_level'], 'analysis_only')
+        self.assertIn('buffer_overflow', normalized['config']['target_vulnerabilities'])
 
 
 class AgentFileToolScopeTestCase(SimpleTestCase):

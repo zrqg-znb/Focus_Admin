@@ -123,6 +123,27 @@ class AgentTaskServicesTestCase(TestCase):
         self.assertIn('仓库规格快照已保存', event.message)
         self.assertIn('Worker 启动', event.message)
 
+    def test_create_task_persists_effective_scenario_profile(self) -> None:
+        access = SimpleNamespace(project=self.project, role='owner')
+
+        with patch('apps.deepaudit.agent_task.agent_task_services.require_project_role', return_value=access):
+            task = create_task(
+                self.user,
+                {
+                    'project_id': str(self.project.id),
+                    'name': 'Scenario Agent Task',
+                    'audit_scope': {
+                        'scenario_key': 'general',
+                    },
+                },
+            )
+
+        self.assertEqual(task.audit_scope.get('scenario_key'), 'general')
+        self.assertIn('effective_profile', task.audit_scope)
+        self.assertEqual(task.audit_scope['effective_profile']['scenario_key'], 'general')
+        self.assertEqual(task.target_vulnerabilities, task.audit_scope['effective_profile']['target_vulnerabilities'])
+        self.assertEqual(task.agent_config['scenario_profile']['scenario_key'], 'general')
+
     def test_create_task_ignores_mismatched_requested_repository_type(self) -> None:
         access = SimpleNamespace(project=self.project, role='owner')
 

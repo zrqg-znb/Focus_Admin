@@ -23,10 +23,10 @@ from apps.deepaudit.agent_engine.agents import (
 )
 from apps.deepaudit.agent_engine.event_manager import AgentEventEmitter, EventManager
 from apps.deepaudit.c_family import (
-    C_FAMILY_KNOWLEDGE_MODULES,
     C_FAMILY_TARGET_VULNERABILITIES,
     build_language_profile,
 )
+from apps.deepaudit.scenario_profile import resolve_scenario_profile
 
 if TYPE_CHECKING:
     from apps.deepaudit.agent_task.agent_task_model import AgentCheckpoint, AgentFinding
@@ -220,16 +220,56 @@ def _normalize_agent_input(task_id: str, input_data: Dict[str, Any], workspace: 
         [{"path": path} for path in (project_info.get("structure", {}).get("files") or [])],
         selected_file_paths=target_files,
     )
-    target_vulnerabilities = list(input_data.get("target_vulnerabilities") or [])
-    if language_profile.get("is_c_family_dominant") and not target_vulnerabilities:
+    agent_config = dict(input_data.get("agent_config") or {})
+    audit_scope = dict(input_data.get("audit_scope") or {})
+    scenario_profile = dict(
+        agent_config.get("scenario_profile")
+        or audit_scope.get("effective_profile")
+        or {}
+    )
+    if not scenario_profile:
+        scenario_key = str(
+            audit_scope.get("scenario_key")
+            or agent_config.get("scenario_key")
+            or input_data.get("scenario_key")
+            or ""
+        ).strip() or None
+        scenario_profile = resolve_scenario_profile(
+            scenario_key,
+            file_paths=target_files,
+            manual_target_vulnerabilities=input_data.get("target_vulnerabilities") or [],
+            language_profile=language_profile,
+        )
+    else:
+        scenario_profile = normalize_json_payload(scenario_profile)
+
+    scenario_key = str(scenario_profile.get("scenario_key") or "").strip().lower()
+    target_vulnerabilities = list(
+        scenario_profile.get("target_vulnerabilities")
+        or input_data.get("target_vulnerabilities")
+        or []
+    )
+    if not target_vulnerabilities and language_profile.get("is_c_family_dominant") and scenario_profile.get("legacy_c_family"):
         target_vulnerabilities = list(C_FAMILY_TARGET_VULNERABILITIES)
+
+    if input_data.get("verification_level"):
+        verification_level = input_data.get("verification_level")
+    elif scenario_profile.get("legacy_c_family") or (
+        language_profile.get("is_c_family_dominant")
+        and scenario_key in {"concurrency", "api_chain", "critical_section"}
+    ):
+        verification_level = "sandbox"
+    else:
+        verification_level = "analysis_only"
+
     config = {
         "target_vulnerabilities": target_vulnerabilities,
-        "verification_level": input_data.get("verification_level") or ("sandbox" if language_profile.get("is_c_family_dominant") else "analysis_only"),
+        "verification_level": verification_level,
         "exclude_patterns": list(input_data.get("exclude_patterns") or []),
         "target_files": target_files,
         "max_iterations": int(input_data.get("max_iterations") or 50),
         "language_profile": language_profile,
+        "scenario_profile": scenario_profile,
     }
     return {
         "project_info": {**project_info, "language_profile": language_profile},
@@ -661,8 +701,8 @@ async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any],
 
     llm_service = _build_llm_service(input_data)
     normalized_input = _normalize_agent_input(task_id, input_data, workspace)
-    language_profile = dict(normalized_input.get("config", {}).get("language_profile") or {})
-    knowledge_modules = list(C_FAMILY_KNOWLEDGE_MODULES) if language_profile.get("is_c_family_dominant") else []
+    scenario_profile = dict(normalized_input.get("config", {}).get("scenario_profile") or {})
+    knowledge_modules = list(scenario_profile.get("knowledge_modules") or [])
     await _initialize_task_runtime_state(
         task_id,
         int(normalized_input.get("project_info", {}).get("file_count") or 0),
@@ -671,7 +711,7 @@ async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any],
         workspace,
         llm_service,
         input_data,
-        enable_c_family_rag_fallback=bool(language_profile.get("is_c_family_dominant")),
+        enable_c_family_rag_fallback=bool(scenario_profile.get("legacy_c_family")),
     )
 
     recon_agent = ReconAgent(

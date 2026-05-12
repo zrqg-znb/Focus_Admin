@@ -139,3 +139,18 @@ class PromptTemplateTestingServiceTestCase(TestCase):
         self.assertFalse(result['success'])
         self.assertEqual(result['result'], {})
         self.assertIn('LLM unavailable', result['error'])
+
+
+class PromptTemplateSeedTestCase(TestCase):
+    def test_ensure_default_templates_creates_scenario_presets(self) -> None:
+        created = prompt_template_services.ensure_default_templates()
+
+        names = set(
+            PromptTemplate.objects.filter(is_deleted=False, is_system=True)
+            .values_list('name', flat=True)
+        )
+
+        self.assertGreaterEqual(created, 6)
+        self.assertIn('场景 A - 并发资源访问排查', names)
+        self.assertIn('场景 B - 高危 API 调用链梳理', names)
+        self.assertIn('场景 C - 临界区与硬件访问检查', names)

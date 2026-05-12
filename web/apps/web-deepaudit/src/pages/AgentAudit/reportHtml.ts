@@ -1277,6 +1277,7 @@ function renderHtmlDocument(model: AgentAuditReportModel): string {
       justify-content: space-between;
       gap: 12px;
       margin-bottom: 12px;
+      min-width: 0;
     }
 
     .sidebar-panel__title {
@@ -1284,12 +1285,19 @@ function renderHtmlDocument(model: AgentAuditReportModel): string {
       color: var(--text-primary);
       font-size: 15px;
       font-weight: 700;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .sidebar-panel__hint {
       color: var(--text-muted);
       font-size: 12px;
       white-space: nowrap;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .sidebar-brand {

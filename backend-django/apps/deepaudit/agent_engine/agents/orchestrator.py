@@ -29,6 +29,7 @@ from apps.deepaudit.constants import (
 from .base import BaseAgent, AgentConfig, AgentResult, AgentType, AgentPattern, TaskHandoff
 from ..json_parser import AgentJsonParser
 from ..prompts import MULTI_AGENT_RULES, CORE_SECURITY_PRINCIPLES
+from apps.deepaudit.scenario_profile import build_scenario_prompt_block, build_scenario_task_block
 
 logger = logging.getLogger(__name__)
 
@@ -320,6 +321,10 @@ class OrchestratorAgent(BaseAgent):
         project_info = input_data.get("project_info", {})
         config = input_data.get("config", {})
         resume_mode = bool(self._conversation_history)
+        scenario_profile = dict(config.get("scenario_profile") or {})
+        scenario_prompt_block = build_scenario_prompt_block(scenario_profile, self.name.lower())
+        if scenario_prompt_block and "<scenario_profile>" not in (self.config.system_prompt or ""):
+            self.config.system_prompt = f"{self.config.system_prompt or ''}\n\n{scenario_prompt_block}".strip()
         
         # 🔥 保存运行时上下文，用于传递给子 Agent
         self._runtime_context = {
@@ -705,6 +710,12 @@ Action Input: {{"参数": "值"}}
 ## ⚠️ 重要提示
 用户指定了 **{len(target_files)}** 个目标文件进行审计。
 请确保你的分析集中在这些指定的文件上，不要浪费时间分析其他文件。
+"""
+
+        scenario_task_block = build_scenario_task_block(config.get('scenario_profile') or {}, self.name.lower())
+        if scenario_task_block:
+            msg += f"""
+{scenario_task_block}
 """
         
         msg += f"""

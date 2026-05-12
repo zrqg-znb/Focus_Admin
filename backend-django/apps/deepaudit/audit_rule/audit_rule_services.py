@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+
 from django.shortcuts import get_object_or_404
 from ninja.errors import HttpError
 
@@ -8,6 +10,7 @@ from apps.deepaudit.c_family import C_FAMILY_SYSTEM_RULE_SET_NAME
 from apps.deepaudit.heuristics import DEFAULT_RULE_PATTERNS
 from apps.deepaudit.permissions import get_user_id
 from apps.deepaudit.runtime import load_rule_export
+from apps.deepaudit.scenario_profile import SCENARIO_RULE_SET_SEEDS
 from apps.deepaudit.serialization import format_datetime_text
 
 
@@ -74,6 +77,7 @@ DEFAULT_RULE_SETS = [
             }
         ],
     },
+    *[copy.deepcopy(item) for item in SCENARIO_RULE_SET_SEEDS],
 ]
 
 

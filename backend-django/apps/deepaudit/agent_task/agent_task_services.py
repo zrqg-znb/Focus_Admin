@@ -14,7 +14,6 @@ from django.utils import timezone
 from ninja.errors import HttpError
 
 from apps.deepaudit.agent_task.agent_task_model import AgentCheckpoint, AgentEvent, AgentFinding, AgentTask
-from apps.deepaudit.c_family import C_FAMILY_TARGET_VULNERABILITIES, project_likely_c_family
 from apps.deepaudit.constants import (
     AGENT_PHASE_ANALYSIS,
     AGENT_PHASE_CHOICES,
@@ -41,6 +40,7 @@ from apps.deepaudit.repo_specs import (
 )
 from apps.deepaudit.runtime import cleanup_runtime_workspace, docker_available, prepare_repository_workspace
 from apps.deepaudit.runtime import resolve_selected_file_paths, summarize_selected_targets, validate_selected_file_paths
+from apps.deepaudit.scenario_profile import resolve_scenario_profile
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact
 from apps.deepaudit.serialization import format_datetime_text, normalize_json_payload
 from apps.deepaudit.db_runtime import close_runtime_db_connections, ensure_runtime_db_connection, run_with_fresh_connection
@@ -751,18 +751,32 @@ def create_task(user, payload: dict) -> AgentTask:
             requested_signature=str(payload.get('repository_signature') or '').strip(),
             effective_signature=repository_signature,
         )
-    target_vulnerabilities = list(payload.get('target_vulnerabilities') or [])
-    if not target_vulnerabilities and project_likely_c_family(
-        access.project,
+    audit_scope = normalize_json_payload(payload.get('audit_scope') or {})
+    scenario_key = str(
+        audit_scope.get('scenario_key')
+        or payload.get('scenario_key')
+        or ''
+    ).strip() or None
+    scenario_profile = resolve_scenario_profile(
+        scenario_key,
+        project=access.project,
         file_paths=payload.get('target_files') or [],
-    ):
-        target_vulnerabilities = list(C_FAMILY_TARGET_VULNERABILITIES)
+        manual_target_vulnerabilities=payload.get('target_vulnerabilities') or [],
+    )
+    audit_scope = {
+        **audit_scope,
+        'scenario_key': scenario_profile.get('scenario_key'),
+        'effective_profile': scenario_profile,
+    }
+    target_vulnerabilities = list(scenario_profile.get('target_vulnerabilities') or [])
     agent_config = dict(payload.get('agent_config') or {})
     agent_config = _persist_repository_signature_metadata(
         agent_config,
         repository_signature=repository_signature,
         project_repository_signature=project_repository_signature,
     )
+    agent_config['scenario_profile'] = scenario_profile
+    agent_config['scenario_key'] = scenario_profile.get('scenario_key')
     agent_config.setdefault(
         'selection_stats',
         {
@@ -776,7 +790,7 @@ def create_task(user, payload: dict) -> AgentTask:
         created_by=user,
         name=payload.get('name') or f'{access.project.name} Agent 审计',
         description=payload.get('description') or '',
-        audit_scope=payload.get('audit_scope') or {},
+        audit_scope=audit_scope,
         target_vulnerabilities=target_vulnerabilities,
         verification_level=payload.get('verification_level') or 'sandbox',
         repository_url=repository_spec['repository_url'] or None,
@@ -932,10 +946,13 @@ def resume_task_from_checkpoint(user, task_id: str, checkpoint_id: str) -> Agent
     resumed_task.description = (
         f"{resumed_task.description}\n\nResumed from checkpoint {resume_checkpoint.id} ({resume_checkpoint.checkpoint_name or resume_checkpoint.checkpoint_type})."
     ).strip()
-    resumed_task.audit_scope = payload['audit_scope']
+    resumed_task.audit_scope = {
+        **dict(payload['audit_scope'] or {}),
+        **dict(resumed_task.audit_scope or {}),
+    }
     resumed_task.agent_config = {
-        **dict(resumed_task.agent_config or {}),
         **dict(payload['agent_config'] or {}),
+        **dict(resumed_task.agent_config or {}),
     }
     resumed_task.sys_modifier = user
     resumed_task.save(update_fields=['description', 'audit_scope', 'agent_config', 'sys_modifier', 'sys_update_datetime'])

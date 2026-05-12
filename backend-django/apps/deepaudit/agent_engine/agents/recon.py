@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from .base import BaseAgent, AgentConfig, AgentResult, AgentType, AgentPattern, TaskHandoff
 from ..json_parser import AgentJsonParser
 from ..prompts import TOOL_USAGE_GUIDE
+from apps.deepaudit.scenario_profile import build_scenario_prompt_block, build_scenario_task_block
 
 logger = logging.getLogger(__name__)
 
@@ -384,6 +385,17 @@ class ReconAgent(BaseAgent):
         task = input_data.get("task", "")
         task_context = input_data.get("task_context", "")
         resume_mode = bool(self._conversation_history)
+        if isinstance(task_context, dict):
+            task_context = json.dumps(task_context, ensure_ascii=False, indent=2)
+        else:
+            task_context = str(task_context or "").strip()
+        scenario_profile = dict(config.get("scenario_profile") or {})
+        scenario_prompt_block = build_scenario_prompt_block(scenario_profile, self.name.lower())
+        if scenario_prompt_block and "<scenario_profile>" not in (self.config.system_prompt or ""):
+            self.config.system_prompt = f"{self.config.system_prompt or ''}\n\n{scenario_prompt_block}".strip()
+        scenario_task_block = build_scenario_task_block(scenario_profile, self.name.lower())
+        if scenario_task_block:
+            task_context = f"{scenario_task_block}\n\n{task_context}".strip() if task_context else scenario_task_block
         
         # 🔥 获取目标文件列表
         target_files = config.get("target_files", [])

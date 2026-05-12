@@ -331,6 +331,45 @@ class PatternMatchTool(AgentTool):
             "description": "C/C++ 内存泄漏风险：分配点需要确认在所有路径都正确释放",
             "cwe_id": "CWE-401",
         },
+        "resource_leak": {
+            "patterns": {
+                "c": [
+                    (r'\bmalloc\s*\(', "malloc"),
+                    (r'\bcalloc\s*\(', "calloc"),
+                    (r'\brealloc\s*\(', "realloc"),
+                ],
+                "cpp": [
+                    (r'\bnew\s+\w+', "new"),
+                    (r'\bnew\[\]\s+\w+', "new[]"),
+                    (r'\bmalloc\s*\(', "malloc"),
+                    (r'\bcalloc\s*\(', "calloc"),
+                    (r'\brealloc\s*\(', "realloc"),
+                ],
+            },
+            "severity": "medium",
+            "description": "资源泄漏风险：内存、文件句柄、锁或硬件资源需要在所有路径释放",
+            "cwe_id": "CWE-401",
+        },
+        "use_after_free": {
+            "patterns": {
+                "c": [
+                    (r'\bfree\s*\(', "free"),
+                    (r'\bmemcpy\s*\(', "memcpy"),
+                    (r'\bmemmove\s*\(', "memmove"),
+                    (r'\bdelete\b', "delete"),
+                ],
+                "cpp": [
+                    (r'\bfree\s*\(', "free"),
+                    (r'\bmemcpy\s*\(', "memcpy"),
+                    (r'\bmemmove\s*\(', "memmove"),
+                    (r'\bdelete\b', "delete"),
+                    (r'\bdelete\[\]\s*\w+', "delete[]"),
+                ],
+            },
+            "severity": "critical",
+            "description": "释放后使用风险：对象生命周期结束后仍被访问或传递",
+            "cwe_id": "CWE-416",
+        },
         "race_condition": {
             "patterns": {
                 "c": [
@@ -348,6 +387,94 @@ class PatternMatchTool(AgentTool):
             "severity": "high",
             "description": "C/C++ 并发访问风险：线程创建后需要检查共享状态是否被同步保护",
             "cwe_id": "CWE-362",
+        },
+        "deadlock": {
+            "patterns": {
+                "c": [
+                    (r'\bpthread_mutex_lock\s*\(', "pthread_mutex_lock"),
+                    (r'\bpthread_mutex_unlock\s*\(', "pthread_mutex_unlock"),
+                    (r'\bsem_wait\s*\(', "sem_wait"),
+                    (r'\bsem_post\s*\(', "sem_post"),
+                    (r'\btaskENTER_CRITICAL\s*\(', "taskENTER_CRITICAL"),
+                    (r'\btaskEXIT_CRITICAL\s*\(', "taskEXIT_CRITICAL"),
+                ],
+                "cpp": [
+                    (r'\bstd::mutex\b', "std::mutex"),
+                    (r'\bstd::lock_guard\b', "std::lock_guard"),
+                    (r'\bpthread_mutex_lock\s*\(', "pthread_mutex_lock"),
+                    (r'\bpthread_mutex_unlock\s*\(', "pthread_mutex_unlock"),
+                    (r'\bsem_wait\s*\(', "sem_wait"),
+                    (r'\bsem_post\s*\(', "sem_post"),
+                ],
+            },
+            "severity": "high",
+            "description": "死锁或锁顺序问题：需要检查锁获取顺序、持锁范围和阻塞调用",
+            "cwe_id": "CWE-833",
+        },
+        "embedded_concurrency": {
+            "patterns": {
+                "c": [
+                    (r'\bISR\b', "ISR"),
+                    (r'\bIRQ\b', "IRQ"),
+                    (r'\bDMA\b', "DMA"),
+                    (r'\bvolatile\b', "volatile"),
+                    (r'\btaskENTER_CRITICAL\s*\(', "taskENTER_CRITICAL"),
+                    (r'\btaskEXIT_CRITICAL\s*\(', "taskEXIT_CRITICAL"),
+                ],
+                "cpp": [
+                    (r'\bISR\b', "ISR"),
+                    (r'\bIRQ\b', "IRQ"),
+                    (r'\bDMA\b', "DMA"),
+                    (r'\bvolatile\b', "volatile"),
+                    (r'\btaskENTER_CRITICAL\s*\(', "taskENTER_CRITICAL"),
+                    (r'\btaskEXIT_CRITICAL\s*\(', "taskEXIT_CRITICAL"),
+                ],
+            },
+            "severity": "high",
+            "description": "嵌入式并发风险：ISR、DMA、共享状态和临界区边界需要同步保护",
+            "cwe_id": "CWE-362",
+        },
+        "api_contract_violation": {
+            "patterns": {
+                "c": [
+                    (r'\bassert\s*\(', "assert"),
+                    (r'\bif\s*\(!\s*\w+\s*\)', "negated-guard"),
+                    (r'\breturn\s+(?:NULL|nullptr|-?\d+)\b', "return"),
+                ],
+                "cpp": [
+                    (r'\bassert\s*\(', "assert"),
+                    (r'\bif\s*\(!\s*\w+\s*\)', "negated-guard"),
+                    (r'\breturn\s+(?:NULL|nullptr|-?\d+)\b', "return"),
+                ],
+            },
+            "severity": "medium",
+            "description": "API 契约误用：返回值、前置条件和上下文约束需要显式校验",
+            "cwe_id": "CWE-252",
+        },
+        "hardware_access": {
+            "patterns": {
+                "c": [
+                    (r'\breadl\s*\(', "readl"),
+                    (r'\bwritel\s*\(', "writel"),
+                    (r'\bioread\w*\s*\(', "ioread"),
+                    (r'\biowrite\w*\s*\(', "iowrite"),
+                    (r'\bdisable_irq\s*\(', "disable_irq"),
+                    (r'\benable_irq\s*\(', "enable_irq"),
+                    (r'\bvolatile\b', "volatile"),
+                ],
+                "cpp": [
+                    (r'\breadl\s*\(', "readl"),
+                    (r'\bwritel\s*\(', "writel"),
+                    (r'\bioread\w*\s*\(', "ioread"),
+                    (r'\biowrite\w*\s*\(', "iowrite"),
+                    (r'\bdisable_irq\s*\(', "disable_irq"),
+                    (r'\benable_irq\s*\(', "enable_irq"),
+                    (r'\bvolatile\b', "volatile"),
+                ],
+            },
+            "severity": "high",
+            "description": "硬件访问与寄存器操作风险：需要检查上下文、内存屏障和临界区保护",
+            "cwe_id": "CWE-667",
         },
         "format_string": {
             "patterns": {

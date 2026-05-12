@@ -24,6 +24,7 @@ from .resource_leak import RESOURCE_LEAK
 from .deadlock import DEADLOCK
 from .embedded_concurrency import EMBEDDED_CONCURRENCY
 from .api_contract_violation import API_CONTRACT_VIOLATION
+from .hardware_access import HARDWARE_ACCESS
 
 # 所有漏洞知识文档
 ALL_VULNERABILITY_DOCS = [
@@ -59,6 +60,7 @@ ALL_VULNERABILITY_DOCS = [
     DEADLOCK,
     EMBEDDED_CONCURRENCY,
     API_CONTRACT_VIOLATION,
+    HARDWARE_ACCESS,
     BUSINESS_LOGIC,
     RATE_LIMITING,
     OPEN_REDIRECT,
@@ -98,6 +100,7 @@ __all__ = [
     "DEADLOCK",
     "EMBEDDED_CONCURRENCY",
     "API_CONTRACT_VIOLATION",
+    "HARDWARE_ACCESS",
     "BUSINESS_LOGIC",
     "RATE_LIMITING",
     "OPEN_REDIRECT",
