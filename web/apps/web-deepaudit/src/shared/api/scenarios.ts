@@ -2,16 +2,18 @@ import { apiClient } from './serverClient';
 
 export type ScenarioObjectiveType = 'audit' | 'inventory';
 
+const SCENARIO_API_PREFIX = '/deepaudit/scenarios';
+
 export interface ScenarioProfile {
   id: string;
   scenario_key: string;
   name: string;
   description?: string;
   objective_type: ScenarioObjectiveType;
-  prompt_template_id?: string | null;
-  prompt_template_name?: string | null;
-  rule_set_id?: string | null;
-  rule_set_name?: string | null;
+  prompt_template_id?: null | string;
+  prompt_template_name?: null | string;
+  rule_set_id?: null | string;
+  rule_set_name?: null | string;
   knowledge_modules: string[];
   knowledge_modules_count: number;
   target_vulnerabilities: string[];
@@ -20,9 +22,9 @@ export interface ScenarioProfile {
   is_default: boolean;
   is_system: boolean;
   is_active: boolean;
-  created_by?: string | null;
-  sys_create_datetime?: string | null;
-  sys_update_datetime?: string | null;
+  created_by?: null | string;
+  sys_create_datetime?: null | string;
+  sys_update_datetime?: null | string;
 }
 
 export interface ScenarioProfileListResponse {
@@ -35,8 +37,8 @@ export interface ScenarioProfileCreate {
   name: string;
   description?: string;
   objective_type: ScenarioObjectiveType;
-  prompt_template_id?: string | null;
-  rule_set_id?: string | null;
+  prompt_template_id?: null | string;
+  rule_set_id?: null | string;
   knowledge_modules?: string[];
   is_active?: boolean;
 }
@@ -45,8 +47,8 @@ export interface ScenarioProfileUpdate {
   name?: string;
   description?: string;
   objective_type?: ScenarioObjectiveType;
-  prompt_template_id?: string | null;
-  rule_set_id?: string | null;
+  prompt_template_id?: null | string;
+  rule_set_id?: null | string;
   knowledge_modules?: string[];
   is_active?: boolean;
   is_default?: boolean;
@@ -93,7 +95,11 @@ export const BUILTIN_SCENARIO_FALLBACKS: ScenarioProfile[] = [
     rule_set_name: '场景 A - 并发资源访问规则集',
     knowledge_modules: ['race_condition', 'deadlock', 'embedded_concurrency'],
     knowledge_modules_count: 3,
-    target_vulnerabilities: ['race_condition', 'deadlock', 'embedded_concurrency'],
+    target_vulnerabilities: [
+      'race_condition',
+      'deadlock',
+      'embedded_concurrency',
+    ],
     focus_keywords: ['pthread_', 'mutex', 'sem_', 'critical', 'ISR', 'DMA'],
     tool_policy: {},
     is_default: false,
@@ -113,9 +119,19 @@ export const BUILTIN_SCENARIO_FALLBACKS: ScenarioProfile[] = [
     prompt_template_name: '场景 B - 高危 API 调用链梳理',
     rule_set_id: null,
     rule_set_name: '场景 B - 高危 API 调用链规则集',
-    knowledge_modules: ['buffer_overflow', 'use_after_free', 'resource_leak', 'format_string'],
+    knowledge_modules: [
+      'buffer_overflow',
+      'use_after_free',
+      'resource_leak',
+      'format_string',
+    ],
     knowledge_modules_count: 4,
-    target_vulnerabilities: ['buffer_overflow', 'use_after_free', 'resource_leak', 'format_string'],
+    target_vulnerabilities: [
+      'buffer_overflow',
+      'use_after_free',
+      'resource_leak',
+      'format_string',
+    ],
     focus_keywords: ['strcpy', 'sprintf', 'memcpy', 'malloc', 'free', 'printf'],
     tool_policy: {},
     is_default: false,
@@ -133,20 +149,25 @@ function normalizeScenarioProfile(item: any): ScenarioProfile {
     scenario_key: String(item?.scenario_key || ''),
     name: String(item?.name || ''),
     description: item?.description ? String(item.description) : '',
-    objective_type: item?.objective_type === 'inventory' ? 'inventory' : 'audit',
-    prompt_template_id: item?.prompt_template_id ? String(item.prompt_template_id) : null,
-    prompt_template_name: item?.prompt_template_name ? String(item.prompt_template_name) : null,
+    objective_type:
+      item?.objective_type === 'inventory' ? 'inventory' : 'audit',
+    prompt_template_id: item?.prompt_template_id
+      ? String(item.prompt_template_id)
+      : null,
+    prompt_template_name: item?.prompt_template_name
+      ? String(item.prompt_template_name)
+      : null,
     rule_set_id: item?.rule_set_id ? String(item.rule_set_id) : null,
     rule_set_name: item?.rule_set_name ? String(item.rule_set_name) : null,
     knowledge_modules: Array.isArray(item?.knowledge_modules)
-      ? item.knowledge_modules.map((entry: unknown) => String(entry))
+      ? item.knowledge_modules.map(String)
       : [],
     knowledge_modules_count: Number(item?.knowledge_modules_count || 0),
     target_vulnerabilities: Array.isArray(item?.target_vulnerabilities)
-      ? item.target_vulnerabilities.map((entry: unknown) => String(entry))
+      ? item.target_vulnerabilities.map(String)
       : [],
     focus_keywords: Array.isArray(item?.focus_keywords)
-      ? item.focus_keywords.map((entry: unknown) => String(entry))
+      ? item.focus_keywords.map(String)
       : [],
     tool_policy:
       item?.tool_policy && typeof item.tool_policy === 'object'
@@ -166,29 +187,29 @@ function normalizeScenarioProfile(item: any): ScenarioProfile {
 }
 
 export async function getScenarioProfiles(params?: {
+  is_active?: boolean;
   keyword?: string;
   objective_type?: ScenarioObjectiveType;
-  is_active?: boolean;
   page?: number;
   pageSize?: number;
 }): Promise<ScenarioProfileListResponse> {
-  const response = await apiClient.get('/scenarios', { params });
+  const response = await apiClient.get(SCENARIO_API_PREFIX, { params });
   const items = Array.isArray(response.data?.items) ? response.data.items : [];
   return {
-    items: items.map(normalizeScenarioProfile),
-    total: Number(response.data?.total || items.length),
+    items: items.map((item) => normalizeScenarioProfile(item)),
+    total: Number(response.data?.total ?? items.length),
   };
 }
 
 export async function getScenarioProfile(id: string): Promise<ScenarioProfile> {
-  const response = await apiClient.get(`/scenarios/${id}`);
+  const response = await apiClient.get(`${SCENARIO_API_PREFIX}/${id}`);
   return normalizeScenarioProfile(response.data);
 }
 
 export async function createScenarioProfile(
   payload: ScenarioProfileCreate,
 ): Promise<ScenarioProfile> {
-  const response = await apiClient.post('/scenarios', payload);
+  const response = await apiClient.post(SCENARIO_API_PREFIX, payload);
   return normalizeScenarioProfile(response.data);
 }
 
@@ -196,7 +217,7 @@ export async function updateScenarioProfile(
   id: string,
   payload: ScenarioProfileUpdate,
 ): Promise<ScenarioProfile> {
-  const response = await apiClient.put(`/scenarios/${id}`, payload);
+  const response = await apiClient.put(`${SCENARIO_API_PREFIX}/${id}`, payload);
   return normalizeScenarioProfile(response.data);
 }
 
@@ -204,14 +225,17 @@ export async function copyScenarioProfile(
   id: string,
   payload: ScenarioProfileCopyPayload,
 ): Promise<ScenarioProfile> {
-  const response = await apiClient.post(`/scenarios/${id}/copy`, payload);
+  const response = await apiClient.post(
+    `${SCENARIO_API_PREFIX}/${id}/copy`,
+    payload,
+  );
   return normalizeScenarioProfile(response.data);
 }
 
 export async function deleteScenarioProfile(id: string): Promise<void> {
-  await apiClient.delete(`/scenarios/${id}`);
+  await apiClient.delete(`${SCENARIO_API_PREFIX}/${id}`);
 }
 
 export async function setDefaultScenarioProfile(id: string): Promise<void> {
-  await apiClient.post(`/scenarios/${id}/set-default`);
+  await apiClient.post(`${SCENARIO_API_PREFIX}/${id}/set-default`);
 }

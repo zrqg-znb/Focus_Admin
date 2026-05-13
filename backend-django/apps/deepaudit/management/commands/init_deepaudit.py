@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from django.core.management.base import BaseCommand
+from django.db.models import Q
 
 from apps.deepaudit.audit_rule.audit_rule_services import ensure_default_rule_sets
 from apps.deepaudit.prompt_template.prompt_template_services import ensure_default_templates
@@ -10,6 +11,7 @@ from apps.deepaudit.scenario.scenario_services import ensure_default_scenarios
 from common.fu_cache import MenuCacheManager, PermissionCacheManager
 from core.menu.menu_model import Menu
 from core.permission.permission_model import Permission
+from core.role.role_model import Role
 from core.user.user_model import User
 
 
@@ -236,6 +238,7 @@ class Command(BaseCommand):
         operator = User.objects.filter(is_superuser=True).order_by('sys_create_datetime').first()
         menus = self._seed_menus(operator)
         permission_count = self._seed_permissions(menus, operator)
+        scenario_role_binding_count = self._seed_scenario_role_bindings(menus)
         template_count = ensure_default_templates()
         rule_count = ensure_default_rule_sets()
         scenario_count = ensure_default_scenarios()
@@ -243,7 +246,7 @@ class Command(BaseCommand):
         PermissionCacheManager.invalidate_permission_cache()
         PermissionCacheManager.invalidate_global_permissions()
         self.stdout.write(self.style.SUCCESS(
-            f'FocusAudit 初始化完成：菜单 {len(menus)} 项，权限 {permission_count} 项，模板 {template_count} 项，规则集 {rule_count} 项，场景 {scenario_count} 项。'
+            f'FocusAudit 初始化完成：菜单 {len(menus)} 项，权限 {permission_count} 项，场景绑定 {scenario_role_binding_count} 处，模板 {template_count} 项，规则集 {rule_count} 项，场景 {scenario_count} 项。'
         ))
 
     def _seed_menus(self, operator):
@@ -340,3 +343,59 @@ class Command(BaseCommand):
                 )
                 total += 1
         return total
+
+    def _resolve_target_roles(self) -> list[Role]:
+        default_role = Role.objects.filter(
+            Q(name='默认') | Q(name__icontains='默认') | Q(code__iexact='default')
+        ).order_by('sys_create_datetime').first()
+        superadmin_role = Role.objects.filter(
+            Q(code__iexact='superadmin') | Q(name__iexact='superadmin') | Q(name__icontains='超级管理员')
+        ).order_by('sys_create_datetime').first()
+
+        roles: list[Role] = []
+        seen_ids: set[str] = set()
+        for role in (default_role, superadmin_role):
+            if role and str(role.id) not in seen_ids:
+                roles.append(role)
+                seen_ids.add(str(role.id))
+        return roles
+
+    @staticmethod
+    def _add_missing_menu_roles(menu: Menu, role_ids: list[str]) -> int:
+        existing_role_ids = set(menu.core_roles.values_list('id', flat=True))
+        missing_role_ids = [role_id for role_id in role_ids if role_id not in existing_role_ids]
+        if missing_role_ids:
+            menu.core_roles.add(*missing_role_ids)
+        return len(missing_role_ids)
+
+    @staticmethod
+    def _add_missing_permission_roles(permission: Permission, role_ids: list[str]) -> int:
+        existing_role_ids = set(permission.roles.values_list('id', flat=True))
+        missing_role_ids = [role_id for role_id in role_ids if role_id not in existing_role_ids]
+        if missing_role_ids:
+            permission.roles.add(*missing_role_ids)
+        return len(missing_role_ids)
+
+    def _seed_scenario_role_bindings(self, menus) -> int:
+        scenario_menu = menus.get('scenarios')
+        if not scenario_menu:
+            return 0
+
+        target_roles = self._resolve_target_roles()
+        if not target_roles:
+            return 0
+
+        role_ids = [str(role.id) for role in target_roles]
+        binding_count = self._add_missing_menu_roles(scenario_menu, role_ids)
+
+        scenario_permission_codes = [
+            item['code']
+            for item in PERMISSION_SEEDS.get('scenarios', [])
+        ]
+        scenario_permissions = Permission.objects.filter(
+            menu=scenario_menu,
+            code__in=scenario_permission_codes,
+        ).prefetch_related('roles')
+        for permission in scenario_permissions:
+            binding_count += self._add_missing_permission_roles(permission, role_ids)
+        return binding_count

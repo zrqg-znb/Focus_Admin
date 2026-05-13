@@ -332,6 +332,8 @@ export function mapApiPath(path: string) {
         mappedPath = `/deepaudit${pathname.replace(/\/$/, '') || '/rules'}`;
       } else if (pathname.startsWith('/prompts')) {
         mappedPath = `/deepaudit${pathname.replace(/\/$/, '') || '/prompts'}`;
+      } else if (pathname.startsWith('/scenarios')) {
+        mappedPath = `/deepaudit${pathname.replace(/\/$/, '') || '/scenarios'}`;
       } else if (pathname.startsWith('/embedding')) {
         mappedPath = `/deepaudit${pathname.replace(/\/$/, '')}`;
       } else if (pathname.startsWith('/ssh-keys')) {
@@ -560,7 +562,10 @@ export function normalizeCodeAnalysisResult(
   const issues = Array.isArray(result.issues)
     ? result.issues.map((issue: JsonRecord) => {
         const issueType =
-          issue.issue_type || issue.type || issue.vulnerability_type || 'security';
+          issue.issue_type ||
+          issue.type ||
+          issue.vulnerability_type ||
+          'security';
         return {
           ...issue,
           type: issue.type || issueType,

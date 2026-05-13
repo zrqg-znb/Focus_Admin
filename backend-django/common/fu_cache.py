@@ -620,6 +620,7 @@ class PermissionCacheManager:
         key = PermissionCacheManager.USER_VERSION_KEY.format(user_id)
         current_version = cache.get(key, 0)
         cache.set(key, current_version + 1, PermissionCacheManager.VERSION_EXPIRE_TIME)
+        CacheManager.delete(f"user_perm_codes:{user_id}")
         logger.info(f"已清除用户 {user_id} 的权限缓存，版本号: {current_version + 1}")
     
     @staticmethod
@@ -708,6 +709,7 @@ class PermissionCacheManager:
         
         # 清除特定权限、角色权限和菜单权限缓存
         CacheManager.clear_by_prefix(f"{CacheKeyPrefix.PERMISSION}")
+        CacheManager.clear_by_prefix("user_perm_codes")
         
         # 清除用户权限缓存（因为权限变更了）
         CacheManager.clear_by_prefix(f"{CacheKeyPrefix.USER_PERMISSION}")
@@ -790,4 +792,3 @@ class CacheWarmer:
         CacheWarmer.warm_dict_cache()
         CacheWarmer.warm_menu_cache()
         logger.info("缓存预热完成")
-

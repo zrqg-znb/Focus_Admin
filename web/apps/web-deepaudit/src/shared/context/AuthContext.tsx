@@ -1,15 +1,27 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import type { PermissionRequirement } from '@/shared/focus/focusPermission';
+import type { ReactNode } from 'react';
 
-import { apiClient } from '../api/serverClient';
-import { normalizeProfile } from '../api/focusAdapter';
-import { ensureFocusSession, redirectToFocusLogin, resetFocusSession } from '@/shared/focus/focusAuth';
+import { persistStoredFocusAccess } from '@/shared/api/focusAdapter';
+import {
+  ensureFocusSession,
+  redirectToFocusLogin,
+  resetFocusSession,
+} from '@/shared/focus/focusAuth';
 import {
   hasAllPermissions,
   hasAnyPermission,
   hasPermission,
-  type PermissionRequirement,
 } from '@/shared/focus/focusPermission';
-import { persistStoredFocusAccess } from '@/shared/api/focusAdapter';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from 'react';
+
+import { normalizeProfile } from '../api/focusAdapter';
+import { apiClient } from '../api/serverClient';
 
 interface User {
   id: string;
@@ -21,7 +33,7 @@ interface User {
 
 interface AuthContextType {
   accessCodes: string[];
-  user: User | null;
+  user: null | User;
   isAuthenticated: boolean;
   isLoading: boolean;
   hasAccess: (requirement?: PermissionRequirement) => boolean;
@@ -36,9 +48,17 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [accessCodes, setAccessCodes] = useState<string[]>([]);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<null | User>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+
+  const refreshPermissions = useCallback(async () => {
+    const response = await apiClient.get<string[]>('/core/permCode');
+    const nextAccessCodes = Array.isArray(response.data) ? response.data : [];
+    setAccessCodes(nextAccessCodes);
+    persistStoredFocusAccess({ accessCodes: nextAccessCodes });
+    return nextAccessCodes;
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -56,12 +76,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
 
         let resolvedAccessCodes = session.accessCodes;
-        if (!resolvedAccessCodes.length) {
-          const accessCodeResponse = await apiClient.get<string[]>('/core/permCode');
-          resolvedAccessCodes = Array.isArray(accessCodeResponse.data)
-            ? accessCodeResponse.data
-            : [];
-          persistStoredFocusAccess({ accessCodes: resolvedAccessCodes });
+        try {
+          resolvedAccessCodes = await refreshPermissions();
+        } catch (error) {
+          if (resolvedAccessCodes.length === 0) {
+            throw error;
+          }
         }
 
         let normalizedUser = null;
@@ -99,15 +119,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return () => {
       mounted = false;
     };
-  }, []);
-
-  const refreshPermissions = async () => {
-    const response = await apiClient.get<string[]>('/core/permCode');
-    const nextAccessCodes = Array.isArray(response.data) ? response.data : [];
-    setAccessCodes(nextAccessCodes);
-    persistStoredFocusAccess({ accessCodes: nextAccessCodes });
-    return nextAccessCodes;
-  };
+  }, [refreshPermissions]);
 
   const logout = async (redirectPath?: string) => {
     try {
