@@ -8,6 +8,7 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from .base import KnowledgeCategory
+from .aliases import MODULE_ALIASES, normalize_module_name, resolve_module_alias
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,9 @@ class KnowledgeLoader:
         Returns:
             模块内容
         """
-        knowledge = await self._rag.get_vulnerability_knowledge(module_name)
+        knowledge = self._get_builtin_knowledge(module_name)
+        if not knowledge:
+            knowledge = await self._rag.get_vulnerability_knowledge(module_name)
         if knowledge:
             return knowledge.get("content", "")
         return ""
@@ -95,9 +98,11 @@ class KnowledgeLoader:
         
         # 使用内置知识（同步）
         knowledge_sections = []
+        seen_documents: set[str] = set()
         for name in module_names:
             knowledge = self._get_builtin_knowledge(name)
-            if knowledge:
+            if knowledge and knowledge.get("id") not in seen_documents:
+                seen_documents.add(str(knowledge.get("id") or ""))
                 knowledge_sections.append(f"### {knowledge['title']}\n{knowledge['content']}")
         
         if not knowledge_sections:
@@ -119,17 +124,27 @@ class KnowledgeLoader:
     
     def _get_builtin_knowledge(self, module_name: str) -> Optional[Dict[str, Any]]:
         """获取内置知识（同步）"""
-        module_name_normalized = module_name.lower().replace("-", "_").replace(" ", "_")
+        module_name_normalized = normalize_module_name(module_name)
+        resolved_module_name = resolve_module_alias(module_name)
+        exact_candidates = {
+            module_name_normalized,
+            resolved_module_name,
+            f"vuln_{module_name_normalized}",
+            f"framework_{module_name_normalized}",
+        }
         
         for doc in self._rag._builtin_knowledge:
-            if doc.id == f"vuln_{module_name_normalized}" or doc.id == module_name_normalized:
+            doc_id = str(doc.id or "").strip().lower()
+            if doc_id in exact_candidates:
                 return doc.to_dict()
         
         # 模糊匹配
         for doc in self._rag._builtin_knowledge:
             if module_name_normalized in doc.id or any(
-                module_name_normalized in tag for tag in doc.tags
+                module_name_normalized in tag.lower() for tag in doc.tags
             ):
+                return doc.to_dict()
+            if resolved_module_name in str(doc.id or "").lower():
                 return doc.to_dict()
         
         return None
@@ -162,40 +177,39 @@ class KnowledgeLoader:
             {"valid": [...], "invalid": [...]}
         """
         all_modules = self.get_all_module_names()
-        all_modules_normalized = {m.lower().replace("-", "_") for m in all_modules}
-        
-        # 添加常见别名
-        aliases = {
-            "sql": "sql_injection",
-            "sqli": "sql_injection",
-            "xss": "xss_reflected",
-            "auth": "auth_bypass",
-            "idor": "idor",
-            "ssrf": "ssrf",
-            "rce": "command_injection",
-            "lfi": "path_traversal",
-            "xxe": "xxe",
-        }
+        all_modules_normalized = {normalize_module_name(m) for m in all_modules}
+        ordered_modules = sorted(all_modules_normalized)
         
         valid = []
         invalid = []
         
         for name in module_names:
-            name_normalized = name.lower().replace("-", "_").replace(" ", "_")
+            name_normalized = normalize_module_name(name)
+            resolved_name = normalize_module_name(MODULE_ALIASES.get(name_normalized, name_normalized))
             
             # 检查直接匹配
             if name_normalized in all_modules_normalized:
-                valid.append(name)
+                valid.append(name_normalized)
             # 检查别名
-            elif name_normalized in aliases:
-                valid.append(aliases[name_normalized])
+            elif resolved_name in all_modules_normalized:
+                valid.append(resolved_name)
             # 检查部分匹配
-            elif any(name_normalized in m for m in all_modules_normalized):
-                valid.append(name)
+            elif any(name_normalized in m for m in ordered_modules):
+                matched = next((m for m in ordered_modules if name_normalized in m), name_normalized)
+                valid.append(matched)
             else:
                 invalid.append(name)
-        
-        return {"valid": valid, "invalid": invalid}
+
+        deduped_valid: list[str] = []
+        seen: set[str] = set()
+        for item in valid:
+            normalized_item = normalize_module_name(item)
+            if normalized_item in seen:
+                continue
+            seen.add(normalized_item)
+            deduped_valid.append(item)
+
+        return {"valid": deduped_valid, "invalid": invalid}
 
 
 # 全局实例

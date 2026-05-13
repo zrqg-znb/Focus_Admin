@@ -36,6 +36,7 @@ from apps.deepaudit.constants import (
 )
 from apps.deepaudit.project.project_model import AuditProject
 from apps.deepaudit.repo_specs import repository_spec_signature
+from apps.deepaudit.scenario.scenario_model import AuditScenarioProfile, ScenarioObjectiveType
 from core.user.user_model import User
 
 
@@ -143,6 +144,36 @@ class AgentTaskServicesTestCase(TestCase):
         self.assertEqual(task.audit_scope['effective_profile']['scenario_key'], 'general')
         self.assertEqual(task.target_vulnerabilities, task.audit_scope['effective_profile']['target_vulnerabilities'])
         self.assertEqual(task.agent_config['scenario_profile']['scenario_key'], 'general')
+
+    def test_create_task_restores_custom_database_scenario_profile(self) -> None:
+        access = SimpleNamespace(project=self.project, role='owner')
+        scenario = AuditScenarioProfile.objects.create(
+            scenario_key='resource_inventory',
+            name='资源代码梳理',
+            objective_type=ScenarioObjectiveType.INVENTORY,
+            is_active=True,
+            is_system=False,
+            created_by=self.user,
+            sys_creator=self.user,
+            sys_modifier=self.user,
+        )
+
+        with patch('apps.deepaudit.agent_task.agent_task_services.require_project_role', return_value=access):
+            task = create_task(
+                self.user,
+                {
+                    'project_id': str(self.project.id),
+                    'name': 'Inventory Agent Task',
+                    'audit_scope': {
+                        'scenario_key': scenario.scenario_key,
+                    },
+                },
+            )
+
+        self.assertEqual(task.audit_scope.get('scenario_key'), scenario.scenario_key)
+        self.assertEqual(task.audit_scope['effective_profile']['scenario_key'], scenario.scenario_key)
+        self.assertEqual(task.audit_scope['effective_profile']['objective_type'], ScenarioObjectiveType.INVENTORY)
+        self.assertEqual(task.agent_config['scenario_profile']['scenario_key'], scenario.scenario_key)
 
     def test_create_task_ignores_mismatched_requested_repository_type(self) -> None:
         access = SimpleNamespace(project=self.project, role='owner')

@@ -14,6 +14,7 @@ export const DEEPAUDIT_PAGE_CODES = {
   PROMPTS: 'deepaudit:prompts',
   RECYCLE_BIN: 'deepaudit:recycle-bin',
   RULES: 'deepaudit:rules',
+  SCENARIOS: 'deepaudit:scenarios',
   SETTINGS: 'deepaudit:settings',
   TASKS: 'deepaudit:tasks',
 } as const;
@@ -30,6 +31,7 @@ export const DEEPAUDIT_ACTION_CODES = {
   PROMPTS_MANAGE: 'deepaudit:prompts:manage',
   REPORTS_EXPORT: 'deepaudit:reports:export',
   RULES_MANAGE: 'deepaudit:rules:manage',
+  SCENARIOS_MANAGE: 'deepaudit:scenarios:manage',
   SETTINGS_SAVE: 'deepaudit:settings:save',
   TASKS_CANCEL: 'deepaudit:tasks:cancel',
   TASKS_CREATE: 'deepaudit:tasks:create',

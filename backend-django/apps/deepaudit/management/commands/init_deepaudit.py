@@ -6,6 +6,7 @@ from django.core.management.base import BaseCommand
 
 from apps.deepaudit.audit_rule.audit_rule_services import ensure_default_rule_sets
 from apps.deepaudit.prompt_template.prompt_template_services import ensure_default_templates
+from apps.deepaudit.scenario.scenario_services import ensure_default_scenarios
 from common.fu_cache import MenuCacheManager, PermissionCacheManager
 from core.menu.menu_model import Menu
 from core.permission.permission_model import Permission
@@ -66,6 +67,7 @@ MENU_SEEDS = [
     MenuSeed('tasks', 'root', '任务中心', '任务中心', '/focusaudit/tasks', '/focusaudit/tasks/index', order=50, hide_in_menu=True, auth_code='deepaudit:tasks'),
     MenuSeed('rules', 'root', '审计规则', '审计规则', '/focusaudit/rules', '/focusaudit/rules/index', order=60, hide_in_menu=True, auth_code='deepaudit:rules'),
     MenuSeed('prompts', 'root', '提示词模板', '提示词模板', '/focusaudit/prompts', '/focusaudit/prompts/index', order=70, hide_in_menu=True, auth_code='deepaudit:prompts'),
+    MenuSeed('scenarios', 'root', '场景管理', '场景管理', '/focusaudit/scenarios', '/focusaudit/scenarios/index', order=75, hide_in_menu=True, auth_code='deepaudit:scenarios'),
     MenuSeed('settings', 'root', '审计设置', '审计设置', '/focusaudit/settings', '/focusaudit/settings/index', order=80, hide_in_menu=True, auth_code='deepaudit:settings'),
     MenuSeed('recycle_bin', 'root', '回收站', '回收站', '/focusaudit/recycle-bin', '/focusaudit/recycle-bin/index', order=90, hide_in_menu=True, auth_code='deepaudit:recycle-bin'),
     MenuSeed('project_detail', 'projects', '项目详情', '项目详情', '/focusaudit/projects/:id', '/focusaudit/projects/detail', order=1, active_path='/focusaudit/projects', hide_in_menu=True, keep_alive=False, auth_code='deepaudit:projects:detail'),
@@ -171,6 +173,16 @@ PERMISSION_SEEDS = {
         {'name': '设置默认提示词', 'code': 'deepaudit:api:prompts:set-default', 'permission_type': 1, 'api_path': '/api/deepaudit/prompts/:id/set-default', 'http_method': 'POST'},
         {'name': '测试提示词', 'code': 'deepaudit:api:prompts:test', 'permission_type': 1, 'api_path': '/api/deepaudit/prompts/test', 'http_method': 'POST'},
     ],
+    'scenarios': [
+        {'name': '管理场景', 'code': 'deepaudit:scenarios:manage', 'permission_type': 0},
+        {'name': '获取场景列表', 'code': 'deepaudit:api:scenarios:list', 'permission_type': 1, 'api_path': '/api/deepaudit/scenarios', 'http_method': 'GET'},
+        {'name': '创建场景', 'code': 'deepaudit:api:scenarios:create', 'permission_type': 1, 'api_path': '/api/deepaudit/scenarios', 'http_method': 'POST'},
+        {'name': '获取场景详情', 'code': 'deepaudit:api:scenarios:detail', 'permission_type': 1, 'api_path': '/api/deepaudit/scenarios/:id', 'http_method': 'GET'},
+        {'name': '更新场景', 'code': 'deepaudit:api:scenarios:update', 'permission_type': 1, 'api_path': '/api/deepaudit/scenarios/:id', 'http_method': 'PUT'},
+        {'name': '复制场景', 'code': 'deepaudit:api:scenarios:copy', 'permission_type': 1, 'api_path': '/api/deepaudit/scenarios/:id/copy', 'http_method': 'POST'},
+        {'name': '删除场景', 'code': 'deepaudit:api:scenarios:delete', 'permission_type': 1, 'api_path': '/api/deepaudit/scenarios/:id', 'http_method': 'DELETE'},
+        {'name': '设为默认场景', 'code': 'deepaudit:api:scenarios:set-default', 'permission_type': 1, 'api_path': '/api/deepaudit/scenarios/:id/set-default', 'http_method': 'POST'},
+    ],
     'settings': [
         {'name': '保存个人设置', 'code': 'deepaudit:settings:save', 'permission_type': 0},
         {'name': '获取我的设置', 'code': 'deepaudit:api:settings:get', 'permission_type': 1, 'api_path': '/api/deepaudit/settings/me', 'http_method': 'GET'},
@@ -226,11 +238,12 @@ class Command(BaseCommand):
         permission_count = self._seed_permissions(menus, operator)
         template_count = ensure_default_templates()
         rule_count = ensure_default_rule_sets()
+        scenario_count = ensure_default_scenarios()
         MenuCacheManager.invalidate_menu_cache()
         PermissionCacheManager.invalidate_permission_cache()
         PermissionCacheManager.invalidate_global_permissions()
         self.stdout.write(self.style.SUCCESS(
-            f'FocusAudit 初始化完成：菜单 {len(menus)} 项，权限 {permission_count} 项，模板 {template_count} 项，规则集 {rule_count} 项。'
+            f'FocusAudit 初始化完成：菜单 {len(menus)} 项，权限 {permission_count} 项，模板 {template_count} 项，规则集 {rule_count} 项，场景 {scenario_count} 项。'
         ))
 
     def _seed_menus(self, operator):

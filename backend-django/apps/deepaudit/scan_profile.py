@@ -31,6 +31,44 @@ RULE_KEYWORD_MAP = {
     'weak_crypto': ('crypto', 'encryption', 'hash', 'md5', 'sha1'),
     'xss': ('dom', 'html', 'innerhtml', 'script', 'xss'),
     'xxe': ('entity', 'xml', 'xxe'),
+    'buffer_overflow': ('strcpy', 'strcat', 'sprintf', 'vsprintf', 'gets', 'scanf', 'memcpy', 'memmove', 'buffer overflow'),
+    'use_after_free': ('use after free', 'uaf', 'freed pointer', 'lifecycle', 'ownership'),
+    'resource_leak': ('malloc', 'calloc', 'realloc', 'free', 'cleanup', 'resource leak'),
+    'format_string': ('printf', 'fprintf', 'syslog', 'format string', '%n'),
+    'api_contract_violation': ('contract', 'precondition', 'postcondition', 'return value', 'error code'),
+    'embedded_concurrency': (
+        'pthread',
+        'mutex',
+        'semaphore',
+        'critical section',
+        'critical_section',
+        'taskenter_critical',
+        'taskexit_critical',
+        'taskenter_critical_from_isr',
+        'taskexit_critical_from_isr',
+        'isr',
+        'irq',
+        'rtos',
+        'interrupt',
+        'atomic',
+        'volatile',
+    ),
+    'hardware_access': (
+        'mmio',
+        'register',
+        'readl',
+        'writel',
+        'ioread',
+        'iowrite',
+        'dma',
+        'driver',
+        'hal',
+        'disable_irq',
+        'enable_irq',
+        'memory barrier',
+        'cache flush',
+        'cache invalidate',
+    ),
 }
 DEPTH_HINTS = {
     'basic': '基础模式：优先审计高价值代码单元。',
@@ -178,14 +216,20 @@ def _infer_prompt_focus(*texts: str) -> list[str]:
 def build_prompt_context(template: PromptTemplate | None, analysis_depth: str) -> dict[str, Any]:
     if not template:
         return {}
-    content = str(template.content_zh or template.content_en or '').strip()
+    template_id = getattr(template, 'id', None)
+    template_name = getattr(template, 'name', '')
+    template_description = getattr(template, 'description', '')
+    template_type = getattr(template, 'template_type', '')
+    content_zh = getattr(template, 'content_zh', '')
+    content_en = getattr(template, 'content_en', '')
+    content = str(content_zh or content_en or '').strip()
     return {
-        'id': str(template.id),
-        'name': template.name,
-        'description': template.description or '',
-        'template_type': template.template_type,
+        'id': str(template_id or ''),
+        'name': template_name,
+        'description': template_description or '',
+        'template_type': template_type,
         'content_excerpt': content[:240],
-        'focus': _infer_prompt_focus(template.name or '', template.description or '', content),
+        'focus': _infer_prompt_focus(template_name or '', template_description or '', content),
         'hint': DEPTH_HINTS.get(analysis_depth, DEPTH_HINTS[DEFAULT_ANALYSIS_DEPTH]),
     }
 

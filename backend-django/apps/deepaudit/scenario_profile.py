@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from apps.deepaudit.audit_rule.audit_rule_model import AuditRuleSet
+from apps.deepaudit.scenario.scenario_model import AuditScenarioProfile, ScenarioObjectiveType
 from apps.deepaudit.c_family import (
     C_FAMILY_KNOWLEDGE_MODULES,
     C_FAMILY_SYSTEM_PROMPT_TEMPLATE_NAME,
@@ -29,6 +30,12 @@ SUPPORTED_SCENARIO_KEYS = {
     API_CHAIN_SCENARIO_KEY,
     CRITICAL_SECTION_SCENARIO_KEY,
     LEGACY_C_FAMILY_SCENARIO_KEY,
+}
+
+SYSTEM_SCENARIO_KEYS = {
+    GENERAL_SCENARIO_KEY,
+    CONCURRENCY_SCENARIO_KEY,
+    API_CHAIN_SCENARIO_KEY,
 }
 
 SCENARIO_KEY_ALIASES = {
@@ -153,66 +160,27 @@ GENERAL_RULE_SET_RULES = _build_rule_entries(
 )
 
 CONCURRENCY_RULE_SET_RULES = _build_rule_entries(
-    ["race_condition", "deadlock"],
+    ["race_condition", "deadlock", "embedded_concurrency"],
     custom_prompt=(
-        "请优先判断共享状态、锁顺序、信号量、条件变量、ISR/任务上下文和临界区范围，"
-        "确认是否存在竞态、死锁、优先级反转或阻塞调用。"
+        "请优先定位共享状态、锁顺序、信号量、条件变量、ISR/任务上下文和临界区范围，"
+        "梳理这些并发资源在代码中的出现位置、调用链和边界，不要只停留在漏洞定性。"
     ),
-    extra_rules=[
-        _custom_rule_entry(
-            rule_code="SCN_CONCURRENCY",
-            name="Embedded Concurrency Hazard",
-            issue_type="embedded_concurrency",
-            severity="high",
-            description="ISR、任务、DMA、共享缓冲区或寄存器镜像之间的并发访问风险。",
-            fix_suggestion="缩短临界区，使用原子操作/锁/事件队列隔离共享状态，并避免在 ISR 中执行阻塞逻辑。",
-            custom_prompt=(
-                "重点检查 ISR 与任务共享变量、环形缓冲区、DMA 描述符、寄存器镜像、"
-                "volatile 误用以及 taskENTER_CRITICAL / taskEXIT_CRITICAL 的边界。"
-            ),
-        ),
-    ],
 )
 
 API_CHAIN_RULE_SET_RULES = _build_rule_entries(
     ["buffer_overflow", "use_after_free", "resource_leak", "format_string"],
     custom_prompt=(
-        "请围绕高危 API 调用链梳理真实影响：从来源、长度控制、生命周期、所有权到危险 sink，"
-        "确认是否存在缓冲区溢出、释放后使用、资源泄漏或格式化字符串问题。"
+        "请围绕高危 API 调用链梳理代码位置：从来源、长度控制、生命周期、所有权到危险 sink，"
+        "输出关键文件、入口点、调用链和资源边界，而不是只做漏洞定性。"
     ),
 )
 
 CRITICAL_SECTION_RULE_SET_RULES = _build_rule_entries(
-    ["deadlock", "api_contract_violation"],
+    ["deadlock", "api_contract_violation", "embedded_concurrency", "hardware_access"],
     custom_prompt=(
         "请聚焦临界区、ISR、DMA、寄存器访问和驱动/HAL 契约，检查返回值、上下文约束、"
         "阻塞调用和共享资源访问是否违背约定。"
     ),
-    extra_rules=[
-        _custom_rule_entry(
-            rule_code="SCN_HW_ACCESS",
-            name="Hardware Access Review",
-            issue_type="hardware_access",
-            severity="high",
-            description="ISR、DMA、寄存器、MMIO 或缓存一致性相关的硬件访问风险。",
-            fix_suggestion="确保寄存器访问具备正确的上下文保护、内存屏障和访问顺序约束。",
-            custom_prompt=(
-                "关注 ISR/IRQ/DMA、volatile、MMIO、readl/writel/ioread/iowrite、"
-                "以及硬件寄存器访问是否缺少临界区与内存屏障。"
-            ),
-        ),
-        _custom_rule_entry(
-            rule_code="SCN_EMBEDDED_CONCURRENCY",
-            name="Embedded Concurrency Hazard",
-            issue_type="embedded_concurrency",
-            severity="high",
-            description="嵌入式并发场景中的共享数据、状态机和中断上下文风险。",
-            fix_suggestion="用事件、锁、原子操作或单向消息队列隔离跨上下文共享状态。",
-            custom_prompt=(
-                "确认 ISR、任务、DMA、中断回调和底层驱动之间的共享状态是否存在竞态或锁顺序问题。"
-            ),
-        ),
-    ],
 )
 
 LEGACY_C_FAMILY_RULE_SET_RULES = _build_rule_entries(
@@ -227,6 +195,8 @@ LEGACY_C_FAMILY_RULE_SET_RULES = _build_rule_entries(
         "resource_leak",
         "race_condition",
         "deadlock",
+        "embedded_concurrency",
+        "hardware_access",
         "format_string",
         "api_contract_violation",
     ],
@@ -237,18 +207,18 @@ LEGACY_C_FAMILY_RULE_SET_RULES = _build_rule_entries(
 
 SCENARIO_PROMPT_TEMPLATE_SEEDS = [
     {
-        "name": "场景 A - 并发资源访问排查",
-        "description": "聚焦竞态条件、死锁、信号量、临界区与共享状态的系统预设。",
+        "name": "场景 A - 并发资源代码梳理",
+        "description": "聚焦并发资源、锁、信号量、临界区与共享状态的代码梳理预设。",
         "template_type": "system",
         "content_zh": (
-            "请重点排查竞态条件、死锁、信号量、互斥锁、原子性、ISR 与任务共享状态、"
-            "DMA 缓冲和寄存器镜像。分析时优先关注 pthread_*/mutex/sem/atomic/volatile/critical "
-            "相关调用链，并尽量把扫描范围收窄到并发风险面。"
+            "请围绕并发资源相关代码进行梳理：重点关注 pthread_*/mutex/sem/atomic/volatile/"
+            "critical 区域、ISR 与任务共享状态、DMA 缓冲和寄存器镜像。输出时优先给出相关文件、"
+            "调用链、资源边界和共享状态位置，而不是只做漏洞定性。"
         ),
         "content_en": (
-            "Focus on race conditions, deadlocks, semaphores, mutexes, atomicity, ISR/task shared state, "
-            "DMA buffers and register mirrors. Prefer pthread_*/mutex/sem/atomic/volatile/critical-related "
-            "call chains and narrow the scan to concurrency risks."
+            "Focus on concurrency-related code inventory: pthread_*/mutex/sem/atomic/volatile/critical "
+            "areas, ISR/task shared state, DMA buffers and register mirrors. Prefer related files, call chains, "
+            "resource boundaries and shared-state locations instead of only classifying vulnerabilities."
         ),
         "variables": {"language": "编程语言", "code": "代码内容"},
         "is_default": False,
@@ -257,18 +227,17 @@ SCENARIO_PROMPT_TEMPLATE_SEEDS = [
     },
     {
         "name": "场景 B - 高危 API 调用链梳理",
-        "description": "聚焦缓冲区越界、释放后使用、资源泄漏和格式化字符串的系统预设。",
+        "description": "聚焦高危 API、生命周期和调用链位置的代码梳理预设。",
         "template_type": "system",
         "content_zh": (
             "请围绕 strcpy / strcat / sprintf / vsprintf / gets / scanf / memcpy / memmove / malloc / "
-            "free / new / delete / printf / fprintf / syslog 等高危 API 调用链进行排查，重点梳理 "
-            "来源、长度控制、所有权和释放路径，识别缓冲区溢出、释放后使用、资源泄漏和格式化字符串风险。"
+            "free / new / delete / printf / fprintf / syslog 等高危 API 调用链进行梳理，重点输出 "
+            "来源、长度控制、所有权、释放路径和受影响文件，而不是只做漏洞判定。"
         ),
         "content_en": (
             "Trace high-risk API call chains around strcpy / strcat / sprintf / vsprintf / gets / scanf / "
             "memcpy / memmove / malloc / free / new / delete / printf / fprintf / syslog. Focus on sources, "
-            "bounds, ownership and release paths to identify buffer overflow, use-after-free, resource leak and "
-            "format-string risks."
+            "bounds, ownership, release paths and impacted files rather than only vulnerability classification."
         ),
         "variables": {"language": "编程语言", "code": "代码内容"},
         "is_default": False,
@@ -300,7 +269,7 @@ SCENARIO_PROMPT_TEMPLATE_SEEDS = [
 SCENARIO_RULE_SET_SEEDS = [
     {
         "name": "场景 A - 并发资源访问规则集",
-        "description": "聚焦并发共享状态、锁顺序、信号量和临界区的系统规则集。",
+        "description": "聚焦并发共享状态、锁顺序、信号量和临界区代码位置的系统规则集。",
         "language": "cpp",
         "rule_type": "builtin",
         "severity_weights": {"critical": 18, "high": 12, "medium": 6, "low": 2},
@@ -311,7 +280,7 @@ SCENARIO_RULE_SET_SEEDS = [
     },
     {
         "name": "场景 B - 高危 API 调用链规则集",
-        "description": "聚焦高危 API 调用链、内存生命周期和格式化字符串的系统规则集。",
+        "description": "聚焦高危 API 调用链、内存生命周期和格式化字符串位置的系统规则集。",
         "language": "cpp",
         "rule_type": "builtin",
         "severity_weights": {"critical": 18, "high": 12, "medium": 6, "low": 2},
@@ -339,6 +308,7 @@ SCENARIO_DEFINITIONS: dict[str, dict[str, Any]] = {
         "scenario_code": "D",
         "scenario_name": "默认通用审计",
         "description": "默认通用审计，不注入场景特化知识或规则。",
+        "objective_type": ScenarioObjectiveType.AUDIT,
         "prompt_template_name": "默认代码审计",
         "rule_set_name": "内置安全规则集",
         "knowledge_modules": [],
@@ -349,9 +319,10 @@ SCENARIO_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     CONCURRENCY_SCENARIO_KEY: {
         "scenario_code": "A",
-        "scenario_name": "并发资源访问排查",
-        "description": "聚焦竞态条件、死锁、信号量、临界区与共享状态。",
-        "prompt_template_name": "场景 A - 并发资源访问排查",
+        "scenario_name": "并发资源代码梳理",
+        "description": "聚焦并发资源、锁、信号量、临界区与共享状态的代码梳理。",
+        "objective_type": ScenarioObjectiveType.INVENTORY,
+        "prompt_template_name": "场景 A - 并发资源代码梳理",
         "rule_set_name": "场景 A - 并发资源访问规则集",
         "knowledge_modules": ["race_condition", "deadlock", "embedded_concurrency"],
         "target_vulnerabilities": ["race_condition", "deadlock", "embedded_concurrency"],
@@ -376,7 +347,8 @@ SCENARIO_DEFINITIONS: dict[str, dict[str, Any]] = {
     API_CHAIN_SCENARIO_KEY: {
         "scenario_code": "B",
         "scenario_name": "高危 API 调用链梳理",
-        "description": "聚焦缓冲区越界、释放后使用、资源泄漏和格式化字符串。",
+        "description": "聚焦高危 API 调用链、生命周期和边界位置的代码梳理。",
+        "objective_type": ScenarioObjectiveType.INVENTORY,
         "prompt_template_name": "场景 B - 高危 API 调用链梳理",
         "rule_set_name": "场景 B - 高危 API 调用链规则集",
         "knowledge_modules": ["buffer_overflow", "use_after_free", "resource_leak", "format_string"],
@@ -410,6 +382,7 @@ SCENARIO_DEFINITIONS: dict[str, dict[str, Any]] = {
         "scenario_code": "C",
         "scenario_name": "临界区与硬件访问检查",
         "description": "聚焦 ISR、DMA、寄存器访问、临界区和接口契约。",
+        "objective_type": ScenarioObjectiveType.INVENTORY,
         "prompt_template_name": "场景 C - 临界区与硬件访问检查",
         "rule_set_name": "场景 C - 临界区与硬件访问规则集",
         "knowledge_modules": ["embedded_concurrency", "deadlock", "api_contract_violation", "hardware_access"],
@@ -437,6 +410,7 @@ SCENARIO_DEFINITIONS: dict[str, dict[str, Any]] = {
         "scenario_code": "LEGACY-C",
         "scenario_name": "嵌入式 C/C++ 深度审计",
         "description": "保留现有的 C/C++ 自动预设行为，兼容旧任务。",
+        "objective_type": ScenarioObjectiveType.AUDIT,
         "prompt_template_name": C_FAMILY_SYSTEM_PROMPT_TEMPLATE_NAME,
         "rule_set_name": C_FAMILY_SYSTEM_RULE_SET_NAME,
         "knowledge_modules": list(C_FAMILY_KNOWLEDGE_MODULES),
@@ -663,6 +637,7 @@ def _build_tool_policy(
 def _build_agent_instructions(
     *,
     scenario_name: str,
+    objective_type: str,
     target_vulnerabilities: Iterable[str],
     knowledge_modules: Iterable[str],
     search_keywords: Iterable[str],
@@ -670,6 +645,32 @@ def _build_agent_instructions(
     targets = _unique_list(target_vulnerabilities)
     modules = _unique_list(knowledge_modules)
     keywords = _unique_list(search_keywords)
+
+    if str(objective_type or "").strip().lower() == ScenarioObjectiveType.INVENTORY:
+        return {
+            "orchestrator": {
+                "task": "先调度 recon 锁定相关文件与入口，再让 analysis 梳理调用链、资源边界和共享状态，最后让 verification/summary 归纳代码位置与影响范围。",
+                "knowledge_modules": modules,
+            },
+            "recon": {
+                "task": "优先定位与当前场景相关的模块、接口、资源访问点和关键文件，并输出可以继续深挖的代码位置。",
+                "knowledge_modules": modules,
+                "focus_keywords": keywords,
+                "focus_vulnerabilities": targets,
+            },
+            "analysis": {
+                "task": "梳理相关调用链、跨文件依赖、资源边界和上下文约束，输出具体代码位置与逻辑关系。",
+                "knowledge_modules": modules,
+                "focus_keywords": keywords,
+                "focus_vulnerabilities": targets,
+            },
+            "verification": {
+                "task": "补充确认边界、异常路径和上下文差异，整理为可直接交付的代码排查结论。",
+                "knowledge_modules": modules,
+                "focus_keywords": keywords,
+                "focus_vulnerabilities": targets,
+            },
+        }
 
     if scenario_name == "并发资源访问排查":
         return {
@@ -778,19 +779,178 @@ def _build_agent_instructions(
 def _build_focus_summary(
     *,
     scenario_name: str,
+    objective_type: str,
     target_vulnerabilities: Iterable[str],
     knowledge_modules: Iterable[str],
     search_keywords: Iterable[str],
 ) -> str:
+    objective_label = "代码梳理" if str(objective_type or "").strip().lower() == ScenarioObjectiveType.INVENTORY else "漏洞审计"
     targets = ", ".join(_unique_list(target_vulnerabilities)) or "无特定目标"
     modules = ", ".join(_unique_list(knowledge_modules)) or "无特定知识模块"
     keywords = ", ".join(_unique_list(search_keywords)) or "无特定关键词"
     return (
         f"场景: {scenario_name}\n"
+        f"- 输出目标: {objective_label}\n"
         f"- 目标漏洞: {targets}\n"
         f"- 知识模块: {modules}\n"
         f"- 搜索关键词: {keywords}"
     )
+
+
+def _resolve_database_scenario_profile(scenario_key: str | None) -> AuditScenarioProfile | None:
+    normalized_key = _normalize_key(scenario_key)
+    if not normalized_key or normalized_key in {AUTO_SCENARIO_KEY}:
+        return None
+    try:
+        return (
+            AuditScenarioProfile.objects.filter(is_deleted=False, scenario_key=normalized_key)
+            .select_related("prompt_template", "rule_set", "created_by")
+            .first()
+        )
+    except Exception:
+        return None
+
+
+def _build_runtime_profile_from_record(
+    scenario: AuditScenarioProfile,
+    *,
+    requested_scenario_key: str | None,
+    project=None,
+    file_paths: Iterable[str] | None = None,
+    manual_target_vulnerabilities: Iterable[str] | None = None,
+    language_profile: dict[str, Any] | None = None,
+    selection_mode: str = "explicit",
+    resolution_reason: str = "db_profile",
+) -> dict[str, Any]:
+    normalized_key = _normalize_key(scenario.scenario_key) or str(scenario.scenario_key or "").strip().lower() or GENERAL_SCENARIO_KEY
+    definition_key = normalized_key if normalized_key in SCENARIO_DEFINITIONS else None
+    definition = dict(SCENARIO_DEFINITIONS.get(definition_key, {}))
+    objective_type = str(scenario.objective_type or definition.get("objective_type") or ScenarioObjectiveType.AUDIT).strip().lower()
+    manual_targets = _unique_list(manual_target_vulnerabilities)
+    language_profile = dict(language_profile or {})
+
+    prompt_template = scenario.prompt_template
+    rule_set = scenario.rule_set
+    prompt_seed = _prompt_template_seed_for(definition_key or GENERAL_SCENARIO_KEY)
+    rule_seed = _rule_set_seed_for(definition_key or GENERAL_SCENARIO_KEY)
+    prompt_template_snapshot = _serialize_prompt_template(prompt_template, prompt_seed)
+    rule_set_snapshot = _serialize_rule_set(rule_set, rule_seed)
+
+    if rule_set:
+        rule_categories = [
+            str(rule.get("category") or "").strip()
+            for rule in (rule_set_snapshot.get("rules") or [])
+            if str(rule.get("category") or "").strip()
+        ]
+        rule_categories = _unique_list(rule_categories)
+    else:
+        rule_categories = []
+
+    raw_tool_policy = normalize_json_payload(scenario.tool_policy or {})
+    smart_scan_policy = dict(raw_tool_policy.get("smart_scan") or {})
+    pattern_policy = dict(raw_tool_policy.get("pattern_match") or {})
+    search_policy = dict(raw_tool_policy.get("search_code") or {})
+
+    if manual_targets and definition_key == GENERAL_SCENARIO_KEY and not raw_tool_policy:
+        target_vulnerabilities = manual_targets
+        target_source = "manual"
+    else:
+        has_tool_targets = bool(
+            smart_scan_policy.get("focus_vulnerabilities")
+            or pattern_policy.get("pattern_types")
+        )
+        has_definition_targets = bool(definition.get("target_vulnerabilities"))
+        target_vulnerabilities = _unique_list(
+            smart_scan_policy.get("focus_vulnerabilities")
+            or pattern_policy.get("pattern_types")
+            or rule_categories
+            or definition.get("target_vulnerabilities")
+            or []
+        )
+        if has_tool_targets:
+            target_source = "tool_policy"
+        elif rule_categories:
+            target_source = "rule_set"
+        elif has_definition_targets:
+            target_source = "scenario_definition"
+        else:
+            target_source = "empty"
+
+    search_keywords = _unique_list(
+        search_policy.get("keywords")
+        or definition.get("focus_keywords")
+        or []
+    )
+
+    tool_policy = normalize_json_payload(raw_tool_policy or {})
+    if not tool_policy:
+        tool_policy = _build_tool_policy(
+            focus_vulnerabilities=target_vulnerabilities,
+            search_keywords=search_keywords,
+            quick_mode=False,
+        )
+    else:
+        smart_scan = dict(tool_policy.get("smart_scan") or {})
+        smart_scan.setdefault("quick_mode", False)
+        smart_scan.setdefault("focus_vulnerabilities", target_vulnerabilities)
+        smart_scan.setdefault("scan_types", ["pattern"])
+        tool_policy["smart_scan"] = smart_scan
+        pattern_match = dict(tool_policy.get("pattern_match") or {})
+        pattern_match.setdefault("pattern_types", target_vulnerabilities)
+        tool_policy["pattern_match"] = pattern_match
+        search_code = dict(tool_policy.get("search_code") or {})
+        search_code.setdefault("keywords", search_keywords)
+        tool_policy["search_code"] = search_code
+        tool_policy.setdefault("first_pass_order", ["semgrep_scan", "smart_scan", "pattern_match"])
+
+    knowledge_modules = _unique_list(
+        scenario.knowledge_modules or definition.get("knowledge_modules") or []
+    )
+    scenario_name = str(scenario.name or definition.get("scenario_name") or "场景").strip()
+    scenario_code = (str(scenario.scenario_key or "").strip().upper() or definition.get("scenario_code") or "SCENARIO")[:24]
+
+    if selection_mode == "auto" and manual_targets and not target_vulnerabilities:
+        target_vulnerabilities = manual_targets
+        target_source = "manual"
+
+    agent_instructions = _build_agent_instructions(
+        scenario_name=scenario_name,
+        objective_type=objective_type,
+        target_vulnerabilities=target_vulnerabilities,
+        knowledge_modules=knowledge_modules,
+        search_keywords=search_keywords,
+    )
+    focus_summary = _build_focus_summary(
+        scenario_name=scenario_name,
+        objective_type=objective_type,
+        target_vulnerabilities=target_vulnerabilities,
+        knowledge_modules=knowledge_modules,
+        search_keywords=search_keywords,
+    )
+
+    resolved_scenario_key = normalized_key
+    return {
+        "scenario_key": normalized_key,
+        "requested_scenario_key": requested_scenario_key,
+        "resolved_scenario_key": resolved_scenario_key,
+        "selection_mode": selection_mode,
+        "resolution_reason": resolution_reason,
+        "scenario_code": scenario_code,
+        "scenario_name": scenario_name,
+        "description": str(scenario.description or definition.get("description") or "").strip(),
+        "objective_type": objective_type,
+        "target_vulnerabilities": target_vulnerabilities,
+        "target_vulnerability_source": target_source,
+        "knowledge_modules": knowledge_modules,
+        "focus_keywords": search_keywords,
+        "prompt_template": prompt_template_snapshot,
+        "rule_set": rule_set_snapshot,
+        "tool_policy": tool_policy,
+        "agent_instructions": agent_instructions,
+        "focus_summary": focus_summary,
+        "language_profile": normalize_json_payload(language_profile),
+        "legacy_c_family": resolved_scenario_key == LEGACY_C_FAMILY_SCENARIO_KEY,
+    }
 
 
 def resolve_scenario_profile(
@@ -808,6 +968,20 @@ def resolve_scenario_profile(
     c_family_context = project_is_c_family or has_c_family_language_profile
     manual_targets = _unique_list(manual_target_vulnerabilities)
     unknown_requested_key = normalized_key is not None and normalized_key not in SUPPORTED_SCENARIO_KEYS
+
+    if normalized_key not in {AUTO_SCENARIO_KEY, None}:
+        db_scenario = _resolve_database_scenario_profile(normalized_key)
+        if db_scenario:
+            return _build_runtime_profile_from_record(
+                db_scenario,
+                requested_scenario_key=normalized_key,
+                project=project,
+                file_paths=file_paths,
+                manual_target_vulnerabilities=manual_target_vulnerabilities,
+                language_profile=language_profile,
+                selection_mode="explicit",
+                resolution_reason="db_profile" if not db_scenario.is_system else "db_system_profile",
+            )
 
     if normalized_key in SUPPORTED_SCENARIO_KEYS:
         profile_key = normalized_key
@@ -827,6 +1001,7 @@ def resolve_scenario_profile(
     rule_set = _resolve_named_rule_set(str(definition.get("rule_set_name") or rule_seed["name"]))
     prompt_template_snapshot = _serialize_prompt_template(prompt_template, prompt_seed)
     rule_set_snapshot = _serialize_rule_set(rule_set, rule_seed)
+    objective_type = str(definition.get("objective_type") or ScenarioObjectiveType.AUDIT).strip().lower()
 
     if profile_key == AUTO_SCENARIO_KEY:
         if manual_targets:
@@ -855,6 +1030,7 @@ def resolve_scenario_profile(
         target_source = "general"
         selection_mode = "explicit"
         resolution_reason = "unknown_scenario_fallback" if unknown_requested_key else (definition.get("resolution_reason") or "explicit_general")
+        objective_type = str(definition.get("objective_type") or ScenarioObjectiveType.AUDIT)
     elif profile_key in {
         CONCURRENCY_SCENARIO_KEY,
         API_CHAIN_SCENARIO_KEY,
@@ -870,6 +1046,7 @@ def resolve_scenario_profile(
         target_source = "scenario"
         selection_mode = "explicit"
         resolution_reason = "unknown_scenario_fallback" if unknown_requested_key else (definition.get("resolution_reason") or f"explicit_{profile_key}")
+        objective_type = str(definition.get("objective_type") or ScenarioObjectiveType.AUDIT)
     else:
         target_vulnerabilities = list(definition.get("target_vulnerabilities") or DEFAULT_GENERIC_TARGET_VULNERABILITIES)
         knowledge_modules = []
@@ -880,6 +1057,7 @@ def resolve_scenario_profile(
         target_source = "fallback"
         selection_mode = "explicit"
         resolution_reason = "unknown_scenario_fallback"
+        objective_type = str(definition.get("objective_type") or ScenarioObjectiveType.AUDIT)
 
     if profile_key == AUTO_SCENARIO_KEY and not c_family_context:
         scenario_name = definition["scenario_name"]
@@ -898,12 +1076,14 @@ def resolve_scenario_profile(
     )
     agent_instructions = _build_agent_instructions(
         scenario_name=scenario_name,
+        objective_type=objective_type,
         target_vulnerabilities=target_vulnerabilities,
         knowledge_modules=knowledge_modules,
         search_keywords=search_keywords,
     )
     focus_summary = _build_focus_summary(
         scenario_name=scenario_name,
+        objective_type=objective_type,
         target_vulnerabilities=target_vulnerabilities,
         knowledge_modules=knowledge_modules,
         search_keywords=search_keywords,
@@ -918,6 +1098,7 @@ def resolve_scenario_profile(
         "scenario_code": scenario_code,
         "scenario_name": scenario_name,
         "description": definition.get("description", ""),
+        "objective_type": objective_type,
         "target_vulnerabilities": _unique_list(target_vulnerabilities),
         "target_vulnerability_source": target_source,
         "knowledge_modules": _unique_list(knowledge_modules),
@@ -974,6 +1155,7 @@ def build_scenario_prompt_block(profile: dict[str, Any] | None, agent_role: str)
         f"场景键: {scenario.get('scenario_key')}",
         f"场景名称: {scenario.get('scenario_name')}",
         f"场景说明: {scenario.get('description')}",
+        f"输出目标: {'代码梳理' if str(scenario.get('objective_type') or '').strip().lower() == ScenarioObjectiveType.INVENTORY else '漏洞审计'}",
         f"目标漏洞: {', '.join(_unique_list(scenario.get('target_vulnerabilities') or [])) or '无'}",
         f"知识模块: {', '.join(_unique_list(scenario.get('knowledge_modules') or [])) or '无'}",
         f"关键词: {', '.join(_unique_list(scenario.get('focus_keywords') or [])) or '无'}",
@@ -1019,6 +1201,7 @@ def build_scenario_task_block(profile: dict[str, Any] | None, agent_role: str) -
     lines = [
         "## 场景预设",
         f"- 场景: {scenario.get('scenario_name')}",
+        f"- 输出目标: {'代码梳理' if str(scenario.get('objective_type') or '').strip().lower() == ScenarioObjectiveType.INVENTORY else '漏洞审计'}",
         f"- 当前模式: {'自动' if scenario.get('selection_mode') == 'auto' else '显式'}",
         f"- 目标漏洞: {', '.join(_unique_list(scenario.get('target_vulnerabilities') or [])) or '无'}",
         f"- 知识模块: {', '.join(_unique_list(scenario.get('knowledge_modules') or [])) or '无'}",

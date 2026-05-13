@@ -10,6 +10,7 @@ import AdminDashboard from "@/pages/AdminDashboard";
 import Account from "@/pages/Account";
 import AuditRules from "@/pages/AuditRules";
 import PromptManager from "@/pages/PromptManager";
+import ScenarioManager from "@/pages/ScenarioManager";
 import type { PermissionRequirement } from '@/shared/focus/focusPermission';
 import {
   DEEPAUDIT_PAGE_CODES,
@@ -95,6 +96,13 @@ const routes: RouteConfig[] = [
     path: "/prompts",
     element: <PromptManager />,
     requiredAccess: DEEPAUDIT_PAGE_CODES.PROMPTS,
+    visible: true,
+  },
+  {
+    name: "场景管理",
+    path: "/scenarios",
+    element: <ScenarioManager />,
+    requiredAccess: DEEPAUDIT_PAGE_CODES.SCENARIOS,
     visible: true,
   },
   {

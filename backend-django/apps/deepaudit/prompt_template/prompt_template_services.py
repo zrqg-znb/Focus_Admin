@@ -48,7 +48,8 @@ DEFAULT_PROMPT_TEMPLATES = [
             'Audit the current C/C++ code unit as an embedded automotive MCU security reviewer. '
             'Focus on buffer overflows, out-of-bounds access, integer overflow or truncation, null dereference, '
             'use-after-free, double free, uninitialized memory, resource leaks, deadlocks, race conditions, '
-            'ISR or task-context shared state, unsafe standard-library APIs, unchecked return values, and API contract violations.'
+            'ISR or task-context shared state, unsafe standard-library APIs, unchecked return values, API contract violations, '
+            'and MISRA / CERT C / AUTOSAR style constraints.'
         ),
         'variables': {'language': '编程语言', 'code': '代码内容'},
         'is_default': False,

@@ -151,6 +151,6 @@ class PromptTemplateSeedTestCase(TestCase):
         )
 
         self.assertGreaterEqual(created, 6)
-        self.assertIn('场景 A - 并发资源访问排查', names)
+        self.assertIn('场景 A - 并发资源代码梳理', names)
         self.assertIn('场景 B - 高危 API 调用链梳理', names)
         self.assertIn('场景 C - 临界区与硬件访问检查', names)

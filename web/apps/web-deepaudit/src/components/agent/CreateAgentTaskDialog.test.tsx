@@ -21,6 +21,7 @@ const testState = vi.hoisted(() => ({
   toastError: vi.fn(),
   createAgentTask: vi.fn(),
   getProjects: vi.fn(),
+  getScenarioProfiles: vi.fn(),
   getZipFileInfo: vi.fn(),
 }));
 
@@ -56,6 +57,27 @@ vi.mock("@/shared/api/agentTasks", () => ({
 vi.mock("@/shared/utils/zipStorage", () => ({
   getZipFileInfo: testState.getZipFileInfo,
   validateZipFile: vi.fn(() => ({ valid: true })),
+}));
+
+vi.mock("@/shared/api/scenarios", () => ({
+  BUILTIN_SCENARIO_FALLBACKS: [
+    {
+      id: "builtin-general",
+      scenario_key: "general",
+      name: "通用审计",
+      description: "通用审计",
+      objective_type: "audit",
+      knowledge_modules: [],
+      knowledge_modules_count: 0,
+      target_vulnerabilities: [],
+      focus_keywords: [],
+      tool_policy: {},
+      is_default: true,
+      is_system: true,
+      is_active: true,
+    },
+  ],
+  getScenarioProfiles: testState.getScenarioProfiles,
 }));
 
 vi.mock("@/components/ui/dialog", () => ({
@@ -204,6 +226,41 @@ describe("CreateAgentTaskDialog", () => {
     testState.toastError.mockReset();
     testState.createAgentTask.mockReset().mockResolvedValue({ id: "agent-task-1" });
     testState.getProjects.mockReset().mockResolvedValue([project]);
+    testState.getScenarioProfiles.mockReset().mockResolvedValue({
+      items: [
+        {
+          id: "scenario-general",
+          scenario_key: "general",
+          name: "通用审计",
+          description: "使用通用安全审计逻辑",
+          objective_type: "audit",
+          knowledge_modules: [],
+          knowledge_modules_count: 0,
+          target_vulnerabilities: [],
+          focus_keywords: [],
+          tool_policy: {},
+          is_default: true,
+          is_system: true,
+          is_active: true,
+        },
+        {
+          id: "scenario-api-chain",
+          scenario_key: "api_chain",
+          name: "高危 API 调用链梳理",
+          description: "聚焦高危 API 调用链",
+          objective_type: "inventory",
+          knowledge_modules: [],
+          knowledge_modules_count: 0,
+          target_vulnerabilities: [],
+          focus_keywords: [],
+          tool_policy: {},
+          is_default: false,
+          is_system: true,
+          is_active: true,
+        },
+      ],
+      total: 2,
+    });
     testState.getZipFileInfo.mockReset().mockResolvedValue({ has_file: true });
   });
 

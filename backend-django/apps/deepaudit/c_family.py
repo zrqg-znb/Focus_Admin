@@ -34,6 +34,8 @@ C_FAMILY_TARGET_VULNERABILITIES = [
     'resource_leak',
     'race_condition',
     'deadlock',
+    'embedded_concurrency',
+    'hardware_access',
     'format_string',
     'api_contract_violation',
 ]
@@ -696,7 +698,7 @@ def get_c_family_prompt_text() -> str:
         '请以汽车级 MCU 嵌入式 C/C++ 安全审计专家的视角分析当前代码单元。'
         '重点关注缓冲区越界、整数溢出/截断、空指针、UAF、double free、未初始化内存、'
         '资源泄漏、竞态、死锁、ISR/任务并发共享数据、返回值未检查、API 契约误用、'
-        '格式化字符串和危险标准库调用。'
+        '格式化字符串、危险标准库调用，以及 MISRA / CERT C / AUTOSAR 风格约束。'
         '请基于当前代码与补充上下文给出根因、触发条件、影响场景、精确位置和可执行修复建议。'
     )
 
@@ -1041,6 +1043,14 @@ def normalize_c_family_issue_type(value: Any) -> str:
         'uaf': 'use_after_free',
         'double delete': 'double_free',
         'nullptr_dereference': 'null_dereference',
+        'hw_access': 'hardware_access',
+        'hardware access': 'hardware_access',
+        'mmio': 'hardware_access',
+        'register_access': 'hardware_access',
+        'critical_section': 'embedded_concurrency',
+        'rtos': 'embedded_concurrency',
+        'isr': 'embedded_concurrency',
+        'irq': 'embedded_concurrency',
     }
     normalized = aliases.get(normalized, normalized)
     if normalized in C_FAMILY_TARGET_VULNERABILITIES:

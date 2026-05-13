@@ -4,6 +4,7 @@
  */
 
 import type { AuditMode } from '@/components/agent/AgentModeSelector';
+import ScenarioSelector from '@/components/scenario/ScenarioSelector';
 import type { PromptTemplate } from '@/shared/api/prompts';
 import type { AuditRuleSet } from '@/shared/api/rules';
 import type { Project } from '@/shared/types';
@@ -105,20 +106,6 @@ const DEFAULT_EXCLUDES = [
   'build/**',
   '*.log',
 ];
-const C_FAMILY_VULNERABILITY_PRESET = [
-  'buffer_overflow',
-  'out_of_bounds',
-  'integer_overflow',
-  'null_dereference',
-  'use_after_free',
-  'double_free',
-  'uninitialized_memory',
-  'resource_leak',
-  'race_condition',
-  'deadlock',
-  'format_string',
-  'api_contract_violation',
-] as const;
 
 export default function CreateTaskDialog({
   open,
@@ -156,6 +143,7 @@ export default function CreateTaskDialog({
   const [selectedRuleSetId, setSelectedRuleSetId] = useState<string>('');
   const [selectedPromptTemplateId, setSelectedPromptTemplateId] =
     useState<string>('');
+  const [selectedScenarioKey, setSelectedScenarioKey] = useState('auto');
 
   const { projects, loading, loadProjects } = useProjects();
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
@@ -252,6 +240,7 @@ export default function CreateTaskDialog({
       setSelectedRepositorySpec(undefined);
       setSelectedRepositorySignature(undefined);
       setShowAdvanced(false);
+      setSelectedScenarioKey('auto');
       const defaultRuleSet = ruleSets.find((r) => r.is_default);
       setSelectedRuleSetId(defaultRuleSet?.id || ruleSets[0]?.id || '');
       const defaultPrompt = promptTemplates.find((p) => p.is_default);
@@ -369,9 +358,9 @@ export default function CreateTaskDialog({
           exclude_patterns: excludePatterns,
           target_files: selectedFiles,
           verification_level: 'sandbox',
-          target_vulnerabilities: isCFamilyProject(selectedProject)
-            ? [...C_FAMILY_VULNERABILITY_PRESET]
-            : undefined,
+          audit_scope: {
+            scenario_key: selectedScenarioKey,
+          },
         });
 
         onOpenChange(false);
@@ -641,6 +630,15 @@ export default function CreateTaskDialog({
                 <span className="text-muted-foreground font-mono text-sm font-bold uppercase">
                   配置
                 </span>
+
+                {auditMode === 'agent' && (
+                  <ScenarioSelector
+                    onChange={setSelectedScenarioKey}
+                    showAutoOption
+                    showCFamilyHint={isCFamilyProject(selectedProject)}
+                    value={selectedScenarioKey}
+                  />
+                )}
 
                 {isRepositoryProject(selectedProject) ? (
                   <div className="border-border space-y-3 rounded border bg-blue-50 p-3 dark:bg-blue-950/20">

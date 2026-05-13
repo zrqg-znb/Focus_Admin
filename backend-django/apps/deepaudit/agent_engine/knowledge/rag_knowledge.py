@@ -5,6 +5,7 @@
 """
 
 import json
+import hashlib
 import logging
 import re
 from pathlib import Path
@@ -13,6 +14,7 @@ from typing import List, Dict, Any, Optional
 from apps.deepaudit.config_resolver import resolve_embedding_config
 from apps.deepaudit import storage as deepaudit_storage
 
+from .aliases import normalize_module_name, resolve_module_alias
 from .base import KnowledgeDocument, KnowledgeCategory
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,7 @@ class SecurityKnowledgeRAG:
         self._indexer = None
         self._retriever = None
         self._initialized = False
+        self._builtin_signature = ""
         
         # 内置知识库 - 从模块化文件加载
         self._builtin_knowledge = self._load_builtin_knowledge()
@@ -85,9 +88,18 @@ class SecurityKnowledgeRAG:
             await self._indexer.initialize()
             await self._retriever.initialize()
             
-            # 检查是否需要索引内置知识
+            # 检查是否需要索引或重建内置知识
             count = await self._indexer.get_chunk_count()
-            if count == 0:
+            collection_metadata = self._indexer.vector_store.get_collection_metadata() if self._indexer else {}
+            stored_signature = str((collection_metadata or {}).get("knowledge_signature") or "").strip()
+            if count == 0 or stored_signature != self._builtin_signature:
+                if count > 0 and stored_signature != self._builtin_signature:
+                    logger.info(
+                        "SecurityKnowledgeRAG builtin signature changed, rebuilding knowledge index: %s -> %s",
+                        stored_signature,
+                        self._builtin_signature,
+                    )
+                    await self._indexer.vector_store.initialize(force_recreate=True)
                 await self._index_builtin_knowledge()
             
             self._initialized = True
@@ -117,10 +129,78 @@ class SecurityKnowledgeRAG:
         except ImportError as e:
             logger.warning(f"Failed to load framework docs: {e}")
 
+        # 加载汽车 C / 嵌入式知识
+        builtin_groups = [
+            (".best_practices", "ALL_BEST_PRACTICE_DOCS"),
+            (".code_patterns", "ALL_CODE_PATTERN_DOCS"),
+            (".remediations", "ALL_REMEDIATION_DOCS"),
+            (".compliance", "ALL_COMPLIANCE_DOCS"),
+        ]
+        for module_suffix, export_name in builtin_groups:
+            try:
+                module = __import__(
+                    f"{__name__.rsplit('.', 1)[0]}{module_suffix}",
+                    fromlist=[export_name],
+                )
+                docs = list(getattr(module, export_name) or [])
+                all_docs.extend(docs)
+                logger.debug("Loaded %s docs from %s", len(docs), module_suffix)
+            except ImportError as e:
+                logger.warning("Failed to load %s docs: %s", module_suffix, e)
+            except Exception as e:
+                logger.warning("Failed to inspect %s docs: %s", module_suffix, e)
+
         all_docs.extend(self._load_custom_knowledge())
+        self._builtin_signature = self._compute_builtin_signature(all_docs)
         
         logger.info(f"Total knowledge documents loaded: {len(all_docs)}")
         return all_docs
+
+    def _compute_builtin_signature(self, docs: List[KnowledgeDocument]) -> str:
+        payload = [
+            doc.to_dict()
+            for doc in sorted(docs, key=lambda item: str(item.id or "").strip().lower())
+        ]
+        return hashlib.sha1(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+
+    def _find_builtin_document(
+        self,
+        module_name: str,
+        *,
+        category: KnowledgeCategory | None = None,
+    ) -> Optional[KnowledgeDocument]:
+        module_name_normalized = normalize_module_name(module_name)
+        resolved_module_name = resolve_module_alias(module_name)
+        exact_candidates = {
+            module_name_normalized,
+            resolved_module_name,
+            f"vuln_{module_name_normalized}",
+            f"framework_{module_name_normalized}",
+        }
+
+        for doc in self._builtin_knowledge:
+            if category and doc.category != category:
+                continue
+            doc_id = str(doc.id or "").strip().lower()
+            if doc_id in exact_candidates:
+                return doc
+
+        for doc in self._builtin_knowledge:
+            if category and doc.category != category:
+                continue
+            doc_id = str(doc.id or "").strip().lower()
+            tags = {str(tag).strip().lower() for tag in (doc.tags or [])}
+            if module_name_normalized and (
+                module_name_normalized in doc_id
+                or module_name_normalized in tags
+                or any(module_name_normalized in tag for tag in tags)
+            ):
+                return doc
+            if resolved_module_name and resolved_module_name in doc_id:
+                return doc
+        return None
 
     def _load_custom_knowledge(self) -> List[KnowledgeDocument]:
         ensure_dir = deepaudit_storage.KNOWLEDGE_DIR
@@ -187,6 +267,13 @@ class SecurityKnowledgeRAG:
         
         async for progress in self._indexer.index_files(files, base_path="knowledge"):
             pass
+
+        await self._indexer.vector_store.update_collection_metadata(
+            {
+                "knowledge_signature": self._builtin_signature,
+                "knowledge_document_count": len(files),
+            }
+        )
         
         logger.info(f"Indexed {len(files)} knowledge documents")
 
@@ -211,6 +298,12 @@ class SecurityKnowledgeRAG:
         ]
         async for _progress in self._indexer.index_files(files, base_path="knowledge"):
             pass
+        await self._indexer.vector_store.update_collection_metadata(
+            {
+                "knowledge_signature": self._builtin_signature,
+                "knowledge_document_count": len(self._builtin_knowledge),
+            }
+        )
         if self._retriever:
             await self._retriever.initialize()
         return {
@@ -355,17 +448,11 @@ class SecurityKnowledgeRAG:
         """
         self.reload_knowledge_sources()
         # 标准化漏洞类型名称
-        vuln_type_normalized = vuln_type.lower().replace("-", "_").replace(" ", "_")
-        
-        # 先尝试精确匹配
-        for doc in self._builtin_knowledge:
-            if doc.id == f"vuln_{vuln_type_normalized}" or doc.id == vuln_type_normalized:
-                return doc.to_dict()
-        
-        # 尝试部分匹配
-        for doc in self._builtin_knowledge:
-            if vuln_type_normalized in doc.id:
-                return doc.to_dict()
+        vuln_type_normalized = normalize_module_name(vuln_type)
+
+        doc = self._find_builtin_document(vuln_type_normalized, category=KnowledgeCategory.VULNERABILITY)
+        if doc:
+            return doc.to_dict()
         
         # 使用搜索
         results = await self.search(vuln_type, top_k=1)
@@ -385,12 +472,11 @@ class SecurityKnowledgeRAG:
             框架安全知识文档
         """
         self.reload_knowledge_sources()
-        framework_normalized = framework.lower().replace("-", "_").replace(" ", "_")
-        
-        for doc in self._builtin_knowledge:
-            if doc.category == KnowledgeCategory.FRAMEWORK:
-                if doc.id == f"framework_{framework_normalized}" or framework_normalized in doc.id:
-                    return doc.to_dict()
+        framework_normalized = normalize_module_name(framework)
+
+        doc = self._find_builtin_document(framework_normalized, category=KnowledgeCategory.FRAMEWORK)
+        if doc:
+            return doc.to_dict()
         
         # 使用搜索
         results = await self.search(framework, category=KnowledgeCategory.FRAMEWORK, top_k=1)
@@ -472,10 +558,9 @@ class SecurityKnowledgeRAG:
 
     def get_document(self, document_id: str) -> Optional[Dict[str, Any]]:
         self.reload_knowledge_sources()
-        needle = str(document_id or "").strip().lower()
-        for doc in self._builtin_knowledge:
-            if doc.id.lower() == needle:
-                return doc.to_dict()
+        doc = self._find_builtin_document(document_id)
+        if doc:
+            return doc.to_dict()
         return None
 
     def save_custom_document(self, payload: Dict[str, Any]) -> Dict[str, Any]:

@@ -72,6 +72,8 @@ DEFAULT_RULE_SETS = [
                 'resource_leak',
                 'race_condition',
                 'deadlock',
+                'embedded_concurrency',
+                'hardware_access',
                 'format_string',
                 'api_contract_violation',
             }

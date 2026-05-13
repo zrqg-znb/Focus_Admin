@@ -14,6 +14,7 @@ import {
   FolderGit2,
   Github,
   LayoutDashboard,
+  Layers3,
   ListTodo,
   Menu,
   MessageSquare,
@@ -38,6 +39,7 @@ const routeIcons: Record<string, React.ReactNode> = {
   '/audit-tasks': <ListTodo className="h-[18px] w-[18px]" />,
   '/audit-rules': <Shield className="h-[18px] w-[18px]" />,
   '/prompts': <MessageSquare className="h-[18px] w-[18px]" />,
+  '/scenarios': <Layers3 className="h-[18px] w-[18px]" />,
   '/admin': <Settings className="h-[18px] w-[18px]" />,
   '/recycle-bin': <Trash2 className="h-[18px] w-[18px]" />,
 };

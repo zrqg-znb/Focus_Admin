@@ -7,6 +7,7 @@ import type { Project } from '@/shared/types';
 import type { ZipFileMeta } from '@/shared/utils/zipStorage';
 
 import FileSelectionDialog from '@/components/audit/FileSelectionDialog';
+import ScenarioSelector from '@/components/scenario/ScenarioSelector';
 import { Badge } from '@/components/ui/badge';
 import { BranchSelector } from '@/components/ui/branch-selector';
 import { Button } from '@/components/ui/button';
@@ -81,38 +82,6 @@ const DEFAULT_EXCLUDES = [
   'build/**',
   '*.log',
 ];
-const SCENARIO_PRESETS = [
-  {
-    key: 'auto',
-    label: '自动',
-    name: '沿用默认行为',
-    description: '保持当前默认审计逻辑，并在 C/C++ 项目上保留兼容预设。',
-  },
-  {
-    key: 'concurrency',
-    label: 'A',
-    name: '并发资源访问排查',
-    description: '聚焦竞态、死锁、信号量、互斥锁与临界区。',
-  },
-  {
-    key: 'api_chain',
-    label: 'B',
-    name: '高危 API 调用链梳理',
-    description: '聚焦 strcpy / malloc / free / printf 等高危调用链。',
-  },
-  {
-    key: 'critical_section',
-    label: 'C',
-    name: '临界区与硬件访问检查',
-    description: '聚焦 ISR、DMA、寄存器访问和 API 契约。',
-  },
-  {
-    key: 'general',
-    label: 'D',
-    name: '通用审计',
-    description: '使用通用安全审计预设，不注入场景特化内容。',
-  },
-] as const;
 
 export default function CreateAgentTaskDialog({
   open,
@@ -156,12 +125,6 @@ export default function CreateAgentTaskDialog({
   const selectionContextRef = useRef('');
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
-  const selectedScenario = useMemo(
-    () =>
-      SCENARIO_PRESETS.find((scenario) => scenario.key === selectedScenarioKey) ??
-      SCENARIO_PRESETS[0],
-    [selectedScenarioKey],
-  );
 
   // 加载项目列表
   useEffect(() => {
@@ -513,59 +476,12 @@ export default function CreateAgentTaskDialog({
           {/* 配置区域 */}
           {selectedProject && (
             <div className="space-y-4">
-              <div className="border-border space-y-3 rounded border bg-muted/40 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-muted-foreground font-mono text-xs font-bold uppercase">
-                      Scenario Profile
-                    </p>
-                    <p className="text-foreground mt-1 text-sm font-medium">
-                      选择一个审计场景，自动联动提示词、规则和知识注入
-                    </p>
-                  </div>
-                  <Badge className="cyber-badge-muted font-mono text-xs">
-                    {selectedScenario.label}
-                  </Badge>
-                </div>
-
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {SCENARIO_PRESETS.map((scenario) => {
-                    const active = selectedScenarioKey === scenario.key;
-                    return (
-                      <Button
-                        aria-pressed={active}
-                        className={`h-auto flex-col items-start justify-start gap-1 whitespace-normal rounded-md px-3 py-2 text-left ${
-                          active
-                            ? 'border-primary/50 bg-primary/10 text-foreground'
-                            : 'border-border bg-background/70 text-foreground hover:bg-muted/70'
-                        }`}
-                        key={scenario.key}
-                        onClick={() => setSelectedScenarioKey(scenario.key)}
-                        type="button"
-                        variant="outline"
-                      >
-                        <div className="flex w-full items-center justify-between gap-2">
-                          <span className="font-mono text-xs font-bold uppercase tracking-widest">
-                            {scenario.label}
-                          </span>
-                          <span className="truncate text-sm font-semibold">
-                            {scenario.name}
-                          </span>
-                        </div>
-                        <span className="text-muted-foreground text-xs leading-5">
-                          {scenario.description}
-                        </span>
-                      </Button>
-                    );
-                  })}
-                </div>
-
-                {selectedScenarioKey === 'auto' && isCFamilyProject(selectedProject) && (
-                  <p className="text-muted-foreground font-mono text-xs leading-5">
-                    当前项目属于 C/C++ / embedded 范围，自动场景会保留兼容预设；如需通用审计请切换到 D。
-                  </p>
-                )}
-              </div>
+              <ScenarioSelector
+                onChange={setSelectedScenarioKey}
+                showAutoOption
+                showCFamilyHint={isCFamilyProject(selectedProject)}
+                value={selectedScenarioKey}
+              />
 
               {/* 仓库项目：分支选择 */}
               {isRepositoryProject(selectedProject) && (
