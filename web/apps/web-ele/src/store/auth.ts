@@ -12,6 +12,10 @@ import { defineStore } from 'pinia';
 
 import { getAccessCodesApi, getUserInfoApi, loginApi, logoutApi } from '#/api';
 import { $t } from '#/locales';
+import {
+  clearFocusAuditSessionBridge,
+  syncFocusAuditSessionBridge,
+} from '#/utils/focus-audit-session';
 
 export const useAuthStore = defineStore('auth', () => {
   const accessStore = useAccessStore();
@@ -47,6 +51,10 @@ export const useAuthStore = defineStore('auth', () => {
         if (refreshToken) {
           accessStore.setRefreshToken(refreshToken);
         }
+        syncFocusAuditSessionBridge(
+          accessToken,
+          refreshToken || accessStore.refreshToken,
+        );
 
         // 获取用户信息并存储到 accessStore 中
         const [fetchUserInfoResult, accessCodes] = await Promise.all([
@@ -98,6 +106,7 @@ export const useAuthStore = defineStore('auth', () => {
 
     resetAllStores();
     accessStore.setLoginExpired(false);
+    clearFocusAuditSessionBridge();
 
     // 回登录页带上当前路由地址
     await router.replace({

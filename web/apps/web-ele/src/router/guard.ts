@@ -7,8 +7,27 @@ import { startProgress, stopProgress } from '@vben/utils';
 
 import { accessRoutes, coreRouteNames } from '#/router/routes';
 import { useAuthStore } from '#/store';
+import { syncFocusAuditSessionBridge } from '#/utils/focus-audit-session';
 
 import { generateAccess } from './access';
+
+function decodeRedirectPathSafely(redirectPath: string) {
+  try {
+    return decodeURIComponent(redirectPath);
+  } catch {
+    return redirectPath;
+  }
+}
+
+function isExternalAppRedirect(redirectPath: string) {
+  return (
+    redirectPath === '/focusaudit-app' ||
+    redirectPath.startsWith('/focusaudit-app/') ||
+    redirectPath === '/deepaudit-app' ||
+    redirectPath.startsWith('/deepaudit-app/') ||
+    /^https?:\/\//.test(redirectPath)
+  );
+}
 
 /**
  * 通用守卫配置
@@ -53,11 +72,23 @@ function setupAccessGuard(router: Router) {
     // 基本路由，这些路由不需要进入权限拦截
     if (coreRouteNames.includes(to.name as string)) {
       if (to.path === LOGIN_PATH && accessStore.accessToken) {
-        return decodeURIComponent(
+        const redirectPath = decodeRedirectPathSafely(
           (to.query?.redirect as string) ||
             userStore.userInfo?.homePath ||
             preferences.app.defaultHomePath,
         );
+
+        syncFocusAuditSessionBridge(
+          accessStore.accessToken,
+          accessStore.refreshToken,
+        );
+
+        if (isExternalAppRedirect(redirectPath)) {
+          window.location.replace(redirectPath);
+          return false;
+        }
+
+        return redirectPath;
       }
       return true;
     }
@@ -112,8 +143,21 @@ function setupAccessGuard(router: Router) {
         ? userInfo.homePath || preferences.app.defaultHomePath
         : to.fullPath)) as string;
 
+    const decodedRedirectPath = decodeRedirectPathSafely(redirectPath);
+
+    // FocusAudit 挂在独立静态入口下，登录后应直接跳浏览器地址；
+    // 否则主站 router 会把它当作内部路由解析并命中主站 404。
+    if (isExternalAppRedirect(decodedRedirectPath)) {
+      syncFocusAuditSessionBridge(
+        accessStore.accessToken,
+        accessStore.refreshToken,
+      );
+      window.location.replace(decodedRedirectPath);
+      return false;
+    }
+
     return {
-      ...router.resolve(decodeURIComponent(redirectPath)),
+      ...router.resolve(decodedRedirectPath),
       replace: true,
     };
   });

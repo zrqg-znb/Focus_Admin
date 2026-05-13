@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { useAccessStore, useUserStore } from '@vben/stores';
 import { oauthCallbackApi, getAccessCodesApi, type OAuthApi } from '#/api/core';
+import { syncFocusAuditSessionBridge } from '#/utils/focus-audit-session';
 
 defineOptions({ name: 'OAuthCallback' });
 
@@ -46,6 +47,7 @@ onMounted(async () => {
       // 保存 token
       accessStore.setAccessToken(access_token);
       accessStore.setRefreshToken(refresh_token);
+      syncFocusAuditSessionBridge(access_token, refresh_token);
 
       // 保存用户信息
       userStore.setUserInfo({

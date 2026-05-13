@@ -16,6 +16,10 @@ import { useAccessStore } from '@vben/stores';
 import { ElMessage } from 'element-plus';
 
 import { useAuthStore } from '#/store';
+import {
+  clearFocusAuditSessionBridge,
+  syncFocusAuditSessionBridge,
+} from '#/utils/focus-audit-session';
 
 import { refreshTokenApi } from './core';
 
@@ -39,6 +43,7 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
     const hadToken = Boolean(accessStore.accessToken) || Boolean(accessStore.refreshToken);
 
     accessStore.setAccessToken(null);
+    clearFocusAuditSessionBridge();
 
     // 如果此前没有token（例如登录接口401），则不触发登出，避免无意义的 /logout 请求
     if (!hadToken) {
@@ -82,6 +87,11 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
     if (typeof resp.data === 'object' && resp.data?.refreshToken) {
       accessStore.setRefreshToken(resp.data.refreshToken);
     }
+
+    syncFocusAuditSessionBridge(
+      newToken,
+      accessStore.refreshToken,
+    );
 
     return newToken;
   }
