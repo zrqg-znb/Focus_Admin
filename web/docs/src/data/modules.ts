@@ -345,6 +345,8 @@ export const focusModules: FocusModuleMeta[] = [
     apiFiles: ['web/apps/web-deepaudit/src/shared/utils/apiInterceptor.ts'],
     viewDirs: ['web/apps/web-deepaudit/src'],
     relatedDocs: [
+      { label: '使用指南（精简版）', link: '/modules/deepaudit-user-guide-quick' },
+      { label: '使用指南（完整版）', link: '/modules/deepaudit-user-guide' },
       { label: '后端技术参考', link: '/backend/apps/deepaudit' },
       { label: '系统架构', link: '/overview/architecture' },
     ],

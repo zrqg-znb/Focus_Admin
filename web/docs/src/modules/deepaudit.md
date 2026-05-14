@@ -439,6 +439,8 @@ sequenceDiagram
 
 <FocusModuleSection kicker="Related Docs" title="相关文档" summary="继续查看更细的实现附录与部署文档。">
 
+- [使用指南（精简版）](/modules/deepaudit-user-guide-quick)
+- [使用指南（完整版）](/modules/deepaudit-user-guide)
 - [后端技术参考](/backend/apps/deepaudit)
 - [前端页面参考](/frontend/views/deepaudit)
 - [Nginx 部署](/dev-guide/deploy/nginx)
