@@ -11,6 +11,7 @@ from django.test import TestCase
 from django.utils import timezone
 from ninja.errors import HttpError
 
+from apps.deepaudit.c_family import C_FAMILY_TARGET_VULNERABILITIES
 from apps.deepaudit.agent_task.agent_task_model import AgentCheckpoint, AgentEvent, AgentFinding, AgentTask
 from apps.deepaudit.agent_task.agent_task_services import (
     build_checkpoints,
@@ -37,6 +38,7 @@ from apps.deepaudit.constants import (
 from apps.deepaudit.project.project_model import AuditProject
 from apps.deepaudit.repo_specs import repository_spec_signature
 from apps.deepaudit.scenario.scenario_model import AuditScenarioProfile, ScenarioObjectiveType
+from apps.deepaudit.scenario_profile import resolve_scenario_profile
 from core.user.user_model import User
 
 
@@ -481,6 +483,67 @@ class AgentTaskServicesTestCase(TestCase):
         )
         info_event = self.task.events.filter(is_deleted=False, event_type='info').latest('sequence')
         self.assertEqual(info_event.message, '已将所选目录展开为具体文件范围')
+
+    def test_execute_agent_task_re_resolves_auto_scenario_after_directory_expansion(self) -> None:
+        stale_profile = resolve_scenario_profile(
+            "auto",
+            project=self.project,
+            file_paths=["src/module"],
+        )
+        self.task.target_files = ["src/module"]
+        self.task.audit_scope = {
+            "scenario_key": "auto",
+            "requested_scenario_key": "auto",
+            "effective_profile": stale_profile,
+        }
+        self.task.agent_config = {
+            "requested_scenario_key": "auto",
+            "requested_target_vulnerabilities": [],
+            "scenario_profile": stale_profile,
+            "scenario_key": stale_profile.get("scenario_key"),
+        }
+        self.task.target_vulnerabilities = list(stale_profile.get("target_vulnerabilities") or [])
+        self.task.save(
+            update_fields=[
+                "target_files",
+                "audit_scope",
+                "agent_config",
+                "target_vulnerabilities",
+                "sys_update_datetime",
+            ]
+        )
+
+        with (
+            patch('apps.deepaudit.agent_task.agent_task_services.close_runtime_db_connections'),
+            patch('apps.deepaudit.agent_task.agent_task_services.docker_available', return_value=True),
+            patch(
+                'apps.deepaudit.agent_task.agent_task_services.prepare_repository_workspace',
+                return_value=(Path('/tmp/focusaudit-agent-workspace'), _multi_runtime_payload()),
+            ),
+            patch(
+                'apps.deepaudit.agent_task.agent_task_services.validate_selected_file_paths',
+                return_value={'existing': ['src/module'], 'missing': []},
+            ),
+            patch(
+                'apps.deepaudit.agent_task.agent_task_services.resolve_selected_file_paths',
+                return_value=['src/module/main.c', 'src/module/helper.h'],
+            ),
+            patch('apps.deepaudit.agent_task.agent_runner.run_orchestrator_agent_sync') as mock_runner,
+            patch('apps.deepaudit.agent_task.agent_task_services.cleanup_runtime_workspace'),
+        ):
+            execute_agent_task(str(self.task.id))
+
+        input_data = mock_runner.call_args.args[1]
+        effective_profile = input_data["agent_config"]["scenario_profile"]
+        self.assertEqual(effective_profile["scenario_key"], "auto")
+        self.assertEqual(effective_profile["resolved_scenario_key"], "legacy_c_family")
+        self.assertTrue(effective_profile["legacy_c_family"])
+        self.assertEqual(input_data["target_vulnerabilities"], C_FAMILY_TARGET_VULNERABILITIES)
+
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.audit_scope["effective_profile"]["resolved_scenario_key"], "legacy_c_family")
+        self.assertEqual(self.task.agent_config["scenario_profile"]["resolved_scenario_key"], "legacy_c_family")
+        self.assertEqual(self.task.target_vulnerabilities, C_FAMILY_TARGET_VULNERABILITIES)
 
     def test_execute_agent_task_fails_when_all_selected_paths_disappear(self) -> None:
         self.task.target_files = ['src/missing-module']
@@ -1107,3 +1170,78 @@ class AgentTaskServicesTestCase(TestCase):
         self.assertEqual(pdf_response.content, b'%PDF-test')
         self.assertEqual(compat_json_response['Content-Type'], 'application/json')
         self.assertEqual(compat_pdf_response['Content-Type'], 'application/pdf')
+
+    def test_export_agent_report_response_preserves_finding_evidence_and_remediation_fallbacks(self) -> None:
+        task = self._seed_completed_runtime(self.task)
+        assert task is not None
+        AgentFinding.objects.create(
+            task=task,
+            vulnerability_type='api_contract_violation',
+            severity='high',
+            title='Unchecked driver return value',
+            description='',
+            file_path='drivers/can/init.c',
+            line_start=87,
+            line_end=90,
+            code_snippet='',
+            is_verified=True,
+            status='open',
+            suggestion='',
+            poc={
+                'verdict': 'confirmed',
+                'matched_line': 'status = can_hw_init(cfg);',
+                'context': 'status = can_hw_init(cfg);\nif (status != 0) {\n    return;\n}',
+                'evidence': '失败分支直接 return，错误码没有向上游传播。',
+                'validation': {
+                    'is_vulnerable': True,
+                    'detailed_analysis': '初始化失败会被静默吞掉，后续模块在未完成初始化的状态下继续运行。',
+                },
+                'fix_code': 'status = can_hw_init(cfg);\nif (status != 0) {\n    return status;\n}',
+                'ai_explanation': '这是典型的驱动初始化契约违背问题。',
+                'recommendation': '检查返回值并向调用方传播错误，避免在失败后继续访问硬件。',
+                'verification_method': 'static_review',
+                'verification_details': '结合初始化调用链确认该错误会影响后续寄存器访问。',
+            },
+            sys_creator=self.user,
+            sys_modifier=self.user,
+        )
+        task = refresh_task_snapshot(
+            task.id,
+            status='completed',
+            current_phase=AGENT_PHASE_REPORTING,
+            current_step='报告生成完成',
+            completed_at=timezone.now(),
+            error_message='',
+        )
+        assert task is not None
+
+        json_response = export_agent_report_response(self.user, task.id, format='json')
+        markdown_response = export_agent_report_response(self.user, task.id, format='markdown')
+
+        json_payload = json.loads(json_response.content.decode('utf-8'))
+        finding = next(
+            item for item in json_payload['findings']
+            if item['title'] == 'Unchecked driver return value'
+        )
+        markdown_body = markdown_response.content.decode('utf-8')
+
+        self.assertEqual(
+            finding['suggestion'],
+            '检查返回值并向调用方传播错误，避免在失败后继续访问硬件。',
+        )
+        self.assertEqual(
+            finding['code_snippet'],
+            'status = can_hw_init(cfg);\nif (status != 0) {\n    return;\n}',
+        )
+        self.assertEqual(
+            finding['fix_code'],
+            'status = can_hw_init(cfg);\nif (status != 0) {\n    return status;\n}',
+        )
+        self.assertEqual(finding['ai_explanation'], '这是典型的驱动初始化契约违背问题。')
+        self.assertEqual(finding['evidence'], '失败分支直接 return，错误码没有向上游传播。')
+        self.assertEqual(finding['validation']['is_vulnerable'], True)
+        self.assertEqual(finding['verification_method'], 'static_review')
+        self.assertIn('检查返回值并向调用方传播错误', markdown_body)
+        self.assertIn('status = can_hw_init(cfg);', markdown_body)
+        self.assertIn('结合初始化调用链确认该错误会影响后续寄存器访问。', markdown_body)
+        self.assertNotIn('建议结合业务上下文补充修复方案。', markdown_body)

@@ -963,7 +963,7 @@ def resolve_scenario_profile(
 ) -> dict[str, Any]:
     normalized_key = _normalize_key(scenario_key)
     language_profile = dict(language_profile or {})
-    project_is_c_family = bool(project and project_likely_c_family(project, file_paths=file_paths))
+    project_is_c_family = bool(project_likely_c_family(project, file_paths=file_paths))
     has_c_family_language_profile = bool(language_profile.get("is_c_family_dominant"))
     c_family_context = project_is_c_family or has_c_family_language_profile
     manual_targets = _unique_list(manual_target_vulnerabilities)
@@ -1166,6 +1166,21 @@ def build_scenario_prompt_block(profile: dict[str, Any] | None, agent_role: str)
         lines.extend(["", "### 提示词模板内容", prompt_content])
     if rule_lines:
         lines.extend(["", "### 规则集重点", *rule_lines])
+
+    if (
+        str(scenario.get("resolved_scenario_key") or scenario.get("scenario_key") or "").strip().lower()
+        == GENERAL_SCENARIO_KEY
+        and str(scenario.get("objective_type") or "").strip().lower() == ScenarioObjectiveType.AUDIT
+    ):
+        lines.extend(
+            [
+                "",
+                "### 通用审计输出约束",
+                "- 每条发现都必须尽量给出真实文件路径、具体行号和来自实际读取代码的证据片段。",
+                "- 修复建议必须结合当前问题根因，优先给出可直接执行的修改方向，不要只输出空泛占位语。",
+                "- 若进行了验证，请明确写出验证结论、触发条件或误报原因，不要把已确认问题写成未验证。",
+            ]
+        )
 
     lines.extend(
         [

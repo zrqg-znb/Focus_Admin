@@ -47,6 +47,18 @@ class ScenarioProfileResolverTestCase(SimpleTestCase):
         self.assertTrue(profile["legacy_c_family"])
         self.assertEqual(profile["target_vulnerabilities"], C_FAMILY_TARGET_VULNERABILITIES)
 
+    def test_auto_detects_c_family_from_concrete_file_paths_without_project_languages(self) -> None:
+        profile = resolve_scenario_profile(
+            None,
+            project=None,
+            file_paths=["drivers/can/main.c", "include/can_driver.h"],
+        )
+
+        self.assertEqual(profile["scenario_key"], AUTO_SCENARIO_KEY)
+        self.assertEqual(profile["resolved_scenario_key"], LEGACY_C_FAMILY_SCENARIO_KEY)
+        self.assertTrue(profile["legacy_c_family"])
+        self.assertEqual(profile["target_vulnerabilities"], C_FAMILY_TARGET_VULNERABILITIES)
+
     def test_general_scenario_suppresses_c_family_fallback(self) -> None:
         profile = resolve_scenario_profile(
             "general",

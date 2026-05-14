@@ -13,6 +13,7 @@ from apps.deepaudit.agent_engine.tools.file_tool import (
 )
 from apps.deepaudit.agent_task.agent_runner import (
     _effective_target_files_from_input,
+    _normalize_finding_payload,
     _normalize_agent_input,
     _validate_runtime_target_files,
 )
@@ -74,6 +75,61 @@ class AgentRunnerScopeTestCase(SimpleTestCase):
         self.assertFalse(scenario_profile['legacy_c_family'])
         self.assertEqual(normalized['config']['verification_level'], 'analysis_only')
         self.assertIn('buffer_overflow', normalized['config']['target_vulnerabilities'])
+
+    def test_normalize_finding_payload_promotes_validation_evidence_and_fix_details(self) -> None:
+        normalized = _normalize_finding_payload(
+            {
+                "title": "Unbounded copy in driver init",
+                "vulnerability_type": "buffer_overflow",
+                "severity": "high",
+                "file_path": "src/module/main.c",
+                "line_start": 18,
+                "matched_line": "strcpy(device->name, user_name);",
+                "context": "if (user_name) {\n    strcpy(device->name, user_name);\n}",
+                "recommendation": "改用 snprintf，并校验输入长度。",
+                "fix_code": "snprintf(device->name, sizeof(device->name), \"%s\", user_name);",
+                "ai_explanation": "拷贝长度受外部输入影响，固定缓冲区可能被覆盖。",
+                "evidence": "未看到任何长度检查或截断逻辑。",
+                "validation": {
+                    "is_vulnerable": True,
+                    "verdict": "likely",
+                    "detailed_analysis": "调用链允许外部名称进入固定数组，构成高可信越界写风险。",
+                },
+                "confidence": 0.91,
+            }
+        )
+
+        assert normalized is not None
+        self.assertEqual(normalized["code_snippet"], "if (user_name) {\n    strcpy(device->name, user_name);\n}")
+        self.assertEqual(normalized["suggestion"], "改用 snprintf，并校验输入长度。")
+        self.assertTrue(normalized["is_verified"])
+        self.assertEqual(normalized["poc"]["fix_code"], "snprintf(device->name, sizeof(device->name), \"%s\", user_name);")
+        self.assertEqual(normalized["poc"]["matched_line"], "strcpy(device->name, user_name);")
+        self.assertEqual(normalized["poc"]["validation"]["verdict"], "likely")
+        self.assertEqual(normalized["description"], "拷贝长度受外部输入影响，固定缓冲区可能被覆盖。")
+
+    def test_normalize_finding_payload_honors_false_positive_verdict_from_nested_poc(self) -> None:
+        normalized = _normalize_finding_payload(
+            {
+                "title": "Escaped output reported as XSS",
+                "vulnerability_type": "xss",
+                "severity": "medium",
+                "file_path": "src/module/main.c",
+                "poc": {
+                    "verdict": "false_positive",
+                    "validation": {
+                        "is_vulnerable": False,
+                        "details": "输出前已经过统一转义。",
+                    },
+                },
+            }
+        )
+
+        assert normalized is not None
+        self.assertEqual(normalized["status"], "false_positive")
+        self.assertFalse(normalized["is_verified"])
+        self.assertEqual(normalized["poc"]["verdict"], "false_positive")
+        self.assertEqual(normalized["poc"]["validation"]["is_vulnerable"], False)
 
 
 class AgentFileToolScopeTestCase(SimpleTestCase):

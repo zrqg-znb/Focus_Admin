@@ -24,7 +24,7 @@ from apps.deepaudit.constants import (
     AGENT_PHASE_VERIFICATION,
     FINDING_STATUS_CHOICES,
 )
-from apps.deepaudit.heuristics import normalize_severity_weight
+from apps.deepaudit.heuristics import DEFAULT_RULE_PATTERNS, normalize_severity_weight
 from apps.deepaudit.permissions import require_project_role, serialize_user_brief
 from apps.deepaudit.realtime import push_task_event
 from apps.deepaudit.reporting import ReportBuilder
@@ -122,6 +122,12 @@ REPORT_LANGUAGE_BY_EXTENSION = {
     '.ts': 'typescript',
     '.tsx': 'typescript',
     '.vue': 'vue',
+}
+
+DEFAULT_FINDING_REMEDIATIONS = {
+    str(pattern.issue_type or "").strip(): str(pattern.suggestion or "").strip()
+    for pattern in DEFAULT_RULE_PATTERNS
+    if str(pattern.issue_type or "").strip() and str(pattern.suggestion or "").strip()
 }
 
 TOOL_COUNT_EVENT_TYPES = {'tool_call', 'tool_start', 'tool_call_start'}
@@ -292,6 +298,101 @@ def _report_language_from_path(file_path: str | None) -> str:
     return REPORT_LANGUAGE_BY_EXTENSION.get(suffix, '')
 
 
+def _text_or_none(value) -> str | None:
+    text = str(value or '').strip()
+    return text or None
+
+
+def _json_dict(value) -> dict:
+    payload = normalize_json_payload(value or {})
+    return payload if isinstance(payload, dict) else {}
+
+
+def _first_non_empty_text(*values) -> str | None:
+    for value in values:
+        text = _text_or_none(value)
+        if text:
+            return text
+    return None
+
+
+def _finding_default_remediation(vulnerability_type: str | None) -> str | None:
+    normalized_type = str(vulnerability_type or '').strip().lower()
+    return DEFAULT_FINDING_REMEDIATIONS.get(normalized_type)
+
+
+def _finding_validation_payload(finding: dict) -> dict:
+    poc_payload = _json_dict(finding.get('poc'))
+    return _json_dict(
+        finding.get('validation')
+        or finding.get('verification')
+        or poc_payload.get('validation')
+    )
+
+
+def _finding_effective_suggestion(finding: dict) -> str | None:
+    poc_payload = _json_dict(finding.get('poc'))
+    validation_payload = _finding_validation_payload(finding)
+    fix_code = _first_non_empty_text(
+        finding.get('fix_code'),
+        poc_payload.get('fix_code'),
+    )
+    ai_explanation = _first_non_empty_text(
+        finding.get('ai_explanation'),
+        poc_payload.get('ai_explanation'),
+        validation_payload.get('detailed_analysis'),
+        validation_payload.get('details'),
+    )
+    return _first_non_empty_text(
+        finding.get('suggestion'),
+        finding.get('recommendation'),
+        poc_payload.get('recommendation'),
+        validation_payload.get('recommendation'),
+        fix_code,
+        ai_explanation,
+        _finding_default_remediation(finding.get('vulnerability_type')),
+    )
+
+
+def _finding_effective_code_snippet(finding: dict) -> str | None:
+    poc_payload = _json_dict(finding.get('poc'))
+    return _first_non_empty_text(
+        finding.get('code_snippet'),
+        finding.get('context'),
+        finding.get('matched_line'),
+        poc_payload.get('context'),
+        poc_payload.get('matched_line'),
+    )
+
+
+def _finding_effective_ai_explanation(finding: dict) -> str | None:
+    poc_payload = _json_dict(finding.get('poc'))
+    validation_payload = _finding_validation_payload(finding)
+    return _first_non_empty_text(
+        finding.get('ai_explanation'),
+        poc_payload.get('ai_explanation'),
+        finding.get('verification_details'),
+        poc_payload.get('verification_details'),
+        validation_payload.get('detailed_analysis'),
+        validation_payload.get('details'),
+        finding.get('description'),
+    )
+
+
+def _finding_effective_verification_details(finding: dict) -> str | None:
+    poc_payload = _json_dict(finding.get('poc'))
+    validation_payload = _finding_validation_payload(finding)
+    return _first_non_empty_text(
+        finding.get('verification_details'),
+        poc_payload.get('verification_details'),
+        validation_payload.get('details'),
+        validation_payload.get('detailed_analysis'),
+        finding.get('evidence'),
+        poc_payload.get('evidence'),
+        validation_payload.get('evidence'),
+    )
+
+
 def _severity_distribution_from_findings(findings: list[AgentFinding]) -> dict[str, int]:
     distribution = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
     for finding in findings:
@@ -433,12 +534,16 @@ def _render_agent_markdown_report(instance: AgentTask, payload: dict) -> str:
         file_path = finding.get('file_path') or '未知文件'
         line_start = finding.get('line_start')
         line_end = finding.get('line_end')
-        suggestion = finding.get('suggestion') or '建议结合业务上下文补充修复方案。'
-        description = finding.get('description') or '暂无详细描述。'
-        code_snippet = finding.get('code_snippet') or ''
+        suggestion = _finding_effective_suggestion(finding) or '建议结合业务上下文补充修复方案。'
+        description = _first_non_empty_text(
+            finding.get('description'),
+            _finding_effective_ai_explanation(finding),
+        ) or '暂无详细描述。'
+        code_snippet = _finding_effective_code_snippet(finding) or ''
         vuln_type = finding.get('vulnerability_type') or 'unknown'
         verdict = (finding.get('poc') or {}).get('verdict')
         verification_label = '已验证' if finding.get('is_verified') else '待验证'
+        verification_details = _finding_effective_verification_details(finding)
         if verdict == 'false_positive' or finding.get('status') == 'false_positive':
             verification_label = '误报'
 
@@ -462,6 +567,16 @@ def _render_agent_markdown_report(instance: AgentTask, payload: dict) -> str:
                 '',
             ]
         )
+
+        if verification_details:
+            lines.extend(
+                [
+                    '#### 验证说明',
+                    '',
+                    verification_details,
+                    '',
+                ]
+            )
 
         if code_snippet:
             language = _report_language_from_path(file_path)
@@ -489,6 +604,48 @@ def _render_agent_markdown_report(instance: AgentTask, payload: dict) -> str:
 
 
 def serialize_finding(instance: AgentFinding) -> dict:
+    poc_payload = _json_dict(instance.poc)
+    if not poc_payload and instance.poc not in (None, {}, []):
+        poc_payload = {'poc': instance.poc}
+    validation_payload = _json_dict(poc_payload.get('validation'))
+    fix_code = _first_non_empty_text(
+        poc_payload.get('fix_code'),
+        validation_payload.get('fix_code'),
+    )
+    ai_explanation = _first_non_empty_text(
+        poc_payload.get('ai_explanation'),
+        validation_payload.get('detailed_analysis'),
+        validation_payload.get('details'),
+    )
+    matched_line = _first_non_empty_text(
+        poc_payload.get('matched_line'),
+        validation_payload.get('matched_line'),
+    )
+    evidence = _first_non_empty_text(
+        poc_payload.get('evidence'),
+        validation_payload.get('evidence'),
+    )
+    verification_method = _first_non_empty_text(
+        poc_payload.get('verification_method'),
+        validation_payload.get('verification_method'),
+        validation_payload.get('method'),
+    )
+    verification_details = _first_non_empty_text(
+        poc_payload.get('verification_details'),
+        validation_payload.get('details'),
+        validation_payload.get('detailed_analysis'),
+        evidence,
+    )
+    effective_code_snippet = _first_non_empty_text(
+        instance.code_snippet,
+        poc_payload.get('context'),
+        matched_line,
+    )
+    suggestion = _first_non_empty_text(
+        instance.suggestion,
+        poc_payload.get('recommendation'),
+        validation_payload.get('recommendation'),
+    )
     return {
         'id': str(instance.id),
         'task_id': str(instance.task_id),
@@ -499,12 +656,20 @@ def serialize_finding(instance: AgentFinding) -> dict:
         'file_path': instance.file_path,
         'line_start': instance.line_start,
         'line_end': instance.line_end,
-        'code_snippet': instance.code_snippet,
+        'code_snippet': effective_code_snippet,
         'is_verified': instance.is_verified,
         'ai_confidence': instance.ai_confidence,
         'status': instance.status,
-        'suggestion': instance.suggestion,
-        'poc': instance.poc or {},
+        'suggestion': suggestion,
+        'recommendation': _first_non_empty_text(poc_payload.get('recommendation'), suggestion),
+        'fix_code': fix_code,
+        'ai_explanation': ai_explanation,
+        'matched_line': matched_line,
+        'evidence': evidence,
+        'validation': validation_payload,
+        'verification_method': verification_method,
+        'verification_details': verification_details,
+        'poc': poc_payload,
         'sys_create_datetime': format_datetime_text(instance.sys_create_datetime),
         'sys_update_datetime': format_datetime_text(instance.sys_update_datetime),
     }
@@ -691,6 +856,58 @@ def get_task(user, task_id: str) -> AgentTask:
     return instance
 
 
+def _requested_scenario_key_from_task_payload(
+    audit_scope: dict,
+    agent_config: dict,
+    fallback_scenario_key: str | None = None,
+) -> str | None:
+    return (
+        _text_or_none(audit_scope.get('requested_scenario_key'))
+        or _text_or_none(agent_config.get('requested_scenario_key'))
+        or _text_or_none(audit_scope.get('scenario_key'))
+        or _text_or_none(agent_config.get('scenario_key'))
+        or _text_or_none(fallback_scenario_key)
+    )
+
+
+def _manual_target_vulnerabilities_from_task(
+    *,
+    instance: AgentTask | None = None,
+    agent_config: dict | None = None,
+    payload: dict | None = None,
+) -> list[str]:
+    configured = list((agent_config or {}).get('requested_target_vulnerabilities') or [])
+    if configured:
+        return configured
+    if payload:
+        explicit = list(payload.get('target_vulnerabilities') or [])
+        if explicit:
+            return explicit
+    if instance:
+        return list(instance.target_vulnerabilities or [])
+    return []
+
+
+def _effective_scenario_profile_for_task(
+    *,
+    project,
+    audit_scope: dict,
+    agent_config: dict,
+    file_paths: list[str],
+    manual_target_vulnerabilities: list[str],
+) -> dict:
+    requested_scenario_key = _requested_scenario_key_from_task_payload(
+        audit_scope,
+        agent_config,
+    )
+    return resolve_scenario_profile(
+        requested_scenario_key,
+        project=project,
+        file_paths=file_paths,
+        manual_target_vulnerabilities=manual_target_vulnerabilities,
+    )
+
+
 def create_task(user, payload: dict) -> AgentTask:
     access = require_project_role(user, payload.get('project_id'), min_role='member')
     project_repository_type = normalize_repository_type(access.project.repository_type)
@@ -752,29 +969,36 @@ def create_task(user, payload: dict) -> AgentTask:
             effective_signature=repository_signature,
         )
     audit_scope = normalize_json_payload(payload.get('audit_scope') or {})
-    scenario_key = str(
-        audit_scope.get('scenario_key')
-        or payload.get('scenario_key')
-        or ''
-    ).strip() or None
+    agent_config = dict(payload.get('agent_config') or {})
+    requested_scenario_key = _requested_scenario_key_from_task_payload(
+        audit_scope,
+        agent_config,
+        payload.get('scenario_key'),
+    )
+    manual_target_vulnerabilities = _manual_target_vulnerabilities_from_task(
+        agent_config=agent_config,
+        payload=payload,
+    )
     scenario_profile = resolve_scenario_profile(
-        scenario_key,
+        requested_scenario_key,
         project=access.project,
         file_paths=payload.get('target_files') or [],
-        manual_target_vulnerabilities=payload.get('target_vulnerabilities') or [],
+        manual_target_vulnerabilities=manual_target_vulnerabilities,
     )
     audit_scope = {
         **audit_scope,
+        'requested_scenario_key': requested_scenario_key,
         'scenario_key': scenario_profile.get('scenario_key'),
         'effective_profile': scenario_profile,
     }
     target_vulnerabilities = list(scenario_profile.get('target_vulnerabilities') or [])
-    agent_config = dict(payload.get('agent_config') or {})
     agent_config = _persist_repository_signature_metadata(
         agent_config,
         repository_signature=repository_signature,
         project_repository_signature=project_repository_signature,
     )
+    agent_config['requested_scenario_key'] = requested_scenario_key
+    agent_config['requested_target_vulnerabilities'] = manual_target_vulnerabilities
     agent_config['scenario_profile'] = scenario_profile
     agent_config['scenario_key'] = scenario_profile.get('scenario_key')
     agent_config.setdefault(
@@ -2192,6 +2416,18 @@ def execute_agent_task(task_id: str) -> None:
             'resolved_file_count': len(resolved_target_files) if validated_target_files else 0,
             'resolved_samples': resolved_target_files[:10],
         }
+        current_audit_scope = normalize_json_payload(instance.audit_scope or {})
+        current_agent_config = dict(instance.agent_config or {})
+        effective_scenario_profile = _effective_scenario_profile_for_task(
+            project=instance.project,
+            audit_scope=current_audit_scope,
+            agent_config=current_agent_config,
+            file_paths=resolved_target_files,
+            manual_target_vulnerabilities=_manual_target_vulnerabilities_from_task(
+                instance=instance,
+                agent_config=current_agent_config,
+            ),
+        )
         logger.info(
             'DeepAudit agent task %s prepared resolved target scope before runner: selected_count=%s directory_count=%s resolved_file_count=%s directory_samples=%s resolved_samples=%s %s',
             instance.id,
@@ -2202,8 +2438,30 @@ def execute_agent_task(task_id: str) -> None:
             resolved_target_files[:5],
             format_repository_spec_for_log(repository_spec),
         )
+        instance.audit_scope = {
+            **current_audit_scope,
+            'requested_scenario_key': _requested_scenario_key_from_task_payload(
+                current_audit_scope,
+                current_agent_config,
+            ),
+            'scenario_key': effective_scenario_profile.get('scenario_key'),
+            'effective_profile': effective_scenario_profile,
+        }
+        instance.target_vulnerabilities = list(
+            effective_scenario_profile.get('target_vulnerabilities') or []
+        )
         instance.agent_config = {
-            **dict(instance.agent_config or {}),
+            **current_agent_config,
+            'requested_scenario_key': _requested_scenario_key_from_task_payload(
+                current_audit_scope,
+                current_agent_config,
+            ),
+            'requested_target_vulnerabilities': _manual_target_vulnerabilities_from_task(
+                instance=instance,
+                agent_config=current_agent_config,
+            ),
+            'scenario_profile': effective_scenario_profile,
+            'scenario_key': effective_scenario_profile.get('scenario_key'),
             'selection_stats': selection_stats,
             'selection_runtime': selection_runtime,
             'repository_runtime': repository_runtime,
@@ -2211,7 +2469,13 @@ def execute_agent_task(task_id: str) -> None:
         instance.total_files = len(resolved_target_files) if validated_target_files else instance.total_files
         run_with_fresh_connection(
             instance.save,
-            update_fields=['agent_config', 'total_files', 'sys_update_datetime'],
+            update_fields=[
+                'audit_scope',
+                'target_vulnerabilities',
+                'agent_config',
+                'total_files',
+                'sys_update_datetime',
+            ],
         )
 
         # 准备交给 Agent 的上下文数据

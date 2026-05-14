@@ -100,8 +100,14 @@ export interface AgentFinding {
   poc_code: null | string;
 
   suggestion: null | string;
+  recommendation?: null | string;
   fix_code: null | string;
   ai_explanation: null | string;
+  matched_line?: null | string;
+  evidence?: null | string;
+  validation?: Record<string, unknown>;
+  verification_method?: null | string;
+  verification_details?: null | string;
   ai_confidence: null | number;
 
   created_at: string;

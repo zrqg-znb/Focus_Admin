@@ -256,4 +256,52 @@ describe("AgentAudit HTML report generation", () => {
 		expect(html).not.toContain("风险总览");
 		expect(html).not.toContain("重点发现");
 	});
+
+	it("falls back to validation details when remediation and code snippet are only present in extended finding fields", async () => {
+		const task = createTask({
+			findings_count: 1,
+			verified_count: 1,
+			false_positive_count: 0,
+			critical_count: 0,
+			high_count: 1,
+			medium_count: 0,
+			low_count: 0,
+		});
+		const findings: AgentFinding[] = [
+			{
+				...createFindings()[0],
+				title: "Unchecked driver return value",
+				description: null,
+				suggestion: null,
+				fix_code: null,
+				ai_explanation: null,
+				code_snippet: null,
+				matched_line: "status = can_hw_init(cfg);",
+				evidence: "失败分支直接 return，错误码没有向上游传播。",
+				validation: {
+					detailed_analysis:
+						"初始化失败会被静默吞掉，后续模块在未完成初始化的状态下继续运行。",
+					recommendation:
+						"检查返回值并向调用方传播错误，避免在失败后继续访问硬件。",
+				},
+				verification_details: "结合初始化调用链确认该错误会影响后续寄存器访问。",
+			},
+		];
+
+		const model = await buildAgentAuditReportModel("", task, findings);
+		await generateAgentAuditHtmlReport("", task, findings);
+
+		expect(model.topFindings[0].description).toBe(
+			"初始化失败会被静默吞掉，后续模块在未完成初始化的状态下继续运行。",
+		);
+		expect(model.topFindings[0].suggestion).toBe(
+			"检查返回值并向调用方传播错误，避免在失败后继续访问硬件。",
+		);
+		expect(model.topFindings[0].codeSnippet).toBe(
+			"status = can_hw_init(cfg);",
+		);
+		expect(model.topFindings[0].aiExplanation).toBe(
+			"结合初始化调用链确认该错误会影响后续寄存器访问。",
+		);
+	});
 });

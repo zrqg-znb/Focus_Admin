@@ -222,22 +222,33 @@ def _normalize_agent_input(task_id: str, input_data: Dict[str, Any], workspace: 
     )
     agent_config = dict(input_data.get("agent_config") or {})
     audit_scope = dict(input_data.get("audit_scope") or {})
+    requested_scenario_key = str(
+        audit_scope.get("requested_scenario_key")
+        or agent_config.get("requested_scenario_key")
+        or audit_scope.get("scenario_key")
+        or agent_config.get("scenario_key")
+        or input_data.get("scenario_key")
+        or ""
+    ).strip() or None
+    manual_target_vulnerabilities = list(
+        agent_config.get("requested_target_vulnerabilities")
+        or input_data.get("target_vulnerabilities")
+        or []
+    )
     scenario_profile = dict(
         agent_config.get("scenario_profile")
         or audit_scope.get("effective_profile")
         or {}
     )
-    if not scenario_profile:
-        scenario_key = str(
-            audit_scope.get("scenario_key")
-            or agent_config.get("scenario_key")
-            or input_data.get("scenario_key")
-            or ""
-        ).strip() or None
+    if (
+        not scenario_profile
+        or str(scenario_profile.get("selection_mode") or "").strip().lower() == "auto"
+        or str(scenario_profile.get("scenario_key") or "").strip().lower() == "auto"
+    ):
         scenario_profile = resolve_scenario_profile(
-            scenario_key,
+            requested_scenario_key,
             file_paths=target_files,
-            manual_target_vulnerabilities=input_data.get("target_vulnerabilities") or [],
+            manual_target_vulnerabilities=manual_target_vulnerabilities,
             language_profile=language_profile,
         )
     else:
@@ -471,6 +482,20 @@ async def _initialize_tools(
 
 
 def _normalize_finding_payload(item: Dict[str, Any]) -> Dict[str, Any] | None:
+    def _text_or_none(value: Any) -> str | None:
+        text = str(value or "").strip()
+        return text or None
+
+    def _json_dict(value: Any) -> Dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
+    def _first_text(*values: Any) -> str | None:
+        for value in values:
+            text = _text_or_none(value)
+            if text:
+                return text
+        return None
+
     title = str(item.get("title") or "").strip()
     file_path = str(item.get("file_path") or item.get("file") or "").strip()
     vulnerability_type = str(item.get("vulnerability_type") or item.get("type") or "other").strip().lower() or "other"
@@ -481,10 +506,56 @@ def _normalize_finding_payload(item: Dict[str, Any]) -> Dict[str, Any] | None:
     if not title:
         return None
 
+    raw_poc = item.get("poc")
+    poc_payload = _json_dict(raw_poc)
+    validation_payload = _json_dict(
+        item.get("validation") or item.get("verification") or poc_payload.get("validation")
+    )
     line_start = item.get("line_start") or item.get("line") or item.get("line_number")
     line_end = item.get("line_end") or line_start
-    recommendation = item.get("recommendation") or item.get("suggestion") or ""
-    verdict = str(item.get("verdict") or item.get("status") or "").strip().lower()
+    matched_line = _first_text(
+        item.get("matched_line"),
+        poc_payload.get("matched_line"),
+        validation_payload.get("matched_line"),
+    )
+    context = _first_text(
+        item.get("context"),
+        poc_payload.get("context"),
+        validation_payload.get("context"),
+    )
+    evidence = _first_text(
+        item.get("evidence"),
+        validation_payload.get("evidence"),
+        poc_payload.get("evidence"),
+    )
+    fix_code = _first_text(
+        item.get("fix_code"),
+        item.get("patched_code"),
+        poc_payload.get("fix_code"),
+        validation_payload.get("fix_code"),
+    )
+    ai_explanation = _first_text(
+        item.get("ai_explanation"),
+        item.get("detailed_analysis"),
+        item.get("verification_details"),
+        poc_payload.get("ai_explanation"),
+        poc_payload.get("verification_details"),
+        validation_payload.get("detailed_analysis"),
+        validation_payload.get("details"),
+    )
+    recommendation = _first_text(
+        item.get("recommendation"),
+        item.get("suggestion"),
+        validation_payload.get("recommendation"),
+        poc_payload.get("recommendation"),
+    )
+    verdict = str(
+        item.get("verdict")
+        or validation_payload.get("verdict")
+        or poc_payload.get("verdict")
+        or item.get("status")
+        or ""
+    ).strip().lower()
     status = "open"
     if verdict == "false_positive":
         status = "false_positive"
@@ -496,28 +567,75 @@ def _normalize_finding_payload(item: Dict[str, Any]) -> Dict[str, Any] | None:
     except (TypeError, ValueError):
         confidence = 0.8
 
+    code_snippet = _first_text(
+        item.get("code_snippet"),
+        context,
+        matched_line,
+    )
+    description = _first_text(
+        item.get("description"),
+        ai_explanation,
+        evidence,
+    )
+    validation_is_vulnerable = validation_payload.get("is_vulnerable")
+    is_verified = bool(
+        item.get("is_verified")
+        or item.get("verified")
+        or validation_payload.get("is_verified")
+    )
+    if not is_verified and verdict in {"confirmed", "fixed", "wont_fix"}:
+        is_verified = True
+    if not is_verified and verdict == "likely" and confidence >= 0.8:
+        is_verified = True
+    if not is_verified and validation_is_vulnerable is True:
+        is_verified = True
+
+    verification_method = _first_text(
+        item.get("verification_method"),
+        validation_payload.get("verification_method"),
+        validation_payload.get("method"),
+        poc_payload.get("verification_method"),
+    )
+    verification_details = _first_text(
+        item.get("verification_details"),
+        validation_payload.get("details"),
+        validation_payload.get("detailed_analysis"),
+        evidence,
+        poc_payload.get("verification_details"),
+    )
+
     return {
         "vulnerability_type": vulnerability_type,
         "severity": severity,
         "title": title,
-        "description": str(item.get("description") or "").strip() or None,
+        "description": description,
         "file_path": file_path or None,
         "line_start": int(line_start) if str(line_start or "").isdigit() else None,
         "line_end": int(line_end) if str(line_end or "").isdigit() else None,
-        "code_snippet": str(item.get("code_snippet") or "").strip() or None,
-        "is_verified": bool(item.get("is_verified")) or verdict in {"confirmed", "fixed", "wont_fix"},
+        "code_snippet": code_snippet,
+        "is_verified": is_verified,
         "ai_confidence": confidence,
         "status": status,
-        "suggestion": str(recommendation).strip() or None,
+        "suggestion": recommendation,
         "poc": {
-            "poc": item.get("poc"),
-            "source": item.get("source"),
-            "sink": item.get("sink"),
-            "impact": item.get("impact"),
-            "cwe_id": item.get("cwe_id"),
-            "cvss_score": item.get("cvss_score"),
+            **poc_payload,
+            "poc": poc_payload.get("poc", raw_poc if not isinstance(raw_poc, dict) else None),
+            "source": item.get("source") or poc_payload.get("source"),
+            "sink": item.get("sink") or poc_payload.get("sink"),
+            "impact": item.get("impact") or poc_payload.get("impact"),
+            "cwe_id": item.get("cwe_id") or poc_payload.get("cwe_id"),
+            "cvss_score": item.get("cvss_score") or poc_payload.get("cvss_score"),
             "verdict": verdict or None,
-            "verified_at": item.get("verified_at"),
+            "verified_at": item.get("verified_at") or poc_payload.get("verified_at"),
+            "matched_line": matched_line,
+            "context": context,
+            "evidence": evidence,
+            "validation": validation_payload,
+            "fix_code": fix_code,
+            "ai_explanation": ai_explanation,
+            "recommendation": recommendation,
+            "verification_method": verification_method,
+            "verification_details": verification_details,
         },
     }
 

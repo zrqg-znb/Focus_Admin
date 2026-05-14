@@ -244,6 +244,86 @@ function truncateMultiline(
 	return `${lines.slice(0, maxLines).join("\n")}\n…`;
 }
 
+function toRecord(value: unknown): Record<string, unknown> {
+	return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function firstNonEmptyText(...values: unknown[]): string {
+	for (const value of values) {
+		if (typeof value !== "string") {
+			continue;
+		}
+		const trimmed = value.trim();
+		if (trimmed) {
+			return trimmed;
+		}
+	}
+	return "";
+}
+
+function getFindingValidationPayload(
+	finding: AgentFinding,
+): Record<string, unknown> {
+	return toRecord(finding.validation);
+}
+
+function getFindingSuggestion(finding: AgentFinding): string {
+	const validation = getFindingValidationPayload(finding);
+	return firstNonEmptyText(
+		finding.suggestion,
+		finding.recommendation,
+		typeof validation.recommendation === "string"
+			? validation.recommendation
+			: "",
+		finding.fix_code,
+		finding.ai_explanation,
+		typeof validation.detailed_analysis === "string"
+			? validation.detailed_analysis
+			: "",
+		typeof validation.details === "string" ? validation.details : "",
+		"暂无修复建议",
+	);
+}
+
+function getFindingDescription(finding: AgentFinding): string {
+	const validation = getFindingValidationPayload(finding);
+	return firstNonEmptyText(
+		finding.description,
+		finding.ai_explanation,
+		typeof validation.detailed_analysis === "string"
+			? validation.detailed_analysis
+			: "",
+		typeof validation.details === "string" ? validation.details : "",
+		finding.verification_details,
+		"暂无详细描述",
+	);
+}
+
+function getFindingCodeSnippet(finding: AgentFinding): string {
+	const validation = getFindingValidationPayload(finding);
+	return firstNonEmptyText(
+		finding.code_snippet,
+		finding.matched_line,
+		finding.evidence,
+		typeof validation.matched_line === "string"
+			? validation.matched_line
+			: "",
+	);
+}
+
+function getFindingAiExplanation(finding: AgentFinding): string {
+	const validation = getFindingValidationPayload(finding);
+	return firstNonEmptyText(
+		finding.ai_explanation,
+		finding.verification_details,
+		typeof validation.detailed_analysis === "string"
+			? validation.detailed_analysis
+			: "",
+		typeof validation.details === "string" ? validation.details : "",
+		finding.evidence,
+	);
+}
+
 function stripCodeBlocksFromHtml(html: string): string {
 	if (!html.trim()) {
 		return html;
@@ -848,19 +928,12 @@ function buildTopFindings(
 				String(
 					finding.title || finding.vulnerability_type || `发现 ${index + 1}`,
 				).trim() || `发现 ${index + 1}`;
-			const description = String(
-				finding.description || finding.ai_explanation || "暂无详细描述",
-			).trim();
-			const suggestion = String(
-				finding.suggestion ||
-					finding.fix_code ||
-					finding.ai_explanation ||
-					"暂无修复建议",
-			).trim();
+			const description = getFindingDescription(finding);
+			const suggestion = getFindingSuggestion(finding);
 			const codeSnippet = options.includeCodeSnippets
-				? truncateMultiline(String(finding.code_snippet || "").trim(), 14, 1200)
+				? truncateMultiline(getFindingCodeSnippet(finding), 14, 1200)
 				: "";
-			const aiExplanation = String(finding.ai_explanation || "").trim();
+			const aiExplanation = getFindingAiExplanation(finding);
 
 			return {
 				id: String(finding.id || `finding-${index}`),

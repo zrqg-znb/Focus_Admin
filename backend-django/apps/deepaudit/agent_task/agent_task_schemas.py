@@ -106,6 +106,14 @@ class AgentFindingSchema(Schema):
     ai_confidence: float = 0.0
     status: str
     suggestion: str | None = None
+    recommendation: str | None = None
+    fix_code: str | None = None
+    ai_explanation: str | None = None
+    matched_line: str | None = None
+    evidence: str | None = None
+    validation: dict[str, Any] = Field(default_factory=dict)
+    verification_method: str | None = None
+    verification_details: str | None = None
     poc: dict[str, Any] = Field(default_factory=dict)
     sys_create_datetime: str | None = None
     sys_update_datetime: str | None = None
