@@ -16,7 +16,7 @@ import { CardList } from '#/components/card-list';
 import RoleFormModal from './role-form-modal.vue';
 
 const emit = defineEmits<{
-  select: [roleId: string | undefined];
+  select: [role: Role | undefined];
 }>();
 
 const roleList = ref<Role[]>([]);
@@ -40,15 +40,30 @@ const cardListOptions: CardListOptions<Role> = {
 async function fetchRoleList() {
   try {
     loading.value = true;
-    const response = await getRoleListApi({ page: 1, pageSize: 1000 });
+    const response = await getRoleListApi({
+      page: 1,
+      pageSize: 1000,
+      include_stats: false,
+    });
     roleList.value = response.items || [];
 
+    if (selectedRoleId.value) {
+      const selectedRole = roleList.value.find(
+        (role) => role.id === selectedRoleId.value,
+      );
+      if (selectedRole) {
+        emit('select', selectedRole);
+        return;
+      }
+      selectedRoleId.value = undefined;
+    }
+
     // 自动选中第一个角色
-    if (roleList.value.length > 0 && !selectedRoleId.value) {
+    if (roleList.value.length > 0) {
       const firstRole = roleList.value.at(0);
       if (firstRole) {
         selectedRoleId.value = firstRole.id;
-        emit('select', firstRole.id);
+        emit('select', firstRole);
       }
     }
   } finally {
@@ -61,7 +76,8 @@ async function fetchRoleList() {
  */
 function onRoleSelect(roleId: string | undefined) {
   selectedRoleId.value = roleId;
-  emit('select', roleId);
+  const role = roleList.value.find((item) => item.id === roleId);
+  emit('select', role);
 }
 
 /**

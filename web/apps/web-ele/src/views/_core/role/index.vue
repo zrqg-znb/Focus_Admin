@@ -4,9 +4,6 @@ import type { Role } from '#/api/core/role';
 import { ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
-import { $t } from '@vben/locales';
-
-import { getRoleDetailApi } from '#/api/core/role';
 
 import PermissionAssignPanel from './modules/permission-assign-panel.vue';
 import RoleList from './modules/role-list.vue';
@@ -19,18 +16,8 @@ const permissionPanelRef = ref();
 /**
  * 角色选择事件
  */
-async function onRoleSelect(roleId: string | undefined) {
-  if (roleId) {
-    try {
-      const role = await getRoleDetailApi(roleId);
-      currentRole.value = role;
-    } catch (error) {
-      console.error($t('role.permissions.getRoleDetailFailed'), error);
-      currentRole.value = undefined;
-    }
-  } else {
-    currentRole.value = undefined;
-  }
+function onRoleSelect(role: Role | undefined) {
+  currentRole.value = role;
 }
 
 /**

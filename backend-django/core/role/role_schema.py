@@ -145,21 +145,21 @@ class RoleSchemaOut(ModelSchema):
         """解析用户数量"""
         if hasattr(obj, 'user_count'):
             return obj.user_count
-        return obj.get_user_count()
+        return None
     
     @staticmethod
     def resolve_menu_count(obj):
         """解析菜单数量"""
         if hasattr(obj, 'menu_count'):
             return obj.menu_count
-        return obj.get_menu_count()
+        return None
     
     @staticmethod
     def resolve_permission_count(obj):
         """解析权限数量"""
         if hasattr(obj, 'permission_count'):
             return obj.permission_count
-        return obj.get_permission_count()
+        return None
     
     @staticmethod
     def resolve_can_delete(obj):
@@ -315,4 +315,3 @@ class MenuPermissionsOut(Schema):
     """菜单权限列表输出"""
     menu_id: str
     permissions: List[PermissionItemOut]
-

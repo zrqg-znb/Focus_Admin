@@ -37,7 +37,7 @@ export interface RoleCreateInput {
   group?: string[];
 }
 
-export interface RoleUpdateInput extends Partial<RoleCreateInput> {}
+export type RoleUpdateInput = Partial<RoleCreateInput>;
 
 export interface RoleBatchDeleteInput {
   ids: string[];
@@ -60,6 +60,7 @@ export interface RoleListParams {
   status?: boolean;
   role_type?: number;
   id?: string[];
+  include_stats?: boolean;
 }
 
 export interface RoleUser {
@@ -78,8 +79,29 @@ export interface PaginatedResponse<T> {
   pageSize: number;
 }
 
+export interface RolePermissionNode {
+  id: string;
+  name: string;
+  label?: string;
+  code?: string;
+  permission_type?: number;
+  permission_type_display?: string;
+  checked?: boolean;
+}
+
+export interface RoleMenuTreeNode {
+  id: string;
+  name: string;
+  label?: string;
+  parent_id?: string;
+  checked?: boolean;
+  permission_count?: number;
+  permissions?: RolePermissionNode[];
+  children?: RoleMenuTreeNode[];
+}
+
 export interface MenuPermissionTree {
-  menu_tree: any[];
+  menu_tree: RoleMenuTreeNode[];
   permission_tree: any[];
   selected_menu_ids: string[];
   selected_permission_ids: string[];
@@ -209,10 +231,7 @@ export async function updateRolePermissionsApi(
   roleId: string,
   data: { permission_ids: string[] },
 ) {
-  return requestClient.put(
-    `/api/core/role/${roleId}/permissions`,
-    data,
-  );
+  return requestClient.put(`/api/core/role/${roleId}/permissions`, data);
 }
 
 /**
@@ -222,10 +241,7 @@ export async function updateRoleMenusPermissionsApi(
   roleId: string,
   data: { menu_ids: string[]; permission_ids: string[] },
 ) {
-  return requestClient.put(
-    `/api/core/role/${roleId}/menus-permissions`,
-    data,
-  );
+  return requestClient.put(`/api/core/role/${roleId}/menus-permissions`, data);
 }
 
 /**
@@ -257,4 +273,3 @@ export async function getRolesByIds(ids: string[]) {
     params: { ids: ids.join(',') },
   });
 }
-

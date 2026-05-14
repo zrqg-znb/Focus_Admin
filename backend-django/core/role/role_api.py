@@ -6,7 +6,8 @@ Role API - 角色管理接口
 """
 from typing import List
 from django.shortcuts import get_object_or_404
-from django.db.models import Q, Count
+from django.db.models import Q, Count, OuterRef, Subquery, IntegerField, Value
+from django.db.models.functions import Coalesce
 from ninja import Router, Query
 from ninja.errors import HttpError
 from ninja.pagination import paginate
@@ -15,6 +16,7 @@ from common.fu_crud import create, retrieve, delete
 from common.fu_pagination import MyPagination
 from common.fu_schema import response_success
 from core.role.role_model import Role
+from core.user.user_model import User
 from core.role.role_schema import (
     RoleSchemaOut,
     RoleSchemaIn,
@@ -234,21 +236,60 @@ def patch_role(request, role_id: str, data: RoleSchemaPatch):
 
 @router.get("/role", response=List[RoleSchemaOut], summary="获取角色列表（分页）")
 @paginate(MyPagination)
-def list_role(request, filters: RoleFilters = Query(...)):
+def list_role(
+    request,
+    filters: RoleFilters = Query(...),
+    include_stats: bool = False,
+):
     """
     获取角色列表（分页）
     
     改进点：
-    - 使用 annotate 优化统计查询
+    - 默认使用轻量模式，避免分页列表触发重型统计聚合
+    - 仅在显式请求统计字段时才附加统计查询
     - 支持多种过滤条件
     """
     query_set = retrieve(request, Role, filters)
-    # 优化查询：添加统计信息
-    query_set = query_set.annotate(
-        user_count=Count('core_users', distinct=True),
-        menu_count=Count('menu', distinct=True),
-        permission_count=Count('permission', distinct=True)
-    )
+
+    if include_stats:
+        user_role_through = User.core_roles.through
+        role_menu_through = Role.menu.through
+        role_permission_through = Role.permission.through
+
+        user_count_subquery = (
+            user_role_through.objects.filter(role_id=OuterRef('pk'))
+            .values('role_id')
+            .annotate(count=Count('user_id'))
+            .values('count')[:1]
+        )
+        menu_count_subquery = (
+            role_menu_through.objects.filter(role_id=OuterRef('pk'))
+            .values('role_id')
+            .annotate(count=Count('menu_id'))
+            .values('count')[:1]
+        )
+        permission_count_subquery = (
+            role_permission_through.objects.filter(role_id=OuterRef('pk'))
+            .values('role_id')
+            .annotate(count=Count('permission_id'))
+            .values('count')[:1]
+        )
+
+        query_set = query_set.annotate(
+            user_count=Coalesce(
+                Subquery(user_count_subquery, output_field=IntegerField()),
+                Value(0),
+            ),
+            menu_count=Coalesce(
+                Subquery(menu_count_subquery, output_field=IntegerField()),
+                Value(0),
+            ),
+            permission_count=Coalesce(
+                Subquery(permission_count_subquery, output_field=IntegerField()),
+                Value(0),
+            ),
+        )
+
     return query_set
 
 
@@ -429,7 +470,10 @@ def get_role_menu_permission_tree(request, role_id: str):
     from core.menu.menu_model import Menu
     from core.permission.permission_model import Permission
     
-    role = get_object_or_404(Role, id=role_id)
+    role = get_object_or_404(
+        Role.objects.prefetch_related('menu', 'permission'),
+        id=role_id,
+    )
     
     # 获取所有菜单
     all_menus = Menu.objects.all().values('id', 'name', 'title', 'parent_id')
@@ -476,18 +520,20 @@ def get_role_menu_permission_tree(request, role_id: str):
     menu_map = {}
     root_menus = []
     
-    # 第一步：创建所有菜单节点（包含权限作为 children 的一部分）
+    # 第一步：创建所有菜单节点，并把权限挂到独立字段，避免前端重复请求
     for menu in all_menus:
         menu_id = str(menu['id'])
         parent_id = str(menu['parent_id']) if menu['parent_id'] else None
+        menu_permissions = permissions_by_menu.get(menu_id, [])
         
-        # 初始化菜单节点，children 为空，稍后填充
         menu_node = {
             'id': menu_id,
             'label': menu['title'] or menu['name'],
             'name': menu['name'],
             'parent_id': parent_id,
             'checked': menu_id in role_menu_ids,
+            'permission_count': len(menu_permissions),
+            'permissions': menu_permissions,
             'children': [],
         }
         menu_map[menu_id] = menu_node
@@ -504,12 +550,6 @@ def get_role_menu_permission_tree(request, role_id: str):
         else:
             # 根菜单
             root_menus.append(menu_map[menu_id])
-    
-    # 第三步：为叶子菜单（没有子菜单的菜单）添加权限
-    for menu_id, menu_node in menu_map.items():
-        # 如果菜单没有子菜单，添加该菜单的权限
-        if not menu_node['children']:
-            menu_node['children'] = permissions_by_menu.get(menu_id, [])
     
     return {
         'menu_tree': root_menus,
@@ -646,12 +686,13 @@ def get_role_menus(request, role_id: str):
         'id', 'name', 'title', 'parent_id'
     )
     
-    # 统计每个菜单的权限数量
-    permission_counts = {}
-    for menu in all_menus:
-        menu_id = str(menu['id'])
-        count = Permission.objects.filter(menu_id=menu_id, is_active=True).count()
-        permission_counts[menu_id] = count
+    # 使用一次聚合查询统计每个菜单的权限数量，避免 N+1 count
+    permission_counts = {
+        str(item['menu_id']): item['count']
+        for item in Permission.objects.filter(is_active=True)
+        .values('menu_id')
+        .annotate(count=Count('id'))
+    }
     
     # 构建菜单树
     menu_map = {}
@@ -785,4 +826,3 @@ def copy_role(request, role_id: str, new_name: str, new_code: str):
     new_role.dept.set(source_role.dept.all())
     
     return new_role
-

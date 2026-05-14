@@ -1,29 +1,42 @@
 <!-- eslint-disable vue/no-unused-vars -->
 <script lang="ts" setup>
-import { ref, watch, provide, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
-import { ElButton, ElCard, ElMessage, ElEmpty, ElSkeleton, ElSkeletonItem, ElScrollbar } from 'element-plus';
+import type {
+  Role,
+  RoleMenuTreeNode,
+  RolePermissionNode,
+} from '#/api/core/role';
+
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  provide,
+  ref,
+  watch,
+} from 'vue';
+
 import { $t } from '@vben/locales';
-import type { Role } from '#/api/core/role';
-import { getRoleMenusApi, getMenuPermissionsApi, updateRoleMenusPermissionsApi } from '#/api/core/role';
+
+import {
+  ElButton,
+  ElCard,
+  ElEmpty,
+  ElMessage,
+  ElScrollbar,
+  ElSkeleton,
+  ElSkeletonItem,
+} from 'element-plus';
+
+import {
+  getRoleMenuPermissionTreeApi,
+  updateRoleMenusPermissionsApi,
+} from '#/api/core/role';
+
 import RenderMenuTree from './render-menu-tree.vue';
 
-interface MenuNode {
-  id: string;
-  name: string;
-  label?: string;
-  parent_id?: string;
-  permission_count?: number;
-  children?: Array<MenuNode | PermissionNode>;
-}
-
-interface PermissionNode {
-    id: string;
-  name: string;
-  label?: string;
-  code?: string;
-  permission_type?: number;
-  permission_type_display?: string;
-}
+interface MenuNode extends RoleMenuTreeNode {}
+interface PermissionNode extends RolePermissionNode {}
 
 interface Props {
   role?: Role;
@@ -36,7 +49,6 @@ const emit = defineEmits<{
 
 const loading = ref(false);
 const saving = ref(false);
-const loadingPermissions = ref(false);
 const treeData = ref<MenuNode[]>([]);
 const selectedMenuIds = ref<Set<string>>(new Set());
 const selectedPermissions = ref<Set<string>>(new Set());
@@ -46,7 +58,9 @@ const menuPermissionsCache = ref<Record<string, PermissionNode[]>>({});
 
 const layoutContainerRef = ref<HTMLElement | null>(null);
 const scrollAreaHeight = ref(400);
-const menuScrollHeight = computed(() => Math.max(scrollAreaHeight.value - 56, 240));
+const menuScrollHeight = computed(() =>
+  Math.max(scrollAreaHeight.value - 56, 240),
+);
 
 function updateScrollAreaHeight() {
   nextTick(() => {
@@ -85,7 +99,7 @@ const totalMenuCount = computed(() => {
   let count = 0;
   function countMenus(nodes: Array<MenuNode | PermissionNode> | undefined) {
     if (!nodes) return;
-    nodes.forEach(node => {
+    nodes.forEach((node) => {
       if (!('code' in node)) {
         count++;
         if ((node as MenuNode).children) {
@@ -103,10 +117,10 @@ const totalMenuCount = computed(() => {
  */
 const currentMenuPermissions = computed(() => {
   if (!selectedMenuId.value) return {};
-  
+
   // 从缓存中获取权限
   const permissions = menuPermissionsCache.value[selectedMenuId.value] || [];
-  
+
   // 按类型分组
   const grouped: Record<number, PermissionNode[]> = {
     0: [],
@@ -114,38 +128,62 @@ const currentMenuPermissions = computed(() => {
     2: [],
     3: [],
   };
-  
-  permissions.forEach(perm => {
+
+  permissions.forEach((perm) => {
     const type = perm.permission_type ?? 3; // 默认为其他权限
     if (grouped[type]) {
       grouped[type].push(perm);
     }
   });
-  
+
   return grouped;
 });
 
+/**
+ * 规范化后端返回的菜单树，并预构建每个菜单的权限缓存
+ */
+function normalizeMenuTree(
+  menus: MenuNode[],
+  permissionCache: Record<string, PermissionNode[]>,
+): MenuNode[] {
+  return menus.map((menu) => {
+    const normalizedChildren = normalizeMenuTree(
+      menu.children || [],
+      permissionCache,
+    );
+    const permissions = menu.permissions || [];
+
+    permissionCache[menu.id] = permissions;
+
+    return {
+      ...menu,
+      permission_count: permissions.length,
+      permissions,
+      children: normalizedChildren,
+    };
+  });
+}
 
 /**
- * 加载菜单列表（不包含权限）
+ * 加载菜单和权限树
  */
 async function loadMenuTree() {
   if (!props.role?.id) return;
 
   try {
     loading.value = true;
-    const data = await getRoleMenusApi(props.role.id);
-    
-    // 使用后端返回的菜单树结构
-    treeData.value = data.menu_tree || [];
+    const data = await getRoleMenuPermissionTreeApi(props.role.id);
+    const permissionCache: Record<string, PermissionNode[]> = {};
+
+    treeData.value = normalizeMenuTree(data.menu_tree || [], permissionCache);
+    menuPermissionsCache.value = permissionCache;
 
     // 初始化已选菜单
     const selectedMenuIdsList = data.selected_menu_ids || [];
     selectedMenuIds.value = new Set(selectedMenuIdsList);
 
-    // 清空权限缓存和选中状态
-    menuPermissionsCache.value = {};
-    selectedPermissions.value.clear();
+    // 初始化已选权限
+    selectedPermissions.value = new Set(data.selected_permission_ids || []);
 
     // 默认展开全部菜单
     expandAllMenus();
@@ -159,46 +197,14 @@ async function loadMenuTree() {
 }
 
 /**
- * 加载指定菜单的权限
- */
-async function loadMenuPermissions(menuId: string) {
-  if (!props.role?.id) return;
-  
-  // 如果已经缓存，直接返回
-  if (menuPermissionsCache.value[menuId]) {
-    return;
-  }
-
-  try {
-    loadingPermissions.value = true;
-    const data = await getMenuPermissionsApi(props.role.id, menuId);
-    
-    // 缓存权限数据
-    menuPermissionsCache.value[menuId] = data.permissions || [];
-    
-    // 初始化已选中的权限
-    data.permissions.forEach((perm: any) => {
-      if (perm.checked) {
-        selectedPermissions.value.add(perm.id);
-      }
-    });
-  } catch (error) {
-    console.error($t('role.permissions.loadPermissionsFailed'), error);
-    ElMessage.error($t('role.permissions.loadPermissionsFailed'));
-  } finally {
-    loadingPermissions.value = false;
-  }
-}
-
-/**
  * 递归获取菜单的所有子孙菜单ID
  */
 function getDescendantMenuIds(menuId: string): string[] {
   const ids: string[] = [];
-  
+
   function findAndCollect(nodes: Array<MenuNode | PermissionNode> | undefined) {
     if (!nodes) return;
-    nodes.forEach(node => {
+    nodes.forEach((node) => {
       if (!('code' in node)) {
         const menu = node as MenuNode;
         if (menu.id === menuId) {
@@ -211,10 +217,12 @@ function getDescendantMenuIds(menuId: string): string[] {
       }
     });
   }
-  
-  function collectDescendants(nodes: Array<MenuNode | PermissionNode> | undefined) {
+
+  function collectDescendants(
+    nodes: Array<MenuNode | PermissionNode> | undefined,
+  ) {
     if (!nodes) return;
-    nodes.forEach(node => {
+    nodes.forEach((node) => {
       if (!('code' in node)) {
         const menu = node as MenuNode;
         ids.push(menu.id);
@@ -222,7 +230,7 @@ function getDescendantMenuIds(menuId: string): string[] {
       }
     });
   }
-  
+
   findAndCollect(treeData.value);
   return ids;
 }
@@ -232,10 +240,14 @@ function getDescendantMenuIds(menuId: string): string[] {
  */
 function getAncestorMenuIds(menuId: string): string[] {
   const ancestors: string[] = [];
-  
-  function findParent(nodes: Array<MenuNode | PermissionNode> | undefined, targetId: string, parentId?: string): boolean {
+
+  function findParent(
+    nodes: Array<MenuNode | PermissionNode> | undefined,
+    targetId: string,
+    parentId?: string,
+  ): boolean {
     if (!nodes) return false;
-    
+
     for (const node of nodes) {
       if (!('code' in node)) {
         const menu = node as MenuNode;
@@ -254,7 +266,7 @@ function getAncestorMenuIds(menuId: string): string[] {
     }
     return false;
   }
-  
+
   findParent(treeData.value, menuId);
   return ancestors;
 }
@@ -264,7 +276,7 @@ function getAncestorMenuIds(menuId: string): string[] {
  */
 function hasSelectedDescendants(menuId: string): boolean {
   const descendants = getDescendantMenuIds(menuId);
-  return descendants.some(id => selectedMenuIds.value.has(id));
+  return descendants.some((id) => selectedMenuIds.value.has(id));
 }
 
 /**
@@ -275,17 +287,17 @@ function toggleMenu(menuId: string) {
     // 取消选中：取消该菜单及其所有子孙菜单
     selectedMenuIds.value.delete(menuId);
     const descendants = getDescendantMenuIds(menuId);
-    descendants.forEach(id => selectedMenuIds.value.delete(id));
-    
+    descendants.forEach((id) => selectedMenuIds.value.delete(id));
+
     // 检查父级菜单是否还应该保持选中
     const ancestors = getAncestorMenuIds(menuId);
-    ancestors.forEach(ancestorId => {
+    ancestors.forEach((ancestorId) => {
       // 如果父级菜单没有任何子节点被选中，则取消选中父级
       if (!hasSelectedDescendants(ancestorId)) {
         selectedMenuIds.value.delete(ancestorId);
       }
     });
-    
+
     // 如果取消选中的菜单正好是当前显示权限的菜单，清除右侧显示
     if (selectedMenuId.value === menuId) {
       selectedMenuId.value = undefined;
@@ -294,11 +306,11 @@ function toggleMenu(menuId: string) {
     // 选中：选中该菜单及其所有子孙菜单和所有父级菜单
     selectedMenuIds.value.add(menuId);
     const descendants = getDescendantMenuIds(menuId);
-    descendants.forEach(id => selectedMenuIds.value.add(id));
-    
+    descendants.forEach((id) => selectedMenuIds.value.add(id));
+
     // 自动选中所有父级菜单
     const ancestors = getAncestorMenuIds(menuId);
-    ancestors.forEach(id => selectedMenuIds.value.add(id));
+    ancestors.forEach((id) => selectedMenuIds.value.add(id));
   }
   updateScrollAreaHeight();
 }
@@ -306,10 +318,8 @@ function toggleMenu(menuId: string) {
 /**
  * 选择菜单（用于显示权限）
  */
-async function selectMenu(menuId: string) {
+function selectMenu(menuId: string) {
   selectedMenuId.value = menuId;
-  // 加载该菜单的权限
-  await loadMenuPermissions(menuId);
   updateScrollAreaHeight();
 }
 
@@ -342,7 +352,7 @@ function togglePermission(permissionId: string) {
 function selectAllMenus() {
   function collectMenus(nodes: Array<MenuNode | PermissionNode> | undefined) {
     if (!nodes) return;
-    nodes.forEach(node => {
+    nodes.forEach((node) => {
       if (!('code' in node)) {
         // 这是菜单项
         selectedMenuIds.value.add(node.id);
@@ -368,7 +378,7 @@ function unselectAllMenus() {
 function selectPermissionsByType(type: number) {
   if (!selectedMenuId.value) return;
   const permissions = currentMenuPermissions.value[type] || [];
-  permissions.forEach(perm => {
+  permissions.forEach((perm) => {
     selectedPermissions.value.add(perm.id);
   });
 }
@@ -379,7 +389,7 @@ function selectPermissionsByType(type: number) {
 function unselectPermissionsByType(type: number) {
   if (!selectedMenuId.value) return;
   const permissions = currentMenuPermissions.value[type] || [];
-  permissions.forEach(perm => {
+  permissions.forEach((perm) => {
     selectedPermissions.value.delete(perm.id);
   });
 }
@@ -390,7 +400,7 @@ function unselectPermissionsByType(type: number) {
 function expandAllMenus() {
   function expandAll(nodes: Array<MenuNode | PermissionNode> | undefined) {
     if (!nodes) return;
-    nodes.forEach(node => {
+    nodes.forEach((node) => {
       if (!('code' in node)) {
         // 这是菜单项
         expandedMenuIds.value.add(node.id);
@@ -419,22 +429,18 @@ async function saveSelection() {
 
   try {
     saving.value = true;
-    const menuIds = Array.from(selectedMenuIds.value);
-    const permissionIds = Array.from(selectedPermissions.value);
-    
-    console.log('保存 - 选中的菜单:', menuIds);
-    console.log('保存 - 选中的权限:', permissionIds);
-    
+    const menuIds = [...selectedMenuIds.value];
+    const permissionIds = [...selectedPermissions.value];
+
     // 获取已加载权限的菜单ID列表作为更新范围
     const scopeMenuIds = Object.keys(menuPermissionsCache.value);
-    console.log('保存 - 权限更新范围:', scopeMenuIds);
 
     await updateRoleMenusPermissionsApi(props.role.id, {
       menu_ids: menuIds,
       permission_ids: permissionIds,
       scope_menu_ids: scopeMenuIds,
     });
-    
+
     ElMessage.success($t('role.permissions.saveSuccess'));
     emit('success');
   } catch (error) {
@@ -475,10 +481,11 @@ provide('expandedMenuIds', expandedMenuIds);
 </script>
 
 <template>
-  <ElCard 
-    :class="['h-full', role ? 'flex flex-col' : 'empty-state-card']" 
-    shadow="never" 
-    style="border: none;" 
+  <ElCard
+    class="h-full"
+    :class="[role ? 'flex flex-col' : 'empty-state-card']"
+    shadow="never"
+    style="border: none"
     :body-style="!role ? { height: '100%', padding: 0 } : { padding: '6px' }"
   >
     <!-- 未选择角色时显示空状态 -->
@@ -488,9 +495,11 @@ provide('expandedMenuIds', expandedMenuIds);
 
     <!-- 角色信息 -->
     <template v-if="role" #header>
-      <div class="flex items-center justify-between w-full">
+      <div class="flex w-full items-center justify-between">
         <div class="flex items-center gap-4">
-          <span class="text-base font-medium">{{ $t('role.permissions.title') }}</span>
+          <span class="text-base font-medium">{{
+            $t('role.permissions.title')
+          }}</span>
           <span class="text-sm text-gray-500">
             {{ role.name }} ({{ role.code }})
           </span>
@@ -510,11 +519,10 @@ provide('expandedMenuIds', expandedMenuIds);
     </template>
 
     <!-- 主要内容 -->
-    <div v-if="role" class="flex-1 overflow-hidden flex flex-col">
-
+    <div v-if="role" class="flex flex-1 flex-col overflow-hidden">
       <!-- 加载状态 - 骨架屏 -->
       <div v-if="loading" class="flex-1 p-3">
-        <div class="flex gap-3 h-full">
+        <div class="flex h-full gap-3">
           <!-- 左侧：菜单列表骨架 -->
           <div class="w-64 pr-3">
             <ElCard
@@ -526,16 +534,28 @@ provide('expandedMenuIds', expandedMenuIds);
                   <ElSkeleton :loading="true" animated :throttle="0">
                     <template #template>
                       <div class="flex items-center gap-2">
-                        <ElSkeletonItem variant="text" style="width: 40px; height: 16px" />
-                        <ElSkeletonItem variant="text" style="width: 40px; height: 16px" />
+                        <ElSkeletonItem
+                          variant="text"
+                          style="width: 40px; height: 16px"
+                        />
+                        <ElSkeletonItem
+                          variant="text"
+                          style="width: 40px; height: 16px"
+                        />
                       </div>
                     </template>
                   </ElSkeleton>
                   <ElSkeleton :loading="true" animated :throttle="0">
                     <template #template>
                       <div class="flex gap-1">
-                        <ElSkeletonItem variant="text" style="width: 40px; height: 16px" />
-                        <ElSkeletonItem variant="text" style="width: 40px; height: 16px" />
+                        <ElSkeletonItem
+                          variant="text"
+                          style="width: 40px; height: 16px"
+                        />
+                        <ElSkeletonItem
+                          variant="text"
+                          style="width: 40px; height: 16px"
+                        />
                       </div>
                     </template>
                   </ElSkeleton>
@@ -544,10 +564,26 @@ provide('expandedMenuIds', expandedMenuIds);
               <ElSkeleton :loading="true" animated :rows="10" :throttle="0">
                 <template #template>
                   <div class="space-y-2">
-                    <div v-for="i in 10" :key="i" class="flex items-center gap-2 h-[42px]">
-                      <ElSkeletonItem variant="text" style="width: 16px; height: 16px; border-radius: 4px" />
-                      <ElSkeletonItem variant="text" style="width: 16px; height: 16px; border-radius: 4px" />
-                      <ElSkeletonItem variant="text" :style="{ width: `${50 + Math.random() * 40}%`, height: '16px' }" />
+                    <div
+                      v-for="i in 10"
+                      :key="i"
+                      class="flex h-[42px] items-center gap-2"
+                    >
+                      <ElSkeletonItem
+                        variant="text"
+                        style="width: 16px; height: 16px; border-radius: 4px"
+                      />
+                      <ElSkeletonItem
+                        variant="text"
+                        style="width: 16px; height: 16px; border-radius: 4px"
+                      />
+                      <ElSkeletonItem
+                        variant="text"
+                        :style="{
+                          width: `${50 + Math.random() * 40}%`,
+                          height: '16px',
+                        }"
+                      />
                       <div class="flex-1"></div>
                       <!-- <ElSkeletonItem variant="text" style="width: 50px; height: 14px" /> -->
                     </div>
@@ -558,7 +594,7 @@ provide('expandedMenuIds', expandedMenuIds);
           </div>
 
           <!-- 右侧：4个权限卡片骨架 -->
-          <div class="flex-1 grid grid-cols-4 gap-4">
+          <div class="grid flex-1 grid-cols-4 gap-4">
             <ElCard
               v-for="i in 4"
               :key="i"
@@ -570,12 +606,24 @@ provide('expandedMenuIds', expandedMenuIds);
                   <template #template>
                     <div class="flex items-center justify-between">
                       <div class="flex items-center gap-2">
-                        <ElSkeletonItem variant="text" style="width: 35px; height: 16px" />
-                        <ElSkeletonItem variant="text" style="width: 35px; height: 16px" />
+                        <ElSkeletonItem
+                          variant="text"
+                          style="width: 35px; height: 16px"
+                        />
+                        <ElSkeletonItem
+                          variant="text"
+                          style="width: 35px; height: 16px"
+                        />
                       </div>
                       <div class="flex gap-1">
-                        <ElSkeletonItem variant="text" style="width: 35px; height: 16px" />
-                        <ElSkeletonItem variant="text" style="width: 35px; height: 16px" />
+                        <ElSkeletonItem
+                          variant="text"
+                          style="width: 35px; height: 16px"
+                        />
+                        <ElSkeletonItem
+                          variant="text"
+                          style="width: 35px; height: 16px"
+                        />
                       </div>
                     </div>
                   </template>
@@ -584,9 +632,22 @@ provide('expandedMenuIds', expandedMenuIds);
               <ElSkeleton :loading="true" animated :rows="8" :throttle="0">
                 <template #template>
                   <div class="space-y-2">
-                    <div v-for="j in 8" :key="j" class="flex items-center gap-2 h-[36px]">
-                      <ElSkeletonItem variant="text" style="width: 14px; height: 14px; border-radius: 3px" />
-                      <ElSkeletonItem variant="text" :style="{ width: `${45 + Math.random() * 40}%`, height: '14px' }" />
+                    <div
+                      v-for="j in 8"
+                      :key="j"
+                      class="flex h-[36px] items-center gap-2"
+                    >
+                      <ElSkeletonItem
+                        variant="text"
+                        style="width: 14px; height: 14px; border-radius: 3px"
+                      />
+                      <ElSkeletonItem
+                        variant="text"
+                        :style="{
+                          width: `${45 + Math.random() * 40}%`,
+                          height: '14px',
+                        }"
+                      />
                     </div>
                   </div>
                 </template>
@@ -596,22 +657,21 @@ provide('expandedMenuIds', expandedMenuIds);
         </div>
       </div>
 
-      <div v-else-if="treeData.length === 0" class="flex-1 flex items-center justify-center">
+      <div
+        v-else-if="treeData.length === 0"
+        class="flex flex-1 items-center justify-center"
+      >
         <ElEmpty :description="$t('role.permissions.noPermissionData')" />
       </div>
 
       <!-- 左右分栏布局 -->
-      <div
-        v-else
-        ref="layoutContainerRef"
-        class="flex-1 flex p-3 min-h-0"
-      >
+      <div v-else ref="layoutContainerRef" class="flex min-h-0 flex-1 p-3">
         <!-- 左侧：菜单树 -->
-        <div class="w-64 pr-3 min-h-0">
+        <div class="min-h-0 w-64 pr-3">
           <ElCard
             class="flex flex-col border border-[var(--el-border-color)]"
             shadow="never"
-            :style="{ height: scrollAreaHeight + 'px' }"
+            :style="{ height: `${scrollAreaHeight}px` }"
             :body-style="{
               padding: '0',
               display: 'flex',
@@ -622,7 +682,9 @@ provide('expandedMenuIds', expandedMenuIds);
             <template #header>
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <span class="text-sm font-medium text-gray-600">{{ $t('role.permissions.menuList') }}</span>
+                  <span class="text-sm font-medium text-gray-600">{{
+                    $t('role.permissions.menuList')
+                  }}</span>
                   <span class="text-xs text-gray-400">
                     ({{ selectedMenuIds.size }}/{{ totalMenuCount }})
                   </span>
@@ -659,96 +721,106 @@ provide('expandedMenuIds', expandedMenuIds);
         </div>
 
         <!-- 右侧：权限列表 -->
-        <div class="flex-1 flex flex-col min-h-0">
-            <div
-              v-if="!selectedMenuId"
-              class="flex items-center justify-center"
-              :style="{ minHeight: menuScrollHeight + 'px' }"
-            >
-              <ElEmpty :description="$t('role.permissions.selectMenuPrompt')" />
-            </div>
-            <div v-else class="grid grid-cols-4 gap-2 pr-2 pb-2">
-              <!-- 4列显示：按钮权限、API权限、数据权限、其他权限 -->
-              <template v-for="type in [0, 1, 2, 3]" :key="type">
-                <ElCard
-                  class="flex flex-col border border-[var(--el-border-color)]"
-                  shadow="never"
-                  :style="{ height: scrollAreaHeight + 'px' }"
-                  :body-style="{
-                    padding: '0',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    height: '100%',
-                  }"
-                >
-                  <!-- 权限类型标题 -->
-                  <template #header>
-                    <div class="flex items-center justify-between gap-2">
-                      <div class="flex items-center gap-2">
-                        <span class="text-xs font-medium text-gray-700">
-                          {{ getPermissionTypeName(type) }}
-                        </span>
-                        <span class="text-xs text-gray-400">
-                          ({{ currentMenuPermissions[type]?.filter((p: PermissionNode) => selectedPermissions.has(p.id)).length || 0 }}/{{ currentMenuPermissions[type]?.length || 0 }})
-                        </span>
-                      </div>
-                      <div class="flex flex-shrink-0">
-                        <ElButton
-                          link
-                          type="primary"
-                          size="small"
-                          @click="selectPermissionsByType(type)"
+        <div class="flex min-h-0 flex-1 flex-col">
+          <div
+            v-if="!selectedMenuId"
+            class="flex items-center justify-center"
+            :style="{ minHeight: `${menuScrollHeight}px` }"
+          >
+            <ElEmpty :description="$t('role.permissions.selectMenuPrompt')" />
+          </div>
+          <div v-else class="grid grid-cols-4 gap-2 pb-2 pr-2">
+            <!-- 4列显示：按钮权限、API权限、数据权限、其他权限 -->
+            <template v-for="type in [0, 1, 2, 3]" :key="type">
+              <ElCard
+                class="flex flex-col border border-[var(--el-border-color)]"
+                shadow="never"
+                :style="{ height: `${scrollAreaHeight}px` }"
+                :body-style="{
+                  padding: '0',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  height: '100%',
+                }"
+              >
+                <!-- 权限类型标题 -->
+                <template #header>
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="flex items-center gap-2">
+                      <span class="text-xs font-medium text-gray-700">
+                        {{ getPermissionTypeName(type) }}
+                      </span>
+                      <span class="text-xs text-gray-400">
+                        ({{
+                          currentMenuPermissions[type]?.filter(
+                            (p: PermissionNode) =>
+                              selectedPermissions.has(p.id),
+                          ).length || 0
+                        }}/{{ currentMenuPermissions[type]?.length || 0 }})
+                      </span>
+                    </div>
+                    <div class="flex flex-shrink-0">
+                      <ElButton
+                        link
+                        type="primary"
+                        size="small"
+                        @click="selectPermissionsByType(type)"
+                      >
+                        {{ $t('role.permissions.selectAll') }}
+                      </ElButton>
+                      <ElButton
+                        link
+                        type="primary"
+                        size="small"
+                        @click="unselectPermissionsByType(type)"
+                      >
+                        {{ $t('role.permissions.unselectAll') }}
+                      </ElButton>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- 权限列表 -->
+                <div class="min-h-0 flex-1">
+                  <ElScrollbar style="height: 100%">
+                    <div
+                      v-if="
+                        !currentMenuPermissions[type] ||
+                        currentMenuPermissions[type].length === 0
+                      "
+                      class="flex h-20 items-center justify-center"
+                    >
+                      <span class="text-xs text-gray-400">{{
+                        $t('role.permissions.noPermissions')
+                      }}</span>
+                    </div>
+                    <div v-else class="space-y-1 p-2">
+                      <div
+                        v-for="permission in currentMenuPermissions[type]"
+                        :key="permission.id"
+                        class="flex h-[36px] cursor-pointer items-center rounded-[6px] px-2 transition-colors hover:bg-[var(--el-fill-color-light)]"
+                        @click="togglePermission(permission.id)"
+                      >
+                        <input
+                          type="checkbox"
+                          :checked="selectedPermissions.has(permission.id)"
+                          class="mr-2 size-3.5 flex-shrink-0 cursor-pointer rounded border-gray-300 transition-colors"
+                          @change="togglePermission(permission.id)"
+                          @click.stop
+                        />
+                        <span
+                          class="flex-1 truncate text-xs"
+                          :title="permission.label || permission.name"
                         >
-                          {{ $t('role.permissions.selectAll') }}
-                        </ElButton>
-                        <ElButton
-                          link
-                          type="primary"
-                          size="small"
-                          @click="unselectPermissionsByType(type)"
-                        >
-                          {{ $t('role.permissions.unselectAll') }}
-                        </ElButton>
+                          {{ permission.label || permission.name }}
+                        </span>
                       </div>
                     </div>
-                  </template>
-
-                  <!-- 权限列表 -->
-                  <div class="flex-1 min-h-0">
-                    <ElScrollbar style="height: 100%">
-                      <div v-if="loadingPermissions" class="flex items-center justify-center h-20">
-                        <span class="text-xs text-gray-400">{{ $t('role.permissions.loading') }}</span>
-                      </div>
-                      <div v-else-if="!currentMenuPermissions[type] || currentMenuPermissions[type].length === 0" class="flex items-center justify-center h-20">
-                        <span class="text-xs text-gray-400">{{ $t('role.permissions.noPermissions') }}</span>
-                      </div>
-                      <div v-else class="space-y-1 p-2">
-                        <div
-                          v-for="permission in currentMenuPermissions[type]"
-                          :key="permission.id"
-                          class="flex h-[36px] cursor-pointer items-center rounded-[6px] px-2 transition-colors hover:bg-[var(--el-fill-color-light)]"
-                          @click="togglePermission(permission.id)"
-                        >
-                          <input
-                            type="checkbox"
-                            :checked="selectedPermissions.has(permission.id)"
-                            class="size-3.5 cursor-pointer rounded border-gray-300 transition-colors mr-2 flex-shrink-0"
-                            @change="togglePermission(permission.id)"
-                            @click.stop
-                          />
-                          <span
-                            class="truncate text-xs flex-1"
-                            :title="permission.label || permission.name"
-                          >
-                            {{ permission.label || permission.name }}
-                          </span>
-                        </div>
-                      </div>
-                    </ElScrollbar>
-                  </div>
-                </ElCard>
-              </template>
-            </div>
+                  </ElScrollbar>
+                </div>
+              </ElCard>
+            </template>
+          </div>
         </div>
       </div>
     </div>

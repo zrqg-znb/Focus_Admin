@@ -63,6 +63,10 @@ def _env_list(name: str, default: list[str] | None = None) -> list[str]:
 # SECURITY WARNING: don't run with debug turned on in production!
 CURRENT_ENV = _env_str('ZQ_ENV', str(globals().get('ENV', 'dev'))).lower() or 'dev'
 DEBUG = _env_bool('DEBUG', CURRENT_ENV != 'prd')
+DATABASE_CONN_MAX_AGE = _env_int(
+    'DATABASE_CONN_MAX_AGE',
+    120 if CURRENT_ENV == 'prd' else 60,
+)
 
 # 从环境变量读取，如果没有则使用默认值，但生产环境必须设置
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-y(df$uwnha$0nrkmh5g(ri^=^#3qru3bf8$pw+t6e_wb*op7gj')
@@ -166,7 +170,8 @@ if DATABASE_TYPE == "MYSQL":
             "USER": DATABASE_USER,
             "PASSWORD": DATABASE_PASSWORD,
             "NAME": DATABASE_NAME,
-            "CONN_MAX_AGE": 0,  # 每次请求后关闭连接，避免长时间连接被MySQL服务器关闭
+            # 允许通过环境变量复用数据库连接，减少角色页这类多接口页面的建连开销。
+            "CONN_MAX_AGE": DATABASE_CONN_MAX_AGE,
             "CONN_HEALTH_CHECKS": True,
             "OPTIONS": {
                 "connect_timeout": 10,  # 连接超时
