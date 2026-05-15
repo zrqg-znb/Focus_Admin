@@ -13,6 +13,7 @@ from apps.auto_test_report.auto_test_report_model import (
     DOMAIN_VEHICLE,
     RESULT_FAILED,
     RESULT_SUCCESS,
+    RESULT_SKIP,
     RESULT_TIMEOUT,
 )
 from apps.auto_test_report.auto_test_report_schemas import (
@@ -132,7 +133,7 @@ class AutoTestReportOverviewTests(TestCase):
         self.assertEqual(row.timeout_count, 1)
         self.assertEqual(overview.summary.abnormal_vehicle_count, 1)
 
-    def test_overview_marks_partial_upload_vehicle_as_abnormal(self):
+    def test_overview_ignores_unuploaded_cases_when_calculating_abnormality(self):
         vehicle = self._create_vehicle('partial')
         cases = self._create_cases(vehicle, 2)
         self._report_result(vehicle, cases[0], RESULT_SUCCESS)
@@ -140,10 +141,11 @@ class AutoTestReportOverviewTests(TestCase):
         overview = self._build_overview()
         row = self._get_row(overview, vehicle)
 
-        self.assertTrue(row.is_abnormal)
+        self.assertFalse(row.is_abnormal)
         self.assertEqual(row.success_count, 1)
-        self.assertEqual(row.skip_count, 1)
-        self.assertEqual(overview.summary.abnormal_vehicle_count, 1)
+        self.assertEqual(row.skip_count, 0)
+        self.assertEqual(row.total_count, 1)
+        self.assertEqual(overview.summary.abnormal_vehicle_count, 0)
 
     def test_overview_marks_no_upload_vehicle_as_abnormal(self):
         vehicle = self._create_vehicle('no-upload')
@@ -154,24 +156,26 @@ class AutoTestReportOverviewTests(TestCase):
 
         self.assertTrue(row.is_abnormal)
         self.assertEqual(row.success_count, 0)
-        self.assertEqual(row.skip_count, 2)
+        self.assertEqual(row.skip_count, 0)
+        self.assertEqual(row.total_count, 0)
         self.assertEqual(overview.summary.abnormal_vehicle_count, 1)
 
-    def test_overview_abnormal_only_includes_partial_and_no_upload_vehicles(self):
+    def test_overview_abnormal_only_includes_explicit_skip_no_upload_and_failed_vehicles(self):
         success_vehicle = self._create_vehicle('all-success')
-        partial_vehicle = self._create_vehicle('partial-only')
+        skip_vehicle = self._create_vehicle('skip-only')
         no_upload_vehicle = self._create_vehicle('no-upload-only')
         failed_vehicle = self._create_vehicle('failed-only')
 
         success_cases = self._create_cases(success_vehicle, 2)
-        partial_cases = self._create_cases(partial_vehicle, 2)
+        skip_cases = self._create_cases(skip_vehicle, 2)
         self._create_cases(no_upload_vehicle, 2)
         failed_cases = self._create_cases(failed_vehicle, 2)
 
         for index, case in enumerate(success_cases):
             self._report_result(success_vehicle, case, RESULT_SUCCESS, minutes_offset=index)
 
-        self._report_result(partial_vehicle, partial_cases[0], RESULT_SUCCESS)
+        self._report_result(skip_vehicle, skip_cases[0], RESULT_SUCCESS)
+        self._report_result(skip_vehicle, skip_cases[1], RESULT_SKIP, minutes_offset=1)
         self._report_result(failed_vehicle, failed_cases[0], RESULT_SUCCESS)
         self._report_result(failed_vehicle, failed_cases[1], RESULT_FAILED, minutes_offset=1)
 
@@ -181,7 +185,7 @@ class AutoTestReportOverviewTests(TestCase):
         self.assertSetEqual(
             vehicle_codes,
             {
-                partial_vehicle.vehicle_code,
+                skip_vehicle.vehicle_code,
                 no_upload_vehicle.vehicle_code,
                 failed_vehicle.vehicle_code,
             },
@@ -189,7 +193,7 @@ class AutoTestReportOverviewTests(TestCase):
         self.assertEqual(overview.summary.vehicle_count, 3)
         self.assertEqual(overview.summary.abnormal_vehicle_count, 3)
 
-    def test_vehicle_domain_report_uses_viu_code_to_match_cases(self):
+    def test_vehicle_domain_report_supports_skip_and_row_errors(self):
         vehicle_platform = McuPlatform.objects.create(
             name='Vehicle Platform',
             version_code='vehicle-platform',
@@ -202,7 +206,7 @@ class AutoTestReportOverviewTests(TestCase):
             vehicle_code='VEH-VIU',
             cdc_platform='CDC',
             execution_machine='machine-viu',
-            viu_codes=['viu0', 'viu1'],
+            viu_codes=['viu0', 'viu1', 'viu2'],
             is_active=True,
         )
         case0 = AutoTestCase.objects.create(
@@ -217,6 +221,13 @@ class AutoTestReportOverviewTests(TestCase):
             viu_code='viu1',
             case_no='CASE-001',
             case_name='Case 2',
+            is_active=True,
+        )
+        AutoTestCase.objects.create(
+            vehicle=vehicle,
+            viu_code='viu0',
+            case_no='CASE-002',
+            case_name='Case 3',
             is_active=True,
         )
 
@@ -235,14 +246,24 @@ class AutoTestReportOverviewTests(TestCase):
                     viu_code='viu1',
                     case_no='CASE-001',
                     start_time=timezone.now() + timedelta(minutes=1),
-                    duration_seconds=90,
-                    result=RESULT_FAILED,
+                    duration_seconds=0,
+                    result=RESULT_SKIP,
+                ),
+                ReportResultItemIn(
+                    viu_code='viu2',
+                    case_no='CASE-404',
+                    start_time=timezone.now() + timedelta(minutes=2),
+                    duration_seconds=30,
+                    result=RESULT_SUCCESS,
                 ),
             ],
         )
 
         result = services.report_daily_results(payload)
         self.assertEqual(result['created_count'], 2)
+        self.assertEqual(result['ignored_count'], 1)
+        self.assertEqual(len(result['errors']), 1)
+        self.assertIn('未找到匹配用例', result['errors'][0].message)
 
         items = services.list_daily_results(
             vehicle.id,
@@ -251,6 +272,7 @@ class AutoTestReportOverviewTests(TestCase):
         )
         self.assertEqual(len(items), 2)
         self.assertEqual({item.viu_code for item in items}, {'viu0', 'viu1'})
+        self.assertEqual({item.status for item in items}, {RESULT_SUCCESS, RESULT_SKIP})
 
         summary = services.get_daily_summary(
             vehicle.id,
@@ -258,7 +280,9 @@ class AutoTestReportOverviewTests(TestCase):
             DOMAIN_VEHICLE,
         )
         self.assertEqual(summary.total_count, 2)
-        self.assertEqual(summary.failed_count, 1)
+        self.assertEqual(summary.success_count, 1)
+        self.assertEqual(summary.skip_count, 1)
+        self.assertEqual(summary.failed_count, 0)
 
         overview = services.get_daily_overview(
             DailyOverviewQuery(
@@ -268,7 +292,8 @@ class AutoTestReportOverviewTests(TestCase):
         )
         row = self._get_row(overview, vehicle)
         self.assertEqual(row.total_count, 2)
-        self.assertEqual(row.failed_count, 1)
+        self.assertEqual(row.success_count, 1)
+        self.assertEqual(row.skip_count, 1)
         self.assertTrue(row.is_abnormal)
 
         self.assertEqual(case0.viu_code, 'viu0')

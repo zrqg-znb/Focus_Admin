@@ -223,9 +223,9 @@ erDiagram
 在 `backend-django/apps/auto_test_report/auto_test_report_services.py` 中，上报流程会：
 
 1. 根据 `vehicle_code` 找到有效车型
-2. 读取该车型下全部有效用例
-3. 校验每条上报结果中的 `case_no`
-4. 为每条结果创建 `DailyExecutionResult`
+2. 逐条校验上报结果中的 `case_no`、`result`、`viu_code`
+3. 为校验通过的结果创建 `DailyExecutionResult`
+4. 收集失败行到 `errors[]`，其余结果继续落库
 5. 调用 `recalculate_daily_batch`
 
 这说明系统不是直接覆盖结果，而是按上报事件追加结果，再重新计算当前视图。
@@ -234,15 +234,15 @@ erDiagram
 
 汇总逻辑会：
 
-1. 读取该车型下所有启用用例数
-2. 查询某天每个用例的最新执行结果
-3. 统计 `success / failed / timeout`
-4. 用“总用例数 - 实际有结果的用例数”计算 `skip_count`
+1. 查询某天该车型每个用例的最新执行结果
+2. 统计 `success / failed / timeout / skip`
+3. 用“实际落库的最新结果数”作为 `total_count`
+4. 用显式 `skip` 结果统计 `skip_count`
 5. 更新 `DailyExecutionBatch`
 
 这意味着：
 
-- `skip` 不是由外部上报直接传入，而是系统根据未出现的用例推导出来
+- `skip` 必须由上报端显式传入，未上传的注册用例不再自动算跳过
 - 汇总表是派生视图，而不是独立业务来源
 
 ### 历史原因建议：`get_suggested_failure_reason`
@@ -252,13 +252,13 @@ erDiagram
 
 ### 每日明细视图：`list_daily_results`
 
-明细页不是直接查某天存在的结果，而是：
+明细页直接查某天存在的最新结果，不再补齐未执行的注册用例：
 
-1. 先拿到车型下全部有效用例
-2. 再查某天每个用例的最新结果
-3. 没有结果的用例默认显示为 `skip`
+1. 查询某天每个用例的最新结果
+2. 只返回真实落库的结果行
+3. `skip` 只代表显式上报的跳过结果
 
-所以日报页天然是一张“全量用例视图”，而不是“只有执行记录的列表”。
+所以日报页展示的是“真实执行结果列表”，而不是“全量用例补齐视图”。
 
 </FocusModuleSection>
 
@@ -286,7 +286,7 @@ erDiagram
 其中：
 
 - 车型配置页可以跳转到日报页
-- 页面内提供全局领域切换器，座舱 / 车控三页共用同一状态和路由 query
+- 页面内提供全局领域切换器，座舱 / 车控三页共用同一状态，并通过 `sessionStorage` 维持同标签页联动
 - 车控视图下，车型配置页会维护 VIU 编号子集，用例页和日报页会展示 `viu_code`
 - 日报页仍按车型汇总，明细和历史抽屉只在车控领域补充 VIU 维度
 - 失败/超时结果允许在前端补录 `failure_reason`

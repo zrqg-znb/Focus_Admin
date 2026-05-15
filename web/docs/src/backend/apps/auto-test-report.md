@@ -47,7 +47,8 @@
 ## 实现重点
 
 - 每日汇总不是外部直接上传，而是由 `recalculate_daily_batch` 从明细重算
-- `skip_count` 通过“总用例数 - 有结果用例数”推导
+- `skip_count` 只统计显式上报的 `skip`，未上传的注册用例不再自动算跳过
+- `report_daily_results` 逐条容错，单条用例不存在或 VIU 不匹配会进入 `errors[]`，其余结果继续落库
 - 失败 / 超时结果支持回看历史 `failure_reason` 给出建议值
 - 前端和导入模板通过 `domain` 统一切换座舱 / 车控视图，后端按同一字段集返回对应结构
 

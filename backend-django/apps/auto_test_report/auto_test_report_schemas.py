@@ -182,6 +182,8 @@ class ReportDailyResultsOut(Schema):
     execute_date: date
     created_count: int
     updated_count: int
+    ignored_count: int = 0
+    errors: List[ImportErrorRow] = Field(default_factory=list)
 
 
 class DailyResultQuery(Schema):

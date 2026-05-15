@@ -22,6 +22,7 @@ RESULT_CHOICES = [
     (RESULT_SUCCESS, '成功'),
     (RESULT_FAILED, '失败'),
     (RESULT_TIMEOUT, '超时'),
+    (RESULT_SKIP, '跳过'),
 ]
 
 

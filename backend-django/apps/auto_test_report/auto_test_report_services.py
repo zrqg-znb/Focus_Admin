@@ -45,6 +45,12 @@ RESULT_LABELS = {
     RESULT_SKIP: '跳过',
 }
 MANUAL_REASON_RESULTS = {RESULT_FAILED, RESULT_TIMEOUT}
+VALID_RESULT_VALUES = {
+    RESULT_SUCCESS,
+    RESULT_FAILED,
+    RESULT_TIMEOUT,
+    RESULT_SKIP,
+}
 VALID_DOMAINS = {DOMAIN_COCKPIT, DOMAIN_VEHICLE}
 
 
@@ -662,59 +668,109 @@ def report_daily_results(payload):
         raise HttpError(404, '车型不存在')
 
     vehicle_domain = vehicle.platform.domain
-    active_cases = {
-        (item.viu_code or '', item.case_no): item
-        for item in TestCase.objects.filter(vehicle=vehicle, is_deleted=False, is_active=True)
+    allowed_viu_codes = {
+        str(code or '').strip().lower()
+        for code in (vehicle.viu_codes or [])
+        if str(code or '').strip()
     }
-    if not active_cases:
-        raise HttpError(400, '该车型下未配置有效测试用例')
-
+    active_cases = {
+        (
+            (item.viu_code or '').strip().lower(),
+            str(item.case_no or '').strip(),
+        ): item
+        for item in TestCase.objects.filter(
+            vehicle=vehicle,
+            is_deleted=False,
+            is_active=True,
+        )
+    }
     created_count = 0
+    ignored_count = 0
+    errors = []
     now = datetime.now()
-    for item in payload.results:
+    for index, item in enumerate(payload.results, start=1):
         case_no = (item.case_no or '').strip()
+        result = (item.result or '').strip().lower()
+        if not case_no:
+            errors.append(ImportErrorRow(row_no=index, message='用例编号不能为空'))
+            ignored_count += 1
+            continue
+        if result not in VALID_RESULT_VALUES:
+            errors.append(
+                ImportErrorRow(
+                    row_no=index,
+                    message=f'执行结果仅支持: {", ".join(sorted(VALID_RESULT_VALUES))}',
+                ),
+            )
+            ignored_count += 1
+            continue
+
         viu_code = (item.viu_code or '').strip().lower()
-        if vehicle_domain == DOMAIN_VEHICLE and not viu_code:
-            raise HttpError(400, '车控领域上报结果需要填写VIU编号')
-        if vehicle_domain == DOMAIN_COCKPIT:
+        if vehicle_domain == DOMAIN_VEHICLE:
+            if not viu_code:
+                errors.append(ImportErrorRow(row_no=index, message='车控领域上报结果需要填写VIU编号'))
+                ignored_count += 1
+                continue
+            if viu_code not in allowed_viu_codes:
+                errors.append(
+                    ImportErrorRow(
+                        row_no=index,
+                        message=f'车型 {vehicle.name} 未配置 VIU 编号: {viu_code}',
+                    ),
+                )
+                ignored_count += 1
+                continue
+        else:
             viu_code = ''
+
         test_case = active_cases.get((viu_code, case_no))
         if not test_case:
-            raise HttpError(400, f'未找到用例编号: {case_no}')
+            lookup_key = f'{viu_code + " / " if viu_code else ""}{case_no}'
+            errors.append(
+                ImportErrorRow(
+                    row_no=index,
+                    message=f'未找到匹配用例: {lookup_key}',
+                ),
+            )
+            ignored_count += 1
+            continue
         DailyExecutionResult.objects.create(
             vehicle=vehicle,
             execute_date=payload.execute_date,
             test_case=test_case,
             start_time=item.start_time,
             duration_seconds=max(int(item.duration_seconds or 0), 0),
-            result=item.result,
+            result=result,
             failure_reason=None,
             log_url=(item.log_url or '').strip() or None,
         )
         created_count += 1
 
-    recalculate_daily_batch(vehicle.id, payload.execute_date, now)
+    if created_count > 0:
+        recalculate_daily_batch(vehicle.id, payload.execute_date, now)
     return {
         'vehicle_id': str(vehicle.id),
         'execute_date': payload.execute_date,
         'created_count': created_count,
         'updated_count': created_count,
+        'ignored_count': ignored_count,
+        'errors': errors,
     }
 
 
 def recalculate_daily_batch(vehicle_id: str, execute_date, last_report_at=None):
     vehicle = get_vehicle(vehicle_id)
-    all_case_count = TestCase.objects.filter(vehicle=vehicle, is_deleted=False, is_active=True).count()
     results = list(build_latest_daily_results_queryset(vehicle=vehicle, execute_date=execute_date))
     counter = Counter(item.result for item in results)
     total_duration_seconds = sum(max(item.duration_seconds or 0, 0) for item in results)
-    skip_count = max(all_case_count - len(results), 0)
+    total_count = len(results)
+    skip_count = counter.get(RESULT_SKIP, 0)
 
     batch, _ = DailyExecutionBatch.objects.get_or_create(
         vehicle=vehicle,
         execute_date=execute_date,
     )
-    batch.total_count = all_case_count
+    batch.total_count = total_count
     batch.success_count = counter.get(RESULT_SUCCESS, 0)
     batch.failed_count = counter.get(RESULT_FAILED, 0)
     batch.timeout_count = counter.get(RESULT_TIMEOUT, 0)
@@ -879,38 +935,36 @@ def list_daily_results(vehicle_id: str, execute_date, domain: Optional[str] = No
     parsed_domain = _parse_domain_filter(domain)
     if parsed_domain and vehicle.platform.domain != parsed_domain:
         raise HttpError(404, '车型不存在')
-    cases = list(
-        TestCase.objects.filter(vehicle=vehicle, is_deleted=False, is_active=True).order_by('-sort', 'viu_code', 'case_no')
-    )
-    result_map = {
-        item.test_case_id: item
-        for item in build_latest_daily_results_queryset(
+    queryset = (
+        build_latest_daily_results_queryset(
             vehicle=vehicle,
             execute_date=execute_date,
-        ).select_related('test_case')
-    }
+        )
+        .select_related('test_case')
+        .order_by('-test_case__sort', 'test_case__viu_code', 'test_case__case_no')
+    )
     items = []
-    for case in cases:
-        result = result_map.get(case.id)
+    for result in queryset:
+        case = result.test_case
         items.append(
             DailyResultItemOut(
-                result_id=str(result.id) if result else None,
+                result_id=str(result.id),
                 case_id=str(case.id),
                 viu_code=case.viu_code,
                 case_no=case.case_no,
                 case_name=case.case_name,
                 remark=case.remark,
-                status=result.result if result else RESULT_SKIP,
-                failure_reason=result.failure_reason if result else None,
+                status=result.result,
+                failure_reason=result.failure_reason,
                 suggested_failure_reason=(
                     get_suggested_failure_reason(str(vehicle.id), str(case.id), execute_date)
-                    if result and result.result in MANUAL_REASON_RESULTS and not result.failure_reason
+                    if result.result in MANUAL_REASON_RESULTS and not result.failure_reason
                     else None
                 ),
-                start_time=result.start_time if result else None,
-                duration_seconds=result.duration_seconds if result else 0,
-                log_url=result.log_url if result else None,
-                reported_at=result.reported_at if result else None,
+                start_time=result.start_time,
+                duration_seconds=result.duration_seconds,
+                log_url=result.log_url,
+                reported_at=result.reported_at,
             )
         )
     return items

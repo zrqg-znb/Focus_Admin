@@ -9,7 +9,7 @@ import requests
 
 DEFAULT_BASE_URL = 'http://127.0.0.1:8000'
 DEFAULT_API_PATH = '/api/auto-test-report/report/daily-results'
-RESULT_CHOICES = ['success', 'failed', 'timeout']
+RESULT_CHOICES = ['success', 'failed', 'timeout', 'skip']
 
 
 def build_payload(
@@ -55,10 +55,10 @@ def build_mock_payload(
     normalized_viu_codes = [code.strip().lower() for code in (viu_codes or []) if code.strip()]
     for index in range(1, case_count + 1):
         case_no = f'{case_prefix}{index:03d}'
-        result = random.choices(RESULT_CHOICES, weights=[0.75, 0.2, 0.05], k=1)[0]
+        result = random.choices(RESULT_CHOICES, weights=[0.72, 0.16, 0.07, 0.05], k=1)[0]
         start_time = (base_dt + timedelta(minutes=index * 3)).strftime('%Y-%m-%d %H:%M:%S')
-        duration_seconds = random.randint(20, 900)
-        log_url = (
+        duration_seconds = 0 if result == 'skip' else random.randint(20, 900)
+        log_url = None if result == 'skip' else (
             f'{base_log_url.rstrip("/")}/{vehicle_code}/{case_no}/{execute_date}'
             if base_log_url
             else None
@@ -92,7 +92,11 @@ def post_report(base_url: str, payload: dict, timeout: int):
     response = requests.post(url, json=payload, timeout=timeout)
     print(f'[auto-test-report] status={response.status_code}')
     try:
-        print(json.dumps(response.json(), ensure_ascii=False, indent=2))
+        body = response.json()
+        print(json.dumps(body, ensure_ascii=False, indent=2))
+        if isinstance(body, dict) and body.get('errors'):
+            print('[auto-test-report] row-level errors:')
+            print(json.dumps(body['errors'], ensure_ascii=False, indent=2))
     except Exception:
         print(response.text)
     response.raise_for_status()
@@ -108,7 +112,7 @@ if __name__ == '__main__':
     parser.add_argument('--timeout', type=int, default=20, help='HTTP 超时秒数')
 
     parser.add_argument('--case-no', help='单用例模式：用例编号')
-    parser.add_argument('--result', choices=RESULT_CHOICES, help='单用例模式：结果 success/failed/timeout')
+    parser.add_argument('--result', choices=RESULT_CHOICES, help='单用例模式：结果 success/failed/timeout/skip')
     parser.add_argument('--duration-seconds', type=int, default=120, help='单用例模式：执行时长，默认 120')
     parser.add_argument('--log-url', default='', help='单用例模式：日志链接')
     parser.add_argument('--start-time', default='', help='单用例模式：开始时间，例如 2026-04-08 09:00:00')

@@ -13,6 +13,7 @@ from apps.auto_test_report.auto_test_report_model import (
     VehicleModel,
     RESULT_FAILED,
     RESULT_SUCCESS,
+    RESULT_SKIP,
     RESULT_TIMEOUT,
 )
 from apps.auto_test_report.auto_test_report_services import recalculate_daily_batch
@@ -40,7 +41,7 @@ class Command(BaseCommand):
             ['viu0', 'viu1', 'viu2', 'viu3'],
             ['viu0', 'viu1', 'viu2', 'viu3', 'viu4'],
         ]
-        results = [RESULT_SUCCESS, RESULT_FAILED, RESULT_TIMEOUT]
+        results = [RESULT_SUCCESS, RESULT_FAILED, RESULT_TIMEOUT, RESULT_SKIP]
         created_vehicle_count = 0
         created_case_count = 0
 
@@ -119,23 +120,24 @@ class Command(BaseCommand):
                 for day_offset in range(days):
                     execute_date = date.today() - timedelta(days=day_offset)
                     for case in cases:
-                        if random.random() < 0.2:
-                            continue
                         start_at = datetime.combine(execute_date, datetime.min.time()) + timedelta(
                             hours=random.randint(0, 23),
                             minutes=random.randint(0, 59),
                             seconds=random.randint(0, 59),
                         )
-                        duration = random.randint(10, 1800)
-                        status = random.choices(results, weights=[0.75, 0.18, 0.07], k=1)[0]
+                        status = random.choices(results, weights=[0.72, 0.16, 0.07, 0.05], k=1)[0]
                         DailyExecutionResult.objects.create(
                             vehicle=vehicle,
                             execute_date=execute_date,
                             test_case=case,
                             start_time=start_at,
-                            duration_seconds=duration,
+                            duration_seconds=0 if status == RESULT_SKIP else random.randint(10, 1800),
                             result=status,
-                            log_url=f'https://mock.example.com/logs/{vehicle.vehicle_code}/{case.case_no}/{execute_date.isoformat()}',
+                            log_url=(
+                                None
+                                if status == RESULT_SKIP
+                                else f'https://mock.example.com/logs/{vehicle.vehicle_code}/{case.case_no}/{execute_date.isoformat()}'
+                            ),
                             sys_creator=operator,
                             sys_modifier=operator,
                         )
