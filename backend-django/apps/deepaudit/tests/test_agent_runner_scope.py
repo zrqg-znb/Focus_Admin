@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from django.test import SimpleTestCase
 
@@ -15,6 +18,7 @@ from apps.deepaudit.agent_task.agent_runner import (
     _effective_target_files_from_input,
     _normalize_finding_payload,
     _normalize_agent_input,
+    run_orchestrator_agent_async,
     _validate_runtime_target_files,
 )
 
@@ -130,6 +134,88 @@ class AgentRunnerScopeTestCase(SimpleTestCase):
         self.assertFalse(normalized["is_verified"])
         self.assertEqual(normalized["poc"]["verdict"], "false_positive")
         self.assertEqual(normalized["poc"]["validation"]["is_vulnerable"], False)
+
+    def test_run_orchestrator_agent_async_normalizes_input_in_worker_thread(self) -> None:
+        result = SimpleNamespace(
+            success=True,
+            data={"findings": []},
+            error=None,
+            duration_ms=1,
+        )
+        orchestrator_run = AsyncMock(return_value=result)
+        fake_orchestrator = SimpleNamespace(run=orchestrator_run)
+
+        class FakeEventManager:
+            def __init__(self, task_id: str) -> None:
+                self.task_id = task_id
+                self.current_phase = None
+                self.events: list[dict[str, object]] = []
+
+            async def init_sequence(self) -> None:
+                return None
+
+            async def emit(self, **kwargs) -> None:
+                self.events.append(kwargs)
+                self.current_phase = kwargs.get("phase", self.current_phase)
+
+        class FakeEventEmitter:
+            def __init__(self, task_id: str, event_manager: FakeEventManager) -> None:
+                self.task_id = task_id
+                self.event_manager = event_manager
+                self.current_phase = None
+
+            async def emit_phase_start(self, phase: str, message: str) -> None:
+                self.current_phase = phase
+
+            async def emit_phase_complete(self, phase: str, message: str) -> None:
+                self.current_phase = phase
+
+            async def emit_task_complete(self, **kwargs) -> None:
+                return None
+
+            async def emit_task_error(self, message: str) -> None:
+                return None
+
+        with (
+            patch("apps.deepaudit.agent_task.agent_runner.EventManager", FakeEventManager),
+            patch("apps.deepaudit.agent_task.agent_runner.AgentEventEmitter", FakeEventEmitter),
+            patch("apps.deepaudit.agent_task.agent_runner._build_llm_service", return_value=object()),
+            patch(
+                "apps.deepaudit.agent_task.agent_runner._initialize_task_runtime_state",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "apps.deepaudit.agent_task.agent_runner._initialize_tools",
+                new=AsyncMock(
+                    return_value={
+                        "orchestrator": {},
+                        "recon": {},
+                        "analysis": {},
+                        "verification": {},
+                    }
+                ),
+            ) as init_tools_mock,
+            patch("apps.deepaudit.agent_task.agent_runner.OrchestratorAgent", return_value=fake_orchestrator),
+            patch("apps.deepaudit.agent_task.agent_runner.ReconAgent", return_value=SimpleNamespace()),
+            patch("apps.deepaudit.agent_task.agent_runner.AnalysisAgent", return_value=SimpleNamespace()),
+            patch("apps.deepaudit.agent_task.agent_runner.VerificationAgent", return_value=SimpleNamespace()),
+            patch("apps.deepaudit.agent_task.agent_task_services.refresh_task_snapshot", lambda task_id: None),
+        ):
+            asyncio.run(
+                run_orchestrator_agent_async(
+                    "task-async-normalize",
+                    {
+                        "project_name": "Demo Project",
+                        "target_files": ["src/module/main.c"],
+                        "audit_scope": {},
+                        "agent_config": {},
+                    },
+                    str(self.workspace),
+                )
+            )
+
+        self.assertEqual(orchestrator_run.await_count, 1)
+        self.assertTrue(init_tools_mock.await_args.kwargs["enable_c_family_rag_fallback"])
 
 
 class AgentFileToolScopeTestCase(SimpleTestCase):

@@ -818,7 +818,10 @@ async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any],
         }
 
     llm_service = _build_llm_service(input_data)
-    normalized_input = _normalize_agent_input(task_id, input_data, workspace)
+    normalized_input = await sync_to_async(
+        _normalize_agent_input,
+        thread_sensitive=True,
+    )(task_id, input_data, workspace)
     scenario_profile = dict(normalized_input.get("config", {}).get("scenario_profile") or {})
     knowledge_modules = list(scenario_profile.get("knowledge_modules") or [])
     await _initialize_task_runtime_state(
