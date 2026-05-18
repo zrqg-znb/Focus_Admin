@@ -108,6 +108,9 @@ export interface DtsMergedDefect {
   iNumofModifyDays?: null | string;
   iNumofTestDays?: null | string;
   dts009ReasonAnalysis?: null | string;
+  dts004ReasonAnalysis?: null | string;
+  dts009ReasonAnalyses?: null | string;
+  sAchieveDescibe?: null | string;
   serverityNo?: null | string;
   productId?: null | string;
   productName?: null | string;
@@ -318,6 +321,8 @@ export interface DtsSummary {
   dev_completion_rate: number;
   test_filled_count: number;
   test_completion_rate: number;
+  low_level_count: number;
+  low_level_rate: number;
 
   severity_dist: DtsDistributionItem[];
   status_dist: DtsDistributionItem[];

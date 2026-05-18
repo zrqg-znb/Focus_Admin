@@ -457,6 +457,8 @@ function createEmptySummary(): DtsSummary {
     dev_completion_rate: 0,
     test_filled_count: 0,
     test_completion_rate: 0,
+    low_level_count: 0,
+    low_level_rate: 0,
     severity_dist: [],
     status_dist: [],
     flow_type_dist: [],
@@ -6484,7 +6486,7 @@ onUnmounted(() => {
                     当前筛选范围内的 DTS 问题单总数
                   </div>
                   <div
-                    class="dense-overview-card__metric-grid dense-overview-card__metric-grid--three"
+                    class="dense-overview-card__metric-grid dense-overview-card__metric-grid--four"
                   >
                     <div class="dense-metric-block dense-metric-block--danger">
                       <div class="dense-metric-block__label">未关闭</div>
@@ -6526,6 +6528,16 @@ onUnmounted(() => {
                         {{ summary.avg_process_days }}
                       </div>
                       <div class="dense-metric-block__subtext">近似口径</div>
+                    </div>
+                    <div class="dense-metric-block dense-metric-block--warning">
+                      <div class="dense-metric-block__label">低级问题</div>
+                      <div class="dense-metric-block__value">
+                        {{ summary.low_level_count }}
+                      </div>
+                      <div class="dense-metric-block__subtext">
+                        占比
+                        {{ Math.round((summary.low_level_rate || 0) * 100) }}%
+                      </div>
                     </div>
                   </div>
                   <div class="dense-overview-card__meta">
@@ -7405,8 +7417,8 @@ onUnmounted(() => {
   color: #64748b;
 }
 
-.dense-overview-card__metric-grid--three {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.dense-overview-card__metric-grid--four {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .dense-metric-block {
@@ -7672,7 +7684,7 @@ onUnmounted(() => {
 }
 
 @media (max-width: 1024px) {
-  .dense-overview-card__metric-grid--three {
+  .dense-overview-card__metric-grid--four {
     grid-template-columns: repeat(1, minmax(0, 1fr));
   }
 

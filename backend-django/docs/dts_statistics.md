@@ -350,7 +350,7 @@ Schema：`DtsStatisticsQuerySchema`
 
 返回字段：
 
-- 上游基础字段（见 `DataLakeDefectSchema`）
+- 上游基础字段（见 `DataLakeDefectSchema`，已补充 `dts004ReasonAnalysis` / `dts009ReasonAnalyses` / `sAchieveDescibe` 三个数据湖字段）
 - 命中映射：
   - `project_ids/project_names/team_names`（数组）
   - `project_name/team_name`（单值展示字段，满足“一个问题单只属于一个团队/项目”的产品口径）
@@ -373,6 +373,7 @@ Schema：`DtsStatisticsQuerySchema`（不依赖分页字段）
   - 当 `column_type=closeDefects`：全部记为 closed
   - 当 `column_type=totalDefects`：用状态/关闭类型启发式判断 closed
 - `avg_process_days`：对可解析为 float 的 `process_days` 求平均（保留 2 位小数）
+- `low_level_count/low_level_rate`：在 `dts004ReasonAnalysis`、`dts009ReasonAnalyses`、`sAchieveDescibe` 三个字段中搜索低级问题关键词，命中任一关键词的缺陷只计 1 次；`low_level_rate = low_level_count / total_count`
 
 扩展字段统计：
 

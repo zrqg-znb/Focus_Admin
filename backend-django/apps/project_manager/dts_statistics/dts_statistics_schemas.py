@@ -617,6 +617,9 @@ class DataLakeDefectSchema(Schema):
     iNumofModifyDays: Optional[str] = None
     iNumofTestDays: Optional[str] = None
     dts009ReasonAnalysis: Optional[str] = None
+    dts004ReasonAnalysis: Optional[str] = None
+    dts009ReasonAnalyses: Optional[str] = None
+    sAchieveDescibe: Optional[str] = None
 
     # Helper fields used by cache/signature and summary/export rendering.
     serverityNo: Optional[str] = None
@@ -744,6 +747,8 @@ class DtsSummarySchema(Schema):
     dev_completion_rate: float
     test_filled_count: int
     test_completion_rate: float
+    low_level_count: int
+    low_level_rate: float
 
     severity_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)
     status_dist: list[DtsDistributionItemSchema] = Field(default_factory=list)

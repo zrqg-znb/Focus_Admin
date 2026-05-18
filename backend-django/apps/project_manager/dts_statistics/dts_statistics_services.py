@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import calendar
 import datetime
+import html
 import hashlib
 import json
 import logging
 import math
 import os
 import random
+import re
 import tempfile
 import threading
 import time
@@ -121,7 +123,22 @@ _DEFAULT_FIELDS = [
     "iNumofModifyDays",
     "iNumofTestDays",
     "dts009ReasonAnalysis",
+    "dts004ReasonAnalysis",
+    "dts009ReasonAnalyses",
+    "sAchieveDescibe",
 ]
+
+_LOW_LEVEL_ISSUE_KEYWORDS = (
+    "内存泄露",
+    "数据未校验",
+    "数组越界",
+    "空指针",
+    "未初始化",
+    "除零",
+    "死循环",
+    "内存不足",
+    "内存溢出",
+)
 
 _FIELD_SET_SUPPORTED_FIELDS = {
     "projectName",
@@ -314,6 +331,15 @@ def _to_bool(value: Any, default: bool = False) -> bool:
 
 def _clean_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _strip_html_text(value: Any) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    text = html.unescape(text)
+    text = re.sub(r"<[^>]+>", "", text)
+    return " ".join(text.split())
 
 
 def _normalize_text_list(values: Any) -> list[str]:
@@ -739,6 +765,22 @@ def _mock_fetch_page(payload: dict[str, Any]) -> dict[str, Any]:
                     "iNumofModifyDays": f"{(index % 10) + 1}",
                     "iNumofTestDays": f"{(index % 7) + 1}",
                     "dts009ReasonAnalysis": f"<p>原因分析 {index + 1}</p>",
+                    # 让 mock 数据里也能命中低级问题，方便前端验收
+                    "dts004ReasonAnalysis": (
+                        f"<p>开发定位分析 {index + 1}，存在内存泄露风险</p>"
+                        if index % 11 == 0
+                        else f"<p>开发定位分析 {index + 1}</p>"
+                    ),
+                    "dts009ReasonAnalyses": (
+                        f"<p>审核修改分析 {index + 1}，数据未校验</p>"
+                        if index % 13 == 0
+                        else f"<p>审核修改分析 {index + 1}</p>"
+                    ),
+                    "sAchieveDescibe": (
+                        f"<p>修复达成描述 {index + 1}，数组越界</p>"
+                        if index % 17 == 0
+                        else f"<p>修复达成描述 {index + 1}</p>"
+                    ),
                 }
             }
         )
@@ -1156,6 +1198,11 @@ def _normalize_source_row(
         "iNumofTestDays": _clean_text(row.get("iNumofTestDays")) or None,
         "dts009ReasonAnalysis": _clean_text(row.get("dts009ReasonAnalysis"))
         or None,
+        "dts004ReasonAnalysis": _clean_text(row.get("dts004ReasonAnalysis"))
+        or None,
+        "dts009ReasonAnalyses": _clean_text(row.get("dts009ReasonAnalyses"))
+        or None,
+        "sAchieveDescibe": _clean_text(row.get("sAchieveDescibe")) or None,
         # helper fields
         "serverityNo": _resolve_severity_code(row) or None,
         "productId": product_id,
@@ -3706,6 +3753,20 @@ def _is_test_filled(ext: DtsExtension) -> bool:
     )
 
 
+def _has_low_level_issue(defect: dict[str, Any]) -> bool:
+    for field in (
+        "dts004ReasonAnalysis",
+        "dts009ReasonAnalyses",
+        "sAchieveDescibe",
+    ):
+        content = _strip_html_text(defect.get(field)).lower()
+        if not content:
+            continue
+        if any(keyword in content for keyword in _LOW_LEVEL_ISSUE_KEYWORDS):
+            return True
+    return False
+
+
 _EXPORT_COLUMN_SPECS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
     ("问题单号", lambda item: _clean_text(item.get("dtsBizNo"))),
     ("简要描述", lambda item: _clean_text(item.get("briefDesc"))),
@@ -4096,6 +4157,8 @@ def get_dts_statistics_summary(
             process_days_count += 1
 
     avg_process_days = round(process_days_sum / process_days_count, 2) if process_days_count else 0.0
+    low_level_count = sum(1 for defect in defects if _has_low_level_issue(defect))
+    low_level_rate = round(low_level_count / total_count, 4) if total_count else 0.0
 
     defect_nos = [
         _clean_text(item.get("dtsBizNo"))
@@ -4215,6 +4278,8 @@ def get_dts_statistics_summary(
         "dev_completion_rate": dev_completion_rate,
         "test_filled_count": test_filled_count,
         "test_completion_rate": test_completion_rate,
+        "low_level_count": low_level_count,
+        "low_level_rate": low_level_rate,
         "severity_dist": _distribution(severity_counter),
         "status_dist": _distribution(status_counter),
         "flow_type_dist": _distribution(flow_type_counter),

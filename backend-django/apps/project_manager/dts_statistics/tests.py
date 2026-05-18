@@ -35,6 +35,14 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
         self.assertIn("dev_asset_type_values", local_filters)
         self.assertEqual(local_filters["dev_asset_type_values"], ["用例", "脚本"])
 
+    def test_default_fields_include_low_level_reason_fields(self):
+        for field in (
+            "dts004ReasonAnalysis",
+            "dts009ReasonAnalyses",
+            "sAchieveDescibe",
+        ):
+            self.assertIn(field, dts_statistics_services._DEFAULT_FIELDS)
+
     def _defect(
         self,
         defect_no: str,
@@ -49,6 +57,9 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
         pl_group: str = "PL-A",
         dev_owner_name: str = "",
         dev_status: str = "处理中",
+        dts004_reason_analysis: str = "",
+        dts009_reason_analyses: str = "",
+        s_achieve_descibe: str = "",
         update_at: str = "2026-05-01 10:00:00",
         create_at: str = "2026-04-25 10:00:00",
         close_time: str = "",
@@ -73,6 +84,9 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
             "sConfigFlowType": flow_type,
             "dev_status": dev_status,
             "iNumOfCloseDays": close_days,
+            "dts004ReasonAnalysis": dts004_reason_analysis,
+            "dts009ReasonAnalyses": dts009_reason_analyses,
+            "sAchieveDescibe": s_achieve_descibe,
         }
 
     @mock.patch(
@@ -108,6 +122,99 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
             ],
         )
         self.assertNotIn("stage_dist", summary)
+
+    def test_normalize_source_row_keeps_low_level_reason_fields(self):
+        raw_row = {
+            "dtsBizNo": "D-1",
+            "briefDesc": "示例缺陷",
+            "dtsStatusName": "处理中",
+            "serverityNoName": "一般",
+            "updateAt": "2026-05-01 10:00:00",
+            "parentNo": "DP-1",
+            "createAt": "2026-04-25 10:00:00",
+            "dCloseTime": "",
+            "uQbiCloseTypeName": "",
+            "sDeptOneNoName": "研发A组",
+            "currentHandler": "张三",
+            "creator": "creator1",
+            "sSubmitUserName": "提交人1",
+            "sSubsystemNoName": "子系统1",
+            "sConfigFlowType": "标准",
+            "sProdCName": "座舱项目",
+            "sProdFamilyNoName": "产品族1",
+            "sProdXtdNoName": "产品1",
+            "iTestBackCount": "1",
+            "sSuggestByReviewer": "<p>建议</p>",
+            "sTestReport": "<p>报告</p>",
+            "sTestSuggest": "<p>测试建议</p>",
+            "sModifyDocument": "<ul><li>doc.md</li></ul>",
+            "sTestorTestReport": "<p>mock report</p>",
+            "last_dts009_handler": "dev_user1",
+            "last_dts010_handler": "review_user1",
+            "last_dts013_handler": "test_user1",
+            "iNumOfCloseDays": "1",
+            "iNumOfFirmDays": "2",
+            "iNumOfLocateDays": "3",
+            "iNumofModifyDays": "4",
+            "iNumofTestDays": "5",
+            "dts009ReasonAnalysis": "<p>原字段</p>",
+            "dts004ReasonAnalysis": "<p>内存泄露定位</p>",
+            "dts009ReasonAnalyses": "<div>数据未校验说明</div>",
+            "sAchieveDescibe": "<span>修复达成描述</span>",
+        }
+
+        normalized = dts_statistics_services._normalize_source_row(
+            raw_row,
+            product_id="250539396",
+        )
+
+        self.assertIsNotNone(normalized)
+        normalized = normalized or {}
+        self.assertEqual(normalized["dts004ReasonAnalysis"], "<p>内存泄露定位</p>")
+        self.assertEqual(
+            normalized["dts009ReasonAnalyses"],
+            "<div>数据未校验说明</div>",
+        )
+        self.assertEqual(
+            normalized["sAchieveDescibe"],
+            "<span>修复达成描述</span>",
+        )
+
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services._resolve_runtime_defects"
+    )
+    def test_summary_low_level_issue_count_matches_any_keyword_hit(
+        self,
+        mocked_resolve,
+    ):
+        defects = [
+            self._defect(
+                "D-1",
+                dts004_reason_analysis="<p>存在内存泄露风险</p>",
+            ),
+            self._defect(
+                "D-2",
+                dts009_reason_analyses="数据未校验",
+            ),
+            self._defect(
+                "D-3",
+                s_achieve_descibe="<div>正常说明</div>",
+            ),
+            self._defect(
+                "D-4",
+                dts004_reason_analysis="<span>数组越界</span>",
+                dts009_reason_analyses="<p>空指针</p>",
+                s_achieve_descibe="<div>内存不足</div>",
+            ),
+        ]
+        mocked_resolve.return_value = (defects, None)
+
+        summary = dts_statistics_services.get_dts_statistics_summary(
+            self._query(self._ms(2026, 5, 1), self._ms(2026, 5, 3, 23, 59))
+        )
+
+        self.assertEqual(summary["low_level_count"], 3)
+        self.assertEqual(summary["low_level_rate"], 0.75)
 
     @mock.patch(
         "apps.project_manager.dts_statistics.dts_statistics_services._resolve_runtime_defects"
