@@ -425,6 +425,33 @@ Schema：`DtsStatisticsExportSchema`（不包含分页字段）
 
 - 扫描页数超过上限（默认 200 页）时，抛 `422`，提示缩小筛选范围。
 
+### 7.5 `POST /responsibility-quality-report`（责任田领域质量报表）
+
+Schema：`DtsResponsibilityQualityQuerySchema`
+
+用途：
+
+- 为前端「责任田领域质量」tab 提供独立报表，不复用 `list/summary` 的查询结果
+- 按 `dCloseTime` 分月预计算最近 24 个月的切片，前端只在已加载切片内切换月份
+- 表格按模板结构返回 `当月值 / 累计值 / 累计扣分`
+- 目前只实现「产品过程质量」第一段，其他两段继续保留结构但值恒为 0
+
+返回结构：
+
+- `month_options`：月份下拉框选项，按最近月份优先排序
+- `pl_groups`：动态 PL 组列头，包含 `label/owner_name/sort`
+- `month_reports`：当前请求月份对应的报表切片；若未传 `month`，后端默认返回最新月份
+  - `score_items`：顶部摘要条数据，包含 `score` 与 `deduction`
+  - `rows`：表格行数据，`cells[]` 对应每个 PL 组
+
+口径说明：
+
+- 请求参数支持 `month`，前端切换月份时会重新请求对应月份的数据
+- `process_quality_type` 仅做精确匹配；带噪声文本、HTML 包裹文本都不会额外命中
+- `累计值` 使用最近 12 个月滚动窗口；`累计扣分` 以负数返回
+- 缺失或未命中的 PL 归入 `未识别PL领域`
+- 若真实数据为空，后端会返回确定性的 mock 报表，保证前端可联调
+
 ---
 
 ## 8. 配置项（Settings / Env）

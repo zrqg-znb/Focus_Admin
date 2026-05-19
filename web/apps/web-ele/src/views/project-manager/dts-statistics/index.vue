@@ -60,10 +60,11 @@ import {
 } from './data';
 import DtsBatchEditDrawer from './DtsBatchEditDrawer.vue';
 import DtsEditDrawer from './DtsEditDrawer.vue';
+import DtsResponsibilityQualityTab from './components/DtsResponsibilityQualityTab.vue';
 
 defineOptions({ name: 'DtsStatistics' });
 
-type TabKey = 'dashboard' | 'list';
+type TabKey = 'dashboard' | 'list' | 'quality';
 type DtsFieldSetKey =
   | 'auto_pl_group_name'
   | 'auto_source_type'
@@ -6897,6 +6898,14 @@ onUnmounted(() => {
               </ElCard>
             </div>
           </div>
+        </ElTabPane>
+
+        <ElTabPane label="责任田领域质量" name="quality" lazy>
+          <DtsResponsibilityQualityTab
+            class="w-full"
+            :product-id="filters.productId"
+            :product-label="selectedProductLabel"
+          />
         </ElTabPane>
       </ElTabs>
 

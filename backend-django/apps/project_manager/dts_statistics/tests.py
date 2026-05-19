@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import datetime
+from types import SimpleNamespace
 from unittest import mock
 
 from django.test import TransactionTestCase
 from django.utils import timezone
 
 from .dts_statistics_model import DtsExtension
-from .dts_statistics_schemas import DtsStatisticsQuerySchema
+from .dts_statistics_schemas import (
+    DtsResponsibilityQualityQuerySchema,
+    DtsStatisticsQuerySchema,
+)
 from . import dts_statistics_services
 
 
@@ -491,3 +495,257 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
                 },
             ],
         )
+
+
+class DtsStatisticsResponsibilityQualityTests(TransactionTestCase):
+    def _dt(
+        self,
+        year: int,
+        month: int,
+        day: int,
+        hour: int = 0,
+        minute: int = 0,
+    ) -> datetime.datetime:
+        return timezone.make_aware(
+            datetime.datetime(year, month, day, hour, minute),
+            timezone.get_current_timezone(),
+        )
+
+    def _normalized_defect(
+        self,
+        month: str,
+        process_quality_type: str,
+        pl_group_label: str = "通信组",
+    ) -> dict[str, str]:
+        return {
+            "month": month,
+            "dtsBizNo": f"D-{month}-{process_quality_type}",
+            "pl_group_label": pl_group_label,
+            "process_quality_type": process_quality_type,
+        }
+
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services.CacheManager.get",
+        return_value=None,
+    )
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services.CacheManager.set"
+    )
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services._load_quality_report_defects"
+    )
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services._build_quality_group_specs_for_report"
+    )
+    def test_report_exact_match_process_quality_type_only(
+        self,
+        mocked_groups,
+        mocked_load_defects,
+        mocked_cache_set,
+        _mocked_cache_get,
+    ):
+        month_ranges = dts_statistics_services._build_quality_month_ranges(
+            reference_dt=self._dt(2026, 5, 19),
+        )
+        current_month = month_ranges[-1]["month"]
+        mocked_groups.return_value = [
+            {"id": "1", "label": "通信组", "owner_name": "徐鸣字", "sort": 1},
+        ]
+        mocked_load_defects.return_value = [
+            self._normalized_defect(current_month, "CI打断问题数"),
+            self._normalized_defect(current_month, "CI打断问题数（噪声）"),
+            self._normalized_defect(current_month, "<p>问题重犯</p>"),
+        ]
+
+        response = dts_statistics_services.get_dts_responsibility_quality_report(
+            DtsResponsibilityQualityQuerySchema(
+                productId="250539396",
+                month=current_month,
+            ),
+            user=SimpleNamespace(id=1),
+        )
+
+        self.assertEqual(len(response["month_reports"]), 1)
+        self.assertEqual(response["month_reports"][0]["month"], current_month)
+        latest_report = response["month_reports"][0]
+        ci_row = latest_report["rows"][1]
+        self.assertEqual(ci_row["cells"][0]["current_value"], 1.0)
+        self.assertEqual(ci_row["cells"][0]["cumulative_value"], 1.0)
+        self.assertEqual(ci_row["cells"][0]["cumulative_deduction"], -2.0)
+        self.assertEqual(latest_report["score_items"][0]["score"], 117.0)
+        self.assertEqual(len(response["month_options"]), len(month_ranges))
+        mocked_cache_set.assert_called_once()
+
+    def test_report_uses_rolling_12_month_window(self):
+        month_ranges = dts_statistics_services._build_quality_month_ranges(
+            reference_dt=self._dt(2026, 5, 19),
+        )
+        pl_groups = [
+            {"id": "1", "label": "通信组", "owner_name": "徐鸣字", "sort": 1},
+        ]
+        defects = [
+            self._normalized_defect(
+                month_ranges[-(index + 1)]["month"],
+                "CI打断问题数",
+            )
+            for index in range(13)
+        ]
+
+        counts = dts_statistics_services._build_quality_counts_from_rows(
+            defects,
+            month_ranges=month_ranges,
+            pl_group_specs=pl_groups,
+        )
+        payload = dts_statistics_services._build_quality_report_payload(
+            month_ranges=month_ranges,
+            pl_group_specs=pl_groups,
+            counts=counts,
+        )
+
+        latest_report = payload["month_reports"][0]
+        ci_row = latest_report["rows"][1]
+        self.assertEqual(ci_row["cells"][0]["current_value"], 1.0)
+        self.assertEqual(ci_row["cells"][0]["cumulative_value"], 12.0)
+        self.assertEqual(ci_row["cells"][0]["cumulative_deduction"], -24.0)
+        self.assertEqual(latest_report["score_items"][0]["score"], 96.0)
+
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services.CacheManager.get",
+        return_value=None,
+    )
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services.CacheManager.set"
+    )
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services._load_quality_report_defects"
+    )
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services._build_quality_group_specs_for_report"
+    )
+    def test_report_unknown_pl_group_falls_back_to_unknown(
+        self,
+        mocked_groups,
+        mocked_load_defects,
+        mocked_cache_set,
+        _mocked_cache_get,
+    ):
+        month_ranges = dts_statistics_services._build_quality_month_ranges(
+            reference_dt=self._dt(2026, 5, 19),
+        )
+        current_month = month_ranges[-1]["month"]
+        mocked_groups.return_value = [
+            {"id": "1", "label": "通信组", "owner_name": "徐鸣字", "sort": 1},
+        ]
+        mocked_load_defects.return_value = [
+            self._normalized_defect(
+                current_month,
+                "CI打断问题数",
+                pl_group_label="未命中责任田",
+            )
+        ]
+
+        response = dts_statistics_services.get_dts_responsibility_quality_report(
+            DtsResponsibilityQualityQuerySchema(
+                productId="250539396",
+                month=current_month,
+            ),
+            user=SimpleNamespace(id=1),
+        )
+
+        self.assertEqual(
+            [item["label"] for item in response["pl_groups"]],
+            ["通信组", "未识别PL领域"],
+        )
+        self.assertEqual(len(response["month_reports"]), 1)
+        self.assertEqual(response["month_reports"][0]["month"], current_month)
+        self.assertEqual(response["month_reports"][0]["score_items"][1]["label"], "未识别PL领域")
+        self.assertEqual(response["month_reports"][0]["score_items"][1]["score"], 118.0)
+        self.assertEqual(
+            response["month_reports"][0]["rows"][1]["cells"][1]["current_value"],
+            1.0,
+        )
+        mocked_cache_set.assert_called_once()
+
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services.CacheManager.get",
+        return_value=None,
+    )
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services.CacheManager.set"
+    )
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services._load_quality_report_defects",
+        return_value=[],
+    )
+    def test_report_mock_mode_returns_renderable_payload(
+        self,
+        mocked_load_defects,
+        mocked_cache_set,
+        _mocked_cache_get,
+    ):
+        month_ranges = dts_statistics_services._build_quality_month_ranges(
+            reference_dt=self._dt(2026, 5, 19),
+        )
+        current_month = month_ranges[-1]["month"]
+        response = dts_statistics_services.get_dts_responsibility_quality_report(
+            DtsResponsibilityQualityQuerySchema(
+                productId="250539396",
+                month=current_month,
+            ),
+            user=SimpleNamespace(id=1),
+        )
+
+        self.assertEqual(len(response["month_options"]), 24)
+        self.assertEqual(len(response["month_reports"]), 1)
+        self.assertEqual(response["month_reports"][0]["month"], current_month)
+        self.assertGreater(len(response["pl_groups"]), 0)
+        self.assertEqual(
+            len(response["month_reports"][0]["rows"]),
+            len(dts_statistics_services._RESPONSIBILITY_QUALITY_ROW_SPECS),
+        )
+        self.assertEqual(
+            len(response["month_reports"][0]["score_items"]),
+            len(response["pl_groups"]),
+        )
+        mocked_cache_set.assert_called_once()
+
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services.CacheManager.get",
+        return_value=None,
+    )
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services.CacheManager.set"
+    )
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services._load_quality_report_defects"
+    )
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services._build_quality_group_specs_for_report"
+    )
+    def test_report_returns_requested_month_slice(
+        self,
+        mocked_groups,
+        mocked_load_defects,
+        mocked_cache_set,
+        _mocked_cache_get,
+    ):
+        mocked_groups.return_value = [
+            {"id": "1", "label": "通信组", "owner_name": "徐鸣字", "sort": 1},
+        ]
+        mocked_load_defects.return_value = [
+            self._normalized_defect("2026-05", "CI打断问题数"),
+            self._normalized_defect("2026-04", "CI打断问题数"),
+        ]
+
+        response = dts_statistics_services.get_dts_responsibility_quality_report(
+            DtsResponsibilityQualityQuerySchema(
+                productId="250539396",
+                month="2026-04",
+            ),
+            user=SimpleNamespace(id=1),
+        )
+
+        self.assertEqual(len(response["month_reports"]), 1)
+        self.assertEqual(response["month_reports"][0]["month"], "2026-04")
+        self.assertEqual(response["month_reports"][0]["rows"][1]["cells"][0]["current_value"], 1.0)
+        mocked_cache_set.assert_called_once()

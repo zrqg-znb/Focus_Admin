@@ -290,6 +290,55 @@ export interface DtsPlGroupCompletionItem {
   filled_rate: number;
 }
 
+export interface DtsResponsibilityQualityPlGroup {
+  id: string;
+  label: string;
+  owner_name: string;
+  sort: number;
+}
+
+export interface DtsResponsibilityQualityCell {
+  current_value: number;
+  cumulative_value: number;
+  cumulative_deduction: number;
+}
+
+export interface DtsResponsibilityQualityRow {
+  section: string;
+  label: string;
+  formula: string;
+  cells: DtsResponsibilityQualityCell[];
+}
+
+export interface DtsResponsibilityQualityScoreItem {
+  label: string;
+  owner_name: string;
+  score: number;
+  deduction: number;
+}
+
+export interface DtsResponsibilityQualityMonthOption {
+  label: string;
+  value: string;
+}
+
+export interface DtsResponsibilityQualityMonthReport {
+  month: string;
+  score_items: DtsResponsibilityQualityScoreItem[];
+  rows: DtsResponsibilityQualityRow[];
+}
+
+export interface DtsResponsibilityQualityReport {
+  month_options: DtsResponsibilityQualityMonthOption[];
+  pl_groups: DtsResponsibilityQualityPlGroup[];
+  month_reports: DtsResponsibilityQualityMonthReport[];
+}
+
+export interface DtsResponsibilityQualityReportRequest {
+  productId: string;
+  month?: string;
+}
+
 export interface DtsTrendSummary {
   granularity: 'day' | 'week';
   labels: string[];
@@ -439,6 +488,15 @@ export async function batchSaveDtsExtension(
 
 export async function getDtsSummary(data: DtsStatisticsFilters) {
   return requestClient.post<DtsSummary>(`${base}/summary`, data);
+}
+
+export async function getDtsResponsibilityQualityReport(
+  data: DtsResponsibilityQualityReportRequest,
+) {
+  return requestClient.post<DtsResponsibilityQualityReport>(
+    `${base}/responsibility-quality-report`,
+    data,
+  );
 }
 
 export async function getDtsFieldSets(data: DtsFieldSetRequest) {

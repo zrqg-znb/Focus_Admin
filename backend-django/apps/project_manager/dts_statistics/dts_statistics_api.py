@@ -12,6 +12,8 @@ from .dts_statistics_schemas import (
     DtsFieldSetRequestSchema,
     DtsFieldSetResponseSchema,
     DtsListResponseSchema,
+    DtsResponsibilityQualityQuerySchema,
+    DtsResponsibilityQualityReportSchema,
     DtsQueryPrepareResponseSchema,
     DtsQueryTaskSchema,
     DtsSaveResponseSchema,
@@ -59,6 +61,21 @@ def batch_save_extension(request, data: DtsBatchExtensionSaveSchema):
 @router.post("/summary", response=DtsSummarySchema)
 def get_summary(request, query: DtsStatisticsQuerySchema):
     return dts_statistics_services.get_dts_statistics_summary(query, user=request.auth)
+
+
+@router.post(
+    "/responsibility-quality-report",
+    response=DtsResponsibilityQualityReportSchema,
+    summary="获取责任田领域质量报表",
+)
+def get_responsibility_quality_report(
+    request,
+    query: DtsResponsibilityQualityQuerySchema,
+):
+    return dts_statistics_services.get_dts_responsibility_quality_report(
+        query,
+        user=request.auth,
+    )
 
 
 @router.get("/dict-options", response=DtsDictOptionsSchema, summary="获取 DTS 模块字典选项")

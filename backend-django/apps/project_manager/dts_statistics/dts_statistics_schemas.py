@@ -735,6 +735,74 @@ class DtsHeatmapMatrixSchema(Schema):
     rows: list[DtsHeatmapRowSchema] = Field(default_factory=list)
 
 
+class DtsResponsibilityQualityPlGroupSchema(Schema):
+    id: str
+    label: str
+    owner_name: str = ""
+    sort: int = 0
+
+
+class DtsResponsibilityQualityCellSchema(Schema):
+    current_value: float = 0
+    cumulative_value: float = 0
+    cumulative_deduction: float = 0
+
+
+class DtsResponsibilityQualityRowSchema(Schema):
+    section: str
+    label: str
+    formula: str
+    cells: list[DtsResponsibilityQualityCellSchema] = Field(default_factory=list)
+
+
+class DtsResponsibilityQualityScoreItemSchema(Schema):
+    label: str
+    owner_name: str = ""
+    score: float = 0
+    deduction: float = 0
+
+
+class DtsResponsibilityQualityMonthOptionSchema(Schema):
+    label: str
+    value: str
+
+
+class DtsResponsibilityQualityMonthReportSchema(Schema):
+    month: str
+    score_items: list[DtsResponsibilityQualityScoreItemSchema] = Field(
+        default_factory=list
+    )
+    rows: list[DtsResponsibilityQualityRowSchema] = Field(default_factory=list)
+
+
+class DtsResponsibilityQualityReportSchema(Schema):
+    month_options: list[DtsResponsibilityQualityMonthOptionSchema] = Field(
+        default_factory=list
+    )
+    pl_groups: list[DtsResponsibilityQualityPlGroupSchema] = Field(
+        default_factory=list
+    )
+    month_reports: list[DtsResponsibilityQualityMonthReportSchema] = Field(
+        default_factory=list
+    )
+
+
+class DtsResponsibilityQualityQuerySchema(Schema):
+    productId: str = "250539396"
+    month: str = ""
+
+    @field_validator("productId", mode="before")
+    @classmethod
+    def normalize_product_id(cls, value: Any):
+        text = str(value or "").strip()
+        return text or "250539396"
+
+    @field_validator("month", mode="before")
+    @classmethod
+    def normalize_month(cls, value: Any):
+        return str(value or "").strip()
+
+
 class DtsSummarySchema(Schema):
     total_count: int
     open_count: int

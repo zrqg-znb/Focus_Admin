@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import calendar
 import datetime
+from copy import deepcopy
 import html
 import hashlib
 import json
@@ -138,6 +139,168 @@ _LOW_LEVEL_ISSUE_KEYWORDS = (
     "死循环",
     "内存不足",
     "内存溢出",
+)
+
+_RESPONSIBILITY_QUALITY_CACHE_KEY_PREFIX = (
+    "cache:dts_statistics:responsibility-quality:v2:"
+)
+_RESPONSIBILITY_QUALITY_CACHE_TTL_SECONDS = 10 * 60
+_RESPONSIBILITY_QUALITY_WINDOW_MONTHS = 24
+_RESPONSIBILITY_QUALITY_ROLLING_MONTHS = 12
+_RESPONSIBILITY_QUALITY_SCORE_BASE = Decimal("120")
+_RESPONSIBILITY_QUALITY_MOCK_GROUP_COUNT = 12
+_RESPONSIBILITY_QUALITY_UNKNOWN_GROUP_LABEL = "未识别PL领域"
+_RESPONSIBILITY_QUALITY_DEFAULT_MOCK_GROUPS = tuple(
+    {
+        "id": f"mock-pl-{index + 1}",
+        "label": f"模拟PL{index + 1:02d}",
+        "owner_name": f"负责人{index + 1:02d}",
+        "sort": _RESPONSIBILITY_QUALITY_MOCK_GROUP_COUNT - index,
+    }
+    for index in range(_RESPONSIBILITY_QUALITY_MOCK_GROUP_COUNT)
+)
+
+_RESPONSIBILITY_QUALITY_ROW_SPECS: tuple[dict[str, Any], ...] = (
+    {
+        "section": "产品过程质里",
+        "label": "例外版本事件（在研版本转测不通过）",
+        "formula": "NUM*5",
+        "match_text": "例外版本事件（在研版本转测不通过）",
+        "factor": Decimal("5"),
+    },
+    {
+        "section": "产品过程质里",
+        "label": "CI打断问题数",
+        "formula": "NUM*2",
+        "match_text": "CI打断问题数",
+        "factor": Decimal("2"),
+    },
+    {
+        "section": "产品过程质里",
+        "label": "DTS问题单回归不通过数",
+        "formula": "NUM*1",
+        "match_text": "DTS问题单回归不通过数",
+        "factor": Decimal("1"),
+    },
+    {
+        "section": "产品过程质里",
+        "label": "阻塞健康选代次数",
+        "formula": "NUM*1",
+        "match_text": "阻塞健康选代次数",
+        "factor": Decimal("1"),
+    },
+    {
+        "section": "产品过程质里",
+        "label": "重大维护事件",
+        "formula": "NUM*2",
+        "match_text": "重大维护事件",
+        "factor": Decimal("2"),
+    },
+    {
+        "section": "产品过程质里",
+        "label": "网络安全红线事件",
+        "formula": "NUM*2",
+        "match_text": "网络安全红线事件",
+        "factor": Decimal("2"),
+    },
+    {
+        "section": "产品过程质里",
+        "label": "质里红线违规",
+        "formula": "NUM*2",
+        "match_text": "质里红线违规",
+        "factor": Decimal("2"),
+    },
+    {
+        "section": "产品过程质里",
+        "label": "问题重犯",
+        "formula": "NUM*1",
+        "match_text": "问题重犯",
+        "factor": Decimal("1"),
+    },
+    {
+        "section": "产品过程质里",
+        "label": "客户面A/B类问题",
+        "formula": "NUM*1",
+        "match_text": "客户面A/B类问题",
+        "factor": Decimal("1"),
+    },
+    {
+        "section": "底软内部过程质量",
+        "label": "代码量",
+        "formula": "仅度量",
+        "match_text": None,
+        "factor": Decimal("0"),
+    },
+    {
+        "section": "底软内部过程质量",
+        "label": "开发自提单数量",
+        "formula": "仅度量",
+        "match_text": None,
+        "factor": Decimal("0"),
+    },
+    {
+        "section": "底软内部过程质量",
+        "label": "底软测试提单数",
+        "formula": "仅度量",
+        "match_text": None,
+        "factor": Decimal("0"),
+    },
+    {
+        "section": "底软内部过程质量",
+        "label": "产品提单数",
+        "formula": "仅度量",
+        "match_text": None,
+        "factor": Decimal("0"),
+    },
+    {
+        "section": "底软内部过程质量",
+        "label": "缺陷密度",
+        "formula": "仅度量",
+        "match_text": None,
+        "factor": Decimal("0"),
+    },
+    {
+        "section": "底软内部过程质量",
+        "label": "缺陷漏出比例一牵引测试",
+        "formula": "仅度量",
+        "match_text": None,
+        "factor": Decimal("0"),
+    },
+    {
+        "section": "底软内部过程质量",
+        "label": "开发测试提单比一牵引开发",
+        "formula": "仅度量",
+        "match_text": None,
+        "factor": Decimal("0"),
+    },
+    {
+        "section": "底软内部过程规范问题",
+        "label": "需求转测不通过数",
+        "formula": "NUM+0.5",
+        "match_text": None,
+        "factor": Decimal("0"),
+    },
+    {
+        "section": "底软内部过程规范问题",
+        "label": "问题单底软测试回归不通过数",
+        "formula": "NUM*0.2",
+        "match_text": None,
+        "factor": Decimal("0"),
+    },
+    {
+        "section": "底软内部过程规范问题",
+        "label": "问题单未经底软测试回归数",
+        "formula": "NUM+0.2",
+        "match_text": None,
+        "factor": Decimal("0"),
+    },
+    {
+        "section": "底软内部过程规范问题",
+        "label": "自提单版本号等信息填写错误数",
+        "formula": "NUM*O.2",
+        "match_text": None,
+        "factor": Decimal("0"),
+    },
 )
 
 _FIELD_SET_SUPPORTED_FIELDS = {
@@ -598,6 +761,21 @@ def _subtract_months(dt: datetime.datetime, months: int) -> datetime.datetime:
     month = (month_index % 12) + 1
     day = min(dt.day, calendar.monthrange(year, month)[1])
     return dt.replace(year=year, month=month, day=day)
+
+
+def _add_months(dt: datetime.datetime, months: int) -> datetime.datetime:
+    safe_months = max(int(months or 0), 0)
+    if safe_months <= 0:
+        return dt
+    month_index = (dt.month - 1) + safe_months
+    year = dt.year + (month_index // 12)
+    month = (month_index % 12) + 1
+    day = min(dt.day, calendar.monthrange(year, month)[1])
+    return dt.replace(year=year, month=month, day=day)
+
+
+def _month_floor(dt: datetime.datetime) -> datetime.datetime:
+    return dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
 def _resolve_snapshot_window(
@@ -4311,6 +4489,499 @@ def get_dts_statistics_summary(
         "pl_group_dev_completion_dist": pl_group_dev_completion_dist,
         "snapshot": snapshot,
     }
+
+
+def _quality_cache_key(product_id: str) -> str:
+    return _cache_key(
+        _RESPONSIBILITY_QUALITY_CACHE_KEY_PREFIX,
+        {"productId": _clean_text(product_id)},
+    )[0]
+
+
+def _format_quality_month_label(month_key: str) -> str:
+    match = re.match(r"^(\d{4})-(\d{2})$", month_key)
+    if not match:
+        return month_key
+    year, month = match.groups()
+    return f"{year}年{month}月"
+
+
+def _build_quality_month_ranges(
+    reference_dt: datetime.datetime | None = None,
+    *,
+    month_count: int = _RESPONSIBILITY_QUALITY_WINDOW_MONTHS,
+) -> list[dict[str, Any]]:
+    safe_count = max(int(month_count or 0), 1)
+    end_dt = reference_dt or timezone.now()
+    month_cursor = _month_floor(_subtract_months(_month_floor(end_dt), safe_count - 1))
+    ranges: list[dict[str, Any]] = []
+
+    for _index in range(safe_count):
+        next_month_start = _add_months(month_cursor, 1)
+        chunk_end = min(
+            next_month_start - datetime.timedelta(milliseconds=1),
+            end_dt,
+        )
+        ranges.append(
+            {
+                "month": month_cursor.strftime("%Y-%m"),
+                "label": _format_quality_month_label(month_cursor.strftime("%Y-%m")),
+                "begin_ms": int(month_cursor.timestamp() * 1000),
+                "end_ms": int(chunk_end.timestamp() * 1000),
+            }
+        )
+        month_cursor = next_month_start
+
+    return ranges
+
+
+def _resolve_quality_pl_group_display_name(group: PlGroup) -> str:
+    owner = getattr(group, "pl_user", None)
+    owner_name = _clean_text(getattr(owner, "name", "")) or _clean_text(
+        getattr(owner, "username", "")
+    )
+    return owner_name or "未填写"
+
+
+def _build_quality_pl_group_specs(
+    groups: Iterable[PlGroup] | Iterable[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    specs: list[dict[str, Any]] = []
+    for item in groups:
+        if isinstance(item, dict):
+            group_id = _clean_text(item.get("id"))
+            group_label = _clean_text(item.get("label") or item.get("name"))
+            owner_name = _clean_text(item.get("owner_name"))
+            sort_value = int(item.get("sort") or 0)
+        else:
+            group_id = _clean_text(getattr(item, "id", ""))
+            group_label = _clean_text(getattr(item, "name", ""))
+            owner_name = _resolve_quality_pl_group_display_name(item)
+            sort_value = int(getattr(item, "sort", 0) or 0)
+        if not group_label:
+            continue
+        specs.append(
+            {
+                "id": group_id or group_label,
+                "label": group_label,
+                "owner_name": owner_name or "未填写",
+                "sort": sort_value,
+            }
+        )
+
+    specs.sort(
+        key=lambda item: (
+            -int(item.get("sort") or 0),
+            str(item.get("label") or ""),
+            str(item.get("id") or ""),
+        )
+    )
+    return specs
+
+
+def _build_mock_quality_pl_group_specs() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": str(item["id"]),
+            "label": str(item["label"]),
+            "owner_name": str(item["owner_name"]),
+            "sort": int(item["sort"]),
+        }
+        for item in _RESPONSIBILITY_QUALITY_DEFAULT_MOCK_GROUPS
+    ]
+
+
+def _build_quality_group_specs_for_report() -> list[dict[str, Any]]:
+    actual_groups = _build_quality_pl_group_specs(
+        PlGroup.objects.filter(status=True)
+        .select_related("pl_user")
+        .only("id", "name", "sort", "pl_user__name", "pl_user__username")
+        .all()
+    )
+    if actual_groups:
+        return actual_groups
+    return _build_mock_quality_pl_group_specs()
+
+
+def _load_quality_report_defects(
+    *,
+    product_id: str,
+    month_ranges: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not month_ranges:
+        return []
+
+    raw_rows: list[dict[str, Any]] = []
+    for chunk in month_ranges:
+        chunk_rows, _scanned_pages, _total_pages = _fetch_rows_for_time_chunk(
+            product_id=product_id,
+            update_time_begin=int(chunk["begin_ms"] or 0),
+            update_time_end=int(chunk["end_ms"] or 0),
+        )
+        raw_rows.extend(chunk_rows)
+
+    merged_rows = _merge_duplicate_rows(raw_rows)
+    if not merged_rows:
+        return []
+
+    extensions_map = _load_extensions_map_for_defects(merged_rows)
+    handler_usernames = [
+        _clean_text(item.get("last_dts009_handler"))
+        for item in merged_rows
+        if _clean_text(item.get("last_dts009_handler"))
+    ]
+    auto_pl_group_by_username = _load_auto_pl_group_by_username(handler_usernames)
+
+    month_key_set = {str(item["month"]) for item in month_ranges}
+    normalized_rows: list[dict[str, Any]] = []
+    for row in merged_rows:
+        close_time = _parse_datetime(row.get("dCloseTime"))
+        if close_time is None:
+            continue
+        month_key = close_time.strftime("%Y-%m")
+        if month_key not in month_key_set:
+            continue
+
+        defect_no = _clean_text(row.get("dtsBizNo"))
+        extension = extensions_map.get(defect_no)
+        process_quality_type = ""
+        if extension is not None:
+            process_quality_type = _strip_html_text(extension.process_quality_type)
+
+        handler_username = _clean_text(row.get("last_dts009_handler"))
+        pl_group_label = _RESPONSIBILITY_QUALITY_UNKNOWN_GROUP_LABEL
+        if handler_username:
+            pl_group_label = auto_pl_group_by_username.get(
+                handler_username,
+                (None, _RESPONSIBILITY_QUALITY_UNKNOWN_GROUP_LABEL),
+            )[1]
+        normalized_rows.append(
+            {
+                "month": month_key,
+                "dtsBizNo": defect_no,
+                "pl_group_label": pl_group_label,
+                "process_quality_type": process_quality_type,
+            }
+        )
+
+    return normalized_rows
+
+
+def _build_quality_counts_from_rows(
+    defects: list[dict[str, Any]],
+    *,
+    month_ranges: list[dict[str, Any]],
+    pl_group_specs: list[dict[str, Any]],
+) -> dict[tuple[str, int], list[int]]:
+    month_index_by_key = {
+        str(item["month"]): index for index, item in enumerate(month_ranges)
+    }
+    group_labels = [str(item.get("label") or "") for item in pl_group_specs]
+    known_group_labels = {label for label in group_labels if label}
+    quality_rows_by_match = {
+        str(item["match_text"]): index
+        for index, item in enumerate(_RESPONSIBILITY_QUALITY_ROW_SPECS)
+        if _clean_text(item.get("match_text"))
+    }
+    counts: dict[tuple[str, int], list[int]] = {}
+
+    def _ensure_bucket(group_label: str, row_index: int) -> list[int]:
+        key = (group_label, row_index)
+        bucket = counts.get(key)
+        if bucket is None:
+            bucket = [0 for _ in month_ranges]
+            counts[key] = bucket
+        return bucket
+
+    for defect in defects:
+        month_key = str(defect.get("month") or "")
+        month_index = month_index_by_key.get(month_key)
+        if month_index is None:
+            continue
+
+        process_quality_type = _strip_html_text(
+            defect.get("process_quality_type")
+        )
+        row_index = quality_rows_by_match.get(process_quality_type)
+        if row_index is None:
+            continue
+
+        group_label = _clean_text(defect.get("pl_group_label"))
+        if not group_label:
+            group_label = _RESPONSIBILITY_QUALITY_UNKNOWN_GROUP_LABEL
+        if group_label not in known_group_labels:
+            group_label = _RESPONSIBILITY_QUALITY_UNKNOWN_GROUP_LABEL
+
+        bucket = _ensure_bucket(group_label, row_index)
+        bucket[month_index] += 1
+
+    return counts
+
+
+def _build_mock_quality_counts(
+    *,
+    month_ranges: list[dict[str, Any]],
+    pl_group_specs: list[dict[str, Any]],
+) -> dict[tuple[str, int], list[int]]:
+    counts: dict[tuple[str, int], list[int]] = {}
+    row_specs = list(_RESPONSIBILITY_QUALITY_ROW_SPECS)
+    groups = [str(item.get("label") or "") for item in pl_group_specs]
+    for group_index, group_label in enumerate(groups):
+        if not group_label:
+            continue
+        for row_index, row_spec in enumerate(row_specs):
+            if row_spec.get("factor", Decimal("0")) <= 0:
+                continue
+            values = [0 for _ in month_ranges]
+            for month_index, month in enumerate(month_ranges):
+                seed_text = "|".join(
+                    [
+                        str(month.get("month") or ""),
+                        group_label,
+                        str(row_spec.get("label") or ""),
+                        str(group_index),
+                        str(row_index),
+                    ]
+                )
+                digest_value = int(
+                    hashlib.sha1(seed_text.encode("utf-8")).hexdigest()[:8],
+                    16,
+                )
+                if digest_value % 11 == 0:
+                    values[month_index] = 2
+                elif digest_value % 4 == 0:
+                    values[month_index] = 1
+            counts[(group_label, row_index)] = values
+    return counts
+
+
+def _build_quality_report_payload(
+    *,
+    month_ranges: list[dict[str, Any]],
+    pl_group_specs: list[dict[str, Any]],
+    counts: dict[tuple[str, int], list[int]],
+) -> dict[str, Any]:
+    month_ranges_desc = list(reversed(month_ranges))
+    month_reports: list[dict[str, Any]] = []
+
+    for month_range in month_ranges_desc:
+        month_key = str(month_range["month"])
+        month_index = next(
+            index for index, item in enumerate(month_ranges) if item["month"] == month_key
+        )
+        rows_payload: list[dict[str, Any]] = []
+        score_items: list[dict[str, Any]] = []
+
+        for row_index, row_spec in enumerate(_RESPONSIBILITY_QUALITY_ROW_SPECS):
+            row_cells: list[dict[str, Any]] = []
+            for group_spec in pl_group_specs:
+                group_label = str(group_spec.get("label") or "")
+                bucket = counts.get((group_label, row_index))
+                month_values = bucket or [0 for _ in month_ranges]
+                current_value = int(month_values[month_index] or 0)
+                start_index = max(0, month_index - _RESPONSIBILITY_QUALITY_ROLLING_MONTHS + 1)
+                cumulative_value = int(sum(month_values[start_index : month_index + 1]))
+                factor = Decimal(str(row_spec.get("factor") or "0"))
+                cumulative_deduction = (
+                    -(Decimal(cumulative_value) * factor)
+                    if factor > 0
+                    else Decimal("0")
+                )
+                row_cells.append(
+                    {
+                        "current_value": float(current_value),
+                        "cumulative_value": float(cumulative_value),
+                        "cumulative_deduction": float(
+                            cumulative_deduction.quantize(
+                                Decimal("0.1"),
+                                rounding=ROUND_HALF_UP,
+                            )
+                        ),
+                    }
+                )
+
+            rows_payload.append(
+                {
+                    "section": str(row_spec.get("section") or ""),
+                    "label": str(row_spec.get("label") or ""),
+                    "formula": str(row_spec.get("formula") or ""),
+                    "cells": row_cells,
+                }
+            )
+
+        for group_spec in pl_group_specs:
+            group_label = str(group_spec.get("label") or "")
+            total_deduction = Decimal("0")
+            for row_index, row_spec in enumerate(_RESPONSIBILITY_QUALITY_ROW_SPECS):
+                factor = Decimal(str(row_spec.get("factor") or "0"))
+                if factor <= 0:
+                    continue
+                bucket = counts.get((group_label, row_index))
+                month_values = bucket or [0 for _ in month_ranges]
+                start_index = max(0, month_index - _RESPONSIBILITY_QUALITY_ROLLING_MONTHS + 1)
+                cumulative_value = int(sum(month_values[start_index : month_index + 1]))
+                total_deduction += -(Decimal(cumulative_value) * factor)
+
+            score_value = _RESPONSIBILITY_QUALITY_SCORE_BASE + total_deduction
+            if score_value < 0:
+                score_value = Decimal("0")
+            score_items.append(
+                {
+                    "label": group_label,
+                    "owner_name": str(group_spec.get("owner_name") or ""),
+                    "score": float(
+                        score_value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+                    ),
+                    "deduction": float(
+                        total_deduction.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+                    ),
+                }
+            )
+
+        month_reports.append(
+            {
+                "month": month_key,
+                "score_items": score_items,
+                "rows": rows_payload,
+            }
+        )
+
+    return {
+        "month_options": [
+            {
+                "label": str(month_range["label"]),
+                "value": str(month_range["month"]),
+            }
+            for month_range in month_ranges_desc
+        ],
+        "pl_groups": [
+            {
+                "id": str(item.get("id") or item.get("label") or ""),
+                "label": str(item.get("label") or ""),
+                "owner_name": str(item.get("owner_name") or ""),
+                "sort": int(item.get("sort") or 0),
+            }
+            for item in pl_group_specs
+        ],
+        "month_reports": month_reports,
+    }
+
+
+def _select_quality_month_report(
+    payload: dict[str, Any],
+    requested_month: str,
+) -> dict[str, Any]:
+    month_reports = list(payload.get("month_reports") or [])
+    if not month_reports:
+        return {
+            "month_options": deepcopy(list(payload.get("month_options") or [])),
+            "pl_groups": deepcopy(list(payload.get("pl_groups") or [])),
+            "month_reports": [],
+        }
+
+    month_report_map = {
+        _clean_text(item.get("month")): item
+        for item in month_reports
+        if _clean_text(item.get("month"))
+    }
+    normalized_requested_month = _clean_text(requested_month)
+    selected_month = (
+        normalized_requested_month
+        if normalized_requested_month in month_report_map
+        else _clean_text(month_reports[0].get("month"))
+    )
+    selected_report = month_report_map.get(selected_month) or month_reports[0]
+
+    return {
+        "month_options": deepcopy(list(payload.get("month_options") or [])),
+        "pl_groups": deepcopy(list(payload.get("pl_groups") or [])),
+        "month_reports": [deepcopy(selected_report)],
+    }
+
+
+def _build_mock_quality_report(
+    *,
+    month_ranges: list[dict[str, Any]],
+    pl_group_specs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    counts = _build_mock_quality_counts(
+        month_ranges=month_ranges,
+        pl_group_specs=pl_group_specs,
+    )
+    return _build_quality_report_payload(
+        month_ranges=month_ranges,
+        pl_group_specs=pl_group_specs,
+        counts=counts,
+    )
+
+
+def get_dts_responsibility_quality_report(
+    query: Any,
+    *,
+    user: Any = None,
+) -> dict[str, Any]:
+    if not user or not getattr(user, "id", None):
+        raise HttpError(401, "用户未登录")
+
+    product_id = _ensure_supported_product_id(
+        getattr(query, "productId", None)
+        if not isinstance(query, dict)
+        else query.get("productId")
+    )
+    cache_key = _quality_cache_key(product_id)
+    requested_month = _clean_text(
+        getattr(query, "month", None)
+        if not isinstance(query, dict)
+        else query.get("month")
+    )
+    cached = CacheManager.get(cache_key)
+    if isinstance(cached, dict):
+        return _select_quality_month_report(cached, requested_month)
+
+    month_ranges = _build_quality_month_ranges()
+    pl_group_specs = _build_quality_group_specs_for_report()
+    defects = _load_quality_report_defects(
+        product_id=product_id,
+        month_ranges=month_ranges,
+    )
+
+    if not defects:
+        payload = _build_mock_quality_report(
+            month_ranges=month_ranges,
+            pl_group_specs=pl_group_specs,
+        )
+    else:
+        known_group_labels = {
+            str(group.get("label") or "") for group in pl_group_specs
+        }
+        has_unknown_group = any(
+            not _clean_text(item.get("pl_group_label"))
+            or _clean_text(item.get("pl_group_label")) not in known_group_labels
+            for item in defects
+        )
+        if has_unknown_group and _RESPONSIBILITY_QUALITY_UNKNOWN_GROUP_LABEL not in known_group_labels:
+            pl_group_specs = [
+                *pl_group_specs,
+                {
+                    "id": "unknown-pl-group",
+                    "label": _RESPONSIBILITY_QUALITY_UNKNOWN_GROUP_LABEL,
+                    "owner_name": "",
+                    "sort": -9999,
+                },
+            ]
+        counts = _build_quality_counts_from_rows(
+            defects,
+            month_ranges=month_ranges,
+            pl_group_specs=pl_group_specs,
+        )
+        payload = _build_quality_report_payload(
+            month_ranges=month_ranges,
+            pl_group_specs=pl_group_specs,
+            counts=counts,
+        )
+
+    CacheManager.set(cache_key, payload, _RESPONSIBILITY_QUALITY_CACHE_TTL_SECONDS)
+    return _select_quality_month_report(payload, requested_month)
 
 
 def _normalize_defect_no_list(values: Iterable[str] | None) -> list[str]:
