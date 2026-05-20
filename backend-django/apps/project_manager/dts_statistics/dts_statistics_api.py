@@ -12,6 +12,7 @@ from .dts_statistics_schemas import (
     DtsFieldSetRequestSchema,
     DtsFieldSetResponseSchema,
     DtsListResponseSchema,
+    DtsLowLevelIssueListResponseSchema,
     DtsResponsibilityQualityQuerySchema,
     DtsResponsibilityQualityReportSchema,
     DtsQueryPrepareResponseSchema,
@@ -61,6 +62,18 @@ def batch_save_extension(request, data: DtsBatchExtensionSaveSchema):
 @router.post("/summary", response=DtsSummarySchema)
 def get_summary(request, query: DtsStatisticsQuerySchema):
     return dts_statistics_services.get_dts_statistics_summary(query, user=request.auth)
+
+
+@router.post(
+    "/low-level-issues",
+    response=DtsLowLevelIssueListResponseSchema,
+    summary="获取低级问题明细",
+)
+def get_low_level_issues(request, query: DtsStatisticsQuerySchema):
+    return dts_statistics_services.get_dts_statistics_low_level_issues(
+        query,
+        user=request.auth,
+    )
 
 
 @router.post(

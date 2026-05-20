@@ -51,12 +51,14 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
         self,
         defect_no: str,
         *,
+        brief_desc: str = "示例缺陷",
         team: str = "研发A组",
         severity: str = "一般",
         status: str = "处理中",
         flow_type: str = "标准",
         source: str = "手工提单",
         handler: str = "张三",
+        submitter_name: str = "提单人A",
         project_name: str = "座舱项目",
         pl_group: str = "PL-A",
         dev_owner_name: str = "",
@@ -72,6 +74,7 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
     ) -> dict[str, str]:
         return {
             "dtsBizNo": defect_no,
+            "briefDesc": brief_desc,
             "dtsStatusName": status,
             "serverityNoName": severity,
             "updateAt": update_at,
@@ -83,6 +86,7 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
             "auto_pl_group_name": pl_group,
             "dev_owner_name": dev_owner_name,
             "currentHandler": handler,
+            "sSubmitUserName": submitter_name,
             "projectName": project_name,
             "sProdCName": project_name,
             "sConfigFlowType": flow_type,
@@ -494,6 +498,89 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
                     "filled_rate": 0.3333,
                 },
             ],
+        )
+
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services._resolve_runtime_defects"
+    )
+    def test_low_level_issue_list_filters_and_paginates(
+        self,
+        mocked_resolve,
+    ):
+        defects = [
+            self._defect(
+                "D-1",
+                brief_desc="<p>内存泄露风险</p>",
+                dts004_reason_analysis="<div>内存泄露</div>",
+                submitter_name="张三",
+                source="QA填报",
+                pl_group="PL-A",
+                close_type="关闭类型A",
+            ),
+            self._defect(
+                "D-2",
+                brief_desc="正常缺陷",
+                dts004_reason_analysis="无关键字",
+                dts009_reason_analyses="无关键字",
+                s_achieve_descibe="无关键字",
+                submitter_name="李四",
+                source="测试",
+                pl_group="PL-B",
+                close_type="关闭类型B",
+            ),
+            self._defect(
+                "D-3",
+                brief_desc="<span>数据未校验</span>",
+                dts009_reason_analyses="<p>数据未校验</p>",
+                submitter_name="",
+                source="现场提单",
+                pl_group="",
+                close_type="",
+            ),
+            self._defect(
+                "D-4",
+                brief_desc="数组越界提示",
+                s_achieve_descibe="<div>数组越界</div>",
+                submitter_name="王五",
+                source="车机",
+                pl_group="PL-C",
+                close_type="关闭类型C",
+            ),
+        ]
+        mocked_resolve.return_value = (defects, None)
+
+        response_page_1 = dts_statistics_services.get_dts_statistics_low_level_issues(
+            DtsStatisticsQuerySchema(
+                updateTimeBegin=self._ms(2026, 5, 1),
+                updateTimeEnd=self._ms(2026, 5, 10),
+                pageIndex=1,
+                pageSize=2,
+            ),
+            user=SimpleNamespace(id=1),
+        )
+        response_page_2 = dts_statistics_services.get_dts_statistics_low_level_issues(
+            DtsStatisticsQuerySchema(
+                updateTimeBegin=self._ms(2026, 5, 1),
+                updateTimeEnd=self._ms(2026, 5, 10),
+                pageIndex=2,
+                pageSize=2,
+            ),
+            user=SimpleNamespace(id=1),
+        )
+
+        self.assertEqual(response_page_1["total"], 3)
+        self.assertEqual(response_page_1["pageIndex"], 1)
+        self.assertEqual(response_page_1["pageSize"], 2)
+        self.assertEqual(
+            [item["dtsBizNo"] for item in response_page_1["items"]],
+            ["D-1", "D-3"],
+        )
+        self.assertEqual(response_page_1["items"][0]["briefDesc"], "内存泄露风险")
+        self.assertEqual(response_page_1["items"][1]["auto_pl_group_name"], "未识别PL领域")
+        self.assertEqual(response_page_1["items"][1]["sSubmitUserName"], "未填写")
+        self.assertEqual(
+            [item["dtsBizNo"] for item in response_page_2["items"]],
+            ["D-4"],
         )
 
 

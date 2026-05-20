@@ -435,6 +435,7 @@ Schema：`DtsResponsibilityQualityQuerySchema`
 - 按 `dCloseTime` 分月预计算最近 24 个月的切片，前端只在已加载切片内切换月份
 - 表格按模板结构返回 `当月值 / 累计值 / 累计扣分`
 - 目前只实现「产品过程质量」第一段，其他两段继续保留结构但值恒为 0
+- 质量 tab 的座舱 / 车控切换是 tab 内局部状态，默认跟随初次打开时的页面产品，之后独立生效
 
 返回结构：
 
@@ -451,6 +452,30 @@ Schema：`DtsResponsibilityQualityQuerySchema`
 - `累计值` 使用最近 12 个月滚动窗口；`累计扣分` 以负数返回
 - 缺失或未命中的 PL 归入 `未识别PL领域`
 - 若真实数据为空，后端会返回确定性的 mock 报表，保证前端可联调
+
+### 7.6 `POST /low-level-issues`（低级问题明细）
+
+Schema：`DtsStatisticsQuerySchema`
+
+用途：
+
+- 为统计看板「低级问题」卡片提供独立分页明细接口
+- 仅返回命中低级问题关键词的缺陷，不影响 `summary` 的计数口径
+
+返回结构：
+
+- `total`：命中的低级问题总数
+- `pageIndex/pageSize`：分页元数据
+- `items[]`：当前页明细，仅包含弹窗需要的主要字段
+
+返回字段：
+
+- `dtsBizNo`：DTS 单号
+- `briefDesc`：简要描述，返回前会做轻量文本化处理
+- `uQbiCloseTypeName`：关闭类型
+- `auto_source_type`：提单来源
+- `sSubmitUserName`：提单人姓名
+- `auto_pl_group_name`：PL 组
 
 ---
 

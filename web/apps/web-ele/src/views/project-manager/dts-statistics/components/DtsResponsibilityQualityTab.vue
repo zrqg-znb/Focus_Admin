@@ -6,14 +6,14 @@ import type {
   DtsResponsibilityQualityReport,
 } from '#/api/project-manager/dts-statistics';
 
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 
-import { useResizeObserver } from '@vueuse/core';
 import {
   ElCard,
   ElEmpty,
   ElMessage,
   ElOption,
+  ElSegmented,
   ElSelect,
   ElTable,
   ElTableColumn,
@@ -35,15 +35,19 @@ const props = withDefaults(
   },
 );
 
+const PRODUCT_OPTIONS = [
+  { label: '座舱', value: '250539396' },
+  { label: '车控', value: '250539397' },
+] as const;
+
 type QualityGridRow = Record<string, number | string>;
 
 const report = ref<DtsResponsibilityQualityReport | null>(null);
+const activeProductId = ref(resolveInitialProductId(props.productId));
 const selectedMonth = ref(getCurrentMonthKey());
 const confirmedMonth = ref('');
 const loading = ref(false);
 const requestSerial = ref(0);
-const tableViewportRef = ref<HTMLElement | null>(null);
-const tableMaxHeight = ref(0);
 
 const monthOptions = computed<DtsResponsibilityQualityMonthOption[]>(
   () => report.value?.month_options || [],
@@ -54,10 +58,22 @@ const plGroups = computed<DtsResponsibilityQualityPlGroup[]>(
 const visibleMonthReport = computed<DtsResponsibilityQualityMonthReport | null>(
   () => report.value?.month_reports?.[0] || null,
 );
+const scoreItemMap = computed(() => {
+  const items = visibleMonthReport.value?.score_items || [];
+  return new Map(items.map((item) => [item.label, item] as const));
+});
 const visibleRows = computed<QualityGridRow[]>(() =>
   flattenRows(visibleMonthReport.value, plGroups.value),
 );
 const sectionSpanMap = computed(() => buildSectionSpanMap(visibleRows.value));
+
+function resolveInitialProductId(productId?: string) {
+  const value = normalizeMonth(productId);
+  return (
+    PRODUCT_OPTIONS.find((item) => item.value === value)?.value ||
+    PRODUCT_OPTIONS[0].value
+  );
+}
 
 function getCurrentMonthKey() {
   const now = new Date();
@@ -118,20 +134,6 @@ function buildSectionSpanMap(rows: QualityGridRow[]) {
   return map;
 }
 
-function syncTableMaxHeight() {
-  const element = tableViewportRef.value;
-  if (!element) {
-    return;
-  }
-  const viewportHeight =
-    window.innerHeight || document.documentElement.clientHeight || 0;
-  const topOffset = element.getBoundingClientRect().top;
-  const nextHeight = Math.max(320, Math.floor(viewportHeight - topOffset - 24));
-  if (Math.abs(nextHeight - tableMaxHeight.value) >= 1) {
-    tableMaxHeight.value = nextHeight;
-  }
-}
-
 function spanMethod({
   columnIndex,
   rowIndex,
@@ -149,22 +151,27 @@ function spanMethod({
   return { rowspan, colspan: 1 };
 }
 
-useResizeObserver(tableViewportRef, () => {
-  syncTableMaxHeight();
-});
+function cellClassName({
+  row,
+  column,
+}: {
+  column: { prop?: string; property?: string };
+  row: QualityGridRow;
+}) {
+  const property = String(column.property || column.prop || '');
+  if (property.endsWith('-deduction') && Number(row[property] || 0) !== 0) {
+    return 'dts-quality-grid__deduction-cell';
+  }
+  return '';
+}
 
-onMounted(() => {
-  syncTableMaxHeight();
-});
+function getGroupScore(label: string) {
+  return scoreItemMap.value.get(label)?.score ?? null;
+}
 
-watch(
-  [visibleRows, plGroups],
-  async () => {
-    await nextTick();
-    syncTableMaxHeight();
-  },
-  { immediate: true },
-);
+function formatGroupScore(score: null | number) {
+  return score === null ? '--' : score.toFixed(1);
+}
 
 async function loadReport(month: string) {
   const requestedMonth = normalizeMonth(month);
@@ -177,7 +184,7 @@ async function loadReport(month: string) {
 
   try {
     const response = await getDtsResponsibilityQualityReport({
-      productId: props.productId || '250539396',
+      productId: activeProductId.value,
       month: requestedMonth,
     });
 
@@ -213,11 +220,10 @@ function handleMonthChange(value: number | string | undefined) {
 }
 
 watch(
-  () => props.productId,
+  activeProductId,
   () => {
     report.value = null;
     confirmedMonth.value = '';
-    selectedMonth.value = getCurrentMonthKey();
     void loadReport(selectedMonth.value);
   },
   { immediate: true },
@@ -225,31 +231,24 @@ watch(
 </script>
 
 <template>
-  <div
-    class="dts-quality-tab flex h-full min-h-0 flex-col overflow-hidden"
-    v-loading="loading"
-  >
-    <ElCard
-      shadow="never"
-      class="dts-quality-table-card flex min-h-0 flex-1 flex-col"
-    >
+  <div class="dts-quality-tab" v-loading="loading">
+    <ElCard shadow="never" class="dts-quality-table-card">
       <template #header>
         <div class="dts-quality-table-title">
           <div>
             <div class="dts-quality-table-title__title">责任田领域质量</div>
-            <div class="dts-quality-table-title__desc">
-              <div>
-                按 dCloseTime
-                分月展示产品过程质量；月份切换会单独请求对应月份数据。
-              </div>
-              <div>表格支持纵向滚动查看指标、横向滚动查看 PL 组。</div>
-            </div>
           </div>
 
           <div class="dts-quality-table-title__controls">
-            <ElTag type="success" effect="plain">
-              {{ props.productLabel || props.productId }}
-            </ElTag>
+            <div class="dts-quality-table-title__field">
+              <span class="dts-quality-table-title__label">产品</span>
+              <ElSegmented
+                v-model="activeProductId"
+                class="dts-quality-table-title__segmented"
+                :options="PRODUCT_OPTIONS"
+                size="small"
+              />
+            </div>
             <div class="dts-quality-table-title__field">
               <span class="dts-quality-table-title__label">月份</span>
               <ElSelect
@@ -272,18 +271,15 @@ watch(
         </div>
       </template>
 
-      <div
-        ref="tableViewportRef"
-        class="dts-quality-table-shell flex min-h-0 flex-1 flex-col"
-      >
+      <div class="dts-quality-table-shell">
         <ElTable
           v-if="visibleRows.length > 0"
           :key="visibleMonthReport?.month || selectedMonth"
           class="dts-quality-grid"
           :data="visibleRows"
           border
+          :cell-class-name="cellClassName"
           stripe
-          :max-height="tableMaxHeight || undefined"
           table-layout="fixed"
           :span-method="spanMethod"
         >
@@ -316,11 +312,23 @@ watch(
           <ElTableColumn
             v-for="(group, index) in plGroups"
             :key="group.id || index"
-            :label="`${group.label}\n${group.owner_name || '未填写'}`"
             align="center"
             header-align="center"
-            :min-width="272"
+            :min-width="300"
           >
+            <template #header>
+              <div class="dts-quality-group-header">
+                <div class="dts-quality-group-header__title">
+                  {{ group.label }}
+                </div>
+                <div class="dts-quality-group-header__meta">
+                  <span>{{ group.owner_name || '未填写' }}</span>
+                  <ElTag type="success" effect="plain" size="small">
+                    得分 {{ formatGroupScore(getGroupScore(group.label)) }}
+                  </ElTag>
+                </div>
+              </div>
+            </template>
             <ElTableColumn
               :prop="`pl-group-${index}-current`"
               label="当月值"
@@ -371,9 +379,6 @@ watch(
 }
 
 .dts-quality-table-card :deep(.el-card__body) {
-  display: flex;
-  flex: 1;
-  min-height: 0;
   padding: 0 20px 20px;
 }
 
@@ -390,13 +395,6 @@ watch(
   font-size: 16px;
   font-weight: 700;
   color: #0f172a;
-}
-
-.dts-quality-table-title__desc {
-  margin-top: 4px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: #64748b;
 }
 
 .dts-quality-table-title__controls {
@@ -422,12 +420,42 @@ watch(
   width: 160px;
 }
 
+.dts-quality-table-title__segmented {
+  min-width: 156px;
+}
+
 .dts-quality-table-shell {
   min-width: 0;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 .dts-quality-grid {
   min-width: 0;
+}
+
+.dts-quality-group-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.dts-quality-group-header__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.dts-quality-group-header__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #64748b;
 }
 
 .dts-quality-grid :deep(.el-table__header .cell) {
@@ -465,6 +493,11 @@ watch(
   font-variant-numeric: tabular-nums;
 }
 
+.dts-quality-grid :deep(.dts-quality-grid__deduction-cell) {
+  color: #dc2626;
+  font-weight: 700;
+}
+
 @media (max-width: 1200px) {
   .dts-quality-table-card :deep(.el-card__header) {
     padding: 16px 16px 12px;
@@ -476,6 +509,10 @@ watch(
 
   .dts-quality-table-title {
     align-items: flex-start;
+  }
+
+  .dts-quality-table-title__segmented {
+    min-width: 140px;
   }
 
   .dts-quality-table-title__select {

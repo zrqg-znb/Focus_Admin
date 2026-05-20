@@ -395,6 +395,24 @@ export interface DtsSummary {
   snapshot?: DtsSnapshotMeta | null;
 }
 
+export interface DtsLowLevelIssueItem {
+  dtsBizNo: string;
+  briefDesc: string;
+  uQbiCloseTypeName: string;
+  auto_source_type: string;
+  sSubmitUserName: string;
+  auto_pl_group_name: string;
+}
+
+export interface DtsLowLevelIssueListResponse {
+  total: number;
+  pageIndex: number;
+  pageSize: number;
+  items: DtsLowLevelIssueItem[];
+}
+
+export type DtsLowLevelIssueQuery = DtsStatisticsQuery;
+
 export type DtsTaskStatus = 'failed' | 'pending' | 'running' | 'success';
 
 export interface DtsQueryTask {
@@ -488,6 +506,13 @@ export async function batchSaveDtsExtension(
 
 export async function getDtsSummary(data: DtsStatisticsFilters) {
   return requestClient.post<DtsSummary>(`${base}/summary`, data);
+}
+
+export async function getDtsLowLevelIssues(data: DtsLowLevelIssueQuery) {
+  return requestClient.post<DtsLowLevelIssueListResponse>(
+    `${base}/low-level-issues`,
+    data,
+  );
 }
 
 export async function getDtsResponsibilityQualityReport(

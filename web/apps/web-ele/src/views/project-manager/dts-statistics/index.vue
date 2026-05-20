@@ -5,10 +5,12 @@ import type {
   DtsBatchSaveResponse,
   DtsDictOptions,
   DtsExportTask,
+  DtsLowLevelIssueItem,
+  DtsLowLevelIssueQuery,
   DtsMergedDefect,
+  DtsPlGroupCompletionItem,
   DtsSnapshotMeta,
   DtsStatisticsFilters,
-  DtsPlGroupCompletionItem,
   DtsSummary,
 } from '#/api/project-manager/dts-statistics';
 
@@ -24,15 +26,19 @@ import {
   ElCheckbox,
   ElCheckboxGroup,
   ElDatePicker,
+  ElDialog,
   ElEmpty,
   ElInput,
   ElMessage,
   ElMessageBox,
   ElOption,
+  ElPagination,
   ElPopover,
   ElSegmented,
   ElSelect,
+  ElTable,
   ElTabPane,
+  ElTableColumn,
   ElTabs,
   ElTag,
   ElTooltip,
@@ -43,6 +49,7 @@ import {
   getDtsExportTask,
   getDtsFieldSets,
   getDtsList,
+  getDtsLowLevelIssues,
   getDtsSummary,
   prepareDtsExport,
 } from '#/api/project-manager/dts-statistics';
@@ -58,9 +65,9 @@ import {
   resolveSeverityMeta,
   useColumns,
 } from './data';
+import DtsResponsibilityQualityTab from './components/DtsResponsibilityQualityTab.vue';
 import DtsBatchEditDrawer from './DtsBatchEditDrawer.vue';
 import DtsEditDrawer from './DtsEditDrawer.vue';
-import DtsResponsibilityQualityTab from './components/DtsResponsibilityQualityTab.vue';
 
 defineOptions({ name: 'DtsStatistics' });
 
@@ -485,6 +492,17 @@ function createEmptySummary(): DtsSummary {
 
 const summary = ref<DtsSummary>(createEmptySummary());
 const summaryLoading = ref(false);
+const lowLevelIssueDialogVisible = ref(false);
+const lowLevelIssueLoading = ref(false);
+const lowLevelIssueItems = ref<DtsLowLevelIssueItem[]>([]);
+const lowLevelIssueTotal = ref(0);
+const lowLevelIssuePageIndex = ref(1);
+const lowLevelIssueRequestSerial = ref(0);
+const lowLevelIssueUseLocalFallback = ref(false);
+const lowLevelIssueLocalFingerprint = ref('');
+const lowLevelIssueLocalItems = ref<DtsLowLevelIssueItem[]>([]);
+const LOW_LEVEL_ISSUE_PAGE_SIZE = 20;
+const LOW_LEVEL_ISSUE_LOCAL_FETCH_PAGE_SIZE = 5000;
 const queryLoading = ref(false);
 const exportPreparing = ref(false);
 const exportPrepareTask = ref<DtsExportTask | null>(null);
@@ -1198,6 +1216,79 @@ function resolveErrorMessage(error: any, fallback: string) {
   return matched || fallback;
 }
 
+const LOW_LEVEL_ISSUE_KEYWORDS = [
+  '内存泄露',
+  '数据未校验',
+  '数组越界',
+  '空指针',
+  '未初始化',
+  '除零',
+  '死循环',
+  '内存不足',
+  '内存溢出',
+] as const;
+
+function normalizeLowLevelIssueText(value: unknown) {
+  return String(value ?? '')
+    .replaceAll(/<[^>]*>/g, ' ')
+    .replaceAll('&nbsp;', ' ')
+    .replaceAll('&amp;', '&')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#39;', "'")
+    .replaceAll(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function stripLowLevelIssueText(value: unknown) {
+  return String(value ?? '')
+    .replaceAll(/<[^>]*>/g, ' ')
+    .replaceAll('&nbsp;', ' ')
+    .replaceAll('&amp;', '&')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#39;', "'")
+    .replaceAll(/\s+/g, ' ')
+    .trim();
+}
+
+function hasLowLevelIssue(row: DtsMergedDefect) {
+  const text = normalizeLowLevelIssueText(
+    [
+      row.dts004ReasonAnalysis,
+      row.dts009ReasonAnalyses,
+      row.sAchieveDescibe,
+    ].join(' '),
+  );
+  return LOW_LEVEL_ISSUE_KEYWORDS.some((keyword) =>
+    text.includes(keyword.toLowerCase()),
+  );
+}
+
+function serializeLowLevelIssueItem(
+  row: DtsMergedDefect,
+): DtsLowLevelIssueItem {
+  return {
+    dtsBizNo: String(row.dtsBizNo || '--').trim() || '--',
+    briefDesc: stripLowLevelIssueText(row.briefDesc) || '未填写',
+    uQbiCloseTypeName: String(row.uQbiCloseTypeName || '').trim() || '未填写',
+    auto_source_type: String(row.auto_source_type || '').trim() || '未填写',
+    sSubmitUserName:
+      String(row.sSubmitUserName || row.creator || '').trim() || '未填写',
+    auto_pl_group_name:
+      String(row.auto_pl_group_name || '').trim() || '未识别PL领域',
+  };
+}
+
+function buildLowLevelIssueItems(rows: DtsMergedDefect[]) {
+  return rows
+    .filter((row) => hasLowLevelIssue(row))
+    .map((row) => serializeLowLevelIssueItem(row));
+}
+
 const selectedProductLabel = computed(() => {
   return (
     PRODUCT_OPTIONS.find((item) => item.value === filters.value.productId)
@@ -1888,6 +1979,143 @@ async function handleSearch(resetPage = true) {
   await runSearch(payload, { resetPage });
 }
 
+function buildLowLevelIssueQuery(pageIndex = 1): DtsLowLevelIssueQuery | null {
+  if (!appliedFilters.value) {
+    return null;
+  }
+  return {
+    ...cloneFilters(appliedFilters.value),
+    pageIndex,
+    pageSize: LOW_LEVEL_ISSUE_PAGE_SIZE,
+  };
+}
+
+function applyLowLevelIssueLocalPage(pageIndex: number) {
+  const start = Math.max(pageIndex - 1, 0) * LOW_LEVEL_ISSUE_PAGE_SIZE;
+  const end = start + LOW_LEVEL_ISSUE_PAGE_SIZE;
+  lowLevelIssuePageIndex.value = pageIndex;
+  lowLevelIssueTotal.value = lowLevelIssueLocalItems.value.length;
+  lowLevelIssueItems.value = lowLevelIssueLocalItems.value.slice(start, end);
+}
+
+async function loadLowLevelIssueFallbackItems() {
+  if (!appliedFilters.value) {
+    return [];
+  }
+
+  const query = {
+    ...cloneFilters(appliedFilters.value),
+    pageIndex: 1,
+    pageSize: LOW_LEVEL_ISSUE_LOCAL_FETCH_PAGE_SIZE,
+  };
+  const firstResponse = await getDtsList(query);
+  const total = Number(firstResponse.total || 0);
+  const items = [...(firstResponse.items || [])];
+  const totalPages = Math.max(
+    1,
+    Math.ceil(total / LOW_LEVEL_ISSUE_LOCAL_FETCH_PAGE_SIZE),
+  );
+
+  for (let pageIndex = 2; pageIndex <= totalPages; pageIndex += 1) {
+    const response = await getDtsList({
+      ...query,
+      pageIndex,
+    });
+    items.push(...(response.items || []));
+  }
+
+  return items;
+}
+
+async function loadLowLevelIssuePage(pageIndex = 1) {
+  const query = buildLowLevelIssueQuery(pageIndex);
+  if (!query) {
+    return;
+  }
+
+  const fingerprint = buildFingerprint(appliedFilters.value);
+  if (
+    lowLevelIssueUseLocalFallback.value &&
+    lowLevelIssueLocalFingerprint.value === fingerprint
+  ) {
+    applyLowLevelIssueLocalPage(pageIndex);
+    return;
+  }
+
+  const serial = lowLevelIssueRequestSerial.value + 1;
+  lowLevelIssueRequestSerial.value = serial;
+  lowLevelIssueLoading.value = true;
+
+  try {
+    const response = await getDtsLowLevelIssues(query);
+    if (serial !== lowLevelIssueRequestSerial.value) {
+      return;
+    }
+    lowLevelIssuePageIndex.value = response.pageIndex || pageIndex;
+    lowLevelIssueTotal.value = response.total || 0;
+    lowLevelIssueItems.value = response.items || [];
+    lowLevelIssueUseLocalFallback.value = false;
+    lowLevelIssueLocalFingerprint.value = '';
+    lowLevelIssueLocalItems.value = [];
+  } catch (error) {
+    if (serial !== lowLevelIssueRequestSerial.value) {
+      return;
+    }
+    try {
+      const fallbackItems = await loadLowLevelIssueFallbackItems();
+      if (serial !== lowLevelIssueRequestSerial.value) {
+        return;
+      }
+      lowLevelIssueUseLocalFallback.value = true;
+      lowLevelIssueLocalFingerprint.value = fingerprint;
+      lowLevelIssueLocalItems.value = buildLowLevelIssueItems(fallbackItems);
+      applyLowLevelIssueLocalPage(pageIndex);
+      console.warn('低级问题明细接口不可用，已切换为本地筛选模式', error);
+    } catch (fallbackError) {
+      if (serial !== lowLevelIssueRequestSerial.value) {
+        return;
+      }
+      ElMessage.error(
+        resolveErrorMessage(fallbackError, '低级问题明细加载失败'),
+      );
+      console.error(error);
+      console.error(fallbackError);
+    }
+  } finally {
+    if (serial === lowLevelIssueRequestSerial.value) {
+      lowLevelIssueLoading.value = false;
+    }
+  }
+}
+
+function openLowLevelIssueDialog() {
+  if (!appliedFilters.value) {
+    ElMessage.warning('请先查询明细数据');
+    return;
+  }
+  lowLevelIssueDialogVisible.value = true;
+  lowLevelIssuePageIndex.value = 1;
+  lowLevelIssueItems.value = [];
+  lowLevelIssueTotal.value = 0;
+  void loadLowLevelIssuePage(1);
+}
+
+function handleLowLevelIssuePageChange(page: number) {
+  lowLevelIssuePageIndex.value = page;
+  void loadLowLevelIssuePage(page);
+}
+
+function handleLowLevelIssueDialogClosed() {
+  lowLevelIssueRequestSerial.value += 1;
+  lowLevelIssuePageIndex.value = 1;
+  lowLevelIssueTotal.value = 0;
+  lowLevelIssueItems.value = [];
+  lowLevelIssueLoading.value = false;
+  lowLevelIssueUseLocalFallback.value = false;
+  lowLevelIssueLocalFingerprint.value = '';
+  lowLevelIssueLocalItems.value = [];
+}
+
 function stopExportPreparePolling() {
   exportPollingSerial += 1;
   if (exportPrepareTimer) {
@@ -1936,6 +2164,10 @@ async function runSearch(
     }
     await nextTick();
     await Promise.all([gridApi.reload(), fetchSummary(true)]);
+    if (lowLevelIssueDialogVisible.value) {
+      lowLevelIssuePageIndex.value = 1;
+      void loadLowLevelIssuePage(1);
+    }
     selectionFingerprint.value = nextFingerprint;
     await nextTick();
     updateDataGridHeight();
@@ -6539,6 +6771,16 @@ onUnmounted(() => {
                         占比
                         {{ Math.round((summary.low_level_rate || 0) * 100) }}%
                       </div>
+                      <div class="dense-metric-block__actions">
+                        <ElButton
+                          link
+                          type="warning"
+                          size="small"
+                          @click="openLowLevelIssueDialog"
+                        >
+                          明细
+                        </ElButton>
+                      </div>
                     </div>
                   </div>
                   <div class="dense-overview-card__meta">
@@ -6908,6 +7150,92 @@ onUnmounted(() => {
           />
         </ElTabPane>
       </ElTabs>
+
+      <ElDialog
+        v-model="lowLevelIssueDialogVisible"
+        class="dts-low-level-dialog"
+        title="低级问题明细"
+        width="960px"
+        destroy-on-close
+        @closed="handleLowLevelIssueDialogClosed"
+      >
+        <div class="dts-low-level-dialog__meta">
+          <ElTag type="warning" effect="plain">
+            命中 {{ lowLevelIssueTotal }} 条
+          </ElTag>
+          <span class="dts-low-level-dialog__tip">
+            仅展示命中关键词的低级问题
+          </span>
+        </div>
+
+        <div
+          class="dts-low-level-dialog__table-shell"
+          v-loading="lowLevelIssueLoading"
+        >
+          <ElTable
+            :data="lowLevelIssueItems"
+            border
+            stripe
+            height="440"
+            table-layout="fixed"
+            empty-text="当前筛选范围内没有命中的低级问题"
+          >
+            <ElTableColumn
+              prop="dtsBizNo"
+              label="DTS单号"
+              width="160"
+              show-overflow-tooltip
+            />
+            <ElTableColumn
+              prop="briefDesc"
+              label="简要描述"
+              min-width="260"
+              show-overflow-tooltip
+            />
+            <ElTableColumn
+              prop="uQbiCloseTypeName"
+              label="关闭类型"
+              width="120"
+              show-overflow-tooltip
+            />
+            <ElTableColumn
+              prop="auto_source_type"
+              label="提单来源"
+              width="120"
+              show-overflow-tooltip
+            />
+            <ElTableColumn
+              prop="sSubmitUserName"
+              label="提单人姓名"
+              width="120"
+              show-overflow-tooltip
+            />
+            <ElTableColumn
+              prop="auto_pl_group_name"
+              label="PL组"
+              width="140"
+              show-overflow-tooltip
+            />
+          </ElTable>
+        </div>
+
+        <template #footer>
+          <div class="dts-low-level-dialog__footer">
+            <div class="dts-low-level-dialog__page-info">
+              第 {{ lowLevelIssuePageIndex }} 页
+            </div>
+            <ElPagination
+              background
+              layout="total, prev, pager, next"
+              :current-page="lowLevelIssuePageIndex"
+              :page-size="LOW_LEVEL_ISSUE_PAGE_SIZE"
+              :total="lowLevelIssueTotal"
+              :pager-count="7"
+              @current-change="handleLowLevelIssuePageChange"
+            />
+          </div>
+        </template>
+      </ElDialog>
 
       <DtsBatchEditDrawer
         v-model="batchEditVisible"
@@ -7471,6 +7799,12 @@ onUnmounted(() => {
   color: #475569;
 }
 
+.dense-metric-block__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
 .dense-completion-grid {
   display: grid;
   gap: 12px;
@@ -7645,6 +7979,36 @@ onUnmounted(() => {
   margin-top: 6px;
   font-size: 12px;
   color: #475569;
+}
+
+.dts-low-level-dialog__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.dts-low-level-dialog__tip {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.dts-low-level-dialog__table-shell {
+  min-width: 0;
+}
+
+.dts-low-level-dialog__footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dts-low-level-dialog__page-info {
+  font-size: 12px;
+  color: #64748b;
 }
 
 .dts-trend-grid,

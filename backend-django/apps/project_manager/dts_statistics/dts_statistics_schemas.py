@@ -704,6 +704,22 @@ class DtsBatchSaveResponseSchema(Schema):
     failedItems: list[DtsBatchSaveFailedItemSchema] = Field(default_factory=list)
 
 
+class DtsLowLevelIssueItemSchema(Schema):
+    dtsBizNo: str = ""
+    briefDesc: str = ""
+    uQbiCloseTypeName: str = ""
+    auto_source_type: str = ""
+    sSubmitUserName: str = ""
+    auto_pl_group_name: str = ""
+
+
+class DtsLowLevelIssueListResponseSchema(Schema):
+    total: int = 0
+    pageIndex: int = 1
+    pageSize: int = 20
+    items: list[DtsLowLevelIssueItemSchema] = Field(default_factory=list)
+
+
 class DtsDistributionItemSchema(Schema):
     label: str
     value: int

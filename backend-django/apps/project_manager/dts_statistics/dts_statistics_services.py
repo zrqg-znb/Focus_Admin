@@ -3588,6 +3588,43 @@ def get_dts_statistics_list(
     return {"total": total, "items": page_items, "snapshot": snapshot}
 
 
+def _serialize_low_level_issue_item(defect: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "dtsBizNo": _clean_text(defect.get("dtsBizNo")) or "--",
+        "briefDesc": _strip_html_text(defect.get("briefDesc"))
+        or _clean_text(defect.get("briefDesc"))
+        or "未填写",
+        "uQbiCloseTypeName": _clean_text(defect.get("uQbiCloseTypeName")) or "未填写",
+        "auto_source_type": _clean_text(defect.get("auto_source_type")) or "未填写",
+        "sSubmitUserName": _clean_text(defect.get("sSubmitUserName"))
+        or _clean_text(defect.get("creator"))
+        or "未填写",
+        "auto_pl_group_name": _clean_text(defect.get("auto_pl_group_name"))
+        or "未识别PL领域",
+    }
+
+
+def get_dts_statistics_low_level_issues(
+    query: DtsStatisticsQuerySchema,
+    *,
+    user: Any = None,
+) -> dict[str, Any]:
+    defects, _snapshot = _resolve_runtime_defects(query, user=user)
+    low_level_defects = [
+        defect for defect in defects if _has_low_level_issue(defect)
+    ]
+    page_index = max(int(getattr(query, "pageIndex", 1) or 1), 1)
+    page_size = max(int(getattr(query, "pageSize", 20) or 20), 1)
+    page_size = min(page_size, 500)
+    total, page_items = _paginate(low_level_defects, page_index, page_size)
+    return {
+        "total": total,
+        "pageIndex": page_index,
+        "pageSize": page_size,
+        "items": [_serialize_low_level_issue_item(item) for item in page_items],
+    }
+
+
 def _distribution(counter: Counter[str], *, top_n: int | None = None) -> list[dict[str, Any]]:
     items = counter.most_common(top_n)
     return [{"label": label, "value": int(value)} for label, value in items if label]
