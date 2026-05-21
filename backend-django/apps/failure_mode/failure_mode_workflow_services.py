@@ -99,6 +99,10 @@ def _normalize_optional_bool(value: Any) -> bool | None:
     return None
 
 
+def _task_scope_is_complete(task: FailureModeTask) -> bool:
+    return bool(_normalize_text(getattr(task, 'product_id', None)) and _normalize_text(getattr(task, 'subsystem', None)))
+
+
 def _filter_product_queryset_by_project_type(queryset, project_type: str | None = None):
     normalized_type = _normalize_text(project_type)
     if not normalized_type:
@@ -261,9 +265,9 @@ def _serialize_task(task: FailureModeTask, policy: 'FailureModeAccessPolicy') ->
         'name': task.name,
         'task_type': task.task_type,
         'status': task.status,
-        'product_id': str(task.product_id),
-        'product_name': task.product.project.name if (task.product and task.product.project) else '',
-        'subsystem': task.subsystem,
+        'product_id': str(task.product_id) if task.product_id else None,
+        'product_name': task.product.project.name if (task.product and task.product.project) else None,
+        'subsystem': task.subsystem or None,
         'creator_id': str(task.creator_id) if task.creator_id else None,
         'creator_info': _format_user(task.creator),
         'assignee_id': str(task.assignee_id) if task.assignee_id else None,
@@ -585,7 +589,7 @@ class FailureModeAccessPolicy:
     def filter_tasks(self, queryset):
         if self.is_admin:
             return queryset
-        query = Q(assignee=self.user) | Q(current_processor=self.user)
+        query = Q(creator=self.user) | Q(assignee=self.user) | Q(current_processor=self.user)
         if self.version_product_ids:
             query |= Q(product_id__in=list(self.version_product_ids))
         scope_q = self._scope_q('product_id', 'subsystem')
@@ -608,6 +612,8 @@ class FailureModeAccessPolicy:
     def can_view_task(self, task: FailureModeTask) -> bool:
         if self.is_admin:
             return True
+        if task.creator_id and str(task.creator_id) == self.user_id:
+            return True
         if task.assignee_id and str(task.assignee_id) == self.user_id:
             return True
         if task.current_processor_id and str(task.current_processor_id) == self.user_id:
@@ -626,13 +632,33 @@ class FailureModeAccessPolicy:
         return bool(task.assignee_id and str(task.assignee_id) == self.user_id)
 
     def can_reject_task(self, task: FailureModeTask) -> bool:
-        return self.is_admin or str(task.product_id) in self.version_product_ids
+        if _task_scope_is_complete(task):
+            return self.is_admin or str(task.product_id) in self.version_product_ids
+        return bool(
+            self.is_admin
+            or (task.creator_id and str(task.creator_id) == self.user_id)
+            or (task.current_processor_id and str(task.current_processor_id) == self.user_id)
+        )
 
     def can_close_task(self, task: FailureModeTask) -> bool:
         return self.can_reject_task(task)
 
     def can_reassign_task(self, task: FailureModeTask) -> bool:
-        return self.can_close_task(task)
+        if self.can_close_task(task):
+            return True
+        if _task_scope_is_complete(task):
+            return False
+        return bool(
+            (task.creator_id and str(task.creator_id) == self.user_id)
+            or (task.assignee_id and str(task.assignee_id) == self.user_id)
+        )
+
+    def can_update_task_scope(self, task: FailureModeTask) -> bool:
+        return bool(
+            self.is_admin
+            or (task.creator_id and str(task.creator_id) == self.user_id)
+            or (task.assignee_id and str(task.assignee_id) == self.user_id)
+        )
 
     def can_assign_feature_user(self, product: FailureModeProduct, subsystem: str, user_id: str) -> bool:
         return FailureModeRoleAssignment.objects.filter(
@@ -940,14 +966,16 @@ class TaskWorkflowService:
     @classmethod
     def _load_baseline_failure_mode_ids(
         cls,
-        product: FailureModeProduct,
-        subsystem: str,
+        product: FailureModeProduct | None,
+        subsystem: str | None,
     ) -> list[str]:
+        if not product or not _normalize_text(subsystem):
+            return []
         return [
             str(item)
             for item in ProductFailureMode.objects.filter(
                 product=product,
-                subsystem=subsystem,
+                subsystem=_normalize_text(subsystem),
             )
             .order_by('sys_create_datetime', 'id')
             .values_list('failure_mode_id', flat=True)
@@ -981,9 +1009,11 @@ class TaskWorkflowService:
         task: FailureModeTask,
         failure_mode_id: str,
     ) -> ProductFailureMode | None:
+        if not _task_scope_is_complete(task):
+            return None
         return cls._product_failure_mode_queryset().filter(
             product=task.product,
-            subsystem=task.subsystem,
+            subsystem=_normalize_text(task.subsystem),
             failure_mode_id=failure_mode_id,
         ).first()
 
@@ -1205,6 +1235,8 @@ class TaskWorkflowService:
     ) -> FailureModeTask:
         if task.task_type != 'REVISE':
             return task
+        if not _task_scope_is_complete(task):
+            return task
         has_workset = TaskFailureMode.objects.filter(task=task).exists()
         if task.baseline_snapshot_ids or has_workset:
             return task
@@ -1256,6 +1288,29 @@ class TaskWorkflowService:
         }
 
         if task.task_type == 'DELETE':
+            if not _task_scope_is_complete(task):
+                rows: list[dict[str, Any]] = []
+                bindings = (
+                    TaskFailureMode.objects.filter(task=task)
+                    .select_related('failure_mode')
+                    .order_by('sys_create_datetime', 'id')
+                )
+                for binding in bindings:
+                    failure_mode = binding.failure_mode
+                    item = failure_mode_services._serialize_failure_mode(failure_mode)
+                    item['task_change_type'] = 'delete_candidate'
+                    item['has_task_draft'] = False
+                    cls._attach_task_landing_summary(
+                        item,
+                        cls._build_task_landing_payload_for_binding(
+                            task,
+                            failure_mode,
+                            existing_payload=binding.landing_payload_json,
+                        ),
+                    )
+                    _attach_task_failure_mode_edit_meta(task, failure_mode, item)
+                    rows.append(item)
+                return rows
             baseline_relations = (
                 cls._product_failure_mode_queryset()
                 .filter(product=task.product, subsystem=task.subsystem)
@@ -1360,67 +1415,41 @@ class TaskWorkflowService:
     def create_task(cls, user: User, data: dict[str, Any]) -> dict[str, Any]:
         ProductWorkflowService.sync_projects()
         policy = FailureModeAccessPolicy(user)
-        product = get_object_or_404(FailureModeProduct.objects.select_related('project', 'owner'), id=data['product_id'])
-        if not policy.can_create_task(product):
-            raise HttpError(403, '只有该产品主版本SE或管理员可以发起任务。')
-
         task_type = _normalize_text(data.get('task_type'))
+        name = _normalize_text(data.get('name'))
+        product_id = _normalize_text(data.get('product_id'))
         subsystem = _normalize_text(data.get('subsystem'))
         assignee_id = _normalize_text(data.get('assignee_id'))
         if task_type not in {'CREATE', 'REVISE', 'DELETE'}:
             raise HttpError(422, '任务类型非法。')
-        if not subsystem:
-            raise HttpError(422, '子系统不能为空。')
+        if not name:
+            raise HttpError(422, '任务名称不能为空。')
+        if bool(product_id) != bool(subsystem):
+            raise HttpError(422, '产品和子系统需同时填写或同时留空。')
         if not assignee_id:
             raise HttpError(422, '责任人不能为空。')
-        if not policy.can_assign_feature_user(product, subsystem, assignee_id):
-            raise HttpError(422, '责任人必须是当前产品子系统下的特性SE。')
-
-        baseline_ids = cls._load_baseline_failure_mode_ids(product, subsystem)
-        if task_type in {'REVISE', 'DELETE'} and not baseline_ids:
-            raise HttpError(422, '当前产品子系统下暂无已生效基线，不能发起修订或删除任务。')
-
+        assignee = get_object_or_404(User.objects.all(), id=assignee_id)
+        product = None
+        if product_id:
+            product = get_object_or_404(
+                FailureModeProduct.objects.select_related('project', 'owner'),
+                id=product_id,
+            )
+            if not policy.can_create_task(product):
+                raise HttpError(403, '只有该产品主版本SE或管理员可以发起任务。')
         task = FailureModeTask.objects.create(
-            name=_normalize_text(data.get('name')),
+            name=name,
             task_type=task_type,
             status='CREATED',
             product=product,
-            subsystem=subsystem,
+            subsystem=subsystem or None,
             creator=user,
-            assignee_id=assignee_id,
+            assignee=assignee,
             current_processor_id=assignee_id,
-            baseline_snapshot_ids=baseline_ids if task_type == 'REVISE' else [],
+            baseline_snapshot_ids=[],
             sys_creator=user,
             sys_modifier=user,
         )
-        if task_type == 'REVISE' and baseline_ids:
-            product_failure_mode_map = {
-                str(item.failure_mode_id): item
-                for item in cls._product_failure_mode_queryset().filter(
-                    product=product,
-                    subsystem=subsystem,
-                    failure_mode_id__in=baseline_ids,
-                )
-            }
-            TaskFailureMode.objects.bulk_create(
-                [
-                    TaskFailureMode(
-                        task=task,
-                        failure_mode_id=failure_mode_id,
-                        landing_payload_json=cls._build_task_landing_payload_for_binding(
-                            task,
-                            product_failure_mode_map[str(failure_mode_id)].failure_mode,
-                            product_failure_mode=product_failure_mode_map.get(
-                                str(failure_mode_id),
-                            ),
-                        ),
-                        sys_creator=user,
-                        sys_modifier=user,
-                    )
-                    for failure_mode_id in baseline_ids
-                    if str(failure_mode_id) in product_failure_mode_map
-                ]
-            )
         cls._log(
             task=task,
             operator=user,
@@ -1430,11 +1459,69 @@ class TaskWorkflowService:
             extra_data={
                 'assignee_id': assignee_id,
                 'assignee_info': _format_user(task.assignee),
-                'baseline_failure_mode_count': len(baseline_ids),
+                'product_id': str(product.id) if product else None,
+                'subsystem': subsystem or None,
             },
         )
         task = cls._get_task_or_404(str(task.id))
         return _serialize_task(task, FailureModeAccessPolicy(user))
+
+    @classmethod
+    @transaction.atomic
+    def update_task_scope(
+        cls,
+        user: User,
+        task_id: str,
+        *,
+        product_id: str | None = None,
+        subsystem: str | None = None,
+    ) -> dict[str, Any]:
+        ProductWorkflowService.sync_projects()
+        task = cls._get_task_or_404(task_id)
+        policy = FailureModeAccessPolicy(user)
+        if not policy.can_update_task_scope(task):
+            raise HttpError(403, '无权修改当前任务工作范围。')
+        if task.status != 'CREATED':
+            raise HttpError(422, '只有创建态任务可以修改工作范围。')
+
+        normalized_product_id = _normalize_text(product_id)
+        normalized_subsystem = _normalize_text(subsystem)
+        if bool(normalized_product_id) != bool(normalized_subsystem):
+            raise HttpError(422, '产品和子系统需同时填写或同时清空。')
+
+        if normalized_product_id:
+            product = get_object_or_404(
+                FailureModeProduct.objects.select_related('project', 'owner'),
+                id=normalized_product_id,
+            )
+            if not policy.can_create_task(product):
+                raise HttpError(403, '只有该产品主版本SE或管理员可以设置任务范围。')
+            task.product = product
+            task.subsystem = normalized_subsystem
+            task.baseline_snapshot_ids = cls._load_baseline_failure_mode_ids(
+                product,
+                normalized_subsystem,
+            )
+        else:
+            task.product = None
+            task.subsystem = None
+            task.baseline_snapshot_ids = []
+
+        task.sys_modifier = user
+        task.save()
+        cls._log(
+            task=task,
+            operator=user,
+            action=FailureModeTaskLog.ACTION_UPDATE_SCOPE,
+            from_status=task.status,
+            to_status=task.status,
+            note='补齐任务工作范围',
+            extra_data={
+                'product_id': str(task.product_id) if task.product_id else None,
+                'subsystem': task.subsystem or None,
+            },
+        )
+        return _serialize_task(cls._get_task_or_404(task_id), FailureModeAccessPolicy(user))
 
     @classmethod
     def get_task_failure_modes(cls, user: User, task_id: str) -> list[dict[str, Any]]:
@@ -1574,6 +1661,12 @@ class TaskWorkflowService:
             raise HttpError(403, '只有当前任务责任人可以接收任务。')
         if task.status != 'CREATED':
             raise HttpError(422, '只有创建态任务可以接收。')
+        if task.task_type in {'REVISE', 'DELETE'} and _task_scope_is_complete(task):
+            baseline_ids = cls._load_baseline_failure_mode_ids(task.product, task.subsystem)
+            if not baseline_ids:
+                raise HttpError(422, '当前产品子系统下暂无已生效基线，不能发起修订或删除任务。')
+        if task.task_type == 'REVISE':
+            cls._ensure_revise_task_initialized(task, user)
         from_status = task.status
         task.status = 'PROCESSING'
         task.accepted_at = timezone.now()
@@ -1608,7 +1701,7 @@ class TaskWorkflowService:
         if missing_ids:
             raise HttpError(422, f'故障模式不存在: {missing_ids[0]}')
 
-        if task.task_type == 'DELETE':
+        if task.task_type == 'DELETE' and _task_scope_is_complete(task):
             baseline_ids = set(cls._load_baseline_failure_mode_ids(task.product, task.subsystem))
             invalid_ids = [item_id for item_id in normalized_ids if item_id not in baseline_ids]
             if invalid_ids:
@@ -1945,7 +2038,7 @@ class TaskWorkflowService:
         task = cls._get_task_or_404(task_id)
         policy = FailureModeAccessPolicy(user)
         if not policy.can_recall_task(task):
-            raise HttpError(403, '只有当前任务责任特性SE可以撤回任务。')
+            raise HttpError(403, '只有当前任务责任人可以撤回任务。')
         if task.status != 'REVIEWING':
             raise HttpError(422, '只有评审中的任务可以撤回。')
 
@@ -1979,7 +2072,7 @@ class TaskWorkflowService:
         task = cls._get_task_or_404(task_id)
         policy = FailureModeAccessPolicy(user)
         if not policy.can_reject_task(task):
-            raise HttpError(403, '只有主版本SE或管理员可以驳回任务。')
+            raise HttpError(403, '无权驳回当前任务。')
         if task.status != 'REVIEWING':
             raise HttpError(422, '只有评审中的任务可以驳回。')
 
@@ -2026,7 +2119,7 @@ class TaskWorkflowService:
         task = cls._ensure_revise_task_initialized(task, user)
         policy = FailureModeAccessPolicy(user)
         if not policy.can_close_task(task):
-            raise HttpError(403, '只有主版本SE或管理员可以关闭任务。')
+            raise HttpError(403, '无权关闭当前任务。')
         if task.status != 'REVIEWING':
             raise HttpError(422, '只有评审中的任务可以关闭。')
 
@@ -2057,94 +2150,121 @@ class TaskWorkflowService:
         cls._sync_task_created_failure_mode_status(task)
 
         task_failure_modes = cls._get_task_selected_failure_mode_ids(task)
+        has_scope = _task_scope_is_complete(task)
         baseline_sync_result = {
             'selected_failure_mode_ids': task_failure_modes,
             'added_failure_mode_ids': [],
             'removed_failure_mode_ids': [],
         }
         if task.task_type == 'CREATE':
-            for failure_mode_id in task_failure_modes:
-                landing_payload = normalized_landing_payloads.get(failure_mode_id) or {}
-                product_failure_mode, _ = ProductFailureMode.objects.get_or_create(
-                    product=task.product,
-                    subsystem=task.subsystem,
-                    failure_mode_id=failure_mode_id,
-                    defaults={
-                        'sys_creator': user,
-                        'sys_modifier': user,
-                    },
-                )
-                cls._sync_product_failure_mode_landings(
-                    product_failure_mode,
-                    landing_payload,
-                    user,
-                )
-                cls._sync_product_failure_mode_landing_cache(
-                    product_failure_mode,
-                    landing_payload,
-                    user,
-                )
-            baseline_sync_result['added_failure_mode_ids'] = task_failure_modes
+            if has_scope:
+                for failure_mode_id in task_failure_modes:
+                    landing_payload = normalized_landing_payloads.get(failure_mode_id) or {}
+                    product_failure_mode, created = ProductFailureMode.objects.get_or_create(
+                        product=task.product,
+                        subsystem=task.subsystem,
+                        failure_mode_id=failure_mode_id,
+                        defaults={
+                            'sys_creator': user,
+                            'sys_modifier': user,
+                        },
+                    )
+                    if created:
+                        failure_mode_services._sync_product_failure_mode_relations_from_template(
+                            product_failure_mode,
+                            product_failure_mode.failure_mode,
+                            user,
+                        )
+                        failure_mode_services._seed_product_failure_mode_landings_from_relations(
+                            product_failure_mode,
+                            user,
+                        )
+                    cls._sync_product_failure_mode_landings(
+                        product_failure_mode,
+                        landing_payload,
+                        user,
+                    )
+                    cls._sync_product_failure_mode_landing_cache(
+                        product_failure_mode,
+                        landing_payload,
+                        user,
+                    )
+                baseline_sync_result['added_failure_mode_ids'] = task_failure_modes
         elif task.task_type == 'REVISE':
             cls._apply_revise_drafts(task, user)
-            baseline_snapshot_ids = [str(item) for item in (task.baseline_snapshot_ids or [])]
-            current_failure_mode_set = set(task_failure_modes)
-            add_ids = [
-                failure_mode_id
-                for failure_mode_id in task_failure_modes
-                if failure_mode_id not in baseline_snapshot_ids
-            ]
-            remove_ids = [
-                failure_mode_id
-                for failure_mode_id in baseline_snapshot_ids
-                if failure_mode_id not in current_failure_mode_set
-            ]
+            if has_scope:
+                baseline_snapshot_ids = [str(item) for item in (task.baseline_snapshot_ids or [])]
+                current_failure_mode_set = set(task_failure_modes)
+                add_ids = [
+                    failure_mode_id
+                    for failure_mode_id in task_failure_modes
+                    if failure_mode_id not in baseline_snapshot_ids
+                ]
+                remove_ids = [
+                    failure_mode_id
+                    for failure_mode_id in baseline_snapshot_ids
+                    if failure_mode_id not in current_failure_mode_set
+                ]
 
-            failure_mode_map = {
-                str(item.id): item
-                for item in failure_mode_services._failure_mode_queryset().filter(
-                    id__in=task_failure_modes,
-                )
-            }
-            for failure_mode_id in current_failure_mode_set:
-                landing_payload = cls._build_task_landing_payload_for_binding(
-                    task,
-                    failure_mode_map[failure_mode_id],
-                    existing_payload=normalized_landing_payloads.get(failure_mode_id),
-                )
-                product_failure_mode, _ = ProductFailureMode.objects.get_or_create(
-                    product=task.product,
-                    subsystem=task.subsystem,
-                    failure_mode_id=failure_mode_id,
-                    defaults={
-                        'sys_creator': user,
-                        'sys_modifier': user,
-                    },
-                )
-                cls._sync_product_failure_mode_landings(
-                    product_failure_mode,
-                    landing_payload,
-                    user,
-                )
-                cls._sync_product_failure_mode_landing_cache(
-                    product_failure_mode,
-                    landing_payload,
-                    user,
-                )
-            if remove_ids:
+                failure_mode_map = {
+                    str(item.id): item
+                    for item in failure_mode_services._failure_mode_queryset().filter(
+                        id__in=task_failure_modes,
+                    )
+                }
+                for failure_mode_id in current_failure_mode_set:
+                    landing_payload = cls._build_task_landing_payload_for_binding(
+                        task,
+                        failure_mode_map[failure_mode_id],
+                        existing_payload=normalized_landing_payloads.get(failure_mode_id),
+                    )
+                    product_failure_mode, created = ProductFailureMode.objects.get_or_create(
+                        product=task.product,
+                        subsystem=task.subsystem,
+                        failure_mode_id=failure_mode_id,
+                        defaults={
+                            'sys_creator': user,
+                            'sys_modifier': user,
+                        },
+                    )
+                    if created:
+                        failure_mode_services._sync_product_failure_mode_relations_from_template(
+                            product_failure_mode,
+                            failure_mode_map[failure_mode_id],
+                            user,
+                        )
+                        failure_mode_services._seed_product_failure_mode_landings_from_relations(
+                            product_failure_mode,
+                            user,
+                        )
+                    cls._sync_product_failure_mode_landings(
+                        product_failure_mode,
+                        landing_payload,
+                        user,
+                    )
+                    cls._sync_product_failure_mode_landing_cache(
+                        product_failure_mode,
+                        landing_payload,
+                        user,
+                    )
+                if remove_ids:
+                    ProductFailureMode.objects.filter(
+                        product=task.product,
+                        subsystem=task.subsystem,
+                        failure_mode_id__in=remove_ids,
+                    ).delete()
+                baseline_sync_result['added_failure_mode_ids'] = add_ids
+                baseline_sync_result['removed_failure_mode_ids'] = remove_ids
+        elif task.task_type == 'DELETE':
+            if has_scope:
                 ProductFailureMode.objects.filter(
                     product=task.product,
                     subsystem=task.subsystem,
-                    failure_mode_id__in=remove_ids,
+                    failure_mode_id__in=task_failure_modes,
                 ).delete()
-            baseline_sync_result['added_failure_mode_ids'] = add_ids
-            baseline_sync_result['removed_failure_mode_ids'] = remove_ids
-        elif task.task_type == 'DELETE':
-            ProductFailureMode.objects.filter(
-                product=task.product,
-                subsystem=task.subsystem,
-                failure_mode_id__in=task_failure_modes,
-            ).delete()
+            else:
+                for failure_mode_id in task_failure_modes:
+                    failure_mode_services.delete_failure_mode(failure_mode_id)
             baseline_sync_result['removed_failure_mode_ids'] = task_failure_modes
 
         cls._log(
@@ -2169,16 +2289,13 @@ class TaskWorkflowService:
         task = cls._get_task_or_404(task_id)
         policy = FailureModeAccessPolicy(user)
         if not policy.can_reassign_task(task):
-            raise HttpError(403, '只有主版本SE或管理员可以改派任务。')
+            raise HttpError(403, '无权改派当前任务。')
         if task.status not in ['CREATED', 'PROCESSING']:
             raise HttpError(422, '只有创建态和梳理/修订中的任务可以改派。')
 
         assignee_id = _normalize_text(assignee_id)
         if not assignee_id:
             raise HttpError(422, '新的责任人不能为空。')
-        if not policy.can_assign_feature_user(task.product, task.subsystem, assignee_id):
-            raise HttpError(422, '新的责任人必须是当前产品子系统下的特性SE。')
-
         old_assignee_id = str(task.assignee_id) if task.assignee_id else None
         old_assignee_info = _format_user(task.assignee)
         new_assignee = User.objects.filter(id=assignee_id).first()

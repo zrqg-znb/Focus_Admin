@@ -21,6 +21,12 @@ class RelationItemSchema(Schema):
     subtitle: Optional[str] = None
 
 
+class FailureModeScopeBindingSchema(Schema):
+    product_id: str
+    subsystem: str
+    product_name: Optional[str] = None
+
+
 class FailureModeDictOptionsSchema(Schema):
     subsystem: list[DictOptionSchema] = Field(default_factory=list)
     module: list[DictOptionSchema] = Field(default_factory=list)
@@ -165,6 +171,7 @@ class FailureModeCreateSchema(ListTextSchemaMixin):
     author_ids: list[str] = Field(default_factory=list)
     related_dts_nos: list[str] = Field(default_factory=list)
     status: Optional[str] = None
+    scope_bindings: list[FailureModeScopeBindingSchema] = Field(default_factory=list)
     interception_required: bool = False
     huatuo_required: bool = False
     required_handling_measure_categories: list[str] = Field(default_factory=list)
@@ -246,6 +253,7 @@ class FailureModeOutSchema(Schema):
     author_info: list[UserBriefSchema] = Field(default_factory=list)
     related_dts_nos: list[str] = Field(default_factory=list)
     status: Optional[str] = None
+    scope_bindings: list[FailureModeScopeBindingSchema] = Field(default_factory=list)
     source_type: str = 'manual'
     source_task_id: Optional[str] = None
     source_task_no: Optional[str] = None
@@ -831,9 +839,9 @@ class FailureModeTaskOutSchema(Schema):
     name: str
     task_type: str
     status: str
-    product_id: str
-    product_name: str
-    subsystem: str
+    product_id: Optional[str] = None
+    product_name: Optional[str] = None
+    subsystem: Optional[str] = None
     creator_id: Optional[str] = None
     creator_info: Optional[UserBriefSchema] = None
     assignee_id: Optional[str] = None
@@ -858,13 +866,18 @@ class FailureModeTaskPageSchema(Schema):
 class FailureModeTaskCreateSchema(Schema):
     name: str
     task_type: str
-    product_id: str
-    subsystem: str
+    product_id: Optional[str] = None
+    subsystem: Optional[str] = None
     assignee_id: str
 
 class FailureModeTaskUpdateSchema(Schema):
     name: Optional[str] = None
     assignee_id: Optional[str] = None
+
+
+class FailureModeTaskScopeUpdateSchema(Schema):
+    product_id: Optional[str] = None
+    subsystem: Optional[str] = None
 
 class TaskReassignSchema(Schema):
     assignee_id: str

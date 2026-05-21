@@ -12,6 +12,12 @@ export interface RelationItem {
   subtitle?: null | string;
 }
 
+export interface FailureModeScopeBinding {
+  product_id: string;
+  subsystem: string;
+  product_name?: null | string;
+}
+
 export interface DictOption {
   label: string;
   value: string;
@@ -87,6 +93,7 @@ export interface FailureModeItem {
   occurrence_frequency?: null | string;
   detectability?: null | string;
   severity?: null | string;
+  scope_bindings: FailureModeScopeBinding[];
   author_ids: string[];
   author_info: UserBriefInfo[];
   related_dts_nos: string[];
@@ -162,6 +169,7 @@ export interface FailureModePayload {
   occurrence_frequency?: null | string;
   detectability?: null | string;
   severity?: null | string;
+  scope_bindings?: FailureModeScopeBinding[];
   author_ids?: string[];
   related_dts_nos?: string[];
   status?: null | string;
@@ -475,6 +483,41 @@ function normalizeStringArray(value: unknown): string[] {
   return normalizeStringArray([value]);
 }
 
+function normalizeScopeBindings(value: unknown): FailureModeScopeBinding[] {
+  let items: unknown[] = [];
+  if (Array.isArray(value)) {
+    items = value;
+  } else if (value) {
+    items = [value];
+  }
+  const result: FailureModeScopeBinding[] = [];
+  const seen = new Set<string>();
+
+  items.forEach((item) => {
+    const raw =
+      item && typeof item === 'object'
+        ? (item as Record<string, unknown>)
+        : { product_id: item };
+    const productId = String(raw.product_id ?? '').trim();
+    const subsystem = String(raw.subsystem ?? '').trim();
+    if (!productId || !subsystem) {
+      return;
+    }
+    const key = `${productId}::${subsystem}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    result.push({
+      product_id: productId,
+      subsystem,
+      product_name: String(raw.product_name ?? '').trim() || null,
+    });
+  });
+
+  return result;
+}
+
 export function normalizeFailureModeItem(
   item: FailureModeItem,
 ): FailureModeItem {
@@ -490,6 +533,7 @@ export function normalizeFailureModeItem(
     required_observation_method_types: normalizeStringArray(
       item.required_observation_method_types,
     ),
+    scope_bindings: normalizeScopeBindings(item.scope_bindings),
     interception_strategy_ids: normalizeStringArray(
       item.interception_strategy_ids,
     ),

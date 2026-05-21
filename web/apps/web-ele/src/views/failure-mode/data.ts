@@ -318,8 +318,10 @@ function withCenter<T extends Record<string, any>>(
   }));
 }
 
-export function useFailureModeColumns(): ZqTableGridOptions<FailureModeItem>['columns'] {
-  return withCenter<FailureModeItem>([
+export function useFailureModeColumns(
+  includeActions = true,
+): ZqTableGridOptions<FailureModeItem>['columns'] {
+  const columns = [
     {
       key: 'brief',
       dataKey: 'brief',
@@ -394,15 +396,19 @@ export function useFailureModeColumns(): ZqTableGridOptions<FailureModeItem>['co
       title: '创建时间',
       width: 180,
     },
-    {
+  ] satisfies Column<FailureModeItem>[];
+
+  if (includeActions) {
+    columns.push({
       key: 'actions',
       dataKey: 'actions',
       title: '操作',
       width: 140,
       cellSlotName: 'cell-actions',
-      showOverflowTooltip: false,
-    },
-  ]);
+    });
+  }
+
+  return withCenter<FailureModeItem>(columns);
 }
 
 export function useSubsystemConfigColumns(): ZqTableGridOptions<FailureModeSubsystemConfigItem>['columns'] {

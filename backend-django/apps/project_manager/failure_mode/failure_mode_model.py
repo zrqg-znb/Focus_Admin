@@ -40,6 +40,7 @@ class FailureMode(RootModel):
     )
     severity = models.CharField(max_length=32, blank=True, null=True, verbose_name='严重程度')
     related_dts_nos = models.JSONField(default=list, blank=True, verbose_name='关联问题单')
+    scope_bindings = models.JSONField(default=list, blank=True, verbose_name='产品范围绑定')
     status = models.CharField(max_length=64, blank=True, null=True, verbose_name='状态')
     source_type = models.CharField(
         max_length=32,
@@ -384,6 +385,138 @@ class ProductFailureMode(RootModel):
         ]
 
 
+class ProductFailureModeInterceptionStrategyRel(RootModel):
+    product_failure_mode = models.ForeignKey(
+        ProductFailureMode,
+        on_delete=models.CASCADE,
+        related_name='interception_relations',
+        verbose_name='产品故障模式基线',
+    )
+    interception_strategy = models.ForeignKey(
+        InterceptionStrategy,
+        on_delete=models.CASCADE,
+        related_name='product_failure_mode_relations',
+        verbose_name='产线拦截策略',
+    )
+    order_index = models.IntegerField(default=0, verbose_name='排序')
+
+    class Meta:
+        db_table = 'pm_product_fm_interception_rel'
+        verbose_name = '产品故障模式-产线拦截策略关联'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product_failure_mode', 'interception_strategy'],
+                name='uniq_pm_prod_fm_inter_rel',
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=['product_failure_mode', 'order_index'],
+                name='idx_pm_prod_fm_inter_rel',
+            )
+        ]
+
+
+class ProductFailureModeHandlingMeasureRel(RootModel):
+    product_failure_mode = models.ForeignKey(
+        ProductFailureMode,
+        on_delete=models.CASCADE,
+        related_name='handling_measure_relations',
+        verbose_name='产品故障模式基线',
+    )
+    handling_measure = models.ForeignKey(
+        HandlingMeasure,
+        on_delete=models.CASCADE,
+        related_name='product_failure_mode_relations',
+        verbose_name='故障处理措施',
+    )
+    order_index = models.IntegerField(default=0, verbose_name='排序')
+
+    class Meta:
+        db_table = 'pm_product_fm_measure_rel'
+        verbose_name = '产品故障模式-故障处理措施关联'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product_failure_mode', 'handling_measure'],
+                name='uniq_pm_prod_fm_measure_rel',
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=['product_failure_mode', 'order_index'],
+                name='idx_pm_prod_fm_measure_rel',
+            )
+        ]
+
+
+class ProductFailureModeObservationMethodRel(RootModel):
+    product_failure_mode = models.ForeignKey(
+        ProductFailureMode,
+        on_delete=models.CASCADE,
+        related_name='observation_method_relations',
+        verbose_name='产品故障模式基线',
+    )
+    observation_method = models.ForeignKey(
+        ObservationMethod,
+        on_delete=models.CASCADE,
+        related_name='product_failure_mode_relations',
+        verbose_name='维测手段',
+    )
+    order_index = models.IntegerField(default=0, verbose_name='排序')
+
+    class Meta:
+        db_table = 'pm_product_fm_observation_rel'
+        verbose_name = '产品故障模式-维测手段关联'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product_failure_mode', 'observation_method'],
+                name='uniq_pm_prod_fm_observation_rel',
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=['product_failure_mode', 'order_index'],
+                name='idx_pm_prod_fm_observe_rel',
+            )
+        ]
+
+
+class ProductFailureModeHuatuoDiagnosisRel(RootModel):
+    product_failure_mode = models.ForeignKey(
+        ProductFailureMode,
+        on_delete=models.CASCADE,
+        related_name='huatuo_diagnosis_relations',
+        verbose_name='产品故障模式基线',
+    )
+    huatuo_diagnosis = models.ForeignKey(
+        HuatuoDiagnosis,
+        on_delete=models.CASCADE,
+        related_name='product_failure_mode_relations',
+        verbose_name='华佗诊断方案',
+    )
+    order_index = models.IntegerField(default=0, verbose_name='排序')
+
+    class Meta:
+        db_table = 'pm_product_fm_huatuo_rel'
+        verbose_name = '产品故障模式-华佗诊断方案关联'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product_failure_mode', 'huatuo_diagnosis'],
+                name='uniq_pm_prod_fm_huatuo_rel',
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=['product_failure_mode', 'order_index'],
+                name='idx_pm_prod_fm_huatuo_rel',
+            )
+        ]
+
+
 class ProductFailureModeInterceptionLanding(RootModel):
     product_failure_mode = models.ForeignKey(
         ProductFailureMode,
@@ -555,10 +688,12 @@ class FailureModeTask(RootModel):
     product = models.ForeignKey(
         FailureModeProduct,
         on_delete=models.CASCADE,
+        null=True,
+        blank=True,
         related_name='tasks',
         verbose_name='关联产品'
     )
-    subsystem = models.CharField(max_length=128, verbose_name='子系统')
+    subsystem = models.CharField(max_length=128, blank=True, null=True, verbose_name='子系统')
     creator = models.ForeignKey(
         'core.User',
         on_delete=models.SET_NULL,
@@ -726,6 +861,7 @@ class FailureModeTaskLog(RootModel):
     ACTION_SAVE_LANDING = 'save_landing'
     ACTION_SAVE_DRAFT = 'save_draft'
     ACTION_DELETE_DRAFT = 'delete_draft'
+    ACTION_UPDATE_SCOPE = 'update_scope'
     ACTION_SUBMIT = 'submit'
     ACTION_RECALL = 'recall'
     ACTION_REJECT = 'reject'
@@ -740,6 +876,7 @@ class FailureModeTaskLog(RootModel):
         (ACTION_SAVE_LANDING, '保存落地配置'),
         (ACTION_SAVE_DRAFT, '保存修订草稿'),
         (ACTION_DELETE_DRAFT, '撤销修订草稿'),
+        (ACTION_UPDATE_SCOPE, '补齐工作范围'),
         (ACTION_SUBMIT, '提交评审'),
         (ACTION_RECALL, '撤回评审'),
         (ACTION_REJECT, '驳回任务'),

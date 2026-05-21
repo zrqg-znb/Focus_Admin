@@ -17,6 +17,14 @@ from apps.project_manager.failure_mode.failure_mode_model import (
     HuatuoDiagnosis,
     InterceptionStrategy,
     ObservationMethod,
+    ProductFailureModeInterceptionStrategyRel,
+    ProductFailureModeHandlingMeasureRel,
+    ProductFailureModeObservationMethodRel,
+    ProductFailureModeHuatuoDiagnosisRel,
+    ProductFailureModeInterceptionLanding,
+    ProductFailureModeHandlingLanding,
+    ProductFailureModeObservationLanding,
+    ProductFailureModeHuatuoLanding,
     TestCase,
 )
 from apps.project_manager.project.project_model import Project, ProjectPhaseConfig

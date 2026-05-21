@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { FailureModeTaskItem } from '#/api/failure_mode_workflow';
 
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
@@ -33,7 +33,7 @@ defineOptions({ name: 'FailureModeTaskManagement' });
 
 const router = useRouter();
 const userStore = useUserStore();
-const currentUserId = userStore.userInfo?.id;
+const currentUserId = computed(() => userStore.userInfo?.id || '');
 
 const activeScope = ref<'all' | 'created' | 'todo'>('todo');
 const keyword = ref('');
@@ -44,6 +44,10 @@ const products = ref<string[]>([]);
 const subsystems = ref<string[]>([]);
 const taskRows = ref<FailureModeTaskItem[]>([]);
 const taskCreateDrawerRef = ref<InstanceType<typeof TaskCreateDrawer>>();
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && Boolean(value.trim());
+}
 
 type TaskUserInfoValue =
   | FailureModeTaskItem['assignee_info']
@@ -78,24 +82,33 @@ const [TaskGrid, taskGridApi] = useZqTable<FailureModeTaskItem>({
           });
           taskRows.value = rows;
           products.value = [
-            ...new Set(rows.map((item) => item.product_name).filter(Boolean)),
+            ...new Set(
+              rows
+                .map((item) => String(item.product_name || '').trim())
+                .filter((value): value is string => isNonEmptyString(value)),
+            ),
           ];
           subsystems.value = [
-            ...new Set(rows.map((item) => item.subsystem).filter(Boolean)),
+            ...new Set(
+              rows
+                .map((item) => String(item.subsystem || '').trim())
+                .filter((value): value is string => isNonEmptyString(value)),
+            ),
           ];
 
           const normalizedKeyword = keyword.value.trim().toLowerCase();
+          const currentUserIdValue = currentUserId.value;
           const filtered = rows.filter((item) => {
             if (
               activeScope.value === 'todo' &&
-              (item.current_processor_id !== currentUserId ||
+              (item.current_processor_id !== currentUserIdValue ||
                 item.status === 'CLOSED')
             ) {
               return false;
             }
             if (
               activeScope.value === 'created' &&
-              item.creator_id !== currentUserId
+              item.creator_id !== currentUserIdValue
             ) {
               return false;
             }
@@ -147,11 +160,13 @@ const [TaskGrid, taskGridApi] = useZqTable<FailureModeTaskItem>({
 
 const scopeCounts = computed(() => ({
   all: taskRows.value.length,
-  created: taskRows.value.filter((item) => item.creator_id === currentUserId)
-    .length,
+  created: taskRows.value.filter(
+    (item) => item.creator_id === currentUserId.value,
+  ).length,
   todo: taskRows.value.filter(
     (item) =>
-      item.current_processor_id === currentUserId && item.status !== 'CLOSED',
+      item.current_processor_id === currentUserId.value &&
+      item.status !== 'CLOSED',
   ).length,
 }));
 
@@ -176,6 +191,13 @@ function handleCreateTask() {
 function handleOpenTask(row: FailureModeTaskItem) {
   router.push(`/failure-mode/tasks/detail/${row.id}`);
 }
+
+watch(currentUserId, async (userId, prevUserId) => {
+  if (!userId || userId === prevUserId) {
+    return;
+  }
+  await handleSearch();
+});
 </script>
 
 <template>

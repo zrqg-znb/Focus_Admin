@@ -74,9 +74,9 @@ export interface FailureModeTaskItem {
   name: string;
   task_type: 'CREATE' | 'DELETE' | 'REVISE';
   status: 'CLOSED' | 'CREATED' | 'PROCESSING' | 'REVIEWING';
-  product_id: string;
-  product_name: string;
-  subsystem: string;
+  product_id?: null | string;
+  product_name?: null | string;
+  subsystem?: null | string;
   creator_id?: null | string;
   creator_info?: null | TaskUserInfo;
   assignee_id?: null | string;
@@ -110,9 +110,14 @@ export interface FailureModeTaskLogItem {
 export interface FailureModeTaskCreatePayload {
   name: string;
   task_type: 'CREATE' | 'DELETE' | 'REVISE';
-  product_id: string;
-  subsystem: string;
+  product_id?: null | string;
+  subsystem?: null | string;
   assignee_id: string;
+}
+
+export interface FailureModeTaskScopeUpdatePayload {
+  product_id?: null | string;
+  subsystem?: null | string;
 }
 
 export interface TaskClosePayload {
@@ -153,6 +158,9 @@ function normalizeTaskItem(item: FailureModeTaskItem): FailureModeTaskItem {
     current_processor_info: normalizeUserInfo(
       item.current_processor_info as RawTaskUserInfo,
     ),
+    product_id: item.product_id || null,
+    product_name: item.product_name || null,
+    subsystem: item.subsystem || null,
   };
 }
 
@@ -232,6 +240,18 @@ export function getTaskApi(taskId: string) {
 export function createTaskApi(data: FailureModeTaskCreatePayload) {
   return requestClient
     .post<FailureModeTaskItem>('/api/failure-mode/workflow/tasks', data)
+    .then(normalizeTaskItem);
+}
+
+export function updateTaskScopeApi(
+  taskId: string,
+  data: FailureModeTaskScopeUpdatePayload,
+) {
+  return requestClient
+    .put<FailureModeTaskItem>(
+      `/api/failure-mode/workflow/tasks/${taskId}/scope`,
+      data,
+    )
     .then(normalizeTaskItem);
 }
 

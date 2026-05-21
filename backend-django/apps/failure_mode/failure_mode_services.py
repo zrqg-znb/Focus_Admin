@@ -30,7 +30,11 @@ from .failure_mode_model import (
     ProductFailureModeHandlingLanding,
     ProductFailureModeHuatuoLanding,
     ProductFailureModeInterceptionLanding,
+    ProductFailureModeInterceptionStrategyRel,
+    ProductFailureModeHandlingMeasureRel,
     ProductFailureModeObservationLanding,
+    ProductFailureModeObservationMethodRel,
+    ProductFailureModeHuatuoDiagnosisRel,
     TestCase,
 )
 
@@ -149,6 +153,42 @@ def _append_unique_text(target: list[str], seen: set[str], value: Any):
     target.append(text)
 
 
+def _normalize_scope_bindings(values: Any) -> list[dict[str, str]]:
+    if values is None:
+        return []
+    if isinstance(values, dict):
+        values = [values]
+    if not isinstance(values, list):
+        values = [values]
+
+    result: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in values:
+        product_id: str | None = None
+        subsystem: str | None = None
+        if isinstance(item, dict):
+            product_id = _normalize_optional_text(item.get('product_id'))
+            subsystem = _normalize_optional_text(item.get('subsystem'))
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            product_id = _normalize_optional_text(item[0])
+            subsystem = _normalize_optional_text(item[1])
+        else:
+            text = _normalize_optional_text(item)
+            if text and '|' in text:
+                parts = [part.strip() for part in text.split('|', 1)]
+                if len(parts) == 2:
+                    product_id = _normalize_optional_text(parts[0])
+                    subsystem = _normalize_optional_text(parts[1])
+        if not product_id or not subsystem:
+            continue
+        key = (product_id, subsystem)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append({'product_id': product_id, 'subsystem': subsystem})
+    return result
+
+
 FAILURE_MODE_SIMPLE_FIELD_NORMALIZERS = {
     'brief': _normalize_optional_text,
     'subsystem': _normalize_optional_text,
@@ -163,6 +203,7 @@ FAILURE_MODE_SIMPLE_FIELD_NORMALIZERS = {
     'detectability': _normalize_optional_text,
     'severity': _normalize_optional_text,
     'related_dts_nos': _normalize_text_list,
+    'scope_bindings': _normalize_scope_bindings,
     'status': _normalize_optional_text,
     'interception_required': _normalize_bool,
     'huatuo_required': _normalize_bool,
@@ -188,6 +229,7 @@ FAILURE_MODE_MODEL_FIELD_MAP = {
     'detectability': 'detectability',
     'severity': 'severity',
     'related_dts_nos': 'related_dts_nos',
+    'scope_bindings': 'scope_bindings',
     'status': 'status',
     'interception_required': 'interception_required',
     'huatuo_required': 'huatuo_required',
@@ -217,6 +259,7 @@ FAILURE_MODE_TASK_DRAFT_ALLOWED_FIELDS = {
     'severity',
     'author_ids',
     'related_dts_nos',
+    'scope_bindings',
     'interception_required',
     'huatuo_required',
     'required_handling_measure_categories',
@@ -399,6 +442,37 @@ def _serialize_handling_measure(measure: HandlingMeasure) -> dict[str, Any]:
     }
 
 
+def _build_failure_mode_scope_binding_items(failure_mode: FailureMode) -> list[dict[str, str | None]]:
+    bindings = list(
+        ProductFailureMode.objects.filter(
+            is_deleted=False,
+            failure_mode_id=failure_mode.id,
+            product__is_deleted=False,
+        )
+        .select_related('product__project')
+        .order_by('product__project__name', 'subsystem', 'sys_create_datetime')
+    )
+    result: list[dict[str, str | None]] = []
+    seen: set[tuple[str, str]] = set()
+    for binding in bindings:
+        product_id = str(binding.product_id)
+        subsystem = _normalize_optional_text(binding.subsystem)
+        if not product_id or not subsystem:
+            continue
+        key = (product_id, subsystem)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(
+            {
+                'product_id': product_id,
+                'product_name': binding.product.project.name if binding.product and binding.product.project else '',
+                'subsystem': subsystem,
+            },
+        )
+    return result
+
+
 def _serialize_failure_mode(failure_mode: FailureMode) -> dict[str, Any]:
     authors = list(failure_mode.authors.all())
     interception_relations = sorted(
@@ -436,6 +510,7 @@ def _serialize_failure_mode(failure_mode: FailureMode) -> dict[str, Any]:
         'author_info': _users_brief(authors),
         'related_dts_nos': _normalize_text_list(failure_mode.related_dts_nos),
         'status': failure_mode.status,
+        'scope_bindings': _build_failure_mode_scope_binding_items(failure_mode),
         'source_type': failure_mode.source_type,
         'source_task_id': str(failure_mode.source_task_id) if failure_mode.source_task_id else None,
         'source_task_no': getattr(getattr(failure_mode, 'source_task', None), 'task_no', None),
@@ -586,6 +661,180 @@ def _sync_ordered_relations(
                 'sys_modifier': current_user,
             }
         )
+
+
+PRODUCT_FAILURE_MODE_RELATION_SPECS = [
+    (
+        'interception_relations',
+        ProductFailureModeInterceptionStrategyRel,
+        InterceptionStrategy,
+        'interception_strategy',
+        'failure_mode',
+        '产线拦截策略',
+    ),
+    (
+        'handling_measure_relations',
+        ProductFailureModeHandlingMeasureRel,
+        HandlingMeasure,
+        'handling_measure',
+        'failure_mode',
+        '故障处理措施',
+    ),
+    (
+        'observation_method_relations',
+        ProductFailureModeObservationMethodRel,
+        ObservationMethod,
+        'observation_method',
+        'failure_mode',
+        '维测手段',
+    ),
+    (
+        'huatuo_diagnosis_relations',
+        ProductFailureModeHuatuoDiagnosisRel,
+        HuatuoDiagnosis,
+        'huatuo_diagnosis',
+        'failure_mode',
+        '华佗诊断方案',
+    ),
+]
+
+
+def _sync_product_failure_mode_relations_from_template(
+    product_failure_mode: ProductFailureMode,
+    failure_mode: FailureMode,
+    current_user: User,
+):
+    for global_relation_name, relation_model, target_model, relation_field_name, parent_field_name, label in PRODUCT_FAILURE_MODE_RELATION_SPECS:
+        relation_ids = _extract_current_relation_ids(
+            failure_mode,
+            global_relation_name,
+            relation_field_name,
+        )
+        _sync_ordered_relations(
+            parent=product_failure_mode,
+            ids=relation_ids,
+            relation_model=relation_model,
+            target_model=target_model,
+            relation_field_name=relation_field_name,
+            parent_field_name=parent_field_name,
+            label=label,
+            current_user=current_user,
+        )
+
+
+def _seed_product_failure_mode_landings_from_relations(
+    product_failure_mode: ProductFailureMode,
+    current_user: User,
+):
+    interception_rows = [
+        ProductFailureModeInterceptionLanding(
+            product_failure_mode=product_failure_mode,
+            interception_strategy_id=item.interception_strategy_id,
+            is_landed=False,
+            sys_creator=current_user,
+            sys_modifier=current_user,
+        )
+        for item in product_failure_mode.interception_relations.all()
+    ]
+    handling_rows = [
+        ProductFailureModeHandlingLanding(
+            product_failure_mode=product_failure_mode,
+            handling_measure_id=item.handling_measure_id,
+            is_landed=False,
+            sys_creator=current_user,
+            sys_modifier=current_user,
+        )
+        for item in product_failure_mode.handling_measure_relations.all()
+    ]
+    observation_rows = [
+        ProductFailureModeObservationLanding(
+            product_failure_mode=product_failure_mode,
+            observation_method_id=item.observation_method_id,
+            is_landed=False,
+            sys_creator=current_user,
+            sys_modifier=current_user,
+        )
+        for item in product_failure_mode.observation_method_relations.all()
+    ]
+    huatuo_rows = [
+        ProductFailureModeHuatuoLanding(
+            product_failure_mode=product_failure_mode,
+            huatuo_diagnosis_id=item.huatuo_diagnosis_id,
+            is_landed=False,
+            sys_creator=current_user,
+            sys_modifier=current_user,
+        )
+        for item in product_failure_mode.huatuo_diagnosis_relations.all()
+    ]
+    if interception_rows:
+        ProductFailureModeInterceptionLanding.objects.bulk_create(interception_rows)
+    if handling_rows:
+        ProductFailureModeHandlingLanding.objects.bulk_create(handling_rows)
+    if observation_rows:
+        ProductFailureModeObservationLanding.objects.bulk_create(observation_rows)
+    if huatuo_rows:
+        ProductFailureModeHuatuoLanding.objects.bulk_create(huatuo_rows)
+
+
+@transaction.atomic
+def _sync_failure_mode_scope_bindings(
+    instance: FailureMode,
+    scope_bindings: Any,
+    current_user: User,
+):
+    normalized_bindings = _normalize_scope_bindings(scope_bindings)
+    normalized_product_ids = _normalize_text_list(
+        [item['product_id'] for item in normalized_bindings],
+    )
+    products = _fetch_ordered_objects(FailureModeProduct, normalized_product_ids, '产品')
+    product_map = {str(item.id): item for item in products}
+
+    existing_bindings = {
+        (str(item.product_id), _normalize_optional_text(item.subsystem) or '')
+        for item in ProductFailureMode.objects.filter(
+            failure_mode=instance,
+            is_deleted=False,
+        ).only('product_id', 'subsystem')
+    }
+    target_bindings = {
+        (
+            binding['product_id'],
+            binding['subsystem'],
+        )
+        for binding in normalized_bindings
+    }
+
+    for product_id, subsystem in target_bindings - existing_bindings:
+        product = product_map.get(product_id)
+        if not product:
+            raise HttpError(422, f'产品不存在: {product_id}')
+        product_failure_mode = ProductFailureMode.objects.create(
+            product=product,
+            subsystem=subsystem,
+            failure_mode=instance,
+            sys_creator=current_user,
+            sys_modifier=current_user,
+        )
+        _sync_product_failure_mode_relations_from_template(
+            product_failure_mode,
+            instance,
+            current_user,
+        )
+        _seed_product_failure_mode_landings_from_relations(
+            product_failure_mode,
+            current_user,
+        )
+
+    for product_id, subsystem in existing_bindings - target_bindings:
+        ProductFailureMode.objects.filter(
+            failure_mode=instance,
+            product_id=product_id,
+            subsystem=subsystem,
+        ).delete()
+
+    instance.scope_bindings = normalized_bindings
+    instance.sys_modifier = current_user
+    instance.save(update_fields=['scope_bindings', 'sys_modifier', 'sys_update_datetime'])
 
 
 def _serialize_paginated_queryset(queryset, serializer, pagination=None):
@@ -1263,6 +1512,7 @@ def _failure_mode_attrs(payload: dict[str, Any]) -> dict[str, Any]:
         'detectability': _normalize_optional_text(payload.get('detectability')),
         'severity': _normalize_optional_text(payload.get('severity')),
         'related_dts_nos': _normalize_text_list(payload.get('related_dts_nos')),
+        'scope_bindings': _normalize_scope_bindings(payload.get('scope_bindings')),
         'status': _normalize_optional_text(payload.get('status')),
         'source_type': _normalize_failure_mode_source_type(payload.get('source_type')),
         'source_task_id': _normalize_optional_text(payload.get('source_task_id')),
@@ -1300,6 +1550,7 @@ def _update_failure_mode_attrs(instance: FailureMode, payload: dict[str, Any]):
         'detectability': ('detectability', _normalize_optional_text),
         'severity': ('severity', _normalize_optional_text),
         'related_dts_nos': ('related_dts_nos', _normalize_text_list),
+        'scope_bindings': ('scope_bindings', _normalize_scope_bindings),
         'status': ('status', _normalize_optional_text),
         'interception_required': ('interception_required', _normalize_bool),
         'huatuo_required': ('huatuo_required', _normalize_bool),
@@ -1618,6 +1869,8 @@ def merge_failure_mode_snapshot(
         detail['huatuo_diagnosis_items'] = _build_huatuo_relation_items(
             detail['huatuo_diagnosis_ids']
         )
+    if 'scope_bindings' in payload:
+        detail['scope_bindings'] = _normalize_scope_bindings(payload.get('scope_bindings'))
     return detail
 
 
@@ -1683,6 +1936,13 @@ def apply_failure_mode_snapshot(
             parent_field_name='failure_mode',
             label='华佗诊断方案',
             current_user=current_user,
+        )
+
+    if 'scope_bindings' in payload:
+        _sync_failure_mode_scope_bindings(
+            instance,
+            normalized_payload.get('scope_bindings'),
+            current_user,
         )
 
     instance = _failure_mode_queryset().get(id=instance.id)
@@ -1776,6 +2036,12 @@ def create_failure_mode(request, data) -> dict[str, Any]:
         label='华佗诊断方案',
         current_user=request.auth,
     )
+    if payload.get('scope_bindings') is not None:
+        _sync_failure_mode_scope_bindings(
+            instance,
+            payload.get('scope_bindings'),
+            request.auth,
+        )
     instance = _failure_mode_queryset().get(id=instance.id)
     return _serialize_failure_mode(instance)
 

@@ -179,7 +179,7 @@ function createKeywordGrid<T extends Record<string, any>>(
 const [FailureModeGrid, failureModeGridApi] = useZqTable<FailureModeItem>({
   gridOptions: {
     border: true,
-    columns: useFailureModeColumns(),
+    columns: useFailureModeColumns(false),
     proxyConfig: {
       autoLoad: true,
       ajax: {

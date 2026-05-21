@@ -104,7 +104,7 @@ export function useTaskColumns(): ZqTableGridOptions<FailureModeTaskItem>['colum
     {
       key: 'assignee_info',
       dataKey: 'assignee_info',
-      title: '责任人(特性SE)',
+      title: '责任人',
       width: 150,
       cellSlotName: 'cell-assignee_info',
     },

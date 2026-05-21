@@ -13,6 +13,7 @@ from apps.failure_mode.failure_mode_schemas import (
     FailureModeTaskLogOutSchema,
     FailureModeTaskOutSchema,
     FailureModeTaskCreateSchema,
+    FailureModeTaskScopeUpdateSchema,
     FailureModeUpdateSchema,
     ProductFailureModeOutSchema,
     ProductRoleAssignmentBatchSaveSchema,
@@ -82,6 +83,16 @@ def get_task_detail(request, task_id: str):
 @router.post('/tasks', response=FailureModeTaskOutSchema, summary='发起梳理任务')
 def create_task(request, data: FailureModeTaskCreateSchema):
     return TaskWorkflowService.create_task(request.auth, data.dict())
+
+
+@router.put('/tasks/{task_id}/scope', response=FailureModeTaskOutSchema, summary='补齐任务工作范围')
+def update_task_scope(request, task_id: str, data: FailureModeTaskScopeUpdateSchema):
+    return TaskWorkflowService.update_task_scope(
+        request.auth,
+        task_id,
+        product_id=data.product_id,
+        subsystem=data.subsystem,
+    )
 
 
 @router.post('/tasks/{task_id}/accept', response=FailureModeTaskOutSchema, summary='接收任务')

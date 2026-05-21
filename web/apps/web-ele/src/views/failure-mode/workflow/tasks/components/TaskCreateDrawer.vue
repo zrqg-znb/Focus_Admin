@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import type {
   FailureModeProductItem,
-  FailureModeRoleAssignmentItem,
   FailureModeTaskCreatePayload,
   ProductFailureModeItem,
   VisibleSubsystemItem,
@@ -22,11 +21,11 @@ import {
 import {
   createTaskApi,
   listProductFailureModesApi,
-  listProductRoleAssignmentsApi,
   listProductsApi,
   listVisibleSubsystemsApi,
 } from '#/api/failure_mode_workflow';
 import { ZqDrawer } from '#/components/zq-drawer';
+import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
 
 const emit = defineEmits(['success']);
 
@@ -35,8 +34,8 @@ const loading = ref(false);
 const submitting = ref(false);
 const products = ref<FailureModeProductItem[]>([]);
 const subsystemOptions = ref<VisibleSubsystemItem[]>([]);
-const roleAssignments = ref<FailureModeRoleAssignmentItem[]>([]);
 const baselinePreviewItems = ref<ProductFailureModeItem[]>([]);
+const baselineLoading = ref(false);
 const formRef = ref<InstanceType<typeof ElForm>>();
 
 const formModel = reactive<FailureModeTaskCreatePayload>({
@@ -47,97 +46,86 @@ const formModel = reactive<FailureModeTaskCreatePayload>({
   assignee_id: '',
 });
 
-const assigneeOptions = computed(() => {
-  const seen = new Set<string>();
-  return roleAssignments.value
-    .filter(
-      (item) =>
-        item.role === 'feature_se' && item.subsystem === formModel.subsystem,
-    )
-    .filter((item) => {
-      if (seen.has(item.user_id)) {
-        return false;
-      }
-      seen.add(item.user_id);
-      return true;
-    })
-    .map((item) => ({
-      label: item.user_info.name || item.user_info.username,
-      value: item.user_id,
-    }));
-});
-
 const requiresBaseline = computed(() =>
   ['DELETE', 'REVISE'].includes(formModel.task_type),
+);
+
+const scopeHasSelection = computed(() =>
+  Boolean(formModel.product_id || formModel.subsystem),
+);
+
+const scopeIsComplete = computed(() =>
+  Boolean(formModel.product_id && formModel.subsystem),
 );
 
 const baselinePreviewNames = computed(() =>
   baselinePreviewItems.value.slice(0, 6).map((item) => item.failure_mode_brief),
 );
 
+function validateTaskScope(
+  _rule: any,
+  _value: string,
+  callback: (error?: Error) => void,
+) {
+  const productId = String(formModel.product_id || '').trim();
+  const subsystem = String(formModel.subsystem || '').trim();
+  if (productId && !subsystem) {
+    callback(new Error('请选择子系统，或同时清空关联产品'));
+    return;
+  }
+  if (!productId && subsystem) {
+    callback(new Error('请选择关联产品，或同时清空子系统'));
+    return;
+  }
+  callback();
+}
+
 const rules = {
   name: [{ message: '请输入任务名称', required: true, trigger: 'blur' }],
   task_type: [{ message: '请选择任务类型', required: true, trigger: 'change' }],
-  product_id: [
-    { message: '请选择关联产品', required: true, trigger: 'change' },
-  ],
-  subsystem: [{ message: '请选择子系统', required: true, trigger: 'change' }],
-  assignee_id: [
-    { message: '请选择特性SE责任人', required: true, trigger: 'change' },
-  ],
+  product_id: [{ validator: validateTaskScope, trigger: 'change' }],
+  assignee_id: [{ message: '请选择责任人', required: true, trigger: 'change' }],
 };
 
 async function loadProducts() {
-  products.value = (await listProductsApi()) as any;
+  products.value = await listProductsApi();
 }
 
 async function loadProductContext() {
   if (!formModel.product_id) {
     subsystemOptions.value = [];
-    roleAssignments.value = [];
     baselinePreviewItems.value = [];
     return;
   }
-  loading.value = true;
-  try {
-    const [subsystems, assignments] = await Promise.all([
-      listVisibleSubsystemsApi(formModel.product_id),
-      listProductRoleAssignmentsApi(formModel.product_id),
-    ]);
-    subsystemOptions.value = subsystems;
-    roleAssignments.value = assignments;
-  } finally {
-    loading.value = false;
-  }
+  subsystemOptions.value = await listVisibleSubsystemsApi(formModel.product_id);
 }
 
-async function handleProductChange() {
+async function handleProductChange(value?: string) {
+  void value;
   formModel.subsystem = '';
-  formModel.assignee_id = '';
+  baselinePreviewItems.value = [];
   await loadProductContext();
 }
 
 function handleSubsystemChange() {
-  formModel.assignee_id = '';
+  baselinePreviewItems.value = [];
 }
 
 async function loadBaselinePreview() {
-  if (
-    !requiresBaseline.value ||
-    !formModel.product_id ||
-    !formModel.subsystem
-  ) {
+  if (!requiresBaseline.value || !scopeIsComplete.value) {
     baselinePreviewItems.value = [];
+    baselineLoading.value = false;
     return;
   }
-  loading.value = true;
+  baselineLoading.value = true;
   try {
-    baselinePreviewItems.value = await listProductFailureModesApi(
-      formModel.product_id,
-      { subsystem: formModel.subsystem },
-    );
+    const productId = String(formModel.product_id || '').trim();
+    const subsystem = String(formModel.subsystem || '').trim();
+    baselinePreviewItems.value = await listProductFailureModesApi(productId, {
+      subsystem,
+    });
   } finally {
-    loading.value = false;
+    baselineLoading.value = false;
   }
 }
 
@@ -151,8 +139,8 @@ async function open() {
   formModel.subsystem = '';
   formModel.assignee_id = '';
   subsystemOptions.value = [];
-  roleAssignments.value = [];
   baselinePreviewItems.value = [];
+  baselineLoading.value = false;
   try {
     await loadProducts();
   } finally {
@@ -165,7 +153,19 @@ async function handleConfirm() {
   if (!valid) {
     return;
   }
-  if (requiresBaseline.value && baselinePreviewItems.value.length === 0) {
+  if (
+    requiresBaseline.value &&
+    scopeIsComplete.value &&
+    baselineLoading.value
+  ) {
+    ElMessage.warning('当前基线还在加载，请稍候再提交');
+    return;
+  }
+  if (
+    requiresBaseline.value &&
+    scopeIsComplete.value &&
+    baselinePreviewItems.value.length === 0
+  ) {
     ElMessage.warning('当前产品子系统下暂无已生效基线，不能发起修订或删除任务');
     return;
   }
@@ -219,11 +219,12 @@ defineExpose({ open });
             <ElOption label="删除" value="DELETE" />
           </ElSelect>
         </ElFormItem>
-        <ElFormItem label="关联产品" prop="product_id">
+        <ElFormItem label="关联产品（可选）" prop="product_id">
           <ElSelect
             v-model="formModel.product_id"
             class="w-full"
             filterable
+            clearable
             @change="handleProductChange"
           >
             <ElOption
@@ -234,11 +235,13 @@ defineExpose({ open });
             />
           </ElSelect>
         </ElFormItem>
-        <ElFormItem label="子系统" prop="subsystem">
+        <ElFormItem label="子系统（可选）" prop="subsystem">
           <ElSelect
             v-model="formModel.subsystem"
             class="w-full"
             filterable
+            clearable
+            :disabled="!formModel.product_id"
             @change="handleSubsystemChange"
           >
             <ElOption
@@ -250,24 +253,35 @@ defineExpose({ open });
           </ElSelect>
         </ElFormItem>
         <ElFormItem label="责任人" prop="assignee_id">
-          <ElSelect v-model="formModel.assignee_id" class="w-full" filterable>
-            <ElOption
-              v-for="item in assigneeOptions"
-              :key="item.value"
-              :label="item.label"
-              :value="item.value"
-            />
-          </ElSelect>
+          <UserSelector
+            v-model="formModel.assignee_id"
+            class="w-full"
+            display-mode="select"
+            :multiple="false"
+            placeholder="请选择责任人"
+          />
         </ElFormItem>
         <ElFormItem
-          v-if="requiresBaseline && formModel.product_id && formModel.subsystem"
+          v-if="requiresBaseline && scopeHasSelection"
           label="当前基线"
         >
           <div
             class="w-full rounded-lg border border-dashed border-gray-300 bg-gray-50 p-3"
           >
             <ElAlert
-              v-if="baselinePreviewItems.length === 0"
+              v-if="!scopeIsComplete"
+              :closable="false"
+              title="请先同时选择产品和子系统，才能查看当前基线；如果是公共任务，也可以直接留空范围继续创建"
+              type="info"
+            />
+            <ElAlert
+              v-else-if="baselineLoading"
+              :closable="false"
+              title="当前基线加载中，请稍候"
+              type="info"
+            />
+            <ElAlert
+              v-else-if="baselinePreviewItems.length === 0"
               :closable="false"
               title="当前产品 + 子系统下暂无已生效基线，不能发起此类任务"
               type="warning"
@@ -298,6 +312,13 @@ defineExpose({ open });
                 </span>
               </div>
             </template>
+          </div>
+        </ElFormItem>
+        <ElFormItem v-else-if="requiresBaseline" label="当前基线">
+          <div
+            class="w-full rounded-lg border border-dashed border-gray-300 bg-gray-50 p-3 text-sm text-gray-500"
+          >
+            选择产品和子系统后可预览当前基线；留空则直接发起公共任务。
           </div>
         </ElFormItem>
       </ElForm>

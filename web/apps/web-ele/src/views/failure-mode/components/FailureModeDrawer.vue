@@ -5,6 +5,7 @@ import type {
   FailureModeDictOptions,
   FailureModeItem,
   FailureModePayload,
+  FailureModeScopeBinding,
   FailureModeSubsystemConfigOptions,
   RelationItem,
 } from '#/api/failure_mode';
@@ -39,6 +40,7 @@ import {
 } from '../data';
 import MasterDataDrawer from './MasterDataDrawer.vue';
 import RelationSelectorDialog from './RelationSelectorDialog.vue';
+import ScopeBindingEditor from './ScopeBindingEditor.vue';
 import StringListEditor from './StringListEditor.vue';
 
 defineOptions({ name: 'FailureModeDrawer' });
@@ -66,6 +68,7 @@ const mode = ref<'create' | 'edit' | 'view'>('create');
 const editingId = ref('');
 const selectedSubsystem = ref<string>();
 const relatedDtsNos = ref<string[]>([]);
+const scopeBindings = ref<FailureModeScopeBinding[]>([]);
 const interceptionRequired = ref(false);
 const huatuoRequired = ref(false);
 const requiredHandlingMeasureCategories = ref<string[]>([]);
@@ -208,6 +211,44 @@ function resetRelations() {
   huatuoDiagnosisItems.value = [];
 }
 
+function normalizeScopeBindingsForSubmit(
+  values: FailureModeScopeBinding[] = [],
+) {
+  const items: FailureModeScopeBinding[] = [];
+  const seen = new Set<string>();
+  let hasIncomplete = false;
+
+  values.forEach((item) => {
+    const productId = String(item.product_id || '').trim();
+    const subsystem = String(item.subsystem || '').trim();
+    const productName = String(item.product_name || '').trim();
+
+    if (!productId && !subsystem) {
+      return;
+    }
+    if (!productId || !subsystem) {
+      hasIncomplete = true;
+      return;
+    }
+
+    const key = `${productId}::${subsystem}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    items.push({
+      product_id: productId,
+      subsystem,
+      product_name: productName || null,
+    });
+  });
+
+  return {
+    hasIncomplete,
+    items,
+  };
+}
+
 function isRelationKindEnabled(kind: MasterResourceKind) {
   switch (kind) {
     case 'huatuo': {
@@ -321,6 +362,7 @@ async function openCreate() {
     symptoms: [],
   };
   relatedDtsNos.value = [];
+  scopeBindings.value = [];
   interceptionRequired.value = false;
   huatuoRequired.value = false;
   requiredHandlingMeasureCategories.value = [];
@@ -358,6 +400,7 @@ function applyFailureModeDetail(detail: FailureModeItem) {
     symptoms,
   };
   selectedSubsystem.value = detail.subsystem || undefined;
+  scopeBindings.value = detail.scope_bindings || [];
   applySchema();
   formApi.setValues({
     author_ids: detail.author_ids || [],
@@ -578,6 +621,13 @@ async function handleConfirm() {
   confirmLoading.value = true;
   try {
     const values = await formApi.getValues<Record<string, any>>();
+    const normalizedScopeBindings = normalizeScopeBindingsForSubmit(
+      scopeBindings.value,
+    );
+    if (normalizedScopeBindings.hasIncomplete) {
+      ElMessage.warning('请先补齐产品和子系统绑定，再保存故障模式。');
+      return;
+    }
     const payload: FailureModePayload = {
       ...(values as FailureModePayload),
       handling_measure_ids: [...handlingMeasureIds.value],
@@ -587,6 +637,7 @@ async function handleConfirm() {
       interception_strategy_ids: [...interceptionStrategyIds.value],
       observation_method_ids: [...observationMethodIds.value],
       related_dts_nos: [...relatedDtsNos.value],
+      scope_bindings: normalizedScopeBindings.items,
       required_handling_measure_categories: [
         ...requiredHandlingMeasureCategories.value,
       ],
@@ -682,6 +733,14 @@ defineExpose({
       </div>
 
       <div class="space-y-4">
+        <ScopeBindingEditor
+          v-model="scopeBindings"
+          body-max-height="360px"
+          :disabled="isReadonly"
+          label="产品 / 子系统绑定"
+          description="选择需要落地的产品与子系统组合。支持为同一故障模式配置多个独立范围，保存后会自动同步到对应产品基线。"
+        />
+
         <StringListEditor
           v-model="relatedDtsNos"
           add-text="新增问题单号"
