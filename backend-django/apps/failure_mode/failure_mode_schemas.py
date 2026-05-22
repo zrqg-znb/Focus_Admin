@@ -162,8 +162,8 @@ class FailureModeCreateSchema(ListTextSchemaMixin):
     chips: list[str] = Field(default_factory=list)
     fault_categories: list[str] = Field(default_factory=list)
     symptoms: list[str] = Field(default_factory=list)
-    effect_html: str = ''
-    root_cause_html: str = ''
+    effect_html: str = Field(min_length=1)
+    root_cause_html: str = Field(min_length=1)
     functional_safety_level: Optional[str] = None
     occurrence_frequency: Optional[str] = None
     detectability: Optional[str] = None

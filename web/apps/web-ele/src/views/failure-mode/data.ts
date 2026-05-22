@@ -111,6 +111,15 @@ export function replaceSubsystemConfigOptions(
   );
 }
 
+function stripRichTextContent(value: unknown) {
+  return String(value || '')
+    .replaceAll(/<\s*br\s*\/?>/gi, '\n')
+    .replaceAll(/<\/p>/gi, '\n')
+    .replaceAll(/<[^>]+>/g, ' ')
+    .replaceAll(/\s+/g, ' ')
+    .trim();
+}
+
 export function normalizeStringList(value: unknown): string[] {
   if (Array.isArray(value)) {
     const result: string[] = [];
@@ -878,6 +887,11 @@ export function useFailureModeFormSchema(
       label: '故障影响',
       formItemClass: 'xl:col-span-2',
       defaultValue: '',
+      rules: z
+        .string()
+        .refine((value) => stripRichTextContent(value).length > 0, {
+          message: '请输入故障影响',
+        }),
       componentProps: {
         minHeight: 220,
         maxHeight: 420,
@@ -889,6 +903,11 @@ export function useFailureModeFormSchema(
       label: '故障根因',
       formItemClass: 'xl:col-span-2',
       defaultValue: '',
+      rules: z
+        .string()
+        .refine((value) => stripRichTextContent(value).length > 0, {
+          message: '请输入故障根因',
+        }),
       componentProps: {
         minHeight: 220,
         maxHeight: 420,

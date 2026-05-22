@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 import json
+import re
 from types import SimpleNamespace
 from typing import Any, Iterable, Type
 
@@ -179,6 +180,15 @@ def _normalize_html_text(value: Any) -> str:
     if value is None:
         return ''
     return str(value).strip()
+
+
+def _has_meaningful_html_text(value: Any) -> bool:
+    text = str(value or '')
+    text = re.sub(r'<\s*br\s*/?>', '\n', text, flags=re.I)
+    text = re.sub(r'</p>', '\n', text, flags=re.I)
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return bool(text)
 
 
 def _normalize_bool(value: Any, default: bool = False) -> bool:
@@ -1794,6 +1804,10 @@ def _failure_mode_attrs(payload: dict[str, Any]) -> dict[str, Any]:
         attrs['source_task_id'] = None
     if not attrs['brief']:
         raise HttpError(422, 'brief 不能为空')
+    if not _has_meaningful_html_text(attrs['effect_html']):
+        raise HttpError(422, '故障影响不能为空')
+    if not _has_meaningful_html_text(attrs['root_cause_html']):
+        raise HttpError(422, '故障根因不能为空')
     return attrs
 
 
@@ -1832,6 +1846,10 @@ def _update_failure_mode_attrs(instance: FailureMode, payload: dict[str, Any]):
         value = normalizer(payload.get(payload_key))
         if field_name == 'brief' and not value:
             raise HttpError(422, 'brief 不能为空')
+        if field_name == 'effect_html' and not _has_meaningful_html_text(value):
+            raise HttpError(422, '故障影响不能为空')
+        if field_name == 'root_cause_html' and not _has_meaningful_html_text(value):
+            raise HttpError(422, '故障根因不能为空')
         setattr(instance, field_name, value)
 
 
