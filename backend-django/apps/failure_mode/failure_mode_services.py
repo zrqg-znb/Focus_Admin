@@ -35,6 +35,7 @@ from .failure_mode_model import (
     ProductFailureModeObservationLanding,
     ProductFailureModeObservationMethodRel,
     ProductFailureModeHuatuoDiagnosisRel,
+    TaskFailureMode,
     TestCase,
 )
 
@@ -1230,6 +1231,135 @@ def _build_failure_mode_insight_product_payload(
     }
 
 
+def _build_failure_mode_task_insight_product_payload(
+    failure_mode: FailureMode,
+) -> dict[str, Any]:
+    task_id = str(failure_mode.source_task_id or '')
+    if not task_id:
+        return {
+            'landed_product_count': 0,
+            'product_rows': [],
+            'related_product_count': 0,
+        }
+
+    task_binding = TaskFailureMode.objects.filter(
+        task_id=task_id,
+        failure_mode_id=failure_mode.id,
+    ).first()
+    if not task_binding or not task_binding.landing_payload_json:
+        return {
+            'landed_product_count': 0,
+            'product_rows': [],
+            'related_product_count': 0,
+        }
+
+    try:
+        from .failure_mode_workflow_services import _build_task_landing_payload_for_product
+    except Exception:
+        return {
+            'landed_product_count': 0,
+            'product_rows': [],
+            'related_product_count': 0,
+        }
+
+    landing_payload = dict(task_binding.landing_payload_json or {})
+    product_rows_payload = [
+        item
+        for item in (landing_payload.get('products') or [])
+        if isinstance(item, dict)
+        and _normalize_optional_text(item.get('product_id'))
+    ]
+    product_ids = [
+        _normalize_optional_text(item.get('product_id'))
+        for item in product_rows_payload
+    ]
+    product_map = {
+        str(item.id): item
+        for item in FailureModeProduct.objects.filter(
+            id__in=product_ids,
+            is_deleted=False,
+        ).select_related('project', 'owner')
+    }
+
+    def _build_section_rows(rows: Any) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for item in rows or []:
+            if not isinstance(item, dict):
+                continue
+            resource_id = _normalize_optional_text(item.get('resource_id'))
+            if not resource_id:
+                continue
+            result.append(
+                {
+                    'id': resource_id,
+                    'label': _normalize_optional_text(item.get('label')) or resource_id,
+                    'subtitle': _normalize_optional_text(item.get('subtitle')) or None,
+                    'status': _normalize_optional_text(item.get('landing_status'))
+                    or LANDING_STATUS_NOT_LANDED,
+                }
+            )
+        return result
+
+    rows: list[dict[str, Any]] = []
+    landed_product_count = 0
+    for item in sorted(
+        product_rows_payload,
+        key=lambda value: (
+            _normalize_optional_text(value.get('product_name')) or '',
+            _normalize_optional_text(value.get('product_id')) or '',
+        ),
+    ):
+        product_id = _normalize_optional_text(item.get('product_id'))
+        if not product_id:
+            continue
+        product_payload = _build_task_landing_payload_for_product(landing_payload, product_id)
+        product_row = (product_payload.get('products') or [{}])[0]
+        product_model = product_map.get(product_id)
+        failure_mode_status = (
+            _normalize_optional_text(product_row.get('landing_status'))
+            or LANDING_STATUS_NOT_LANDED
+        )
+        if failure_mode_status == LANDING_STATUS_LANDED:
+            landed_product_count += 1
+        rows.append(
+            {
+                'product_id': product_id,
+                'product_name': (
+                    product_model.project.name
+                    if product_model and product_model.project
+                    else _normalize_optional_text(item.get('product_name'))
+                    or product_id
+                ),
+                'owner_info': _user_brief(product_model.owner) if product_model else None,
+                'subsystems': list(product_row.get('subsystems') or item.get('subsystems') or []),
+                'failure_mode_status': failure_mode_status,
+                'interception_rows': _build_section_rows(product_payload.get('interception_rows')),
+                'handling_rows': _build_section_rows(product_payload.get('handling_rows')),
+                'observation_rows': _build_section_rows(product_payload.get('observation_rows')),
+                'huatuo_rows': _build_section_rows(product_payload.get('huatuo_rows')),
+                'landed_at': None,
+            }
+        )
+
+    return {
+        'landed_product_count': landed_product_count,
+        'product_rows': rows,
+        'related_product_count': len(rows),
+    }
+
+
+def _build_effective_failure_mode_insight_product_payload(
+    failure_mode: FailureMode,
+) -> dict[str, Any]:
+    product_payload = _build_failure_mode_insight_product_payload(str(failure_mode.id))
+    if product_payload.get('product_rows'):
+        return product_payload
+    task_payload = _build_failure_mode_task_insight_product_payload(failure_mode)
+    if task_payload.get('product_rows'):
+        return task_payload
+    return product_payload
+
+
 def _dedupe_failure_modes(failure_modes: Iterable[FailureMode]) -> list[FailureMode]:
     rows: list[FailureMode] = []
     seen: set[str] = set()
@@ -1330,9 +1460,8 @@ def _build_resource_insight_rows_by_product_landings(
     landing_model,
     resource_field_name: str,
     resource_ids: Iterable[str],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> dict[str, Any]:
     normalized_failure_modes = _dedupe_failure_modes(failure_modes)
-    failure_mode_ids = [str(item.id) for item in normalized_failure_modes]
     normalized_resource_ids = _normalize_text_list(list(resource_ids))
     failure_mode_rows: list[dict[str, Any]] = [
         {
@@ -1341,76 +1470,94 @@ def _build_resource_insight_rows_by_product_landings(
             'subsystem': item.subsystem,
             'status': item.status,
             'product_names': [],
+            'related_product_count': 0,
             'landed_product_count': 0,
         }
         for item in normalized_failure_modes
     ]
-    if not failure_mode_ids or not normalized_resource_ids:
-        return failure_mode_rows, []
+    if not normalized_failure_modes or not normalized_resource_ids:
+        return {
+            'failure_mode_rows': failure_mode_rows,
+            'product_rows': [],
+            'related_product_count': 0,
+            'landed_product_count': 0,
+        }
 
-    landed_rows = list(
-        landing_model.objects.filter(
-            is_deleted=False,
-            is_landed=True,
-            product_failure_mode__is_deleted=False,
-            product_failure_mode__product__is_deleted=False,
-            product_failure_mode__failure_mode_id__in=failure_mode_ids,
-            **{f'{resource_field_name}__in': normalized_resource_ids},
-        )
-        .select_related(
-            'product_failure_mode__product__owner',
-            'product_failure_mode__product__project',
-            'product_failure_mode__failure_mode',
-        )
-        .order_by(
-            'product_failure_mode__product__project__name',
-            'product_failure_mode__subsystem',
-            '-product_failure_mode__sys_update_datetime',
-        )
-    )
+    resource_field_map = {
+        'interception_strategy_id': 'interception_rows',
+        'handling_measure_id': 'handling_rows',
+        'observation_method_id': 'observation_rows',
+        'huatuo_diagnosis_id': 'huatuo_rows',
+    }
+    section_key = resource_field_map.get(resource_field_name, '')
+    if not section_key:
+        return {
+            'failure_mode_rows': failure_mode_rows,
+            'product_rows': [],
+            'related_product_count': 0,
+            'landed_product_count': 0,
+        }
 
-    failure_mode_product_names: dict[str, list[str]] = defaultdict(list)
-    failure_mode_product_seen: dict[str, set[str]] = defaultdict(set)
+    resource_id_set = set(normalized_resource_ids)
     product_rows_map: dict[str, dict[str, Any]] = {}
+    related_product_seen: set[str] = set()
+    landed_product_seen: set[str] = set()
 
-    for landed_row in landed_rows:
-        product_failure_mode = landed_row.product_failure_mode
-        product = product_failure_mode.product
-        if not product:
-            continue
-        product_id = str(product.id)
-        product_name = product.project.name if product.project else ''
-        failure_mode_id = str(product_failure_mode.failure_mode_id)
-        if product_id not in failure_mode_product_seen[failure_mode_id]:
-            failure_mode_product_seen[failure_mode_id].add(product_id)
-            failure_mode_product_names[failure_mode_id].append(product_name)
+    for failure_mode, row in zip(normalized_failure_modes, failure_mode_rows):
+        product_payload = _build_effective_failure_mode_insight_product_payload(
+            failure_mode,
+        )
+        failure_mode_product_seen: set[str] = set()
+        failure_mode_landed_seen: set[str] = set()
 
-        product_row = product_rows_map.get(product_id)
-        if product_row is None:
-            product_row = {
-                'product_id': product_id,
-                'product_name': product_name,
-                'owner_info': _user_brief(product.owner),
-                'failure_mode_briefs': [],
-                '_failure_mode_seen': set(),
-            }
-            product_rows_map[product_id] = product_row
-        if (
-            product_failure_mode.failure_mode
-            and product_failure_mode.failure_mode.brief
-            and product_failure_mode.failure_mode.brief not in product_row['_failure_mode_seen']
-        ):
-            product_row['_failure_mode_seen'].add(
-                product_failure_mode.failure_mode.brief,
+        for product_row in product_payload.get('product_rows') or []:
+            product_id = _normalize_optional_text(product_row.get('product_id'))
+            if not product_id:
+                continue
+            resource_rows = [
+                item
+                for item in (product_row.get(section_key) or [])
+                if _normalize_optional_text(item.get('id')) in resource_id_set
+            ]
+            if not resource_rows:
+                continue
+
+            product_name = (
+                _normalize_optional_text(product_row.get('product_name')) or product_id
             )
-            product_row['failure_mode_briefs'].append(
-                product_failure_mode.failure_mode.brief,
-            )
+            if product_id not in failure_mode_product_seen:
+                failure_mode_product_seen.add(product_id)
+                row['product_names'].append(product_name)
 
-    for row in failure_mode_rows:
-        product_names = failure_mode_product_names.get(row['failure_mode_id'], [])
-        row['product_names'] = product_names
-        row['landed_product_count'] = len(product_names)
+            if any(
+                _normalize_optional_text(item.get('status')) == LANDING_STATUS_LANDED
+                for item in resource_rows
+            ):
+                failure_mode_landed_seen.add(product_id)
+                landed_product_seen.add(product_id)
+
+            related_product_seen.add(product_id)
+
+            product_cache = product_rows_map.get(product_id)
+            if product_cache is None:
+                product_cache = {
+                    'product_id': product_id,
+                    'product_name': product_name,
+                    'owner_info': product_row.get('owner_info'),
+                    'failure_mode_briefs': [],
+                    '_failure_mode_seen': set(),
+                }
+                product_rows_map[product_id] = product_cache
+
+            if (
+                failure_mode.brief
+                and failure_mode.brief not in product_cache['_failure_mode_seen']
+            ):
+                product_cache['_failure_mode_seen'].add(failure_mode.brief)
+                product_cache['failure_mode_briefs'].append(failure_mode.brief)
+
+        row['related_product_count'] = len(failure_mode_product_seen)
+        row['landed_product_count'] = len(failure_mode_landed_seen)
 
     product_rows = [
         {
@@ -1423,10 +1570,15 @@ def _build_resource_insight_rows_by_product_landings(
             key=lambda item: (item['product_name'], item['product_id']),
         )
     ]
-    return failure_mode_rows, product_rows
+    return {
+        'failure_mode_rows': failure_mode_rows,
+        'product_rows': product_rows,
+        'related_product_count': len(related_product_seen),
+        'landed_product_count': len(landed_product_seen),
+    }
 
 
-def _build_interception_insight_data(item_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _build_interception_insight_data(item_id: str) -> dict[str, Any]:
     relations = list(
         FailureModeInterceptionStrategyRel.objects.filter(
             is_deleted=False,
@@ -2171,7 +2323,7 @@ def get_failure_mode_detail(failure_mode_id: str) -> dict[str, Any]:
 
 def get_failure_mode_insight(failure_mode_id: str) -> dict[str, Any]:
     instance = get_object_or_404(_failure_mode_queryset(), id=failure_mode_id)
-    product_payload = _build_failure_mode_insight_product_payload(failure_mode_id)
+    product_payload = _build_effective_failure_mode_insight_product_payload(instance)
     return {
         'id': str(instance.id),
         'brief': instance.brief,
@@ -2259,16 +2411,17 @@ def get_interception_strategy_detail(item_id: str) -> dict[str, Any]:
 
 def get_interception_strategy_insight(item_id: str) -> dict[str, Any]:
     instance = get_object_or_404(_interception_strategy_queryset(), id=item_id)
-    failure_mode_rows, product_rows = _build_interception_insight_data(item_id)
+    insight_payload = _build_interception_insight_data(item_id)
     return {
         'id': str(instance.id),
         'interception_item': instance.interception_item,
         'station': instance.station,
-        'related_failure_mode_count': len(failure_mode_rows),
-        'landed_product_count': len(product_rows),
+        'related_failure_mode_count': len(insight_payload['failure_mode_rows']),
+        'related_product_count': insight_payload['related_product_count'],
+        'landed_product_count': insight_payload['landed_product_count'],
         'total_product_count': _total_failure_mode_product_count(),
-        'failure_mode_rows': failure_mode_rows,
-        'product_rows': product_rows,
+        'failure_mode_rows': insight_payload['failure_mode_rows'],
+        'product_rows': insight_payload['product_rows'],
     }
 
 
@@ -2375,7 +2528,7 @@ def get_handling_measure_insight(item_id: str) -> dict[str, Any]:
         .select_related('failure_mode')
         .order_by('order_index', 'sys_create_datetime')
     )
-    failure_mode_rows, product_rows = _build_resource_insight_rows_by_product_landings(
+    insight_payload = _build_resource_insight_rows_by_product_landings(
         [item.failure_mode for item in failure_mode_relations],
         landing_model=ProductFailureModeHandlingLanding,
         resource_field_name='handling_measure_id',
@@ -2386,11 +2539,12 @@ def get_handling_measure_insight(item_id: str) -> dict[str, Any]:
         'measure': instance.measure,
         'measure_category': instance.measure_category,
         'related_test_case_count': instance.test_case_relations.count(),
-        'related_failure_mode_count': len(failure_mode_rows),
-        'landed_product_count': len(product_rows),
+        'related_failure_mode_count': len(insight_payload['failure_mode_rows']),
+        'related_product_count': insight_payload['related_product_count'],
+        'landed_product_count': insight_payload['landed_product_count'],
         'total_product_count': _total_failure_mode_product_count(),
-        'failure_mode_rows': failure_mode_rows,
-        'product_rows': product_rows,
+        'failure_mode_rows': insight_payload['failure_mode_rows'],
+        'product_rows': insight_payload['product_rows'],
     }
 
 
@@ -2466,7 +2620,7 @@ def get_observation_method_insight(item_id: str) -> dict[str, Any]:
         .select_related('failure_mode')
         .order_by('order_index', 'sys_create_datetime')
     )
-    failure_mode_rows, product_rows = _build_resource_insight_rows_by_product_landings(
+    insight_payload = _build_resource_insight_rows_by_product_landings(
         [item.failure_mode for item in failure_mode_relations],
         landing_model=ProductFailureModeObservationLanding,
         resource_field_name='observation_method_id',
@@ -2483,11 +2637,12 @@ def get_observation_method_insight(item_id: str) -> dict[str, Any]:
         'log_id': instance.log_id,
         'log_keyword': instance.log_keyword,
         'log_path': instance.log_path,
-        'related_failure_mode_count': len(failure_mode_rows),
-        'landed_product_count': len(product_rows),
+        'related_failure_mode_count': len(insight_payload['failure_mode_rows']),
+        'related_product_count': insight_payload['related_product_count'],
+        'landed_product_count': insight_payload['landed_product_count'],
         'total_product_count': _total_failure_mode_product_count(),
-        'failure_mode_rows': failure_mode_rows,
-        'product_rows': product_rows,
+        'failure_mode_rows': insight_payload['failure_mode_rows'],
+        'product_rows': insight_payload['product_rows'],
     }
 
 
@@ -2559,7 +2714,7 @@ def get_huatuo_diagnosis_insight(item_id: str) -> dict[str, Any]:
         .select_related('failure_mode')
         .order_by('order_index', 'sys_create_datetime')
     )
-    failure_mode_rows, product_rows = _build_resource_insight_rows_by_product_landings(
+    insight_payload = _build_resource_insight_rows_by_product_landings(
         [item.failure_mode for item in failure_mode_relations],
         landing_model=ProductFailureModeHuatuoLanding,
         resource_field_name='huatuo_diagnosis_id',
@@ -2568,11 +2723,12 @@ def get_huatuo_diagnosis_insight(item_id: str) -> dict[str, Any]:
     return {
         'id': str(instance.id),
         'description': instance.description,
-        'related_failure_mode_count': len(failure_mode_rows),
-        'landed_product_count': len(product_rows),
+        'related_failure_mode_count': len(insight_payload['failure_mode_rows']),
+        'related_product_count': insight_payload['related_product_count'],
+        'landed_product_count': insight_payload['landed_product_count'],
         'total_product_count': _total_failure_mode_product_count(),
-        'failure_mode_rows': failure_mode_rows,
-        'product_rows': product_rows,
+        'failure_mode_rows': insight_payload['failure_mode_rows'],
+        'product_rows': insight_payload['product_rows'],
     }
 
 
@@ -2663,7 +2819,7 @@ def get_test_case_insight(item_id: str) -> dict[str, Any]:
         .select_related('failure_mode')
         .order_by('handling_measure_id', 'order_index', 'sys_create_datetime')
     )
-    failure_mode_rows, product_rows = _build_resource_insight_rows_by_product_landings(
+    insight_payload = _build_resource_insight_rows_by_product_landings(
         [item.failure_mode for item in failure_mode_relations],
         landing_model=ProductFailureModeHandlingLanding,
         resource_field_name='handling_measure_id',
@@ -2674,11 +2830,12 @@ def get_test_case_insight(item_id: str) -> dict[str, Any]:
         'brief': instance.brief,
         'cida_link': instance.cida_link,
         'related_handling_measure_count': len({str(item.handling_measure_id) for item in handling_measure_relations}),
-        'related_failure_mode_count': len(failure_mode_rows),
-        'landed_product_count': len(product_rows),
+        'related_failure_mode_count': len(insight_payload['failure_mode_rows']),
+        'related_product_count': insight_payload['related_product_count'],
+        'landed_product_count': insight_payload['landed_product_count'],
         'total_product_count': _total_failure_mode_product_count(),
-        'failure_mode_rows': failure_mode_rows,
-        'product_rows': product_rows,
+        'failure_mode_rows': insight_payload['failure_mode_rows'],
+        'product_rows': insight_payload['product_rows'],
     }
 
 

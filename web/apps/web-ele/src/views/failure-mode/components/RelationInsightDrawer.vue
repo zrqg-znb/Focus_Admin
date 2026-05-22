@@ -8,8 +8,6 @@ import type {
   HuatuoDiagnosisInsight,
   HuatuoDiagnosisItem,
   InterceptionInsight,
-  InterceptionInsightFailureModeRow,
-  InterceptionInsightProductRow,
   InterceptionStrategyItem,
   ObservationMethodInsight,
   ObservationMethodItem,
@@ -17,7 +15,7 @@ import type {
   UserBriefInfo,
 } from '#/api/failure_mode';
 
-import { computed, ref } from 'vue';
+import { reactive, ref } from 'vue';
 
 import {
   ElEmpty,
@@ -71,6 +69,7 @@ interface SummaryMetric {
 }
 
 interface FailureModeResourceSummary {
+  related_product_count: number;
   landed_product_count: number;
   summary_status: FailureModeResourceLandingStatus;
 }
@@ -82,70 +81,82 @@ type FailureModeObservationRow = FailureModeResourceSummary &
   ObservationMethodItem;
 type FailureModeHuatuoRow = FailureModeResourceSummary & HuatuoDiagnosisItem;
 
-const visible = ref(false);
-const loading = ref(false);
-const mode = ref<InsightMode>('failure_mode');
+interface InsightFrame {
+  key: string;
+  resourceId: string;
+  mode: InsightMode;
+  visible: boolean;
+  loading: boolean;
+  failureModeDetail: FailureModeItem | null;
+  failureModeInsight: FailureModeInsight | null;
+  interceptionInsight: InterceptionInsight | null;
+  handlingMeasureInsight: HandlingMeasureInsight | null;
+  observationMethodInsight: null | ObservationMethodInsight;
+  huatuoDiagnosisInsight: HuatuoDiagnosisInsight | null;
+  testCaseInsight: null | TestCaseInsight;
+  failureModeInterceptionRows: FailureModeInterceptionRow[];
+  failureModeHandlingRows: FailureModeHandlingRow[];
+  failureModeObservationRows: FailureModeObservationRow[];
+  failureModeHuatuoRows: FailureModeHuatuoRow[];
+}
 
-const failureModeDetail = ref<FailureModeItem | null>(null);
-const failureModeInsight = ref<FailureModeInsight | null>(null);
-const interceptionInsight = ref<InterceptionInsight | null>(null);
-const handlingMeasureInsight = ref<HandlingMeasureInsight | null>(null);
-const observationMethodInsight = ref<null | ObservationMethodInsight>(null);
-const huatuoDiagnosisInsight = ref<HuatuoDiagnosisInsight | null>(null);
-const testCaseInsight = ref<null | TestCaseInsight>(null);
+let frameSequence = 0;
+const frames = ref<InsightFrame[]>([]);
 
-const failureModeInterceptionRows = ref<FailureModeInterceptionRow[]>([]);
-const failureModeHandlingRows = ref<FailureModeHandlingRow[]>([]);
-const failureModeObservationRows = ref<FailureModeObservationRow[]>([]);
-const failureModeHuatuoRows = ref<FailureModeHuatuoRow[]>([]);
+function createFrame(mode: InsightMode, resourceId: string): InsightFrame {
+  return reactive({
+    key: `${mode}-${resourceId}-${++frameSequence}`,
+    resourceId,
+    mode,
+    visible: true,
+    loading: false,
+    failureModeDetail: null,
+    failureModeInsight: null,
+    interceptionInsight: null,
+    handlingMeasureInsight: null,
+    observationMethodInsight: null,
+    huatuoDiagnosisInsight: null,
+    testCaseInsight: null,
+    failureModeInterceptionRows: [],
+    failureModeHandlingRows: [],
+    failureModeObservationRows: [],
+    failureModeHuatuoRows: [],
+  }) as InsightFrame;
+}
 
-const failureModeDetailCache = new Map<
-  string,
-  FailureModeItem | Promise<FailureModeItem>
->();
-const failureModeInsightCache = new Map<
-  string,
-  FailureModeInsight | Promise<FailureModeInsight>
->();
-const interceptionDetailCache = new Map<
-  string,
-  InterceptionStrategyItem | Promise<InterceptionStrategyItem>
->();
-const interceptionInsightCache = new Map<
-  string,
-  InterceptionInsight | Promise<InterceptionInsight>
->();
-const handlingMeasureDetailCache = new Map<
-  string,
-  HandlingMeasureItem | Promise<HandlingMeasureItem>
->();
-const handlingMeasureInsightCache = new Map<
-  string,
-  HandlingMeasureInsight | Promise<HandlingMeasureInsight>
->();
-const observationMethodDetailCache = new Map<
-  string,
-  ObservationMethodItem | Promise<ObservationMethodItem>
->();
-const observationMethodInsightCache = new Map<
-  string,
-  ObservationMethodInsight | Promise<ObservationMethodInsight>
->();
-const huatuoDiagnosisDetailCache = new Map<
-  string,
-  HuatuoDiagnosisItem | Promise<HuatuoDiagnosisItem>
->();
-const huatuoDiagnosisInsightCache = new Map<
-  string,
-  HuatuoDiagnosisInsight | Promise<HuatuoDiagnosisInsight>
->();
-const testCaseInsightCache = new Map<
-  string,
-  Promise<TestCaseInsight> | TestCaseInsight
->();
+function removeFrame(frameKey: string) {
+  const index = frames.value.findIndex((item) => item.key === frameKey);
+  if (index === -1) {
+    return;
+  }
+  frames.value.splice(index);
+}
 
-const drawerTitle = computed(() => {
-  switch (mode.value) {
+function getResourceInsight(frame: InsightFrame): null | ResourceInsight {
+  switch (frame.mode) {
+    case 'handling_measure': {
+      return frame.handlingMeasureInsight;
+    }
+    case 'huatuo_diagnosis': {
+      return frame.huatuoDiagnosisInsight;
+    }
+    case 'interception': {
+      return frame.interceptionInsight;
+    }
+    case 'observation_method': {
+      return frame.observationMethodInsight;
+    }
+    case 'test_case': {
+      return frame.testCaseInsight;
+    }
+    default: {
+      return null;
+    }
+  }
+}
+
+function getDrawerTitle(frame: InsightFrame) {
+  switch (frame.mode) {
     case 'failure_mode': {
       return '故障模式关联洞察';
     }
@@ -165,153 +176,143 @@ const drawerTitle = computed(() => {
       return '测试用例关联洞察';
     }
   }
-});
+}
 
-const currentResourceInsight = computed<null | ResourceInsight>(() => {
-  switch (mode.value) {
-    case 'handling_measure': {
-      return handlingMeasureInsight.value;
-    }
-    case 'huatuo_diagnosis': {
-      return huatuoDiagnosisInsight.value;
-    }
-    case 'interception': {
-      return interceptionInsight.value;
-    }
-    case 'observation_method': {
-      return observationMethodInsight.value;
-    }
-    case 'test_case': {
-      return testCaseInsight.value;
-    }
-    default: {
-      return null;
-    }
-  }
-});
-
-const currentRate = computed(() => {
+function getCurrentRate(frame: InsightFrame) {
+  const resourceInsight = getResourceInsight(frame);
   const numerator =
-    mode.value === 'failure_mode'
-      ? failureModeInsight.value?.landed_product_count || 0
-      : currentResourceInsight.value?.landed_product_count || 0;
+    frame.mode === 'failure_mode'
+      ? frame.failureModeInsight?.landed_product_count || 0
+      : resourceInsight?.landed_product_count || 0;
   const denominator =
-    mode.value === 'failure_mode'
-      ? failureModeInsight.value?.related_product_count || 0
-      : currentResourceInsight.value?.total_product_count || 0;
+    frame.mode === 'failure_mode'
+      ? frame.failureModeInsight?.related_product_count || 0
+      : resourceInsight?.related_product_count || 0;
   return formatRate(numerator, denominator);
-});
+}
 
-const heroTitle = computed(() => {
-  switch (mode.value) {
+function getHeroTitle(frame: InsightFrame) {
+  switch (frame.mode) {
     case 'failure_mode': {
-      return failureModeInsight.value?.brief || '';
+      return frame.failureModeInsight?.brief || '';
     }
     case 'handling_measure': {
-      return handlingMeasureInsight.value?.measure || '';
+      return frame.handlingMeasureInsight?.measure || '';
     }
     case 'huatuo_diagnosis': {
-      return huatuoDiagnosisInsight.value?.description || '';
+      return frame.huatuoDiagnosisInsight?.description || '';
     }
     case 'interception': {
-      return interceptionInsight.value?.interception_item || '';
+      return frame.interceptionInsight?.interception_item || '';
     }
     case 'observation_method': {
-      return observationMethodInsight.value?.display_name || '';
+      return frame.observationMethodInsight?.display_name || '';
     }
     default: {
-      return testCaseInsight.value?.brief || '';
+      return frame.testCaseInsight?.brief || '';
     }
   }
-});
+}
 
-const heroMeta = computed(() => {
-  switch (mode.value) {
+function getHeroMeta(frame: InsightFrame) {
+  switch (frame.mode) {
     case 'failure_mode': {
       return [
-        `子系统：${failureModeInsight.value?.subsystem || '-'}`,
-        `状态：${failureModeInsight.value?.status || '-'}`,
+        `子系统：${frame.failureModeInsight?.subsystem || '-'}`,
+        `状态：${frame.failureModeInsight?.status || '-'}`,
       ];
     }
     case 'handling_measure': {
       return [
-        `措施类别：${handlingMeasureInsight.value?.measure_category || '-'}`,
+        `措施类别：${frame.handlingMeasureInsight?.measure_category || '-'}`,
       ];
     }
     case 'huatuo_diagnosis': {
       return [];
     }
     case 'interception': {
-      return [`工位：${interceptionInsight.value?.station || '-'}`];
+      return [`工位：${frame.interceptionInsight?.station || '-'}`];
     }
     case 'observation_method': {
       return [
-        `维测类型：${observationMethodInsight.value?.monitor_type || '-'}`,
-        `日志 ID：${observationMethodInsight.value?.log_id || '-'}`,
+        `维测类型：${frame.observationMethodInsight?.monitor_type || '-'}`,
+        `日志 ID：${frame.observationMethodInsight?.log_id || '-'}`,
       ];
     }
     default: {
-      return [`CIDA 链接：${testCaseInsight.value?.cida_link || '-'}`];
+      return [`CIDA 链接：${frame.testCaseInsight?.cida_link || '-'}`];
     }
   }
-});
+}
 
-const summaryMetrics = computed<SummaryMetric[]>(() => {
-  switch (mode.value) {
+function getSummaryMetrics(frame: InsightFrame): SummaryMetric[] {
+  switch (frame.mode) {
     case 'failure_mode': {
       return [
         {
           label: '已落地产品数',
-          value: failureModeInsight.value?.landed_product_count || 0,
+          value: frame.failureModeInsight?.landed_product_count || 0,
         },
         {
           label: '关联产品数',
-          value: failureModeInsight.value?.related_product_count || 0,
+          value: frame.failureModeInsight?.related_product_count || 0,
         },
-        { label: '落地率', value: currentRate.value },
+        { label: '落地率', value: getCurrentRate(frame) },
       ];
     }
     case 'handling_measure': {
       return [
         {
           label: '关联测试用例数',
-          value: handlingMeasureInsight.value?.related_test_case_count || 0,
+          value: frame.handlingMeasureInsight?.related_test_case_count || 0,
         },
         {
           label: '关联故障模式数',
-          value: handlingMeasureInsight.value?.related_failure_mode_count || 0,
+          value: frame.handlingMeasureInsight?.related_failure_mode_count || 0,
+        },
+        {
+          label: '关联产品数',
+          value: frame.handlingMeasureInsight?.related_product_count || 0,
         },
         {
           label: '已落地产品数',
-          value: handlingMeasureInsight.value?.landed_product_count || 0,
+          value: frame.handlingMeasureInsight?.landed_product_count || 0,
         },
-        { label: '落地率', value: currentRate.value },
+        { label: '落地率', value: getCurrentRate(frame) },
       ];
     }
     case 'huatuo_diagnosis': {
       return [
         {
           label: '关联故障模式数',
-          value: huatuoDiagnosisInsight.value?.related_failure_mode_count || 0,
+          value: frame.huatuoDiagnosisInsight?.related_failure_mode_count || 0,
+        },
+        {
+          label: '关联产品数',
+          value: frame.huatuoDiagnosisInsight?.related_product_count || 0,
         },
         {
           label: '已落地产品数',
-          value: huatuoDiagnosisInsight.value?.landed_product_count || 0,
+          value: frame.huatuoDiagnosisInsight?.landed_product_count || 0,
         },
-        { label: '落地率', value: currentRate.value },
+        { label: '落地率', value: getCurrentRate(frame) },
       ];
     }
     case 'interception': {
       return [
         {
           label: '关联故障模式数',
-          value: interceptionInsight.value?.related_failure_mode_count || 0,
+          value: frame.interceptionInsight?.related_failure_mode_count || 0,
+        },
+        {
+          label: '关联产品数',
+          value: frame.interceptionInsight?.related_product_count || 0,
         },
         {
           label: '已落地产品数',
-          value: interceptionInsight.value?.landed_product_count || 0,
+          value: frame.interceptionInsight?.landed_product_count || 0,
         },
-        { label: '落地率', value: currentRate.value },
+        { label: '落地率', value: getCurrentRate(frame) },
       ];
     }
     case 'observation_method': {
@@ -319,72 +320,80 @@ const summaryMetrics = computed<SummaryMetric[]>(() => {
         {
           label: '关联故障模式数',
           value:
-            observationMethodInsight.value?.related_failure_mode_count || 0,
+            frame.observationMethodInsight?.related_failure_mode_count || 0,
+        },
+        {
+          label: '关联产品数',
+          value: frame.observationMethodInsight?.related_product_count || 0,
         },
         {
           label: '已落地产品数',
-          value: observationMethodInsight.value?.landed_product_count || 0,
+          value: frame.observationMethodInsight?.landed_product_count || 0,
         },
-        { label: '落地率', value: currentRate.value },
+        { label: '落地率', value: getCurrentRate(frame) },
       ];
     }
     default: {
       return [
         {
           label: '关联处理措施数',
-          value: testCaseInsight.value?.related_handling_measure_count || 0,
+          value: frame.testCaseInsight?.related_handling_measure_count || 0,
         },
         {
           label: '关联故障模式数',
-          value: testCaseInsight.value?.related_failure_mode_count || 0,
+          value: frame.testCaseInsight?.related_failure_mode_count || 0,
+        },
+        {
+          label: '关联产品数',
+          value: frame.testCaseInsight?.related_product_count || 0,
         },
         {
           label: '已落地产品数',
-          value: testCaseInsight.value?.landed_product_count || 0,
+          value: frame.testCaseInsight?.landed_product_count || 0,
         },
-        { label: '落地率', value: currentRate.value },
+        { label: '落地率', value: getCurrentRate(frame) },
       ];
     }
   }
-});
+}
 
-const currentFailureModeRows = computed<InterceptionInsightFailureModeRow[]>(
-  () => currentResourceInsight.value?.failure_mode_rows || [],
-);
+function getCurrentFailureModeRows(frame: InsightFrame) {
+  return getResourceInsight(frame)?.failure_mode_rows || [];
+}
 
-const currentFailureModeProductRows = computed(
-  () => failureModeInsight.value?.product_rows || [],
-);
+function getCurrentFailureModeProductRows(frame: InsightFrame) {
+  return frame.failureModeInsight?.product_rows || [];
+}
 
-const currentLandingProductRows = computed<InterceptionInsightProductRow[]>(
-  () => currentResourceInsight.value?.product_rows || [],
-);
+function getCurrentLandingProductRows(frame: InsightFrame) {
+  return getResourceInsight(frame)?.product_rows || [];
+}
 
-const productEmptyText = computed(() => {
-  switch (mode.value) {
+function getProductEmptyText(frame: InsightFrame) {
+  switch (frame.mode) {
     case 'failure_mode': {
-      return '当前故障模式尚未落地到任何产品基线';
+      return '当前故障模式尚未关联到任何产品基线';
     }
     case 'handling_measure': {
-      return '当前故障处理措施尚未通过故障模式落地到任何产品';
+      return '当前故障处理措施尚未关联到任何产品';
     }
     case 'huatuo_diagnosis': {
-      return '当前华佗诊断方案尚未通过故障模式落地到任何产品';
+      return '当前华佗诊断方案尚未关联到任何产品';
     }
     case 'interception': {
-      return '当前产线拦截策略尚未通过故障模式落地到任何产品';
+      return '当前产线拦截策略尚未关联到任何产品';
     }
     case 'observation_method': {
-      return '当前维测手段尚未通过故障模式落地到任何产品';
+      return '当前维测手段尚未关联到任何产品';
     }
     default: {
-      return '当前测试用例尚未通过处理措施与故障模式落地到任何产品';
+      return '当前测试用例尚未关联到任何产品';
     }
   }
-});
+}
 
-const failureModeEmptyText = computed(() => {
-  switch (mode.value) {
+function getFailureModeEmptyText(frame: InsightFrame) {
+  switch (frame.mode) {
     case 'handling_measure': {
       return '当前故障处理措施尚未关联任何故障模式';
     }
@@ -401,20 +410,10 @@ const failureModeEmptyText = computed(() => {
       return '当前测试用例尚未通过处理措施关联到任何故障模式';
     }
   }
-});
+}
 
-function resetInsights() {
-  failureModeDetail.value = null;
-  failureModeInsight.value = null;
-  interceptionInsight.value = null;
-  handlingMeasureInsight.value = null;
-  observationMethodInsight.value = null;
-  huatuoDiagnosisInsight.value = null;
-  testCaseInsight.value = null;
-  failureModeInterceptionRows.value = [];
-  failureModeHandlingRows.value = [];
-  failureModeObservationRows.value = [];
-  failureModeHuatuoRows.value = [];
+function getFrameZIndex(index: number) {
+  return 2000 + index * 10;
 }
 
 function formatRate(numerator: number, denominator: number) {
@@ -545,39 +544,56 @@ function buildResourceSummaryMap(
     | 'observation_rows',
   resourceIds: string[],
 ) {
-  const productCount = productRows.length;
-  const buckets = new Map<string, FailureModeResourceLandingStatus[]>();
+  const buckets = new Map<
+    string,
+    {
+      landedProductIds: Set<string>;
+      relatedProductIds: Set<string>;
+      statuses: FailureModeResourceLandingStatus[];
+    }
+  >();
   resourceIds.forEach((id) => {
-    buckets.set(
-      id,
-      Array.from(
-        { length: productCount },
-        () => '未落地' as FailureModeResourceLandingStatus,
-      ),
-    );
+    buckets.set(id, {
+      relatedProductIds: new Set<string>(),
+      landedProductIds: new Set<string>(),
+      statuses: [],
+    });
   });
 
-  productRows.forEach((productRow, index) => {
+  productRows.forEach((productRow) => {
+    const seenResourceIds = new Set<string>();
     getFailureModeProductResourceRows(productRow, key).forEach((row) => {
+      if (seenResourceIds.has(row.id)) {
+        return;
+      }
+      seenResourceIds.add(row.id);
       const bucket = buckets.get(row.id);
       if (!bucket) {
         return;
       }
-      bucket[index] =
+      const status =
         (row.status as FailureModeResourceLandingStatus) || '未落地';
+      bucket.relatedProductIds.add(productRow.product_id);
+      bucket.statuses.push(status);
+      if (status === '已落地') {
+        bucket.landedProductIds.add(productRow.product_id);
+      }
     });
   });
 
   return new Map(
     resourceIds.map((id) => {
-      const statuses = buckets.get(id) || [];
+      const bucket = buckets.get(id) || {
+        relatedProductIds: new Set<string>(),
+        landedProductIds: new Set<string>(),
+        statuses: [],
+      };
       return [
         id,
         {
-          landed_product_count: statuses.filter(
-            (item) => item !== '未落地' && item !== '不涉及',
-          ).length,
-          summary_status: normalizeLandingStatus(statuses),
+          related_product_count: bucket.relatedProductIds.size,
+          landed_product_count: bucket.landedProductIds.size,
+          summary_status: normalizeLandingStatus(bucket.statuses),
         },
       ] as const;
     }),
@@ -597,6 +613,7 @@ function buildFailureModeInterceptionRows(
   return relations.map((relation, index) => {
     const detail = details[index];
     const summary = summaryMap.get(relation.id) || {
+      related_product_count: 0,
       landed_product_count: 0,
       summary_status: '未落地' as const,
     };
@@ -630,6 +647,7 @@ function buildFailureModeHandlingRows(
   return relations.map((relation, index) => {
     const detail = details[index];
     const summary = summaryMap.get(relation.id) || {
+      related_product_count: 0,
       landed_product_count: 0,
       summary_status: '未落地' as const,
     };
@@ -665,6 +683,7 @@ function buildFailureModeObservationRows(
   return relations.map((relation, index) => {
     const detail = details[index];
     const summary = summaryMap.get(relation.id) || {
+      related_product_count: 0,
       landed_product_count: 0,
       summary_status: '未落地' as const,
     };
@@ -700,6 +719,7 @@ function buildFailureModeHuatuoRows(
   return relations.map((relation, index) => {
     const detail = details[index];
     const summary = summaryMap.get(relation.id) || {
+      related_product_count: 0,
       landed_product_count: 0,
       summary_status: '未落地' as const,
     };
@@ -742,29 +762,37 @@ function getFailureModeProductResourceRows(
   return (row?.[key] || []) as FailureModeInsightResourceRow[];
 }
 
-async function openInsight(
-  nextMode: InsightMode,
+function pushFrame(mode: InsightMode, resourceId: string) {
+  const frame = createFrame(mode, resourceId);
+  frames.value.push(frame);
+  return frame;
+}
+
+async function loadFrame(
+  frame: InsightFrame,
   loader: () => Promise<void>,
   errorMessage: string,
 ) {
-  mode.value = nextMode;
-  resetInsights();
-  visible.value = true;
-  loading.value = true;
+  frame.loading = true;
   try {
     await loader();
   } catch (error) {
-    visible.value = false;
+    removeFrame(frame.key);
     console.error(error);
     ElMessage.error(errorMessage);
   } finally {
-    loading.value = false;
+    frame.loading = false;
   }
 }
 
+function handleFrameClosed(frameKey: string) {
+  removeFrame(frameKey);
+}
+
 async function openFailureMode(id: string) {
-  await openInsight(
-    'failure_mode',
+  const frame = pushFrame('failure_mode', id);
+  await loadFrame(
+    frame,
     async () => {
       const [detail, insight] = await Promise.all([
         loadCached(failureModeDetailCache, id, () =>
@@ -774,8 +802,8 @@ async function openFailureMode(id: string) {
           getFailureModeInsightApi(id),
         ),
       ]);
-      failureModeDetail.value = detail;
-      failureModeInsight.value = insight;
+      frame.failureModeDetail = detail;
+      frame.failureModeInsight = insight;
 
       const [
         interceptionDetails,
@@ -805,22 +833,22 @@ async function openFailureMode(id: string) {
         ),
       ]);
 
-      failureModeInterceptionRows.value = buildFailureModeInterceptionRows(
+      frame.failureModeInterceptionRows = buildFailureModeInterceptionRows(
         detail.interception_strategy_items || [],
         interceptionDetails,
         insight.product_rows || [],
       );
-      failureModeHandlingRows.value = buildFailureModeHandlingRows(
+      frame.failureModeHandlingRows = buildFailureModeHandlingRows(
         detail.handling_measure_items || [],
         handlingDetails,
         insight.product_rows || [],
       );
-      failureModeObservationRows.value = buildFailureModeObservationRows(
+      frame.failureModeObservationRows = buildFailureModeObservationRows(
         detail.observation_method_items || [],
         observationDetails,
         insight.product_rows || [],
       );
-      failureModeHuatuoRows.value = buildFailureModeHuatuoRows(
+      frame.failureModeHuatuoRows = buildFailureModeHuatuoRows(
         detail.huatuo_diagnosis_items || [],
         huatuoDetails,
         insight.product_rows || [],
@@ -831,10 +859,11 @@ async function openFailureMode(id: string) {
 }
 
 async function openInterception(id: string) {
-  await openInsight(
-    'interception',
+  const frame = pushFrame('interception', id);
+  await loadFrame(
+    frame,
     async () => {
-      interceptionInsight.value = await loadCached(
+      frame.interceptionInsight = await loadCached(
         interceptionInsightCache,
         id,
         () => getInterceptionStrategyInsightApi(id),
@@ -845,10 +874,11 @@ async function openInterception(id: string) {
 }
 
 async function openHandlingMeasure(id: string) {
-  await openInsight(
-    'handling_measure',
+  const frame = pushFrame('handling_measure', id);
+  await loadFrame(
+    frame,
     async () => {
-      handlingMeasureInsight.value = await loadCached(
+      frame.handlingMeasureInsight = await loadCached(
         handlingMeasureInsightCache,
         id,
         () => getHandlingMeasureInsightApi(id),
@@ -859,10 +889,11 @@ async function openHandlingMeasure(id: string) {
 }
 
 async function openObservationMethod(id: string) {
-  await openInsight(
-    'observation_method',
+  const frame = pushFrame('observation_method', id);
+  await loadFrame(
+    frame,
     async () => {
-      observationMethodInsight.value = await loadCached(
+      frame.observationMethodInsight = await loadCached(
         observationMethodInsightCache,
         id,
         () => getObservationMethodInsightApi(id),
@@ -873,10 +904,11 @@ async function openObservationMethod(id: string) {
 }
 
 async function openHuatuoDiagnosis(id: string) {
-  await openInsight(
-    'huatuo_diagnosis',
+  const frame = pushFrame('huatuo_diagnosis', id);
+  await loadFrame(
+    frame,
     async () => {
-      huatuoDiagnosisInsight.value = await loadCached(
+      frame.huatuoDiagnosisInsight = await loadCached(
         huatuoDiagnosisInsightCache,
         id,
         () => getHuatuoDiagnosisInsightApi(id),
@@ -887,10 +919,11 @@ async function openHuatuoDiagnosis(id: string) {
 }
 
 async function openTestCase(id: string) {
-  await openInsight(
-    'test_case',
+  const frame = pushFrame('test_case', id);
+  await loadFrame(
+    frame,
     async () => {
-      testCaseInsight.value = await loadCached(testCaseInsightCache, id, () =>
+      frame.testCaseInsight = await loadCached(testCaseInsightCache, id, () =>
         getTestCaseInsightApi(id),
       );
     },
@@ -909,454 +942,553 @@ defineExpose({
 </script>
 
 <template>
-  <ZqDrawer
-    v-model="visible"
-    :loading="loading"
-    :show-footer="false"
-    :size="1180"
-    :title="drawerTitle"
-  >
-    <div class="fm-relation-insight flex flex-col gap-4 pb-2">
-      <div v-if="heroTitle" class="fm-relation-insight__hero">
-        <div class="fm-relation-insight__hero-title">
-          {{ heroTitle }}
+  <template v-for="(frame, index) in frames" :key="frame.key">
+    <ZqDrawer
+      v-model="frame.visible"
+      :loading="frame.loading"
+      :show-footer="false"
+      :size="1180"
+      :title="getDrawerTitle(frame)"
+      :z-index="getFrameZIndex(index)"
+      @closed="handleFrameClosed(frame.key)"
+    >
+      <div class="fm-relation-insight flex flex-col gap-4 pb-2">
+        <div v-if="getHeroTitle(frame)" class="fm-relation-insight__hero">
+          <div class="fm-relation-insight__hero-title">
+            {{ getHeroTitle(frame) }}
+          </div>
+          <div
+            v-if="getHeroMeta(frame).length > 0"
+            class="fm-relation-insight__hero-meta"
+          >
+            <span v-for="item in getHeroMeta(frame)" :key="item">{{
+              item
+            }}</span>
+          </div>
         </div>
-        <div v-if="heroMeta.length > 0" class="fm-relation-insight__hero-meta">
-          <span v-for="item in heroMeta" :key="item">{{ item }}</span>
+
+        <div class="fm-relation-insight__summary-grid">
+          <div
+            v-for="item in getSummaryMetrics(frame)"
+            :key="item.label"
+            class="fm-relation-insight__summary-card"
+          >
+            <div class="fm-relation-insight__summary-label">
+              {{ item.label }}
+            </div>
+            <div class="fm-relation-insight__summary-value">
+              {{ item.value }}
+            </div>
+          </div>
+        </div>
+
+        <div v-if="frame.mode === 'failure_mode'" class="flex flex-col gap-4">
+          <section class="fm-relation-insight__panel">
+            <div class="fm-relation-insight__panel-title">产线拦截策略</div>
+            <ElEmpty
+              v-if="frame.failureModeInterceptionRows.length === 0"
+              description="当前故障模式尚未关联任何产线拦截策略"
+            />
+            <ElTable
+              v-else
+              :data="frame.failureModeInterceptionRows"
+              border
+              stripe
+            >
+              <ElTableColumn label="产线拦截项" min-width="220">
+                <template #default="{ row }">
+                  <button
+                    class="fm-relation-insight__drill-link"
+                    type="button"
+                    @click="openInterception(row.id)"
+                  >
+                    {{ row.interception_item }}
+                  </button>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn label="工位" min-width="120">
+                <template #default="{ row }">
+                  {{ row.station || '-' }}
+                </template>
+              </ElTableColumn>
+              <ElTableColumn label="版本检测内容" min-width="320">
+                <template #default="{ row }">
+                  {{ formatHtmlSnippet(row.version_detection_html) }}
+                </template>
+              </ElTableColumn>
+              <ElTableColumn label="设计责任人" min-width="220">
+                <template #default="{ row }">
+                  {{ formatUserNames(row.owner_info) }}
+                </template>
+              </ElTableColumn>
+              <ElTableColumn
+                label="关联产品数"
+                min-width="110"
+                prop="related_product_count"
+              />
+              <ElTableColumn
+                label="已落地产品数"
+                min-width="110"
+                prop="landed_product_count"
+              />
+              <ElTableColumn label="汇总状态" min-width="120">
+                <template #default="{ row }">
+                  <ElTag
+                    :type="getLandingStatusTagType(row.summary_status)"
+                    effect="light"
+                    round
+                  >
+                    {{ row.summary_status }}
+                  </ElTag>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn
+                label="创建时间"
+                min-width="180"
+                prop="sys_create_datetime"
+              />
+              <ElTableColumn
+                label="更新时间"
+                min-width="180"
+                prop="sys_update_datetime"
+              />
+            </ElTable>
+          </section>
+
+          <section class="fm-relation-insight__panel">
+            <div class="fm-relation-insight__panel-title">故障处理措施</div>
+            <ElEmpty
+              v-if="frame.failureModeHandlingRows.length === 0"
+              description="当前故障模式尚未关联任何故障处理措施"
+            />
+            <ElTable v-else :data="frame.failureModeHandlingRows" border stripe>
+              <ElTableColumn label="处理措施" min-width="220">
+                <template #default="{ row }">
+                  <button
+                    class="fm-relation-insight__drill-link"
+                    type="button"
+                    @click="openHandlingMeasure(row.id)"
+                  >
+                    {{ row.measure }}
+                  </button>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn
+                label="措施类别"
+                min-width="120"
+                prop="measure_category"
+              />
+              <ElTableColumn label="措施详情" min-width="280">
+                <template #default="{ row }">
+                  {{ formatHtmlSnippet(row.measure_detail_html) }}
+                </template>
+              </ElTableColumn>
+              <ElTableColumn
+                label="措施效果"
+                min-width="220"
+                prop="measure_effect"
+              />
+              <ElTableColumn label="测试用例" min-width="260">
+                <template #default="{ row }">
+                  {{ formatRelationLabels(row.test_case_items) }}
+                </template>
+              </ElTableColumn>
+              <ElTableColumn label="设计责任人" min-width="220">
+                <template #default="{ row }">
+                  {{ formatUserNames(row.owner_info) }}
+                </template>
+              </ElTableColumn>
+              <ElTableColumn
+                label="关联产品数"
+                min-width="110"
+                prop="related_product_count"
+              />
+              <ElTableColumn
+                label="已落地产品数"
+                min-width="110"
+                prop="landed_product_count"
+              />
+              <ElTableColumn label="汇总状态" min-width="120">
+                <template #default="{ row }">
+                  <ElTag
+                    :type="getLandingStatusTagType(row.summary_status)"
+                    effect="light"
+                    round
+                  >
+                    {{ row.summary_status }}
+                  </ElTag>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn
+                label="创建时间"
+                min-width="180"
+                prop="sys_create_datetime"
+              />
+              <ElTableColumn
+                label="更新时间"
+                min-width="180"
+                prop="sys_update_datetime"
+              />
+            </ElTable>
+          </section>
+
+          <section class="fm-relation-insight__panel">
+            <div class="fm-relation-insight__panel-title">维测手段</div>
+            <ElEmpty
+              v-if="frame.failureModeObservationRows.length === 0"
+              description="当前故障模式尚未关联任何维测手段"
+            />
+            <ElTable
+              v-else
+              :data="frame.failureModeObservationRows"
+              border
+              stripe
+            >
+              <ElTableColumn label="维测手段" min-width="220">
+                <template #default="{ row }">
+                  <button
+                    class="fm-relation-insight__drill-link"
+                    type="button"
+                    @click="openObservationMethod(row.id)"
+                  >
+                    {{ row.display_name }}
+                  </button>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn
+                label="维测类型"
+                min-width="140"
+                prop="monitor_type"
+              />
+              <ElTableColumn label="日志 ID" min-width="180" prop="log_id" />
+              <ElTableColumn
+                label="日志关键词"
+                min-width="180"
+                prop="log_keyword"
+              />
+              <ElTableColumn label="日志路径" min-width="240" prop="log_path" />
+              <ElTableColumn label="设计责任人" min-width="220">
+                <template #default="{ row }">
+                  {{ formatUserNames(row.owner_info) }}
+                </template>
+              </ElTableColumn>
+              <ElTableColumn
+                label="关联产品数"
+                min-width="110"
+                prop="related_product_count"
+              />
+              <ElTableColumn
+                label="已落地产品数"
+                min-width="110"
+                prop="landed_product_count"
+              />
+              <ElTableColumn label="汇总状态" min-width="120">
+                <template #default="{ row }">
+                  <ElTag
+                    :type="getLandingStatusTagType(row.summary_status)"
+                    effect="light"
+                    round
+                  >
+                    {{ row.summary_status }}
+                  </ElTag>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn
+                label="创建时间"
+                min-width="180"
+                prop="sys_create_datetime"
+              />
+              <ElTableColumn
+                label="更新时间"
+                min-width="180"
+                prop="sys_update_datetime"
+              />
+            </ElTable>
+          </section>
+
+          <section class="fm-relation-insight__panel">
+            <div class="fm-relation-insight__panel-title">华佗诊断方案</div>
+            <ElEmpty
+              v-if="frame.failureModeHuatuoRows.length === 0"
+              description="当前故障模式尚未关联任何华佗诊断方案"
+            />
+            <ElTable v-else :data="frame.failureModeHuatuoRows" border stripe>
+              <ElTableColumn label="诊断方案" min-width="320">
+                <template #default="{ row }">
+                  <button
+                    class="fm-relation-insight__drill-link"
+                    type="button"
+                    @click="openHuatuoDiagnosis(row.id)"
+                  >
+                    {{ row.description }}
+                  </button>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn label="设计责任人" min-width="220">
+                <template #default="{ row }">
+                  {{ formatUserNames(row.owner_info) }}
+                </template>
+              </ElTableColumn>
+              <ElTableColumn
+                label="关联产品数"
+                min-width="110"
+                prop="related_product_count"
+              />
+              <ElTableColumn
+                label="已落地产品数"
+                min-width="110"
+                prop="landed_product_count"
+              />
+              <ElTableColumn label="汇总状态" min-width="120">
+                <template #default="{ row }">
+                  <ElTag
+                    :type="getLandingStatusTagType(row.summary_status)"
+                    effect="light"
+                    round
+                  >
+                    {{ row.summary_status }}
+                  </ElTag>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn
+                label="创建时间"
+                min-width="180"
+                prop="sys_create_datetime"
+              />
+              <ElTableColumn
+                label="更新时间"
+                min-width="180"
+                prop="sys_update_datetime"
+              />
+            </ElTable>
+          </section>
+
+          <section class="fm-relation-insight__panel">
+            <div class="fm-relation-insight__panel-title">落地产品</div>
+            <ElEmpty
+              v-if="getCurrentFailureModeProductRows(frame).length === 0"
+              :description="getProductEmptyText(frame)"
+            />
+            <ElTable
+              v-else
+              :data="getCurrentFailureModeProductRows(frame)"
+              border
+              stripe
+            >
+              <ElTableColumn label="产品" min-width="220" prop="product_name" />
+              <ElTableColumn label="主版本SE" min-width="160">
+                <template #default="{ row }">
+                  {{ formatUserName(row.owner_info) }}
+                </template>
+              </ElTableColumn>
+              <ElTableColumn label="故障模式落地" min-width="150">
+                <template #default="{ row }">
+                  <ElTag
+                    :type="getLandingStatusTagType(row.failure_mode_status)"
+                    effect="light"
+                    round
+                  >
+                    {{ row.failure_mode_status || '-' }}
+                  </ElTag>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn label="落地子系统" min-width="220">
+                <template #default="{ row }">
+                  {{ formatTextList(row.subsystems) }}
+                </template>
+              </ElTableColumn>
+              <ElTableColumn label="产线拦截策略" min-width="260">
+                <template #default="{ row }">
+                  <div
+                    v-if="
+                      getFailureModeProductResourceRows(
+                        row,
+                        'interception_rows',
+                      ).length > 0
+                    "
+                    class="fm-relation-insight__tag-list"
+                  >
+                    <ElTag
+                      v-for="item in getFailureModeProductResourceRows(
+                        row,
+                        'interception_rows',
+                      )"
+                      :key="item.id"
+                      :type="getLandingStatusTagType(item.status)"
+                      effect="light"
+                      size="small"
+                    >
+                      {{ item.label }}
+                      <span v-if="item.subtitle"> · {{ item.subtitle }}</span>
+                      <span> · {{ item.status }}</span>
+                    </ElTag>
+                  </div>
+                  <span v-else class="text-gray-400">未关联</span>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn label="故障处理措施" min-width="280">
+                <template #default="{ row }">
+                  <div
+                    v-if="
+                      getFailureModeProductResourceRows(row, 'handling_rows')
+                        .length > 0
+                    "
+                    class="fm-relation-insight__tag-list"
+                  >
+                    <ElTag
+                      v-for="item in getFailureModeProductResourceRows(
+                        row,
+                        'handling_rows',
+                      )"
+                      :key="item.id"
+                      :type="getLandingStatusTagType(item.status)"
+                      effect="light"
+                      size="small"
+                    >
+                      {{ item.label }}
+                      <span v-if="item.subtitle"> · {{ item.subtitle }}</span>
+                      <span> · {{ item.status }}</span>
+                    </ElTag>
+                  </div>
+                  <span v-else class="text-gray-400">未关联</span>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn label="维测手段" min-width="280">
+                <template #default="{ row }">
+                  <div
+                    v-if="
+                      getFailureModeProductResourceRows(row, 'observation_rows')
+                        .length > 0
+                    "
+                    class="fm-relation-insight__tag-list"
+                  >
+                    <ElTag
+                      v-for="item in getFailureModeProductResourceRows(
+                        row,
+                        'observation_rows',
+                      )"
+                      :key="item.id"
+                      :type="getLandingStatusTagType(item.status)"
+                      effect="light"
+                      size="small"
+                    >
+                      {{ item.label }}
+                      <span v-if="item.subtitle"> · {{ item.subtitle }}</span>
+                      <span> · {{ item.status }}</span>
+                    </ElTag>
+                  </div>
+                  <span v-else class="text-gray-400">未关联</span>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn label="华佗诊断方案" min-width="260">
+                <template #default="{ row }">
+                  <div
+                    v-if="
+                      getFailureModeProductResourceRows(row, 'huatuo_rows')
+                        .length > 0
+                    "
+                    class="fm-relation-insight__tag-list"
+                  >
+                    <ElTag
+                      v-for="item in getFailureModeProductResourceRows(
+                        row,
+                        'huatuo_rows',
+                      )"
+                      :key="item.id"
+                      :type="getLandingStatusTagType(item.status)"
+                      effect="light"
+                      size="small"
+                    >
+                      {{ item.label }}
+                      <span v-if="item.subtitle"> · {{ item.subtitle }}</span>
+                      <span> · {{ item.status }}</span>
+                    </ElTag>
+                  </div>
+                  <span v-else class="text-gray-400">未关联</span>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn
+                label="最近落地时间"
+                min-width="180"
+                prop="landed_at"
+              />
+            </ElTable>
+          </section>
+        </div>
+
+        <div v-else class="flex flex-col gap-4">
+          <section class="fm-relation-insight__panel">
+            <div class="fm-relation-insight__panel-title">关联故障模式</div>
+            <ElEmpty
+              v-if="getCurrentFailureModeRows(frame).length === 0"
+              :description="getFailureModeEmptyText(frame)"
+            />
+            <ElTable
+              v-else
+              :data="getCurrentFailureModeRows(frame)"
+              border
+              stripe
+            >
+              <ElTableColumn label="故障模式" min-width="240">
+                <template #default="{ row }">
+                  <button
+                    class="fm-relation-insight__drill-link"
+                    type="button"
+                    @click="openFailureMode(row.failure_mode_id)"
+                  >
+                    {{ row.failure_mode_brief }}
+                  </button>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn label="子系统" min-width="140" prop="subsystem" />
+              <ElTableColumn label="状态" min-width="120" prop="status" />
+              <ElTableColumn label="关联产品" min-width="220">
+                <template #default="{ row }">
+                  {{ formatTextList(row.product_names) }}
+                </template>
+              </ElTableColumn>
+              <ElTableColumn
+                label="关联产品数"
+                min-width="90"
+                prop="related_product_count"
+              />
+              <ElTableColumn
+                label="已落地产品数"
+                min-width="110"
+                prop="landed_product_count"
+              />
+            </ElTable>
+          </section>
+
+          <section class="fm-relation-insight__panel">
+            <div class="fm-relation-insight__panel-title">落地产品</div>
+            <ElEmpty
+              v-if="getCurrentLandingProductRows(frame).length === 0"
+              :description="getProductEmptyText(frame)"
+            />
+            <ElTable
+              v-else
+              :data="getCurrentLandingProductRows(frame)"
+              border
+              stripe
+            >
+              <ElTableColumn label="产品" min-width="180" prop="product_name" />
+              <ElTableColumn label="主版本SE" min-width="140">
+                <template #default="{ row }">
+                  {{ formatUserName(row.owner_info) }}
+                </template>
+              </ElTableColumn>
+              <ElTableColumn label="通过哪些故障模式落地" min-width="260">
+                <template #default="{ row }">
+                  {{ formatTextList(row.failure_mode_briefs) }}
+                </template>
+              </ElTableColumn>
+            </ElTable>
+          </section>
         </div>
       </div>
-
-      <div class="fm-relation-insight__summary-grid">
-        <div
-          v-for="item in summaryMetrics"
-          :key="item.label"
-          class="fm-relation-insight__summary-card"
-        >
-          <div class="fm-relation-insight__summary-label">{{ item.label }}</div>
-          <div class="fm-relation-insight__summary-value">{{ item.value }}</div>
-        </div>
-      </div>
-
-      <div v-if="mode === 'failure_mode'" class="flex flex-col gap-4">
-        <section class="fm-relation-insight__panel">
-          <div class="fm-relation-insight__panel-title">产线拦截策略</div>
-          <ElEmpty
-            v-if="failureModeInterceptionRows.length === 0"
-            description="当前故障模式尚未关联任何产线拦截策略"
-          />
-          <ElTable v-else :data="failureModeInterceptionRows" border stripe>
-            <ElTableColumn
-              label="产线拦截项"
-              min-width="220"
-              prop="interception_item"
-            />
-            <ElTableColumn label="工位" min-width="120">
-              <template #default="{ row }">
-                {{ row.station || '-' }}
-              </template>
-            </ElTableColumn>
-            <ElTableColumn label="版本检测内容" min-width="320">
-              <template #default="{ row }">
-                {{ formatHtmlSnippet(row.version_detection_html) }}
-              </template>
-            </ElTableColumn>
-            <ElTableColumn label="设计责任人" min-width="220">
-              <template #default="{ row }">
-                {{ formatUserNames(row.owner_info) }}
-              </template>
-            </ElTableColumn>
-            <ElTableColumn
-              label="落地产品数"
-              min-width="110"
-              prop="landed_product_count"
-            />
-            <ElTableColumn label="汇总状态" min-width="120">
-              <template #default="{ row }">
-                <ElTag
-                  :type="getLandingStatusTagType(row.summary_status)"
-                  effect="light"
-                  round
-                >
-                  {{ row.summary_status }}
-                </ElTag>
-              </template>
-            </ElTableColumn>
-            <ElTableColumn
-              label="创建时间"
-              min-width="180"
-              prop="sys_create_datetime"
-            />
-            <ElTableColumn
-              label="更新时间"
-              min-width="180"
-              prop="sys_update_datetime"
-            />
-          </ElTable>
-        </section>
-
-        <section class="fm-relation-insight__panel">
-          <div class="fm-relation-insight__panel-title">故障处理措施</div>
-          <ElEmpty
-            v-if="failureModeHandlingRows.length === 0"
-            description="当前故障模式尚未关联任何故障处理措施"
-          />
-          <ElTable v-else :data="failureModeHandlingRows" border stripe>
-            <ElTableColumn label="处理措施" min-width="220" prop="measure" />
-            <ElTableColumn
-              label="措施类别"
-              min-width="120"
-              prop="measure_category"
-            />
-            <ElTableColumn label="措施详情" min-width="280">
-              <template #default="{ row }">
-                {{ formatHtmlSnippet(row.measure_detail_html) }}
-              </template>
-            </ElTableColumn>
-            <ElTableColumn
-              label="措施效果"
-              min-width="220"
-              prop="measure_effect"
-            />
-            <ElTableColumn label="测试用例" min-width="260">
-              <template #default="{ row }">
-                {{ formatRelationLabels(row.test_case_items) }}
-              </template>
-            </ElTableColumn>
-            <ElTableColumn label="设计责任人" min-width="220">
-              <template #default="{ row }">
-                {{ formatUserNames(row.owner_info) }}
-              </template>
-            </ElTableColumn>
-            <ElTableColumn
-              label="落地产品数"
-              min-width="110"
-              prop="landed_product_count"
-            />
-            <ElTableColumn label="汇总状态" min-width="120">
-              <template #default="{ row }">
-                <ElTag
-                  :type="getLandingStatusTagType(row.summary_status)"
-                  effect="light"
-                  round
-                >
-                  {{ row.summary_status }}
-                </ElTag>
-              </template>
-            </ElTableColumn>
-            <ElTableColumn
-              label="创建时间"
-              min-width="180"
-              prop="sys_create_datetime"
-            />
-            <ElTableColumn
-              label="更新时间"
-              min-width="180"
-              prop="sys_update_datetime"
-            />
-          </ElTable>
-        </section>
-
-        <section class="fm-relation-insight__panel">
-          <div class="fm-relation-insight__panel-title">维测手段</div>
-          <ElEmpty
-            v-if="failureModeObservationRows.length === 0"
-            description="当前故障模式尚未关联任何维测手段"
-          />
-          <ElTable v-else :data="failureModeObservationRows" border stripe>
-            <ElTableColumn
-              label="维测手段"
-              min-width="220"
-              prop="display_name"
-            />
-            <ElTableColumn
-              label="维测类型"
-              min-width="140"
-              prop="monitor_type"
-            />
-            <ElTableColumn label="日志 ID" min-width="180" prop="log_id" />
-            <ElTableColumn
-              label="日志关键词"
-              min-width="180"
-              prop="log_keyword"
-            />
-            <ElTableColumn label="日志路径" min-width="240" prop="log_path" />
-            <ElTableColumn label="设计责任人" min-width="220">
-              <template #default="{ row }">
-                {{ formatUserNames(row.owner_info) }}
-              </template>
-            </ElTableColumn>
-            <ElTableColumn
-              label="落地产品数"
-              min-width="110"
-              prop="landed_product_count"
-            />
-            <ElTableColumn label="汇总状态" min-width="120">
-              <template #default="{ row }">
-                <ElTag
-                  :type="getLandingStatusTagType(row.summary_status)"
-                  effect="light"
-                  round
-                >
-                  {{ row.summary_status }}
-                </ElTag>
-              </template>
-            </ElTableColumn>
-            <ElTableColumn
-              label="创建时间"
-              min-width="180"
-              prop="sys_create_datetime"
-            />
-            <ElTableColumn
-              label="更新时间"
-              min-width="180"
-              prop="sys_update_datetime"
-            />
-          </ElTable>
-        </section>
-
-        <section class="fm-relation-insight__panel">
-          <div class="fm-relation-insight__panel-title">华佗诊断方案</div>
-          <ElEmpty
-            v-if="failureModeHuatuoRows.length === 0"
-            description="当前故障模式尚未关联任何华佗诊断方案"
-          />
-          <ElTable v-else :data="failureModeHuatuoRows" border stripe>
-            <ElTableColumn
-              label="诊断方案"
-              min-width="320"
-              prop="description"
-            />
-            <ElTableColumn label="设计责任人" min-width="220">
-              <template #default="{ row }">
-                {{ formatUserNames(row.owner_info) }}
-              </template>
-            </ElTableColumn>
-            <ElTableColumn
-              label="落地产品数"
-              min-width="110"
-              prop="landed_product_count"
-            />
-            <ElTableColumn label="汇总状态" min-width="120">
-              <template #default="{ row }">
-                <ElTag
-                  :type="getLandingStatusTagType(row.summary_status)"
-                  effect="light"
-                  round
-                >
-                  {{ row.summary_status }}
-                </ElTag>
-              </template>
-            </ElTableColumn>
-            <ElTableColumn
-              label="创建时间"
-              min-width="180"
-              prop="sys_create_datetime"
-            />
-            <ElTableColumn
-              label="更新时间"
-              min-width="180"
-              prop="sys_update_datetime"
-            />
-          </ElTable>
-        </section>
-
-        <section class="fm-relation-insight__panel">
-          <div class="fm-relation-insight__panel-title">落地产品</div>
-          <ElEmpty
-            v-if="currentFailureModeProductRows.length === 0"
-            :description="productEmptyText"
-          />
-          <ElTable v-else :data="currentFailureModeProductRows" border stripe>
-            <ElTableColumn label="产品" min-width="220" prop="product_name" />
-            <ElTableColumn label="主版本SE" min-width="160">
-              <template #default="{ row }">
-                {{ formatUserName(row.owner_info) }}
-              </template>
-            </ElTableColumn>
-            <ElTableColumn label="故障模式落地" min-width="150">
-              <template #default="{ row }">
-                <ElTag
-                  :type="getLandingStatusTagType(row.failure_mode_status)"
-                  effect="light"
-                  round
-                >
-                  {{ row.failure_mode_status || '-' }}
-                </ElTag>
-              </template>
-            </ElTableColumn>
-            <ElTableColumn label="落地子系统" min-width="220">
-              <template #default="{ row }">
-                {{ formatTextList(row.subsystems) }}
-              </template>
-            </ElTableColumn>
-            <ElTableColumn label="产线拦截策略" min-width="260">
-              <template #default="{ row }">
-                <div
-                  v-if="
-                    getFailureModeProductResourceRows(row, 'interception_rows')
-                      .length > 0
-                  "
-                  class="fm-relation-insight__tag-list"
-                >
-                  <ElTag
-                    v-for="item in getFailureModeProductResourceRows(
-                      row,
-                      'interception_rows',
-                    )"
-                    :key="item.id"
-                    :type="getLandingStatusTagType(item.status)"
-                    effect="light"
-                    size="small"
-                  >
-                    {{ item.label }}
-                    <span v-if="item.subtitle"> · {{ item.subtitle }}</span>
-                    <span> · {{ item.status }}</span>
-                  </ElTag>
-                </div>
-                <span v-else class="text-gray-400">未关联</span>
-              </template>
-            </ElTableColumn>
-            <ElTableColumn label="故障处理措施" min-width="280">
-              <template #default="{ row }">
-                <div
-                  v-if="
-                    getFailureModeProductResourceRows(row, 'handling_rows')
-                      .length > 0
-                  "
-                  class="fm-relation-insight__tag-list"
-                >
-                  <ElTag
-                    v-for="item in getFailureModeProductResourceRows(
-                      row,
-                      'handling_rows',
-                    )"
-                    :key="item.id"
-                    :type="getLandingStatusTagType(item.status)"
-                    effect="light"
-                    size="small"
-                  >
-                    {{ item.label }}
-                    <span v-if="item.subtitle"> · {{ item.subtitle }}</span>
-                    <span> · {{ item.status }}</span>
-                  </ElTag>
-                </div>
-                <span v-else class="text-gray-400">未关联</span>
-              </template>
-            </ElTableColumn>
-            <ElTableColumn label="维测手段" min-width="280">
-              <template #default="{ row }">
-                <div
-                  v-if="
-                    getFailureModeProductResourceRows(row, 'observation_rows')
-                      .length > 0
-                  "
-                  class="fm-relation-insight__tag-list"
-                >
-                  <ElTag
-                    v-for="item in getFailureModeProductResourceRows(
-                      row,
-                      'observation_rows',
-                    )"
-                    :key="item.id"
-                    :type="getLandingStatusTagType(item.status)"
-                    effect="light"
-                    size="small"
-                  >
-                    {{ item.label }}
-                    <span v-if="item.subtitle"> · {{ item.subtitle }}</span>
-                    <span> · {{ item.status }}</span>
-                  </ElTag>
-                </div>
-                <span v-else class="text-gray-400">未关联</span>
-              </template>
-            </ElTableColumn>
-            <ElTableColumn label="华佗诊断方案" min-width="260">
-              <template #default="{ row }">
-                <div
-                  v-if="
-                    getFailureModeProductResourceRows(row, 'huatuo_rows')
-                      .length > 0
-                  "
-                  class="fm-relation-insight__tag-list"
-                >
-                  <ElTag
-                    v-for="item in getFailureModeProductResourceRows(
-                      row,
-                      'huatuo_rows',
-                    )"
-                    :key="item.id"
-                    :type="getLandingStatusTagType(item.status)"
-                    effect="light"
-                    size="small"
-                  >
-                    {{ item.label }}
-                    <span v-if="item.subtitle"> · {{ item.subtitle }}</span>
-                    <span> · {{ item.status }}</span>
-                  </ElTag>
-                </div>
-                <span v-else class="text-gray-400">未关联</span>
-              </template>
-            </ElTableColumn>
-            <ElTableColumn
-              label="最近落地时间"
-              min-width="180"
-              prop="landed_at"
-            />
-          </ElTable>
-        </section>
-      </div>
-
-      <div v-else class="flex flex-col gap-4">
-        <section class="fm-relation-insight__panel">
-          <div class="fm-relation-insight__panel-title">关联故障模式</div>
-          <ElEmpty
-            v-if="currentFailureModeRows.length === 0"
-            :description="failureModeEmptyText"
-          />
-          <ElTable v-else :data="currentFailureModeRows" border stripe>
-            <ElTableColumn
-              label="故障模式"
-              min-width="240"
-              prop="failure_mode_brief"
-            />
-            <ElTableColumn label="子系统" min-width="140" prop="subsystem" />
-            <ElTableColumn label="状态" min-width="120" prop="status" />
-            <ElTableColumn label="已落地产品" min-width="220">
-              <template #default="{ row }">
-                {{ formatTextList(row.product_names) }}
-              </template>
-            </ElTableColumn>
-            <ElTableColumn
-              label="产品数"
-              min-width="90"
-              prop="landed_product_count"
-            />
-          </ElTable>
-        </section>
-
-        <section class="fm-relation-insight__panel">
-          <div class="fm-relation-insight__panel-title">落地产品</div>
-          <ElEmpty
-            v-if="currentLandingProductRows.length === 0"
-            :description="productEmptyText"
-          />
-          <ElTable v-else :data="currentLandingProductRows" border stripe>
-            <ElTableColumn label="产品" min-width="180" prop="product_name" />
-            <ElTableColumn label="主版本SE" min-width="140">
-              <template #default="{ row }">
-                {{ formatUserName(row.owner_info) }}
-              </template>
-            </ElTableColumn>
-            <ElTableColumn label="通过哪些故障模式落地" min-width="260">
-              <template #default="{ row }">
-                {{ formatTextList(row.failure_mode_briefs) }}
-              </template>
-            </ElTableColumn>
-          </ElTable>
-        </section>
-      </div>
-    </div>
-  </ZqDrawer>
+    </ZqDrawer>
+  </template>
 </template>
 
 <style scoped>
@@ -1426,6 +1558,21 @@ defineExpose({
   color: #0f172a;
   font-size: 15px;
   font-weight: 700;
+}
+
+.fm-relation-insight__drill-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--el-color-primary);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.fm-relation-insight__drill-link:hover {
+  text-decoration: underline;
 }
 
 .fm-relation-insight__tag-list {

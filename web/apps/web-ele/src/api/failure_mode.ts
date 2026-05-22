@@ -214,6 +214,7 @@ export interface InterceptionInsightFailureModeRow {
   subsystem?: null | string;
   status?: null | string;
   product_names: string[];
+  related_product_count: number;
   landed_product_count: number;
 }
 
@@ -229,6 +230,7 @@ export interface InterceptionInsight {
   interception_item: string;
   station?: null | string;
   related_failure_mode_count: number;
+  related_product_count: number;
   landed_product_count: number;
   total_product_count: number;
   failure_mode_rows: InterceptionInsightFailureModeRow[];
@@ -241,6 +243,7 @@ export interface HandlingMeasureInsight {
   measure_category?: null | string;
   related_test_case_count: number;
   related_failure_mode_count: number;
+  related_product_count: number;
   landed_product_count: number;
   total_product_count: number;
   failure_mode_rows: InterceptionInsightFailureModeRow[];
@@ -255,6 +258,7 @@ export interface ObservationMethodInsight {
   log_keyword?: null | string;
   log_path?: null | string;
   related_failure_mode_count: number;
+  related_product_count: number;
   landed_product_count: number;
   total_product_count: number;
   failure_mode_rows: InterceptionInsightFailureModeRow[];
@@ -265,6 +269,7 @@ export interface HuatuoDiagnosisInsight {
   id: string;
   description: string;
   related_failure_mode_count: number;
+  related_product_count: number;
   landed_product_count: number;
   total_product_count: number;
   failure_mode_rows: InterceptionInsightFailureModeRow[];
@@ -277,6 +282,7 @@ export interface TestCaseInsight {
   cida_link?: null | string;
   related_handling_measure_count: number;
   related_failure_mode_count: number;
+  related_product_count: number;
   landed_product_count: number;
   total_product_count: number;
   failure_mode_rows: InterceptionInsightFailureModeRow[];

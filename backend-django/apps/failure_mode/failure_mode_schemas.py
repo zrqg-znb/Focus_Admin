@@ -381,6 +381,7 @@ class InterceptionInsightFailureModeRowSchema(Schema):
     subsystem: Optional[str] = None
     status: Optional[str] = None
     product_names: list[str] = Field(default_factory=list)
+    related_product_count: int = 0
     landed_product_count: int
 
 
@@ -396,6 +397,7 @@ class InterceptionInsightOutSchema(Schema):
     interception_item: str
     station: Optional[str] = None
     related_failure_mode_count: int
+    related_product_count: int = 0
     landed_product_count: int
     total_product_count: int
     failure_mode_rows: list[InterceptionInsightFailureModeRowSchema] = Field(
@@ -412,6 +414,7 @@ class HandlingMeasureInsightOutSchema(Schema):
     measure_category: Optional[str] = None
     related_test_case_count: int
     related_failure_mode_count: int
+    related_product_count: int = 0
     landed_product_count: int
     total_product_count: int
     failure_mode_rows: list[InterceptionInsightFailureModeRowSchema] = Field(
@@ -430,6 +433,7 @@ class ObservationMethodInsightOutSchema(Schema):
     log_keyword: Optional[str] = None
     log_path: Optional[str] = None
     related_failure_mode_count: int
+    related_product_count: int = 0
     landed_product_count: int
     total_product_count: int
     failure_mode_rows: list[InterceptionInsightFailureModeRowSchema] = Field(
@@ -444,6 +448,7 @@ class HuatuoDiagnosisInsightOutSchema(Schema):
     id: str
     description: str
     related_failure_mode_count: int
+    related_product_count: int = 0
     landed_product_count: int
     total_product_count: int
     failure_mode_rows: list[InterceptionInsightFailureModeRowSchema] = Field(
@@ -460,6 +465,7 @@ class TestCaseInsightOutSchema(Schema):
     cida_link: Optional[str] = None
     related_handling_measure_count: int
     related_failure_mode_count: int
+    related_product_count: int = 0
     landed_product_count: int
     total_product_count: int
     failure_mode_rows: list[InterceptionInsightFailureModeRowSchema] = Field(
