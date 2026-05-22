@@ -83,6 +83,23 @@ const huatuoDiagnosisIds = ref<string[]>([]);
 const huatuoDiagnosisItems = ref<RelationItem[]>([]);
 const relationSelectorRef = ref<any>();
 const masterDrawerRef = ref<any>();
+type FailureModeFormValues = {
+  author_ids: string[];
+  brief: string;
+  chips: string[];
+  detectability?: string;
+  effect_html: string;
+  fault_categories: string[];
+  functional_safety_level?: string;
+  module?: string;
+  occurrence_frequency?: string;
+  root_cause_html: string;
+  severity?: string;
+  status?: string;
+  subsystem?: string;
+  symptoms: string[];
+};
+
 const formValueFallbacks = ref<{
   chips: string[];
   fault_categories: string[];
@@ -136,6 +153,27 @@ const selectedRelationCount = computed(() => {
     huatuoDiagnosisIds.value.length
   );
 });
+
+function createDefaultFormValues(
+  detail: Partial<FailureModeItem> = {},
+): FailureModeFormValues {
+  return {
+    author_ids: detail.author_ids || [],
+    brief: detail.brief || '',
+    chips: normalizeStringList(detail.chips || []),
+    detectability: detail.detectability || undefined,
+    effect_html: detail.effect_html || '',
+    fault_categories: normalizeStringList(detail.fault_categories || []),
+    functional_safety_level: detail.functional_safety_level || undefined,
+    module: detail.module || undefined,
+    occurrence_frequency: detail.occurrence_frequency || undefined,
+    root_cause_html: detail.root_cause_html || '',
+    severity: detail.severity || undefined,
+    status: detail.status || undefined,
+    subsystem: detail.subsystem || undefined,
+    symptoms: normalizeStringList(detail.symptoms || []),
+  };
+}
 
 const [Form, formApi] = useVbenForm({
   commonConfig: getFormCommonConfig(),
@@ -209,6 +247,12 @@ function resetRelations() {
   observationMethodItems.value = [];
   huatuoDiagnosisIds.value = [];
   huatuoDiagnosisItems.value = [];
+}
+
+async function clearInitialValidationState() {
+  await nextTick();
+  await nextTick();
+  await formApi.resetValidate?.();
 }
 
 function normalizeScopeBindingsForSubmit(
@@ -341,7 +385,7 @@ async function syncScopedFieldValues() {
   }
 
   if (Object.keys(nextValues).length > 0) {
-    formApi.setValues(nextValues);
+    await formApi.setValues(nextValues);
   }
 }
 
@@ -369,28 +413,14 @@ async function openCreate() {
   requiredObservationMethodTypes.value = [];
   resetRelations();
   applySchema();
+  loading.value = false;
   visible.value = true;
   await nextTick();
-  await formApi.resetForm();
-  formApi.setValues({
-    author_ids: [],
-    brief: '',
-    chips: [],
-    detectability: undefined,
-    effect_html: '',
-    fault_categories: [],
-    symptoms: [],
-    functional_safety_level: undefined,
-    module: undefined,
-    occurrence_frequency: undefined,
-    root_cause_html: '',
-    severity: undefined,
-    status: undefined,
-    subsystem: undefined,
-  });
+  await formApi.resetForm({ values: createDefaultFormValues() });
+  await clearInitialValidationState();
 }
 
-function applyFailureModeDetail(detail: FailureModeItem) {
+async function applyFailureModeDetail(detail: FailureModeItem) {
   const chips = normalizeStringList(detail.chips || []);
   const faultCategories = normalizeStringList(detail.fault_categories || []);
   const symptoms = normalizeStringList(detail.symptoms || []);
@@ -401,23 +431,6 @@ function applyFailureModeDetail(detail: FailureModeItem) {
   };
   selectedSubsystem.value = detail.subsystem || undefined;
   scopeBindings.value = detail.scope_bindings || [];
-  applySchema();
-  formApi.setValues({
-    author_ids: detail.author_ids || [],
-    brief: detail.brief,
-    chips,
-    detectability: detail.detectability || undefined,
-    effect_html: detail.effect_html || '',
-    fault_categories: faultCategories,
-    symptoms,
-    functional_safety_level: detail.functional_safety_level || undefined,
-    module: detail.module || undefined,
-    occurrence_frequency: detail.occurrence_frequency || undefined,
-    root_cause_html: detail.root_cause_html || '',
-    severity: detail.severity || undefined,
-    status: detail.status || undefined,
-    subsystem: detail.subsystem || undefined,
-  });
   relatedDtsNos.value = normalizeStringList(detail.related_dts_nos || []);
   interceptionRequired.value = Boolean(detail.interception_required);
   huatuoRequired.value = Boolean(detail.huatuo_required);
@@ -455,43 +468,47 @@ function applyFailureModeDetail(detail: FailureModeItem) {
     huatuoDiagnosisIds.value,
     detail.huatuo_diagnosis_items || [],
   );
+  applySchema();
+  await nextTick();
+  await formApi.resetForm({ values: createDefaultFormValues(detail) });
+  await clearInitialValidationState();
 }
 
 async function openEdit(record: FailureModeItem | string | { id: string }) {
   mode.value = 'edit';
   editingId.value = typeof record === 'string' ? record : record.id;
+  loading.value = true;
   visible.value = true;
   await nextTick();
-  loading.value = true;
   resetRelations();
   try {
-    await formApi.resetForm();
     const detail =
       typeof record === 'object' && 'brief' in record
         ? record
         : await getFailureModeDetailApi(editingId.value);
-    applyFailureModeDetail(detail as FailureModeItem);
+    await applyFailureModeDetail(detail as FailureModeItem);
   } finally {
     loading.value = false;
+    await clearInitialValidationState();
   }
 }
 
 async function openView(record: FailureModeItem | string | { id: string }) {
   mode.value = 'view';
   editingId.value = typeof record === 'string' ? record : record.id;
+  loading.value = true;
   visible.value = true;
   await nextTick();
-  loading.value = true;
   resetRelations();
   try {
-    await formApi.resetForm();
     const detail =
       typeof record === 'object' && 'brief' in record
         ? record
         : await getFailureModeDetailApi(editingId.value);
-    applyFailureModeDetail(detail as FailureModeItem);
+    await applyFailureModeDetail(detail as FailureModeItem);
   } finally {
     loading.value = false;
+    await clearInitialValidationState();
   }
 }
 

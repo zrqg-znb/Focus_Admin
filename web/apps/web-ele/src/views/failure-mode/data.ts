@@ -892,6 +892,13 @@ export function useFailureModeFormSchema(
         .refine((value) => stripRichTextContent(value).length > 0, {
           message: '请输入故障影响',
         }),
+      formFieldProps: {
+        validateOnBlur: false,
+        validateOnChange: false,
+        validateOnInput: false,
+        validateOnModelUpdate: false,
+        validateOnMount: false,
+      },
       componentProps: {
         minHeight: 220,
         maxHeight: 420,
@@ -908,6 +915,13 @@ export function useFailureModeFormSchema(
         .refine((value) => stripRichTextContent(value).length > 0, {
           message: '请输入故障根因',
         }),
+      formFieldProps: {
+        validateOnBlur: false,
+        validateOnChange: false,
+        validateOnInput: false,
+        validateOnModelUpdate: false,
+        validateOnMount: false,
+      },
       componentProps: {
         minHeight: 220,
         maxHeight: 420,

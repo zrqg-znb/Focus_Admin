@@ -102,6 +102,50 @@ interface InsightFrame {
 
 let frameSequence = 0;
 const frames = ref<InsightFrame[]>([]);
+const failureModeDetailCache = new Map<
+  string,
+  FailureModeItem | Promise<FailureModeItem>
+>();
+const failureModeInsightCache = new Map<
+  string,
+  FailureModeInsight | Promise<FailureModeInsight>
+>();
+const interceptionDetailCache = new Map<
+  string,
+  InterceptionStrategyItem | Promise<InterceptionStrategyItem>
+>();
+const interceptionInsightCache = new Map<
+  string,
+  InterceptionInsight | Promise<InterceptionInsight>
+>();
+const handlingMeasureDetailCache = new Map<
+  string,
+  HandlingMeasureItem | Promise<HandlingMeasureItem>
+>();
+const handlingMeasureInsightCache = new Map<
+  string,
+  HandlingMeasureInsight | Promise<HandlingMeasureInsight>
+>();
+const observationMethodDetailCache = new Map<
+  string,
+  ObservationMethodItem | Promise<ObservationMethodItem>
+>();
+const observationMethodInsightCache = new Map<
+  string,
+  ObservationMethodInsight | Promise<ObservationMethodInsight>
+>();
+const huatuoDiagnosisDetailCache = new Map<
+  string,
+  HuatuoDiagnosisItem | Promise<HuatuoDiagnosisItem>
+>();
+const huatuoDiagnosisInsightCache = new Map<
+  string,
+  HuatuoDiagnosisInsight | Promise<HuatuoDiagnosisInsight>
+>();
+const testCaseInsightCache = new Map<
+  string,
+  Promise<TestCaseInsight> | TestCaseInsight
+>();
 
 function createFrame(mode: InsightMode, resourceId: string): InsightFrame {
   return reactive({
@@ -768,6 +812,10 @@ function pushFrame(mode: InsightMode, resourceId: string) {
   return frame;
 }
 
+function findFrame(frameKey: string) {
+  return frames.value.find((item) => item.key === frameKey) || null;
+}
+
 async function loadFrame(
   frame: InsightFrame,
   loader: () => Promise<void>,
@@ -789,6 +837,68 @@ function handleFrameClosed(frameKey: string) {
   removeFrame(frameKey);
 }
 
+async function enrichFailureModeRelationRows(
+  frameKey: string,
+  detail: FailureModeItem,
+  insight: FailureModeInsight,
+) {
+  try {
+    const [
+      interceptionDetails,
+      handlingDetails,
+      observationDetails,
+      huatuoDetails,
+    ] = await Promise.all([
+      loadDetailList(
+        detail.interception_strategy_items || [],
+        getInterceptionStrategyDetailApi,
+        interceptionDetailCache,
+      ),
+      loadDetailList(
+        detail.handling_measure_items || [],
+        getHandlingMeasureDetailApi,
+        handlingMeasureDetailCache,
+      ),
+      loadDetailList(
+        detail.observation_method_items || [],
+        getObservationMethodDetailApi,
+        observationMethodDetailCache,
+      ),
+      loadDetailList(
+        detail.huatuo_diagnosis_items || [],
+        getHuatuoDiagnosisDetailApi,
+        huatuoDiagnosisDetailCache,
+      ),
+    ]);
+    const frame = findFrame(frameKey);
+    if (!frame) {
+      return;
+    }
+    frame.failureModeInterceptionRows = buildFailureModeInterceptionRows(
+      detail.interception_strategy_items || [],
+      interceptionDetails,
+      insight.product_rows || [],
+    );
+    frame.failureModeHandlingRows = buildFailureModeHandlingRows(
+      detail.handling_measure_items || [],
+      handlingDetails,
+      insight.product_rows || [],
+    );
+    frame.failureModeObservationRows = buildFailureModeObservationRows(
+      detail.observation_method_items || [],
+      observationDetails,
+      insight.product_rows || [],
+    );
+    frame.failureModeHuatuoRows = buildFailureModeHuatuoRows(
+      detail.huatuo_diagnosis_items || [],
+      huatuoDetails,
+      insight.product_rows || [],
+    );
+  } catch (error) {
+    console.error(error);
+  }
+}
+
 async function openFailureMode(id: string) {
   const frame = pushFrame('failure_mode', id);
   await loadFrame(
@@ -804,55 +914,27 @@ async function openFailureMode(id: string) {
       ]);
       frame.failureModeDetail = detail;
       frame.failureModeInsight = insight;
-
-      const [
-        interceptionDetails,
-        handlingDetails,
-        observationDetails,
-        huatuoDetails,
-      ] = await Promise.all([
-        loadDetailList(
-          detail.interception_strategy_items || [],
-          getInterceptionStrategyDetailApi,
-          interceptionDetailCache,
-        ),
-        loadDetailList(
-          detail.handling_measure_items || [],
-          getHandlingMeasureDetailApi,
-          handlingMeasureDetailCache,
-        ),
-        loadDetailList(
-          detail.observation_method_items || [],
-          getObservationMethodDetailApi,
-          observationMethodDetailCache,
-        ),
-        loadDetailList(
-          detail.huatuo_diagnosis_items || [],
-          getHuatuoDiagnosisDetailApi,
-          huatuoDiagnosisDetailCache,
-        ),
-      ]);
-
       frame.failureModeInterceptionRows = buildFailureModeInterceptionRows(
         detail.interception_strategy_items || [],
-        interceptionDetails,
+        (detail.interception_strategy_items || []).map(() => null),
         insight.product_rows || [],
       );
       frame.failureModeHandlingRows = buildFailureModeHandlingRows(
         detail.handling_measure_items || [],
-        handlingDetails,
+        (detail.handling_measure_items || []).map(() => null),
         insight.product_rows || [],
       );
       frame.failureModeObservationRows = buildFailureModeObservationRows(
         detail.observation_method_items || [],
-        observationDetails,
+        (detail.observation_method_items || []).map(() => null),
         insight.product_rows || [],
       );
       frame.failureModeHuatuoRows = buildFailureModeHuatuoRows(
         detail.huatuo_diagnosis_items || [],
-        huatuoDetails,
+        (detail.huatuo_diagnosis_items || []).map(() => null),
         insight.product_rows || [],
       );
+      void enrichFailureModeRelationRows(frame.key, detail, insight);
     },
     '加载故障模式关联洞察失败',
   );

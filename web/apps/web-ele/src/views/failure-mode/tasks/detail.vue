@@ -759,7 +759,12 @@ watch(
 
 <template>
   <Page content-class="flex h-full min-h-0 flex-col" auto-content-height>
-    <div class="flex min-h-0 flex-1 flex-col gap-4">
+    <div
+      v-loading="loading"
+      element-loading-background="rgba(255, 255, 255, 0.78)"
+      element-loading-text="正在加载任务详情..."
+      class="flex min-h-0 flex-1 flex-col gap-4"
+    >
       <div class="rounded-xl bg-white shadow-sm">
         <!-- Header -->
         <div

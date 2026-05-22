@@ -564,15 +564,10 @@ watch(
 );
 
 onMounted(async () => {
-  try {
-    await loadBaseOptions();
-  } catch (error) {
+  void loadBaseOptions().catch((error) => {
     console.error(error);
     ElMessage.error('加载故障管理基础选项失败');
-  }
-
-  await nextTick();
-  await reloadActiveGrid();
+  });
 });
 </script>
 
@@ -593,219 +588,205 @@ onMounted(async () => {
 
     <div class="flex h-full flex-col">
       <section
-        class="border-border bg-card flex h-full min-h-0 flex-col rounded-lg border p-4 shadow-sm"
+        class="border-border bg-card relative flex h-full min-h-0 flex-col rounded-lg border p-4 shadow-sm"
       >
         <ElTabs
           v-model="activeTab"
           class="failure-mode-tabs flex h-full min-h-0 flex-col"
         >
-          <ElTabPane label="故障模式" lazy name="failureMode">
-            <section class="flex h-full min-h-0 flex-col">
-              <div class="min-h-0 flex-1">
-                <FailureModeGrid class="h-full">
-                  <template #toolbar-actions>
+          <ElTabPane label="故障模式" name="failureMode">
+            <FailureModeGrid class="h-full">
+              <template #toolbar-actions>
+                <ElButton
+                  type="primary"
+                  @click="failureModeDrawerRef?.openCreate()"
+                >
+                  新增故障模式
+                </ElButton>
+              </template>
+
+              <template #header-brief>
+                <div class="failure-mode-header-filter" @click.stop>
+                  <span class="failure-mode-header-filter__label">
+                    故障模式 brief
+                  </span>
+                  <ElInput
+                    v-model="failureModeFilters.keyword"
+                    class="failure-mode-header-filter__input"
+                    clearable
+                    placeholder="请输入关键词"
+                    size="small"
+                    @change="commitFailureModeFilters"
+                    @clear="commitFailureModeFilters"
+                    @keyup.enter="commitFailureModeFilters"
+                  />
+                </div>
+              </template>
+
+              <template #header-author-info>
+                <div class="failure-mode-header-filter" @click.stop>
+                  <span class="failure-mode-header-filter__label">作者</span>
+                  <ElInput
+                    v-model="failureModeFilters.author_keyword"
+                    class="failure-mode-header-filter__input"
+                    clearable
+                    placeholder="关键词搜索"
+                    size="small"
+                    @change="commitFailureModeFilters"
+                    @clear="commitFailureModeFilters"
+                    @keyup.enter="commitFailureModeFilters"
+                  />
+                </div>
+              </template>
+
+              <template #header-subsystem>
+                <div class="failure-mode-header-filter" @click.stop>
+                  <span class="failure-mode-header-filter__label">子系统</span>
+                  <ElSelect
+                    v-model="failureModeFilters.subsystem"
+                    class="failure-mode-header-filter__select"
+                    clearable
+                    collapse-tags
+                    collapse-tags-tooltip
+                    filterable
+                    multiple
+                    placeholder="全部，可多选"
+                    size="small"
+                    @clear="commitFailureModeFilters"
+                    @visible-change="handleFailureModeDictVisibleChange"
+                  >
+                    <ElOption
+                      v-for="item in failureModeSubsystemFilterOptions"
+                      :key="item.value"
+                      :label="item.label"
+                      :value="item.value"
+                    />
+                  </ElSelect>
+                </div>
+              </template>
+
+              <template #header-module>
+                <div class="failure-mode-header-filter" @click.stop>
+                  <span class="failure-mode-header-filter__label">模块</span>
+                  <ElSelect
+                    v-model="failureModeFilters.module"
+                    class="failure-mode-header-filter__select"
+                    clearable
+                    collapse-tags
+                    collapse-tags-tooltip
+                    filterable
+                    multiple
+                    placeholder="全部，可多选"
+                    size="small"
+                    @clear="commitFailureModeFilters"
+                    @visible-change="handleFailureModeDictVisibleChange"
+                  >
+                    <ElOption
+                      v-for="item in failureModeModuleFilterOptions"
+                      :key="item.value"
+                      :label="item.label"
+                      :value="item.value"
+                    />
+                  </ElSelect>
+                </div>
+              </template>
+
+              <template #header-status>
+                <div class="failure-mode-header-filter" @click.stop>
+                  <span class="failure-mode-header-filter__label">状态</span>
+                  <ElSelect
+                    v-model="failureModeFilters.status"
+                    class="failure-mode-header-filter__select"
+                    clearable
+                    collapse-tags
+                    collapse-tags-tooltip
+                    filterable
+                    multiple
+                    placeholder="全部，可多选"
+                    size="small"
+                    @clear="commitFailureModeFilters"
+                    @visible-change="handleFailureModeDictVisibleChange"
+                  >
+                    <ElOption
+                      v-for="item in dictOptions.status"
+                      :key="item.value"
+                      :label="item.label"
+                      :value="item.value"
+                    />
+                  </ElSelect>
+                </div>
+              </template>
+
+              <template #cell-chips="{ row }">
+                {{ formatTextList(row.chips) || '-' }}
+              </template>
+              <template #cell-brief="{ row }">
+                <button
+                  class="failure-mode-link-cell"
+                  type="button"
+                  @click="handleOpenFailureModeInsight(row)"
+                >
+                  <span class="failure-mode-link-cell__text">
+                    {{ row.brief }}
+                  </span>
+                </button>
+              </template>
+              <template #cell-fault_categories="{ row }">
+                {{ formatTextList(row.fault_categories) || '-' }}
+              </template>
+              <template #cell-symptoms="{ row }">
+                {{ formatTextList(row.symptoms) || '-' }}
+              </template>
+              <template #cell-author_info="{ row }">
+                {{ formatUserNames(row.author_info) || '-' }}
+              </template>
+              <template #cell-related_dts_nos="{ row }">
+                {{ formatTextList(row.related_dts_nos) || '-' }}
+              </template>
+              <template #cell-handling_measure_items="{ row }">
+                {{ formatRelationLabels(row.handling_measure_items) || '-' }}
+              </template>
+              <template #cell-status="{ row }">
+                {{ row.status || '-' }}
+              </template>
+              <template #cell-source_task_no="{ row }">
+                <div class="text-sm text-gray-700">
+                  {{ formatFailureModeSourceLabel(row) }}
+                </div>
+                <div
+                  v-if="formatFailureModeSourceHint(row)"
+                  class="mt-1 text-xs text-gray-500"
+                >
+                  {{ formatFailureModeSourceHint(row) }}
+                </div>
+              </template>
+              <template #cell-actions="{ row }">
+                <div class="flex justify-center gap-1">
+                  <ElTooltip content="编辑" placement="top">
                     <ElButton
+                      circle
+                      link
+                      size="small"
                       type="primary"
-                      @click="failureModeDrawerRef?.openCreate()"
+                      @click="handleFailureModeAction('edit', row)"
                     >
-                      新增故障模式
+                      <IconifyIcon icon="ep:edit" />
                     </ElButton>
-                  </template>
-
-                  <template #header-brief>
-                    <div class="failure-mode-header-filter" @click.stop>
-                      <span class="failure-mode-header-filter__label">
-                        故障模式 brief
-                      </span>
-                      <ElInput
-                        v-model="failureModeFilters.keyword"
-                        class="failure-mode-header-filter__input"
-                        clearable
-                        placeholder="请输入关键词"
-                        size="small"
-                        @change="commitFailureModeFilters"
-                        @clear="commitFailureModeFilters"
-                        @keyup.enter="commitFailureModeFilters"
-                      />
-                    </div>
-                  </template>
-
-                  <template #header-author-info>
-                    <div class="failure-mode-header-filter" @click.stop>
-                      <span class="failure-mode-header-filter__label">
-                        作者
-                      </span>
-                      <ElInput
-                        v-model="failureModeFilters.author_keyword"
-                        class="failure-mode-header-filter__input"
-                        clearable
-                        placeholder="关键词搜索"
-                        size="small"
-                        @change="commitFailureModeFilters"
-                        @clear="commitFailureModeFilters"
-                        @keyup.enter="commitFailureModeFilters"
-                      />
-                    </div>
-                  </template>
-
-                  <template #header-subsystem>
-                    <div class="failure-mode-header-filter" @click.stop>
-                      <span class="failure-mode-header-filter__label">
-                        子系统
-                      </span>
-                      <ElSelect
-                        v-model="failureModeFilters.subsystem"
-                        class="failure-mode-header-filter__select"
-                        clearable
-                        collapse-tags
-                        collapse-tags-tooltip
-                        filterable
-                        multiple
-                        placeholder="全部，可多选"
-                        size="small"
-                        @clear="commitFailureModeFilters"
-                        @visible-change="handleFailureModeDictVisibleChange"
-                      >
-                        <ElOption
-                          v-for="item in failureModeSubsystemFilterOptions"
-                          :key="item.value"
-                          :label="item.label"
-                          :value="item.value"
-                        />
-                      </ElSelect>
-                    </div>
-                  </template>
-
-                  <template #header-module>
-                    <div class="failure-mode-header-filter" @click.stop>
-                      <span class="failure-mode-header-filter__label">
-                        模块
-                      </span>
-                      <ElSelect
-                        v-model="failureModeFilters.module"
-                        class="failure-mode-header-filter__select"
-                        clearable
-                        collapse-tags
-                        collapse-tags-tooltip
-                        filterable
-                        multiple
-                        placeholder="全部，可多选"
-                        size="small"
-                        @clear="commitFailureModeFilters"
-                        @visible-change="handleFailureModeDictVisibleChange"
-                      >
-                        <ElOption
-                          v-for="item in failureModeModuleFilterOptions"
-                          :key="item.value"
-                          :label="item.label"
-                          :value="item.value"
-                        />
-                      </ElSelect>
-                    </div>
-                  </template>
-
-                  <template #header-status>
-                    <div class="failure-mode-header-filter" @click.stop>
-                      <span class="failure-mode-header-filter__label">
-                        状态
-                      </span>
-                      <ElSelect
-                        v-model="failureModeFilters.status"
-                        class="failure-mode-header-filter__select"
-                        clearable
-                        collapse-tags
-                        collapse-tags-tooltip
-                        filterable
-                        multiple
-                        placeholder="全部，可多选"
-                        size="small"
-                        @clear="commitFailureModeFilters"
-                        @visible-change="handleFailureModeDictVisibleChange"
-                      >
-                        <ElOption
-                          v-for="item in dictOptions.status"
-                          :key="item.value"
-                          :label="item.label"
-                          :value="item.value"
-                        />
-                      </ElSelect>
-                    </div>
-                  </template>
-
-                  <template #cell-chips="{ row }">
-                    {{ formatTextList(row.chips) || '-' }}
-                  </template>
-                  <template #cell-brief="{ row }">
-                    <button
-                      class="failure-mode-link-cell"
-                      type="button"
-                      @click="handleOpenFailureModeInsight(row)"
+                  </ElTooltip>
+                  <ElTooltip content="删除" placement="top">
+                    <ElButton
+                      circle
+                      link
+                      size="small"
+                      type="danger"
+                      @click="handleFailureModeAction('delete', row)"
                     >
-                      <span class="failure-mode-link-cell__text">
-                        {{ row.brief }}
-                      </span>
-                    </button>
-                  </template>
-                  <template #cell-fault_categories="{ row }">
-                    {{ formatTextList(row.fault_categories) || '-' }}
-                  </template>
-                  <template #cell-symptoms="{ row }">
-                    {{ formatTextList(row.symptoms) || '-' }}
-                  </template>
-                  <template #cell-author_info="{ row }">
-                    {{ formatUserNames(row.author_info) || '-' }}
-                  </template>
-                  <template #cell-related_dts_nos="{ row }">
-                    {{ formatTextList(row.related_dts_nos) || '-' }}
-                  </template>
-                  <template #cell-handling_measure_items="{ row }">
-                    {{
-                      formatRelationLabels(row.handling_measure_items) || '-'
-                    }}
-                  </template>
-                  <template #cell-status="{ row }">
-                    {{ row.status || '-' }}
-                  </template>
-                  <template #cell-source_task_no="{ row }">
-                    <div class="text-sm text-gray-700">
-                      {{ formatFailureModeSourceLabel(row) }}
-                    </div>
-                    <div
-                      v-if="formatFailureModeSourceHint(row)"
-                      class="mt-1 text-xs text-gray-500"
-                    >
-                      {{ formatFailureModeSourceHint(row) }}
-                    </div>
-                  </template>
-                  <template #cell-actions="{ row }">
-                    <div class="flex justify-center gap-1">
-                      <ElTooltip content="编辑" placement="top">
-                        <ElButton
-                          circle
-                          link
-                          size="small"
-                          type="primary"
-                          @click="handleFailureModeAction('edit', row)"
-                        >
-                          <IconifyIcon icon="ep:edit" />
-                        </ElButton>
-                      </ElTooltip>
-                      <ElTooltip content="删除" placement="top">
-                        <ElButton
-                          circle
-                          link
-                          size="small"
-                          type="danger"
-                          @click="handleFailureModeAction('delete', row)"
-                        >
-                          <IconifyIcon icon="ep:delete" />
-                        </ElButton>
-                      </ElTooltip>
-                    </div>
-                  </template>
-                </FailureModeGrid>
-              </div>
-            </section>
+                      <IconifyIcon icon="ep:delete" />
+                    </ElButton>
+                  </ElTooltip>
+                </div>
+              </template>
+            </FailureModeGrid>
           </ElTabPane>
 
           <ElTabPane label="产线拦截策略" lazy name="interception">
