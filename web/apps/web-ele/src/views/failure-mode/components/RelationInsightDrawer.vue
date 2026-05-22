@@ -59,7 +59,11 @@ type ResourceInsight =
   | ObservationMethodInsight
   | TestCaseInsight;
 
-type FailureModeResourceLandingStatus = '已落地' | '未落地' | '部分落地';
+type FailureModeResourceLandingStatus =
+  | '不涉及'
+  | '已落地'
+  | '未落地'
+  | '部分落地';
 
 interface SummaryMetric {
   label: string;
@@ -511,11 +515,23 @@ function normalizeLandingStatus(
   statuses: FailureModeResourceLandingStatus[],
 ): FailureModeResourceLandingStatus {
   const normalized = statuses.filter(Boolean);
+  if (normalized.length === 0) {
+    return '未落地';
+  }
+  if (normalized.every((item) => item === '不涉及')) {
+    return '不涉及';
+  }
   if (normalized.every((item) => item === '未落地')) {
     return '未落地';
   }
   if (normalized.every((item) => item === '已落地')) {
     return '已落地';
+  }
+  if (normalized.every((item) => item === '已落地' || item === '不涉及')) {
+    return '已落地';
+  }
+  if (normalized.every((item) => item === '未落地' || item === '不涉及')) {
+    return '未落地';
   }
   return '部分落地';
 }
@@ -558,8 +574,9 @@ function buildResourceSummaryMap(
       return [
         id,
         {
-          landed_product_count: statuses.filter((item) => item !== '未落地')
-            .length,
+          landed_product_count: statuses.filter(
+            (item) => item !== '未落地' && item !== '不涉及',
+          ).length,
           summary_status: normalizeLandingStatus(statuses),
         },
       ] as const;
@@ -704,6 +721,9 @@ function buildFailureModeHuatuoRows(
 function getLandingStatusTagType(status?: null | string) {
   if (status === '已落地') {
     return 'success';
+  }
+  if (status === '不涉及') {
+    return 'info';
   }
   if (status === '部分落地') {
     return 'warning';

@@ -16,8 +16,8 @@ export default defineConfig(async () => {
           '/basic-api': {
             changeOrigin: true,
             rewrite: (path) => path.replace(/^\/basic-api/, ''),
-            // mock代理目标地址
-            target: 'http://localhost:8001',
+            // 本地开发统一转到修复后的后端
+            target: 'http://localhost:8002',
             ws: true,
           },
           '/focusaudit-app': {

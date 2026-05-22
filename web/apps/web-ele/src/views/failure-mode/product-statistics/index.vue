@@ -318,7 +318,7 @@ onMounted(async () => {
               <strong>{{ selectedLandedCount }}</strong>
             </div>
             <div class="product-statistics-summary-pill warning">
-              <span>待开展故障</span>
+              <span>未落地故障</span>
               <strong>{{ selectedPendingCount }}</strong>
             </div>
           </div>
@@ -332,7 +332,7 @@ onMounted(async () => {
           </div>
           <h1 class="product-statistics-hero__title">产品故障统计</h1>
           <p class="product-statistics-hero__desc">
-            从产品视角追踪当前生效基线的显式落地成熟度，先看全产品概览，再下钻到子系统维度的待开展缺口。
+            从产品视角追踪当前生效基线的显式落地成熟度，先看全产品概览，再下钻到子系统维度的未落地缺口。
           </p>
         </div>
         <div class="product-statistics-hero__metrics">
@@ -357,7 +357,7 @@ onMounted(async () => {
             </div>
           </div>
           <div class="product-statistics-metric-card warning">
-            <div class="product-statistics-metric-card__label">待开展率</div>
+            <div class="product-statistics-metric-card__label">未落地率</div>
             <div class="product-statistics-metric-card__value">
               {{ formatPercent(selectedPendingRate) }}
             </div>
@@ -429,8 +429,8 @@ onMounted(async () => {
               <span>主版本SE</span>
               <span>基线故障模式数</span>
               <span>已落地故障数</span>
-              <span>待开展故障数</span>
-              <span>待开展率</span>
+              <span>未落地故障数</span>
+              <span>未落地率</span>
               <span>状态灯</span>
             </div>
             <button
@@ -529,7 +529,7 @@ onMounted(async () => {
               <strong>{{ selectedLandedCount }}</strong>
             </div>
             <div class="product-analysis-summary__item warning">
-              <span>待开展率</span>
+              <span>未落地率</span>
               <strong>{{ formatPercent(selectedPendingRate) }}</strong>
             </div>
             <div class="product-analysis-summary__item">
@@ -584,7 +584,7 @@ onMounted(async () => {
                           </div>
                           <div class="product-statistics-card-header__desc">
                             当前页面只看产品级显式落地结果。故障模式本身是二态，其余能力按“已落地
-                            / 待开展 / 不涉及”三态推导。
+                            / 未落地 / 不涉及”三态推导。
                           </div>
                         </div>
                       </div>
@@ -601,7 +601,7 @@ onMounted(async () => {
                         <div class="product-statistics-note-item">
                           <span class="dot pending"></span>
                           <div>
-                            <div class="title">待开展</div>
+                            <div class="title">未落地</div>
                             <div class="desc">
                               当前维度为必配，但存在未落地资源，或当前还没有补齐对应资源。
                             </div>
@@ -612,7 +612,7 @@ onMounted(async () => {
                           <div>
                             <div class="title">不涉及</div>
                             <div class="desc">
-                              当前维度未勾选必配，因此不纳入待开展统计。
+                              当前维度未勾选必配，因此不纳入未落地统计。
                             </div>
                           </div>
                         </div>
@@ -672,7 +672,7 @@ onMounted(async () => {
                               }}
                             </div>
                             <div class="product-statistics-status-hint">
-                              待开展 {{ row.pending_failure_mode_count }} /
+                              未落地 {{ row.pending_failure_mode_count }} /
                               {{ row.baseline_failure_mode_count }} ·
                               {{ formatPercent(row.pending_rate) }}
                             </div>

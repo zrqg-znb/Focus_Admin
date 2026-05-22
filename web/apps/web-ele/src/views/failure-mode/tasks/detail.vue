@@ -7,11 +7,9 @@ import type {
   TaskFailureModeLandingPayload,
 } from '#/api/failure_mode';
 import type {
-  FailureModeProductItem,
   FailureModeTaskItem,
   FailureModeTaskLogItem,
   ProductFailureModeItem,
-  VisibleSubsystemItem,
 } from '#/api/failure_mode_workflow';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
@@ -19,6 +17,7 @@ import { computed, nextTick, reactive, ref, shallowRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
+import { useUserStore } from '@vben/stores';
 
 import {
   ElButton,
@@ -26,8 +25,6 @@ import {
   ElInput,
   ElMessage,
   ElMessageBox,
-  ElOption,
-  ElSelect,
   ElStep,
   ElSteps,
   ElTabPane,
@@ -50,9 +47,7 @@ import {
   getTaskFailureModeLandingApi,
   getTaskFailureModesApi,
   listProductFailureModesApi,
-  listProductsApi,
   listTaskLogsApi,
-  listVisibleSubsystemsApi,
   quickCreateTaskFailureModeApi,
   reassignTaskApi,
   recallTaskApi,
@@ -61,7 +56,6 @@ import {
   saveTaskFailureModeLandingApi,
   submitTaskApi,
   updateTaskFailureModeApi,
-  updateTaskScopeApi,
 } from '#/api/failure_mode_workflow';
 import FileSelector from '#/components/zq-form/file-selector/file-selector.vue';
 import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
@@ -95,8 +89,10 @@ const TASK_CHANGE_TYPE_LABEL_MAP: Record<string, string> = {
 
 const route = useRoute();
 const router = useRouter();
+const userStore = useUserStore();
 
 const taskId = computed(() => String(route.params.id || ''));
+const currentUserId = computed(() => userStore.userInfo?.id || '');
 const loading = ref(false);
 const actionLoading = ref(false);
 const activeTab = ref('workbench');
@@ -105,8 +101,6 @@ const currentTask = ref<FailureModeTaskItem | null>(null);
 const boundFailureModes = shallowRef<FailureModeItem[]>([]);
 const baselineFailureModes = shallowRef<ProductFailureModeItem[]>([]);
 const taskLogs = ref<FailureModeTaskLogItem[]>([]);
-const productOptions = ref<FailureModeProductItem[]>([]);
-const scopeSubsystemOptions = ref<VisibleSubsystemItem[]>([]);
 const reassignUserId = ref('');
 const transferDialogRef = ref<InstanceType<typeof FailureModeTransferDialog>>();
 const failureModeDrawerRef = ref<InstanceType<typeof FailureModeDrawer>>();
@@ -116,10 +110,6 @@ const dictOptions = reactive<FailureModeDictOptions>(createEmptyDictOptions());
 const subsystemConfigOptions = reactive<FailureModeSubsystemConfigOptions>(
   createEmptySubsystemConfigOptions(),
 );
-const scopeForm = reactive({
-  product_id: '',
-  subsystem: '',
-});
 
 const reviewForm = reactive({
   review_attachment_ids: [] as string[],
@@ -141,7 +131,25 @@ const availableActions = computed(
   () => new Set(currentTask.value?.available_actions || []),
 );
 
-const canAccept = computed(() => availableActions.value.has('accept'));
+const isCurrentUserTaskResponsible = computed(() => {
+  const task = currentTask.value;
+  if (!task) {
+    return false;
+  }
+  return [task.assignee_id, task.current_processor_id].some(
+    (id) => !!id && id === currentUserId.value,
+  );
+});
+
+const canAccept = computed(() => {
+  if (availableActions.value.has('accept')) {
+    return true;
+  }
+  return (
+    currentTask.value?.status === 'CREATED' &&
+    isCurrentUserTaskResponsible.value
+  );
+});
 const canEdit = computed(() => availableActions.value.has('bind'));
 const canSubmit = computed(() => availableActions.value.has('submit'));
 const canReassign = computed(() => availableActions.value.has('reassign'));
@@ -171,41 +179,19 @@ const selectedDeleteRows = computed(() =>
   ),
 );
 
-const scopeProductLabel = computed(() => {
-  const productId = String(scopeForm.product_id || '').trim();
-  if (!productId) {
-    return currentTask.value?.product_name || '未选择';
-  }
-  return (
-    productOptions.value.find((item) => item.id === productId)?.project_name ||
-    currentTask.value?.product_name ||
-    productId
-  );
-});
-
-const scopeSubsystemLabel = computed(() => {
-  const subsystem = String(scopeForm.subsystem || '').trim();
-  return subsystem || currentTask.value?.subsystem || '未选择';
-});
-
 const workbenchSummary = computed(() => {
   if (isDeleteTask.value) {
-    if (hasTaskScope.value) {
-      return `当前基线 ${boundFailureModes.value.length} 条，已选择待删除 ${selectedDeleteRows.value.length} 条`;
-    }
-    return `当前已选待删除 ${selectedDeleteRows.value.length} 条，可从全局故障模式库继续添加`;
+    return hasTaskScope.value
+      ? `当前基线 ${boundFailureModes.value.length} 条，已选择待删除 ${selectedDeleteRows.value.length} 条`
+      : `当前已选择待删除 ${selectedDeleteRows.value.length} 条`;
   }
   if (isReviseTask.value) {
     const editedCount = boundFailureModes.value.filter(
       (item) => item.has_task_draft,
     ).length;
-    return hasTaskScope.value
-      ? `当前工作集 ${boundFailureModes.value.length} 条，其中已修订 ${editedCount} 条`
-      : `当前公共工作集 ${boundFailureModes.value.length} 条，其中已修订 ${editedCount} 条`;
+    return `当前工作集 ${boundFailureModes.value.length} 条，其中已修订 ${editedCount} 条`;
   }
-  return hasTaskScope.value
-    ? `当前工作集 ${boundFailureModes.value.length} 条，可继续绑定已有故障模式或快速新增`
-    : `当前公共工作集 ${boundFailureModes.value.length} 条，可继续绑定已有故障模式或快速新增`;
+  return `当前工作集 ${boundFailureModes.value.length} 条`;
 });
 
 const latestReviewFeedback = computed(() => {
@@ -426,52 +412,6 @@ function formatDate(dateStr?: null | string) {
   }
 }
 
-async function loadScopeProducts() {
-  productOptions.value = await listProductsApi();
-}
-
-async function loadScopeSubsystemOptions(productId?: null | string) {
-  if (!productId) {
-    scopeSubsystemOptions.value = [];
-    return;
-  }
-  scopeSubsystemOptions.value = await listVisibleSubsystemsApi(productId);
-}
-
-async function handleScopeProductChange() {
-  scopeForm.subsystem = '';
-  baselineFailureModes.value = [];
-  await loadScopeSubsystemOptions(scopeForm.product_id);
-}
-
-function handleScopeSubsystemChange() {
-  baselineFailureModes.value = [];
-}
-
-async function handleSaveTaskScope() {
-  if (!currentTask.value) {
-    return;
-  }
-  const productId = String(scopeForm.product_id || '').trim();
-  const subsystem = String(scopeForm.subsystem || '').trim();
-  if (Boolean(productId) !== Boolean(subsystem)) {
-    ElMessage.warning('产品和子系统需同时填写或同时清空');
-    return;
-  }
-
-  actionLoading.value = true;
-  try {
-    await updateTaskScopeApi(currentTask.value.id, {
-      product_id: productId || undefined,
-      subsystem: subsystem || undefined,
-    });
-    ElMessage.success('任务工作范围已更新');
-    await loadTaskContext();
-  } finally {
-    actionLoading.value = false;
-  }
-}
-
 async function loadTaskContext() {
   if (!taskId.value) {
     return;
@@ -480,38 +420,30 @@ async function loadTaskContext() {
   try {
     const detail = await getTaskApi(taskId.value);
     currentTask.value = detail;
-    scopeForm.product_id = detail.product_id || '';
-    scopeForm.subsystem = detail.subsystem || '';
-    productOptions.value = [];
-    scopeSubsystemOptions.value = [];
-    const [failureModes, logs, taskDictOptions, taskSubsystemOptions] =
-      await Promise.all([
-        getTaskFailureModesApi(taskId.value),
-        listTaskLogsApi(taskId.value),
-        getFailureModeDictOptionsApi(),
-        getFailureModeSubsystemConfigOptionsApi(),
-      ]);
+    const baselinePromise =
+      detail.product_id && detail.subsystem
+        ? listProductFailureModesApi(detail.product_id, {
+            subsystem: detail.subsystem,
+          })
+        : Promise.resolve([] as ProductFailureModeItem[]);
+    const [
+      failureModes,
+      logs,
+      taskDictOptions,
+      taskSubsystemOptions,
+      baselineItems,
+    ] = await Promise.all([
+      getTaskFailureModesApi(taskId.value),
+      listTaskLogsApi(taskId.value),
+      getFailureModeDictOptionsApi(),
+      getFailureModeSubsystemConfigOptionsApi(),
+      baselinePromise,
+    ]);
     boundFailureModes.value = failureModes as FailureModeItem[];
     taskLogs.value = logs as FailureModeTaskLogItem[];
+    baselineFailureModes.value = baselineItems as ProductFailureModeItem[];
     Object.assign(dictOptions, taskDictOptions);
     Object.assign(subsystemConfigOptions, taskSubsystemOptions);
-    if (detail.status === 'CREATED') {
-      await loadScopeProducts();
-      if (scopeForm.product_id) {
-        await loadScopeSubsystemOptions(scopeForm.product_id);
-      }
-    } else {
-      productOptions.value = [];
-      if (scopeForm.product_id) {
-        await loadScopeSubsystemOptions(scopeForm.product_id);
-      }
-    }
-    baselineFailureModes.value =
-      scopeForm.product_id && scopeForm.subsystem
-        ? await listProductFailureModesApi(scopeForm.product_id, {
-            subsystem: scopeForm.subsystem,
-          })
-        : [];
     reassignUserId.value = detail.assignee_id || '';
     reviewForm.review_minutes_html = detail.review_minutes_html || '';
     reviewForm.review_attachment_ids = [
@@ -585,7 +517,22 @@ async function handleAcceptTask() {
   }
   actionLoading.value = true;
   try {
-    await acceptTaskApi(currentTask.value.id);
+    const latestTask = await getTaskApi(currentTask.value.id);
+    currentTask.value = latestTask;
+    const latestResponsibleIds = new Set(
+      [latestTask.assignee_id, latestTask.current_processor_id].filter(
+        (id): id is string => !!id,
+      ),
+    );
+    if (
+      currentUserId.value &&
+      (latestTask.status !== 'CREATED' ||
+        !latestResponsibleIds.has(currentUserId.value))
+    ) {
+      ElMessage.warning('当前任务责任人已变更，请刷新页面后再接收。');
+      return;
+    }
+    await acceptTaskApi(latestTask.id);
     ElMessage.success('任务已接收');
     await loadTaskContext();
   } finally {
@@ -638,14 +585,10 @@ function getLandingStatusLabel(row: FailureModeItem) {
   if (!row.landing_completed) {
     return '待补齐';
   }
-  return row.failure_mode_is_landed ? '已落地' : '未落地';
-}
-
-function getLandingStatusTagType(row: FailureModeItem) {
-  if (!row.landing_completed) {
-    return 'warning';
-  }
-  return row.failure_mode_is_landed ? 'success' : 'info';
+  return (
+    row.failure_mode_landing_status ||
+    (row.failure_mode_is_landed ? '已落地' : '未落地')
+  );
 }
 
 function handleOpenLandingConfig(row: FailureModeItem) {
@@ -944,98 +887,6 @@ watch(
           </div>
         </div>
 
-        <div
-          v-if="currentTask?.status === 'CREATED'"
-          class="rounded-xl bg-white p-4 shadow-sm"
-        >
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <div class="text-base font-semibold text-gray-900">
-                工作范围（可选）
-              </div>
-              <div class="mt-1 text-sm text-gray-500">
-                不填产品和子系统也能直接接收任务；如果后续需要同步产品基线，再补充这里。
-              </div>
-            </div>
-            <ElButton
-              :loading="actionLoading"
-              type="primary"
-              @click="handleSaveTaskScope"
-            >
-              保存范围
-            </ElButton>
-          </div>
-
-          <div
-            class="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]"
-          >
-            <div class="grid gap-4 md:grid-cols-2">
-              <div class="flex flex-col gap-2">
-                <span class="text-xs text-gray-500">关联产品（可选）</span>
-                <ElSelect
-                  v-model="scopeForm.product_id"
-                  clearable
-                  filterable
-                  placeholder="请选择关联产品"
-                  @change="handleScopeProductChange"
-                >
-                  <ElOption
-                    v-for="item in productOptions"
-                    :key="item.id"
-                    :label="item.project_name"
-                    :value="item.id"
-                  />
-                </ElSelect>
-              </div>
-              <div class="flex flex-col gap-2">
-                <span class="text-xs text-gray-500">子系统（可选）</span>
-                <ElSelect
-                  v-model="scopeForm.subsystem"
-                  :disabled="!scopeForm.product_id"
-                  clearable
-                  filterable
-                  placeholder="请选择子系统"
-                  @change="handleScopeSubsystemChange"
-                >
-                  <ElOption
-                    v-for="item in scopeSubsystemOptions"
-                    :key="item.value"
-                    :label="item.label"
-                    :value="item.value"
-                  />
-                </ElSelect>
-              </div>
-            </div>
-
-            <div
-              class="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4"
-            >
-              <div
-                class="text-xs font-medium uppercase tracking-[0.2em] text-gray-500"
-              >
-                当前范围
-              </div>
-              <div class="mt-3 space-y-2 text-sm text-gray-700">
-                <div class="flex items-center justify-between gap-3">
-                  <span class="text-gray-500">产品</span>
-                  <span class="truncate font-medium">{{
-                    scopeProductLabel
-                  }}</span>
-                </div>
-                <div class="flex items-center justify-between gap-3">
-                  <span class="text-gray-500">子系统</span>
-                  <span class="truncate font-medium">{{
-                    scopeSubsystemLabel
-                  }}</span>
-                </div>
-                <div class="pt-2 text-xs leading-6 text-gray-500">
-                  补充范围只会影响后续的产品级同步，不会阻挡公共任务直接接收。
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <!-- Body -->
         <div class="flex flex-col gap-6 p-4 xl:flex-row xl:items-start">
           <!-- Info Grid -->
@@ -1232,15 +1083,17 @@ watch(
                       v-if="!isDeleteTask"
                       class="mt-1 text-xs"
                       :class="
-                        row.landing_completed
+                        row.failure_mode_landing_status === '已落地'
                           ? 'text-emerald-600'
-                          : 'text-amber-600'
+                          : row.failure_mode_landing_status === '不涉及'
+                            ? 'text-slate-500'
+                            : row.failure_mode_landing_status === '部分落地'
+                              ? 'text-blue-600'
+                              : 'text-amber-600'
                       "
                     >
                       {{
-                        row.landing_completed
-                          ? `落地已补齐 · ${row.landing_resource_landed_count}/${row.landing_resource_total}`
-                          : `落地待补齐 · ${row.landing_resource_landed_count}/${row.landing_resource_total}`
+                        `${getLandingStatusLabel(row)} · ${row.landing_resource_landed_count}/${row.landing_resource_total}`
                       }}
                     </div>
                   </template>
@@ -1302,13 +1155,18 @@ watch(
 
                   <template #cell-actions="{ row }">
                     <div class="flex items-center justify-center gap-2">
-                      <ElTag
-                        :type="getLandingStatusTagType(row)"
-                        effect="light"
-                        size="small"
+                      <span
+                        class="text-xs font-medium"
+                        :class="
+                          !row.landing_completed
+                            ? 'text-amber-600'
+                            : row.failure_mode_is_landed
+                              ? 'text-emerald-600'
+                              : 'text-gray-500'
+                        "
                       >
                         {{ getLandingStatusLabel(row) }}
-                      </ElTag>
+                      </span>
                       <ElButton
                         link
                         type="primary"

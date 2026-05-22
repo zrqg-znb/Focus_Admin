@@ -115,11 +115,6 @@ export interface FailureModeTaskCreatePayload {
   assignee_id: string;
 }
 
-export interface FailureModeTaskScopeUpdatePayload {
-  product_id?: null | string;
-  subsystem?: null | string;
-}
-
 export interface TaskClosePayload {
   review_result?: string;
   review_minutes_html: string;
@@ -240,18 +235,6 @@ export function getTaskApi(taskId: string) {
 export function createTaskApi(data: FailureModeTaskCreatePayload) {
   return requestClient
     .post<FailureModeTaskItem>('/api/failure-mode/workflow/tasks', data)
-    .then(normalizeTaskItem);
-}
-
-export function updateTaskScopeApi(
-  taskId: string,
-  data: FailureModeTaskScopeUpdatePayload,
-) {
-  return requestClient
-    .put<FailureModeTaskItem>(
-      `/api/failure-mode/workflow/tasks/${taskId}/scope`,
-      data,
-    )
     .then(normalizeTaskItem);
 }
 

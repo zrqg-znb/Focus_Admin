@@ -274,8 +274,10 @@ class FailureModeOutSchema(Schema):
     editable_in_task: bool = False
     task_edit_mode: Optional[str] = None
     landing_completed: bool = False
+    failure_mode_landing_status: str = '未落地'
     failure_mode_is_landed: bool = False
     landing_resource_total: int = 0
+    landing_resource_selected_count: int = 0
     landing_resource_landed_count: int = 0
     sys_create_datetime: Optional[str] = None
     sys_update_datetime: Optional[str] = None
@@ -897,31 +899,45 @@ class TaskFailureModeBindSchema(Schema):
     failure_mode_ids: list[str] = Field(default_factory=list)
 
 
-class TaskFailureModeLandingRowSchema(Schema):
+class TaskFailureModeLandingProductRowSchema(Schema):
+    product_id: str
+    product_name: str
+    subsystems: list[str] = Field(default_factory=list)
+    landing_status: Optional[str] = None
+
+
+class TaskFailureModeLandingResourceRowSchema(Schema):
     resource_id: str
     label: str
     subtitle: Optional[str] = None
     group_key: str = ''
-    is_landed: Optional[bool] = None
+    landing_status: Optional[str] = None
+    product_rows: list[TaskFailureModeLandingProductRowSchema] = Field(default_factory=list)
 
 
 class TaskFailureModeLandingOutSchema(Schema):
     task_id: str
     failure_mode_id: str
     failure_mode_brief: str
+    failure_mode_landing_status: str = '未落地'
     failure_mode_is_landed: bool = False
     landing_completed: bool = False
-    interception_rows: list[TaskFailureModeLandingRowSchema] = Field(default_factory=list)
-    handling_rows: list[TaskFailureModeLandingRowSchema] = Field(default_factory=list)
-    observation_rows: list[TaskFailureModeLandingRowSchema] = Field(default_factory=list)
-    huatuo_rows: list[TaskFailureModeLandingRowSchema] = Field(default_factory=list)
+    landing_resource_total: int = 0
+    landing_resource_selected_count: int = 0
+    landing_resource_landed_count: int = 0
+    products: list[TaskFailureModeLandingProductRowSchema] = Field(default_factory=list)
+    interception_rows: list[TaskFailureModeLandingResourceRowSchema] = Field(default_factory=list)
+    handling_rows: list[TaskFailureModeLandingResourceRowSchema] = Field(default_factory=list)
+    observation_rows: list[TaskFailureModeLandingResourceRowSchema] = Field(default_factory=list)
+    huatuo_rows: list[TaskFailureModeLandingResourceRowSchema] = Field(default_factory=list)
 
 
 class TaskFailureModeLandingSaveSchema(Schema):
-    interception_rows: list[TaskFailureModeLandingRowSchema] = Field(default_factory=list)
-    handling_rows: list[TaskFailureModeLandingRowSchema] = Field(default_factory=list)
-    observation_rows: list[TaskFailureModeLandingRowSchema] = Field(default_factory=list)
-    huatuo_rows: list[TaskFailureModeLandingRowSchema] = Field(default_factory=list)
+    products: list[TaskFailureModeLandingProductRowSchema] = Field(default_factory=list)
+    interception_rows: list[TaskFailureModeLandingResourceRowSchema] = Field(default_factory=list)
+    handling_rows: list[TaskFailureModeLandingResourceRowSchema] = Field(default_factory=list)
+    observation_rows: list[TaskFailureModeLandingResourceRowSchema] = Field(default_factory=list)
+    huatuo_rows: list[TaskFailureModeLandingResourceRowSchema] = Field(default_factory=list)
 
 class TaskFailureModeSearchSchema(SearchPaginationSchema):
     keyword: Optional[str] = Field(None, description='关键词')

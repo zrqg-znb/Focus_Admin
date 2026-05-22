@@ -23,7 +23,17 @@ import {
 
 import { refreshTokenApi } from './core';
 
-const { apiURL } = useAppConfig(import.meta.env, import.meta.env.PROD);
+const { apiURL: configuredApiURL } = useAppConfig(
+  import.meta.env,
+  import.meta.env.PROD,
+);
+const LOCAL_API_URL = 'http://localhost:8002';
+const LOCALHOST_HOSTNAMES = new Set(['127.0.0.1', '::1', 'localhost']);
+const isLocalFrontendHost =
+  typeof window !== 'undefined' &&
+  LOCALHOST_HOSTNAMES.has(window.location.hostname);
+
+const apiURL = isLocalFrontendHost ? LOCAL_API_URL : configuredApiURL;
 
 function createRequestClient(baseURL: string, options?: RequestClientOptions) {
   const client = new RequestClient({
@@ -40,7 +50,8 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
     const authStore = useAuthStore();
 
     // 在重置前记录一次是否已登录（是否持有token）
-    const hadToken = Boolean(accessStore.accessToken) || Boolean(accessStore.refreshToken);
+    const hadToken =
+      Boolean(accessStore.accessToken) || Boolean(accessStore.refreshToken);
 
     accessStore.setAccessToken(null);
     clearFocusAuditSessionBridge();
@@ -88,10 +99,7 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
       accessStore.setRefreshToken(resp.data.refreshToken);
     }
 
-    syncFocusAuditSessionBridge(
-      newToken,
-      accessStore.refreshToken,
-    );
+    syncFocusAuditSessionBridge(newToken, accessStore.refreshToken);
 
     return newToken;
   }

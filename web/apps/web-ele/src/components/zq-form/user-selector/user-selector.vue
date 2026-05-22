@@ -56,14 +56,19 @@ const attrs = useAttrs();
 const modalVisible = ref(false);
 const departments = ref<any[]>([]);
 const selectedDeptId = ref<string>('');
+
+function normalizeSelectedUsers(modelValue: UserSelectorProps['modelValue']) {
+  if (Array.isArray(modelValue)) {
+    return new Set(modelValue);
+  }
+  if (modelValue) {
+    return new Set([modelValue]);
+  }
+  return new Set<string>();
+}
+
 const selectedUsers = ref<Set<string>>(
-  new Set(
-    Array.isArray(props.modelValue)
-      ? props.modelValue
-      : (props.modelValue
-        ? [props.modelValue]
-        : []),
-  ),
+  normalizeSelectedUsers(props.modelValue),
 );
 // 临时选择（用于 modal 中的选择，未确认前）
 const tempSelectedUsers = ref<Set<string>>(new Set());
@@ -71,6 +76,18 @@ const tempSelectedUsers = ref<Set<string>>(new Set());
 const userInfoMap = ref<
   Map<string, { id: string; name?: string; username: string }>
 >(new Map());
+const loadingUserIds = ref<Set<string>>(new Set());
+
+function getSelectedUserDisplay(userId: string) {
+  if (loadingUserIds.value.has(userId)) {
+    return '加载中...';
+  }
+  const userInfo = userInfoMap.value.get(userId);
+  if (userInfo) {
+    return userInfo.name || userInfo.username;
+  }
+  return userId;
+}
 // 分离的加载状态
 const deptLoading = ref(false); // 部门加载状态
 const confirmLoading = ref(false); // 确认按钮加载状态
@@ -107,10 +124,9 @@ const selectedUsersList = computed(() => {
     if (seenIds.has(userId)) continue;
 
     seenIds.add(userId);
-    const userInfo = userInfoMap.value.get(userId);
     result.push({
       id: userId,
-      display: userInfo ? `${userInfo.name || userInfo.username}` : userId,
+      display: getSelectedUserDisplay(userId),
     });
   }
   return result;
@@ -129,7 +145,7 @@ const loadDepartments = async () => {
 
     // 直接使用接口返回的数据作为根节点列表
     departments.value = Array.isArray(result) ? result : [];
-    
+
     // 如果没有选中的部门，清除选中状态（不再默认选中'0'）
     if (!selectedDeptId.value) {
       selectedDeptId.value = '';
@@ -326,11 +342,12 @@ const handleConfirm = async () => {
   // 将临时选择的值保存到 selectedUsers（已确认）
   selectedUsers.value = new Set(tempSelectedUsers.value);
 
-  const value = props.multiple
-    ? [...selectedUsers.value]
-    : (selectedUsers.value.size > 0
-      ? [...selectedUsers.value][0]
-      : '');
+  let value: string | string[] = '';
+  if (props.multiple) {
+    value = [...selectedUsers.value];
+  } else if (selectedUsers.value.size > 0) {
+    value = [...selectedUsers.value][0] ?? '';
+  }
 
   // 如果是 button 模式且有 onConfirm 回调，调用回调而不是 emit change
   if (props.displayMode === 'button' && props.onConfirm) {
@@ -389,6 +406,8 @@ const loadInitialUserInfo = async (userIds: string[]) => {
     return;
   }
 
+  idsToLoad.forEach((id) => loadingUserIds.value.add(id));
+
   // 并行加载所有用户信息
   const promises = idsToLoad.map(async (userId) => {
     try {
@@ -413,6 +432,8 @@ const loadInitialUserInfo = async (userIds: string[]) => {
         username: userId,
       });
       userInfoMap.value = newMap;
+    } finally {
+      loadingUserIds.value.delete(userId);
     }
   });
 
@@ -436,9 +457,15 @@ const updateInternalValue = async () => {
     userIds.push(props.modelValue);
   }
 
+  loadingUserIds.value = new Set(
+    userIds.filter((id) => !userInfoMap.value.has(id)),
+  );
+
   // 加载用户信息
   if (userIds.length > 0) {
     await loadInitialUserInfo(userIds);
+  } else {
+    loadingUserIds.value.clear();
   }
 
   // 打开 modal 时初始化临时选择
@@ -496,7 +523,11 @@ defineExpose({
     </div>
 
     <!-- Button 模式 -->
-    <div v-else class="flex items-center gap-2" :class="{ 'opacity-60 pointer-events-none': disabled }">
+    <div
+      v-else
+      class="flex items-center gap-2"
+      :class="{ 'pointer-events-none opacity-60': disabled }"
+    >
       <ElButton :disabled="disabled" type="primary" @click="openModal">
         {{ buttonDisplayText }}
       </ElButton>
@@ -520,11 +551,13 @@ defineExpose({
       append-to-body
       @opened="handleModalOpened"
     >
-      <div class="grid grid-cols-1 md:grid-cols-[1fr_3fr] gap-4 h-[600px] p-0">
+      <div class="grid h-[600px] grid-cols-1 gap-4 p-0 md:grid-cols-[1fr_3fr]">
         <!-- 左侧：部门树 -->
-        <div class="flex flex-col relative border border-[hsl(var(--border))] rounded-[var(--radius)] overflow-hidden bg-[hsl(var(--background))] shadow-sm hover:shadow-md transition-shadow duration-300 px-2.5">
+        <div
+          class="relative flex flex-col overflow-hidden rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2.5 shadow-sm transition-shadow duration-300 hover:shadow-md"
+        >
           <!-- 部门搜索 -->
-          <div class="py-3 border-b border-[var(--border)]">
+          <div class="border-b border-[var(--border)] py-3">
             <ElInput
               v-model="deptSearchText"
               :placeholder="$t('common.search') || 'Search'"
@@ -541,7 +574,7 @@ defineExpose({
               :count="8"
             >
               <template #template>
-                <div class="flex-1 flex flex-col py-2 w-full">
+                <div class="flex w-full flex-1 flex-col py-2">
                   <div v-for="i in 8" :key="i">
                     <ElSkeletonItem
                       variant="text"
@@ -551,7 +584,7 @@ defineExpose({
                 </div>
               </template>
               <template #default>
-                <div class="flex-1 flex flex-col py-2 w-full">
+                <div class="flex w-full flex-1 flex-col py-2">
                   <ElEmpty
                     v-if="flattenedTree.length === 0"
                     :description="$t('common.noData')"
@@ -560,7 +593,7 @@ defineExpose({
                     <div
                       v-for="(item, index) in flattenedTree"
                       :key="`${item.node.id}-${index}`"
-                      class="flex items-center h-[42px] px-3 cursor-pointer transition-all duration-200 rounded-lg my-0.5"
+                      class="my-0.5 flex h-[42px] cursor-pointer items-center rounded-lg px-3 transition-all duration-200"
                       :class="[
                         selectedDeptId === item.node.id
                           ? 'bg-primary/15 dark:bg-accent text-primary'
@@ -572,9 +605,12 @@ defineExpose({
                       @click="handleDeptSelect(item.node.id)"
                     >
                       <!-- 展开/折叠按钮 -->
-                      <div v-if="hasChildren(item.node)" class="flex items-center justify-center w-5 h-5 flex-shrink-0 mr-1">
+                      <div
+                        v-if="hasChildren(item.node)"
+                        class="mr-1 flex h-5 w-5 flex-shrink-0 items-center justify-center"
+                      >
                         <div
-                          class="flex items-center justify-center cursor-pointer transition-transform duration-200 hover:text-[var(--primary)]"
+                          class="flex cursor-pointer items-center justify-center transition-transform duration-200 hover:text-[var(--primary)]"
                           @click.stop="toggleDeptExpanded(item.node)"
                         >
                           <IconifyIcon
@@ -590,10 +626,14 @@ defineExpose({
                           <Loader v-else class="size-4 animate-spin" />
                         </div>
                       </div>
-                      <div v-else class="w-5 flex-shrink-0 mr-1"></div>
+                      <div v-else class="mr-1 w-5 flex-shrink-0"></div>
 
                       <!-- 部门名称 -->
-                      <div class="flex-1 whitespace-nowrap overflow-hidden text-ellipsis text-sm transition-colors duration-200">{{ item.node.name }}</div>
+                      <div
+                        class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm transition-colors duration-200"
+                      >
+                        {{ item.node.name }}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -604,7 +644,9 @@ defineExpose({
 
         <!-- 右侧：用户列表 -->
         <UserListPanel
-          :data-source="selectedDeptId ? (selectedDeptId === '0' ? 'all' : 'dept') : 'all'"
+          :data-source="
+            selectedDeptId ? (selectedDeptId === '0' ? 'all' : 'dept') : 'all'
+          "
           :source-id="selectedDeptId === '0' ? undefined : selectedDeptId"
           :temp-selected-users="tempSelectedUsers"
           :filterable="true"
@@ -617,7 +659,7 @@ defineExpose({
       </div>
 
       <template #footer>
-        <div class="flex justify-between items-center gap-2">
+        <div class="flex items-center justify-between gap-2">
           <div class="flex items-center gap-2">
             <span class="selected-count">
               {{ tempSelectedUsers.size }} {{ $t('common.selected') }}
@@ -632,7 +674,7 @@ defineExpose({
               {{ $t('common.clear') }}
             </ElButton>
           </div>
-          <div class="flex items-center gap-2 ml-auto">
+          <div class="ml-auto flex items-center gap-2">
             <ElButton :disabled="confirmLoading" @click="modalVisible = false">
               {{ $t('common.cancel') }}
             </ElButton>

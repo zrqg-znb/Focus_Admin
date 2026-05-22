@@ -109,7 +109,7 @@ export function useProductStatisticsSubsystemColumns(): ZqTableGridOptions<Failu
       dataKey: 'pending_failure_mode_count',
       headerAlign: 'center',
       key: 'pending_failure_mode_count',
-      title: '待开展故障数',
+      title: '未落地故障数',
       width: 160,
     },
     {
@@ -117,7 +117,7 @@ export function useProductStatisticsSubsystemColumns(): ZqTableGridOptions<Failu
       dataKey: 'pending_rate',
       headerAlign: 'center',
       key: 'pending_rate',
-      title: '待开展率',
+      title: '未落地率',
       width: 140,
     },
     {

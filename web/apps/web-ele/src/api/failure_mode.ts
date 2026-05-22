@@ -118,8 +118,10 @@ export interface FailureModeItem {
   editable_in_task?: boolean;
   task_edit_mode?: 'direct_update' | 'draft' | null;
   landing_completed?: boolean;
+  failure_mode_landing_status?: string;
   failure_mode_is_landed?: boolean;
   landing_resource_total?: number;
+  landing_resource_selected_count?: number;
   landing_resource_landed_count?: number;
   sys_create_datetime?: string;
   sys_update_datetime?: string;
@@ -544,59 +546,130 @@ export function normalizeFailureModeItem(
     editable_in_task: Boolean(item.editable_in_task),
     task_edit_mode: item.task_edit_mode || null,
     landing_completed: Boolean(item.landing_completed),
+    failure_mode_landing_status:
+      item.failure_mode_landing_status ||
+      (item.failure_mode_is_landed ? '已落地' : '未落地'),
     failure_mode_is_landed: Boolean(item.failure_mode_is_landed),
     landing_resource_total: Number(item.landing_resource_total || 0),
+    landing_resource_selected_count: Number(
+      item.landing_resource_selected_count || 0,
+    ),
     landing_resource_landed_count: Number(
       item.landing_resource_landed_count || 0,
     ),
   };
 }
 
-export interface TaskFailureModeLandingRow {
+export interface TaskFailureModeLandingProductRow {
+  product_id: string;
+  product_name: string;
+  subsystems: string[];
+  landing_status?: null | string;
+}
+
+export interface TaskFailureModeLandingResourceRow {
   resource_id: string;
   label: string;
   subtitle?: null | string;
   group_key: string;
-  is_landed?: boolean | null;
+  landing_status?: null | string;
+  product_rows: TaskFailureModeLandingProductRow[];
 }
 
 export interface TaskFailureModeLandingDetail {
   task_id: string;
   failure_mode_id: string;
   failure_mode_brief: string;
+  failure_mode_landing_status: string;
   failure_mode_is_landed: boolean;
   landing_completed: boolean;
-  interception_rows: TaskFailureModeLandingRow[];
-  handling_rows: TaskFailureModeLandingRow[];
-  observation_rows: TaskFailureModeLandingRow[];
-  huatuo_rows: TaskFailureModeLandingRow[];
+  landing_resource_total: number;
+  landing_resource_selected_count: number;
+  landing_resource_landed_count: number;
+  products: TaskFailureModeLandingProductRow[];
+  interception_rows: TaskFailureModeLandingResourceRow[];
+  handling_rows: TaskFailureModeLandingResourceRow[];
+  observation_rows: TaskFailureModeLandingResourceRow[];
+  huatuo_rows: TaskFailureModeLandingResourceRow[];
 }
 
 export interface TaskFailureModeLandingPayload {
-  interception_rows: TaskFailureModeLandingRow[];
-  handling_rows: TaskFailureModeLandingRow[];
-  observation_rows: TaskFailureModeLandingRow[];
-  huatuo_rows: TaskFailureModeLandingRow[];
+  products: TaskFailureModeLandingProductRow[];
+  interception_rows: TaskFailureModeLandingResourceRow[];
+  handling_rows: TaskFailureModeLandingResourceRow[];
+  observation_rows: TaskFailureModeLandingResourceRow[];
+  huatuo_rows: TaskFailureModeLandingResourceRow[];
+}
+
+const TRUTHY_LANDING_STATUS_VALUES = new Set(['1', 'on', 'true', 'yes']);
+const FALSY_LANDING_STATUS_VALUES = new Set(['0', 'false', 'no', 'off']);
+
+function normalizeLandingStatus(value: unknown): null | string {
+  if (typeof value === 'boolean') {
+    return value ? '已落地' : '未落地';
+  }
+  const text = String(value ?? '').trim();
+  if (!text) {
+    return null;
+  }
+  if (
+    text === '已落地' ||
+    text === '未落地' ||
+    text === '不涉及' ||
+    text === '部分落地'
+  ) {
+    return text;
+  }
+  const normalizedText = text.toLowerCase();
+  if (TRUTHY_LANDING_STATUS_VALUES.has(normalizedText)) {
+    return '已落地';
+  }
+  if (FALSY_LANDING_STATUS_VALUES.has(normalizedText)) {
+    return '未落地';
+  }
+  return null;
 }
 
 export function normalizeTaskFailureModeLandingDetail(
   detail: TaskFailureModeLandingDetail,
 ): TaskFailureModeLandingDetail {
+  const normalizeProductRows = (
+    rows?: TaskFailureModeLandingProductRow[],
+  ): TaskFailureModeLandingProductRow[] =>
+    (rows || []).map((row) => ({
+      ...row,
+      landing_status: normalizeLandingStatus(row.landing_status),
+      product_id: String(row.product_id || ''),
+      product_name: String(row.product_name || ''),
+      subsystems: normalizeStringArray(row.subsystems),
+    }));
   const normalizeRows = (
-    rows?: TaskFailureModeLandingRow[],
-  ): TaskFailureModeLandingRow[] =>
+    rows?: TaskFailureModeLandingResourceRow[],
+  ): TaskFailureModeLandingResourceRow[] =>
     (rows || []).map((row) => ({
       ...row,
       group_key: String(row.group_key || ''),
-      is_landed: typeof row.is_landed === 'boolean' ? row.is_landed : null,
+      landing_status: normalizeLandingStatus(row.landing_status),
       label: String(row.label || ''),
       resource_id: String(row.resource_id || ''),
       subtitle: row.subtitle || null,
+      product_rows: normalizeProductRows(row.product_rows),
     }));
 
   return {
     ...detail,
+    failure_mode_landing_status:
+      normalizeLandingStatus(detail.failure_mode_landing_status) ||
+      (detail.failure_mode_is_landed ? '已落地' : '未落地'),
     failure_mode_is_landed: Boolean(detail.failure_mode_is_landed),
+    landing_resource_total: Number(detail.landing_resource_total || 0),
+    landing_resource_selected_count: Number(
+      detail.landing_resource_selected_count || 0,
+    ),
+    landing_resource_landed_count: Number(
+      detail.landing_resource_landed_count || 0,
+    ),
+    products: normalizeProductRows(detail.products),
     handling_rows: normalizeRows(detail.handling_rows),
     huatuo_rows: normalizeRows(detail.huatuo_rows),
     interception_rows: normalizeRows(detail.interception_rows),

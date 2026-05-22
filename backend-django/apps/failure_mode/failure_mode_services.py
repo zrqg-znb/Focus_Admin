@@ -56,10 +56,19 @@ DICT_CODE_MAP = {
 FIXED_HANDLING_MEASURE_CATEGORIES = ['检测', '预防', '自愈']
 FIXED_OBSERVATION_METHOD_TYPES = ['流水日志', 'DMD 点位', 'FMP 点位']
 STATISTICS_STATUS_ORDER = ['已配置', '待补充', '无需配置']
-PRODUCT_STATISTICS_STATUS_ORDER = ['已落地', '待开展', '不涉及']
-FAILURE_MODE_LANDING_STATUS_ORDER = ['已落地', '未落地']
+PRODUCT_STATISTICS_STATUS_ORDER = ['已落地', '未落地', '不涉及']
+FAILURE_MODE_LANDING_STATUS_ORDER = ['已落地', '未落地', '不涉及']
 EMPTY_SUBSYSTEM_LABEL = '未配置子系统'
 PLATFORM_PROJECT_TYPE = '平台项目'
+LANDING_STATUS_LANDED = '已落地'
+LANDING_STATUS_NOT_LANDED = '未落地'
+LANDING_STATUS_NOT_APPLICABLE = '不涉及'
+LANDING_STATUS_PARTIAL = '部分落地'
+LANDING_STATUS_ORDER = [
+    LANDING_STATUS_LANDED,
+    LANDING_STATUS_NOT_LANDED,
+    LANDING_STATUS_NOT_APPLICABLE,
+]
 
 
 def _normalize_text_list(values: Any) -> list[str]:
@@ -74,10 +83,23 @@ def _normalize_text_list(values: Any) -> list[str]:
                 decoded = None
             if isinstance(decoded, list):
                 values = decoded
+    def _unwrap_scalar_value(value: Any) -> Any:
+        if isinstance(value, dict):
+            for key in ('id', 'value', 'product_id', 'resource_id', 'user_id'):
+                raw_value = value.get(key)
+                if raw_value is not None:
+                    return raw_value
+        if not isinstance(value, (str, bytes)) and hasattr(value, 'id'):
+            raw_value = getattr(value, 'id', None)
+            if raw_value is not None:
+                return raw_value
+        return value
+
     raw_values = values if isinstance(values, list) else [values]
     result: list[str] = []
     seen: set[str] = set()
     for item in raw_values:
+        item = _unwrap_scalar_value(item)
         if isinstance(item, str):
             nested = item.strip()
             if nested.startswith('[') and nested.endswith(']'):
@@ -98,6 +120,51 @@ def _normalize_text_list(values: Any) -> list[str]:
         seen.add(text)
         result.append(text)
     return result
+
+
+def _normalize_landing_status(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return LANDING_STATUS_LANDED if value else LANDING_STATUS_NOT_LANDED
+    text = _normalize_optional_text(value)
+    if text in {
+        LANDING_STATUS_LANDED,
+        LANDING_STATUS_NOT_LANDED,
+        LANDING_STATUS_NOT_APPLICABLE,
+        LANDING_STATUS_PARTIAL,
+    }:
+        return text
+    if text in {'true', '1', 'yes', 'on'}:
+        return LANDING_STATUS_LANDED
+    if text in {'false', '0', 'no', 'off'}:
+        return LANDING_STATUS_NOT_LANDED
+    return None
+
+
+def _aggregate_landing_status(
+    statuses: Iterable[Any],
+    *,
+    allow_partial: bool = False,
+    default: str | None = None,
+) -> str | None:
+    normalized = [
+        status
+        for status in (_normalize_landing_status(item) for item in statuses)
+        if status is not None
+    ]
+    if not normalized:
+        return default
+    unique = set(normalized)
+    if unique == {LANDING_STATUS_NOT_APPLICABLE}:
+        return LANDING_STATUS_NOT_APPLICABLE
+    if unique <= {LANDING_STATUS_LANDED, LANDING_STATUS_NOT_APPLICABLE}:
+        return LANDING_STATUS_LANDED
+    if unique <= {LANDING_STATUS_NOT_LANDED, LANDING_STATUS_NOT_APPLICABLE}:
+        return LANDING_STATUS_NOT_LANDED
+    if allow_partial:
+        return LANDING_STATUS_PARTIAL
+    return LANDING_STATUS_NOT_LANDED
 
 
 def _normalize_optional_text(value: Any) -> str | None:
@@ -669,7 +736,7 @@ PRODUCT_FAILURE_MODE_RELATION_SPECS = [
         ProductFailureModeInterceptionStrategyRel,
         InterceptionStrategy,
         'interception_strategy',
-        'failure_mode',
+        'product_failure_mode',
         '产线拦截策略',
     ),
     (
@@ -677,7 +744,7 @@ PRODUCT_FAILURE_MODE_RELATION_SPECS = [
         ProductFailureModeHandlingMeasureRel,
         HandlingMeasure,
         'handling_measure',
-        'failure_mode',
+        'product_failure_mode',
         '故障处理措施',
     ),
     (
@@ -685,7 +752,7 @@ PRODUCT_FAILURE_MODE_RELATION_SPECS = [
         ProductFailureModeObservationMethodRel,
         ObservationMethod,
         'observation_method',
-        'failure_mode',
+        'product_failure_mode',
         '维测手段',
     ),
     (
@@ -693,7 +760,7 @@ PRODUCT_FAILURE_MODE_RELATION_SPECS = [
         ProductFailureModeHuatuoDiagnosisRel,
         HuatuoDiagnosis,
         'huatuo_diagnosis',
-        'failure_mode',
+        'product_failure_mode',
         '华佗诊断方案',
     ),
 ]
@@ -708,7 +775,7 @@ def _sync_product_failure_mode_relations_from_template(
         relation_ids = _extract_current_relation_ids(
             failure_mode,
             global_relation_name,
-            relation_field_name,
+            f'{relation_field_name}_id',
         )
         _sync_ordered_relations(
             parent=product_failure_mode,
@@ -851,18 +918,19 @@ def _serialize_paginated_queryset(queryset, serializer, pagination=None):
     }
 
 
-def _resolve_insight_landing_status(flags: list[bool]) -> str:
-    if not flags:
-        return '未落地'
-    if all(flags):
-        return '已落地'
-    if any(flags):
-        return '部分落地'
-    return '未落地'
+def _resolve_insight_landing_status(statuses: list[Any]) -> str:
+    return (
+        _aggregate_landing_status(
+            statuses,
+            allow_partial=True,
+            default=LANDING_STATUS_NOT_LANDED,
+        )
+        or LANDING_STATUS_NOT_LANDED
+    )
 
 
 def _derive_product_failure_mode_is_landed(binding: ProductFailureMode) -> bool:
-    landing_flags: list[bool] = []
+    landing_statuses: list[str] = []
     for relation_name in (
         'interception_landings',
         'handling_landings',
@@ -872,26 +940,34 @@ def _derive_product_failure_mode_is_landed(binding: ProductFailureMode) -> bool:
         relation_manager = getattr(binding, relation_name, None)
         if not hasattr(relation_manager, 'all'):
             continue
-        landing_flags.extend(
-            bool(item.is_landed)
+        landing_statuses.extend(
+            getattr(item, 'landing_status', None)
+            or (LANDING_STATUS_LANDED if item.is_landed else LANDING_STATUS_NOT_LANDED)
             for item in relation_manager.all()
             if not getattr(item, 'is_deleted', False)
         )
-    return bool(landing_flags) and all(landing_flags)
+    return (
+        _aggregate_landing_status(
+            landing_statuses,
+            allow_partial=False,
+            default=LANDING_STATUS_NOT_LANDED,
+        )
+        == LANDING_STATUS_LANDED
+    )
 
 
 def _build_failure_mode_insight_landing_row(
     *,
     item_id: str,
     label: str,
-    flags: list[bool],
+    statuses: list[Any],
     subtitle: str | None = None,
 ) -> dict[str, Any]:
     return {
         'id': item_id,
         'label': label,
         'subtitle': subtitle,
-        'status': _resolve_insight_landing_status(flags),
+        'status': _resolve_insight_landing_status(statuses),
     }
 
 
@@ -952,7 +1028,7 @@ def _build_failure_mode_insight_product_payload(
                 'landed_at': None,
                 '_landed_at_raw': None,
                 '_subsystem_seen': set(),
-                '_failure_mode_flags': [],
+                '_failure_mode_statuses': [],
                 '_interception_items': {},
                 '_handling_items': {},
                 '_observation_items': {},
@@ -966,10 +1042,33 @@ def _build_failure_mode_insight_product_payload(
             subsystem_seen.add(subsystem)
             row['subsystems'].append(subsystem)
 
-        derived_failure_mode_landed = _derive_product_failure_mode_is_landed(relation)
-        row['_failure_mode_flags'].append(derived_failure_mode_landed)
+        relation_status = _aggregate_landing_status(
+            [
+                getattr(item, 'landing_status', None)
+                for item in relation.interception_landings.all()
+                if not item.is_deleted
+            ]
+            + [
+                getattr(item, 'landing_status', None)
+                for item in relation.handling_landings.all()
+                if not item.is_deleted
+            ]
+            + [
+                getattr(item, 'landing_status', None)
+                for item in relation.observation_landings.all()
+                if not item.is_deleted
+            ]
+            + [
+                getattr(item, 'landing_status', None)
+                for item in relation.huatuo_landings.all()
+                if not item.is_deleted
+            ],
+            allow_partial=True,
+            default=LANDING_STATUS_NOT_LANDED,
+        ) or LANDING_STATUS_NOT_LANDED
+        row['_failure_mode_statuses'].append(relation_status)
         current_landed_at = row['_landed_at_raw']
-        if derived_failure_mode_landed and (
+        if relation_status == LANDING_STATUS_LANDED and (
             current_landed_at is None
             or (
                 relation.sys_update_datetime
@@ -988,10 +1087,13 @@ def _build_failure_mode_insight_product_payload(
                     'id': str(landing.interception_strategy_id),
                     'label': landing.interception_strategy.interception_item,
                     'subtitle': None,
-                    'flags': [],
+                    'statuses': [],
                 },
             )
-            cache['flags'].append(bool(landing.is_landed))
+            cache['statuses'].append(
+                getattr(landing, 'landing_status', None)
+                or (LANDING_STATUS_LANDED if landing.is_landed else LANDING_STATUS_NOT_LANDED)
+            )
 
         for landing in relation.handling_landings.all():
             if not landing.handling_measure:
@@ -1004,10 +1106,13 @@ def _build_failure_mode_insight_product_payload(
                     'subtitle': _normalize_optional_text(
                         landing.handling_measure.measure_category,
                     ),
-                    'flags': [],
+                    'statuses': [],
                 },
             )
-            cache['flags'].append(bool(landing.is_landed))
+            cache['statuses'].append(
+                getattr(landing, 'landing_status', None)
+                or (LANDING_STATUS_LANDED if landing.is_landed else LANDING_STATUS_NOT_LANDED)
+            )
 
         for landing in relation.observation_landings.all():
             if not landing.observation_method:
@@ -1026,10 +1131,13 @@ def _build_failure_mode_insight_product_payload(
                     'subtitle': _normalize_optional_text(
                         landing.observation_method.monitor_type,
                     ),
-                    'flags': [],
+                    'statuses': [],
                 },
             )
-            cache['flags'].append(bool(landing.is_landed))
+            cache['statuses'].append(
+                getattr(landing, 'landing_status', None)
+                or (LANDING_STATUS_LANDED if landing.is_landed else LANDING_STATUS_NOT_LANDED)
+            )
 
         for landing in relation.huatuo_landings.all():
             if not landing.huatuo_diagnosis:
@@ -1040,10 +1148,13 @@ def _build_failure_mode_insight_product_payload(
                     'id': str(landing.huatuo_diagnosis_id),
                     'label': landing.huatuo_diagnosis.description,
                     'subtitle': None,
-                    'flags': [],
+                    'statuses': [],
                 },
             )
-            cache['flags'].append(bool(landing.is_landed))
+            cache['statuses'].append(
+                getattr(landing, 'landing_status', None)
+                or (LANDING_STATUS_LANDED if landing.is_landed else LANDING_STATUS_NOT_LANDED)
+            )
 
     rows: list[dict[str, Any]] = []
     landed_product_count = 0
@@ -1052,7 +1163,7 @@ def _build_failure_mode_insight_product_payload(
         key=lambda item: (item['product_name'], item['product_id']),
     ):
         row['failure_mode_status'] = _resolve_insight_landing_status(
-            row['_failure_mode_flags'],
+            row['_failure_mode_statuses'],
         )
         if row['failure_mode_status'] == '已落地':
             landed_product_count += 1
@@ -1061,7 +1172,7 @@ def _build_failure_mode_insight_product_payload(
                 item_id=item['id'],
                 label=item['label'],
                 subtitle=item['subtitle'],
-                flags=item['flags'],
+                statuses=item['statuses'],
             )
             for item in sorted(
                 row['_interception_items'].values(),
@@ -1073,7 +1184,7 @@ def _build_failure_mode_insight_product_payload(
                 item_id=item['id'],
                 label=item['label'],
                 subtitle=item['subtitle'],
-                flags=item['flags'],
+                statuses=item['statuses'],
             )
             for item in sorted(
                 row['_handling_items'].values(),
@@ -1085,7 +1196,7 @@ def _build_failure_mode_insight_product_payload(
                 item_id=item['id'],
                 label=item['label'],
                 subtitle=item['subtitle'],
-                flags=item['flags'],
+                statuses=item['statuses'],
             )
             for item in sorted(
                 row['_observation_items'].values(),
@@ -1097,7 +1208,7 @@ def _build_failure_mode_insight_product_payload(
                 item_id=item['id'],
                 label=item['label'],
                 subtitle=item['subtitle'],
-                flags=item['flags'],
+                statuses=item['statuses'],
             )
             for item in sorted(
                 row['_huatuo_items'].values(),
@@ -1938,7 +2049,7 @@ def apply_failure_mode_snapshot(
             current_user=current_user,
         )
 
-    if 'scope_bindings' in payload:
+    if 'scope_bindings' in normalized_payload:
         _sync_failure_mode_scope_bindings(
             instance,
             normalized_payload.get('scope_bindings'),
@@ -3091,12 +3202,17 @@ def _get_visible_product_statistics_bindings(
     return list(queryset.order_by('subsystem', '-sys_create_datetime'))
 
 
-def _resolve_product_landing_status(required: bool, landed_flags: list[bool]) -> str:
+def _resolve_product_landing_status(required: bool, landing_statuses: list[Any]) -> str:
     if not required:
-        return '不涉及'
-    if not landed_flags:
-        return '待开展'
-    return '已落地' if all(landed_flags) else '待开展'
+        return LANDING_STATUS_NOT_APPLICABLE
+    return (
+        _aggregate_landing_status(
+            landing_statuses,
+            allow_partial=False,
+            default=LANDING_STATUS_NOT_LANDED,
+        )
+        or LANDING_STATUS_NOT_LANDED
+    )
 
 
 def _build_product_statistics_payload_from_bindings(
@@ -3145,100 +3261,100 @@ def _build_product_statistics_payload_from_bindings(
         row = ensure_row(subsystem)
         row['baseline_failure_mode_count'] += 1
 
-        failure_mode_is_landed = _derive_product_failure_mode_is_landed(binding)
-        if failure_mode_is_landed:
-            row['landed_failure_mode_count'] += 1
-            failure_mode_landing_counter['已落地'] += 1
-        else:
-            failure_mode_landing_counter['未落地'] += 1
-
-        interception_flags = [
-            bool(item.is_landed)
-            for item in binding.interception_landings.all()
-            if not item.is_deleted
-        ]
-        interception_status = _resolve_product_landing_status(
-            bool(failure_mode.interception_required),
-            interception_flags,
-        )
-        interception_counter[interception_status] += 1
-
-        huatuo_flags = [
-            bool(item.is_landed)
-            for item in binding.huatuo_landings.all()
-            if not item.is_deleted
-        ]
-        huatuo_status = _resolve_product_landing_status(
-            bool(failure_mode.huatuo_required),
-            huatuo_flags,
-        )
-        huatuo_counter[huatuo_status] += 1
-
         required_handling_categories = set(
             _normalize_enum_list(
                 failure_mode.required_handling_measure_categories,
                 FIXED_HANDLING_MEASURE_CATEGORIES,
             ),
         )
-        handling_flags_map: dict[str, list[bool]] = defaultdict(list)
-        for landing in binding.handling_landings.all():
-            if landing.is_deleted or not landing.handling_measure:
-                continue
-            category = _normalize_optional_text(landing.handling_measure.measure_category)
-            if category:
-                handling_flags_map[category].append(bool(landing.is_landed))
-        for category in FIXED_HANDLING_MEASURE_CATEGORIES:
-            status = _resolve_product_landing_status(
-                category in required_handling_categories,
-                handling_flags_map.get(category, []),
-            )
-            handling_counters[category][status] += 1
-
         required_observation_types = set(
             _normalize_enum_list(
                 failure_mode.required_observation_method_types,
                 FIXED_OBSERVATION_METHOD_TYPES,
             ),
         )
-        observation_flags_map: dict[str, list[bool]] = defaultdict(list)
+
+        interception_statuses = [
+            getattr(item, 'landing_status', None)
+            or (LANDING_STATUS_LANDED if item.is_landed else LANDING_STATUS_NOT_LANDED)
+            for item in binding.interception_landings.all()
+            if not item.is_deleted
+        ]
+        huatuo_statuses = [
+            getattr(item, 'landing_status', None)
+            or (LANDING_STATUS_LANDED if item.is_landed else LANDING_STATUS_NOT_LANDED)
+            for item in binding.huatuo_landings.all()
+            if not item.is_deleted
+        ]
+        handling_status_map: dict[str, list[str]] = defaultdict(list)
+        for landing in binding.handling_landings.all():
+            if landing.is_deleted or not landing.handling_measure:
+                continue
+            category = _normalize_optional_text(landing.handling_measure.measure_category)
+            if category:
+                handling_status_map[category].append(
+                    getattr(landing, 'landing_status', None)
+                    or (LANDING_STATUS_LANDED if landing.is_landed else LANDING_STATUS_NOT_LANDED)
+                )
+        observation_status_map: dict[str, list[str]] = defaultdict(list)
         for landing in binding.observation_landings.all():
             if landing.is_deleted or not landing.observation_method:
                 continue
             monitor_type = _normalize_optional_text(landing.observation_method.monitor_type)
             if monitor_type:
-                observation_flags_map[monitor_type].append(bool(landing.is_landed))
-        for monitor_type in FIXED_OBSERVATION_METHOD_TYPES:
-            status = _resolve_product_landing_status(
-                monitor_type in required_observation_types,
-                observation_flags_map.get(monitor_type, []),
-            )
-            observation_counters[monitor_type][status] += 1
+                observation_status_map[monitor_type].append(
+                    getattr(landing, 'landing_status', None)
+                    or (LANDING_STATUS_LANDED if landing.is_landed else LANDING_STATUS_NOT_LANDED)
+                )
 
-        pending = not failure_mode_is_landed
-        if not pending and interception_status == '待开展':
-            pending = True
-        if not pending and huatuo_status == '待开展':
-            pending = True
-        if not pending:
-            pending = any(
-                handling_counters[category] is not None
-                and _resolve_product_landing_status(
-                    category in required_handling_categories,
-                    handling_flags_map.get(category, []),
-                )
-                == '待开展'
-                for category in FIXED_HANDLING_MEASURE_CATEGORIES
+        interception_status = _resolve_product_landing_status(
+            bool(failure_mode.interception_required),
+            interception_statuses,
+        )
+        huatuo_status = _resolve_product_landing_status(
+            bool(failure_mode.huatuo_required),
+            huatuo_statuses,
+        )
+        handling_statuses = {
+            category: _resolve_product_landing_status(
+                category in required_handling_categories,
+                handling_status_map.get(category, []),
             )
-        if not pending:
-            pending = any(
-                _resolve_product_landing_status(
-                    monitor_type in required_observation_types,
-                    observation_flags_map.get(monitor_type, []),
-                )
-                == '待开展'
-                for monitor_type in FIXED_OBSERVATION_METHOD_TYPES
+            for category in FIXED_HANDLING_MEASURE_CATEGORIES
+        }
+        observation_statuses = {
+            monitor_type: _resolve_product_landing_status(
+                monitor_type in required_observation_types,
+                observation_status_map.get(monitor_type, []),
             )
-        if pending:
+            for monitor_type in FIXED_OBSERVATION_METHOD_TYPES
+        }
+
+        binding_status = _aggregate_landing_status(
+            [
+                interception_status,
+                huatuo_status,
+                *handling_statuses.values(),
+                *observation_statuses.values(),
+            ],
+            allow_partial=False,
+            default=LANDING_STATUS_NOT_LANDED,
+        ) or LANDING_STATUS_NOT_LANDED
+
+        if binding_status == LANDING_STATUS_LANDED:
+            row['landed_failure_mode_count'] += 1
+            failure_mode_landing_counter[LANDING_STATUS_LANDED] += 1
+        else:
+            failure_mode_landing_counter[binding_status] += 1
+
+        interception_counter[interception_status] += 1
+        huatuo_counter[huatuo_status] += 1
+        for category in FIXED_HANDLING_MEASURE_CATEGORIES:
+            handling_counters[category][handling_statuses[category]] += 1
+        for monitor_type in FIXED_OBSERVATION_METHOD_TYPES:
+            observation_counters[monitor_type][observation_statuses[monitor_type]] += 1
+
+        if binding_status == LANDING_STATUS_NOT_LANDED:
             row['pending_failure_mode_count'] += 1
 
     rows: list[dict[str, Any]] = []

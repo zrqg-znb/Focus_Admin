@@ -3,6 +3,12 @@ from django.utils import timezone
 
 from common.fu_model import RootModel
 
+LANDING_STATUS_CHOICES = [
+    ('已落地', '已落地'),
+    ('未落地', '未落地'),
+    ('不涉及', '不涉及'),
+]
+
 
 class FailureMode(RootModel):
     SOURCE_TYPE_MANUAL = 'manual'
@@ -531,6 +537,12 @@ class ProductFailureModeInterceptionLanding(RootModel):
         verbose_name='产线拦截策略',
     )
     is_landed = models.BooleanField(default=False, verbose_name='是否已落地')
+    landing_status = models.CharField(
+        max_length=32,
+        choices=LANDING_STATUS_CHOICES,
+        default='未落地',
+        verbose_name='落地状态',
+    )
 
     class Meta:
         db_table = 'pm_product_fm_interception_landing'
@@ -568,6 +580,12 @@ class ProductFailureModeHandlingLanding(RootModel):
         verbose_name='故障处理措施',
     )
     is_landed = models.BooleanField(default=False, verbose_name='是否已落地')
+    landing_status = models.CharField(
+        max_length=32,
+        choices=LANDING_STATUS_CHOICES,
+        default='未落地',
+        verbose_name='落地状态',
+    )
 
     class Meta:
         db_table = 'pm_product_fm_handling_landing'
@@ -605,6 +623,12 @@ class ProductFailureModeObservationLanding(RootModel):
         verbose_name='维测手段',
     )
     is_landed = models.BooleanField(default=False, verbose_name='是否已落地')
+    landing_status = models.CharField(
+        max_length=32,
+        choices=LANDING_STATUS_CHOICES,
+        default='未落地',
+        verbose_name='落地状态',
+    )
 
     class Meta:
         db_table = 'pm_product_fm_observation_landing'
@@ -642,6 +666,12 @@ class ProductFailureModeHuatuoLanding(RootModel):
         verbose_name='华佗诊断方案',
     )
     is_landed = models.BooleanField(default=False, verbose_name='是否已落地')
+    landing_status = models.CharField(
+        max_length=32,
+        choices=LANDING_STATUS_CHOICES,
+        default='未落地',
+        verbose_name='落地状态',
+    )
 
     class Meta:
         db_table = 'pm_product_fm_huatuo_landing'
