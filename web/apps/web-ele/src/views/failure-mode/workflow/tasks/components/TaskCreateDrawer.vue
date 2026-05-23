@@ -35,7 +35,10 @@ const submitting = ref(false);
 const products = ref<FailureModeProductItem[]>([]);
 const subsystemOptions = ref<VisibleSubsystemItem[]>([]);
 const baselinePreviewItems = ref<ProductFailureModeItem[]>([]);
+const subsystemLoading = ref(false);
 const baselineLoading = ref(false);
+const subsystemRequestSeq = ref(0);
+const baselineRequestSeq = ref(0);
 const formRef = ref<InstanceType<typeof ElForm>>();
 
 const formModel = reactive<FailureModeTaskCreatePayload>({
@@ -92,26 +95,45 @@ async function loadProducts() {
 }
 
 async function loadProductContext() {
+  const requestSeq = ++subsystemRequestSeq.value;
   if (!formModel.product_id) {
+    subsystemLoading.value = false;
     subsystemOptions.value = [];
     baselinePreviewItems.value = [];
     return;
   }
-  subsystemOptions.value = await listVisibleSubsystemsApi(formModel.product_id);
+  subsystemLoading.value = true;
+  try {
+    const options = await listVisibleSubsystemsApi(formModel.product_id);
+    if (requestSeq !== subsystemRequestSeq.value) {
+      return;
+    }
+    subsystemOptions.value = options;
+  } finally {
+    if (requestSeq === subsystemRequestSeq.value) {
+      subsystemLoading.value = false;
+    }
+  }
 }
 
-async function handleProductChange(value?: string) {
+function handleProductChange(value?: string) {
   void value;
   formModel.subsystem = '';
+  subsystemOptions.value = [];
   baselinePreviewItems.value = [];
-  await loadProductContext();
+  baselineLoading.value = false;
+  baselineRequestSeq.value += 1;
+  void loadProductContext();
 }
 
 function handleSubsystemChange() {
   baselinePreviewItems.value = [];
+  baselineLoading.value = false;
+  baselineRequestSeq.value += 1;
 }
 
 async function loadBaselinePreview() {
+  const requestSeq = ++baselineRequestSeq.value;
   if (!requiresBaseline.value || !scopeIsComplete.value) {
     baselinePreviewItems.value = [];
     baselineLoading.value = false;
@@ -121,11 +143,17 @@ async function loadBaselinePreview() {
   try {
     const productId = String(formModel.product_id || '').trim();
     const subsystem = String(formModel.subsystem || '').trim();
-    baselinePreviewItems.value = await listProductFailureModesApi(productId, {
+    const items = await listProductFailureModesApi(productId, {
       subsystem,
     });
+    if (requestSeq !== baselineRequestSeq.value) {
+      return;
+    }
+    baselinePreviewItems.value = items;
   } finally {
-    baselineLoading.value = false;
+    if (requestSeq === baselineRequestSeq.value) {
+      baselineLoading.value = false;
+    }
   }
 }
 
@@ -140,7 +168,10 @@ async function open() {
   formModel.assignee_id = '';
   subsystemOptions.value = [];
   baselinePreviewItems.value = [];
+  subsystemLoading.value = false;
   baselineLoading.value = false;
+  subsystemRequestSeq.value += 1;
+  baselineRequestSeq.value += 1;
   try {
     await loadProducts();
   } finally {
@@ -241,7 +272,8 @@ defineExpose({ open });
             class="w-full"
             filterable
             clearable
-            :disabled="!formModel.product_id"
+            :disabled="!formModel.product_id || subsystemLoading"
+            :loading="subsystemLoading"
             @change="handleSubsystemChange"
           >
             <ElOption

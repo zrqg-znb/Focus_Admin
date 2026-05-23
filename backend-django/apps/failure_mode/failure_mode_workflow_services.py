@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from collections import defaultdict
 from types import SimpleNamespace
 from typing import Any
@@ -97,6 +98,48 @@ def _normalize_optional_bool(value: Any) -> bool | None:
     if text in {'0', 'false', 'no', 'off'}:
         return False
     return None
+
+
+TASK_LANDING_PAYLOAD_SOURCE_KEY = '_task_landing_source'
+TASK_LANDING_PAYLOAD_SOURCE_MANUAL = 'manual'
+TASK_LANDING_PAYLOAD_SOURCE_SEED = 'seed'
+TASK_LANDING_PAYLOAD_SOURCE_SEED_GRACE = timedelta(seconds=1)
+
+
+def _annotate_task_landing_payload_source(
+    payload: dict[str, Any] | None,
+    source: str,
+) -> dict[str, Any]:
+    normalized = dict(payload or {})
+    normalized[TASK_LANDING_PAYLOAD_SOURCE_KEY] = source
+    return normalized
+
+
+def _task_landing_payload_source(payload: dict[str, Any] | None) -> str:
+    return _normalize_text((payload or {}).get(TASK_LANDING_PAYLOAD_SOURCE_KEY))
+
+
+def _is_task_landing_payload_manual(binding: TaskFailureMode | None) -> bool:
+    if not binding:
+        return False
+    source = _task_landing_payload_source(binding.landing_payload_json)
+    if source == TASK_LANDING_PAYLOAD_SOURCE_MANUAL:
+        return True
+    if source == TASK_LANDING_PAYLOAD_SOURCE_SEED:
+        return False
+    create_dt = getattr(binding, 'sys_create_datetime', None)
+    update_dt = getattr(binding, 'sys_update_datetime', None)
+    if create_dt and update_dt and (update_dt - create_dt) > TASK_LANDING_PAYLOAD_SOURCE_SEED_GRACE:
+        return True
+    return False
+
+
+def _get_task_landing_payload_for_binding(binding: TaskFailureMode | None) -> dict[str, Any] | None:
+    if not binding or not _is_task_landing_payload_manual(binding):
+        return None
+    payload = dict(binding.landing_payload_json or {})
+    payload.pop(TASK_LANDING_PAYLOAD_SOURCE_KEY, None)
+    return payload
 
 
 def _task_scope_is_complete(task: FailureModeTask) -> bool:
@@ -1509,7 +1552,7 @@ class TaskWorkflowService:
             )
             normalized_payload = _normalize_task_landing_payload_for_item(
                 item,
-                existing_payload=binding.landing_payload_json,
+                existing_payload=_get_task_landing_payload_for_binding(binding),
                 fallback_payload=_build_product_failure_mode_landing_maps(
                     product_failure_modes,
                 ),
@@ -1706,13 +1749,34 @@ class TaskWorkflowService:
         failure_mode_id: str,
         normalized_payload: dict[str, Any],
         operator: User,
+        *,
+        landing_source: str | None = None,
     ):
+        existing_binding = (
+            TaskFailureMode.objects.filter(
+                task=task,
+                failure_mode_id=failure_mode_id,
+            )
+            .only('landing_payload_json', 'sys_create_datetime', 'sys_update_datetime')
+            .first()
+        )
+        source = landing_source
+        if source not in {TASK_LANDING_PAYLOAD_SOURCE_MANUAL, TASK_LANDING_PAYLOAD_SOURCE_SEED}:
+            source = (
+                TASK_LANDING_PAYLOAD_SOURCE_MANUAL
+                if _is_task_landing_payload_manual(existing_binding)
+                else TASK_LANDING_PAYLOAD_SOURCE_SEED
+            )
         TaskFailureMode.objects.filter(
             task=task,
             failure_mode_id=failure_mode_id,
         ).update(
-            landing_payload_json=normalized_payload,
+            landing_payload_json=_annotate_task_landing_payload_source(
+                normalized_payload,
+                source,
+            ),
             sys_modifier_id=operator.id,
+            sys_update_datetime=timezone.now(),
         )
 
     @classmethod
@@ -1750,12 +1814,15 @@ class TaskWorkflowService:
                 TaskFailureMode(
                     task=task,
                     failure_mode_id=failure_mode_id,
-                    landing_payload_json=cls._build_task_landing_payload_for_binding(
-                        task,
-                        product_failure_mode_map[str(failure_mode_id)].failure_mode,
-                        product_failure_modes=[
-                            product_failure_mode_map[str(failure_mode_id)],
-                        ],
+                    landing_payload_json=_annotate_task_landing_payload_source(
+                        cls._build_task_landing_payload_for_binding(
+                            task,
+                            product_failure_mode_map[str(failure_mode_id)].failure_mode,
+                            product_failure_modes=[
+                                product_failure_mode_map[str(failure_mode_id)],
+                            ],
+                        ),
+                        TASK_LANDING_PAYLOAD_SOURCE_SEED,
                     ),
                     sys_creator=operator or task.creator or task.sys_creator,
                     sys_modifier=operator or task.creator or task.sys_creator,
@@ -1796,7 +1863,9 @@ class TaskWorkflowService:
                         cls._build_task_landing_payload_for_binding(
                             task,
                             failure_mode,
-                            existing_payload=binding.landing_payload_json,
+                            existing_payload=_get_task_landing_payload_for_binding(
+                                binding,
+                            ),
                             product_failure_modes=product_failure_modes,
                         ),
                     )
@@ -1863,7 +1932,7 @@ class TaskWorkflowService:
                 change_type = 'new'
             landing_payload = _normalize_task_landing_payload_for_item(
                 item,
-                existing_payload=binding.landing_payload_json,
+                existing_payload=_get_task_landing_payload_for_binding(binding),
                 fallback_payload=_build_product_failure_mode_landing_maps(
                     product_failure_modes,
                 ),
@@ -2076,7 +2145,7 @@ class TaskWorkflowService:
             task,
             binding.failure_mode,
             item=current_item,
-            existing_payload=binding.landing_payload_json,
+            existing_payload=_get_task_landing_payload_for_binding(binding),
             product_failure_modes=product_failure_modes,
         )
         return landing
@@ -2131,6 +2200,7 @@ class TaskWorkflowService:
             failure_mode_id,
             normalized_payload,
             user,
+            landing_source=TASK_LANDING_PAYLOAD_SOURCE_MANUAL,
         )
         cls._sync_task_failure_mode_product_landings(
             failure_mode_id,
@@ -2220,7 +2290,7 @@ class TaskWorkflowService:
                 raise HttpError(422, '删除任务只能选择当前产品子系统已生效基线中的故障模式。')
 
         existing_binding_map = {
-            str(item.failure_mode_id): item.landing_payload_json or {}
+            str(item.failure_mode_id): _get_task_landing_payload_for_binding(item)
             for item in TaskFailureMode.objects.filter(task=task)
         }
         product_failure_mode_map = {
@@ -2245,14 +2315,21 @@ class TaskWorkflowService:
                         task=task,
                         failure_mode_id=item_id,
                         landing_payload_json=(
-                            cls._build_task_landing_payload_for_binding(
-                                task,
-                                failure_mode_map[item_id],
-                                existing_payload=existing_binding_map.get(item_id),
-                                product_failure_modes=(
-                                    [product_failure_mode_map[item_id]]
-                                    if item_id in product_failure_mode_map
-                                    else None
+                            _annotate_task_landing_payload_source(
+                                cls._build_task_landing_payload_for_binding(
+                                    task,
+                                    failure_mode_map[item_id],
+                                    existing_payload=existing_binding_map.get(item_id),
+                                    product_failure_modes=(
+                                        [product_failure_mode_map[item_id]]
+                                        if item_id in product_failure_mode_map
+                                        else None
+                                    ),
+                                ),
+                                (
+                                    TASK_LANDING_PAYLOAD_SOURCE_MANUAL
+                                    if existing_binding_map.get(item_id) is not None
+                                    else TASK_LANDING_PAYLOAD_SOURCE_SEED
                                 ),
                             )
                             if task.task_type != 'DELETE'
@@ -2308,6 +2385,7 @@ class TaskWorkflowService:
         if not TaskFailureMode.objects.filter(task=task, failure_mode_id=failure_mode_id).exists():
             raise HttpError(422, '当前故障模式未加入该任务工作集。')
 
+        binding = cls._get_task_failure_mode_binding_or_404(task, failure_mode_id)
         failure_mode = get_object_or_404(
             failure_mode_services._failure_mode_queryset(),
             id=failure_mode_id,
@@ -2347,15 +2425,15 @@ class TaskWorkflowService:
         item = failure_mode_services.merge_failure_mode_snapshot(failure_mode, draft_payload)
         landing_payload = _normalize_task_landing_payload_for_item(
             item,
-            existing_payload=TaskFailureMode.objects.filter(
-                task=task,
-                failure_mode_id=failure_mode_id,
-            )
-            .values_list('landing_payload_json', flat=True)
-            .first()
-            or {},
+            existing_payload=_get_task_landing_payload_for_binding(binding),
         )
-        cls._persist_binding_landing_payload(task, failure_mode_id, landing_payload, user)
+        cls._persist_binding_landing_payload(
+            task,
+            failure_mode_id,
+            landing_payload,
+            user,
+            landing_source=TASK_LANDING_PAYLOAD_SOURCE_MANUAL,
+        )
         item['task_change_type'] = 'edited'
         item['has_task_draft'] = True
         cls._attach_task_landing_summary(item, landing_payload)
@@ -2403,17 +2481,19 @@ class TaskWorkflowService:
             filtered_payload,
             user,
         )
+        binding = cls._get_task_failure_mode_binding_or_404(task, failure_mode_id)
+        existing_payload = _get_task_landing_payload_for_binding(binding)
         landing_payload = _normalize_task_landing_payload_for_item(
             item,
-            existing_payload=TaskFailureMode.objects.filter(
-                task=task,
-                failure_mode_id=failure_mode_id,
-            )
-            .values_list('landing_payload_json', flat=True)
-            .first()
-            or {},
+            existing_payload=existing_payload,
         )
-        cls._persist_binding_landing_payload(task, failure_mode_id, landing_payload, user)
+        cls._persist_binding_landing_payload(
+            task,
+            failure_mode_id,
+            landing_payload,
+            user,
+            landing_source=TASK_LANDING_PAYLOAD_SOURCE_MANUAL,
+        )
         item['task_change_type'] = 'new'
         item['has_task_draft'] = False
         cls._attach_task_landing_summary(item, landing_payload)
@@ -2485,8 +2565,11 @@ class TaskWorkflowService:
             task=task,
             failure_mode_id=created_item['id'],
             defaults={
-                'landing_payload_json': _normalize_task_landing_payload_for_item(
-                    created_item,
+                'landing_payload_json': _annotate_task_landing_payload_source(
+                    _normalize_task_landing_payload_for_item(
+                        created_item,
+                    ),
+                    TASK_LANDING_PAYLOAD_SOURCE_SEED,
                 ),
                 'sys_creator': request.auth,
                 'sys_modifier': request.auth,
@@ -2524,7 +2607,13 @@ class TaskWorkflowService:
                     f'以下故障模式的落地情况尚未补齐: {"、".join(incomplete_briefs[:5])}',
                 )
             for failure_mode_id, landing_payload in normalized_payloads.items():
-                cls._persist_binding_landing_payload(task, failure_mode_id, landing_payload, user)
+                cls._persist_binding_landing_payload(
+                    task,
+                    failure_mode_id,
+                    landing_payload,
+                    user,
+                    landing_source=TASK_LANDING_PAYLOAD_SOURCE_MANUAL,
+                )
         from_status = task.status
         task.status = 'REVIEWING'
         task.submitted_at = timezone.now()
