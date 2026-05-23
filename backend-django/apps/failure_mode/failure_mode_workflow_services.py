@@ -134,7 +134,25 @@ def _is_task_landing_payload_manual(binding: TaskFailureMode | None) -> bool:
     return False
 
 
-def _get_task_landing_payload_for_binding(binding: TaskFailureMode | None) -> dict[str, Any] | None:
+def _get_task_landing_payload_for_binding(
+    binding: TaskFailureMode | None,
+    *,
+    task: FailureModeTask | None = None,
+) -> dict[str, Any] | None:
+    if not binding:
+        return None
+    payload = dict(binding.landing_payload_json or {})
+    payload.pop(TASK_LANDING_PAYLOAD_SOURCE_KEY, None)
+    if task and task.task_type in {'CREATE', 'DELETE'}:
+        return payload
+    if not _is_task_landing_payload_manual(binding):
+        return None
+    return payload
+
+
+def _get_manual_task_landing_payload_for_binding(
+    binding: TaskFailureMode | None,
+) -> dict[str, Any] | None:
     if not binding or not _is_task_landing_payload_manual(binding):
         return None
     payload = dict(binding.landing_payload_json or {})
@@ -450,10 +468,17 @@ def _normalize_task_landing_rows(
         subtitle = _normalize_text(relation_item.get('subtitle')) or None
         group_key = subtitle if use_subtitle_group_key and subtitle else default_group_key
         payload_row = payload_rows_by_id.get(resource_id) or {}
+        fallback_status_map_for_resource: dict[str, str | None] = {}
+        for product_id, resource_status_map in (fallback_status_map_by_product or {}).items():
+            if not isinstance(resource_status_map, dict):
+                continue
+            fallback_status = resource_status_map.get(resource_id)
+            if fallback_status is not None:
+                fallback_status_map_for_resource[product_id] = fallback_status
         product_rows = _normalize_task_landing_product_rows(
             target_products,
             payload_row.get('product_rows') or [],
-            fallback_status_map=(fallback_status_map_by_product or {}).get(resource_id, {}),
+            fallback_status_map=fallback_status_map_for_resource,
             legacy_status=payload_row.get('landing_status')
             if 'landing_status' in payload_row
             else payload_row.get('is_landed'),
@@ -1552,7 +1577,10 @@ class TaskWorkflowService:
             )
             normalized_payload = _normalize_task_landing_payload_for_item(
                 item,
-                existing_payload=_get_task_landing_payload_for_binding(binding),
+                existing_payload=_get_task_landing_payload_for_binding(
+                    binding,
+                    task=task,
+                ),
                 fallback_payload=_build_product_failure_mode_landing_maps(
                     product_failure_modes,
                 ),
@@ -1865,6 +1893,7 @@ class TaskWorkflowService:
                             failure_mode,
                             existing_payload=_get_task_landing_payload_for_binding(
                                 binding,
+                                task=task,
                             ),
                             product_failure_modes=product_failure_modes,
                         ),
@@ -1932,7 +1961,10 @@ class TaskWorkflowService:
                 change_type = 'new'
             landing_payload = _normalize_task_landing_payload_for_item(
                 item,
-                existing_payload=_get_task_landing_payload_for_binding(binding),
+                existing_payload=_get_task_landing_payload_for_binding(
+                    binding,
+                    task=task,
+                ),
                 fallback_payload=_build_product_failure_mode_landing_maps(
                     product_failure_modes,
                 ),
@@ -2145,7 +2177,10 @@ class TaskWorkflowService:
             task,
             binding.failure_mode,
             item=current_item,
-            existing_payload=_get_task_landing_payload_for_binding(binding),
+            existing_payload=_get_task_landing_payload_for_binding(
+                binding,
+                task=task,
+            ),
             product_failure_modes=product_failure_modes,
         )
         return landing
@@ -2290,16 +2325,10 @@ class TaskWorkflowService:
                 raise HttpError(422, '删除任务只能选择当前产品子系统已生效基线中的故障模式。')
 
         existing_binding_map = {
-            str(item.failure_mode_id): _get_task_landing_payload_for_binding(item)
-            for item in TaskFailureMode.objects.filter(task=task)
-        }
-        product_failure_mode_map = {
-            str(item.failure_mode_id): item
-            for item in cls._product_failure_mode_queryset().filter(
-                product=task.product,
-                subsystem=task.subsystem,
-                failure_mode_id__in=normalized_ids,
+            str(item.failure_mode_id): _get_manual_task_landing_payload_for_binding(
+                item,
             )
+            for item in TaskFailureMode.objects.filter(task=task)
         }
         failure_mode_map = {
             str(item.id): item
@@ -2320,10 +2349,8 @@ class TaskWorkflowService:
                                     task,
                                     failure_mode_map[item_id],
                                     existing_payload=existing_binding_map.get(item_id),
-                                    product_failure_modes=(
-                                        [product_failure_mode_map[item_id]]
-                                        if item_id in product_failure_mode_map
-                                        else None
+                                    product_failure_modes=cls._get_product_failure_mode_bindings(
+                                        item_id,
                                     ),
                                 ),
                                 (
@@ -2425,7 +2452,10 @@ class TaskWorkflowService:
         item = failure_mode_services.merge_failure_mode_snapshot(failure_mode, draft_payload)
         landing_payload = _normalize_task_landing_payload_for_item(
             item,
-            existing_payload=_get_task_landing_payload_for_binding(binding),
+            existing_payload=_get_task_landing_payload_for_binding(
+                binding,
+                task=task,
+            ),
         )
         cls._persist_binding_landing_payload(
             task,
@@ -2482,7 +2512,10 @@ class TaskWorkflowService:
             user,
         )
         binding = cls._get_task_failure_mode_binding_or_404(task, failure_mode_id)
-        existing_payload = _get_task_landing_payload_for_binding(binding)
+        existing_payload = _get_task_landing_payload_for_binding(
+            binding,
+            task=task,
+        )
         landing_payload = _normalize_task_landing_payload_for_item(
             item,
             existing_payload=existing_payload,
