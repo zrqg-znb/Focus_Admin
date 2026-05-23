@@ -160,6 +160,16 @@ def _get_manual_task_landing_payload_for_binding(
     return payload
 
 
+def _get_task_landing_payload_snapshot_for_binding(
+    binding: TaskFailureMode | None,
+) -> dict[str, Any] | None:
+    if not binding:
+        return None
+    payload = dict(binding.landing_payload_json or {})
+    payload.pop(TASK_LANDING_PAYLOAD_SOURCE_KEY, None)
+    return payload
+
+
 def _task_scope_is_complete(task: FailureModeTask) -> bool:
     return bool(_normalize_text(getattr(task, 'product_id', None)) and _normalize_text(getattr(task, 'subsystem', None)))
 
@@ -2450,11 +2460,14 @@ class TaskWorkflowService:
         )
 
         item = failure_mode_services.merge_failure_mode_snapshot(failure_mode, draft_payload)
+        product_failure_modes = cls._get_product_failure_mode_bindings(failure_mode_id)
         landing_payload = _normalize_task_landing_payload_for_item(
             item,
-            existing_payload=_get_task_landing_payload_for_binding(
+            existing_payload=_get_task_landing_payload_snapshot_for_binding(
                 binding,
-                task=task,
+            ),
+            fallback_payload=_build_product_failure_mode_landing_maps(
+                product_failure_modes,
             ),
         )
         cls._persist_binding_landing_payload(
@@ -2512,13 +2525,13 @@ class TaskWorkflowService:
             user,
         )
         binding = cls._get_task_failure_mode_binding_or_404(task, failure_mode_id)
-        existing_payload = _get_task_landing_payload_for_binding(
-            binding,
-            task=task,
-        )
+        product_failure_modes = cls._get_product_failure_mode_bindings(failure_mode_id)
         landing_payload = _normalize_task_landing_payload_for_item(
             item,
-            existing_payload=existing_payload,
+            existing_payload=_get_task_landing_payload_snapshot_for_binding(binding),
+            fallback_payload=_build_product_failure_mode_landing_maps(
+                product_failure_modes,
+            ),
         )
         cls._persist_binding_landing_payload(
             task,

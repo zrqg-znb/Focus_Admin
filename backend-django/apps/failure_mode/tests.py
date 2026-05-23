@@ -52,3 +52,69 @@ class TaskLandingPayloadNormalizationTests(SimpleTestCase):
             '已落地',
         )
         self.assertEqual(payload['failure_mode_landing_status'], '已落地')
+
+    def test_existing_payload_keeps_product_names_and_landing_status(self):
+        item = {
+            'brief': '编辑后的故障模式标题',
+            'scope_bindings': [
+                {
+                    'product_id': 'product-1',
+                    'product_name': 'Product A',
+                    'subsystem': 'Engine',
+                },
+            ],
+            'interception_strategy_items': [
+                {
+                    'id': 'resource-1',
+                    'label': '产线拦截策略 1',
+                    'subtitle': '主拦截',
+                },
+            ],
+        }
+        existing_payload = {
+            'products': [
+                {
+                    'product_id': 'product-1',
+                    'product_name': 'Product A',
+                    'subsystems': ['Engine'],
+                    'landing_status': '已落地',
+                },
+            ],
+            'interception_rows': [
+                {
+                    'resource_id': 'resource-1',
+                    'label': '产线拦截策略 1',
+                    'subtitle': '主拦截',
+                    'group_key': 'interception',
+                    'landing_status': '已落地',
+                    'product_rows': [
+                        {
+                            'product_id': 'product-1',
+                            'product_name': 'Product A',
+                            'subsystems': ['Engine'],
+                            'landing_status': '已落地',
+                        },
+                    ],
+                },
+            ],
+            'handling_rows': [],
+            'observation_rows': [],
+            'huatuo_rows': [],
+        }
+
+        payload = _normalize_task_landing_payload_for_item(
+            item,
+            existing_payload=existing_payload,
+        )
+
+        self.assertEqual(payload['products'][0]['product_name'], 'Product A')
+        self.assertEqual(payload['products'][0]['landing_status'], '已落地')
+        self.assertEqual(
+            payload['interception_rows'][0]['product_rows'][0]['product_name'],
+            'Product A',
+        )
+        self.assertEqual(
+            payload['interception_rows'][0]['product_rows'][0]['landing_status'],
+            '已落地',
+        )
+        self.assertEqual(payload['failure_mode_landing_status'], '已落地')
