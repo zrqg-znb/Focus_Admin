@@ -36,6 +36,11 @@ class ProjectCreateSchema(Schema):
     manager_ids: List[str] = Field(..., description="项目经理ID列表")
     is_closed: bool = Field(False, description="是否结项")
     repo_url: Optional[str] = Field(None, description="制品仓号/地址")
+    power_info_link: Optional[str] = Field(None, description="用电信息表链接")
+    hardware_software_interface_doc: Optional[str] = Field(
+        None,
+        description="软硬件接口文档",
+    )
     remark: Optional[str] = Field(None, description="备注")
     enable_milestone: bool = Field(True, description="是否统计里程碑")
     enable_iteration: bool = Field(True, description="是否统计迭代数据")
@@ -73,6 +78,8 @@ class ProjectUpdateSchema(Schema):
     manager_ids: Optional[List[str]] = None
     is_closed: Optional[bool] = None
     repo_url: Optional[str] = None
+    power_info_link: Optional[str] = None
+    hardware_software_interface_doc: Optional[str] = None
     remark: Optional[str] = None
     enable_milestone: Optional[bool] = None
     enable_iteration: Optional[bool] = None

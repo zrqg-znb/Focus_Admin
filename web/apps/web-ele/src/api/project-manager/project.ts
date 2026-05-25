@@ -9,6 +9,8 @@ export interface ProjectOut {
   managers_info: { id: string; name: string }[];
   is_closed: boolean;
   repo_url?: string;
+  power_info_link?: null | string;
+  hardware_software_interface_doc?: null | string;
   remark?: string;
   enable_milestone: boolean;
   enable_iteration: boolean;
@@ -62,6 +64,8 @@ export interface ProjectCreatePayload {
   manager_ids: string[];
   is_closed?: boolean;
   repo_url?: string;
+  power_info_link?: null | string;
+  hardware_software_interface_doc?: null | string;
   remark?: string;
   enable_milestone?: boolean;
   enable_iteration?: boolean;
@@ -88,6 +92,8 @@ export interface ProjectUpdatePayload {
   manager_ids?: string[];
   is_closed?: boolean;
   repo_url?: string;
+  power_info_link?: null | string;
+  hardware_software_interface_doc?: null | string;
   remark?: string;
   enable_milestone?: boolean;
   enable_iteration?: boolean;
