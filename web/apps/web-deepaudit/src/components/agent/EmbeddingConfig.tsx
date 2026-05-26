@@ -1,149 +1,266 @@
 /**
- * 嵌入模型配置组件
- * Cyberpunk Terminal Aesthetic
- * 独立于 LLM 配置，专门用于 Agent 审计的 RAG 系统
+ * Embedding configuration panel for DeepAudit system settings.
  */
 
-import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { useEffect, useMemo, useState } from 'react';
+
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
-  Brain,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { apiClient } from '@/shared/api/serverClient';
+import { useAuth } from '@/shared/context/AuthContext';
+import { DEEPAUDIT_ACTION_CODES } from '@/shared/focus/focusPermission';
+import {
+  AlertCircle,
   Check,
+  CheckCircle2,
+  Globe,
+  Info,
   Loader2,
+  Lock,
+  PlayCircle,
   RefreshCw,
   Server,
-  Info,
-  CheckCircle2,
-  AlertCircle,
-  PlayCircle,
-} from "lucide-react";
-import { toast } from "sonner";
-import { apiClient } from "@/shared/api/serverClient";
-import { useAuth } from "@/shared/context/AuthContext";
-import { DEEPAUDIT_ACTION_CODES } from "@/shared/focus/focusPermission";
+} from 'lucide-react';
+import { toast } from 'sonner';
 
-interface EmbeddingConfig {
+interface EmbeddingProviderMeta {
+  default_model?: string | null;
+  description: string;
+  id: string;
+  models: string[];
+  name: string;
+  requires_api_key: boolean;
+}
+
+interface EmbeddingProviderModels {
+  default_model?: string | null;
+  models: string[];
   provider: string;
-  model: string;
+  requires_api_key: boolean;
+}
+
+interface EmbeddingConfigResponse {
   api_key: string | null;
+  api_key_configured?: boolean;
   base_url: string | null;
-  dimensions: number;
-  batch_size: number;
+  batch_size: number | null;
+  config_locked?: boolean;
+  dimensions: number | null;
+  model: string;
+  provider: string;
 }
 
 interface TestResult {
-  success: boolean;
-  message: string;
   dimensions?: number;
-  sample_embedding?: number[];
   latency_ms?: number;
+  message: string;
+  sample_embedding?: number[];
+  success: boolean;
+}
+
+function containsOnlyAscii(value: string) {
+  return /^[\x00-\x7F]*$/.test(value);
+}
+
+function getApiKeyValidationMessage() {
+  return 'API Key 只能包含 ASCII 字符，请勿输入中文或其它非 ASCII 占位内容';
 }
 
 export default function EmbeddingConfigPanel() {
   const { hasAccess } = useAuth();
-  const [currentConfig, setCurrentConfig] = useState<EmbeddingConfig | null>(null);
+  const [currentConfig, setCurrentConfig] = useState<EmbeddingConfigResponse | null>(null);
+  const [providers, setProviders] = useState<EmbeddingProviderMeta[]>([]);
+  const [providerModels, setProviderModels] = useState<EmbeddingProviderModels | null>(null);
   const [loading, setLoading] = useState(true);
+  const [modelsLoading, setModelsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
 
-  // 表单状态
-  const [selectedModel, setSelectedModel] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
+  const [selectedProvider, setSelectedProvider] = useState('openai');
+  const [selectedModel, setSelectedModel] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [baseUrl, setBaseUrl] = useState('');
   const [customDimension, setCustomDimension] = useState<number | null>(null);
   const [batchSize, setBatchSize] = useState(100);
-  const canSaveSettings = hasAccess(DEEPAUDIT_ACTION_CODES.SETTINGS_SAVE);
 
-  // 加载数据
+  const canSaveSettings = hasAccess(DEEPAUDIT_ACTION_CODES.SETTINGS_SAVE);
+  const configLocked = Boolean(currentConfig?.config_locked);
+  const selectedProviderMeta = useMemo(
+    () =>
+      providers.find((item) => item.id === selectedProvider) || null,
+    [providers, selectedProvider],
+  );
+  const requiresApiKey = Boolean(
+    providerModels?.requires_api_key ?? selectedProviderMeta?.requires_api_key,
+  );
+  const modelOptions = useMemo(() => {
+    const models = [...(providerModels?.models || selectedProviderMeta?.models || [])];
+    if (selectedModel && !models.includes(selectedModel)) {
+      models.unshift(selectedModel);
+    }
+    return models;
+  }, [providerModels, selectedProviderMeta, selectedModel]);
+
   useEffect(() => {
-    loadData();
+    void loadData();
   }, []);
+
+  useEffect(() => {
+    if (!selectedProvider) {
+      return;
+    }
+    void loadProviderModels(selectedProvider);
+  }, [selectedProvider]);
 
   const loadData = async () => {
     try {
       setLoading(true);
-      const configRes = await apiClient.get("/embedding/config");
-      setCurrentConfig(configRes.data);
+      const [configRes, providersRes] = await Promise.all([
+        apiClient.get('/embedding/config'),
+        apiClient.get('/embedding/providers'),
+      ]);
+      const nextConfig = configRes.data as EmbeddingConfigResponse;
+      const nextProviders = Array.isArray(providersRes.data)
+        ? (providersRes.data as EmbeddingProviderMeta[])
+        : [];
 
-      // 设置表单默认值
-      if (configRes.data) {
-        setSelectedModel(configRes.data.model);
-        setApiKey(configRes.data.api_key || "");
-        setBaseUrl(configRes.data.base_url || "");
-        setCustomDimension(configRes.data.dimensions || null);
-        setBatchSize(configRes.data.batch_size);
-      }
-    } catch (error) {
-      toast.error("加载配置失败");
+      setCurrentConfig(nextConfig);
+      setProviders(nextProviders);
+      setSelectedProvider(nextConfig.provider || nextProviders[0]?.id || 'openai');
+      setSelectedModel(nextConfig.model || '');
+      setApiKey(nextConfig.api_key || '');
+      setBaseUrl(nextConfig.base_url || '');
+      setCustomDimension(nextConfig.dimensions || null);
+      setBatchSize(nextConfig.batch_size || 100);
+      setTestResult(null);
+    } catch {
+      toast.error('加载 embedding 配置失败');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSave = async () => {
-    if (!canSaveSettings) {
-      toast.error("当前账号没有保存设置的权限");
-      return;
+  const loadProviderModels = async (provider: string) => {
+    try {
+      setModelsLoading(true);
+      const response = await apiClient.get(`/embedding/models/${provider}`);
+      const payload = response.data as EmbeddingProviderModels;
+      setProviderModels(payload);
+      if (!selectedModel && payload.default_model) {
+        setSelectedModel(payload.default_model);
+      }
+    } catch (error) {
+      setProviderModels(null);
+      const message =
+        error instanceof Error ? error.message : '加载模型列表失败';
+      toast.error(message);
+    } finally {
+      setModelsLoading(false);
+    }
+  };
+
+  const handleProviderChange = (provider: string) => {
+    const meta = providers.find((item) => item.id === provider);
+    setSelectedProvider(provider);
+    setSelectedModel(meta?.default_model || '');
+    if (provider === 'ollama') {
+      setApiKey('');
+    }
+    setTestResult(null);
+  };
+
+  const validateBeforeSubmit = () => {
+    if (!selectedProvider) {
+      toast.error('请选择 Embedding Provider');
+      return false;
     }
     if (!selectedModel) {
-      toast.error("请填写模型名称");
+      toast.error('请选择模型');
+      return false;
+    }
+    if (selectedProvider !== 'ollama' && apiKey && !containsOnlyAscii(apiKey)) {
+      toast.error(getApiKeyValidationMessage());
+      return false;
+    }
+    const hasReusableConfiguredKey =
+      Boolean(currentConfig?.api_key_configured) &&
+      currentConfig?.provider === selectedProvider;
+    if (requiresApiKey && !apiKey.trim() && !hasReusableConfiguredKey) {
+      toast.error('当前 embedding provider 需要 API Key');
+      return false;
+    }
+    return true;
+  };
+
+  const handleSave = async () => {
+    if (!canSaveSettings) {
+      toast.error('当前账号没有保存设置的权限');
+      return;
+    }
+    if (configLocked) {
+      toast.error('当前 embedding 配置由生产环境统一管理，页面不允许保存覆盖');
+      return;
+    }
+    if (!validateBeforeSubmit()) {
       return;
     }
 
     try {
       setSaving(true);
-      await apiClient.put("/embedding/config", {
-        provider: "openai",
+      await apiClient.put('/embedding/config', {
+        provider: selectedProvider,
         model: selectedModel,
-        api_key: apiKey || undefined,
+        api_key: selectedProvider === 'ollama' ? undefined : apiKey || undefined,
         base_url: baseUrl || undefined,
         dimensions: customDimension || undefined,
         batch_size: batchSize,
       });
-
-      toast.success("配置已保存");
+      toast.success('Embedding 配置已保存');
       await loadData();
     } catch (error: any) {
-      toast.error(error.response?.data?.detail || "保存失败");
+      toast.error(error.response?.data?.detail || '保存失败');
     } finally {
       setSaving(false);
     }
   };
 
   const handleTest = async () => {
-    if (!selectedModel) {
-      toast.error("请填写模型名称");
+    if (!validateBeforeSubmit()) {
       return;
     }
 
     try {
       setTesting(true);
       setTestResult(null);
-
-      const response = await apiClient.post("/embedding/test", {
-        provider: "openai",
+      const response = await apiClient.post('/embedding/test', {
+        provider: selectedProvider,
         model: selectedModel,
-        api_key: apiKey || undefined,
+        api_key: selectedProvider === 'ollama' ? undefined : apiKey || undefined,
         base_url: baseUrl || undefined,
-        dimension: customDimension || undefined,
+        dimensions: customDimension || undefined,
       });
-
       setTestResult(response.data);
-
-      if (response.data.success) {
-        toast.success("测试成功");
+      if (response.data?.success) {
+        toast.success('测试成功');
       } else {
-        toast.error("测试失败");
+        toast.error(response.data?.message || '测试失败');
       }
     } catch (error: any) {
+      const message = error.response?.data?.detail || '测试失败';
       setTestResult({
         success: false,
-        message: error.response?.data?.detail || "测试失败",
+        message,
       });
-      toast.error("测试失败");
+      toast.error(message);
     } finally {
       setTesting(false);
     }
@@ -151,10 +268,12 @@ export default function EmbeddingConfigPanel() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[300px]">
-        <div className="text-center space-y-4">
+      <div className="flex min-h-[300px] items-center justify-center">
+        <div className="space-y-4 text-center">
           <div className="loading-spinner mx-auto" />
-          <p className="text-muted-foreground font-mono text-sm uppercase tracking-wider">加载配置中...</p>
+          <p className="text-muted-foreground font-mono text-sm uppercase tracking-wider">
+            加载配置中...
+          </p>
         </div>
       </div>
     );
@@ -162,150 +281,244 @@ export default function EmbeddingConfigPanel() {
 
   return (
     <div className="space-y-6">
-      {/* 当前配置状态 */}
-      {currentConfig && (
-        <div className="cyber-card p-4 border-primary/30">
-          <div className="flex items-center gap-2 mb-3">
-            <Server className="w-4 h-4 text-primary" />
-            <span className="font-mono font-bold text-sm uppercase text-foreground">当前配置</span>
+      {configLocked && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
+          <div className="mb-2 flex items-center gap-2 text-amber-300">
+            <Lock className="h-4 w-4" />
+            <span className="font-bold">当前 embedding 配置由生产环境统一管理</span>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="bg-muted p-3 rounded-lg border border-border">
-              <p className="text-xs text-muted-foreground uppercase mb-1">模型</p>
+          <p className="text-sm text-muted-foreground">
+            你仍然可以修改当前表单并点击“测试连接”验证局域网 Ollama 是否可达，但保存按钮会被禁用，不会覆盖生产运行配置。
+          </p>
+        </div>
+      )}
+
+      {currentConfig && (
+        <div className="cyber-card border-primary/30 p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <Server className="text-primary h-4 w-4" />
+            <span className="font-mono font-bold text-sm uppercase text-foreground">
+              当前生效配置
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+            <div className="rounded-lg border border-border bg-muted p-3">
+              <p className="text-muted-foreground mb-1 text-xs uppercase">Provider</p>
+              <p className="font-mono text-sm text-foreground">{currentConfig.provider}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-muted p-3">
+              <p className="text-muted-foreground mb-1 text-xs uppercase">模型</p>
               <p className="font-mono text-sm text-foreground truncate">{currentConfig.model}</p>
             </div>
-            <div className="bg-muted p-3 rounded-lg border border-border">
-              <p className="text-xs text-muted-foreground uppercase mb-1">中转地址</p>
-              <p className="font-mono text-sm text-foreground truncate">{currentConfig.base_url || "(default)"}</p>
+            <div className="rounded-lg border border-border bg-muted p-3">
+              <p className="text-muted-foreground mb-1 text-xs uppercase">Base URL</p>
+              <p className="font-mono text-sm text-foreground truncate">
+                {currentConfig.base_url || '(default)'}
+              </p>
             </div>
-            <div className="bg-muted p-3 rounded-lg border border-border">
-              <p className="text-xs text-muted-foreground uppercase mb-1">向量维度</p>
-              <p className="font-mono text-sm text-foreground">{currentConfig.dimensions}</p>
+            <div className="rounded-lg border border-border bg-muted p-3">
+              <p className="text-muted-foreground mb-1 text-xs uppercase">向量维度</p>
+              <p className="font-mono text-sm text-foreground">{currentConfig.dimensions || '-'}</p>
             </div>
-            <div className="bg-muted p-3 rounded-lg border border-border">
-              <p className="text-xs text-muted-foreground uppercase mb-1">批处理大小</p>
-              <p className="font-mono text-sm text-foreground">{currentConfig.batch_size}</p>
+            <div className="rounded-lg border border-border bg-muted p-3">
+              <p className="text-muted-foreground mb-1 text-xs uppercase">API Key</p>
+              <p className="font-mono text-sm text-foreground">
+                {currentConfig.api_key_configured ? '已配置' : '未配置'}
+              </p>
             </div>
           </div>
         </div>
       )}
 
-      {/* 配置表单 */}
-      <div className="cyber-card p-6 space-y-6">
-        {/* 模型 */}
+      <div className="cyber-card space-y-6 p-6">
         <div className="space-y-2">
-          <Label className="text-xs font-bold text-muted-foreground uppercase">模型</Label>
-          <Input
-            type="text"
-            value={selectedModel}
-            onChange={(e) => setSelectedModel(e.target.value)}
-            placeholder="输入模型名称"
-            className="h-10 cyber-input"
-          />
+          <Label className="text-muted-foreground text-xs font-bold uppercase">
+            Embedding Provider
+          </Label>
+          <Select onValueChange={handleProviderChange} value={selectedProvider}>
+            <SelectTrigger className="cyber-input h-10">
+              <SelectValue placeholder="选择 Embedding Provider" />
+            </SelectTrigger>
+            <SelectContent className="cyber-dialog border-border">
+              {providers.map((provider) => (
+                <SelectItem key={provider.id} className="font-mono" value={provider.id}>
+                  {provider.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-muted-foreground text-xs">
+            {selectedProviderMeta?.description || '选择要用于语义检索的 embedding provider'}
+          </p>
         </div>
 
-        {/* API Key */}
         <div className="space-y-2">
+          <Label className="text-muted-foreground text-xs font-bold uppercase">
+            模型
+          </Label>
+          {modelOptions.length > 0 ? (
+            <Select onValueChange={setSelectedModel} value={selectedModel}>
+              <SelectTrigger className="cyber-input h-10">
+                <SelectValue
+                  placeholder={modelsLoading ? '加载模型列表中...' : '选择模型'}
+                />
+              </SelectTrigger>
+              <SelectContent className="cyber-dialog border-border">
+                {modelOptions.map((model) => (
+                  <SelectItem key={model} className="font-mono" value={model}>
+                    {model}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Input
+              className="cyber-input h-10"
+              onChange={(event) => setSelectedModel(event.target.value)}
+              placeholder="输入模型名称"
+              type="text"
+              value={selectedModel}
+            />
+          )}
+          <p className="text-muted-foreground text-xs">
+            {selectedProvider === 'ollama'
+              ? '推荐直接选择 bge-m3；若 Ollama 已拉取自定义模型，也可以输入自定义模型名。'
+              : '优先使用系统提供的模型列表。'}
+          </p>
+        </div>
+
+        {selectedProvider !== 'ollama' && (
           <div className="space-y-2">
-            <Label className="text-xs font-bold text-muted-foreground uppercase">
+            <Label className="text-muted-foreground text-xs font-bold uppercase">
               API Key
             </Label>
             <Input
+              className="cyber-input h-10"
+              onChange={(event) => setApiKey(event.target.value)}
+              placeholder="输入 API Key"
               type="password"
               value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="输入内网中转 Key"
-              className="h-10 cyber-input"
             />
-            <p className="text-xs text-muted-foreground">
-              API Key 将安全存储，不会显示在页面上
+            <p className="text-muted-foreground text-xs">
+              {currentConfig?.api_key_configured && !apiKey
+                ? '当前已存在可用 API Key；留空测试时会沿用已保存或系统配置。'
+                : 'API Key 只能包含 ASCII 字符，请勿输入中文占位内容。'}
             </p>
           </div>
-        </div>
+        )}
 
-        {/* 自定义端点 */}
+        {selectedProvider === 'ollama' && (
+          <div className="rounded-lg border border-sky-500/20 bg-sky-500/10 p-3 text-sm text-muted-foreground">
+            <div className="mb-1 flex items-center gap-2 text-sky-300">
+              <Info className="h-4 w-4" />
+              <span className="font-bold">Ollama 默认无需 API Key</span>
+            </div>
+            <p>
+              关键在于当前 DeepAudit 后端机器必须能访问 Ollama 所在主机的 `11434` 端口。`127.0.0.1` 只代表服务器自己，不代表你的电脑。
+            </p>
+          </div>
+        )}
+
         <div className="space-y-2">
-          <Label className="text-xs font-bold text-muted-foreground uppercase">
-            自定义 API 端点 <span className="text-muted-foreground">(内网地址)</span>
+          <Label className="text-muted-foreground text-xs font-bold uppercase">
+            Base URL
           </Label>
           <Input
+            className="cyber-input h-10"
+            onChange={(event) => setBaseUrl(event.target.value)}
+            placeholder={
+              selectedProvider === 'ollama'
+                ? '例如 http://10.0.0.8:11434'
+                : '例如 https://llm-gateway.intra.example/v1'
+            }
             type="url"
             value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="例如 https://llm-gateway.intra.example/v1"
-            className="h-10 cyber-input"
           />
-          <p className="text-xs text-muted-foreground">
-            用于公司内网中转或自托管代理
+          <p className="text-muted-foreground text-xs">
+            {selectedProvider === 'ollama'
+              ? '填写到主机和端口即可，不要手动追加 /v1 或 /api；后端会自动归一化。'
+              : '如使用内网 OpenAI 兼容网关，请填写完整兼容入口地址。'}
           </p>
         </div>
 
-        {/* 自定义向量维度 */}
         <div className="space-y-2">
-          <Label className="text-xs font-bold text-muted-foreground uppercase">
+          <Label className="text-muted-foreground text-xs font-bold uppercase">
             自定义向量维度 <span className="text-muted-foreground">(可选)</span>
           </Label>
           <Input
-            type="number"
-            value={customDimension || ""}
-            onChange={(e) => setCustomDimension(e.target.value ? parseInt(e.target.value) : null)}
-            placeholder="留空使用默认值"
-            min={64}
+            className="cyber-input h-10 w-40"
             max={8192}
-            className="h-10 cyber-input w-40"
+            min={64}
+            onChange={(event) =>
+              setCustomDimension(event.target.value ? parseInt(event.target.value, 10) : null)
+            }
+            placeholder="留空使用默认值"
+            type="number"
+            value={customDimension || ''}
           />
-          <p className="text-xs text-muted-foreground">
-            适用于内网中转或本地 embedding 服务，若服务端已固定维度可留空
+          <p className="text-muted-foreground text-xs">
+            `bge-m3` 默认推荐使用 `1024` 维；若你的封装服务实际输出不同维度，再在这里覆盖。
           </p>
         </div>
 
-        {/* 批处理大小 */}
         <div className="space-y-2">
-          <Label className="text-xs font-bold text-muted-foreground uppercase">批处理大小</Label>
+          <Label className="text-muted-foreground text-xs font-bold uppercase">
+            批处理大小
+          </Label>
           <Input
+            className="cyber-input h-10 w-32"
+            max={500}
+            min={1}
+            onChange={(event) => setBatchSize(parseInt(event.target.value, 10) || 100)}
             type="number"
             value={batchSize}
-            onChange={(e) => setBatchSize(parseInt(e.target.value) || 100)}
-            min={1}
-            max={500}
-            className="h-10 cyber-input w-32"
           />
-          <p className="text-xs text-muted-foreground">
-            每批嵌入的文本数量，建议 50-100
+          <p className="text-muted-foreground text-xs">
+            每批嵌入的文本数量，建议 50-100。
           </p>
         </div>
 
-        {/* 测试结果 */}
         {testResult && (
           <div
-            className={`p-4 rounded-lg ${
+            className={`rounded-lg p-4 ${
               testResult.success
-                ? "bg-emerald-500/10 border border-emerald-500/30"
-                : "bg-rose-500/10 border border-rose-500/30"
+                ? 'border border-emerald-500/30 bg-emerald-500/10'
+                : 'border border-rose-500/30 bg-rose-500/10'
             }`}
           >
-            <div className="flex items-center gap-2 mb-2">
+            <div className="mb-2 flex items-center gap-2">
               {testResult.success ? (
-                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                <CheckCircle2 className="h-5 w-5 text-emerald-400" />
               ) : (
-                <AlertCircle className="w-5 h-5 text-rose-400" />
+                <AlertCircle className="h-5 w-5 text-rose-400" />
               )}
               <span
                 className={`font-bold ${
-                  testResult.success ? "text-emerald-400" : "text-rose-400"
+                  testResult.success ? 'text-emerald-400' : 'text-rose-400'
                 }`}
               >
-                {testResult.success ? "测试成功" : "测试失败"}
+                {testResult.success ? '测试成功' : '测试失败'}
               </span>
             </div>
-            <p className="text-sm text-muted-foreground">{testResult.message}</p>
+            <p className="text-muted-foreground text-sm">{testResult.message}</p>
             {testResult.success && (
-              <div className="mt-3 pt-3 border-t border-border text-xs text-muted-foreground space-y-1 font-mono">
-                <div>向量维度: <span className="text-foreground">{testResult.dimensions}</span></div>
-                <div>延迟: <span className="text-foreground">{testResult.latency_ms}ms</span></div>
+              <div className="mt-3 space-y-1 border-t border-border pt-3 font-mono text-xs text-muted-foreground">
+                <div>
+                  向量维度: <span className="text-foreground">{testResult.dimensions}</span>
+                </div>
+                <div>
+                  延迟: <span className="text-foreground">{testResult.latency_ms}ms</span>
+                </div>
                 {testResult.sample_embedding && (
                   <div className="truncate">
-                    示例向量: <span className="text-muted-foreground">[{testResult.sample_embedding.slice(0, 5).map((v) => v.toFixed(4)).join(", ")}...]</span>
+                    示例向量:{' '}
+                    <span className="text-muted-foreground">
+                      [{testResult.sample_embedding
+                        .slice(0, 5)
+                        .map((value) => value.toFixed(4))
+                        .join(', ')}
+                      ...]
+                    </span>
                   </div>
                 )}
               </div>
@@ -313,59 +526,70 @@ export default function EmbeddingConfigPanel() {
           </div>
         )}
 
-        {/* 操作按钮 */}
-        <div className="flex items-center gap-3 pt-4 border-t border-border border-dashed">
+        <div className="flex items-center gap-3 border-t border-dashed border-border pt-4">
           <Button
-            onClick={handleTest}
-            disabled={testing || !selectedModel}
-            variant="outline"
             className="cyber-btn-outline h-10"
+            disabled={testing || !selectedModel}
+            onClick={handleTest}
+            variant="outline"
           >
             {testing ? (
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
-              <PlayCircle className="w-4 h-4 mr-2" />
+              <PlayCircle className="mr-2 h-4 w-4" />
             )}
             测试连接
           </Button>
 
           {canSaveSettings && (
             <Button
-              onClick={handleSave}
-              disabled={saving || !selectedModel}
               className="cyber-btn-primary h-10"
+              disabled={saving || !selectedModel || configLocked}
+              onClick={handleSave}
             >
               {saving ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
-                <Check className="w-4 h-4 mr-2" />
+                <Check className="mr-2 h-4 w-4" />
               )}
               保存配置
             </Button>
           )}
 
           <Button
-            onClick={loadData}
-            variant="ghost"
             className="cyber-btn-ghost ml-auto h-10"
+            onClick={() => void loadData()}
+            variant="ghost"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className="h-4 w-4" />
           </Button>
         </div>
       </div>
 
-      {/* 说明 */}
-      <div className="bg-muted border border-border p-4 rounded-lg text-xs space-y-3">
-        <p className="font-bold uppercase text-muted-foreground flex items-center gap-2">
-          <Info className="w-4 h-4 text-sky-400" />
+      <div className="rounded-lg border border-border bg-muted p-4 text-xs space-y-3">
+        <p className="text-muted-foreground flex items-center gap-2 font-bold uppercase">
+          <Info className="h-4 w-4 text-sky-400" />
           配置说明
         </p>
         <ul className="text-muted-foreground space-y-1 ml-6">
-          <li>• 嵌入模型用于 Agent 审计的代码语义搜索 (RAG)</li>
-          <li>• 页面只保留内网中转地址、API Key 和模型，不再暴露 provider 选择</li>
-          <li>• 若服务端已固定向量维度，可将该项留空</li>
-          <li>• 向量维度会影响存储空间和检索精度</li>
+          <li>• Embedding 模型用于 Agent 审计和知识库的语义检索。</li>
+          <li>• Ollama 场景默认无需 API Key，重点是生产后端到目标主机的网络连通性。</li>
+          <li>• 如果填写的是 Ollama 地址，请只填到主机和端口，例如 `http://10.0.0.8:11434`。</li>
+          <li>• 若页面提示“统一管理”，说明运行配置来自生产环境变量，页面编辑仅用于临时测试。</li>
         </ul>
+        {selectedProvider === 'ollama' && (
+          <div className="rounded-md border border-sky-500/20 bg-sky-500/10 p-3">
+            <div className="mb-1 flex items-center gap-2 text-sky-300">
+              <Globe className="h-4 w-4" />
+              <span className="font-bold">生产环境 Ollama 检查清单</span>
+            </div>
+            <ul className="space-y-1">
+              <li>1. Ollama 所在机器需监听局域网地址，而不是只监听 `127.0.0.1`。</li>
+              <li>2. 生产后端机器必须能访问目标主机的 `11434` 端口。</li>
+              <li>3. `bge-m3` 需已在 Ollama 所在机器完成拉取并可正常 `api/embed`。</li>
+            </ul>
+          </div>
+        )}
       </div>
     </div>
   );

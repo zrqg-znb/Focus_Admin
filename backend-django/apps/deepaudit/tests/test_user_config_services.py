@@ -4,7 +4,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import requests
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
+from ninja.errors import HttpError
 
 from apps.deepaudit.user_config import user_config_services
 
@@ -109,6 +110,7 @@ class UserConfigServicesTestCase(SimpleTestCase):
         service.embed = AsyncMock(return_value=[0.1, 0.2, 0.3, 0.4])
 
         result = user_config_services.test_embedding(
+            None,
             {
                 "provider": "openai",
                 "model": "text-embedding-3-small",
@@ -122,3 +124,51 @@ class UserConfigServicesTestCase(SimpleTestCase):
         self.assertEqual(result["sample_embedding"], [0.1, 0.2, 0.3, 0.4])
         self.assertEqual(result["preview_vector_length"], 4)
         mock_embedding_service.assert_called_once()
+
+    @patch("apps.deepaudit.user_config.user_config_services.EmbeddingService")
+    def test_embedding_test_allows_ollama_without_api_key(self, mock_embedding_service) -> None:
+        service = mock_embedding_service.return_value
+        service.embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
+
+        result = user_config_services.test_embedding(
+            None,
+            {
+                "provider": "ollama",
+                "model": "bge-m3",
+                "base_url": "http://10.0.0.8:11434/v1",
+                "test_text": "hello",
+            },
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(mock_embedding_service.call_args.kwargs["provider"], "ollama")
+        self.assertIsNone(mock_embedding_service.call_args.kwargs["api_key"])
+        self.assertEqual(mock_embedding_service.call_args.kwargs["base_url"], "http://10.0.0.8:11434")
+
+    def test_embedding_test_rejects_non_ascii_api_key(self) -> None:
+        result = user_config_services.test_embedding(
+            None,
+            {
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "随便填",
+            },
+        )
+
+        self.assertFalse(result["success"])
+        self.assertIn("ASCII", result["message"])
+
+    @override_settings(EMBEDDING_CONFIG_LOCKED=True)
+    def test_update_embedding_config_rejects_changes_when_locked(self) -> None:
+        with self.assertRaises(HttpError) as raised:
+            user_config_services.update_embedding_config(
+                object(),
+                {
+                    "provider": "ollama",
+                    "model": "bge-m3",
+                    "base_url": "http://10.0.0.8:11434",
+                },
+            )
+
+        self.assertEqual(raised.exception.status_code, 403)
+        self.assertIn("统一管理", str(raised.exception))

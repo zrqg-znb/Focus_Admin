@@ -82,6 +82,11 @@ DEFAULT_LLM_BASE_URLS = {
 EMBEDDING_DEFAULT_MODELS = {
     item["id"]: item["default_model"] for item in EMBEDDING_PROVIDERS
 }
+EMBEDDING_PROVIDER_IDS = {
+    str(item["id"]).strip().lower()
+    for item in EMBEDDING_PROVIDERS
+    if str(item.get("id") or "").strip()
+}
 
 EMBEDDING_DEFAULT_BASE_URLS = {
     "openai": "https://api.openai.com/v1",
@@ -100,6 +105,10 @@ def get_setting(name: str, default: Any = None) -> Any:
     return getattr(settings, name, default)
 
 
+def embedding_config_locked() -> bool:
+    return bool(get_setting("EMBEDDING_CONFIG_LOCKED", False))
+
+
 def deep_merge(base: dict | None, override: dict | None) -> dict:
     result = deepcopy(base or {})
     for key, value in (override or {}).items():
@@ -116,6 +125,30 @@ def _clean_dict(data: dict[str, Any]) -> dict[str, Any]:
         for key, value in data.items()
         if value is not None
     }
+
+
+def normalize_embedding_provider(value: str | None) -> str:
+    provider = str(value or "").strip().lower() or DEFAULT_OTHER_CONFIG["embedding_config"]["provider"]
+    if provider not in EMBEDDING_PROVIDER_IDS:
+        return DEFAULT_OTHER_CONFIG["embedding_config"]["provider"]
+    return provider
+
+
+def normalize_embedding_base_url(provider: str, base_url: str | None) -> str:
+    normalized_provider = normalize_embedding_provider(provider)
+    text = str(base_url or "").strip()
+    if not text:
+        return ""
+    if normalized_provider != "ollama":
+        return text.rstrip("/")
+
+    normalized = text.rstrip("/")
+    lowered = normalized.lower()
+    for suffix in ("/api/embed", "/api/embeddings", "/api", "/v1"):
+        if lowered.endswith(suffix):
+            normalized = normalized[: -len(suffix)].rstrip("/")
+            lowered = normalized.lower()
+    return normalized
 
 
 def _coerce_int(value: Any) -> int | None:
@@ -444,17 +477,47 @@ def resolve_embedding_config(
     normalized = normalize_runtime_user_config(user_config)
     llm_config = dict(normalized["llm_config"] or {})
     embedding_config = dict(normalized["other_config"].get("embedding_config") or {})
+    locked = embedding_config_locked()
+    saved_provider = normalize_embedding_provider(embedding_config.get("provider"))
 
-    resolved_provider = str(
+    configured_provider = (
+        get_setting("EMBEDDING_PROVIDER", "")
+        if locked
+        else embedding_config.get("provider")
+    )
+    configured_model = (
+        get_setting("EMBEDDING_MODEL", "")
+        if locked
+        else embedding_config.get("model")
+    )
+    configured_api_key = "" if locked else embedding_config.get("api_key")
+    configured_base_url = (
+        get_setting("EMBEDDING_BASE_URL", "")
+        if locked
+        else embedding_config.get("base_url")
+    )
+    configured_dimensions = (
+        _coerce_int(get_setting("EMBEDDING_DIMENSIONS", None))
+        if locked
+        else _coerce_int(embedding_config.get("dimensions") or embedding_config.get("dimension"))
+    )
+    configured_batch_size = (
+        _coerce_int(get_setting("EMBEDDING_BATCH_SIZE", None))
+        if locked
+        else _coerce_int(embedding_config.get("batch_size"))
+    )
+
+    resolved_provider = normalize_embedding_provider(
         provider
-        or embedding_config.get("provider")
+        or configured_provider
         or get_setting("EMBEDDING_PROVIDER", "")
         or DEFAULT_OTHER_CONFIG["embedding_config"]["provider"]
-    ).strip().lower() or DEFAULT_OTHER_CONFIG["embedding_config"]["provider"]
+    )
+    same_saved_provider = locked or saved_provider == resolved_provider
 
     resolved_model = str(
         model
-        or embedding_config.get("model")
+        or (configured_model if same_saved_provider else "")
         or get_setting("EMBEDDING_MODEL", "")
         or EMBEDDING_DEFAULT_MODELS.get(
             resolved_provider,
@@ -465,32 +528,48 @@ def resolve_embedding_config(
         DEFAULT_OTHER_CONFIG["embedding_config"]["model"],
     )
 
-    resolved_api_key = str(api_key or embedding_config.get("api_key") or "").strip()
+    resolved_api_key = str(api_key or (configured_api_key if same_saved_provider else "") or "").strip()
     if not resolved_api_key:
         for setting_name in EMBEDDING_API_KEY_SETTINGS.get(resolved_provider, ()):
             resolved_api_key = str(get_setting(setting_name, "") or "").strip()
             if resolved_api_key:
                 break
-    if not resolved_api_key and resolved_provider == llm_config.get("provider"):
+    if not locked and not resolved_api_key and resolved_provider == llm_config.get("provider"):
         resolved_api_key = resolve_provider_api_key(
             resolved_provider,
             llm_config,
         )
 
-    resolved_base_url = str(base_url or embedding_config.get("base_url") or "").strip()
+    resolved_base_url = normalize_embedding_base_url(
+        resolved_provider,
+        base_url or (configured_base_url if same_saved_provider else "") or "",
+    )
     if not resolved_base_url:
-        resolved_base_url = str(get_setting("EMBEDDING_BASE_URL", "") or "").strip()
-    if not resolved_base_url and resolved_provider == llm_config.get("provider"):
-        resolved_base_url = str(resolve_provider_base_url(resolved_provider, llm_config) or "")
+        resolved_base_url = normalize_embedding_base_url(
+            resolved_provider,
+            get_setting("EMBEDDING_BASE_URL", "") or "",
+        )
+    if not locked and not resolved_base_url and resolved_provider == llm_config.get("provider"):
+        resolved_base_url = normalize_embedding_base_url(
+            resolved_provider,
+            resolve_provider_base_url(resolved_provider, llm_config) or "",
+        )
     if not resolved_base_url:
-        resolved_base_url = EMBEDDING_DEFAULT_BASE_URLS.get(resolved_provider, "")
+        resolved_base_url = normalize_embedding_base_url(
+            resolved_provider,
+            EMBEDDING_DEFAULT_BASE_URLS.get(resolved_provider, ""),
+        )
 
     resolved_dimensions = (
         dimensions
-        or _coerce_int(embedding_config.get("dimensions"))
-        or _coerce_int(embedding_config.get("dimension"))
+        or (configured_dimensions if same_saved_provider else None)
         or _coerce_int(get_setting("EMBEDDING_DIMENSIONS", None))
         or _coerce_int(DEFAULT_OTHER_CONFIG["embedding_config"]["dimensions"])
+    )
+    resolved_batch_size = (
+        configured_batch_size if same_saved_provider else None
+    ) or _coerce_int(get_setting("EMBEDDING_BATCH_SIZE", None)) or _coerce_int(
+        DEFAULT_OTHER_CONFIG["embedding_config"]["batch_size"]
     )
 
     return {
@@ -499,6 +578,5 @@ def resolve_embedding_config(
         "api_key": resolved_api_key,
         "base_url": resolved_base_url,
         "dimensions": resolved_dimensions,
-        "batch_size": _coerce_int(embedding_config.get("batch_size"))
-        or _coerce_int(DEFAULT_OTHER_CONFIG["embedding_config"]["batch_size"]),
+        "batch_size": resolved_batch_size,
     }

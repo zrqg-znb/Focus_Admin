@@ -18,6 +18,7 @@ from .user_config_schemas import (
     LLMTestSchema,
     LLMProviderSchema,
     EmbeddingConfigSchema,
+    EmbeddingConfigUpdateSchema,
     EmbeddingProviderSchema,
     EmbeddingTestResultSchema,
     EmbeddingTestSchema,
@@ -74,13 +75,13 @@ def get_embedding_config(request):
 
 
 @embedding_router.put('/config', response=EmbeddingConfigSchema, summary='更新 Embedding 配置')
-def update_embedding_config(request, data: EmbeddingConfigSchema):
+def update_embedding_config(request, data: EmbeddingConfigUpdateSchema):
     return user_config_services.update_embedding_config(request.auth, data.dict())
 
 
 @embedding_router.post('/test', response=EmbeddingTestResultSchema, summary='测试 Embedding 配置')
 def test_embedding(request, data: EmbeddingTestSchema):
-    return user_config_services.test_embedding(data.dict())
+    return user_config_services.test_embedding(request.auth, data.dict())
 
 
 @ssh_router.get('', response=AuditSshCredentialSchema, summary='获取 SSH 凭据')

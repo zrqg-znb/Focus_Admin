@@ -23,7 +23,13 @@ from apps.deepaudit.llm.types import DEFAULT_BASE_URLS, LLMProvider
 from apps.deepaudit.rag import EmbeddingService
 
 from apps.deepaudit.constants import DEFAULT_LLM_CONFIG, DEFAULT_OTHER_CONFIG, EMBEDDING_PROVIDERS
-from apps.deepaudit.config_resolver import coerce_llm_provider
+from apps.deepaudit.config_resolver import (
+    coerce_llm_provider,
+    embedding_config_locked,
+    normalize_embedding_base_url,
+    normalize_embedding_provider,
+    resolve_embedding_config,
+)
 from apps.deepaudit.encryption import decrypt_value, encrypt_value
 from apps.deepaudit.permissions import get_user_id
 from apps.deepaudit.serialization import format_datetime_text
@@ -219,6 +225,38 @@ def _mask_api_key(api_key: str) -> str:
     if len(api_key) <= 8:
         return api_key
     return f'{api_key[:8]}...'
+
+
+def _contains_only_ascii(value: str) -> bool:
+    try:
+        value.encode('ascii')
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _invalid_api_key_message() -> str:
+    return 'API Key 只能包含 ASCII 字符，请勿输入中文或其它非 ASCII 占位内容'
+
+
+def _validate_embedding_api_key(api_key: str) -> None:
+    if api_key and not _contains_only_ascii(api_key):
+        raise HttpError(422, _invalid_api_key_message())
+
+
+def _normalize_embedding_update_payload(payload: dict) -> dict:
+    provider = normalize_embedding_provider(payload.get('provider'))
+    api_key = str(payload.get('api_key') or '').strip()
+    _validate_embedding_api_key(api_key)
+    normalized = {
+        'provider': provider,
+        'model': str(payload.get('model') or '').strip(),
+        'api_key': '' if provider == 'ollama' else api_key,
+        'base_url': normalize_embedding_base_url(provider, payload.get('base_url')),
+        'dimensions': payload.get('dimensions'),
+        'batch_size': payload.get('batch_size'),
+    }
+    return normalized
 
 
 def _default_model_for_provider(provider: str) -> str:
@@ -595,20 +633,55 @@ def get_embedding_provider_models(provider: str) -> dict:
 
 def get_embedding_config(user) -> dict:
     config = get_user_config(user)
-    return config['other_config'].get('embedding_config') or {}
+    resolved = resolve_embedding_config(config)
+    saved_embedding_config = dict(config.get('other_config', {}).get('embedding_config') or {})
+    locked = embedding_config_locked()
+    return {
+        'provider': resolved.get('provider') or 'openai',
+        'model': resolved.get('model') or '',
+        'api_key': '' if locked else str(saved_embedding_config.get('api_key') or resolved.get('api_key') or ''),
+        'base_url': resolved.get('base_url') or '',
+        'dimensions': resolved.get('dimensions'),
+        'batch_size': resolved.get('batch_size'),
+        'config_locked': locked,
+        'api_key_configured': bool(str(resolved.get('api_key') or '').strip()),
+    }
 
 
 def update_embedding_config(user, payload: dict) -> dict:
-    return update_user_config(user, {'other_config': {'embedding_config': payload}})['other_config']['embedding_config']
+    if embedding_config_locked():
+        raise HttpError(403, '当前 embedding 配置由生产环境统一管理，不能在页面保存覆盖')
+    normalized_payload = _normalize_embedding_update_payload(payload)
+    update_user_config(user, {'other_config': {'embedding_config': normalized_payload}})
+    return get_embedding_config(user)
 
 
-def test_embedding(payload: dict) -> dict:
-    provider = str(payload.get('provider') or '').strip() or 'openai'
+def test_embedding(user, payload: dict) -> dict:
+    provider = normalize_embedding_provider(payload.get('provider'))
     model = str(payload.get('model') or '').strip()
     test_text = str(payload.get('test_text') or 'Focus DeepAudit embedding health check')
     dimension = payload.get('dimensions') or payload.get('dimension')
-    requires_key = any(item['id'] == provider and item['requires_api_key'] for item in EMBEDDING_PROVIDERS)
-    if requires_key and not str(payload.get('api_key') or '').strip():
+    api_key = str(payload.get('api_key') or '').strip()
+    if api_key and not _contains_only_ascii(api_key):
+        return {
+            'success': False,
+            'message': _invalid_api_key_message(),
+            'preview_vector_length': 0,
+            'dimensions': None,
+            'sample_embedding': [],
+            'latency_ms': None,
+        }
+    user_config = get_user_config(user) if user is not None else None
+    resolved = resolve_embedding_config(
+        user_config,
+        provider=provider or None,
+        model=model or None,
+        api_key=api_key or None,
+        base_url=str(payload.get('base_url') or '').strip() or None,
+        dimensions=dimension,
+    )
+    requires_key = any(item['id'] == resolved['provider'] and item['requires_api_key'] for item in EMBEDDING_PROVIDERS)
+    if requires_key and not str(resolved.get('api_key') or '').strip():
         return {
             'success': False,
             'message': '当前 embedding provider 需要 API Key',
@@ -620,11 +693,11 @@ def test_embedding(payload: dict) -> dict:
     started = time.perf_counter()
     try:
         service = EmbeddingService(
-            provider=provider,
-            model=model,
-            api_key=str(payload.get('api_key') or '').strip() or None,
-            base_url=str(payload.get('base_url') or '').strip() or None,
-            dimension=dimension,
+            provider=resolved.get('provider'),
+            model=resolved.get('model'),
+            api_key=str(resolved.get('api_key') or '').strip() or None,
+            base_url=str(resolved.get('base_url') or '').strip() or None,
+            dimension=resolved.get('dimensions'),
         )
         embedding = async_to_sync(service.embed)(test_text)
         latency_ms = int((time.perf_counter() - started) * 1000)
@@ -638,9 +711,17 @@ def test_embedding(payload: dict) -> dict:
         }
     except Exception as exc:
         latency_ms = int((time.perf_counter() - started) * 1000)
+        if resolved.get('provider') == 'ollama':
+            message = (
+                '嵌入失败: 无法连接或调用 Ollama embedding 服务。'
+                f' 请确认当前 DeepAudit 后端机器可以访问 {resolved.get("base_url") or "Ollama 地址"}'
+                f'，当前测试地址: {resolved.get("base_url") or "-"}。原始错误: {exc}'
+            )
+        else:
+            message = f'嵌入失败: {exc}'
         return {
             'success': False,
-            'message': f'嵌入失败: {exc}',
+            'message': message,
             'preview_vector_length': 0,
             'dimensions': None,
             'sample_embedding': [],

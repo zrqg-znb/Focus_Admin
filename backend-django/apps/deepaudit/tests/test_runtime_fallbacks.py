@@ -6,13 +6,17 @@ import sys
 import types
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 
 from apps.deepaudit.agent_engine.agents.base import AgentConfig, AgentResult, AgentType, BaseAgent
 from apps.deepaudit.agent_engine.tools.base import AgentTool, ToolResult
 from apps.deepaudit.agent_engine.tools.rag_tool import RAGQueryTool
 from apps.deepaudit.agent_engine.tools.run_code import RunCodeTool
-from apps.deepaudit.config_resolver import coerce_llm_provider, normalize_runtime_user_config
+from apps.deepaudit.config_resolver import (
+    coerce_llm_provider,
+    normalize_runtime_user_config,
+    resolve_embedding_config,
+)
 from apps.deepaudit.agent_engine.knowledge.rag_knowledge import SecurityKnowledgeRAG
 from apps.deepaudit.llm.service import LLMService
 from apps.deepaudit.llm import tokenizer
@@ -208,6 +212,34 @@ class RuntimeFallbacksTestCase(SimpleTestCase):
 
         self.assertEqual(timeout_config["llm_first_token_timeout"], 90)
         self.assertEqual(timeout_config["llm_stream_timeout"], 60)
+
+    @override_settings(
+        EMBEDDING_CONFIG_LOCKED=True,
+        EMBEDDING_PROVIDER="ollama",
+        EMBEDDING_MODEL="bge-m3",
+        EMBEDDING_BASE_URL="http://10.0.0.8:11434/v1",
+        EMBEDDING_DIMENSIONS=1024,
+    )
+    def test_locked_embedding_config_prefers_system_ollama_settings(self) -> None:
+        resolved = resolve_embedding_config(
+            {
+                "other_config": {
+                    "embedding_config": {
+                        "provider": "openai",
+                        "model": "text-embedding-3-small",
+                        "api_key": "user-key",
+                        "base_url": "https://gateway.example/v1",
+                        "dimensions": 1536,
+                    }
+                }
+            }
+        )
+
+        self.assertEqual(resolved["provider"], "ollama")
+        self.assertEqual(resolved["model"], "bge-m3")
+        self.assertEqual(resolved["base_url"], "http://10.0.0.8:11434")
+        self.assertEqual(resolved["dimensions"], 1024)
+        self.assertEqual(resolved["api_key"], "")
 
     def test_run_code_c_and_cpp_commands_enable_sanitizers(self) -> None:
         tool = RunCodeTool()
