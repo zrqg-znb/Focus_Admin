@@ -1,6 +1,7 @@
 import type { Column } from 'element-plus';
 
 import type {
+  DictOption,
   FailureModeStatisticsChartDatum,
   FailureModeStatisticsSubsystemRow,
   FailureModeStatisticsSummary,
@@ -10,57 +11,17 @@ import type { ZqTableGridOptions } from '#/components/zq-table';
 export type StatisticsTabKey = 'charts' | 'table';
 
 export interface StatisticsPieCard {
-  key: keyof FailureModeStatisticsSummary;
-  title: string;
+  key: string;
   subtitle: string;
+  title: string;
+  resolveData: (
+    summary: FailureModeStatisticsSummary,
+  ) => FailureModeStatisticsChartDatum[];
 }
 
 export const statisticsTabs: Array<{ key: StatisticsTabKey; label: string }> = [
   { key: 'charts', label: '可视化图表' },
   { key: 'table', label: '数据表格' },
-];
-
-export const statisticsPieCards: StatisticsPieCard[] = [
-  {
-    key: 'interception_status',
-    title: '产线拦截策略配置率',
-    subtitle: '按故障模式条数统计已配置 / 待补充 / 无需配置。',
-  },
-  {
-    key: 'huatuo_status',
-    title: '华佗诊断配置完成率',
-    subtitle: '根据必配开关与实际诊断关联共同判定三态。',
-  },
-  {
-    key: 'handling_detection_status',
-    title: '故障处理措施-检测',
-    subtitle: '检测类措施的配置完成情况。',
-  },
-  {
-    key: 'handling_prevention_status',
-    title: '故障处理措施-预防',
-    subtitle: '预防类措施的配置完成情况。',
-  },
-  {
-    key: 'handling_self_heal_status',
-    title: '故障处理措施-自愈',
-    subtitle: '自愈类措施的配置完成情况。',
-  },
-  {
-    key: 'observation_pipeline_log_status',
-    title: '维测手段-流水日志',
-    subtitle: '流水日志类维测手段的配置完成情况。',
-  },
-  {
-    key: 'observation_dmd_status',
-    title: '维测手段-DMD 点位',
-    subtitle: 'DMD 点位类维测手段的配置完成情况。',
-  },
-  {
-    key: 'observation_fmp_status',
-    title: '维测手段-FMP 点位',
-    subtitle: 'FMP 点位类维测手段的配置完成情况。',
-  },
 ];
 
 function withCenter<T extends Record<string, any>>(
@@ -73,6 +34,67 @@ function withCenter<T extends Record<string, any>>(
   }));
 }
 
+function appendUniqueValue(
+  target: string[],
+  seen: Set<string>,
+  value: unknown,
+) {
+  const text = String(value || '').trim();
+  if (!text || seen.has(text)) {
+    return;
+  }
+  seen.add(text);
+  target.push(text);
+}
+
+export function resolveOrderedCategoryValues(
+  dictOptions: DictOption[] = [],
+  extraValues: string[] = [],
+) {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  dictOptions.forEach((item) => appendUniqueValue(result, seen, item.value));
+  extraValues.forEach((item) => appendUniqueValue(result, seen, item));
+  return result;
+}
+
+export function buildStatisticsPieCards({
+  handlingCategories,
+  observationTypes,
+}: {
+  handlingCategories: string[];
+  observationTypes: string[];
+}): StatisticsPieCard[] {
+  return [
+    {
+      key: 'interception_status',
+      title: '产线拦截策略配置率',
+      subtitle: '按故障模式条数统计已配置 / 待补充 / 无需配置。',
+      resolveData: (summary) => summary.interception_status || [],
+    },
+    {
+      key: 'huatuo_status',
+      title: '华佗诊断配置完成率',
+      subtitle: '根据必配开关与实际诊断关联共同判定三态。',
+      resolveData: (summary) => summary.huatuo_status || [],
+    },
+    ...handlingCategories.map((category) => ({
+      key: `handling-${category}`,
+      title: `故障处理措施-${category}`,
+      subtitle: `${category}类措施的配置完成情况。`,
+      resolveData: (summary: FailureModeStatisticsSummary) =>
+        summary.handling_status_map?.[category] || [],
+    })),
+    ...observationTypes.map((monitorType) => ({
+      key: `observation-${monitorType}`,
+      title: `维测手段-${monitorType}`,
+      subtitle: `${monitorType}类维测手段的配置完成情况。`,
+      resolveData: (summary: FailureModeStatisticsSummary) =>
+        summary.observation_status_map?.[monitorType] || [],
+    })),
+  ];
+}
+
 export function createEmptyStatisticsSummary(): FailureModeStatisticsSummary {
   const empty: FailureModeStatisticsChartDatum[] = [];
   return {
@@ -80,16 +102,40 @@ export function createEmptyStatisticsSummary(): FailureModeStatisticsSummary {
     failure_mode_landing_status: empty,
     interception_status: empty,
     huatuo_status: empty,
-    handling_detection_status: empty,
-    handling_prevention_status: empty,
-    handling_self_heal_status: empty,
-    observation_pipeline_log_status: empty,
-    observation_dmd_status: empty,
-    observation_fmp_status: empty,
+    handling_status_map: {},
+    observation_status_map: {},
   };
 }
 
-export function useStatisticsSubsystemColumns(): ZqTableGridOptions<FailureModeStatisticsSubsystemRow>['columns'] {
+function buildCountColumn(
+  kind: 'handling' | 'observation',
+  category: string,
+): Column<FailureModeStatisticsSubsystemRow> {
+  const titlePrefix = kind === 'handling' ? '措施' : '维测';
+  const dataKey = `${kind}_${category}`;
+  return {
+    cellRenderer: ({
+      rowData,
+    }: {
+      rowData: FailureModeStatisticsSubsystemRow;
+    }) =>
+      kind === 'handling'
+        ? Number(rowData.handling_relation_counts?.[category] || 0)
+        : Number(rowData.observation_relation_counts?.[category] || 0),
+    dataKey,
+    key: dataKey,
+    title: `${titlePrefix}-${category}`,
+    width: Math.max(140, category.length * 18 + 72),
+  };
+}
+
+export function useStatisticsSubsystemColumns({
+  handlingCategories,
+  observationTypes,
+}: {
+  handlingCategories: string[];
+  observationTypes: string[];
+}): ZqTableGridOptions<FailureModeStatisticsSubsystemRow>['columns'] {
   return withCenter<FailureModeStatisticsSubsystemRow>([
     { key: 'subsystem', dataKey: 'subsystem', title: '子系统', width: 180 },
     {
@@ -104,42 +150,12 @@ export function useStatisticsSubsystemColumns(): ZqTableGridOptions<FailureModeS
       title: '产线拦截策略数量',
       width: 150,
     },
-    {
-      key: 'handling_detection_relation_count',
-      dataKey: 'handling_detection_relation_count',
-      title: '业务版本检测措施数量',
-      width: 170,
-    },
-    {
-      key: 'handling_prevention_relation_count',
-      dataKey: 'handling_prevention_relation_count',
-      title: '业务版本预防措施数量',
-      width: 170,
-    },
-    {
-      key: 'handling_self_heal_relation_count',
-      dataKey: 'handling_self_heal_relation_count',
-      title: '业务版本自愈措施数量',
-      width: 170,
-    },
-    {
-      key: 'observation_pipeline_log_relation_count',
-      dataKey: 'observation_pipeline_log_relation_count',
-      title: '流水日志数量',
-      width: 140,
-    },
-    {
-      key: 'observation_dmd_relation_count',
-      dataKey: 'observation_dmd_relation_count',
-      title: 'DMD 点位数量',
-      width: 140,
-    },
-    {
-      key: 'observation_fmp_relation_count',
-      dataKey: 'observation_fmp_relation_count',
-      title: 'FMP 点位数量',
-      width: 140,
-    },
+    ...handlingCategories.map((category) =>
+      buildCountColumn('handling', category),
+    ),
+    ...observationTypes.map((monitorType) =>
+      buildCountColumn('observation', monitorType),
+    ),
     {
       key: 'huatuo_relation_count',
       dataKey: 'huatuo_relation_count',

@@ -1013,7 +1013,17 @@ async function openTestCase(id: string) {
   );
 }
 
+function invalidateFailureMode(id: string) {
+  const key = String(id || '').trim();
+  if (!key) {
+    return;
+  }
+  failureModeDetailCache.delete(key);
+  failureModeInsightCache.delete(key);
+}
+
 defineExpose({
+  invalidateFailureMode,
   openFailureMode,
   openHandlingMeasure,
   openHuatuoDiagnosis,

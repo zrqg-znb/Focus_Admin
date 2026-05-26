@@ -7,15 +7,20 @@ import type { ZqTableGridOptions } from '#/components/zq-table';
 import {
   createEmptyStatisticsSummary,
   formatPercent,
+  resolveOrderedCategoryValues,
   resolveStatusLightMeta,
 } from '../statistics/data';
 
 export type ProductStatisticsTabKey = 'charts' | 'table';
 
 export interface ProductStatisticsPieCard {
-  key: keyof FailureModeProductStatisticsSummary;
-  title: string;
+  key: string;
   subtitle: string;
+  title: string;
+  resolveData: (summary: FailureModeProductStatisticsSummary) => Array<{
+    name: string;
+    value: number;
+  }>;
 }
 
 export const productStatisticsTabs: Array<{
@@ -26,53 +31,48 @@ export const productStatisticsTabs: Array<{
   { key: 'table', label: '数据表格' },
 ];
 
-export const productStatisticsPieCards: ProductStatisticsPieCard[] = [
-  {
-    key: 'failure_mode_landing_status',
-    title: '故障模式落地情况',
-    subtitle: '按当前产品基线中的故障模式本身是否已落地统计。',
-  },
-  {
-    key: 'interception_status',
-    title: '产线拦截策略落地情况',
-    subtitle: '必配时要求当前绑定的全部拦截策略都已落地。',
-  },
-  {
-    key: 'huatuo_status',
-    title: '华佗诊断落地情况',
-    subtitle: '必配时要求当前绑定的全部诊断方案都已落地。',
-  },
-  {
-    key: 'handling_detection_status',
-    title: '故障处理措施-检测',
-    subtitle: '检测类措施按当前产品子系统显式落地状态汇总。',
-  },
-  {
-    key: 'handling_prevention_status',
-    title: '故障处理措施-预防',
-    subtitle: '预防类措施按当前产品子系统显式落地状态汇总。',
-  },
-  {
-    key: 'handling_self_heal_status',
-    title: '故障处理措施-自愈',
-    subtitle: '自愈类措施按当前产品子系统显式落地状态汇总。',
-  },
-  {
-    key: 'observation_pipeline_log_status',
-    title: '维测手段-流水日志',
-    subtitle: '流水日志类维测手段按显式落地状态汇总。',
-  },
-  {
-    key: 'observation_dmd_status',
-    title: '维测手段-DMD 点位',
-    subtitle: 'DMD 点位类维测手段按显式落地状态汇总。',
-  },
-  {
-    key: 'observation_fmp_status',
-    title: '维测手段-FMP 点位',
-    subtitle: 'FMP 点位类维测手段按显式落地状态汇总。',
-  },
-];
+export function buildProductStatisticsPieCards({
+  handlingCategories,
+  observationTypes,
+}: {
+  handlingCategories: string[];
+  observationTypes: string[];
+}): ProductStatisticsPieCard[] {
+  return [
+    {
+      key: 'failure_mode_landing_status',
+      title: '故障模式落地情况',
+      subtitle: '按当前产品基线中的故障模式本身是否已落地统计。',
+      resolveData: (summary) => summary.failure_mode_landing_status || [],
+    },
+    {
+      key: 'interception_status',
+      title: '产线拦截策略落地情况',
+      subtitle: '必配时要求当前绑定的全部拦截策略都已落地。',
+      resolveData: (summary) => summary.interception_status || [],
+    },
+    {
+      key: 'huatuo_status',
+      title: '华佗诊断落地情况',
+      subtitle: '必配时要求当前绑定的全部诊断方案都已落地。',
+      resolveData: (summary) => summary.huatuo_status || [],
+    },
+    ...handlingCategories.map((category) => ({
+      key: `handling-${category}`,
+      title: `故障处理措施-${category}`,
+      subtitle: `${category}类措施按当前产品子系统显式落地状态汇总。`,
+      resolveData: (summary: FailureModeProductStatisticsSummary) =>
+        summary.handling_status_map?.[category] || [],
+    })),
+    ...observationTypes.map((monitorType) => ({
+      key: `observation-${monitorType}`,
+      title: `维测手段-${monitorType}`,
+      subtitle: `${monitorType}类维测手段按显式落地状态汇总。`,
+      resolveData: (summary: FailureModeProductStatisticsSummary) =>
+        summary.observation_status_map?.[monitorType] || [],
+    })),
+  ];
+}
 
 export function createEmptyProductStatisticsSummary(): FailureModeProductStatisticsSummary {
   return createEmptyStatisticsSummary();
@@ -131,4 +131,4 @@ export function useProductStatisticsSubsystemColumns(): ZqTableGridOptions<Failu
   ];
 }
 
-export { formatPercent, resolveStatusLightMeta };
+export { formatPercent, resolveOrderedCategoryValues, resolveStatusLightMeta };

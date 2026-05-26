@@ -2,6 +2,7 @@
 import type { ProductStatisticsTabKey } from './data';
 
 import type {
+  FailureModeDictOptions,
   FailureModeProductStatisticsOverviewItem,
   FailureModeProductStatisticsSubsystemRow,
   FailureModeProductStatisticsSummary,
@@ -24,6 +25,7 @@ import {
 } from 'element-plus';
 
 import {
+  getFailureModeDictOptionsApi,
   getFailureModeProductStatisticsSummaryApi,
   listFailureModeProductStatisticsOverviewApi,
   listFailureModeProductStatisticsSubsystemOptionsApi,
@@ -31,13 +33,15 @@ import {
 } from '#/api/failure_mode';
 import { useZqTable } from '#/components/zq-table';
 
+import { createEmptyDictOptions } from '../data';
 import StatisticsBarChart from '../statistics/components/StatisticsBarChart.vue';
 import StatisticsPieChart from '../statistics/components/StatisticsPieChart.vue';
 import {
+  buildProductStatisticsPieCards,
   createEmptyProductStatisticsSummary,
   formatPercent,
-  productStatisticsPieCards,
   productStatisticsTabs,
+  resolveOrderedCategoryValues,
   resolveStatusLightMeta,
   useProductStatisticsSubsystemColumns,
 } from './data';
@@ -58,10 +62,29 @@ const summaryLoading = ref(false);
 const subsystemOptionsLoading = ref(false);
 const selectedProductIds = ref<string[]>([]);
 const selectedSubsystems = ref<string[]>([]);
+const dictOptions = ref<FailureModeDictOptions>(createEmptyDictOptions());
 const overviewItems = ref<FailureModeProductStatisticsOverviewItem[]>([]);
 const subsystemOptions = ref<string[]>([]);
 const summary = ref<FailureModeProductStatisticsSummary>(
   createEmptyProductStatisticsSummary(),
+);
+const handlingCategories = computed(() =>
+  resolveOrderedCategoryValues(
+    dictOptions.value.measure_category,
+    Object.keys(summary.value.handling_status_map || {}),
+  ),
+);
+const observationTypes = computed(() =>
+  resolveOrderedCategoryValues(
+    dictOptions.value.monitor_type,
+    Object.keys(summary.value.observation_status_map || {}),
+  ),
+);
+const productStatisticsPieCards = computed(() =>
+  buildProductStatisticsPieCards({
+    handlingCategories: handlingCategories.value,
+    observationTypes: observationTypes.value,
+  }),
 );
 
 const [SubsystemTable, subsystemTableApi] =
@@ -192,6 +215,10 @@ async function loadOverview() {
   }
 }
 
+async function loadDictOptions() {
+  dictOptions.value = await getFailureModeDictOptionsApi();
+}
+
 async function loadSubsystemOptions() {
   subsystemOptionsLoading.value = true;
   try {
@@ -269,7 +296,7 @@ async function handleSubsystemChange(
 }
 
 async function initializePage() {
-  await loadOverview();
+  await Promise.all([loadDictOptions(), loadOverview()]);
   await loadSubsystemOptions();
   await reloadAnalysis();
 }
@@ -638,7 +665,7 @@ onMounted(async () => {
                         </div>
                       </div>
                       <StatisticsPieChart
-                        :data="summary[card.key]"
+                        :data="card.resolveData(summary)"
                         :title="card.title"
                       />
                     </ElCard>

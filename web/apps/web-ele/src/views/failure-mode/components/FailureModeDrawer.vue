@@ -58,8 +58,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   success: [item: FailureModeItem];
 }>();
-const HANDLING_CATEGORIES = ['检测', '预防', '自愈'];
-const OBSERVATION_TYPES = ['流水日志', 'DMD 点位', 'FMP 点位'];
 
 const visible = ref(false);
 const loading = ref(false);
@@ -132,17 +130,11 @@ function getFormCommonConfig() {
 }
 
 const handlingCategoryOptions = computed(() => {
-  const allowSet = new Set(HANDLING_CATEGORIES);
-  return props.dictOptions.measure_category.filter((item) =>
-    allowSet.has(item.value),
-  );
+  return props.dictOptions.measure_category;
 });
 
 const observationTypeOptions = computed(() => {
-  const allowSet = new Set(OBSERVATION_TYPES);
-  return props.dictOptions.monitor_type.filter((item) =>
-    allowSet.has(item.value),
-  );
+  return props.dictOptions.monitor_type;
 });
 
 const selectedRelationCount = computed(() => {

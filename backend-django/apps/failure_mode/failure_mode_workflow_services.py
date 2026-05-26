@@ -420,6 +420,115 @@ def _extract_task_landing_product_status_map(rows: Any) -> dict[str, str | None]
     return result
 
 
+def _merge_landing_subsystems(*value_groups: Any) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for values in value_groups:
+        for value in values or []:
+            text = _normalize_text(value)
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            result.append(text)
+    return result
+
+
+def _group_scope_binding_products(
+    item: dict[str, Any],
+    *,
+    fallback_subsystem: str = '',
+) -> list[dict[str, Any]]:
+    grouped_products: dict[str, dict[str, Any]] = {}
+    for binding in item.get('scope_bindings') or []:
+        if not isinstance(binding, dict):
+            continue
+        product_id = _normalize_text(binding.get('product_id'))
+        if not product_id:
+            continue
+        product_row = grouped_products.get(product_id)
+        if product_row is None:
+            product_row = {
+                'product_id': product_id,
+                'product_name': _normalize_text(binding.get('product_name')) or product_id,
+                'subsystems': [],
+            }
+            grouped_products[product_id] = product_row
+        subsystem = _normalize_text(binding.get('subsystem')) or fallback_subsystem
+        if subsystem and subsystem not in product_row['subsystems']:
+            product_row['subsystems'].append(subsystem)
+    return list(grouped_products.values())
+
+
+def _normalize_target_products(
+    item: dict[str, Any],
+    *,
+    existing_payload: dict[str, Any] | None = None,
+    fallback_payload: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    existing_payload = dict(existing_payload or {})
+    fallback_payload = dict(fallback_payload or {})
+    fallback_subsystem = _normalize_text(item.get('subsystem'))
+    current_products = _group_scope_binding_products(
+        item,
+        fallback_subsystem=fallback_subsystem,
+    )
+
+    base_products = current_products
+    if not base_products:
+        base_products = [
+            dict(product_item)
+            for product_item in list(fallback_payload.get('products') or [])
+            if isinstance(product_item, dict)
+            and _normalize_text(product_item.get('product_id'))
+        ]
+
+    existing_products = {
+        _normalize_text(product_item.get('product_id')): product_item
+        for product_item in list(existing_payload.get('products') or [])
+        if isinstance(product_item, dict)
+        and _normalize_text(product_item.get('product_id'))
+    }
+    fallback_products = {
+        _normalize_text(product_item.get('product_id')): product_item
+        for product_item in list(fallback_payload.get('products') or [])
+        if isinstance(product_item, dict)
+        and _normalize_text(product_item.get('product_id'))
+    }
+
+    target_products: list[dict[str, Any]] = []
+    for product_item in base_products:
+        product_id = _normalize_text(product_item.get('product_id'))
+        if not product_id:
+            continue
+        existing_product = existing_products.get(product_id) or {}
+        fallback_product = fallback_products.get(product_id) or {}
+        target_products.append(
+            _build_task_landing_product_row(
+                product_id=product_id,
+                product_name=(
+                    _normalize_text(product_item.get('product_name'))
+                    or _normalize_text(existing_product.get('product_name'))
+                    or _normalize_text(fallback_product.get('product_name'))
+                    or product_id
+                ),
+                landing_status=(
+                    failure_mode_services._normalize_landing_status(
+                        existing_product.get('landing_status'),
+                    )
+                    or failure_mode_services._normalize_landing_status(
+                        fallback_product.get('landing_status'),
+                    )
+                ),
+                subsystems=_merge_landing_subsystems(
+                    product_item.get('subsystems'),
+                    existing_product.get('subsystems'),
+                    fallback_product.get('subsystems'),
+                ),
+            ),
+        )
+    return target_products
+
+
 def _normalize_task_landing_product_rows(
     target_products: list[dict[str, Any]],
     payload_rows: Any,
@@ -428,6 +537,7 @@ def _normalize_task_landing_product_rows(
     legacy_status: Any = None,
 ) -> list[dict[str, Any]]:
     payload_status_map = _extract_task_landing_product_status_map(payload_rows)
+    has_explicit_product_status = len(payload_status_map) > 0
     legacy_status_text = failure_mode_services._normalize_landing_status(legacy_status)
     rows: list[dict[str, Any]] = []
     for product_item in target_products or []:
@@ -437,7 +547,7 @@ def _normalize_task_landing_product_rows(
         status = payload_status_map.get(product_id)
         if status is None:
             status = (fallback_status_map or {}).get(product_id)
-        if status is None:
+        if status is None and not has_explicit_product_status:
             status = legacy_status_text
         if status is None:
             status = failure_mode_services.LANDING_STATUS_NOT_LANDED
@@ -698,31 +808,11 @@ def _normalize_task_landing_payload_for_item(
 ) -> dict[str, Any]:
     payload = dict(existing_payload or {})
     fallback_payload = dict(fallback_payload or {})
-    fallback_subsystem = _normalize_text(item.get('subsystem'))
-    target_products = list(payload.get('products') or fallback_payload.get('products') or [])
-    if not target_products:
-        scope_bindings = item.get('scope_bindings') or []
-        grouped_products: dict[str, dict[str, Any]] = {}
-        for binding in scope_bindings:
-            if not isinstance(binding, dict):
-                continue
-            product_id = _normalize_text(binding.get('product_id'))
-            if not product_id:
-                continue
-            product_row = grouped_products.get(product_id)
-            if product_row is None:
-                product_row = {
-                    'product_id': product_id,
-                    'product_name': _normalize_text(binding.get('product_name')) or product_id,
-                    'subsystems': [],
-                }
-                grouped_products[product_id] = product_row
-            subsystem = _normalize_text(binding.get('subsystem'))
-            if subsystem and subsystem not in product_row['subsystems']:
-                product_row['subsystems'].append(subsystem)
-            elif fallback_subsystem and fallback_subsystem not in product_row['subsystems']:
-                product_row['subsystems'].append(fallback_subsystem)
-        target_products = list(grouped_products.values())
+    target_products = _normalize_target_products(
+        item,
+        existing_payload=payload,
+        fallback_payload=fallback_payload,
+    )
     if not target_products:
         target_products = [
             {

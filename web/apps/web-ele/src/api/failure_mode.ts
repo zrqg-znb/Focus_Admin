@@ -400,12 +400,8 @@ export interface FailureModeStatisticsSummary {
   failure_mode_landing_status: FailureModeStatisticsChartDatum[];
   interception_status: FailureModeStatisticsChartDatum[];
   huatuo_status: FailureModeStatisticsChartDatum[];
-  handling_detection_status: FailureModeStatisticsChartDatum[];
-  handling_prevention_status: FailureModeStatisticsChartDatum[];
-  handling_self_heal_status: FailureModeStatisticsChartDatum[];
-  observation_pipeline_log_status: FailureModeStatisticsChartDatum[];
-  observation_dmd_status: FailureModeStatisticsChartDatum[];
-  observation_fmp_status: FailureModeStatisticsChartDatum[];
+  handling_status_map: Record<string, FailureModeStatisticsChartDatum[]>;
+  observation_status_map: Record<string, FailureModeStatisticsChartDatum[]>;
 }
 
 export interface FailureModeStatisticsSummaryQuery {
@@ -416,12 +412,8 @@ export interface FailureModeStatisticsSubsystemRow {
   subsystem: string;
   failure_mode_count: number;
   interception_relation_count: number;
-  handling_detection_relation_count: number;
-  handling_prevention_relation_count: number;
-  handling_self_heal_relation_count: number;
-  observation_pipeline_log_relation_count: number;
-  observation_dmd_relation_count: number;
-  observation_fmp_relation_count: number;
+  handling_relation_counts: Record<string, number>;
+  observation_relation_counts: Record<string, number>;
   huatuo_relation_count: number;
   pending_failure_mode_count: number;
   pending_rate: number;

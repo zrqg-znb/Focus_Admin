@@ -5,26 +5,29 @@ import type {
 } from '#/api/failure_mode';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
-import { computed, nextTick, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
 import { ElCard, ElMessage, ElTabPane, ElTabs, ElTag } from 'element-plus';
 
 import {
+  getFailureModeDictOptionsApi,
   getFailureModeStatisticsSummaryApi,
   listFailureModeStatisticsSubsystemOptionsApi,
   listFailureModeStatisticsSubsystemsApi,
 } from '#/api/failure_mode';
 import { useZqTable } from '#/components/zq-table';
 
+import { createEmptyDictOptions } from '../data';
 import StatisticsBarChart from './components/StatisticsBarChart.vue';
 import StatisticsPieChart from './components/StatisticsPieChart.vue';
 import {
+  buildStatisticsPieCards,
   createEmptyStatisticsSummary,
   formatPercent,
+  resolveOrderedCategoryValues,
   resolveStatusLightMeta,
-  statisticsPieCards,
   statisticsTabs,
   useStatisticsSubsystemColumns,
 } from './data';
@@ -46,16 +49,37 @@ const summaryLoading = ref(false);
 const subsystemOptionsLoading = ref(false);
 const subsystemOptions = ref<string[]>([]);
 const selectedSubsystems = ref<string[]>([]);
+const dictOptions = ref(createEmptyDictOptions());
 const summary = ref<FailureModeStatisticsSummary>(
   createEmptyStatisticsSummary(),
+);
+const handlingCategories = computed(() =>
+  resolveOrderedCategoryValues(
+    dictOptions.value.measure_category,
+    Object.keys(summary.value.handling_status_map || {}),
+  ),
+);
+const observationTypes = computed(() =>
+  resolveOrderedCategoryValues(
+    dictOptions.value.monitor_type,
+    Object.keys(summary.value.observation_status_map || {}),
+  ),
+);
+const statisticsPieCards = computed(() =>
+  buildStatisticsPieCards({
+    handlingCategories: handlingCategories.value,
+    observationTypes: observationTypes.value,
+  }),
 );
 
 const [SubsystemTable, subsystemTableApi] =
   useZqTable<FailureModeStatisticsSubsystemRow>({
     gridOptions: {
       border: true,
-      columns:
-        useStatisticsSubsystemColumns() as ZqTableGridOptions<FailureModeStatisticsSubsystemRow>['columns'],
+      columns: useStatisticsSubsystemColumns({
+        handlingCategories: [],
+        observationTypes: [],
+      }) as ZqTableGridOptions<FailureModeStatisticsSubsystemRow>['columns'],
       proxyConfig: {
         autoLoad: true,
         ajax: {
@@ -116,6 +140,23 @@ const waitingInterceptionCount = computed(() => {
 
 const showSummaryBar = computed(() => pageScrollTop.value > 72);
 
+watch(
+  [handlingCategories, observationTypes],
+  ([nextHandlingCategories, nextObservationTypes]) => {
+    subsystemTableApi.setGridOptions({
+      columns: useStatisticsSubsystemColumns({
+        handlingCategories: nextHandlingCategories,
+        observationTypes: nextObservationTypes,
+      }) as ZqTableGridOptions<FailureModeStatisticsSubsystemRow>['columns'],
+    });
+  },
+  { immediate: true },
+);
+
+async function loadDictOptions() {
+  dictOptions.value = await getFailureModeDictOptionsApi();
+}
+
 async function loadSummary() {
   summaryLoading.value = true;
   try {
@@ -170,7 +211,7 @@ function handlePageScroll(event: Event) {
 
 onMounted(async () => {
   try {
-    await loadSubsystemOptions();
+    await Promise.all([loadDictOptions(), loadSubsystemOptions()]);
     await reloadAnalysis();
   } catch (error) {
     console.error(error);
@@ -405,7 +446,7 @@ onMounted(async () => {
                     <ElTag type="info">饼图</ElTag>
                   </div>
                   <StatisticsPieChart
-                    :data="summary[card.key]"
+                    :data="card.resolveData(summary)"
                     :title="card.title"
                   />
                 </ElCard>

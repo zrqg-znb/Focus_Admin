@@ -55,8 +55,6 @@ DICT_CODE_MAP = {
     'monitor_type': 'failure_mode_monitor_type',
 }
 
-FIXED_HANDLING_MEASURE_CATEGORIES = ['检测', '预防', '自愈']
-FIXED_OBSERVATION_METHOD_TYPES = ['流水日志', 'DMD 点位', 'FMP 点位']
 STATISTICS_STATUS_ORDER = ['已配置', '待补充', '无需配置']
 PRODUCT_STATISTICS_STATUS_ORDER = ['已落地', '未落地', '不涉及']
 FAILURE_MODE_LANDING_STATUS_ORDER = ['已落地', '未落地', '不涉及']
@@ -212,6 +210,55 @@ def _normalize_enum_list(values: Any, allowed_values: list[str]) -> list[str]:
     return [item for item in allowed_values if item in normalized_set]
 
 
+def _normalize_ordered_value_selection(
+    values: Any,
+    allowed_values: Iterable[str],
+    *,
+    append_unknown: bool = False,
+) -> list[str]:
+    normalized = _normalize_text_list(values)
+    normalized_set = set(normalized)
+    result: list[str] = []
+    seen: set[str] = set()
+
+    for value in allowed_values:
+        text = _normalize_optional_text(value)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        if text in normalized_set:
+            result.append(text)
+
+    if append_unknown:
+        for value in normalized:
+            if value in seen:
+                continue
+            seen.add(value)
+            result.append(value)
+
+    return result
+
+
+def _ordered_values_with_extras(
+    ordered_values: Iterable[str],
+    extra_values: Any,
+) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in ordered_values:
+        text = _normalize_optional_text(value)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    for value in _normalize_text_list(extra_values):
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
 def _normalize_failure_mode_source_type(value: Any) -> str:
     normalized = _normalize_optional_text(value) or FailureMode.SOURCE_TYPE_MANUAL
     allowed_values = {
@@ -319,10 +366,10 @@ FAILURE_MODE_SIMPLE_FIELD_NORMALIZERS = {
     'interception_required': _normalize_bool,
     'huatuo_required': _normalize_bool,
     'required_handling_measure_categories': (
-        lambda value: _normalize_enum_list(value, FIXED_HANDLING_MEASURE_CATEGORIES)
+        lambda value: _normalize_dict_driven_values(value, 'measure_category')
     ),
     'required_observation_method_types': (
-        lambda value: _normalize_enum_list(value, FIXED_OBSERVATION_METHOD_TYPES)
+        lambda value: _normalize_dict_driven_values(value, 'monitor_type')
     ),
 }
 
@@ -627,13 +674,13 @@ def _serialize_failure_mode(failure_mode: FailureMode) -> dict[str, Any]:
         'source_task_no': getattr(getattr(failure_mode, 'source_task', None), 'task_no', None),
         'interception_required': bool(failure_mode.interception_required),
         'huatuo_required': bool(failure_mode.huatuo_required),
-        'required_handling_measure_categories': _normalize_enum_list(
+        'required_handling_measure_categories': _serialize_dict_driven_values(
             failure_mode.required_handling_measure_categories,
-            FIXED_HANDLING_MEASURE_CATEGORIES,
+            'measure_category',
         ),
-        'required_observation_method_types': _normalize_enum_list(
+        'required_observation_method_types': _serialize_dict_driven_values(
             failure_mode.required_observation_method_types,
-            FIXED_OBSERVATION_METHOD_TYPES,
+            'monitor_type',
         ),
         'interception_strategy_ids': [str(item.interception_strategy_id) for item in interception_relations],
         'interception_strategy_items': [
@@ -1676,6 +1723,32 @@ def _load_dict_grouped(field_names: Iterable[str] | None = None) -> dict[str, li
     return grouped
 
 
+def _dict_ordered_values(field_name: str) -> list[str]:
+    return _load_dict_grouped([field_name]).get(field_name, [])
+
+
+def _normalize_dict_driven_values(values: Any, field_name: str) -> list[str]:
+    return _normalize_ordered_value_selection(
+        values,
+        _dict_ordered_values(field_name),
+    )
+
+
+def _serialize_dict_driven_values(values: Any, field_name: str) -> list[str]:
+    return _normalize_ordered_value_selection(
+        values,
+        _dict_ordered_values(field_name),
+        append_unknown=True,
+    )
+
+
+def _dict_values_with_extras(field_name: str, extra_values: Any) -> list[str]:
+    return _ordered_values_with_extras(
+        _dict_ordered_values(field_name),
+        extra_values,
+    )
+
+
 def _build_subsystem_config_options() -> dict[str, Any]:
     dict_grouped = _load_dict_grouped(['subsystem', 'module', 'chip'])
     configs = list(_subsystem_config_queryset())
@@ -1831,13 +1904,13 @@ def _failure_mode_attrs(payload: dict[str, Any]) -> dict[str, Any]:
         'source_task_id': _normalize_optional_text(payload.get('source_task_id')),
         'interception_required': _normalize_bool(payload.get('interception_required')),
         'huatuo_required': _normalize_bool(payload.get('huatuo_required')),
-        'required_handling_measure_categories': _normalize_enum_list(
+        'required_handling_measure_categories': _normalize_dict_driven_values(
             payload.get('required_handling_measure_categories'),
-            FIXED_HANDLING_MEASURE_CATEGORIES,
+            'measure_category',
         ),
-        'required_observation_method_types': _normalize_enum_list(
+        'required_observation_method_types': _normalize_dict_driven_values(
             payload.get('required_observation_method_types'),
-            FIXED_OBSERVATION_METHOD_TYPES,
+            'monitor_type',
         ),
     }
     if attrs['source_type'] == FailureMode.SOURCE_TYPE_MANUAL:
@@ -1872,11 +1945,11 @@ def _update_failure_mode_attrs(instance: FailureMode, payload: dict[str, Any]):
         'huatuo_required': ('huatuo_required', _normalize_bool),
         'required_handling_measure_categories': (
             'required_handling_measure_categories',
-            lambda value: _normalize_enum_list(value, FIXED_HANDLING_MEASURE_CATEGORIES),
+            lambda value: _normalize_dict_driven_values(value, 'measure_category'),
         ),
         'required_observation_method_types': (
             'required_observation_method_types',
-            lambda value: _normalize_enum_list(value, FIXED_OBSERVATION_METHOD_TYPES),
+            lambda value: _normalize_dict_driven_values(value, 'monitor_type'),
         ),
     }
     for payload_key, (field_name, normalizer) in mapping.items():
@@ -1970,25 +2043,25 @@ def _resolve_failure_mode_relation_plan(
         instance.huatuo_required if instance else False,
     )
     required_handling_categories = (
-        _normalize_enum_list(
+        _normalize_dict_driven_values(
             payload.get('required_handling_measure_categories'),
-            FIXED_HANDLING_MEASURE_CATEGORIES,
+            'measure_category',
         )
         if 'required_handling_measure_categories' in payload or instance is None
-        else _normalize_enum_list(
+        else _serialize_dict_driven_values(
             instance.required_handling_measure_categories,
-            FIXED_HANDLING_MEASURE_CATEGORIES,
+            'measure_category',
         )
     )
     required_observation_types = (
-        _normalize_enum_list(
+        _normalize_dict_driven_values(
             payload.get('required_observation_method_types'),
-            FIXED_OBSERVATION_METHOD_TYPES,
+            'monitor_type',
         )
         if 'required_observation_method_types' in payload or instance is None
-        else _normalize_enum_list(
+        else _serialize_dict_driven_values(
             instance.required_observation_method_types,
-            FIXED_OBSERVATION_METHOD_TYPES,
+            'monitor_type',
         )
     )
 
@@ -3105,12 +3178,8 @@ def _build_statistics_payload_from_sources(
             'subsystem': subsystem,
             'failure_mode_count': 0,
             'interception_relation_count': 0,
-            'handling_detection_relation_count': 0,
-            'handling_prevention_relation_count': 0,
-            'handling_self_heal_relation_count': 0,
-            'observation_pipeline_log_relation_count': 0,
-            'observation_dmd_relation_count': 0,
-            'observation_fmp_relation_count': 0,
+            'handling_relation_counts': {},
+            'observation_relation_counts': {},
             'huatuo_relation_count': 0,
             'pending_failure_mode_count': 0,
             'pending_rate': 0.0,
@@ -3129,19 +3198,62 @@ def _build_statistics_payload_from_sources(
     for source in source_row_list:
         ensure_subsystem_key(source.subsystem)
 
+    handling_category_order = _dict_values_with_extras(
+        'measure_category',
+        [
+            *[
+                relation.handling_measure.measure_category
+                for source in source_row_list
+                for relation in source.failure_mode.handling_measure_relations.all()
+                if getattr(relation, 'handling_measure', None)
+            ],
+            *[
+                category
+                for source in source_row_list
+                for category in _normalize_text_list(
+                    source.failure_mode.required_handling_measure_categories,
+                )
+            ],
+        ],
+    )
+    observation_type_order = _dict_values_with_extras(
+        'monitor_type',
+        [
+            *[
+                relation.observation_method.monitor_type
+                for source in source_row_list
+                for relation in source.failure_mode.observation_method_relations.all()
+                if getattr(relation, 'observation_method', None)
+            ],
+            *[
+                monitor_type
+                for source in source_row_list
+                for monitor_type in _normalize_text_list(
+                    source.failure_mode.required_observation_method_types,
+                )
+            ],
+        ],
+    )
+
     rows: dict[str, dict[str, Any]] = {}
     for subsystem in subsystem_keys:
-        ensure_row(rows, subsystem)
+        row = ensure_row(rows, subsystem)
+        row['handling_relation_counts'] = {
+            category: 0 for category in handling_category_order
+        }
+        row['observation_relation_counts'] = {
+            monitor_type: 0 for monitor_type in observation_type_order
+        }
 
     interception_counter = defaultdict(int)
     huatuo_counter = defaultdict(int)
     handling_counters = {
         category: defaultdict(int)
-        for category in FIXED_HANDLING_MEASURE_CATEGORIES
+        for category in handling_category_order
     }
     observation_counters = {
         monitor_type: defaultdict(int)
-        for monitor_type in FIXED_OBSERVATION_METHOD_TYPES
+        for monitor_type in observation_type_order
     }
 
     for source in source_row_list:
@@ -3164,9 +3276,10 @@ def _build_statistics_payload_from_sources(
             )
             if category:
                 handling_counts[category] += 1
-        row['handling_detection_relation_count'] += handling_counts['检测']
-        row['handling_prevention_relation_count'] += handling_counts['预防']
-        row['handling_self_heal_relation_count'] += handling_counts['自愈']
+        for category in handling_category_order:
+            row['handling_relation_counts'][category] = int(
+                row['handling_relation_counts'].get(category, 0)
+            ) + int(handling_counts.get(category, 0))
 
         observation_counts = defaultdict(int)
         for relation in observation_relations:
@@ -3175,20 +3288,21 @@ def _build_statistics_payload_from_sources(
             )
             if monitor_type:
                 observation_counts[monitor_type] += 1
-        row['observation_pipeline_log_relation_count'] += observation_counts['流水日志']
-        row['observation_dmd_relation_count'] += observation_counts['DMD 点位']
-        row['observation_fmp_relation_count'] += observation_counts['FMP 点位']
+        for monitor_type in observation_type_order:
+            row['observation_relation_counts'][monitor_type] = int(
+                row['observation_relation_counts'].get(monitor_type, 0)
+            ) + int(observation_counts.get(monitor_type, 0))
 
         required_handling_categories = set(
-            _normalize_enum_list(
+            _serialize_dict_driven_values(
                 failure_mode.required_handling_measure_categories,
-                FIXED_HANDLING_MEASURE_CATEGORIES,
+                'measure_category',
             ),
         )
         required_observation_types = set(
-            _normalize_enum_list(
+            _serialize_dict_driven_values(
                 failure_mode.required_observation_method_types,
-                FIXED_OBSERVATION_METHOD_TYPES,
+                'monitor_type',
             ),
         )
 
@@ -3208,7 +3322,7 @@ def _build_statistics_payload_from_sources(
             _normalize_optional_text(relation.handling_measure.measure_category)
             for relation in handling_relations
         }
-        for category in FIXED_HANDLING_MEASURE_CATEGORIES:
+        for category in handling_category_order:
             status = _resolve_statistics_status(
                 category in required_handling_categories,
                 category in handling_available,
@@ -3219,7 +3333,7 @@ def _build_statistics_payload_from_sources(
             _normalize_optional_text(relation.observation_method.monitor_type)
             for relation in observation_relations
         }
-        for monitor_type in FIXED_OBSERVATION_METHOD_TYPES:
+        for monitor_type in observation_type_order:
             status = _resolve_statistics_status(
                 monitor_type in required_observation_types,
                 monitor_type in observation_available,
@@ -3263,26 +3377,19 @@ def _build_statistics_payload_from_sources(
             }
             for item in subsystem_rows
         ],
+        'failure_mode_landing_status': [],
         'interception_status': _build_statistics_status_dataset(interception_counter),
         'huatuo_status': _build_statistics_status_dataset(huatuo_counter),
-        'handling_detection_status': _build_statistics_status_dataset(
-            handling_counters['检测'],
-        ),
-        'handling_prevention_status': _build_statistics_status_dataset(
-            handling_counters['预防'],
-        ),
-        'handling_self_heal_status': _build_statistics_status_dataset(
-            handling_counters['自愈'],
-        ),
-        'observation_pipeline_log_status': _build_statistics_status_dataset(
-            observation_counters['流水日志'],
-        ),
-        'observation_dmd_status': _build_statistics_status_dataset(
-            observation_counters['DMD 点位'],
-        ),
-        'observation_fmp_status': _build_statistics_status_dataset(
-            observation_counters['FMP 点位'],
-        ),
+        'handling_status_map': {
+            category: _build_statistics_status_dataset(handling_counters[category])
+            for category in handling_category_order
+        },
+        'observation_status_map': {
+            monitor_type: _build_statistics_status_dataset(
+                observation_counters[monitor_type],
+            )
+            for monitor_type in observation_type_order
+        },
     }
     return {
         'rows': subsystem_rows,
@@ -3486,16 +3593,54 @@ def _build_product_statistics_payload_from_bindings(
     failure_mode_landing_counter = defaultdict(int)
     interception_counter = defaultdict(int)
     huatuo_counter = defaultdict(int)
+    binding_list = list(bindings)
+    handling_category_order = _dict_values_with_extras(
+        'measure_category',
+        [
+            *[
+                landing.handling_measure.measure_category
+                for binding in binding_list
+                for landing in binding.handling_landings.all()
+                if not landing.is_deleted and getattr(landing, 'handling_measure', None)
+            ],
+            *[
+                category
+                for binding in binding_list
+                if getattr(binding, 'failure_mode', None)
+                for category in _normalize_text_list(
+                    binding.failure_mode.required_handling_measure_categories,
+                )
+            ],
+        ],
+    )
+    observation_type_order = _dict_values_with_extras(
+        'monitor_type',
+        [
+            *[
+                landing.observation_method.monitor_type
+                for binding in binding_list
+                for landing in binding.observation_landings.all()
+                if not landing.is_deleted
+                and getattr(landing, 'observation_method', None)
+            ],
+            *[
+                monitor_type
+                for binding in binding_list
+                if getattr(binding, 'failure_mode', None)
+                for monitor_type in _normalize_text_list(
+                    binding.failure_mode.required_observation_method_types,
+                )
+            ],
+        ],
+    )
     handling_counters = {
         category: defaultdict(int)
-        for category in FIXED_HANDLING_MEASURE_CATEGORIES
+        for category in handling_category_order
     }
     observation_counters = {
         monitor_type: defaultdict(int)
-        for monitor_type in FIXED_OBSERVATION_METHOD_TYPES
+        for monitor_type in observation_type_order
     }
-
-    binding_list = list(bindings)
     for binding in binding_list:
         failure_mode = binding.failure_mode
         if not failure_mode:
@@ -3505,15 +3650,15 @@ def _build_product_statistics_payload_from_bindings(
         row['baseline_failure_mode_count'] += 1
 
         required_handling_categories = set(
-            _normalize_enum_list(
+            _serialize_dict_driven_values(
                 failure_mode.required_handling_measure_categories,
-                FIXED_HANDLING_MEASURE_CATEGORIES,
+                'measure_category',
             ),
         )
         required_observation_types = set(
-            _normalize_enum_list(
+            _serialize_dict_driven_values(
                 failure_mode.required_observation_method_types,
-                FIXED_OBSERVATION_METHOD_TYPES,
+                'monitor_type',
             ),
         )
 
@@ -3563,14 +3708,14 @@ def _build_product_statistics_payload_from_bindings(
                 category in required_handling_categories,
                 handling_status_map.get(category, []),
             )
-            for category in FIXED_HANDLING_MEASURE_CATEGORIES
+            for category in handling_category_order
         }
         observation_statuses = {
             monitor_type: _resolve_product_landing_status(
                 monitor_type in required_observation_types,
                 observation_status_map.get(monitor_type, []),
             )
-            for monitor_type in FIXED_OBSERVATION_METHOD_TYPES
+            for monitor_type in observation_type_order
         }
 
         binding_status = _aggregate_landing_status(
@@ -3592,9 +3737,9 @@ def _build_product_statistics_payload_from_bindings(
 
         interception_counter[interception_status] += 1
         huatuo_counter[huatuo_status] += 1
-        for category in FIXED_HANDLING_MEASURE_CATEGORIES:
+        for category in handling_category_order:
             handling_counters[category][handling_statuses[category]] += 1
-        for monitor_type in FIXED_OBSERVATION_METHOD_TYPES:
+        for monitor_type in observation_type_order:
             observation_counters[monitor_type][observation_statuses[monitor_type]] += 1
 
         if binding_status == LANDING_STATUS_NOT_LANDED:
@@ -3627,30 +3772,20 @@ def _build_product_statistics_payload_from_bindings(
             huatuo_counter,
             PRODUCT_STATISTICS_STATUS_ORDER,
         ),
-        'handling_detection_status': _build_statistics_status_dataset(
-            handling_counters['检测'],
-            PRODUCT_STATISTICS_STATUS_ORDER,
-        ),
-        'handling_prevention_status': _build_statistics_status_dataset(
-            handling_counters['预防'],
-            PRODUCT_STATISTICS_STATUS_ORDER,
-        ),
-        'handling_self_heal_status': _build_statistics_status_dataset(
-            handling_counters['自愈'],
-            PRODUCT_STATISTICS_STATUS_ORDER,
-        ),
-        'observation_pipeline_log_status': _build_statistics_status_dataset(
-            observation_counters['流水日志'],
-            PRODUCT_STATISTICS_STATUS_ORDER,
-        ),
-        'observation_dmd_status': _build_statistics_status_dataset(
-            observation_counters['DMD 点位'],
-            PRODUCT_STATISTICS_STATUS_ORDER,
-        ),
-        'observation_fmp_status': _build_statistics_status_dataset(
-            observation_counters['FMP 点位'],
-            PRODUCT_STATISTICS_STATUS_ORDER,
-        ),
+        'handling_status_map': {
+            category: _build_statistics_status_dataset(
+                handling_counters[category],
+                PRODUCT_STATISTICS_STATUS_ORDER,
+            )
+            for category in handling_category_order
+        },
+        'observation_status_map': {
+            monitor_type: _build_statistics_status_dataset(
+                observation_counters[monitor_type],
+                PRODUCT_STATISTICS_STATUS_ORDER,
+            )
+            for monitor_type in observation_type_order
+        },
     }
     return {'rows': rows, 'summary': summary}
 
@@ -3771,15 +3906,6 @@ def get_failure_mode_dict_options() -> dict[str, Any]:
     grouped['subsystem'] = [item['value'] for item in subsystem_options['subsystem_options']]
     grouped['module'] = [item['value'] for item in subsystem_options['module_options']]
     grouped['chip'] = [item['value'] for item in subsystem_options['chip_options']]
-
-    grouped['measure_category'] = [
-        *_normalize_enum_list(FIXED_HANDLING_MEASURE_CATEGORIES, FIXED_HANDLING_MEASURE_CATEGORIES),
-        *[item for item in grouped.get('measure_category', []) if item not in FIXED_HANDLING_MEASURE_CATEGORIES],
-    ]
-    grouped['monitor_type'] = [
-        *_normalize_enum_list(FIXED_OBSERVATION_METHOD_TYPES, FIXED_OBSERVATION_METHOD_TYPES),
-        *[item for item in grouped.get('monitor_type', []) if item not in FIXED_OBSERVATION_METHOD_TYPES],
-    ]
 
     return {
         field: _build_option_list(values)

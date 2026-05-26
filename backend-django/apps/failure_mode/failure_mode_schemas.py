@@ -720,24 +720,20 @@ class FailureModeStatisticsSummarySchema(Schema):
     failure_mode_landing_status: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
     interception_status: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
     huatuo_status: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
-    handling_detection_status: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
-    handling_prevention_status: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
-    handling_self_heal_status: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
-    observation_pipeline_log_status: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
-    observation_dmd_status: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
-    observation_fmp_status: list[FailureModeStatisticsChartDatumSchema] = Field(default_factory=list)
+    handling_status_map: dict[str, list[FailureModeStatisticsChartDatumSchema]] = Field(
+        default_factory=dict,
+    )
+    observation_status_map: dict[str, list[FailureModeStatisticsChartDatumSchema]] = Field(
+        default_factory=dict,
+    )
 
 
 class FailureModeStatisticsSubsystemRowSchema(Schema):
     subsystem: str
     failure_mode_count: int
     interception_relation_count: int
-    handling_detection_relation_count: int
-    handling_prevention_relation_count: int
-    handling_self_heal_relation_count: int
-    observation_pipeline_log_relation_count: int
-    observation_dmd_relation_count: int
-    observation_fmp_relation_count: int
+    handling_relation_counts: dict[str, int] = Field(default_factory=dict)
+    observation_relation_counts: dict[str, int] = Field(default_factory=dict)
     huatuo_relation_count: int
     pending_failure_mode_count: int
     pending_rate: float

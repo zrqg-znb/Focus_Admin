@@ -66,13 +66,13 @@ const landingSections = computed<LandingSection[]>(() => [
     key: 'handling_rows',
     rows: detail.value?.handling_rows || [],
     title: '故障处理措施',
-    description: '检测、预防、自愈对应的产品落地状态在这里统一维护。',
+    description: '按当前措施类别为每个产品分别维护落地状态。',
   },
   {
     key: 'observation_rows',
     rows: detail.value?.observation_rows || [],
     title: '维测手段',
-    description: '流水日志、DMD 点位、FMP 点位都按产品独立配置。',
+    description: '按当前维测类别为每个产品分别维护落地状态。',
   },
   {
     key: 'huatuo_rows',

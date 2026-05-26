@@ -497,7 +497,8 @@ async function handleMasterAction(
   }
 }
 
-async function handleFailureModeSaved() {
+async function handleFailureModeSaved(item: FailureModeItem) {
+  relationInsightDrawerRef.value?.invalidateFailureMode(item.id);
   await Promise.all([failureModeGridApi.reload(), loadBaseOptions()]);
 }
 
