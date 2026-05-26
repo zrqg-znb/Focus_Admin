@@ -1,24 +1,17 @@
 <script lang="ts" setup>
 import type { FailureModeScopeBinding } from '#/api/failure_mode';
-import type {
-  FailureModeProductItem,
-  VisibleSubsystemItem,
-} from '#/api/failure_mode_workflow';
+import type { FailureModeProductItem } from '#/api/failure_mode_workflow';
 
 import { computed, onMounted, ref, watch } from 'vue';
 
 import { Delete, Plus } from '@element-plus/icons-vue';
 import { ElButton, ElEmpty, ElOption, ElSelect, ElTag } from 'element-plus';
 
-import {
-  listProductsApi,
-  listVisibleSubsystemsApi,
-} from '#/api/failure_mode_workflow';
+import { listProductsApi } from '#/api/failure_mode_workflow';
 
 interface DraftScopeBinding {
   key: number;
   product_id: string;
-  subsystem: string;
   product_name: string;
 }
 
@@ -34,7 +27,7 @@ const props = withDefaults(
   {
     bodyMaxHeight: '320px',
     description:
-      '为当前故障模式选择需要落地的产品与子系统，支持配置多个独立范围。',
+      '为当前故障模式选择需要关联的产品，子系统将统一取故障模式表单中的子系统字段。',
     disabled: false,
     modelValue: () => [],
     scrollable: true,
@@ -49,8 +42,6 @@ let sequence = 0;
 const draftItems = ref<DraftScopeBinding[]>([]);
 const products = ref<FailureModeProductItem[]>([]);
 const productsLoading = ref(false);
-const subsystemOptionsMap = ref<Record<string, VisibleSubsystemItem[]>>({});
-const subsystemLoadingMap = ref<Record<string, boolean>>({});
 
 const productOptions = computed(() =>
   products.value.map((item) => ({
@@ -64,8 +55,7 @@ const bodyClass = computed(() =>
 );
 
 const filledCount = computed(
-  () =>
-    draftItems.value.filter((item) => item.product_id && item.subsystem).length,
+  () => draftItems.value.filter((item) => item.product_id).length,
 );
 
 function createDraft(
@@ -75,7 +65,6 @@ function createDraft(
   return {
     key: sequence,
     product_id: String(value.product_id || '').trim(),
-    subsystem: String(value.subsystem || '').trim(),
     product_name: String(value.product_name || '').trim(),
   };
 }
@@ -88,7 +77,6 @@ function arraysEqual(left: DraftScopeBinding[], right: DraftScopeBinding[]) {
     const other = right[index];
     return (
       item.product_id === other.product_id &&
-      item.subsystem === other.subsystem &&
       item.product_name === other.product_name
     );
   });
@@ -97,7 +85,17 @@ function arraysEqual(left: DraftScopeBinding[], right: DraftScopeBinding[]) {
 function normalizeDraftBindings(
   values: FailureModeScopeBinding[] = [],
 ): DraftScopeBinding[] {
-  return (Array.isArray(values) ? values : []).map((item) => createDraft(item));
+  const seen = new Set<string>();
+  const items: DraftScopeBinding[] = [];
+  (Array.isArray(values) ? values : []).forEach((item) => {
+    const productId = String(item.product_id || '').trim();
+    if (!productId || seen.has(productId)) {
+      return;
+    }
+    seen.add(productId);
+    items.push(createDraft(item));
+  });
+  return items;
 }
 
 function getProductName(productId: string) {
@@ -106,18 +104,22 @@ function getProductName(productId: string) {
   );
 }
 
-function getSubsystemOptions(productId: string) {
-  return subsystemOptionsMap.value[productId] || [];
-}
-
 function emitValue() {
+  const seen = new Set<string>();
   emit(
     'update:modelValue',
-    draftItems.value.map((item) => ({
-      product_id: item.product_id.trim(),
-      subsystem: item.subsystem.trim(),
-      product_name: item.product_name.trim() || null,
-    })),
+    draftItems.value
+      .map((item) => ({
+        product_id: item.product_id.trim(),
+        product_name: item.product_name.trim() || null,
+      }))
+      .filter((item) => {
+        if (!item.product_id || seen.has(item.product_id)) {
+          return false;
+        }
+        seen.add(item.product_id);
+        return true;
+      }),
   );
 }
 
@@ -133,41 +135,6 @@ async function loadProducts() {
   }
 }
 
-async function ensureSubsystemOptions(productId: string) {
-  const normalizedProductId = String(productId || '').trim();
-  if (!normalizedProductId || subsystemOptionsMap.value[normalizedProductId]) {
-    return;
-  }
-  subsystemLoadingMap.value = {
-    ...subsystemLoadingMap.value,
-    [normalizedProductId]: true,
-  };
-  try {
-    const items = await listVisibleSubsystemsApi(normalizedProductId);
-    subsystemOptionsMap.value = {
-      ...subsystemOptionsMap.value,
-      [normalizedProductId]: items || [],
-    };
-  } finally {
-    subsystemLoadingMap.value = {
-      ...subsystemLoadingMap.value,
-      [normalizedProductId]: false,
-    };
-  }
-}
-
-async function primeSubsystemOptions() {
-  await loadProducts();
-  const productIds = [
-    ...new Set(
-      draftItems.value.map((item) => item.product_id.trim()).filter(Boolean),
-    ),
-  ];
-  await Promise.all(
-    productIds.map((productId) => ensureSubsystemOptions(productId)),
-  );
-}
-
 function syncDraftsFromModel(values: FailureModeScopeBinding[]) {
   const nextDraftItems = normalizeDraftBindings(values || []);
   if (
@@ -178,7 +145,6 @@ function syncDraftsFromModel(values: FailureModeScopeBinding[]) {
   }
   draftItems.value =
     nextDraftItems.length > 0 ? nextDraftItems : [createDraft()];
-  void primeSubsystemOptions();
 }
 
 function handleAdd() {
@@ -201,7 +167,7 @@ function handleRemove(index: number) {
   emitValue();
 }
 
-async function handleProductChange(index: number, value?: string) {
+function handleProductChange(index: number, value?: string) {
   if (props.disabled) {
     return;
   }
@@ -212,17 +178,6 @@ async function handleProductChange(index: number, value?: string) {
   const productId = String(value || '').trim();
   item.product_id = productId;
   item.product_name = getProductName(productId);
-  item.subsystem = '';
-  if (productId) {
-    await ensureSubsystemOptions(productId);
-  }
-  emitValue();
-}
-
-function handleSubsystemChange() {
-  if (props.disabled) {
-    return;
-  }
   emitValue();
 }
 
@@ -236,7 +191,6 @@ watch(
 
 onMounted(() => {
   void loadProducts();
-  void primeSubsystemOptions();
 });
 </script>
 
@@ -288,7 +242,7 @@ onMounted(() => {
             {{ index + 1 }}
           </div>
 
-          <div class="grid min-w-0 flex-1 gap-3 md:grid-cols-2">
+          <div class="grid min-w-0 flex-1 gap-3">
             <div class="min-w-0">
               <div class="mb-2 text-xs text-[var(--el-text-color-secondary)]">
                 产品
@@ -310,29 +264,6 @@ onMounted(() => {
                 />
               </ElSelect>
             </div>
-
-            <div class="min-w-0">
-              <div class="mb-2 text-xs text-[var(--el-text-color-secondary)]">
-                子系统
-              </div>
-              <ElSelect
-                v-model="item.subsystem"
-                class="w-full"
-                clearable
-                filterable
-                :disabled="props.disabled || !item.product_id"
-                :loading="Boolean(subsystemLoadingMap[item.product_id])"
-                placeholder="请选择子系统"
-                @change="handleSubsystemChange"
-              >
-                <ElOption
-                  v-for="option in getSubsystemOptions(item.product_id)"
-                  :key="option.value"
-                  :label="option.label"
-                  :value="option.value"
-                />
-              </ElSelect>
-            </div>
           </div>
 
           <ElButton
@@ -347,7 +278,7 @@ onMounted(() => {
       </div>
 
       <div v-else class="flex min-h-[180px] items-center justify-center">
-        <ElEmpty description="暂无产品范围绑定" :image-size="72" />
+        <ElEmpty description="暂无关联产品" :image-size="72" />
       </div>
     </div>
   </div>

@@ -23,7 +23,7 @@ class RelationItemSchema(Schema):
 
 class FailureModeScopeBindingSchema(Schema):
     product_id: str
-    subsystem: str
+    subsystem: Optional[str] = None
     product_name: Optional[str] = None
 
 

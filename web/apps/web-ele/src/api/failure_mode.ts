@@ -14,7 +14,7 @@ export interface RelationItem {
 
 export interface FailureModeScopeBinding {
   product_id: string;
-  subsystem: string;
+  subsystem?: null | string;
   product_name?: null | string;
 }
 
@@ -508,17 +508,17 @@ function normalizeScopeBindings(value: unknown): FailureModeScopeBinding[] {
         : { product_id: item };
     const productId = String(raw.product_id ?? '').trim();
     const subsystem = String(raw.subsystem ?? '').trim();
-    if (!productId || !subsystem) {
+    if (!productId) {
       return;
     }
-    const key = `${productId}::${subsystem}`;
+    const key = subsystem ? `${productId}::${subsystem}` : productId;
     if (seen.has(key)) {
       return;
     }
     seen.add(key);
     result.push({
       product_id: productId,
-      subsystem,
+      subsystem: subsystem || null,
       product_name: String(raw.product_name ?? '').trim() || null,
     });
   });

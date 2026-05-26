@@ -257,32 +257,33 @@ async function clearInitialValidationState() {
 
 function normalizeScopeBindingsForSubmit(
   values: FailureModeScopeBinding[] = [],
+  selectedSubsystem?: string,
 ) {
   const items: FailureModeScopeBinding[] = [];
   const seen = new Set<string>();
+  const normalizedSubsystem = String(selectedSubsystem || '').trim();
   let hasIncomplete = false;
 
   values.forEach((item) => {
     const productId = String(item.product_id || '').trim();
-    const subsystem = String(item.subsystem || '').trim();
     const productName = String(item.product_name || '').trim();
 
-    if (!productId && !subsystem) {
+    if (!productId) {
       return;
     }
-    if (!productId || !subsystem) {
+    if (!normalizedSubsystem) {
       hasIncomplete = true;
       return;
     }
 
-    const key = `${productId}::${subsystem}`;
+    const key = productId;
     if (seen.has(key)) {
       return;
     }
     seen.add(key);
     items.push({
       product_id: productId,
-      subsystem,
+      subsystem: normalizedSubsystem,
       product_name: productName || null,
     });
   });
@@ -640,9 +641,10 @@ async function handleConfirm() {
     const values = await formApi.getValues<Record<string, any>>();
     const normalizedScopeBindings = normalizeScopeBindingsForSubmit(
       scopeBindings.value,
+      String(values.subsystem || '').trim(),
     );
     if (normalizedScopeBindings.hasIncomplete) {
-      ElMessage.warning('请先补齐产品和子系统绑定，再保存故障模式。');
+      ElMessage.warning('已关联产品时，请先选择故障模式子系统。');
       return;
     }
     const payload: FailureModePayload = {
@@ -754,8 +756,8 @@ defineExpose({
           v-model="scopeBindings"
           body-max-height="360px"
           :disabled="isReadonly"
-          label="产品 / 子系统绑定"
-          description="选择需要落地的产品与子系统组合。支持为同一故障模式配置多个独立范围，保存后会自动同步到对应产品基线。"
+          label="关联产品"
+          description="选择需要关联的产品，子系统统一取当前故障模式的子系统字段；保存后会自动同步到对应产品基线。"
         />
 
         <StringListEditor

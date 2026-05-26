@@ -698,6 +698,7 @@ def _normalize_task_landing_payload_for_item(
 ) -> dict[str, Any]:
     payload = dict(existing_payload or {})
     fallback_payload = dict(fallback_payload or {})
+    fallback_subsystem = _normalize_text(item.get('subsystem'))
     target_products = list(payload.get('products') or fallback_payload.get('products') or [])
     if not target_products:
         scope_bindings = item.get('scope_bindings') or []
@@ -719,6 +720,8 @@ def _normalize_task_landing_payload_for_item(
             subsystem = _normalize_text(binding.get('subsystem'))
             if subsystem and subsystem not in product_row['subsystems']:
                 product_row['subsystems'].append(subsystem)
+            elif fallback_subsystem and fallback_subsystem not in product_row['subsystems']:
+                product_row['subsystems'].append(fallback_subsystem)
         target_products = list(grouped_products.values())
     if not target_products:
         target_products = [

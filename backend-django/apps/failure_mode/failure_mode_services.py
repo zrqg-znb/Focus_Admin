@@ -231,7 +231,7 @@ def _append_unique_text(target: list[str], seen: set[str], value: Any):
     target.append(text)
 
 
-def _normalize_scope_bindings(values: Any) -> list[dict[str, str]]:
+def _normalize_scope_bindings(values: Any) -> list[dict[str, str | None]]:
     if values is None:
         return []
     if isinstance(values, dict):
@@ -239,13 +239,15 @@ def _normalize_scope_bindings(values: Any) -> list[dict[str, str]]:
     if not isinstance(values, list):
         values = [values]
 
-    result: list[dict[str, str]] = []
+    result: list[dict[str, str | None]] = []
     seen: set[tuple[str, str]] = set()
     for item in values:
         product_id: str | None = None
+        product_name: str | None = None
         subsystem: str | None = None
         if isinstance(item, dict):
             product_id = _normalize_optional_text(item.get('product_id'))
+            product_name = _normalize_optional_text(item.get('product_name'))
             subsystem = _normalize_optional_text(item.get('subsystem'))
         elif isinstance(item, (list, tuple)) and len(item) >= 2:
             product_id = _normalize_optional_text(item[0])
@@ -257,8 +259,40 @@ def _normalize_scope_bindings(values: Any) -> list[dict[str, str]]:
                 if len(parts) == 2:
                     product_id = _normalize_optional_text(parts[0])
                     subsystem = _normalize_optional_text(parts[1])
-        if not product_id or not subsystem:
+        if not product_id:
             continue
+        key = (product_id, subsystem or '')
+        if key in seen:
+            continue
+        seen.add(key)
+        binding: dict[str, str | None] = {'product_id': product_id}
+        if product_name:
+            binding['product_name'] = product_name
+        if subsystem:
+            binding['subsystem'] = subsystem
+        result.append(binding)
+    return result
+
+
+def _normalize_scope_bindings_for_storage(
+    values: Any,
+    *,
+    fallback_subsystem: Any = None,
+) -> list[dict[str, str]]:
+    raw_bindings = _normalize_scope_bindings(values)
+    normalized_fallback_subsystem = _normalize_optional_text(fallback_subsystem)
+
+    result: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in raw_bindings:
+        product_id = _normalize_optional_text(item.get('product_id'))
+        if not product_id:
+            continue
+        subsystem = _normalize_optional_text(item.get('subsystem'))
+        if not subsystem:
+            subsystem = normalized_fallback_subsystem
+        if not subsystem:
+            raise HttpError(422, '存在关联产品时，必须先设置故障模式子系统。')
         key = (product_id, subsystem)
         if key in seen:
             continue
@@ -281,7 +315,6 @@ FAILURE_MODE_SIMPLE_FIELD_NORMALIZERS = {
     'detectability': _normalize_optional_text,
     'severity': _normalize_optional_text,
     'related_dts_nos': _normalize_text_list,
-    'scope_bindings': _normalize_scope_bindings,
     'status': _normalize_optional_text,
     'interception_required': _normalize_bool,
     'huatuo_required': _normalize_bool,
@@ -860,7 +893,10 @@ def _sync_failure_mode_scope_bindings(
     scope_bindings: Any,
     current_user: User,
 ):
-    normalized_bindings = _normalize_scope_bindings(scope_bindings)
+    normalized_bindings = _normalize_scope_bindings_for_storage(
+        scope_bindings,
+        fallback_subsystem=instance.subsystem,
+    )
     normalized_product_ids = _normalize_text_list(
         [item['product_id'] for item in normalized_bindings],
     )
@@ -1771,9 +1807,10 @@ def _sanitize_subsystem_fields(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _failure_mode_attrs(payload: dict[str, Any]) -> dict[str, Any]:
     payload = _sanitize_subsystem_fields(dict(payload))
+    normalized_subsystem = _normalize_optional_text(payload.get('subsystem'))
     attrs = {
         'brief': _normalize_optional_text(payload.get('brief')),
-        'subsystem': _normalize_optional_text(payload.get('subsystem')),
+        'subsystem': normalized_subsystem,
         'module_name': _normalize_optional_text(payload.get('module')),
         'chips': _normalize_text_list(payload.get('chips')),
         'fault_categories': _normalize_text_list(payload.get('fault_categories')),
@@ -1785,7 +1822,10 @@ def _failure_mode_attrs(payload: dict[str, Any]) -> dict[str, Any]:
         'detectability': _normalize_optional_text(payload.get('detectability')),
         'severity': _normalize_optional_text(payload.get('severity')),
         'related_dts_nos': _normalize_text_list(payload.get('related_dts_nos')),
-        'scope_bindings': _normalize_scope_bindings(payload.get('scope_bindings')),
+        'scope_bindings': _normalize_scope_bindings_for_storage(
+            payload.get('scope_bindings'),
+            fallback_subsystem=normalized_subsystem,
+        ),
         'status': _normalize_optional_text(payload.get('status')),
         'source_type': _normalize_failure_mode_source_type(payload.get('source_type')),
         'source_task_id': _normalize_optional_text(payload.get('source_task_id')),
@@ -1827,7 +1867,6 @@ def _update_failure_mode_attrs(instance: FailureMode, payload: dict[str, Any]):
         'detectability': ('detectability', _normalize_optional_text),
         'severity': ('severity', _normalize_optional_text),
         'related_dts_nos': ('related_dts_nos', _normalize_text_list),
-        'scope_bindings': ('scope_bindings', _normalize_scope_bindings),
         'status': ('status', _normalize_optional_text),
         'interception_required': ('interception_required', _normalize_bool),
         'huatuo_required': ('huatuo_required', _normalize_bool),
@@ -1851,6 +1890,16 @@ def _update_failure_mode_attrs(instance: FailureMode, payload: dict[str, Any]):
         if field_name == 'root_cause_html' and not _has_meaningful_html_text(value):
             raise HttpError(422, '故障根因不能为空')
         setattr(instance, field_name, value)
+    if 'scope_bindings' in payload:
+        fallback_subsystem = (
+            _normalize_optional_text(payload.get('subsystem'))
+            if 'subsystem' in payload
+            else _normalize_optional_text(instance.subsystem)
+        )
+        instance.scope_bindings = _normalize_scope_bindings_for_storage(
+            payload.get('scope_bindings'),
+            fallback_subsystem=fallback_subsystem,
+        )
 
 
 def _extract_current_relation_ids(instance: FailureMode, relation_name: str, field_name: str) -> list[str]:
@@ -2040,6 +2089,17 @@ def _prepare_failure_mode_update_plan(
         allowed_fields=allowed_fields,
     )
 
+    if 'scope_bindings' in filtered_payload:
+        fallback_subsystem = (
+            normalized_payload.get('subsystem')
+            if 'subsystem' in filtered_payload
+            else _normalize_optional_text(instance.subsystem)
+        )
+        normalized_payload['scope_bindings'] = _normalize_scope_bindings_for_storage(
+            filtered_payload.get('scope_bindings'),
+            fallback_subsystem=fallback_subsystem,
+        )
+
     if 'author_ids' in filtered_payload:
         authors = _resolve_users(filtered_payload.get('author_ids'), current_user)
         normalized_payload['author_ids'] = [str(item.id) for item in authors]
@@ -2151,7 +2211,15 @@ def merge_failure_mode_snapshot(
             detail['huatuo_diagnosis_ids']
         )
     if 'scope_bindings' in payload:
-        detail['scope_bindings'] = _normalize_scope_bindings(payload.get('scope_bindings'))
+        fallback_subsystem = (
+            detail.get('subsystem')
+            if 'subsystem' in payload
+            else _normalize_optional_text(instance.subsystem)
+        )
+        detail['scope_bindings'] = _normalize_scope_bindings_for_storage(
+            payload.get('scope_bindings'),
+            fallback_subsystem=fallback_subsystem,
+        )
     return detail
 
 

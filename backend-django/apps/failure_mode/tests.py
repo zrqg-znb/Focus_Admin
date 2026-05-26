@@ -1,8 +1,58 @@
 from __future__ import annotations
 
 from django.test import SimpleTestCase
+from ninja.errors import HttpError
 
+from .failure_mode_services import _normalize_scope_bindings_for_storage
 from .failure_mode_workflow_services import _normalize_task_landing_payload_for_item
+
+
+class ScopeBindingNormalizationTests(SimpleTestCase):
+    def test_storage_scope_binding_uses_fallback_subsystem(self):
+        bindings = _normalize_scope_bindings_for_storage(
+            [
+                {
+                    'product_id': 'product-1',
+                    'product_name': 'Product A',
+                }
+            ],
+            fallback_subsystem='Engine',
+        )
+
+        self.assertEqual(
+            bindings,
+            [{'product_id': 'product-1', 'subsystem': 'Engine'}],
+        )
+
+    def test_storage_scope_binding_keeps_explicit_subsystem(self):
+        bindings = _normalize_scope_bindings_for_storage(
+            [
+                {
+                    'product_id': 'product-1',
+                    'product_name': 'Product A',
+                    'subsystem': 'Chassis',
+                }
+            ],
+            fallback_subsystem='Engine',
+        )
+
+        self.assertEqual(
+            bindings,
+            [{'product_id': 'product-1', 'subsystem': 'Chassis'}],
+        )
+
+    def test_storage_scope_binding_requires_effective_subsystem(self):
+        with self.assertRaises(HttpError) as context:
+            _normalize_scope_bindings_for_storage(
+                [
+                    {
+                        'product_id': 'product-1',
+                        'product_name': 'Product A',
+                    }
+                ],
+            )
+
+        self.assertEqual(context.exception.status_code, 422)
 
 
 class TaskLandingPayloadNormalizationTests(SimpleTestCase):
@@ -52,6 +102,33 @@ class TaskLandingPayloadNormalizationTests(SimpleTestCase):
             '已落地',
         )
         self.assertEqual(payload['failure_mode_landing_status'], '已落地')
+
+    def test_product_only_scope_bindings_fallback_to_failure_mode_subsystem(self):
+        payload = _normalize_task_landing_payload_for_item(
+            {
+                'brief': '新故障模式',
+                'subsystem': 'Engine',
+                'scope_bindings': [
+                    {
+                        'product_id': 'product-1',
+                        'product_name': 'Product A',
+                    },
+                ],
+                'interception_strategy_items': [
+                    {
+                        'id': 'resource-1',
+                        'label': '产线拦截策略 1',
+                        'subtitle': '主拦截',
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(payload['products'][0]['subsystems'], ['Engine'])
+        self.assertEqual(
+            payload['interception_rows'][0]['product_rows'][0]['subsystems'],
+            ['Engine'],
+        )
 
     def test_existing_payload_keeps_product_names_and_landing_status(self):
         item = {
