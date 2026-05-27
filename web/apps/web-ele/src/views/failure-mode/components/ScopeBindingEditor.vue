@@ -152,7 +152,6 @@ function handleAdd() {
     return;
   }
   draftItems.value.push(createDraft());
-  emitValue();
 }
 
 function handleRemove(index: number) {
