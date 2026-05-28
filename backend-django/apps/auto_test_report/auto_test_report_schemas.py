@@ -114,6 +114,7 @@ class DailyResultItemOut(Schema):
     start_time: Optional[datetime] = None
     duration_seconds: int = 0
     log_url: Optional[str] = None
+    car_log_url: Optional[str] = None
     reported_at: Optional[datetime] = None
 
 
@@ -152,6 +153,7 @@ class DailyHistoryRow(Schema):
     start_time: Optional[datetime] = None
     duration_seconds: int = 0
     log_url: Optional[str] = None
+    car_log_url: Optional[str] = None
     reported_at: Optional[datetime] = None
 
 

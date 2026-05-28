@@ -1065,6 +1065,17 @@ onMounted(async () => {
                     </ElLink>
                     <span v-else class="text-gray-400">-</span>
                   </template>
+                  <template #cell-car_log_url="{ row }">
+                    <ElLink
+                      v-if="row.car_log_url"
+                      :href="row.car_log_url"
+                      target="_blank"
+                      type="primary"
+                    >
+                      查看日志
+                    </ElLink>
+                    <span v-else class="text-gray-400">-</span>
+                  </template>
                   <template #cell-actions="{ row }">
                     <ElButton link type="primary" @click="openHistory(row)">
                       历史

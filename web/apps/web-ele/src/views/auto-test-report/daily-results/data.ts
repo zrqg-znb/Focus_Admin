@@ -121,6 +121,14 @@ export function useResultColumns(
       headerAlign: 'center',
     },
     {
+      key: 'car_log_url',
+      dataKey: 'car_log_url',
+      title: '车机日志',
+      width: 240,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
       key: 'actions',
       dataKey: 'actions',
       title: '操作',

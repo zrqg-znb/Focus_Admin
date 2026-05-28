@@ -71,6 +71,7 @@ class AutoTestReportOverviewTests(TestCase):
         result: str,
         *,
         minutes_offset: int = 0,
+        log_url: str | None = None,
     ) -> DailyExecutionResult:
         return DailyExecutionResult.objects.create(
             vehicle=vehicle,
@@ -79,6 +80,7 @@ class AutoTestReportOverviewTests(TestCase):
             start_time=timezone.now() + timedelta(minutes=minutes_offset),
             duration_seconds=60,
             result=result,
+            log_url=log_url,
         )
 
     def _get_row(self, overview, vehicle: VehicleModel):
@@ -193,6 +195,32 @@ class AutoTestReportOverviewTests(TestCase):
         self.assertEqual(overview.summary.vehicle_count, 3)
         self.assertEqual(overview.summary.abnormal_vehicle_count, 3)
 
+    def test_derive_car_log_url_handles_valid_and_invalid_values(self):
+        self.assertEqual(
+            services.derive_car_log_url('https://example.com/logs/testcase.html'),
+            'https://example.com/logs/',
+        )
+        self.assertIsNone(services.derive_car_log_url(''))
+        self.assertIsNone(services.derive_car_log_url('   '))
+        self.assertIsNone(services.derive_car_log_url('https://example.com/logs/index.html'))
+        self.assertIsNone(services.derive_car_log_url('testcase.html'))
+
+    def test_list_daily_results_derives_car_log_url_for_cockpit_result(self):
+        vehicle = self._create_vehicle('car-log')
+        case = self._create_cases(vehicle, 1)[0]
+        self._report_result(
+            vehicle,
+            case,
+            RESULT_SUCCESS,
+            log_url='https://example.com/artifacts/testcase.html',
+        )
+
+        items = services.list_daily_results(vehicle.id, self.execute_date, DOMAIN_COCKPIT)
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].log_url, 'https://example.com/artifacts/testcase.html')
+        self.assertEqual(items[0].car_log_url, 'https://example.com/artifacts/')
+
     def test_vehicle_domain_report_supports_skip_and_row_errors(self):
         vehicle_platform = McuPlatform.objects.create(
             name='Vehicle Platform',
@@ -241,6 +269,7 @@ class AutoTestReportOverviewTests(TestCase):
                     start_time=timezone.now(),
                     duration_seconds=60,
                     result=RESULT_SUCCESS,
+                    log_url='https://example.com/viu0/testcase.html',
                 ),
                 ReportResultItemIn(
                     viu_code='viu1',
@@ -248,6 +277,7 @@ class AutoTestReportOverviewTests(TestCase):
                     start_time=timezone.now() + timedelta(minutes=1),
                     duration_seconds=0,
                     result=RESULT_SKIP,
+                    log_url='https://example.com/viu1/testcase.html',
                 ),
                 ReportResultItemIn(
                     viu_code='viu2',
@@ -273,6 +303,13 @@ class AutoTestReportOverviewTests(TestCase):
         self.assertEqual(len(items), 2)
         self.assertEqual({item.viu_code for item in items}, {'viu0', 'viu1'})
         self.assertEqual({item.status for item in items}, {RESULT_SUCCESS, RESULT_SKIP})
+        self.assertEqual(
+            {item.viu_code: item.car_log_url for item in items},
+            {
+                'viu0': 'https://example.com/viu0/',
+                'viu1': 'https://example.com/viu1/',
+            },
+        )
 
         summary = services.get_daily_summary(
             vehicle.id,
@@ -298,6 +335,22 @@ class AutoTestReportOverviewTests(TestCase):
 
         self.assertEqual(case0.viu_code, 'viu0')
         self.assertEqual(case1.viu_code, 'viu1')
+
+    def test_get_test_case_history_includes_car_log_url(self):
+        vehicle = self._create_vehicle('history')
+        case = self._create_cases(vehicle, 1)[0]
+        result = self._report_result(
+            vehicle,
+            case,
+            RESULT_FAILED,
+            log_url='https://example.com/history/testcase.html',
+        )
+
+        history = services.get_test_case_history(str(case.id))
+
+        self.assertEqual(history.total, 1)
+        self.assertEqual(history.items[0].id, str(result.id))
+        self.assertEqual(history.items[0].car_log_url, 'https://example.com/history/')
 
     def test_vehicle_domain_import_supports_duplicate_case_no_across_viu_codes(self):
         vehicle_platform = McuPlatform.objects.create(

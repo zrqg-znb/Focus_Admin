@@ -188,6 +188,7 @@ export interface DailyResultItem {
   start_time?: string;
   duration_seconds: number;
   log_url?: string;
+  car_log_url?: string;
   reported_at?: string;
 }
 
@@ -200,6 +201,7 @@ export interface TestCaseHistoryRow {
   start_time?: string;
   duration_seconds: number;
   log_url?: string;
+  car_log_url?: string;
   reported_at?: string;
 }
 

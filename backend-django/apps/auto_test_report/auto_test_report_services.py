@@ -52,6 +52,7 @@ VALID_RESULT_VALUES = {
     RESULT_SKIP,
 }
 VALID_DOMAINS = {DOMAIN_COCKPIT, DOMAIN_VEHICLE}
+TESTCASE_LOG_SUFFIX = 'testcase.html'
 
 
 def _get_latest_result_order_by():
@@ -122,6 +123,14 @@ def _resolve_domain_value(domain: Optional[str], *, default: str = DOMAIN_COCKPI
     if value not in VALID_DOMAINS:
         raise HttpError(422, '领域仅支持 cockpit 或 vehicle')
     return value
+
+
+def derive_car_log_url(log_url: Optional[str]) -> Optional[str]:
+    value = (log_url or '').strip()
+    if not value or not value.endswith(TESTCASE_LOG_SUFFIX):
+        return None
+    car_log_url = value[: -len(TESTCASE_LOG_SUFFIX)]
+    return car_log_url or None
 
 
 def _normalize_viu_codes(viu_codes, *, require_non_empty: bool = False):
@@ -964,6 +973,7 @@ def list_daily_results(vehicle_id: str, execute_date, domain: Optional[str] = No
                 start_time=result.start_time,
                 duration_seconds=result.duration_seconds,
                 log_url=result.log_url,
+                car_log_url=derive_car_log_url(result.log_url),
                 reported_at=result.reported_at,
             )
         )
@@ -1006,6 +1016,7 @@ def get_test_case_history(case_id: str, page: int = 1, page_size: int = 10) -> D
             start_time=item.start_time,
             duration_seconds=item.duration_seconds,
             log_url=item.log_url,
+            car_log_url=derive_car_log_url(item.log_url),
             reported_at=item.reported_at,
         )
         for item in queryset[start:start + page_size]
