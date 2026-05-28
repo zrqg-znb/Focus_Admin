@@ -61,6 +61,11 @@ LANDING_SECTION_KEYS = (
     'observation_rows',
     'huatuo_rows',
 )
+TENGWU_REQUIREMENT_NUMBERS_FIELD = 'tengwu_requirement_numbers'
+TENGWU_REQUIREMENT_NUMBER_ALIASES = (
+    TENGWU_REQUIREMENT_NUMBERS_FIELD,
+    'tengwu_requirement_nos',
+)
 
 
 def _normalize_text(value: Any) -> str:
@@ -81,6 +86,61 @@ def _normalize_id_list(values: Any) -> list[str]:
         seen.add(text)
         result.append(text)
     return result
+
+
+def _normalize_tengwu_requirement_numbers(values: Any) -> list[str]:
+    return failure_mode_services._normalize_text_list(values)
+
+
+def _read_tengwu_requirement_numbers(item: dict[str, Any] | None) -> list[str]:
+    if not isinstance(item, dict):
+        return []
+    for key in TENGWU_REQUIREMENT_NUMBER_ALIASES:
+        if key in item:
+            return _normalize_tengwu_requirement_numbers(item.get(key))
+    return []
+
+
+def _normalize_tengwu_requirement_numbers_for_status(
+    landing_status: Any,
+    values: Any,
+) -> list[str]:
+    if (
+        failure_mode_services._normalize_landing_status(landing_status)
+        != failure_mode_services.LANDING_STATUS_LANDED
+    ):
+        return []
+    return _normalize_tengwu_requirement_numbers(values)
+
+
+def _extract_resource_row_tengwu_requirement_numbers(item: dict[str, Any]) -> list[str]:
+    for product_row in item.get('product_rows') or []:
+        if not isinstance(product_row, dict):
+            continue
+        for key in TENGWU_REQUIREMENT_NUMBER_ALIASES:
+            if key in product_row:
+                return _normalize_tengwu_requirement_numbers(product_row.get(key))
+    return _read_tengwu_requirement_numbers(item)
+
+
+def _normalize_resource_row_landing_status(item: dict[str, Any]) -> str:
+    return (
+        failure_mode_services._normalize_landing_status(
+            item.get('landing_status')
+            if 'landing_status' in item
+            else item.get('is_landed'),
+        )
+        or failure_mode_services.LANDING_STATUS_NOT_LANDED
+    )
+
+
+def _normalize_resource_row_tengwu_requirement_numbers(
+    item: dict[str, Any],
+) -> list[str]:
+    return _normalize_tengwu_requirement_numbers_for_status(
+        _normalize_resource_row_landing_status(item),
+        _extract_resource_row_tengwu_requirement_numbers(item),
+    )
 
 
 def _normalize_optional_bool(value: Any) -> bool | None:
@@ -378,12 +438,17 @@ def _build_task_landing_product_row(
     product_name: str,
     landing_status: str | None = None,
     subsystems: list[str] | None = None,
+    tengwu_requirement_numbers: Any = None,
 ) -> dict[str, Any]:
     return {
         'product_id': product_id,
         'product_name': product_name,
         'subsystems': list(subsystems or []),
         'landing_status': landing_status,
+        TENGWU_REQUIREMENT_NUMBERS_FIELD: _normalize_tengwu_requirement_numbers_for_status(
+            landing_status,
+            tengwu_requirement_numbers,
+        ),
     }
 
 
@@ -417,6 +482,21 @@ def _extract_task_landing_product_status_map(rows: Any) -> dict[str, str | None]
         result[product_id] = failure_mode_services._normalize_landing_status(
             item.get('landing_status') if 'landing_status' in item else item.get('status')
         )
+    return result
+
+
+def _extract_task_landing_product_tengwu_map(rows: Any) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for item in rows or []:
+        if not isinstance(item, dict):
+            continue
+        product_id = _normalize_text(item.get('product_id') or item.get('id'))
+        if not product_id:
+            continue
+        for key in TENGWU_REQUIREMENT_NUMBER_ALIASES:
+            if key in item:
+                result[product_id] = _normalize_tengwu_requirement_numbers(item.get(key))
+                break
     return result
 
 
@@ -534,9 +614,11 @@ def _normalize_task_landing_product_rows(
     payload_rows: Any,
     *,
     fallback_status_map: dict[str, str | None] | None = None,
+    fallback_tengwu_numbers_map: dict[str, list[str]] | None = None,
     legacy_status: Any = None,
 ) -> list[dict[str, Any]]:
     payload_status_map = _extract_task_landing_product_status_map(payload_rows)
+    payload_tengwu_numbers_map = _extract_task_landing_product_tengwu_map(payload_rows)
     has_explicit_product_status = len(payload_status_map) > 0
     legacy_status_text = failure_mode_services._normalize_landing_status(legacy_status)
     rows: list[dict[str, Any]] = []
@@ -551,12 +633,20 @@ def _normalize_task_landing_product_rows(
             status = legacy_status_text
         if status is None:
             status = failure_mode_services.LANDING_STATUS_NOT_LANDED
+        if product_id in payload_tengwu_numbers_map:
+            tengwu_requirement_numbers = payload_tengwu_numbers_map[product_id]
+        else:
+            tengwu_requirement_numbers = (fallback_tengwu_numbers_map or {}).get(
+                product_id,
+                [],
+            )
         rows.append(
             _build_task_landing_product_row(
                 product_id=product_id,
                 product_name=_normalize_text(product_item.get('product_name')) or product_id,
                 landing_status=status,
                 subsystems=list(product_item.get('subsystems') or []),
+                tengwu_requirement_numbers=tengwu_requirement_numbers,
             ),
         )
     return rows
@@ -568,6 +658,7 @@ def _normalize_task_landing_rows(
     target_products: list[dict[str, Any]],
     *,
     fallback_status_map_by_product: dict[str, dict[str, str | None]] | None = None,
+    fallback_tengwu_numbers_map_by_product: dict[str, dict[str, list[str]]] | None = None,
     default_group_key: str = '',
     use_subtitle_group_key: bool = False,
 ) -> list[dict[str, Any]]:
@@ -589,16 +680,29 @@ def _normalize_task_landing_rows(
         group_key = subtitle if use_subtitle_group_key and subtitle else default_group_key
         payload_row = payload_rows_by_id.get(resource_id) or {}
         fallback_status_map_for_resource: dict[str, str | None] = {}
+        fallback_tengwu_numbers_map_for_resource: dict[str, list[str]] = {}
         for product_id, resource_status_map in (fallback_status_map_by_product or {}).items():
             if not isinstance(resource_status_map, dict):
                 continue
             fallback_status = resource_status_map.get(resource_id)
             if fallback_status is not None:
                 fallback_status_map_for_resource[product_id] = fallback_status
+        for product_id, resource_tengwu_numbers_map in (
+            fallback_tengwu_numbers_map_by_product or {}
+        ).items():
+            if not isinstance(resource_tengwu_numbers_map, dict):
+                continue
+            if resource_id in resource_tengwu_numbers_map:
+                fallback_tengwu_numbers_map_for_resource[product_id] = (
+                    _normalize_tengwu_requirement_numbers(
+                        resource_tengwu_numbers_map.get(resource_id),
+                    )
+                )
         product_rows = _normalize_task_landing_product_rows(
             target_products,
             payload_row.get('product_rows') or [],
             fallback_status_map=fallback_status_map_for_resource,
+            fallback_tengwu_numbers_map=fallback_tengwu_numbers_map_for_resource,
             legacy_status=payload_row.get('landing_status')
             if 'landing_status' in payload_row
             else payload_row.get('is_landed'),
@@ -636,6 +740,10 @@ def _build_product_failure_mode_landing_maps(
             'handling_status_map_by_product': {},
             'observation_status_map_by_product': {},
             'huatuo_status_map_by_product': {},
+            'interception_tengwu_numbers_map_by_product': {},
+            'handling_tengwu_numbers_map_by_product': {},
+            'observation_tengwu_numbers_map_by_product': {},
+            'huatuo_tengwu_numbers_map_by_product': {},
         }
 
     grouped_products: dict[str, dict[str, Any]] = {}
@@ -645,6 +753,31 @@ def _build_product_failure_mode_landing_maps(
         'observation': defaultdict(lambda: defaultdict(list)),
         'huatuo': defaultdict(lambda: defaultdict(list)),
     }
+    grouped_tengwu_numbers = {
+        'interception': defaultdict(lambda: defaultdict(list)),
+        'handling': defaultdict(lambda: defaultdict(list)),
+        'observation': defaultdict(lambda: defaultdict(list)),
+        'huatuo': defaultdict(lambda: defaultdict(list)),
+    }
+
+    def append_landing_cache(
+        section_key: str,
+        product_id: str,
+        resource_id: str,
+        landing: Any,
+    ):
+        grouped_statuses[section_key][product_id][resource_id].append(
+            failure_mode_services._normalize_landing_status(
+                getattr(landing, 'landing_status', None)
+                if getattr(landing, 'landing_status', None) is not None
+                else landing.is_landed,
+            )
+        )
+        grouped_tengwu_numbers[section_key][product_id][resource_id].extend(
+            _normalize_tengwu_requirement_numbers(
+                getattr(landing, TENGWU_REQUIREMENT_NUMBERS_FIELD, []),
+            )
+        )
 
     for product_failure_mode in product_failure_mode_list:
         product = product_failure_mode.product
@@ -666,42 +799,38 @@ def _build_product_failure_mode_landing_maps(
         for landing in getattr(product_failure_mode, 'interception_landings', []).all():
             if landing.is_deleted:
                 continue
-            grouped_statuses['interception'][product_id][str(landing.interception_strategy_id)].append(
-                failure_mode_services._normalize_landing_status(
-                    getattr(landing, 'landing_status', None)
-                    if getattr(landing, 'landing_status', None) is not None
-                    else landing.is_landed,
-                )
+            append_landing_cache(
+                'interception',
+                product_id,
+                str(landing.interception_strategy_id),
+                landing,
             )
         for landing in getattr(product_failure_mode, 'handling_landings', []).all():
             if landing.is_deleted:
                 continue
-            grouped_statuses['handling'][product_id][str(landing.handling_measure_id)].append(
-                failure_mode_services._normalize_landing_status(
-                    getattr(landing, 'landing_status', None)
-                    if getattr(landing, 'landing_status', None) is not None
-                    else landing.is_landed,
-                )
+            append_landing_cache(
+                'handling',
+                product_id,
+                str(landing.handling_measure_id),
+                landing,
             )
         for landing in getattr(product_failure_mode, 'observation_landings', []).all():
             if landing.is_deleted:
                 continue
-            grouped_statuses['observation'][product_id][str(landing.observation_method_id)].append(
-                failure_mode_services._normalize_landing_status(
-                    getattr(landing, 'landing_status', None)
-                    if getattr(landing, 'landing_status', None) is not None
-                    else landing.is_landed,
-                )
+            append_landing_cache(
+                'observation',
+                product_id,
+                str(landing.observation_method_id),
+                landing,
             )
         for landing in getattr(product_failure_mode, 'huatuo_landings', []).all():
             if landing.is_deleted:
                 continue
-            grouped_statuses['huatuo'][product_id][str(landing.huatuo_diagnosis_id)].append(
-                failure_mode_services._normalize_landing_status(
-                    getattr(landing, 'landing_status', None)
-                    if getattr(landing, 'landing_status', None) is not None
-                    else landing.is_landed,
-                )
+            append_landing_cache(
+                'huatuo',
+                product_id,
+                str(landing.huatuo_diagnosis_id),
+                landing,
             )
 
     products = sorted(
@@ -725,12 +854,33 @@ def _build_product_failure_mode_landing_maps(
             }
         return section_map
 
+    def finalize_tengwu_numbers_map(section_key: str) -> dict[str, dict[str, list[str]]]:
+        section_map: dict[str, dict[str, list[str]]] = {}
+        for product_id, resource_map in grouped_tengwu_numbers[section_key].items():
+            section_map[product_id] = {
+                resource_id: _normalize_tengwu_requirement_numbers(values)
+                for resource_id, values in resource_map.items()
+            }
+        return section_map
+
     return {
         'products': products,
         'interception_status_map_by_product': finalize_status_map('interception'),
         'handling_status_map_by_product': finalize_status_map('handling'),
         'observation_status_map_by_product': finalize_status_map('observation'),
         'huatuo_status_map_by_product': finalize_status_map('huatuo'),
+        'interception_tengwu_numbers_map_by_product': finalize_tengwu_numbers_map(
+            'interception',
+        ),
+        'handling_tengwu_numbers_map_by_product': finalize_tengwu_numbers_map(
+            'handling',
+        ),
+        'observation_tengwu_numbers_map_by_product': finalize_tengwu_numbers_map(
+            'observation',
+        ),
+        'huatuo_tengwu_numbers_map_by_product': finalize_tengwu_numbers_map(
+            'huatuo',
+        ),
     }
 
 
@@ -754,6 +904,9 @@ def _collect_task_landing_product_rows(payload: dict[str, Any] | None) -> list[d
                             if 'landing_status' in product_row
                             else product_row.get('status'),
                         ),
+                        TENGWU_REQUIREMENT_NUMBERS_FIELD: _read_tengwu_requirement_numbers(
+                            product_row,
+                        ),
                     },
                 )
     if not rows:
@@ -776,9 +929,39 @@ def _collect_task_landing_product_rows(payload: dict[str, Any] | None) -> list[d
                             'resource_id': resource_id,
                             'product_id': product_id,
                             'landing_status': legacy_status,
+                            TENGWU_REQUIREMENT_NUMBERS_FIELD: _read_tengwu_requirement_numbers(
+                                resource_row,
+                            ),
                         },
                     )
     return rows
+
+
+def _collect_task_landing_missing_tengwu_requirement_rows(
+    payload: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    missing_rows: list[dict[str, str]] = []
+    for item in _collect_task_landing_product_rows(payload):
+        if not _normalize_text(item.get('product_id')):
+            continue
+        if item.get('landing_status') != failure_mode_services.LANDING_STATUS_LANDED:
+            continue
+        if item.get(TENGWU_REQUIREMENT_NUMBERS_FIELD):
+            continue
+        missing_rows.append(
+            {
+                'resource_id': _normalize_text(item.get('resource_id')),
+                'product_id': _normalize_text(item.get('product_id')),
+            },
+        )
+    return missing_rows
+
+
+def _validate_task_landing_tengwu_requirement_numbers(
+    payload: dict[str, Any] | None,
+):
+    if _collect_task_landing_missing_tengwu_requirement_rows(payload):
+        raise HttpError(422, '已落地项请填写腾雾需求号。')
 
 
 def _derive_task_failure_mode_landing_status(payload: dict[str, Any] | None) -> str:
@@ -846,6 +1029,10 @@ def _normalize_task_landing_payload_for_item(
                 'interception_status_map_by_product',
             )
             or {},
+            fallback_tengwu_numbers_map_by_product=fallback_payload.get(
+                'interception_tengwu_numbers_map_by_product',
+            )
+            or {},
             default_group_key='interception',
         ),
         'handling_rows': _normalize_task_landing_rows(
@@ -854,6 +1041,10 @@ def _normalize_task_landing_payload_for_item(
             target_products,
             fallback_status_map_by_product=fallback_payload.get(
                 'handling_status_map_by_product',
+            )
+            or {},
+            fallback_tengwu_numbers_map_by_product=fallback_payload.get(
+                'handling_tengwu_numbers_map_by_product',
             )
             or {},
             default_group_key='handling',
@@ -867,6 +1058,10 @@ def _normalize_task_landing_payload_for_item(
                 'observation_status_map_by_product',
             )
             or {},
+            fallback_tengwu_numbers_map_by_product=fallback_payload.get(
+                'observation_tengwu_numbers_map_by_product',
+            )
+            or {},
             default_group_key='observation',
             use_subtitle_group_key=True,
         ),
@@ -876,6 +1071,10 @@ def _normalize_task_landing_payload_for_item(
             target_products,
             fallback_status_map_by_product=fallback_payload.get(
                 'huatuo_status_map_by_product',
+            )
+            or {},
+            fallback_tengwu_numbers_map_by_product=fallback_payload.get(
+                'huatuo_tengwu_numbers_map_by_product',
             )
             or {},
             default_group_key='huatuo',
@@ -1017,7 +1216,7 @@ def _summarize_task_landing_payload(payload: dict[str, Any] | None) -> dict[str,
     )
     landing_completed = all(
         item.get('landing_status') is not None for item in product_rows
-    )
+    ) and not _collect_task_landing_missing_tengwu_requirement_rows(payload)
     landing_status = _derive_task_failure_mode_landing_status(payload)
     return {
         'landing_completed': landing_completed,
@@ -1718,20 +1917,12 @@ class TaskWorkflowService:
                 product_failure_mode=product_failure_mode,
                 interception_strategy_id=item['resource_id'],
                 is_landed=(
-                    failure_mode_services._normalize_landing_status(
-                        item.get('landing_status')
-                        if 'landing_status' in item
-                        else item.get('is_landed'),
-                    )
+                    _normalize_resource_row_landing_status(item)
                     == failure_mode_services.LANDING_STATUS_LANDED
                 ),
-                landing_status=(
-                    failure_mode_services._normalize_landing_status(
-                        item.get('landing_status')
-                        if 'landing_status' in item
-                        else item.get('is_landed'),
-                    )
-                    or failure_mode_services.LANDING_STATUS_NOT_LANDED
+                landing_status=_normalize_resource_row_landing_status(item),
+                tengwu_requirement_numbers=(
+                    _normalize_resource_row_tengwu_requirement_numbers(item)
                 ),
                 sys_creator=operator,
                 sys_modifier=operator,
@@ -1743,20 +1934,12 @@ class TaskWorkflowService:
                 product_failure_mode=product_failure_mode,
                 handling_measure_id=item['resource_id'],
                 is_landed=(
-                    failure_mode_services._normalize_landing_status(
-                        item.get('landing_status')
-                        if 'landing_status' in item
-                        else item.get('is_landed'),
-                    )
+                    _normalize_resource_row_landing_status(item)
                     == failure_mode_services.LANDING_STATUS_LANDED
                 ),
-                landing_status=(
-                    failure_mode_services._normalize_landing_status(
-                        item.get('landing_status')
-                        if 'landing_status' in item
-                        else item.get('is_landed'),
-                    )
-                    or failure_mode_services.LANDING_STATUS_NOT_LANDED
+                landing_status=_normalize_resource_row_landing_status(item),
+                tengwu_requirement_numbers=(
+                    _normalize_resource_row_tengwu_requirement_numbers(item)
                 ),
                 sys_creator=operator,
                 sys_modifier=operator,
@@ -1768,20 +1951,12 @@ class TaskWorkflowService:
                 product_failure_mode=product_failure_mode,
                 observation_method_id=item['resource_id'],
                 is_landed=(
-                    failure_mode_services._normalize_landing_status(
-                        item.get('landing_status')
-                        if 'landing_status' in item
-                        else item.get('is_landed'),
-                    )
+                    _normalize_resource_row_landing_status(item)
                     == failure_mode_services.LANDING_STATUS_LANDED
                 ),
-                landing_status=(
-                    failure_mode_services._normalize_landing_status(
-                        item.get('landing_status')
-                        if 'landing_status' in item
-                        else item.get('is_landed'),
-                    )
-                    or failure_mode_services.LANDING_STATUS_NOT_LANDED
+                landing_status=_normalize_resource_row_landing_status(item),
+                tengwu_requirement_numbers=(
+                    _normalize_resource_row_tengwu_requirement_numbers(item)
                 ),
                 sys_creator=operator,
                 sys_modifier=operator,
@@ -1793,20 +1968,12 @@ class TaskWorkflowService:
                 product_failure_mode=product_failure_mode,
                 huatuo_diagnosis_id=item['resource_id'],
                 is_landed=(
-                    failure_mode_services._normalize_landing_status(
-                        item.get('landing_status')
-                        if 'landing_status' in item
-                        else item.get('is_landed'),
-                    )
+                    _normalize_resource_row_landing_status(item)
                     == failure_mode_services.LANDING_STATUS_LANDED
                 ),
-                landing_status=(
-                    failure_mode_services._normalize_landing_status(
-                        item.get('landing_status')
-                        if 'landing_status' in item
-                        else item.get('is_landed'),
-                    )
-                    or failure_mode_services.LANDING_STATUS_NOT_LANDED
+                landing_status=_normalize_resource_row_landing_status(item),
+                tengwu_requirement_numbers=(
+                    _normalize_resource_row_tengwu_requirement_numbers(item)
                 ),
                 sys_creator=operator,
                 sys_modifier=operator,
@@ -2333,6 +2500,7 @@ class TaskWorkflowService:
                 failure_mode_id,
             ),
         )
+        _validate_task_landing_tengwu_requirement_numbers(normalized_payload)
         cls._persist_binding_landing_payload(
             task,
             failure_mode_id,

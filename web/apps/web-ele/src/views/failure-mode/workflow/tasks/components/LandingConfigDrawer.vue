@@ -8,7 +8,13 @@ import type {
 
 import { computed, ref } from 'vue';
 
-import { ElEmpty, ElMessage, ElRadioButton, ElRadioGroup } from 'element-plus';
+import {
+  ElEmpty,
+  ElInputTag,
+  ElMessage,
+  ElRadioButton,
+  ElRadioGroup,
+} from 'element-plus';
 
 import { ZqDrawer } from '#/components/zq-drawer';
 
@@ -182,14 +188,59 @@ function formatSubsystems(subsystems: string[]) {
   return values.length > 0 ? values.join(' / ') : '未绑定子系统';
 }
 
+function normalizeTengwuRequirementNumbers(values: unknown): string[] {
+  let rawValues: unknown[] = [];
+  if (Array.isArray(values)) {
+    rawValues = values;
+  } else if (values) {
+    rawValues = [values];
+  }
+  const result: string[] = [];
+  const seen = new Set<string>();
+  rawValues.forEach((item) => {
+    const text = String(item ?? '').trim();
+    if (!text || seen.has(text)) {
+      return;
+    }
+    seen.add(text);
+    result.push(text);
+  });
+  return result;
+}
+
+function isLandedProductRow(row: TaskFailureModeLandingProductRow) {
+  return normalizeLandingStatus(row.landing_status) === '已落地';
+}
+
+function shouldShowTengwuRequirementInput(
+  row: TaskFailureModeLandingProductRow,
+) {
+  return Boolean(row.product_id) && isLandedProductRow(row);
+}
+
+function handleLandingStatusChange(row: TaskFailureModeLandingProductRow) {
+  if (!isLandedProductRow(row)) {
+    row.tengwu_requirement_numbers = [];
+    return;
+  }
+  row.tengwu_requirement_numbers = normalizeTengwuRequirementNumbers(
+    row.tengwu_requirement_numbers,
+  );
+}
+
 function cloneProductRow(
   row: TaskFailureModeLandingProductRow,
 ): TaskFailureModeLandingProductRow {
+  const landingStatus = normalizeLandingStatus(row.landing_status);
   return {
     product_id: String(row.product_id || ''),
     product_name: String(row.product_name || ''),
     subsystems: [...(row.subsystems || [])],
-    landing_status: normalizeLandingStatus(row.landing_status),
+    landing_status: landingStatus,
+    tengwu_requirement_numbers:
+      landingStatus === '已落地'
+        ? normalizeTengwuRequirementNumbers(row.tengwu_requirement_numbers)
+        : [],
   };
 }
 
@@ -258,6 +309,23 @@ function validatePayload() {
   );
   if (incomplete) {
     ElMessage.warning('请先为所有产品选择落地状态');
+    return false;
+  }
+  const missingTengwuRequirementNumbers = landingSections.value.some(
+    (section) =>
+      section.rows.some((row) =>
+        row.product_rows.some(
+          (productRow) =>
+            Boolean(productRow.product_id) &&
+            normalizeLandingStatus(productRow.landing_status) === '已落地' &&
+            normalizeTengwuRequirementNumbers(
+              productRow.tengwu_requirement_numbers,
+            ).length === 0,
+        ),
+      ),
+  );
+  if (missingTengwuRequirementNumbers) {
+    ElMessage.warning('已落地项请填写腾雾需求号');
     return false;
   }
   return true;
@@ -469,11 +537,27 @@ defineExpose({ open });
                     v-model="product.landing_status"
                     class="fm-landing-drawer__radio-group"
                     :disabled="loading || confirmLoading || readonly"
+                    @change="handleLandingStatusChange(product)"
                   >
                     <ElRadioButton label="已落地">已落地</ElRadioButton>
                     <ElRadioButton label="未落地">未落地</ElRadioButton>
                     <ElRadioButton label="不涉及">不涉及</ElRadioButton>
                   </ElRadioGroup>
+
+                  <div
+                    v-if="shouldShowTengwuRequirementInput(product)"
+                    class="fm-landing-drawer__tengwu-field"
+                  >
+                    <div class="fm-landing-drawer__tengwu-label">
+                      腾雾需求号
+                    </div>
+                    <ElInputTag
+                      v-model="product.tengwu_requirement_numbers"
+                      clearable
+                      :disabled="loading || confirmLoading || readonly"
+                      placeholder="输入腾雾需求号后回车"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -746,6 +830,22 @@ defineExpose({ open });
 .fm-landing-drawer__radio-group :deep(.el-radio-button__inner:hover) {
   color: var(--el-color-primary);
   border-color: var(--el-color-primary);
+}
+
+.fm-landing-drawer__tengwu-field {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.fm-landing-drawer__tengwu-label {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.fm-landing-drawer__tengwu-field :deep(.el-input-tag) {
+  min-height: 36px;
 }
 
 @media (max-width: 860px) {

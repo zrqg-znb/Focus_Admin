@@ -906,6 +906,7 @@ class TaskFailureModeLandingProductRowSchema(Schema):
     product_name: str
     subsystems: list[str] = Field(default_factory=list)
     landing_status: Optional[str] = None
+    tengwu_requirement_numbers: list[str] = Field(default_factory=list)
 
 
 class TaskFailureModeLandingResourceRowSchema(Schema):

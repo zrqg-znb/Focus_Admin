@@ -7,13 +7,23 @@ from ninja.errors import HttpError
 
 from core.dict.dict_model import Dict
 from core.dict_item.dict_item_model import DictItem
+from core.user.user_model import User
+from apps.project_manager.project.project_model import Project
 
 from .failure_mode_model import (
     FailureMode,
     FailureModeHandlingMeasureRel,
     FailureModeObservationMethodRel,
+    FailureModeProduct,
     HandlingMeasure,
+    HuatuoDiagnosis,
+    InterceptionStrategy,
     ObservationMethod,
+    ProductFailureMode,
+    ProductFailureModeHandlingLanding,
+    ProductFailureModeHuatuoLanding,
+    ProductFailureModeInterceptionLanding,
+    ProductFailureModeObservationLanding,
 )
 from .failure_mode_services import (
     _build_statistics_payload_from_sources,
@@ -21,7 +31,13 @@ from .failure_mode_services import (
     _serialize_failure_mode,
     get_failure_mode_dict_options,
 )
-from .failure_mode_workflow_services import _normalize_task_landing_payload_for_item
+from .failure_mode_workflow_services import (
+    TaskWorkflowService,
+    _build_product_failure_mode_landing_maps,
+    _normalize_task_landing_payload_for_item,
+    _summarize_task_landing_payload,
+    _validate_task_landing_tengwu_requirement_numbers,
+)
 
 
 class ScopeBindingNormalizationTests(SimpleTestCase):
@@ -119,6 +135,198 @@ class TaskLandingPayloadNormalizationTests(SimpleTestCase):
             '已落地',
         )
         self.assertEqual(payload['failure_mode_landing_status'], '已落地')
+
+    def test_landed_product_row_requires_tengwu_requirement_numbers(self):
+        payload = _normalize_task_landing_payload_for_item(
+            {
+                'scope_bindings': [
+                    {
+                        'product_id': 'product-1',
+                        'product_name': 'Product A',
+                        'subsystem': 'Engine',
+                    },
+                ],
+                'interception_strategy_items': [
+                    {
+                        'id': 'resource-1',
+                        'label': '产线拦截策略 1',
+                    },
+                ],
+            },
+            existing_payload={
+                'products': [],
+                'interception_rows': [
+                    {
+                        'resource_id': 'resource-1',
+                        'label': '产线拦截策略 1',
+                        'landing_status': '已落地',
+                        'product_rows': [
+                            {
+                                'product_id': 'product-1',
+                                'product_name': 'Product A',
+                                'subsystems': ['Engine'],
+                                'landing_status': '已落地',
+                            },
+                        ],
+                    },
+                ],
+                'handling_rows': [],
+                'observation_rows': [],
+                'huatuo_rows': [],
+            },
+        )
+
+        with self.assertRaises(HttpError) as context:
+            _validate_task_landing_tengwu_requirement_numbers(payload)
+
+        self.assertEqual(context.exception.status_code, 422)
+        self.assertFalse(_summarize_task_landing_payload(payload)['landing_completed'])
+
+    def test_landed_product_row_normalizes_tengwu_requirement_numbers(self):
+        payload = _normalize_task_landing_payload_for_item(
+            {
+                'scope_bindings': [
+                    {
+                        'product_id': 'product-1',
+                        'product_name': 'Product A',
+                        'subsystem': 'Engine',
+                    },
+                ],
+                'interception_strategy_items': [
+                    {
+                        'id': 'resource-1',
+                        'label': '产线拦截策略 1',
+                    },
+                ],
+            },
+            existing_payload={
+                'products': [],
+                'interception_rows': [
+                    {
+                        'resource_id': 'resource-1',
+                        'label': '产线拦截策略 1',
+                        'landing_status': '已落地',
+                        'product_rows': [
+                            {
+                                'product_id': 'product-1',
+                                'product_name': 'Product A',
+                                'subsystems': ['Engine'],
+                                'landing_status': '已落地',
+                                'tengwu_requirement_numbers': [
+                                    ' TW-1 ',
+                                    'TW-1',
+                                    '',
+                                    'TW-2',
+                                ],
+                            },
+                        ],
+                    },
+                ],
+                'handling_rows': [],
+                'observation_rows': [],
+                'huatuo_rows': [],
+            },
+        )
+
+        product_row = payload['interception_rows'][0]['product_rows'][0]
+        self.assertEqual(
+            product_row['tengwu_requirement_numbers'],
+            ['TW-1', 'TW-2'],
+        )
+        _validate_task_landing_tengwu_requirement_numbers(payload)
+        self.assertTrue(_summarize_task_landing_payload(payload)['landing_completed'])
+
+    def test_non_landed_product_row_clears_tengwu_requirement_numbers(self):
+        payload = _normalize_task_landing_payload_for_item(
+            {
+                'scope_bindings': [
+                    {
+                        'product_id': 'product-1',
+                        'product_name': 'Product A',
+                        'subsystem': 'Engine',
+                    },
+                ],
+                'interception_strategy_items': [
+                    {
+                        'id': 'resource-1',
+                        'label': '产线拦截策略 1',
+                    },
+                ],
+            },
+            existing_payload={
+                'products': [],
+                'interception_rows': [
+                    {
+                        'resource_id': 'resource-1',
+                        'label': '产线拦截策略 1',
+                        'landing_status': '未落地',
+                        'product_rows': [
+                            {
+                                'product_id': 'product-1',
+                                'product_name': 'Product A',
+                                'subsystems': ['Engine'],
+                                'landing_status': '未落地',
+                                'tengwu_requirement_numbers': ['TW-1'],
+                            },
+                        ],
+                    },
+                ],
+                'handling_rows': [],
+                'observation_rows': [],
+                'huatuo_rows': [],
+            },
+        )
+
+        self.assertEqual(
+            payload['interception_rows'][0]['product_rows'][0][
+                'tengwu_requirement_numbers'
+            ],
+            [],
+        )
+
+    def test_fallback_tengwu_requirement_numbers_are_applied(self):
+        payload = _normalize_task_landing_payload_for_item(
+            {
+                'scope_bindings': [
+                    {
+                        'product_id': 'product-1',
+                        'product_name': 'Product A',
+                        'subsystem': 'Engine',
+                    },
+                ],
+                'interception_strategy_items': [
+                    {
+                        'id': 'resource-1',
+                        'label': '产线拦截策略 1',
+                    },
+                ],
+            },
+            fallback_payload={
+                'products': [
+                    {
+                        'product_id': 'product-1',
+                        'product_name': 'Product A',
+                        'subsystems': ['Engine'],
+                    },
+                ],
+                'interception_status_map_by_product': {
+                    'product-1': {'resource-1': '已落地'},
+                },
+                'interception_tengwu_numbers_map_by_product': {
+                    'product-1': {'resource-1': ['TW-1']},
+                },
+                'handling_status_map_by_product': {},
+                'observation_status_map_by_product': {},
+                'huatuo_status_map_by_product': {},
+            },
+        )
+
+        self.assertEqual(
+            payload['interception_rows'][0]['product_rows'][0][
+                'tengwu_requirement_numbers'
+            ],
+            ['TW-1'],
+        )
 
     def test_product_only_scope_bindings_fallback_to_failure_mode_subsystem(self):
         payload = _normalize_task_landing_payload_for_item(
@@ -343,6 +551,157 @@ class TaskLandingPayloadNormalizationTests(SimpleTestCase):
                 for item in payload['interception_rows'][0]['product_rows']
             ],
             ['product-2'],
+        )
+
+
+class TaskLandingTengwuPersistenceTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create(username='fm-tengwu-tester', password='x')
+        self.project = Project.objects.create(
+            name='Product A',
+            domain='Domain',
+            type='Vehicle',
+            code='FM-TW-A',
+        )
+        self.product = FailureModeProduct.objects.create(project=self.project)
+        self.failure_mode = FailureMode.objects.create(
+            brief='FM-TW-001',
+            subsystem='Engine',
+        )
+        self.product_failure_mode = ProductFailureMode.objects.create(
+            product=self.product,
+            subsystem='Engine',
+            failure_mode=self.failure_mode,
+        )
+        self.interception = InterceptionStrategy.objects.create(
+            interception_item='产线拦截策略 1',
+            version_detection_html='',
+        )
+        self.handling = HandlingMeasure.objects.create(
+            measure='处理措施 1',
+            measure_category='检测',
+        )
+        self.observation = ObservationMethod.objects.create(
+            monitor_type='流水日志',
+            log_id='LOG-1',
+        )
+        self.huatuo = HuatuoDiagnosis.objects.create(description='诊断方案 1')
+
+    def test_product_landing_table_fallback_carries_tengwu_requirement_numbers(self):
+        ProductFailureModeInterceptionLanding.objects.create(
+            product_failure_mode=self.product_failure_mode,
+            interception_strategy=self.interception,
+            landing_status='已落地',
+            is_landed=True,
+            tengwu_requirement_numbers=['TW-1'],
+        )
+
+        fallback_payload = _build_product_failure_mode_landing_maps(
+            self.product_failure_mode,
+        )
+        payload = _normalize_task_landing_payload_for_item(
+            {
+                'scope_bindings': [
+                    {
+                        'product_id': str(self.product.id),
+                        'product_name': self.project.name,
+                        'subsystem': 'Engine',
+                    },
+                ],
+                'interception_strategy_items': [
+                    {
+                        'id': str(self.interception.id),
+                        'label': self.interception.interception_item,
+                    },
+                ],
+            },
+            fallback_payload=fallback_payload,
+        )
+
+        self.assertEqual(
+            payload['interception_rows'][0]['product_rows'][0][
+                'tengwu_requirement_numbers'
+            ],
+            ['TW-1'],
+        )
+
+    def test_sync_product_failure_mode_landings_writes_tengwu_requirement_numbers(self):
+        product_row = {
+            'product_id': str(self.product.id),
+            'product_name': self.project.name,
+            'subsystems': ['Engine'],
+            'landing_status': '已落地',
+            'tengwu_requirement_numbers': [' TW-1 ', 'TW-1', 'TW-2'],
+        }
+        payload = {
+            'products': [product_row],
+            'interception_rows': [
+                {
+                    'resource_id': str(self.interception.id),
+                    'landing_status': '已落地',
+                    'product_rows': [product_row],
+                },
+            ],
+            'handling_rows': [
+                {
+                    'resource_id': str(self.handling.id),
+                    'landing_status': '已落地',
+                    'product_rows': [
+                        {
+                            **product_row,
+                            'tengwu_requirement_numbers': ['TW-H'],
+                        },
+                    ],
+                },
+            ],
+            'observation_rows': [
+                {
+                    'resource_id': str(self.observation.id),
+                    'landing_status': '已落地',
+                    'product_rows': [
+                        {
+                            **product_row,
+                            'tengwu_requirement_numbers': ['TW-O'],
+                        },
+                    ],
+                },
+            ],
+            'huatuo_rows': [
+                {
+                    'resource_id': str(self.huatuo.id),
+                    'landing_status': '未落地',
+                    'product_rows': [
+                        {
+                            **product_row,
+                            'landing_status': '未落地',
+                            'tengwu_requirement_numbers': ['TW-SHOULD-CLEAR'],
+                        },
+                    ],
+                },
+            ],
+        }
+
+        TaskWorkflowService._sync_product_failure_mode_landings(
+            self.product_failure_mode,
+            payload,
+            self.user,
+        )
+
+        self.assertEqual(
+            ProductFailureModeInterceptionLanding.objects.get().tengwu_requirement_numbers,
+            ['TW-1', 'TW-2'],
+        )
+        self.assertEqual(
+            ProductFailureModeHandlingLanding.objects.get().tengwu_requirement_numbers,
+            ['TW-H'],
+        )
+        self.assertEqual(
+            ProductFailureModeObservationLanding.objects.get().tengwu_requirement_numbers,
+            ['TW-O'],
+        )
+        self.assertEqual(
+            ProductFailureModeHuatuoLanding.objects.get().tengwu_requirement_numbers,
+            [],
         )
 
 

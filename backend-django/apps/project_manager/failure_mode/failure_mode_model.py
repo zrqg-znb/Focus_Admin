@@ -543,6 +543,11 @@ class ProductFailureModeInterceptionLanding(RootModel):
         default='未落地',
         verbose_name='落地状态',
     )
+    tengwu_requirement_numbers = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='腾雾需求号',
+    )
 
     class Meta:
         db_table = 'pm_product_fm_interception_landing'
@@ -585,6 +590,11 @@ class ProductFailureModeHandlingLanding(RootModel):
         choices=LANDING_STATUS_CHOICES,
         default='未落地',
         verbose_name='落地状态',
+    )
+    tengwu_requirement_numbers = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='腾雾需求号',
     )
 
     class Meta:
@@ -629,6 +639,11 @@ class ProductFailureModeObservationLanding(RootModel):
         default='未落地',
         verbose_name='落地状态',
     )
+    tengwu_requirement_numbers = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='腾雾需求号',
+    )
 
     class Meta:
         db_table = 'pm_product_fm_observation_landing'
@@ -671,6 +686,11 @@ class ProductFailureModeHuatuoLanding(RootModel):
         choices=LANDING_STATUS_CHOICES,
         default='未落地',
         verbose_name='落地状态',
+    )
+    tengwu_requirement_numbers = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='腾雾需求号',
     )
 
     class Meta:

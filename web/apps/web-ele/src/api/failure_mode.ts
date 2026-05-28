@@ -563,6 +563,7 @@ export interface TaskFailureModeLandingProductRow {
   product_name: string;
   subsystems: string[];
   landing_status?: null | string;
+  tengwu_requirement_numbers: string[];
 }
 
 export interface TaskFailureModeLandingResourceRow {
@@ -640,6 +641,9 @@ export function normalizeTaskFailureModeLandingDetail(
       product_id: String(row.product_id || ''),
       product_name: String(row.product_name || ''),
       subsystems: normalizeStringArray(row.subsystems),
+      tengwu_requirement_numbers: normalizeStringArray(
+        row.tengwu_requirement_numbers,
+      ),
     }));
   const normalizeRows = (
     rows?: TaskFailureModeLandingResourceRow[],
