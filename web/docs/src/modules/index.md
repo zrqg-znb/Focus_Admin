@@ -17,7 +17,7 @@ Focus 的核心文档入口按“模块主线”组织，而不是先按前后�
 
 ## 推荐阅读顺序
 
-1. [项目管理](/modules/project-manager) 和 [需求中心](/modules/requirement-center)
+1. [项目管理](/modules/project-manager)
 2. [性能监控](/modules/performance)、[代码合规](/modules/code-compliance)、[代码扫描](/modules/code-scan)
 3. [交付矩阵](/modules/delivery-matrix)、[集成报告](/modules/integration-report)、[自动化测试报告](/modules/auto-test-report)
 4. [故障模式](/modules/failure-mode) 与 [DeepAudit 智能审计](/modules/deepaudit)

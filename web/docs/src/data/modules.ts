@@ -46,7 +46,7 @@ export const focusModules: FocusModuleMeta[] = [
     highlights: [
       '聚合项目、需求、性能与质量摘要，缩短角色切换成本',
       '工作台按项目与个人职责展示待办、风险与收藏视图',
-      '为项目管理、性能监控和需求中心提供跨模块入口',
+      '为项目管理、性能监控和质量模块提供跨模块入口',
     ],
     audience: ['项目经理', '研发负责人', '测试负责人', '平台运营人员'],
     backendPrefixes: ['/api/dashboard'],
@@ -124,7 +124,7 @@ export const focusModules: FocusModuleMeta[] = [
       { label: '前端页面参考', link: '/frontend/views/performance' },
     ],
     group: 'quality',
-    order: 3,
+    order: 4,
   },
   {
     slug: 'code-compliance',
@@ -149,7 +149,7 @@ export const focusModules: FocusModuleMeta[] = [
       { label: '前端页面参考', link: '/frontend/views/code-compliance' },
     ],
     group: 'quality',
-    order: 4,
+    order: 5,
   },
   {
     slug: 'code-scan',
@@ -179,7 +179,7 @@ export const focusModules: FocusModuleMeta[] = [
       { label: '前端页面参考', link: '/frontend/views/code-scan' },
     ],
     group: 'quality',
-    order: 5,
+    order: 6,
   },
   {
     slug: 'delivery-matrix',
@@ -204,7 +204,7 @@ export const focusModules: FocusModuleMeta[] = [
       { label: '前端页面参考', link: '/frontend/views/delivery-matrix' },
     ],
     group: 'delivery',
-    order: 6,
+    order: 7,
   },
   {
     slug: 'integration-report',
@@ -277,7 +277,7 @@ export const focusModules: FocusModuleMeta[] = [
     highlights: [
       '支持故障模式条目、任务流转、角色与产品线配置',
       '前端以抽屉、详情和统计看板支撑复杂信息维护',
-      '可与需求中心、项目管理、DeepAudit形成问题治理联动',
+      '可与项目管理、DeepAudit形成问题治理联动',
     ],
     audience: ['质量工程师', '测试负责人', '问题分析人员'],
     backendPrefixes: ['/api/failure-mode'],
@@ -297,34 +297,6 @@ export const focusModules: FocusModuleMeta[] = [
     ],
     group: 'delivery',
     order: 9,
-  },
-  {
-    slug: 'requirement-center',
-    title: '需求中心',
-    titleEn: 'Requirement Center',
-    aliases: ['requirement-center', 'requirement center', '需求中心'],
-    summary:
-      '支持需求树、看板、详情和流转操作，用统一模型追踪需求从创建、评审到发布的全过程。',
-    tagline: '用一套需求对象承接规划、协作和状态变更，而不是分散在表格和聊天记录里。',
-    highlights: [
-      '同时支持树形拆解和看板协作，兼顾规划视角与执行视角',
-      '后端提供评论、日志、批量指派和状态流转接口',
-      '和工作台、项目管理一起构成交付协同主链路',
-    ],
-    audience: ['产品经理', '项目经理', '研发团队负责人'],
-    backendPrefixes: ['/api/requirement-center'],
-    frontendRoutes: [
-      '/requirement-center/requirement',
-      '/requirement-center/requirement/dashboard',
-    ],
-    apiFiles: ['web/apps/web-ele/src/api/requirement-center/requirement.ts'],
-    viewDirs: ['web/apps/web-ele/src/views/requirement-center'],
-    relatedDocs: [
-      { label: '后端技术参考', link: '/backend/apps/requirement-center' },
-      { label: '前端页面参考', link: '/frontend/views/requirement-center' },
-    ],
-    group: 'command',
-    order: 10,
   },
   {
     slug: 'deepaudit',

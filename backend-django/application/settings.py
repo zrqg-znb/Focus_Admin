@@ -97,7 +97,6 @@ INSTALLED_APPS = [
     'apps.failure_mode',
     'apps.performance',
     'apps.project_manager',
-    'apps.requirement_center',
     'apps.integration_report',
     'apps.auto_test_report',
     'apps.code_compliance',

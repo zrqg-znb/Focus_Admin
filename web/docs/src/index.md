@@ -44,7 +44,7 @@ features:
   <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 60px;">
     <div style="padding: 24px; border-radius: 12px; background: var(--vp-c-bg-soft);">
       <h3 style="margin-top: 0; margin-bottom: 12px; font-size: 1.1rem;">1. 产品模块层</h3>
-      <p style="margin: 0; color: var(--vp-c-text-2); font-size: 0.95rem;">项目管理、需求中心、性能监控、故障模式等模块面向不同角色承接实际业务协作。</p>
+      <p style="margin: 0; color: var(--vp-c-text-2); font-size: 0.95rem;">项目管理、性能监控、故障模式等模块面向不同角色承接实际业务协作。</p>
     </div>
     <div style="padding: 24px; border-radius: 12px; background: var(--vp-c-bg-soft);">
       <h3 style="margin-top: 0; margin-bottom: 12px; font-size: 1.1rem;">2. 平台能力层</h3>

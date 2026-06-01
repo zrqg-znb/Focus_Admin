@@ -392,7 +392,6 @@ sequenceDiagram
 
 - [后端技术参考](/backend/apps/project-manager)
 - [前端页面参考](/frontend/views/project-manager)
-- [需求中心](/modules/requirement-center)
 - [交付矩阵](/modules/delivery-matrix)
 
 </FocusModuleSection>

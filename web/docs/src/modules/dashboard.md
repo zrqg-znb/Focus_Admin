@@ -276,8 +276,6 @@ sequenceDiagram
   `project-manager` 提供项目、里程碑、迭代、质量、DTS 等基础数据
 - 上游输入
   `performance` 提供最近一天的性能指标与波动阈值
-- 上游输入
-  `requirement-center` 通过 `RequirementWorkspacePanel` 提供需求工作台摘要
 - 下游消费
   工作台首屏、收藏项目视图、近期里程碑提醒、分布图等首页组件
 
@@ -295,7 +293,6 @@ sequenceDiagram
 
 - [项目管理](/modules/project-manager)
 - [性能监控](/modules/performance)
-- [需求中心](/modules/requirement-center)
 - [前端工作台附录](/frontend/views/dashboard)
 
 </FocusModuleSection>

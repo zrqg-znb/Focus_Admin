@@ -351,6 +351,5 @@ sequenceDiagram
 - [后端技术参考](/backend/apps/failure-mode)
 - [前端页面参考](/frontend/views/failure-mode)
 - [项目管理](/modules/project-manager)
-- [需求中心](/modules/requirement-center)
 
 </FocusModuleSection>
