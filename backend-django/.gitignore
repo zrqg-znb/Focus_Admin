@@ -3,5 +3,6 @@ venv
 static/
 .venv/
 logs/
+backups/
 */migrations/
 *.pyc

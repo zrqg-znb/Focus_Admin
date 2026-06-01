@@ -277,20 +277,26 @@ def update_job_statistics(**kwargs):
 
 
 @scheduler_task
-def database_backup():
+def database_backup(
+    output_dir: str | None = None,
+    database: str = "default",
+    **kwargs,
+):
     """
-    数据库备份任务示例
-    
-    这是一个示例，实际使用时需要根据具体数据库类型实现
+    MySQL 数据库备份任务
+
+    task_kwargs 示例：
+    {"output_dir": "backups/sql", "database": "default"}
     """
     try:
         logger.info("开始数据库备份...")
-        
-        # TODO: 实现实际的数据库备份逻辑
-        # 这里只是一个示例
-        
-        logger.info("数据库备份完成")
-        return "数据库备份完成"
+
+        from common.db_backup import backup_mysql_database
+
+        result = backup_mysql_database(output_dir=output_dir, database=database)
+
+        logger.info("数据库备份完成: %s", result.path)
+        return f"数据库备份完成: {result.path}, 大小: {result.size_bytes} bytes"
     
     except Exception as e:
         logger.error(f"数据库备份失败: {str(e)}")

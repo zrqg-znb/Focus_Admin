@@ -58,6 +58,7 @@ coverage
 ./backend-django/static/
 ./backend-django/.venv/
 ./backend-django/logs/
+./backend-django/backups/
 
 # Python bytecode
 __pycache__/
