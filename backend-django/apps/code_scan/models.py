@@ -1,7 +1,22 @@
 from django.db import models
+from django.utils import timezone
 from common.fu_model import RootModel
 from core.user.user_model import User
 import uuid
+
+
+SCAN_SEVERITY_CHOICES = (
+    ('High', '高'),
+    ('Medium', '中'),
+    ('Low', '低'),
+)
+
+SCAN_SHIELD_STATUS_CHOICES = (
+    ('Normal', '正常'),
+    ('Pending', '屏蔽申请中'),
+    ('Shielded', '已屏蔽'),
+    ('Rejected', '已驳回'),
+)
 
 class ScanProject(RootModel):
     name = models.CharField(max_length=100, verbose_name="项目名称", help_text="项目名称")
@@ -53,17 +68,8 @@ class ScanTask(RootModel):
         ordering = ['-sys_create_datetime']
 
 class ScanResult(RootModel):
-    SEVERITY_CHOICES = (
-        ('High', '高'),
-        ('Medium', '中'),
-        ('Low', '低'),
-    )
-    SHIELD_STATUS_CHOICES = (
-        ('Normal', '正常'),
-        ('Pending', '屏蔽申请中'),
-        ('Shielded', '已屏蔽'),
-        ('Rejected', '已驳回'),
-    )
+    SEVERITY_CHOICES = SCAN_SEVERITY_CHOICES
+    SHIELD_STATUS_CHOICES = SCAN_SHIELD_STATUS_CHOICES
     task = models.ForeignKey(ScanTask, on_delete=models.CASCADE, related_name='results', verbose_name="任务")
     
     file_path = models.CharField(max_length=500, verbose_name="文件路径")
@@ -85,13 +91,161 @@ class ScanResult(RootModel):
         verbose_name_plural = verbose_name
         ordering = ['-severity', 'file_path']
 
+
+class ScanFinding(models.Model):
+    """项目维度的稳定缺陷身份，用于跨扫描任务归并治理状态。"""
+
+    id = models.BigAutoField(primary_key=True)
+    project = models.ForeignKey(
+        ScanProject,
+        on_delete=models.CASCADE,
+        related_name='findings',
+        verbose_name="项目",
+    )
+    fingerprint = models.CharField(max_length=255, db_index=True, verbose_name="缺陷指纹")
+    shield_status = models.CharField(
+        max_length=20,
+        choices=SCAN_SHIELD_STATUS_CHOICES,
+        default='Normal',
+        verbose_name="治理状态",
+    )
+    first_seen_task = models.ForeignKey(
+        ScanTask,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='first_seen_findings',
+        verbose_name="首次出现任务",
+    )
+    last_seen_task = models.ForeignKey(
+        ScanTask,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='last_seen_findings',
+        verbose_name="最近出现任务",
+    )
+    first_seen_at = models.DateTimeField(default=timezone.now, db_index=True, verbose_name="首次出现时间")
+    last_seen_at = models.DateTimeField(default=timezone.now, db_index=True, verbose_name="最近出现时间")
+    is_deleted = models.BooleanField(default=False, db_index=True, verbose_name="是否删除")
+    created_at = models.DateTimeField(default=timezone.now, db_index=True, verbose_name="创建时间")
+    updated_at = models.DateTimeField(auto_now=True, db_index=True, verbose_name="更新时间")
+
+    class Meta:
+        db_table = 'scan_finding'
+        verbose_name = '扫描缺陷身份'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=['project', 'fingerprint'],
+                name='scan_finding_project_fingerprint_uniq',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['project', 'shield_status'], name='scan_find_project_status_idx'),
+            models.Index(fields=['project', 'last_seen_at'], name='scan_find_project_last_seen_idx'),
+        ]
+
+
+class ScanResultDetail(models.Model):
+    """去重后的缺陷明细载荷，承接重复度最高的大文本字段。"""
+
+    id = models.BigAutoField(primary_key=True)
+    content_hash = models.CharField(max_length=64, unique=True, db_index=True, verbose_name="内容哈希")
+    file_path = models.CharField(max_length=500, verbose_name="文件路径")
+    defect_type = models.CharField(max_length=100, verbose_name="缺陷类型")
+    severity = models.CharField(max_length=20, choices=SCAN_SEVERITY_CHOICES, verbose_name="严重程度")
+    description = models.TextField(verbose_name="缺陷描述")
+    help_info = models.TextField(null=True, blank=True, verbose_name="修复建议")
+    code_snippet = models.TextField(null=True, blank=True, verbose_name="代码片段")
+    created_at = models.DateTimeField(default=timezone.now, db_index=True, verbose_name="创建时间")
+    updated_at = models.DateTimeField(auto_now=True, db_index=True, verbose_name="更新时间")
+
+    class Meta:
+        db_table = 'scan_result_detail'
+        verbose_name = '扫描结果明细'
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=['severity', 'defect_type'], name='scan_detail_severity_type_idx'),
+        ]
+
+
+class ScanResultOccurrence(models.Model):
+    """一次扫描任务中的缺陷命中快照，尽量只保留任务态轻字段。"""
+
+    id = models.BigAutoField(primary_key=True)
+    task = models.ForeignKey(
+        ScanTask,
+        on_delete=models.CASCADE,
+        related_name='occurrences',
+        verbose_name="任务",
+    )
+    finding = models.ForeignKey(
+        ScanFinding,
+        on_delete=models.CASCADE,
+        related_name='occurrences',
+        verbose_name="缺陷身份",
+    )
+    detail = models.ForeignKey(
+        ScanResultDetail,
+        on_delete=models.PROTECT,
+        related_name='occurrences',
+        verbose_name="缺陷明细",
+    )
+    legacy_result = models.OneToOneField(
+        ScanResult,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='normalized_occurrence',
+        verbose_name="旧结果记录",
+    )
+    line_number = models.IntegerField(verbose_name="行号")
+    shield_status = models.CharField(
+        max_length=20,
+        choices=SCAN_SHIELD_STATUS_CHOICES,
+        default='Normal',
+        db_index=True,
+        verbose_name="屏蔽状态",
+    )
+    is_deleted = models.BooleanField(default=False, db_index=True, verbose_name="是否删除")
+    created_at = models.DateTimeField(default=timezone.now, db_index=True, verbose_name="创建时间")
+    updated_at = models.DateTimeField(auto_now=True, db_index=True, verbose_name="更新时间")
+
+    class Meta:
+        db_table = 'scan_result_occurrence'
+        verbose_name = '扫描结果命中'
+        verbose_name_plural = verbose_name
+        ordering = ['-detail__severity', 'detail__file_path', 'line_number']
+        indexes = [
+            models.Index(fields=['task', 'is_deleted'], name='scan_occ_task_deleted_idx'),
+            models.Index(fields=['task', 'shield_status'], name='scan_occ_task_status_idx'),
+            models.Index(fields=['finding', 'task'], name='scan_occ_finding_task_idx'),
+        ]
+
+
 class ShieldApplication(RootModel):
     STATUS_CHOICES = (
         ('Pending', '待审批'),
         ('Approved', '已通过'),
         ('Rejected', '已驳回'),
     )
-    result = models.ForeignKey(ScanResult, on_delete=models.CASCADE, related_name='shield_applications', verbose_name="关联结果")
+    result = models.ForeignKey(
+        ScanResult,
+        on_delete=models.CASCADE,
+        related_name='shield_applications',
+        null=True,
+        blank=True,
+        verbose_name="关联旧结果",
+    )
+    occurrence = models.ForeignKey(
+        ScanResultOccurrence,
+        on_delete=models.SET_NULL,
+        related_name='shield_applications',
+        null=True,
+        blank=True,
+        verbose_name="关联结果命中",
+    )
     applicant = models.ForeignKey(User, on_delete=models.CASCADE, related_name='scan_applications', verbose_name="申请人")
     approver = models.ForeignKey(User, on_delete=models.CASCADE, related_name='scan_audits', null=True, blank=True, verbose_name="审批人")
     reason = models.TextField(verbose_name="屏蔽理由")

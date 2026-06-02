@@ -1,10 +1,20 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.test import RequestFactory, TestCase
 from django.utils import timezone
 
 from apps.code_scan.api import list_latest_results, list_project_overview
-from apps.code_scan.models import ScanProject, ScanResult, ScanTask
+from apps.code_scan.models import (
+    ScanFinding,
+    ScanProject,
+    ScanResult,
+    ScanResultDetail,
+    ScanResultOccurrence,
+    ScanTask,
+    ShieldApplication,
+)
+from apps.code_scan.services import ScanService
 from core.user.user_model import User
 
 
@@ -75,6 +85,56 @@ class CodeScanApiTests(TestCase):
             shield_status=shield_status,
             sys_creator=self.user,
             sys_modifier=self.user,
+        )
+
+    def _create_occurrence(
+        self,
+        task: ScanTask,
+        *,
+        shield_status: str = 'Normal',
+        index: int = 0,
+        file_path: str | None = None,
+        defect_type: str = 'NullPointer',
+        severity: str = 'High',
+        description: str | None = None,
+    ) -> ScanResultOccurrence:
+        detail_payload = {
+            'file_path': file_path or f'src/module_{index}.cpp',
+            'defect_type': defect_type,
+            'severity': severity,
+            'description': description or f'defect-{shield_status}-{index}',
+            'help_info': '',
+            'code_snippet': '',
+        }
+        fingerprint = ScanService.build_fingerprint(
+            {**detail_payload, 'line_number': index + 1}
+        )
+        finding, _ = ScanFinding.objects.get_or_create(
+            project=task.project,
+            fingerprint=fingerprint,
+            defaults={
+                'shield_status': shield_status,
+                'first_seen_task': task,
+                'last_seen_task': task,
+                'first_seen_at': timezone.now(),
+                'last_seen_at': timezone.now(),
+            },
+        )
+        if finding.shield_status != shield_status:
+            finding.shield_status = shield_status
+            finding.save(update_fields=['shield_status', 'updated_at'])
+
+        detail_hash = ScanService.build_detail_hash(detail_payload)
+        detail, _ = ScanResultDetail.objects.get_or_create(
+            content_hash=detail_hash,
+            defaults=detail_payload,
+        )
+        return ScanResultOccurrence.objects.create(
+            task=task,
+            finding=finding,
+            detail=detail,
+            line_number=index + 1,
+            shield_status=shield_status,
         )
 
     def test_latest_results_include_all_statuses_by_default(self):
@@ -350,3 +410,140 @@ class CodeScanApiTests(TestCase):
             latest_time_asc_payload['items'][-1]['project_name'],
             gamma.name,
         )
+
+    def test_latest_results_reads_normalized_occurrences(self):
+        task = self._create_task(tool_name='tscan')
+        occurrence = self._create_occurrence(
+            task,
+            index=7,
+            severity='Medium',
+            defect_type='MemoryLeak',
+            file_path='src/normalized.cpp',
+            description='normalized leak',
+        )
+
+        request = self.factory.get(
+            f'/api/code-scan/projects/{self.project.id}/latest-results'
+        )
+
+        payload = list_latest_results(request, self.project.id, tool_name='tscan')
+
+        self.assertEqual(payload['total'], 1)
+        self.assertEqual(payload['items'][0]['id'], str(occurrence.id))
+        self.assertEqual(payload['items'][0]['file_path'], 'src/normalized.cpp')
+        self.assertEqual(payload['items'][0]['description'], 'normalized leak')
+
+    def test_project_overview_counts_normalized_occurrences(self):
+        task = self._create_task(tool_name='tscan')
+        self._create_occurrence(task, index=1)
+        self._create_occurrence(task, index=2, shield_status='Shielded')
+
+        request = self.factory.get('/api/code-scan/projects/overview')
+
+        payload = list_project_overview(
+            request,
+            page=1,
+            pageSize=20,
+            project_id=self.project.id,
+        )
+
+        self.assertEqual(payload['items'][0]['total'], 2)
+        self.assertEqual(payload['items'][0]['tool_counts']['tscan'], 2)
+
+    def test_process_report_deduplicates_detail_and_finding(self):
+        defect = {
+            'file_path': 'src/shared.cpp',
+            'line_number': 12,
+            'defect_type': 'MemoryLeak',
+            'severity': 'High',
+            'description': 'same leak',
+            'help_info': 'free it',
+            'code_snippet': 'malloc();',
+        }
+        parser = type('Parser', (), {'parse': lambda self, path: [defect]})()
+        first_task = self._create_task(tool_name='tscan', status='processing')
+        second_task = self._create_task(tool_name='tscan', status='processing')
+
+        with patch('apps.code_scan.services.ParserFactory.get_parser', return_value=parser):
+            ScanService.process_report(first_task.id)
+            ScanService.process_report(second_task.id)
+
+        self.assertEqual(ScanResult.objects.count(), 0)
+        self.assertEqual(ScanResultDetail.objects.count(), 1)
+        self.assertEqual(ScanFinding.objects.count(), 1)
+        self.assertEqual(ScanResultOccurrence.objects.count(), 2)
+
+    def test_process_report_inherits_shielded_finding(self):
+        defect = {
+            'file_path': 'src/inherit.cpp',
+            'line_number': 8,
+            'defect_type': 'NullPointer',
+            'severity': 'High',
+            'description': 'same null',
+        }
+        parser = type('Parser', (), {'parse': lambda self, path: [defect]})()
+        first_task = self._create_task(tool_name='tscan', status='processing')
+        second_task = self._create_task(tool_name='tscan', status='processing')
+
+        with patch('apps.code_scan.services.ParserFactory.get_parser', return_value=parser):
+            ScanService.process_report(first_task.id)
+
+        first_occurrence = ScanResultOccurrence.objects.get(task=first_task)
+        first_occurrence.shield_status = 'Shielded'
+        first_occurrence.save(update_fields=['shield_status', 'updated_at'])
+        first_occurrence.finding.shield_status = 'Shielded'
+        first_occurrence.finding.save(update_fields=['shield_status', 'updated_at'])
+
+        with patch('apps.code_scan.services.ParserFactory.get_parser', return_value=parser):
+            ScanService.process_report(second_task.id)
+
+        second_occurrence = ScanResultOccurrence.objects.get(task=second_task)
+        self.assertEqual(second_occurrence.shield_status, 'Shielded')
+
+    def test_process_report_applies_path_prefix_shielding(self):
+        self.project.path_shield_prefixes = ['third_party/']
+        self.project.save(update_fields=['path_shield_prefixes', 'sys_update_datetime'])
+        defect = {
+            'file_path': 'third_party/vendor.cpp',
+            'line_number': 8,
+            'defect_type': 'Style',
+            'severity': 'Low',
+            'description': 'vendor issue',
+        }
+        parser = type('Parser', (), {'parse': lambda self, path: [defect]})()
+        task = self._create_task(tool_name='tscan', status='processing')
+
+        with patch('apps.code_scan.services.ParserFactory.get_parser', return_value=parser):
+            ScanService.process_report(task.id)
+
+        occurrence = ScanResultOccurrence.objects.get(task=task)
+        self.assertEqual(occurrence.shield_status, 'Shielded')
+
+    def test_apply_and_audit_shield_for_normalized_occurrence(self):
+        task = self._create_task(tool_name='tscan')
+        occurrence = self._create_occurrence(task)
+
+        ScanService.apply_shield(
+            self.user,
+            [str(occurrence.id)],
+            self.user.id,
+            'false positive',
+        )
+
+        occurrence.refresh_from_db()
+        app = ShieldApplication.objects.get(occurrence=occurrence)
+        self.assertEqual(occurrence.shield_status, 'Pending')
+        self.assertIsNone(app.result_id)
+
+        processed = ScanService.audit_shield_batch(
+            self.user,
+            [app.id],
+            'Approved',
+            'ok',
+        )
+
+        occurrence.refresh_from_db()
+        occurrence.finding.refresh_from_db()
+        self.assertEqual(processed, 1)
+        self.assertEqual(occurrence.shield_status, 'Shielded')
+        self.assertEqual(occurrence.finding.shield_status, 'Shielded')

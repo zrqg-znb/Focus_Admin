@@ -1,11 +1,18 @@
 from typing import List
 from ninja import Router, File, UploadedFile, Form
 from django.shortcuts import get_object_or_404
+from django.db.models import Count, Q
 from ninja.errors import HttpError
-from apps.code_scan.models import ScanProject, ScanTask, ScanResult, ShieldApplication
+from apps.code_scan.models import (
+    ScanProject,
+    ScanTask,
+    ScanResult,
+    ScanResultOccurrence,
+    ShieldApplication,
+)
 from apps.code_scan.schemas import (
     ScanProjectSchema, ScanProjectCreateSchema,
-    ScanTaskSchema, ScanResultSchema,
+    ScanTaskSchema,
     ShieldApplicationSchema, ShieldApplySchema, ShieldAuditSchema,
     ShieldRecordSchema,
     ChunkUploadSchema, ProjectOverviewSchema, LatestScanResultSchema,
@@ -215,6 +222,155 @@ def _sort_project_overview_items(
     )
     return [item for _, item in present_items] + missing_items
 
+
+def _occurrence_to_latest_payload(item: ScanResultOccurrence) -> dict:
+    detail = item.detail
+    finding = item.finding
+    task = item.task
+    return {
+        "id": str(item.id),
+        "task_id": str(item.task_id),
+        "tool_name": task.tool_name,
+        "sub_module": task.sub_module,
+        "file_path": detail.file_path,
+        "line_number": item.line_number,
+        "defect_type": detail.defect_type,
+        "severity": detail.severity,
+        "description": detail.description,
+        "fingerprint": finding.fingerprint,
+        "shield_status": item.shield_status,
+        "help_info": detail.help_info,
+        "code_snippet": detail.code_snippet,
+        "sys_create_datetime": item.created_at.isoformat(sep=" ", timespec="seconds")
+        if getattr(item, "created_at", None)
+        else None,
+    }
+
+
+def _legacy_result_to_latest_payload(item: ScanResult) -> dict:
+    return {
+        "id": str(item.id),
+        "task_id": str(item.task_id),
+        "tool_name": item.task.tool_name,
+        "sub_module": item.task.sub_module,
+        "file_path": item.file_path,
+        "line_number": item.line_number,
+        "defect_type": item.defect_type,
+        "severity": item.severity,
+        "description": item.description,
+        "fingerprint": item.fingerprint,
+        "shield_status": item.shield_status,
+        "help_info": item.help_info,
+        "code_snippet": item.code_snippet,
+        "sys_create_datetime": item.sys_create_datetime.isoformat(sep=" ", timespec="seconds")
+        if getattr(item, "sys_create_datetime", None)
+        else None,
+    }
+
+
+def _sort_latest_payloads(items: list[dict]) -> list[dict]:
+    severity_rank = {"High": 0, "Medium": 1, "Low": 2}
+    return sorted(
+        items,
+        key=lambda item: (
+            severity_rank.get(str(item.get("severity") or ""), 99),
+            str(item.get("file_path") or ""),
+            int(item.get("line_number") or 0),
+        ),
+    )
+
+
+def _apply_occurrence_filters(
+    qs,
+    normalized_shield_status: str | None,
+    keyword_filters: dict[str, str],
+):
+    if normalized_shield_status:
+        qs = qs.filter(shield_status=normalized_shield_status)
+    occurrence_filter_map = {
+        "severity": "detail__severity__icontains",
+        "defect_type": "detail__defect_type__icontains",
+        "file_path": "detail__file_path__icontains",
+        "description": "detail__description__icontains",
+    }
+    for key, lookup in occurrence_filter_map.items():
+        value = keyword_filters.get(key)
+        if value:
+            qs = qs.filter(**{lookup: value})
+    return qs
+
+
+def _apply_legacy_filters(
+    qs,
+    normalized_shield_status: str | None,
+    keyword_filters: dict[str, str],
+):
+    if normalized_shield_status:
+        qs = qs.filter(shield_status=normalized_shield_status)
+    legacy_filter_map = {
+        "severity": "severity__icontains",
+        "defect_type": "defect_type__icontains",
+        "file_path": "file_path__icontains",
+        "description": "description__icontains",
+    }
+    for key, lookup in legacy_filter_map.items():
+        value = keyword_filters.get(key)
+        if value:
+            qs = qs.filter(**{lookup: value})
+    return qs
+
+
+def _get_result_context(result_id: str):
+    occurrence = None
+    legacy_result = None
+    if str(result_id).isdigit():
+        occurrence = (
+            ScanResultOccurrence.objects.select_related("task", "finding")
+            .filter(
+                id=result_id,
+                is_deleted=False,
+                task__is_deleted=False,
+                task__project__is_deleted=False,
+            )
+            .first()
+        )
+    if occurrence is None:
+        legacy_result = get_object_or_404(
+            ScanResult.objects.select_related("task").filter(
+                is_deleted=False,
+                task__is_deleted=False,
+                task__project__is_deleted=False,
+            ),
+            id=result_id,
+        )
+    return occurrence, legacy_result
+
+
+def _application_context(app: ShieldApplication) -> dict:
+    if app.occurrence_id:
+        occurrence = app.occurrence
+        detail = occurrence.detail
+        return {
+            "result_id": str(occurrence.id),
+            "file_path": detail.file_path,
+            "defect_description": detail.description,
+            "severity": detail.severity,
+            "tool_name": occurrence.task.tool_name,
+            "help_info": detail.help_info,
+            "code_snippet": detail.code_snippet,
+        }
+
+    result = app.result
+    return {
+        "result_id": str(result.id) if result else "",
+        "file_path": result.file_path if result else None,
+        "defect_description": result.description if result else None,
+        "severity": result.severity if result else None,
+        "tool_name": result.task.tool_name if result else None,
+        "help_info": result.help_info if result else None,
+        "code_snippet": result.code_snippet if result else None,
+    }
+
 # --- 项目管理 ---
 
 @router.get("/projects", response=PaginatedScanProjectSchema, auth=BearerAuth(), summary="获取项目列表")
@@ -289,10 +445,19 @@ def list_project_overview(
 
     counts_by_task: dict[str, int] = {}
     if latest_task_ids:
-        from django.db.models import Count
-
-        qs = (
+        legacy_counts = (
             ScanResult.objects.filter(
+                task_id__in=latest_task_ids,
+                is_deleted=False,
+                normalized_occurrence__isnull=True,
+                task__is_deleted=False,
+                task__project__is_deleted=False,
+            )
+            .values("task_id")
+            .annotate(cnt=Count("id"))
+        )
+        occurrence_counts = (
+            ScanResultOccurrence.objects.filter(
                 task_id__in=latest_task_ids,
                 is_deleted=False,
                 task__is_deleted=False,
@@ -301,7 +466,12 @@ def list_project_overview(
             .values("task_id")
             .annotate(cnt=Count("id"))
         )
-        counts_by_task = {str(x["task_id"]): int(x["cnt"]) for x in qs}
+        for row in legacy_counts:
+            task_id = str(row["task_id"])
+            counts_by_task[task_id] = counts_by_task.get(task_id, 0) + int(row["cnt"])
+        for row in occurrence_counts:
+            task_id = str(row["task_id"])
+            counts_by_task[task_id] = counts_by_task.get(task_id, 0) + int(row["cnt"])
 
     overview_by_project: dict[str, dict] = {
         p["id"]: {"tool_counts": {}, "total": None}
@@ -415,35 +585,69 @@ def list_tasks(
 
 # --- 结果管理 ---
 
-@router.get("/results", response=List[ScanResultSchema], auth=BearerAuth(), summary="获取任务结果列表")
+@router.get("/results", auth=BearerAuth(), summary="获取任务结果列表")
 def list_results(request, task_id: str):
-    return ScanResult.objects.filter(
-        task_id=task_id,
-        is_deleted=False,
-        task__is_deleted=False,
-        task__project__is_deleted=False,
-    )
-
-@router.get("/results/{result_id}/shield-records", response=List[ShieldRecordSchema], auth=BearerAuth(), summary="获取屏蔽记录")
-def list_result_shield_records(request, result_id: str):
-    r = get_object_or_404(
-        ScanResult.objects.select_related("task").filter(
+    occurrences = list(
+        ScanResultOccurrence.objects.filter(
+            task_id=task_id,
             is_deleted=False,
             task__is_deleted=False,
             task__project__is_deleted=False,
-        ),
-        id=result_id,
+        )
+        .select_related("task", "finding", "detail")
+        .order_by("-detail__severity", "detail__file_path", "line_number")
     )
+    results = list(ScanResult.objects.filter(
+        task_id=task_id,
+        is_deleted=False,
+        normalized_occurrence__isnull=True,
+        task__is_deleted=False,
+        task__project__is_deleted=False,
+    ).select_related("task"))
+    payload = [_occurrence_to_latest_payload(item) for item in occurrences]
+    payload.extend(_legacy_result_to_latest_payload(item) for item in results)
+    return _sort_latest_payloads(payload)
+
+@router.get("/results/{result_id}/shield-records", response=List[ShieldRecordSchema], auth=BearerAuth(), summary="获取屏蔽记录")
+def list_result_shield_records(request, result_id: str):
+    occurrence, legacy_result = _get_result_context(result_id)
+    if occurrence:
+        project_id = occurrence.task.project_id
+        fingerprint = occurrence.finding.fingerprint
+    else:
+        project_id = legacy_result.task.project_id
+        fingerprint = legacy_result.fingerprint
+
     apps = (
-        ShieldApplication.objects.select_related("applicant", "approver")
+        ShieldApplication.objects.select_related(
+            "applicant",
+            "approver",
+            "result",
+            "result__task",
+            "occurrence",
+            "occurrence__finding",
+            "occurrence__task",
+        )
         .filter(
             is_deleted=False,
-            result__is_deleted=False,
-            result__task__is_deleted=False,
-            result__task__project__is_deleted=False,
-            result__task__project_id=r.task.project_id,
-            result__fingerprint=r.fingerprint,
         )
+        .filter(
+            Q(
+                result__is_deleted=False,
+                result__task__is_deleted=False,
+                result__task__project__is_deleted=False,
+                result__task__project_id=project_id,
+                result__fingerprint=fingerprint,
+            )
+            | Q(
+                occurrence__is_deleted=False,
+                occurrence__task__is_deleted=False,
+                occurrence__task__project__is_deleted=False,
+                occurrence__finding__project_id=project_id,
+                occurrence__finding__fingerprint=fingerprint,
+            )
+        )
+        .distinct()
         .order_by("-sys_create_datetime")
     )
     payload = []
@@ -451,7 +655,7 @@ def list_result_shield_records(request, result_id: str):
         payload.append(
             {
                 "id": str(app.id),
-                "result_id": str(app.result_id),
+                "result_id": str(app.occurrence_id or app.result_id or ""),
                 "status": app.status,
                 "reason": app.reason,
                 "audit_comment": app.audit_comment,
@@ -507,57 +711,68 @@ def list_latest_results(
     if not task_ids:
         return {"items": [], "total": 0}
 
-    results_qs = (
+    keyword_filters = {
+        "severity": _normalize_keyword(severity_keyword),
+        "defect_type": _normalize_keyword(defect_type_keyword),
+        "file_path": _normalize_keyword(file_path_keyword),
+        "description": _normalize_keyword(description_keyword),
+    }
+
+    start = (page - 1) * pageSize
+    end = start + pageSize
+
+    occurrence_qs = (
+        ScanResultOccurrence.objects.filter(
+            task_id__in=task_ids,
+            is_deleted=False,
+            task__is_deleted=False,
+            task__project__is_deleted=False,
+        )
+        .select_related("task", "finding", "detail")
+        .order_by("-detail__severity", "detail__file_path", "line_number")
+    )
+    occurrence_qs = _apply_occurrence_filters(
+        occurrence_qs,
+        normalized_shield_status,
+        keyword_filters,
+    )
+
+    legacy_qs = (
         ScanResult.objects.filter(
             task_id__in=task_ids,
             is_deleted=False,
+            normalized_occurrence__isnull=True,
             task__is_deleted=False,
             task__project__is_deleted=False,
         )
         .select_related("task")
         .order_by("-severity", "file_path", "line_number")
     )
-    if normalized_shield_status:
-        results_qs = results_qs.filter(shield_status=normalized_shield_status)
+    legacy_qs = _apply_legacy_filters(
+        legacy_qs,
+        normalized_shield_status,
+        keyword_filters,
+    )
 
-    keyword_filters = {
-        "severity__icontains": _normalize_keyword(severity_keyword),
-        "defect_type__icontains": _normalize_keyword(defect_type_keyword),
-        "file_path__icontains": _normalize_keyword(file_path_keyword),
-        "description__icontains": _normalize_keyword(description_keyword),
-    }
-    for lookup, value in keyword_filters.items():
-        if value:
-            results_qs = results_qs.filter(**{lookup: value})
+    occurrence_count = occurrence_qs.count()
+    legacy_count = legacy_qs.count()
+    if occurrence_count and not legacy_count:
+        return {
+            "items": [_occurrence_to_latest_payload(item) for item in occurrence_qs[start:end]],
+            "total": occurrence_count,
+        }
 
-    total = results_qs.count()
-    start = (page - 1) * pageSize
-    end = start + pageSize
-    results = results_qs[start:end]
+    if legacy_count and not occurrence_count:
+        total = legacy_count
+        return {
+            "items": [_legacy_result_to_latest_payload(item) for item in legacy_qs[start:end]],
+            "total": total,
+        }
 
-    payload = []
-    for r in results:
-        payload.append(
-            {
-                "id": str(r.id),
-                "task_id": str(r.task_id),
-                "tool_name": r.task.tool_name,
-                "sub_module": r.task.sub_module,
-                "file_path": r.file_path,
-                "line_number": r.line_number,
-                "defect_type": r.defect_type,
-                "severity": r.severity,
-                "description": r.description,
-                "fingerprint": r.fingerprint,
-                "shield_status": r.shield_status,
-                "help_info": r.help_info,
-                "code_snippet": r.code_snippet,
-                "sys_create_datetime": r.sys_create_datetime.isoformat(sep=" ", timespec="seconds")
-                if getattr(r, "sys_create_datetime", None)
-                else None,
-            }
-        )
-    return {"items": payload, "total": total}
+    payload = [_occurrence_to_latest_payload(item) for item in occurrence_qs]
+    payload.extend(_legacy_result_to_latest_payload(item) for item in legacy_qs)
+    payload = _sort_latest_payloads(payload)
+    return {"items": payload[start:end], "total": len(payload)}
 
 # --- 屏蔽申请与审批 ---
 
@@ -571,9 +786,17 @@ def list_applications(request, mode: str = "my_apply", page: int = 1, pageSize: 
     user = request.auth  # BearerAuth returns user in request.auth
     base_qs = ShieldApplication.objects.filter(
         is_deleted=False,
-        result__is_deleted=False,
-        result__task__is_deleted=False,
-        result__task__project__is_deleted=False,
+    ).filter(
+        Q(
+            result__is_deleted=False,
+            result__task__is_deleted=False,
+            result__task__project__is_deleted=False,
+        )
+        | Q(
+            occurrence__is_deleted=False,
+            occurrence__task__is_deleted=False,
+            occurrence__task__project__is_deleted=False,
+        )
     )
     if mode == "my_apply":
         qs = base_qs.filter(applicant=user)
@@ -586,11 +809,20 @@ def list_applications(request, mode: str = "my_apply", page: int = 1, pageSize: 
     page_qs = qs[start:end]
 
     results = []
-    for app in page_qs.select_related("applicant", "approver", "result", "result__task"):
+    for app in page_qs.select_related(
+        "applicant",
+        "approver",
+        "result",
+        "result__task",
+        "occurrence",
+        "occurrence__task",
+        "occurrence__detail",
+    ):
+        context = _application_context(app)
         results.append(
             {
                 "id": str(app.id),
-                "result_id": str(app.result_id),
+                "result_id": context["result_id"],
                 "applicant_id": str(app.applicant_id),
                 "approver_id": str(app.approver_id) if app.approver_id else None,
                 "reason": app.reason,
@@ -601,12 +833,12 @@ def list_applications(request, mode: str = "my_apply", page: int = 1, pageSize: 
                 "sys_create_datetime": app.sys_create_datetime.isoformat(sep=" ", timespec="seconds")
                 if getattr(app, "sys_create_datetime", None)
                 else None,
-                "file_path": app.result.file_path,
-                "defect_description": app.result.description,
-                "severity": app.result.severity,
-                "tool_name": app.result.task.tool_name,
-                "help_info": app.result.help_info,
-                "code_snippet": app.result.code_snippet,
+                "file_path": context["file_path"],
+                "defect_description": context["defect_description"],
+                "severity": context["severity"],
+                "tool_name": context["tool_name"],
+                "help_info": context["help_info"],
+                "code_snippet": context["code_snippet"],
             }
         )
     return {"items": results, "total": total}

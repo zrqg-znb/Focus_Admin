@@ -1,5 +1,6 @@
 import os
 import hashlib
+import json
 import logging
 import base64
 import binascii
@@ -8,10 +9,19 @@ from typing import Any, Iterable
 from django.shortcuts import get_object_or_404
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from django.utils import timezone
-from apps.code_scan.models import ScanProject, ScanTask, ScanResult, ShieldApplication
+from apps.code_scan.models import (
+    ScanFinding,
+    ScanProject,
+    ScanResult,
+    ScanResultDetail,
+    ScanResultOccurrence,
+    ScanTask,
+    ShieldApplication,
+)
 from apps.code_scan.parsers.factory import ParserFactory
 from core.user.user_model import User
 
@@ -27,6 +37,13 @@ class ScanService:
         if modifier_id:
             update_kwargs["sys_modifier_id"] = modifier_id
         return queryset.filter(is_deleted=False).update(**update_kwargs)
+
+    @staticmethod
+    def _soft_delete_light_queryset(queryset) -> int:
+        return queryset.filter(is_deleted=False).update(
+            is_deleted=True,
+            updated_at=timezone.now(),
+        )
 
     @staticmethod
     def _normalize_path(value: str | None) -> str:
@@ -80,6 +97,319 @@ class ScanService:
     @staticmethod
     def _normalize_sub_module(sub_module: str | None) -> str:
         return (sub_module or "").strip()
+
+    @staticmethod
+    def _as_text(value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value)
+
+    @staticmethod
+    def _as_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _normalize_detail_payload(item: dict) -> dict:
+        return {
+            "file_path": ScanService._as_text(item.get("file_path")) or "unknown",
+            "defect_type": ScanService._as_text(item.get("defect_type")) or "Unknown",
+            "severity": ScanService._as_text(item.get("severity")) or "Low",
+            "description": ScanService._as_text(item.get("description")),
+            "help_info": ScanService._as_text(item.get("help_info")),
+            "code_snippet": ScanService._as_text(item.get("code_snippet")),
+        }
+
+    @staticmethod
+    def build_fingerprint(item: dict) -> str:
+        payload = ScanService._normalize_detail_payload(item)
+        fingerprint_str = (
+            f"{payload['file_path']}:{payload['defect_type']}:{payload['description']}"
+        )
+        return hashlib.md5(fingerprint_str.encode()).hexdigest()
+
+    @staticmethod
+    def build_detail_hash(payload: dict) -> str:
+        normalized = {
+            "file_path": payload.get("file_path") or "",
+            "defect_type": payload.get("defect_type") or "",
+            "severity": payload.get("severity") or "",
+            "description": payload.get("description") or "",
+            "help_info": payload.get("help_info") or "",
+            "code_snippet": payload.get("code_snippet") or "",
+        }
+        encoded = json.dumps(
+            normalized,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _ensure_details(detail_payloads: list[dict]) -> dict[str, ScanResultDetail]:
+        payload_by_hash: dict[str, dict] = {}
+        for payload in detail_payloads:
+            content_hash = ScanService.build_detail_hash(payload)
+            payload_by_hash.setdefault(content_hash, payload)
+
+        if not payload_by_hash:
+            return {}
+
+        existing = ScanResultDetail.objects.in_bulk(
+            payload_by_hash.keys(),
+            field_name="content_hash",
+        )
+        update_time = timezone.now()
+        missing = [
+            ScanResultDetail(content_hash=content_hash, updated_at=update_time, **payload)
+            for content_hash, payload in payload_by_hash.items()
+            if content_hash not in existing
+        ]
+        if missing:
+            ScanResultDetail.objects.bulk_create(missing, ignore_conflicts=True)
+            existing = ScanResultDetail.objects.in_bulk(
+                payload_by_hash.keys(),
+                field_name="content_hash",
+            )
+        return existing
+
+    @staticmethod
+    def _ensure_findings(
+        project: ScanProject,
+        entries: list[dict],
+    ) -> dict[str, ScanFinding]:
+        fingerprints = list(dict.fromkeys(entry["fingerprint"] for entry in entries))
+        if not fingerprints:
+            return {}
+
+        existing = {
+            item.fingerprint: item
+            for item in ScanFinding.objects.filter(
+                project=project,
+                fingerprint__in=fingerprints,
+            )
+        }
+        first_entry_by_fingerprint: dict[str, dict] = {}
+        for entry in entries:
+            first_entry_by_fingerprint.setdefault(entry["fingerprint"], entry)
+
+        missing = []
+        for fingerprint, entry in first_entry_by_fingerprint.items():
+            if fingerprint in existing:
+                continue
+            seen_at = entry.get("seen_at") or timezone.now()
+            task = entry.get("task")
+            missing.append(
+                ScanFinding(
+                    project=project,
+                    fingerprint=fingerprint,
+                    first_seen_task=task,
+                    last_seen_task=task,
+                    first_seen_at=seen_at,
+                    last_seen_at=seen_at,
+                    updated_at=seen_at,
+                )
+            )
+        if missing:
+            ScanFinding.objects.bulk_create(missing, ignore_conflicts=True)
+            existing = {
+                item.fingerprint: item
+                for item in ScanFinding.objects.filter(
+                    project=project,
+                    fingerprint__in=fingerprints,
+                )
+            }
+
+        latest_entry_by_fingerprint: dict[str, dict] = {}
+        earliest_entry_by_fingerprint: dict[str, dict] = {}
+        for entry in entries:
+            fingerprint = entry["fingerprint"]
+            seen_at = entry.get("seen_at") or timezone.now()
+            if (
+                fingerprint not in latest_entry_by_fingerprint
+                or seen_at >= latest_entry_by_fingerprint[fingerprint]["seen_at"]
+            ):
+                latest_entry_by_fingerprint[fingerprint] = {**entry, "seen_at": seen_at}
+            if (
+                fingerprint not in earliest_entry_by_fingerprint
+                or seen_at < earliest_entry_by_fingerprint[fingerprint]["seen_at"]
+            ):
+                earliest_entry_by_fingerprint[fingerprint] = {**entry, "seen_at": seen_at}
+
+        findings_to_update = []
+        update_time = timezone.now()
+        for fingerprint, finding in existing.items():
+            changed = False
+            latest_entry = latest_entry_by_fingerprint.get(fingerprint)
+            if latest_entry and latest_entry["seen_at"] >= finding.last_seen_at:
+                finding.last_seen_task = latest_entry.get("task")
+                finding.last_seen_at = latest_entry["seen_at"]
+                changed = True
+
+            earliest_entry = earliest_entry_by_fingerprint.get(fingerprint)
+            if earliest_entry and earliest_entry["seen_at"] < finding.first_seen_at:
+                finding.first_seen_task = earliest_entry.get("task")
+                finding.first_seen_at = earliest_entry["seen_at"]
+                changed = True
+
+            if finding.is_deleted:
+                finding.is_deleted = False
+                changed = True
+
+            if changed:
+                finding.updated_at = update_time
+                findings_to_update.append(finding)
+
+        if findings_to_update:
+            ScanFinding.objects.bulk_update(
+                findings_to_update,
+                [
+                    "first_seen_task",
+                    "first_seen_at",
+                    "last_seen_task",
+                    "last_seen_at",
+                    "is_deleted",
+                    "updated_at",
+                ],
+            )
+        return existing
+
+    @staticmethod
+    def _shielded_fingerprints(project: ScanProject, fingerprints: list[str]) -> set[str]:
+        if not fingerprints:
+            return set()
+
+        normalized = list(dict.fromkeys(fingerprints))
+        from_findings = set(
+            ScanFinding.objects.filter(
+                project=project,
+                fingerprint__in=normalized,
+                shield_status="Shielded",
+                is_deleted=False,
+            ).values_list("fingerprint", flat=True)
+        )
+        from_legacy_results = set(
+            ScanResult.objects.filter(
+                task__project=project,
+                fingerprint__in=normalized,
+                shield_status="Shielded",
+                is_deleted=False,
+                task__is_deleted=False,
+            ).values_list("fingerprint", flat=True)
+        )
+        return from_findings | from_legacy_results
+
+    @staticmethod
+    def persist_normalized_results(
+        task: ScanTask,
+        defects: list[dict],
+        *,
+        replace_task: bool = False,
+        legacy_results: list[ScanResult] | None = None,
+    ) -> int:
+        project_prefix_rules = ScanService._normalize_path_prefixes(
+            getattr(task.project, "path_shield_prefixes", []),
+        )
+        legacy_results = legacy_results or []
+        legacy_by_index = {index: result for index, result in enumerate(legacy_results)}
+
+        entries: list[dict] = []
+        detail_payloads: list[dict] = []
+        fingerprints: list[str] = []
+        for index, item in enumerate(defects):
+            legacy_result = legacy_by_index.get(index)
+            detail_payload = ScanService._normalize_detail_payload(item)
+            fingerprint = (
+                legacy_result.fingerprint if legacy_result else ScanService.build_fingerprint(item)
+            )
+            seen_at = (
+                getattr(legacy_result, "sys_create_datetime", None)
+                or getattr(task, "sys_create_datetime", None)
+                or timezone.now()
+            )
+            entry = {
+                "task": task,
+                "detail_payload": detail_payload,
+                "fingerprint": fingerprint,
+                "line_number": ScanService._as_int(item.get("line_number"), 0),
+                "legacy_result": legacy_result,
+                "seen_at": seen_at,
+                "path_rule_shielded": ScanService._is_path_prefix_shielded(
+                    detail_payload["file_path"],
+                    project_prefix_rules,
+                ),
+            }
+            entries.append(entry)
+            detail_payloads.append(detail_payload)
+            fingerprints.append(fingerprint)
+
+        if replace_task:
+            ScanResultOccurrence.objects.filter(task=task).delete()
+
+        if not entries:
+            return 0
+
+        details = ScanService._ensure_details(detail_payloads)
+        findings = ScanService._ensure_findings(task.project, entries)
+        inherited_shielded = ScanService._shielded_fingerprints(task.project, fingerprints)
+
+        occurrences: list[ScanResultOccurrence] = []
+        finding_status_updates: dict[int, str] = {}
+        for entry in entries:
+            detail_hash = ScanService.build_detail_hash(entry["detail_payload"])
+            finding = findings[entry["fingerprint"]]
+            legacy_result = entry["legacy_result"]
+            if legacy_result:
+                status = legacy_result.shield_status
+            else:
+                status = (
+                    "Shielded"
+                    if entry["fingerprint"] in inherited_shielded or entry["path_rule_shielded"]
+                    else "Normal"
+                )
+
+            if status != "Normal":
+                previous = finding_status_updates.get(finding.id)
+                if previous != "Shielded":
+                    finding_status_updates[finding.id] = status
+
+            occurrences.append(
+                ScanResultOccurrence(
+                    task=task,
+                    finding=finding,
+                    detail=details[detail_hash],
+                    legacy_result=legacy_result,
+                    line_number=entry["line_number"],
+                    shield_status=status,
+                    created_at=entry["seen_at"],
+                    updated_at=entry["seen_at"],
+                )
+            )
+
+        ScanResultOccurrence.objects.bulk_create(occurrences)
+
+        if finding_status_updates:
+            findings_to_update = []
+            update_time = timezone.now()
+            for finding in findings.values():
+                next_status = finding_status_updates.get(finding.id)
+                if not next_status:
+                    continue
+                if finding.shield_status == "Shielded" and next_status != "Shielded":
+                    continue
+                finding.shield_status = next_status
+                finding.updated_at = update_time
+                findings_to_update.append(finding)
+            if findings_to_update:
+                ScanFinding.objects.bulk_update(
+                    findings_to_update,
+                    ["shield_status", "updated_at"],
+                )
+
+        return len(occurrences)
     
     @staticmethod
     def create_project(data: dict, user: User) -> ScanProject:
@@ -117,8 +447,16 @@ class ScanService:
         )
         modifier_id = getattr(user, "id", None)
         ScanService._soft_delete_queryset(
-            ShieldApplication.objects.filter(result__task__project=project),
+            ShieldApplication.objects.filter(
+                Q(result__task__project=project) | Q(occurrence__task__project=project),
+            ),
             modifier_id,
+        )
+        ScanService._soft_delete_light_queryset(
+            ScanResultOccurrence.objects.filter(task__project=project),
+        )
+        ScanService._soft_delete_light_queryset(
+            ScanFinding.objects.filter(project=project),
         )
         ScanService._soft_delete_queryset(
             ScanResult.objects.filter(task__project=project),
@@ -278,49 +616,13 @@ class ScanService:
         try:
             parser = ParserFactory.get_parser(task.tool_name)
             defects = parser.parse(task.report_file)
-            project_prefix_rules = ScanService._normalize_path_prefixes(
-                getattr(task.project, "path_shield_prefixes", []),
-            )
             
             with transaction.atomic():
-                # 如果是重跑任务，清除旧结果
-                ScanResult.objects.filter(task=task).delete()
-                
-                results_to_create = []
-                for item in defects:
-                    # 生成指纹: 文件路径 + 缺陷类型 + 描述 (不包含行号，以支持代码移动)
-                    # 如果需要区分同一文件中的相同错误，建议工具提供更稳定的 context hash
-                    fingerprint_str = f"{item['file_path']}:{item['defect_type']}:{item['description']}"
-                    fingerprint = hashlib.md5(fingerprint_str.encode()).hexdigest()
-                    
-                    # 自动匹配屏蔽规则 (同项目 + 同指纹 + 已屏蔽状态)
-                    is_shielded = ScanResult.objects.filter(
-                        task__project=task.project,
-                        fingerprint=fingerprint,
-                        shield_status='Shielded'
-                    ).exists()
-
-                    is_path_rule_shielded = ScanService._is_path_prefix_shielded(
-                        item['file_path'],
-                        project_prefix_rules,
-                    )
-                    
-                    status = 'Shielded' if (is_shielded or is_path_rule_shielded) else 'Normal'
-                    
-                    results_to_create.append(ScanResult(
-                        task=task,
-                        file_path=item['file_path'],
-                        line_number=item['line_number'],
-                        defect_type=item['defect_type'],
-                        severity=item['severity'],
-                        description=item['description'],
-                        fingerprint=fingerprint,
-                        shield_status=status,
-                        help_info=item.get('help_info'),
-                        code_snippet=item.get('code_snippet')
-                    ))
-                
-                ScanResult.objects.bulk_create(results_to_create)
+                ScanService.persist_normalized_results(
+                    task,
+                    defects,
+                    replace_task=True,
+                )
                 
             task.status = 'success'
             task.processed_time = datetime.now()
@@ -337,16 +639,56 @@ class ScanService:
     def apply_shield(user, result_ids, approver_id, reason):
         """申请屏蔽缺陷"""
         approver = User.objects.get(id=approver_id)
-        results = ScanResult.objects.filter(id__in=result_ids)
+        normalized_ids = [str(item) for item in (result_ids or []) if str(item).isdigit()]
+        legacy_ids = [str(item) for item in (result_ids or []) if not str(item).isdigit()]
+        occurrences = ScanResultOccurrence.objects.filter(
+            id__in=normalized_ids,
+            is_deleted=False,
+            task__is_deleted=False,
+            task__project__is_deleted=False,
+        ).select_related("finding", "legacy_result")
+        results = ScanResult.objects.filter(id__in=legacy_ids, is_deleted=False)
         
         with transaction.atomic():
+            for occurrence in occurrences:
+                if occurrence.shield_status != 'Normal':
+                    continue
+                occurrence.shield_status = 'Pending'
+                occurrence.save(update_fields=['shield_status', 'updated_at'])
+                occurrence.finding.shield_status = 'Pending'
+                occurrence.finding.save(update_fields=['shield_status', 'updated_at'])
+
+                if occurrence.legacy_result_id:
+                    occurrence.legacy_result.shield_status = 'Pending'
+                    occurrence.legacy_result.save(update_fields=['shield_status', 'sys_update_datetime'])
+
+                ShieldApplication.objects.create(
+                    result=occurrence.legacy_result,
+                    occurrence=occurrence,
+                    applicant=user,
+                    approver=approver,
+                    reason=reason,
+                    status='Pending'
+                )
+
             for result in results:
                 if result.shield_status == 'Normal':
                     result.shield_status = 'Pending'
-                    result.save()
+                    result.save(update_fields=['shield_status', 'sys_update_datetime'])
+
+                    try:
+                        occurrence = result.normalized_occurrence
+                    except ScanResultOccurrence.DoesNotExist:
+                        occurrence = None
+                    if occurrence:
+                        occurrence.shield_status = 'Pending'
+                        occurrence.save(update_fields=['shield_status', 'updated_at'])
+                        occurrence.finding.shield_status = 'Pending'
+                        occurrence.finding.save(update_fields=['shield_status', 'updated_at'])
                     
                     ShieldApplication.objects.create(
                         result=result,
+                        occurrence=occurrence,
                         applicant=user,
                         approver=approver,
                         reason=reason,
@@ -356,19 +698,31 @@ class ScanService:
     @staticmethod
     def audit_shield(user, application_id, status, comment):
         """审批屏蔽申请"""
-        app = ShieldApplication.objects.get(id=application_id, approver=user)
+        app = ShieldApplication.objects.select_related(
+            'result',
+            'occurrence',
+            'occurrence__finding',
+        ).get(id=application_id, approver=user)
         
         with transaction.atomic():
             app.status = status
             app.audit_comment = comment
-            app.save()
+            app.save(update_fields=['status', 'audit_comment', 'sys_update_datetime'])
             
-            result = app.result
-            if status == 'Approved':
-                result.shield_status = 'Shielded'
-            else:
-                result.shield_status = 'Rejected'
-            result.save()
+            ScanService._apply_audit_status_to_result(app, status)
+
+    @staticmethod
+    def _apply_audit_status_to_result(app: ShieldApplication, status: str):
+        next_status = 'Shielded' if status == 'Approved' else 'Rejected'
+        if app.occurrence_id:
+            app.occurrence.shield_status = next_status
+            app.occurrence.save(update_fields=['shield_status', 'updated_at'])
+            app.occurrence.finding.shield_status = next_status
+            app.occurrence.finding.save(update_fields=['shield_status', 'updated_at'])
+
+        if app.result_id:
+            app.result.shield_status = next_status
+            app.result.save(update_fields=['shield_status', 'sys_update_datetime'])
 
     @staticmethod
     def audit_shield_batch(user, application_ids, status, comment):
@@ -381,7 +735,7 @@ class ScanService:
             approver=user,
             is_deleted=False,
             status='Pending',
-        ).select_related('result')
+        ).select_related('result', 'occurrence', 'occurrence__finding')
 
         processed = 0
         with transaction.atomic():
@@ -390,12 +744,7 @@ class ScanService:
                 app.audit_comment = comment
                 app.save(update_fields=['status', 'audit_comment', 'sys_update_datetime'])
 
-                result = app.result
-                if status == 'Approved':
-                    result.shield_status = 'Shielded'
-                else:
-                    result.shield_status = 'Rejected'
-                result.save(update_fields=['shield_status', 'sys_update_datetime'])
+                ScanService._apply_audit_status_to_result(app, status)
                 processed += 1
 
         return processed

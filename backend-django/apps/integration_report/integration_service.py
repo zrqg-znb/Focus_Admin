@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 from django.db import close_old_connections, transaction
 from django.db.models import Count, Max, Q
 
-from apps.code_scan.models import ScanProject, ScanResult, ScanTask
+from apps.code_scan.models import ScanProject, ScanResult, ScanResultOccurrence, ScanTask
 from core.user.user_model import User
 
 from .integration_models import (
@@ -137,6 +137,36 @@ def _build_code_scan_detail_url(
     return f"/code_scan/result?{urlencode(params)}"
 
 
+def _count_code_scan_results_by_task(task_ids: List[str]) -> Dict[str, float]:
+    if not task_ids:
+        return {}
+
+    count_map: Dict[str, float] = {}
+    occurrence_counts = (
+        ScanResultOccurrence.objects.filter(task_id__in=task_ids, is_deleted=False)
+        .exclude(shield_status__in=EXCLUDED_SHIELD_STATUSES)
+        .values("task_id")
+        .annotate(cnt=Count("id"))
+    )
+    legacy_counts = (
+        ScanResult.objects.filter(
+            task_id__in=task_ids,
+            is_deleted=False,
+            normalized_occurrence__isnull=True,
+        )
+        .exclude(shield_status__in=EXCLUDED_SHIELD_STATUSES)
+        .values("task_id")
+        .annotate(cnt=Count("id"))
+    )
+    for row in occurrence_counts:
+        task_id = str(row["task_id"])
+        count_map[task_id] = count_map.get(task_id, 0.0) + float(row["cnt"])
+    for row in legacy_counts:
+        task_id = str(row["task_id"])
+        count_map[task_id] = count_map.get(task_id, 0.0) + float(row["cnt"])
+    return count_map
+
+
 def _count_results_for_sub_modules(
     scan_project: ScanProject,
     tool_name: str,
@@ -174,11 +204,7 @@ def _count_results_for_sub_modules(
     task_ids = list(set(latest_task_by_module.values()))
     if not task_ids:
         return 0.0, []
-    count = float(
-        ScanResult.objects.filter(task_id__in=task_ids, is_deleted=False)
-        .exclude(shield_status__in=EXCLUDED_SHIELD_STATUSES)
-        .count()
-    )
+    count = sum(_count_code_scan_results_by_task(task_ids).values())
     return count, task_ids
 
 
@@ -224,13 +250,7 @@ def _fetch_code_scan_metrics(
 
     if latest_task_by_metric:
         task_ids = list(set(latest_task_by_metric.values()))
-        counts = (
-            ScanResult.objects.filter(task_id__in=task_ids, is_deleted=False)
-            .exclude(shield_status__in=EXCLUDED_SHIELD_STATUSES)
-            .values("task_id")
-            .annotate(cnt=Count("id"))
-        )
-        count_map = {str(row["task_id"]): float(row["cnt"]) for row in counts}
+        count_map = _count_code_scan_results_by_task(task_ids)
         for metric_key, task_id in latest_task_by_metric.items():
             if metric_key in SUB_MODULE_SCOPED_METRICS:
                 continue
