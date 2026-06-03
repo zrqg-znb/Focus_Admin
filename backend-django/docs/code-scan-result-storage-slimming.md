@@ -28,6 +28,12 @@
 python manage.py audit_code_scan_storage
 ```
 
+该命令使用主键分批扫描，不再执行全表 `count/distinct/group by`。生产大表建议从默认参数开始；如果单行 `code_snippet` 很大，可进一步降低批量：
+
+```bash
+python manage.py audit_code_scan_storage --chunk-size 100 --progress-every 5000
+```
+
 回填旧结果：
 
 ```bash

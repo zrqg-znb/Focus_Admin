@@ -1,7 +1,8 @@
 from collections import defaultdict
+import time
 
 from django.core.management.base import BaseCommand
-from django.db import transaction
+from django.db import OperationalError, close_old_connections, transaction
 from django.utils import timezone
 
 from apps.code_scan.models import ScanResult, ScanResultOccurrence, ShieldApplication
@@ -16,12 +17,14 @@ class Command(BaseCommand):
         parser.add_argument("--batch-size", type=int, default=1000, help="每批处理的旧结果行数")
         parser.add_argument("--limit", type=int, default=0, help="最多处理多少行，0 表示不限")
         parser.add_argument("--dry-run", action="store_true", help="只统计待回填数量，不写入")
+        parser.add_argument("--max-retries", type=int, default=3, help="单批查询断线后的重试次数")
 
     def handle(self, *args, **options):
         project_id = options.get("project_id")
         batch_size = options["batch_size"]
         limit = options["limit"]
         dry_run = options["dry_run"]
+        max_retries = max(int(options["max_retries"] or 0), 0)
 
         base_qs = ScanResult.objects.filter(
             is_deleted=False,
@@ -32,25 +35,30 @@ class Command(BaseCommand):
         if project_id:
             base_qs = base_qs.filter(task__project_id=project_id)
 
-        pending_count = base_qs.count()
-        self.stdout.write(f"pending legacy scan_result rows: {pending_count}")
-        if dry_run:
-            return
-
         processed = 0
+        last_id = ""
         while True:
             remaining = limit - processed if limit else batch_size
             if limit and remaining <= 0:
                 break
             current_batch_size = min(batch_size, remaining) if limit else batch_size
-            batch = list(
-                base_qs.select_related("task", "task__project")
-                .order_by("task__sys_create_datetime", "sys_create_datetime", "id")[
+            current_qs = base_qs
+            if last_id:
+                current_qs = current_qs.filter(id__gt=last_id)
+            batch = self._fetch_batch(
+                current_qs.select_related("task", "task__project").order_by("id")[
                     :current_batch_size
-                ]
+                ],
+                max_retries=max_retries,
             )
             if not batch:
                 break
+            last_id = str(batch[-1].id)
+
+            if dry_run:
+                processed += len(batch)
+                self.stdout.write(f"would process legacy rows: {processed}")
+                continue
 
             grouped_results: dict[str, list[ScanResult]] = defaultdict(list)
             task_by_id = {}
@@ -104,4 +112,22 @@ class Command(BaseCommand):
             processed += len(batch)
             self.stdout.write(f"processed legacy rows: {processed}")
 
-        self.stdout.write(self.style.SUCCESS(f"backfill finished, processed={processed}"))
+        action = "dry-run finished" if dry_run else "backfill finished"
+        self.stdout.write(self.style.SUCCESS(f"{action}, processed={processed}"))
+
+    def _fetch_batch(self, qs, *, max_retries: int) -> list[ScanResult]:
+        for attempt in range(max_retries + 1):
+            try:
+                close_old_connections()
+                return list(qs)
+            except OperationalError as exc:
+                close_old_connections()
+                if attempt >= max_retries:
+                    raise
+                sleep_seconds = min(2 ** attempt, 8)
+                self.stderr.write(
+                    f"scan_result backfill batch failed, retry "
+                    f"{attempt + 1}/{max_retries} after {sleep_seconds}s: {exc}"
+                )
+                time.sleep(sleep_seconds)
+        return []
