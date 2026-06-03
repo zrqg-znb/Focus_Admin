@@ -40,6 +40,15 @@ python manage.py audit_code_scan_storage --chunk-size 100 --progress-every 5000
 python manage.py backfill_code_scan_occurrences --batch-size 1000
 ```
 
+生产大表回填同样使用主键窗口扫描，避免 `normalized_occurrence__isnull=True` 这类反连接。建议先小批验证：
+
+```bash
+python manage.py backfill_code_scan_occurrences --batch-size 50 --scan-window-size 500 --limit 500 --dry-run
+python manage.py backfill_code_scan_occurrences --batch-size 50 --scan-window-size 500 --limit 500
+```
+
+如果已经回填过一部分，窗口里可能大多是已处理行，可以逐步增大 `--scan-window-size`，例如 `2000` 或 `5000`；`--batch-size` 仍控制单次真正写入的行数。
+
 校验回填一致性：
 
 ```bash

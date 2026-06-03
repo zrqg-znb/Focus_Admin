@@ -354,7 +354,12 @@ class ScanService:
 
         details = ScanService._ensure_details(detail_payloads)
         findings = ScanService._ensure_findings(task.project, entries)
-        inherited_shielded = ScanService._shielded_fingerprints(task.project, fingerprints)
+        needs_inherited_status = any(entry["legacy_result"] is None for entry in entries)
+        inherited_shielded = (
+            ScanService._shielded_fingerprints(task.project, fingerprints)
+            if needs_inherited_status
+            else set()
+        )
 
         occurrences: list[ScanResultOccurrence] = []
         finding_status_updates: dict[int, str] = {}
