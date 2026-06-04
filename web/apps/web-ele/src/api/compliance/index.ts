@@ -108,9 +108,15 @@ export function updateBranchStatus(branchId: string, data: UpdateStatusParams) {
 export function uploadComplianceData(file: File) {
   const formData = new FormData();
   formData.append('file', file);
-  return requestClient.post<UploadResponse>('/api/code-compliance/upload', formData);
+  return requestClient.post<UploadResponse>(
+    '/api/code-compliance/upload',
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  );
 }
 
 export function getUploadTemplate() {
-  return requestClient.get('/api/code-compliance/template', { responseType: 'blob' });
+  return requestClient.get('/api/code-compliance/template', {
+    responseType: 'blob',
+  });
 }

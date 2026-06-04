@@ -145,6 +145,10 @@ export interface PaginatedResponse<T> {
 
 const base = '/api/code-compliance/base';
 
+const multipartOptions = {
+  headers: { 'Content-Type': 'multipart/form-data' },
+};
+
 export function listOrganizationsApi() {
   return requestClient.get<OrganizationItem[]>(`${base}/organizations/tree`);
 }
@@ -160,8 +164,14 @@ export function createOrganizationApi(data: OrganizationPayload) {
   return requestClient.post<OrganizationItem>(`${base}/organizations`, data);
 }
 
-export function updateOrganizationApi(id: string, data: Partial<OrganizationPayload>) {
-  return requestClient.put<OrganizationItem>(`${base}/organizations/${id}`, data);
+export function updateOrganizationApi(
+  id: string,
+  data: Partial<OrganizationPayload>,
+) {
+  return requestClient.put<OrganizationItem>(
+    `${base}/organizations/${id}`,
+    data,
+  );
 }
 
 export function deleteOrganizationApi(id: string) {
@@ -171,7 +181,11 @@ export function deleteOrganizationApi(id: string) {
 export function importOrganizationsApi(file: File) {
   const formData = new FormData();
   formData.append('file', file);
-  return requestClient.post<ImportResult>(`${base}/organizations/import`, formData);
+  return requestClient.post<ImportResult>(
+    `${base}/organizations/import`,
+    formData,
+    multipartOptions,
+  );
 }
 
 export function downloadOrganizationTemplateApi() {
@@ -191,7 +205,10 @@ export function createRepositoryApi(data: RepositoryPayload) {
   return requestClient.post<RepositoryItem>(`${base}/repositories`, data);
 }
 
-export function updateRepositoryApi(id: string, data: Partial<RepositoryPayload>) {
+export function updateRepositoryApi(
+  id: string,
+  data: Partial<RepositoryPayload>,
+) {
   return requestClient.put<RepositoryItem>(`${base}/repositories/${id}`, data);
 }
 
@@ -202,7 +219,11 @@ export function deleteRepositoryApi(id: string) {
 export function importRepositoriesApi(file: File) {
   const formData = new FormData();
   formData.append('file', file);
-  return requestClient.post<ImportResult>(`${base}/repositories/import`, formData);
+  return requestClient.post<ImportResult>(
+    `${base}/repositories/import`,
+    formData,
+    multipartOptions,
+  );
 }
 
 export function downloadRepositoryTemplateApi() {
@@ -243,7 +264,11 @@ export function deleteBranchApi(id: string) {
 export function importBranchesApi(file: File) {
   const formData = new FormData();
   formData.append('file', file);
-  return requestClient.post<ImportResult>(`${base}/branches/import`, formData);
+  return requestClient.post<ImportResult>(
+    `${base}/branches/import`,
+    formData,
+    multipartOptions,
+  );
 }
 
 export function downloadBranchTemplateApi() {
