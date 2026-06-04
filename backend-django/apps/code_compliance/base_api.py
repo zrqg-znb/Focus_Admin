@@ -43,18 +43,6 @@ def create_organization(request, payload: OrganizationIn):
     return services.create_organization(request.auth, payload)
 
 
-@router.put("/organizations/{org_id}", response=OrganizationOut, summary="更新代码库组织")
-def update_organization(request, org_id: str, payload: OrganizationPatch):
-    """更新组织基础字段并校验父子关系。"""
-    return services.update_organization(request.auth, org_id, payload)
-
-
-@router.delete("/organizations/{org_id}", summary="删除代码库组织")
-def delete_organization(request, org_id: str):
-    """删除没有子组织和代码库的组织。"""
-    return services.delete_organization(org_id)
-
-
 @router.get("/organizations/template", summary="下载组织导入模板")
 def download_organization_template(request):
     """下载组织基础字段 Excel 导入模板。"""
@@ -65,6 +53,18 @@ def download_organization_template(request):
 def import_organizations(request, file: UploadedFile = File(...)):
     """导入组织基础字段，不处理代码库绑定。"""
     return services.import_organizations(request.auth, file)
+
+
+@router.put("/organizations/{org_id}", response=OrganizationOut, summary="更新代码库组织")
+def update_organization(request, org_id: str, payload: OrganizationPatch):
+    """更新组织基础字段并校验父子关系。"""
+    return services.update_organization(request.auth, org_id, payload)
+
+
+@router.delete("/organizations/{org_id}", summary="删除代码库组织")
+def delete_organization(request, org_id: str):
+    """删除没有子组织和代码库的组织。"""
+    return services.delete_organization(org_id)
 
 
 @router.get("/repositories", response=PaginatedRepositoryOut, summary="获取代码库列表")

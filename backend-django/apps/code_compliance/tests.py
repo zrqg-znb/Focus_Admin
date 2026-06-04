@@ -250,3 +250,9 @@ class CodeComplianceFoundationTests(TestCase):
         self.assertEqual(result.updated_count, 1)
         updated = ComplianceManagedBranch.objects.get(id=branch["id"])
         self.assertEqual(updated.alias, "主线")
+
+    def test_organization_template_route_is_not_captured_by_dynamic_org_route(self):
+        """组织模板静态路由必须先于 /organizations/{org_id} 匹配。"""
+        response = self.client.get("/api/code-compliance/base/organizations/template")
+
+        self.assertNotEqual(response.status_code, 405)
