@@ -49,6 +49,22 @@ const apis = [
     purpose: '批量导入风险记录与分支信息，并提供标准模板',
     returns: 'UploadResponse / Blob',
   },
+  {
+    consumer: '代码库管理',
+    method: 'GET / POST / PUT / DELETE',
+    params: '组织、代码库基础字段；组织树、分页筛选、Excel 文件',
+    path: '/api/code-compliance/base/organizations* / /api/code-compliance/base/repositories*',
+    purpose: '维护公司代码库系统组织树和代码库基础主数据',
+    returns: 'OrganizationOut[] / PaginatedRepositoryOut / ImportResult',
+  },
+  {
+    consumer: '分支管理',
+    method: 'GET / POST / PUT / DELETE',
+    params: '分支基础字段；分页筛选、Excel 文件、批量绑定对象',
+    path: '/api/code-compliance/base/branches*',
+    purpose: '维护分支主数据，并支持从分支侧批量绑定代码库',
+    returns: 'PaginatedBranchOut / ImportResult / BindResult',
+  },
 ];
 </script>
 
@@ -67,6 +83,36 @@ const apis = [
 - 风险状态在组织维度和个人维度如何统计
 
 因此它的设计重点不是复杂模型数量，而是“记录级状态”和“分支级状态”的层次拆分。
+
+</FocusModuleSection>
+
+<FocusModuleSection
+  kicker="Foundation V1"
+  title="一期基础数据升级"
+  summary="新一期在保留旧 Excel 风险台账的前提下，新增组织、代码库、分支和代码库-分支绑定主数据。"
+>
+
+一期新增的基础数据不参与漏合风险检测，只为后续联动公司代码库系统做准备。
+
+新增模型包括：
+
+- `ComplianceOrganization`
+  公司代码库系统组织，使用外部 `group_id` 作为业务唯一标识
+- `ComplianceRepository`
+  公司代码库系统代码库，使用外部 `project_id` 作为业务唯一标识
+- `ComplianceManagedBranch`
+  分支主数据，为避免影响旧风险台账，未复用旧 `ComplianceBranch`
+- `ComplianceRepositoryBranch`
+  代码库和分支的绑定表，支持软删除恢复
+
+新增页面包括：
+
+- `代码库管理`
+  左侧组织树，右侧当前组织直接挂载的代码库列表，组织用 Dialog 编辑，代码库用 Drawer 编辑
+- `分支管理`
+  分支基础信息列表、CRUD、Excel 导入和批量绑定代码库
+
+详细一期说明见后端文档：`backend-django/docs/code-compliance-foundation-v1.md`。
 
 </FocusModuleSection>
 
@@ -220,12 +266,17 @@ erDiagram
   合规风险概览页，消费 `getPostStats`
 - `web/apps/web-ele/src/views/compliance/detail/index.vue`
   岗位详情页，消费 `getPostUsersStats`
+- `web/apps/web-ele/src/views/compliance/repository/index.vue`
+  代码库管理页，消费 `/api/code-compliance/base/organizations` 与 `/repositories`
+- `web/apps/web-ele/src/views/compliance/branch/index.vue`
+  分支管理页，消费 `/api/code-compliance/base/branches`
 - `web/apps/web-ele/src/views/compliance/components/RiskDrawer.vue`
   用户风险抽屉，消费 `getUserRecords`
 - `web/apps/web-ele/src/views/compliance/components/RiskHandleDialog.vue`
   分支整改对话框，消费 `updateBranchStatus`
 
 对应 API 类型定义位于 `web/apps/web-ele/src/api/compliance/index.ts`。
+基础数据 API 类型定义位于 `web/apps/web-ele/src/api/compliance/base.ts`。
 
 这套页面结构与数据结构是一一对应的：
 

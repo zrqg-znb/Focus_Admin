@@ -2,6 +2,11 @@
 
 代码合规模块（`code_compliance`）用于追踪代码变更的合规性风险，确保代码变更在所有必要的分支上进行了同步。
 
+当前模块是双轨形态：
+
+- 旧风险台账：继续保留 Excel 上传、岗位概览、用户详情和旧分支整改能力。
+- 一期基础数据：新增组织、代码库、分支和代码库-分支绑定，为后续联动公司代码库系统做准备。
+
 ## 架构概览
 
 ### 模块关系图
@@ -30,6 +35,8 @@
 | --- | --- | --- | --- |
 | ComplianceRecord | User | N:1 | 记录关联到提交变更的用户 |
 | ComplianceRecord | ComplianceBranch | 1:N | 一条记录可能缺失多个分支的同步 |
+| ComplianceOrganization | ComplianceRepository | 1:N | 组织下直接挂载代码库 |
+| ComplianceRepository | ComplianceManagedBranch | M:N | 通过 ComplianceRepositoryBranch 维护绑定 |
 
 ## 核心概念
 
@@ -85,6 +92,46 @@ class ComplianceBranch(RootModel):
     branch_name = models.CharField(max_length=255)  # 分支名称
     status = models.IntegerField(default=0)          # 分支状态
     remark = models.TextField()                      # 备注
+```
+
+### ComplianceOrganization（基础数据组织）
+
+```python
+class ComplianceOrganization(RootModel):
+    group_id = models.CharField(unique=True)  # 公司代码库系统组织ID
+    name = models.CharField(max_length=255)
+    parent = models.ForeignKey("self", null=True, related_name="children")
+    mode = models.CharField(choices=(("CR", "CR"), ("MR", "MR")))
+    domain = models.CharField(choices=(("cockpit", "座舱"), ("vehicle", "车控")))
+    remark = models.TextField(null=True, blank=True)
+```
+
+### ComplianceRepository（基础数据代码库）
+
+```python
+class ComplianceRepository(RootModel):
+    project_id = models.CharField(unique=True)  # 公司代码库系统代码库ID
+    project_name = models.CharField(max_length=255)
+    project_url = models.CharField(max_length=1024, blank=True)
+    organization = models.ForeignKey(ComplianceOrganization)
+    repo_type = models.CharField(max_length=100)  # core 字典 code_compliance_repo_type
+    responsibility_groups = models.ManyToManyField("core.PlGroup")
+    mode = models.CharField(choices=(("CR", "CR"), ("MR", "MR")))
+    domain = models.CharField(choices=(("cockpit", "座舱"), ("vehicle", "车控")))
+```
+
+### ComplianceManagedBranch（基础数据分支）
+
+`ComplianceManagedBranch` 是新分支主数据，命名上刻意避开旧风险台账的 `ComplianceBranch`，避免旧功能下线前发生语义冲突。
+
+```python
+class ComplianceManagedBranch(RootModel):
+    branch_name = models.CharField(max_length=255)
+    created_date = models.DateField(null=True, blank=True)
+    branch_type = models.CharField(choices=(("development", "开发"), ("trunk", "主干"), ("release", "发布"), ("other", "其他")))
+    alias = models.CharField(max_length=255, blank=True)
+    purpose = models.TextField(blank=True)
+    domain = models.CharField(choices=(("cockpit", "座舱"), ("vehicle", "车控")))
 ```
 
 ## 业务流程
@@ -154,11 +201,28 @@ class ComplianceBranch(RootModel):
 | --- | --- | --- |
 | POST | `/api/code-compliance/sync` | 手动触发数据同步 |
 
+### 一期基础数据
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/code-compliance/base/organizations/tree` | 获取组织树，节点包含直接代码库数量 |
+| POST/PUT/DELETE | `/api/code-compliance/base/organizations` | 组织新增、编辑、删除 |
+| GET/POST | `/api/code-compliance/base/organizations/template`、`/import` | 组织模板下载和 Excel 导入 |
+| GET | `/api/code-compliance/base/repositories` | 代码库分页列表，支持组织、关键词、模式、领域、仓库类型过滤 |
+| POST/PUT/DELETE | `/api/code-compliance/base/repositories` | 代码库新增、编辑、删除 |
+| POST | `/api/code-compliance/base/repositories/batch-bind-branches` | 从代码库侧批量绑定分支，支持 `append` / `replace` |
+| GET | `/api/code-compliance/base/branches` | 分支分页列表，输出关联代码库数量 |
+| POST/PUT/DELETE | `/api/code-compliance/base/branches` | 分支新增、编辑、删除 |
+| POST | `/api/code-compliance/base/branches/batch-bind-repositories` | 从分支侧批量绑定代码库，支持 `append` / `replace` |
+
 ## 目录结构
 
 ```
 apps/code_compliance/
 ├── api.py             # API 接口定义
+├── base_api.py        # 一期基础数据 API
+├── base_schemas.py    # 一期基础数据 Schema
+├── base_services.py   # 一期基础数据服务
 ├── models.py          # 数据模型 (Record, Branch)
 ├── schemas.py         # Pydantic Schema
 ├── services.py        # 业务服务
@@ -167,6 +231,16 @@ apps/code_compliance/
 │   └── commands/      # 自定义命令（如同步命令）
 └── migrations/        # 数据库迁移
 ```
+
+## 初始化
+
+一期新增命令：
+
+```bash
+python manage.py init_code_compliance
+```
+
+命令补齐菜单、权限和 `code_compliance_repo_type` 字典。旧风险入口保持可见，后续等新检测能力稳定后再做日落。
 
 ## 数据同步
 
