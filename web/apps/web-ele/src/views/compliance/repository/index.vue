@@ -16,7 +16,14 @@ import type {
   UploadRequestOptions,
 } from 'element-plus';
 
-import { computed, nextTick, onMounted, reactive, ref } from 'vue';
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+} from 'vue';
 
 import { Page } from '@vben/common-ui';
 import { Edit, Plus, Search, Trash2, Upload } from '@vben/icons';
@@ -112,6 +119,10 @@ const organizationKeyword = ref('');
 const organizationTree = ref<OrganizationTreeNode[]>([]);
 const selectedOrganizationId = ref('');
 
+const SIDEBAR_MIN_WIDTH = 260;
+const SIDEBAR_MAX_WIDTH = 520;
+const repositorySidebarWidth = ref(320);
+
 const repositoryKeyword = ref('');
 const selectedMode = ref('');
 const selectedDomain = ref('');
@@ -133,6 +144,10 @@ const repositoryDrawerTitle = ref('新增代码库');
 const repositoryEditingId = ref('');
 const bindDialogVisible = ref(false);
 const bindLoading = ref(false);
+
+let sidebarResizeStartWidth = 320;
+let sidebarResizeStartX = 0;
+let sidebarResizing = false;
 
 const organizationForm = reactive<OrganizationFormState>({
   domain: 'cockpit',
@@ -406,6 +421,61 @@ async function loadOptions() {
   ]);
   repoTypeOptions.value = repoTypes.filter((item) => item.status);
   plGroupOptions.value = plGroups.filter((item) => item.status);
+}
+
+function clampSidebarWidth(width: number) {
+  return Math.min(
+    SIDEBAR_MAX_WIDTH,
+    Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)),
+  );
+}
+
+function handleSidebarResizeMove(event: PointerEvent) {
+  if (!sidebarResizing) return;
+  repositorySidebarWidth.value = clampSidebarWidth(
+    sidebarResizeStartWidth + event.clientX - sidebarResizeStartX,
+  );
+}
+
+function stopResizeSidebar() {
+  // 拖拽结束后清理全局监听，避免鼠标离开页面区域后仍持续影响布局。
+  if (!sidebarResizing) return;
+  sidebarResizing = false;
+  document.body.style.removeProperty('cursor');
+  document.body.style.removeProperty('user-select');
+  window.removeEventListener('pointermove', handleSidebarResizeMove);
+  window.removeEventListener('pointerup', stopResizeSidebar);
+  window.removeEventListener('pointercancel', stopResizeSidebar);
+}
+
+function startResizeSidebar(event: PointerEvent) {
+  // 使用全局 pointer 监听，拖出分隔条时也能继续手动调宽/调窄。
+  sidebarResizing = true;
+  sidebarResizeStartX = event.clientX;
+  sidebarResizeStartWidth = repositorySidebarWidth.value;
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+  window.addEventListener('pointermove', handleSidebarResizeMove);
+  window.addEventListener('pointerup', stopResizeSidebar);
+  window.addEventListener('pointercancel', stopResizeSidebar);
+  event.preventDefault();
+}
+
+function handleSidebarResizeKeydown(event: KeyboardEvent) {
+  // 键盘微调给分隔条一个可访问的替代操作，Shift 时步长更大。
+  const step = event.shiftKey ? 32 : 16;
+  if (event.key === 'ArrowLeft') {
+    repositorySidebarWidth.value = clampSidebarWidth(
+      repositorySidebarWidth.value - step,
+    );
+    event.preventDefault();
+  }
+  if (event.key === 'ArrowRight') {
+    repositorySidebarWidth.value = clampSidebarWidth(
+      repositorySidebarWidth.value + step,
+    );
+    event.preventDefault();
+  }
 }
 
 function reloadRepositories(resetPage = false) {
@@ -689,6 +759,10 @@ onMounted(async () => {
   await gridApi.query();
   pageLoading.value = false;
 });
+
+onBeforeUnmount(() => {
+  stopResizeSidebar();
+});
 </script>
 
 <template>
@@ -718,9 +792,10 @@ onMounted(async () => {
       </template>
 
       <template #default>
-        <div class="flex h-full min-h-0 gap-3">
+        <div class="repository-main-layout flex h-full min-h-0">
           <aside
             class="repository-sidebar flex shrink-0 flex-col rounded border border-[var(--el-border-color-light)] bg-[var(--el-bg-color)]"
+            :style="{ width: `${repositorySidebarWidth}px` }"
           >
             <div class="border-b border-[var(--el-border-color-light)] p-3">
               <div class="mb-3 flex items-center justify-between gap-2">
@@ -817,6 +892,16 @@ onMounted(async () => {
               </ElTree>
             </div>
           </aside>
+
+          <div
+            class="repository-sidebar-resizer"
+            role="separator"
+            aria-label="调整组织树宽度"
+            aria-orientation="vertical"
+            tabindex="0"
+            @keydown="handleSidebarResizeKeydown"
+            @pointerdown="startResizeSidebar"
+          ></div>
 
           <section
             class="flex min-w-0 flex-1 flex-col rounded border border-[var(--el-border-color-light)] bg-[var(--el-bg-color)]"
@@ -1285,13 +1370,44 @@ onMounted(async () => {
 </template>
 
 <style scoped lang="less">
+.repository-main-layout {
+  gap: 0;
+}
+
 .repository-sidebar {
-  // 原生 resize 只在 overflow 非 visible 时生效，内部树区域继续负责滚动。
-  width: 320px;
+  // 宽度由拖拽分隔条控制，限制范围避免组织树或右侧列表被压坏。
   min-width: 260px;
   max-width: 520px;
   overflow: hidden;
-  resize: horizontal;
+}
+
+.repository-sidebar-resizer {
+  position: relative;
+  flex-shrink: 0;
+  width: 14px;
+  cursor: col-resize;
+  outline: none;
+}
+
+.repository-sidebar-resizer::before {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 6px;
+  width: 2px;
+  content: '';
+  border-radius: 999px;
+  background-color: var(--el-border-color);
+  transition:
+    width 0.16s ease,
+    background-color 0.16s ease;
+}
+
+.repository-sidebar-resizer:hover::before,
+.repository-sidebar-resizer:focus-visible::before {
+  left: 5px;
+  width: 4px;
+  background-color: var(--el-color-primary);
 }
 
 .toolbar-stack {
@@ -1371,11 +1487,6 @@ onMounted(async () => {
 }
 
 @media (max-width: 768px) {
-  .repository-sidebar {
-    width: 280px;
-    min-width: 240px;
-  }
-
   .toolbar-keyword,
   .toolbar-select-md,
   .toolbar-select-sm {
