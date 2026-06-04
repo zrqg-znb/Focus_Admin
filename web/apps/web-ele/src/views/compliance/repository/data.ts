@@ -3,8 +3,6 @@ import type { Column } from 'element-plus';
 import type { RepositoryItem } from '#/api/compliance/base';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
-export const ALL_ORGANIZATION_ID = '__all__';
-
 export const DOMAIN_OPTIONS = [
   { label: '座舱', value: 'cockpit' },
   { label: '车控', value: 'vehicle' },

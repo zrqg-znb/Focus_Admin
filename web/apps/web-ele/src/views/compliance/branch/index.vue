@@ -100,9 +100,7 @@ const bindForm = reactive<{
 });
 
 const branchRules: FormRules<BranchFormState> = {
-  branch_name: [
-    { message: '请输入分支名称', required: true, trigger: 'blur' },
-  ],
+  branch_name: [{ message: '请输入分支名称', required: true, trigger: 'blur' }],
   branch_type: [
     { message: '请选择分支类型', required: true, trigger: 'change' },
   ],
@@ -324,77 +322,81 @@ onMounted(() => {
 </script>
 
 <template>
-  <Page title="分支管理" auto-content-height>
+  <Page auto-content-height>
     <div
       class="flex h-full min-h-0 flex-col rounded border border-[var(--el-border-color-light)] bg-[var(--el-bg-color)] p-3"
     >
       <Grid class="h-full" @selection-change="handleSelectionChange">
         <template #toolbar-actions>
-          <div class="flex flex-1 flex-wrap items-center gap-2">
-            <ElInput
-              v-model="keyword"
-              class="w-[240px]"
-              clearable
-              placeholder="搜索分支名/别名/用途"
-              :prefix-icon="Search"
-              @clear="reloadBranches(true)"
-              @keyup.enter="reloadBranches(true)"
-            />
-            <ElSelect
-              v-model="selectedBranchType"
-              class="w-[130px]"
-              clearable
-              placeholder="分支类型"
-              @change="reloadBranches(true)"
-              @clear="reloadBranches(true)"
-            >
-              <ElOption
-                v-for="item in BRANCH_TYPE_OPTIONS"
-                :key="item.value"
-                :label="item.label"
-                :value="item.value"
+          <div class="toolbar-stack">
+            <!-- 工具栏拆成筛选区和操作区，缩窄窗口时两类控件不会互相挤压。 -->
+            <div class="toolbar-row">
+              <ElInput
+                v-model="keyword"
+                class="toolbar-keyword"
+                clearable
+                placeholder="搜索分支名/别名/用途"
+                :prefix-icon="Search"
+                @clear="reloadBranches(true)"
+                @keyup.enter="reloadBranches(true)"
               />
-            </ElSelect>
-            <ElSelect
-              v-model="selectedDomain"
-              class="w-[120px]"
-              clearable
-              placeholder="领域"
-              @change="reloadBranches(true)"
-              @clear="reloadBranches(true)"
-            >
-              <ElOption
-                v-for="item in DOMAIN_OPTIONS"
-                :key="item.value"
-                :label="item.label"
-                :value="item.value"
-              />
-            </ElSelect>
-            <ElButton @click="reloadBranches(true)">查询</ElButton>
-            <div class="flex-1"></div>
-            <ElButton
-              type="primary"
-              plain
-              :disabled="selectedBranches.length === 0"
-              @click="openBindRepositories"
-            >
-              绑定代码库
-            </ElButton>
-            <ElButton @click="downloadTemplate">下载模板</ElButton>
-            <ElUpload
-              action="#"
-              accept=".xlsx"
-              :disabled="importing"
-              :http-request="handleImport"
-              :show-file-list="false"
-            >
-              <ElButton type="success" :loading="importing">
-                <Upload class="mr-1 size-4" /> 批量导入
+              <ElSelect
+                v-model="selectedBranchType"
+                class="toolbar-select-md"
+                clearable
+                placeholder="分支类型"
+                @change="reloadBranches(true)"
+                @clear="reloadBranches(true)"
+              >
+                <ElOption
+                  v-for="item in BRANCH_TYPE_OPTIONS"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </ElSelect>
+              <ElSelect
+                v-model="selectedDomain"
+                class="toolbar-select-sm"
+                clearable
+                placeholder="领域"
+                @change="reloadBranches(true)"
+                @clear="reloadBranches(true)"
+              >
+                <ElOption
+                  v-for="item in DOMAIN_OPTIONS"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </ElSelect>
+              <ElButton @click="reloadBranches(true)">查询</ElButton>
+            </div>
+            <div class="toolbar-row toolbar-row-actions">
+              <ElButton
+                type="primary"
+                plain
+                :disabled="selectedBranches.length === 0"
+                @click="openBindRepositories"
+              >
+                绑定代码库
               </ElButton>
-            </ElUpload>
-            <ElButton type="primary" @click="openCreate">
-              <Plus class="mr-1 size-4" /> 新增分支
-            </ElButton>
+              <ElButton @click="downloadTemplate">下载模板</ElButton>
+              <ElUpload
+                action="#"
+                accept=".xlsx"
+                :disabled="importing"
+                :http-request="handleImport"
+                :show-file-list="false"
+              >
+                <ElButton type="success" :loading="importing">
+                  <Upload class="mr-1 size-4" /> 批量导入
+                </ElButton>
+              </ElUpload>
+              <ElButton type="primary" @click="openCreate">
+                <Plus class="mr-1 size-4" /> 新增分支
+              </ElButton>
+            </div>
           </div>
         </template>
 
@@ -409,7 +411,9 @@ onMounted(() => {
               <div class="truncate font-medium" :title="row.branch_name">
                 {{ row.branch_name }}
               </div>
-              <div class="truncate text-xs text-[var(--el-text-color-secondary)]">
+              <div
+                class="truncate text-xs text-[var(--el-text-color-secondary)]"
+              >
                 {{ row.alias || '-' }}
               </div>
             </div>
@@ -427,7 +431,9 @@ onMounted(() => {
         <template #cell-actions="{ row }">
           <div class="flex items-center justify-center gap-1">
             <ElButton link type="primary" @click="openEdit(row)">编辑</ElButton>
-            <ElButton link type="danger" @click="handleDelete(row)">删除</ElButton>
+            <ElButton link type="danger" @click="handleDelete(row)"
+              >删除</ElButton
+            >
           </div>
         </template>
       </Grid>
@@ -446,7 +452,10 @@ onMounted(() => {
         :rules="branchRules"
       >
         <ElFormItem label="分支名称" prop="branch_name">
-          <ElInput v-model="branchForm.branch_name" placeholder="请输入分支名称" />
+          <ElInput
+            v-model="branchForm.branch_name"
+            placeholder="请输入分支名称"
+          />
         </ElFormItem>
         <ElFormItem label="创建日期">
           <ElDatePicker
@@ -561,3 +570,53 @@ onMounted(() => {
     </ElDialog>
   </Page>
 </template>
+
+<style scoped lang="less">
+.toolbar-stack {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toolbar-row {
+  // 筛选项和业务按钮分行排布，保证表格工具栏在窄屏下仍可读。
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: 8px;
+}
+
+.toolbar-row-actions {
+  justify-content: flex-end;
+}
+
+.toolbar-keyword {
+  width: 280px;
+  max-width: 100%;
+}
+
+.toolbar-select-sm {
+  width: 120px;
+}
+
+.toolbar-select-md {
+  width: 140px;
+}
+
+@media (max-width: 768px) {
+  .toolbar-keyword,
+  .toolbar-select-md,
+  .toolbar-select-sm {
+    width: 100%;
+  }
+
+  .toolbar-row-actions {
+    justify-content: flex-start;
+  }
+}
+</style>

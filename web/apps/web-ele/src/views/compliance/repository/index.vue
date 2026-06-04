@@ -66,7 +66,6 @@ import { getAllPlApi } from '#/api/core/pl';
 import { useZqTable } from '#/components/zq-table';
 
 import {
-  ALL_ORGANIZATION_ID,
   BIND_MODE_OPTIONS,
   DOMAIN_OPTIONS,
   MODE_OPTIONS,
@@ -79,7 +78,6 @@ const REPO_TYPE_DICT_CODE = 'code_compliance_repo_type';
 
 interface OrganizationTreeNode extends OrganizationItem {
   children?: OrganizationTreeNode[];
-  is_virtual?: boolean;
 }
 
 interface OrganizationOption {
@@ -112,7 +110,7 @@ const treeExpandAll = ref(true);
 const treeRenderKey = ref(0);
 const organizationKeyword = ref('');
 const organizationTree = ref<OrganizationTreeNode[]>([]);
-const selectedOrganizationId = ref(ALL_ORGANIZATION_ID);
+const selectedOrganizationId = ref('');
 
 const repositoryKeyword = ref('');
 const selectedMode = ref('');
@@ -211,14 +209,15 @@ const [Grid, gridApi] = useZqTable<RepositoryItem>({
         }: {
           page: { currentPage: number; pageSize: number };
         }) => {
+          if (!selectedOrganizationId.value) {
+            repositoryTotal.value = 0;
+            return { items: [], total: 0 };
+          }
           const result = await listRepositoriesApi({
             domain: getSelectedDomain(),
             keyword: repositoryKeyword.value || undefined,
             mode: (selectedMode.value as ComplianceMode) || undefined,
-            organization_id:
-              selectedOrganizationId.value === ALL_ORGANIZATION_ID
-                ? undefined
-                : selectedOrganizationId.value,
+            organization_id: selectedOrganizationId.value,
             page: page.currentPage,
             pageSize: page.pageSize,
             repo_type: selectedRepoType.value || undefined,
@@ -240,29 +239,11 @@ const [Grid, gridApi] = useZqTable<RepositoryItem>({
 });
 
 const filteredOrganizationTree = computed(() => {
-  // 页面默认展示“全部组织”虚拟节点，真实组织树作为它的 children。
+  // 搜索时仍保留命中节点的祖先，让组织层级关系清晰可读。
   const keyword = organizationKeyword.value.trim().toLowerCase();
-  const children = keyword
+  return keyword
     ? filterOrganizationTree(organizationTree.value, keyword)
     : cloneOrganizationTree(organizationTree.value);
-  return [
-    {
-      children,
-      domain: 'cockpit' as ComplianceDomain,
-      domain_label: '',
-      group_id: '',
-      id: ALL_ORGANIZATION_ID,
-      is_virtual: true,
-      mode: 'CR' as ComplianceMode,
-      mode_label: '',
-      name: '全部组织',
-      parent_id: null,
-      parent_name: null,
-      remark: '',
-      repository_count: repositoryTotal.value,
-      sort: 0,
-    },
-  ];
 });
 
 const organizationOptions = computed(() =>
@@ -270,7 +251,7 @@ const organizationOptions = computed(() =>
 );
 
 const selectedOrganization = computed(() => {
-  if (selectedOrganizationId.value === ALL_ORGANIZATION_ID) return undefined;
+  if (!selectedOrganizationId.value) return undefined;
   return findOrganizationById(
     organizationTree.value,
     selectedOrganizationId.value,
@@ -278,7 +259,7 @@ const selectedOrganization = computed(() => {
 });
 
 const selectedOrganizationPath = computed(() => {
-  if (selectedOrganizationId.value === ALL_ORGANIZATION_ID) return '全部组织';
+  if (!selectedOrganizationId.value) return '暂无组织';
   const path = findOrganizationPath(
     organizationTree.value,
     selectedOrganizationId.value,
@@ -340,6 +321,17 @@ function findOrganizationById(
   }
 }
 
+function findFirstOrganizationNode(
+  items: OrganizationTreeNode[],
+): OrganizationTreeNode | undefined {
+  // 页面取消虚拟根节点后，进入时按树展示顺序选中第一个真实组织。
+  for (const item of items) {
+    if (item.id) return item;
+    const child = findFirstOrganizationNode(item.children || []);
+    if (child) return child;
+  }
+}
+
 function findOrganizationPath(
   items: OrganizationTreeNode[],
   id: string,
@@ -384,18 +376,24 @@ function resetRepositoryForm() {
 }
 
 async function loadOrganizations() {
-  // 组织树刷新后尽量保留当前选中节点，不存在时回到“全部组织”。
+  // 组织树刷新后尽量保留当前选中节点，不存在时选中第一个真实组织。
   treeLoading.value = true;
   try {
     organizationTree.value = await listOrganizationsApi();
-    if (
-      selectedOrganizationId.value !== ALL_ORGANIZATION_ID &&
-      !findOrganizationById(organizationTree.value, selectedOrganizationId.value)
-    ) {
-      selectedOrganizationId.value = ALL_ORGANIZATION_ID;
+    const current = selectedOrganizationId.value
+      ? findOrganizationById(
+          organizationTree.value,
+          selectedOrganizationId.value,
+        )
+      : undefined;
+    if (!current) {
+      selectedOrganizationId.value =
+        findFirstOrganizationNode(organizationTree.value)?.id || '';
     }
     await nextTick();
-    organizationTreeRef.value?.setCurrentKey(selectedOrganizationId.value);
+    if (selectedOrganizationId.value) {
+      organizationTreeRef.value?.setCurrentKey(selectedOrganizationId.value);
+    }
   } finally {
     treeLoading.value = false;
   }
@@ -441,7 +439,7 @@ async function openCreateOrganization(parent?: OrganizationTreeNode) {
   organizationEditingId.value = '';
   organizationDialogTitle.value = parent ? '新增子组织' : '新增组织';
   await loadParentOptions();
-  resetOrganizationForm(parent?.is_virtual ? '' : parent?.id || '');
+  resetOrganizationForm(parent?.id || '');
   organizationDialogVisible.value = true;
 }
 
@@ -463,9 +461,7 @@ async function openEditOrganization(row: OrganizationTreeNode) {
 
 async function submitOrganization() {
   // 空字符串父组织归一成 null，后端按根组织处理。
-  const valid = await organizationFormRef.value
-    ?.validate()
-    .catch(() => false);
+  const valid = await organizationFormRef.value?.validate().catch(() => false);
   if (!valid) return;
 
   const payload = {
@@ -503,15 +499,15 @@ async function handleDeleteOrganization(row: OrganizationTreeNode) {
   await deleteOrganizationApi(row.id);
   ElMessage.success('组织已删除');
   if (selectedOrganizationId.value === row.id) {
-    selectedOrganizationId.value = ALL_ORGANIZATION_ID;
+    selectedOrganizationId.value = '';
   }
   await loadOrganizations();
   reloadRepositories(true);
 }
 
 function openCreateRepository() {
-  // 代码库必须归属到真实组织，不能挂在“全部组织”虚拟节点下。
-  if (!organizationOptions.value.length) {
+  // 代码库必须归属到真实组织，未选中组织时不允许创建。
+  if (!selectedOrganization.value) {
     ElMessage.warning('请先创建组织，再维护代码库');
     return;
   }
@@ -696,7 +692,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page title="代码库管理" auto-content-height>
+  <Page auto-content-height>
     <ElSkeleton :loading="pageLoading" animated>
       <template #template>
         <div class="flex h-full gap-3">
@@ -724,7 +720,7 @@ onMounted(async () => {
       <template #default>
         <div class="flex h-full min-h-0 gap-3">
           <aside
-            class="flex w-[320px] shrink-0 flex-col rounded border border-[var(--el-border-color-light)] bg-[var(--el-bg-color)]"
+            class="repository-sidebar flex shrink-0 flex-col rounded border border-[var(--el-border-color-light)] bg-[var(--el-bg-color)]"
           >
             <div class="border-b border-[var(--el-border-color-light)] p-3">
               <div class="mb-3 flex items-center justify-between gap-2">
@@ -756,7 +752,10 @@ onMounted(async () => {
               />
             </div>
 
-            <div class="min-h-0 flex-1 overflow-auto p-2" v-loading="treeLoading">
+            <div
+              class="min-h-0 flex-1 overflow-auto p-2"
+              v-loading="treeLoading"
+            >
               <ElTree
                 :key="treeRenderKey"
                 ref="organizationTreeRef"
@@ -770,12 +769,7 @@ onMounted(async () => {
               >
                 <template #default="{ data }">
                   <div class="org-tree-node">
-                    <div class="min-w-0 flex items-center gap-2">
-                      <span
-                        class="inline-flex size-6 shrink-0 items-center justify-center rounded bg-[var(--el-fill-color-light)] text-[var(--el-color-primary)]"
-                      >
-                        {{ data.is_virtual ? 'A' : 'G' }}
-                      </span>
+                    <div class="flex min-w-0 items-center gap-2">
                       <span class="truncate text-sm" :title="data.name">
                         {{ data.name }}
                       </span>
@@ -783,11 +777,7 @@ onMounted(async () => {
                         {{ data.repository_count }}
                       </ElTag>
                     </div>
-                    <div
-                      v-if="!data.is_virtual"
-                      class="org-tree-actions"
-                      @click.stop
-                    >
+                    <div class="org-tree-actions" @click.stop>
                       <ElTooltip content="新增子组织" placement="top">
                         <ElButton
                           circle
@@ -840,12 +830,14 @@ onMounted(async () => {
                   >
                     {{ selectedOrganizationPath }}
                   </div>
-                  <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-[var(--el-text-color-secondary)]">
+                  <div
+                    class="mt-1 flex flex-wrap items-center gap-2 text-xs text-[var(--el-text-color-secondary)]"
+                  >
                     <span>
                       {{
                         selectedOrganization
                           ? `组织ID：${selectedOrganization.group_id}`
-                          : '展示全部组织代码库'
+                          : '暂无组织，请先新增组织'
                       }}
                     </span>
                     <span v-if="selectedOrganization">
@@ -855,108 +847,114 @@ onMounted(async () => {
                     <span>当前列表 {{ repositoryTotal }} 个代码库</span>
                   </div>
                 </div>
-                <ElButton type="primary" @click="openCreateRepository">
-                  <Plus class="mr-1 size-4" /> 新增代码库
-                </ElButton>
               </div>
             </div>
 
             <div class="min-h-0 flex-1 p-3">
               <Grid class="h-full" @selection-change="handleSelectionChange">
                 <template #toolbar-actions>
-                  <div class="flex flex-1 flex-wrap items-center gap-2">
-                    <ElInput
-                      v-model="repositoryKeyword"
-                      class="w-[220px]"
-                      clearable
-                      placeholder="搜索代码库名/ID/URL"
-                      :prefix-icon="Search"
-                      @clear="reloadRepositories(true)"
-                      @keyup.enter="reloadRepositories(true)"
-                    />
-                    <ElSelect
-                      v-model="selectedMode"
-                      class="w-[110px]"
-                      clearable
-                      placeholder="模式"
-                      @change="reloadRepositories(true)"
-                      @clear="reloadRepositories(true)"
-                    >
-                      <ElOption
-                        v-for="item in MODE_OPTIONS"
-                        :key="item.value"
-                        :label="item.label"
-                        :value="item.value"
+                  <div class="toolbar-stack">
+                    <!-- 工具栏拆成筛选区和操作区，避免窄屏下输入框挤压按钮。 -->
+                    <div class="toolbar-row">
+                      <ElInput
+                        v-model="repositoryKeyword"
+                        class="toolbar-keyword"
+                        clearable
+                        placeholder="搜索代码库名/ID/URL"
+                        :prefix-icon="Search"
+                        @clear="reloadRepositories(true)"
+                        @keyup.enter="reloadRepositories(true)"
                       />
-                    </ElSelect>
-                    <ElSelect
-                      v-model="selectedDomain"
-                      class="w-[120px]"
-                      clearable
-                      placeholder="领域"
-                      @change="reloadRepositories(true)"
-                      @clear="reloadRepositories(true)"
-                    >
-                      <ElOption
-                        v-for="item in DOMAIN_OPTIONS"
-                        :key="item.value"
-                        :label="item.label"
-                        :value="item.value"
-                      />
-                    </ElSelect>
-                    <ElSelect
-                      v-model="selectedRepoType"
-                      class="w-[150px]"
-                      clearable
-                      placeholder="仓库类型"
-                      @change="reloadRepositories(true)"
-                      @clear="reloadRepositories(true)"
-                    >
-                      <ElOption
-                        v-for="item in repoTypeOptions"
-                        :key="item.id"
-                        :label="item.label || item.value"
-                        :value="item.value || ''"
-                      />
-                    </ElSelect>
-                    <ElButton @click="reloadRepositories(true)">查询</ElButton>
-                    <div class="flex-1"></div>
-                    <ElButton
-                      type="primary"
-                      plain
-                      :disabled="selectedRepositories.length === 0"
-                      @click="openBindBranches"
-                    >
-                      绑定分支
-                    </ElButton>
-                    <ElButton @click="downloadOrganizationTemplate">
-                      组织模板
-                    </ElButton>
-                    <ElUpload
-                      action="#"
-                      accept=".xlsx"
-                      :disabled="importing"
-                      :http-request="handleOrganizationImport"
-                      :show-file-list="false"
-                    >
-                      <ElButton :loading="importing">
-                        <Upload class="mr-1 size-4" /> 组织导入
+                      <ElSelect
+                        v-model="selectedMode"
+                        class="toolbar-select-sm"
+                        clearable
+                        placeholder="模式"
+                        @change="reloadRepositories(true)"
+                        @clear="reloadRepositories(true)"
+                      >
+                        <ElOption
+                          v-for="item in MODE_OPTIONS"
+                          :key="item.value"
+                          :label="item.label"
+                          :value="item.value"
+                        />
+                      </ElSelect>
+                      <ElSelect
+                        v-model="selectedDomain"
+                        class="toolbar-select-sm"
+                        clearable
+                        placeholder="领域"
+                        @change="reloadRepositories(true)"
+                        @clear="reloadRepositories(true)"
+                      >
+                        <ElOption
+                          v-for="item in DOMAIN_OPTIONS"
+                          :key="item.value"
+                          :label="item.label"
+                          :value="item.value"
+                        />
+                      </ElSelect>
+                      <ElSelect
+                        v-model="selectedRepoType"
+                        class="toolbar-select-md"
+                        clearable
+                        placeholder="仓库类型"
+                        @change="reloadRepositories(true)"
+                        @clear="reloadRepositories(true)"
+                      >
+                        <ElOption
+                          v-for="item in repoTypeOptions"
+                          :key="item.id"
+                          :label="item.label || item.value"
+                          :value="item.value || ''"
+                        />
+                      </ElSelect>
+                      <ElButton @click="reloadRepositories(true)"
+                        >查询</ElButton
+                      >
+                    </div>
+                    <div class="toolbar-row toolbar-row-actions">
+                      <ElButton
+                        type="primary"
+                        plain
+                        :disabled="selectedRepositories.length === 0"
+                        @click="openBindBranches"
+                      >
+                        绑定分支
                       </ElButton>
-                    </ElUpload>
-                    <ElButton @click="downloadRepositoryTemplate">
-                      仓库模板
-                    </ElButton>
-                    <ElUpload
-                      action="#"
-                      accept=".xlsx"
-                      :disabled="importing"
-                      :http-request="handleRepositoryImport"
-                      :show-file-list="false"
-                    >
-                      <ElButton type="success" :loading="importing">
-                        <Upload class="mr-1 size-4" /> 仓库导入
+                      <ElButton @click="downloadOrganizationTemplate">
+                        组织模板
                       </ElButton>
-                    </ElUpload>
+                      <ElUpload
+                        action="#"
+                        accept=".xlsx"
+                        :disabled="importing"
+                        :http-request="handleOrganizationImport"
+                        :show-file-list="false"
+                      >
+                        <ElButton :loading="importing">
+                          <Upload class="mr-1 size-4" /> 组织导入
+                        </ElButton>
+                      </ElUpload>
+                      <ElButton @click="downloadRepositoryTemplate">
+                        仓库模板
+                      </ElButton>
+                      <ElUpload
+                        action="#"
+                        accept=".xlsx"
+                        :disabled="importing"
+                        :http-request="handleRepositoryImport"
+                        :show-file-list="false"
+                      >
+                        <ElButton type="success" :loading="importing">
+                          <Upload class="mr-1 size-4" /> 仓库导入
+                        </ElButton>
+                      </ElUpload>
+                      <ElButton type="primary" @click="openCreateRepository">
+                        <Plus class="mr-1 size-4" /> 新增代码库
+                      </ElButton>
+                    </div>
                   </div>
                 </template>
 
@@ -968,10 +966,15 @@ onMounted(async () => {
                       R
                     </span>
                     <div class="min-w-0">
-                      <div class="truncate font-medium" :title="row.project_name">
+                      <div
+                        class="truncate font-medium"
+                        :title="row.project_name"
+                      >
                         {{ row.project_name }}
                       </div>
-                      <div class="truncate text-xs text-[var(--el-text-color-secondary)]">
+                      <div
+                        class="truncate text-xs text-[var(--el-text-color-secondary)]"
+                      >
                         {{ row.project_id }}
                       </div>
                     </div>
@@ -1003,10 +1006,18 @@ onMounted(async () => {
 
                 <template #cell-actions="{ row }">
                   <div class="flex items-center justify-center gap-1">
-                    <ElButton link type="primary" @click="openEditRepository(row)">
+                    <ElButton
+                      link
+                      type="primary"
+                      @click="openEditRepository(row)"
+                    >
                       编辑
                     </ElButton>
-                    <ElButton link type="danger" @click="handleDeleteRepository(row)">
+                    <ElButton
+                      link
+                      type="danger"
+                      @click="handleDeleteRepository(row)"
+                    >
                       删除
                     </ElButton>
                   </div>
@@ -1031,7 +1042,10 @@ onMounted(async () => {
         :rules="organizationRules"
       >
         <ElFormItem label="组织ID" prop="group_id">
-          <ElInput v-model="organizationForm.group_id" placeholder="公司代码库系统组织ID" />
+          <ElInput
+            v-model="organizationForm.group_id"
+            placeholder="公司代码库系统组织ID"
+          />
         </ElFormItem>
         <ElFormItem label="组织名" prop="name">
           <ElInput v-model="organizationForm.name" placeholder="请输入组织名" />
@@ -1115,10 +1129,16 @@ onMounted(async () => {
           />
         </ElFormItem>
         <ElFormItem label="代码库名" prop="project_name">
-          <ElInput v-model="repositoryForm.project_name" placeholder="请输入代码库名" />
+          <ElInput
+            v-model="repositoryForm.project_name"
+            placeholder="请输入代码库名"
+          />
         </ElFormItem>
         <ElFormItem label="代码库URL">
-          <ElInput v-model="repositoryForm.project_url" placeholder="请输入代码库 URL" />
+          <ElInput
+            v-model="repositoryForm.project_url"
+            placeholder="请输入代码库 URL"
+          />
         </ElFormItem>
         <ElFormItem label="所属组织" prop="organization_id">
           <ElSelect
@@ -1252,7 +1272,11 @@ onMounted(async () => {
       </ElForm>
       <template #footer>
         <ElButton @click="bindDialogVisible = false">取消</ElButton>
-        <ElButton type="primary" :loading="bindLoading" @click="submitBindBranches">
+        <ElButton
+          type="primary"
+          :loading="bindLoading"
+          @click="submitBindBranches"
+        >
           确定绑定
         </ElButton>
       </template>
@@ -1261,6 +1285,51 @@ onMounted(async () => {
 </template>
 
 <style scoped lang="less">
+.repository-sidebar {
+  // 原生 resize 只在 overflow 非 visible 时生效，内部树区域继续负责滚动。
+  width: 320px;
+  min-width: 260px;
+  max-width: 520px;
+  overflow: hidden;
+  resize: horizontal;
+}
+
+.toolbar-stack {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toolbar-row {
+  // 筛选条件独占一行且允许换行，避免输入框和按钮横向互相挤压。
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: 8px;
+}
+
+.toolbar-row-actions {
+  justify-content: flex-end;
+}
+
+.toolbar-keyword {
+  width: 260px;
+  max-width: 100%;
+}
+
+.toolbar-select-sm {
+  width: 120px;
+}
+
+.toolbar-select-md {
+  width: 160px;
+}
+
 .org-tree-node {
   display: flex;
   align-items: center;
@@ -1299,5 +1368,22 @@ onMounted(async () => {
 
 :deep(.el-tree-node.is-current > .el-tree-node__content .org-tree-actions) {
   display: inline-flex;
+}
+
+@media (max-width: 768px) {
+  .repository-sidebar {
+    width: 280px;
+    min-width: 240px;
+  }
+
+  .toolbar-keyword,
+  .toolbar-select-md,
+  .toolbar-select-sm {
+    width: 100%;
+  }
+
+  .toolbar-row-actions {
+    justify-content: flex-start;
+  }
 }
 </style>
