@@ -541,6 +541,17 @@ def _env_bool(name: str, default: bool) -> bool:
     return str(value).strip().lower() not in {'0', 'false', 'no'}
 
 
+# 代码合规漏合检测数据湖配置。
+# 服务层统一从 Django settings 读取，部署时可通过同名环境变量覆盖。
+CODE_COMPLIANCE_CR_API_URL = _env_str('CODE_COMPLIANCE_CR_API_URL', '')
+CODE_COMPLIANCE_CR_API_TOKEN = _env_str('CODE_COMPLIANCE_CR_API_TOKEN', '')
+CODE_COMPLIANCE_CR_API_HEADERS_JSON = _env_str('CODE_COMPLIANCE_CR_API_HEADERS_JSON', '{}')
+CODE_COMPLIANCE_CR_FORCE_MOCK = _env_bool('CODE_COMPLIANCE_CR_FORCE_MOCK', False)
+CODE_COMPLIANCE_CR_API_TIMEOUT = _env_float('CODE_COMPLIANCE_CR_API_TIMEOUT', 15.0)
+CODE_COMPLIANCE_CR_API_VERIFY_SSL = _env_bool('CODE_COMPLIANCE_CR_API_VERIFY_SSL', True)
+CODE_COMPLIANCE_CR_PAGE_SIZE = _env_int('CODE_COMPLIANCE_CR_PAGE_SIZE', 100)
+CODE_COMPLIANCE_CR_SCHEDULE_WINDOW_DAYS = _env_int('CODE_COMPLIANCE_CR_SCHEDULE_WINDOW_DAYS', 1)
+
 DEEPAUDIT_DOCKER_ENABLED = os.environ.get('DEEPAUDIT_DOCKER_ENABLED', 'true').lower() not in {'0', 'false', 'no'}
 DEEPAUDIT_QUEUE = os.environ.get('DEEPAUDIT_QUEUE', 'deepaudit')
 DEEPAUDIT_TIKTOKEN_MODE = _env_str('DEEPAUDIT_TIKTOKEN_MODE', 'local') or 'local'

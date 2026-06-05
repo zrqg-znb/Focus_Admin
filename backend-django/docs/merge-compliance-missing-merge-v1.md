@@ -12,6 +12,8 @@
 
 配置项：
 
+本地开发默认值写在 `backend-django/.env`，Django 侧统一在 `application/settings.py` 暴露为同名 setting；测试和部署环境可直接用同名系统环境变量覆盖。
+
 | 配置 | 说明 |
 | --- | --- |
 | `CODE_COMPLIANCE_CR_API_URL` | 公司数据湖 CR 查询地址；为空时走 mock |
