@@ -7,6 +7,22 @@ from pydantic import Field
 from .base_schemas import OrganizationOut, RepositoryOut
 
 
+class MissingMergeOperationLogOut(Schema):
+    id: str
+    operation_type: str
+    operation_type_label: str
+    source: str
+    source_label: str
+    from_status: str
+    from_status_label: str
+    to_status: str
+    to_status_label: str
+    operator_id: Optional[str] = None
+    operator_name: str
+    remark: str
+    operated_at: datetime
+
+
 class MissingMergeRecordOut(Schema):
     id: str
     organization_id: Optional[str] = None
@@ -35,6 +51,7 @@ class MissingMergeRecordOut(Schema):
     handled_by_name: Optional[str] = None
     handled_at: Optional[datetime] = None
     handle_remark: str
+    operation_logs: List[MissingMergeOperationLogOut] = Field(default_factory=list)
     sys_create_datetime: Optional[datetime] = None
     sys_update_datetime: Optional[datetime] = None
 

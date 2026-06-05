@@ -9,6 +9,28 @@ export type MissingMergeScanStatus =
   | 'running'
   | 'success';
 export type MissingMergeTriggerType = 'manual' | 'scheduled';
+export type MissingMergeOperationSource = 'manual' | 'system';
+export type MissingMergeOperationType =
+  | 'auto_closed'
+  | 'detected'
+  | 'manual_handle'
+  | 'reopened';
+
+export interface MissingMergeOperationLogItem {
+  from_status: string;
+  from_status_label: string;
+  id: string;
+  operated_at: string;
+  operation_type: MissingMergeOperationType;
+  operation_type_label: string;
+  operator_id?: null | string;
+  operator_name: string;
+  remark: string;
+  source: MissingMergeOperationSource;
+  source_label: string;
+  to_status: string;
+  to_status_label: string;
+}
 
 export interface MissingMergeRecordItem {
   added_lines: number;
@@ -23,6 +45,7 @@ export interface MissingMergeRecordItem {
   handled_by_name?: null | string;
   id: string;
   merged_at?: null | string;
+  operation_logs: MissingMergeOperationLogItem[];
   organization_group_id: string;
   organization_id?: null | string;
   organization_name: string;
@@ -119,7 +142,7 @@ export function listMissingMergeOptionsApi() {
 
 export function updateMissingMergeRecordStatusApi(
   id: string,
-  data: { handle_remark?: string; status: MissingMergeStatus },
+  data: { handle_remark: string; status: MissingMergeStatus },
 ) {
   return requestClient.put<MissingMergeRecordItem>(
     `${base}/records/${id}/status`,

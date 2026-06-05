@@ -21,12 +21,17 @@ from apps.code_compliance.missing_merge_client import (
     build_cr_encoded_query,
     build_cr_request_params,
 )
-from apps.code_compliance.missing_merge_schemas import MissingMergeScanRunIn
+from apps.code_compliance.missing_merge_schemas import MissingMergeRecordStatusIn, MissingMergeScanRunIn
 from apps.code_compliance.models import (
+    MISSING_MERGE_OPERATION_AUTO_CLOSED,
+    MISSING_MERGE_OPERATION_DETECTED,
+    MISSING_MERGE_OPERATION_MANUAL_HANDLE,
+    MISSING_MERGE_OPERATION_REOPENED,
     MISSING_MERGE_STATUS_FIXED,
     MISSING_MERGE_STATUS_IGNORED,
     MISSING_MERGE_STATUS_OPEN,
     ComplianceManagedBranch,
+    ComplianceMissingMergeOperationLog,
     ComplianceMissingMergeRecord,
     ComplianceOrganization,
     ComplianceRepository,
@@ -121,6 +126,34 @@ class CodeComplianceFoundationTests(TestCase):
                 branch_type=branch_type,
                 domain="cockpit",
             ),
+        )
+
+    def create_missing_record(
+        self,
+        repository: ComplianceRepository,
+        organization: ComplianceOrganization,
+        *,
+        change_key: str = "mock-20001-001",
+        status: str = MISSING_MERGE_STATUS_OPEN,
+    ):
+        return ComplianceMissingMergeRecord.objects.create(
+            organization=organization,
+            repository=repository,
+            organization_group_id=organization.group_id,
+            organization_name=organization.name,
+            repository_project_id=repository.project_id,
+            repository_name=repository.project_name,
+            project_id=repository.project_id,
+            trunk_branch="master",
+            release_branch="release/1.0",
+            change_request_iid="10001",
+            change_key=change_key,
+            title=f"record {change_key}",
+            merged_at=timezone.now(),
+            target_branch="master",
+            author_username="user01",
+            detected_at=timezone.now(),
+            status=status,
         )
 
     def test_organization_tree_counts_direct_repositories(self):
@@ -291,6 +324,38 @@ class CodeComplianceFoundationTests(TestCase):
         self.assertEqual(params["projects"], "20001,20002")
         self.assertIn("merged_after=2026-06-11T16%3A20%3A20.000%2B08%3A00", encoded)
 
+    def test_missing_merge_status_requires_valid_remark_and_logs_manual_history(self):
+        """人工处理必须填写合规备注，并写入操作历史。"""
+        org = self.create_org()
+        repo = self.create_repo(org["id"], "20001")
+        repository = ComplianceRepository.objects.get(id=repo["id"])
+        organization = ComplianceOrganization.objects.get(id=org["id"])
+        record = self.create_missing_record(repository, organization)
+
+        for remark in ("", "1234", "包含<script>"):
+            with self.assertRaises(HttpError):
+                missing_merge_services.update_missing_merge_status(
+                    self.user,
+                    str(record.id),
+                    MissingMergeRecordStatusIn(
+                        status=MISSING_MERGE_STATUS_IGNORED,
+                        handle_remark=remark,
+                    ),
+                )
+
+        result = missing_merge_services.update_missing_merge_status(
+            self.user,
+            str(record.id),
+            MissingMergeRecordStatusIn(
+                status=MISSING_MERGE_STATUS_IGNORED,
+                handle_remark="确认无需补合处理",
+            ),
+        )
+
+        self.assertEqual(result["status"], MISSING_MERGE_STATUS_IGNORED)
+        self.assertEqual(result["operation_logs"][0]["operation_type"], MISSING_MERGE_OPERATION_MANUAL_HANDLE)
+        self.assertEqual(result["operation_logs"][0]["remark"], "确认无需补合处理")
+
     @override_settings(CODE_COMPLIANCE_CR_FORCE_MOCK=True)
     def test_missing_merge_scan_detects_fixed_and_preserves_ignored(self):
         """扫描应识别主干差集，自动关闭已补合项，并不覆盖已忽略项。"""
@@ -306,45 +371,20 @@ class CodeComplianceFoundationTests(TestCase):
         repository = ComplianceRepository.objects.get(id=repo["id"])
         organization = ComplianceOrganization.objects.get(id=org["id"])
         now = timezone.now()
-        ComplianceMissingMergeRecord.objects.create(
-            organization=organization,
-            repository=repository,
-            organization_group_id=organization.group_id,
-            organization_name=organization.name,
-            repository_project_id=repository.project_id,
-            repository_name=repository.project_name,
-            project_id=repository.project_id,
-            trunk_branch="master",
-            release_branch="release/1.0",
-            change_request_iid="10001",
+        self.create_missing_record(
+            repository,
+            organization,
             change_key="mock-20001-001",
-            title="existing fixed candidate",
-            merged_at=now,
-            target_branch="master",
-            author_username="user01",
-            detected_at=now,
             status=MISSING_MERGE_STATUS_OPEN,
         )
-        ignored = ComplianceMissingMergeRecord.objects.create(
-            organization=organization,
-            repository=repository,
-            organization_group_id=organization.group_id,
-            organization_name=organization.name,
-            repository_project_id=repository.project_id,
-            repository_name=repository.project_name,
-            project_id=repository.project_id,
-            trunk_branch="master",
-            release_branch="release/1.0",
-            change_request_iid="10003",
+        ignored = self.create_missing_record(
+            repository,
+            organization,
             change_key="mock-20001-003",
-            title="ignored candidate",
-            merged_at=now,
-            target_branch="master",
-            author_username="user03",
-            detected_at=now,
             status=MISSING_MERGE_STATUS_IGNORED,
-            handle_remark="人工忽略",
         )
+        ignored.handle_remark = "人工忽略"
+        ignored.save()
 
         task = missing_merge_services.run_missing_merge_scan(
             self.user,
@@ -363,8 +403,77 @@ class CodeComplianceFoundationTests(TestCase):
         self.assertEqual(fixed_record.status, MISSING_MERGE_STATUS_FIXED)
         self.assertEqual(ignored.status, MISSING_MERGE_STATUS_IGNORED)
         self.assertTrue(
+            ComplianceMissingMergeOperationLog.objects.filter(
+                record=fixed_record,
+                operation_type=MISSING_MERGE_OPERATION_AUTO_CLOSED,
+                remark=missing_merge_services.AUTO_CLOSED_REMARK,
+            ).exists()
+        )
+        self.assertTrue(
             ComplianceMissingMergeRecord.objects.filter(
                 change_key="mock-20001-006",
                 status=MISSING_MERGE_STATUS_OPEN,
+            ).exists()
+        )
+        created_record = ComplianceMissingMergeRecord.objects.get(change_key="mock-20001-006")
+        self.assertTrue(
+            ComplianceMissingMergeOperationLog.objects.filter(
+                record=created_record,
+                operation_type=MISSING_MERGE_OPERATION_DETECTED,
+            ).exists()
+        )
+
+        missing_merge_services.run_missing_merge_scan(
+            self.user,
+            MissingMergeScanRunIn(
+                merged_after=now - timedelta(days=1),
+                merged_before=now + timedelta(days=1),
+            ),
+        )
+        self.assertEqual(
+            ComplianceMissingMergeOperationLog.objects.filter(
+                record=fixed_record,
+                operation_type=MISSING_MERGE_OPERATION_AUTO_CLOSED,
+            ).count(),
+            1,
+        )
+
+    @override_settings(CODE_COMPLIANCE_CR_FORCE_MOCK=True)
+    def test_missing_merge_scan_reopens_previously_fixed_record(self):
+        """已补合记录再次出现在主干差集时，应重新变为未处理并写历史。"""
+        org = self.create_org()
+        repo = self.create_repo(org["id"], "20001")
+        trunk = self.create_branch("master", "trunk")
+        release = self.create_branch("release/1.0", "release")
+        services.bind_branches_to_repositories(
+            [repo["id"]],
+            [trunk["id"], release["id"]],
+            "append",
+        )
+        repository = ComplianceRepository.objects.get(id=repo["id"])
+        organization = ComplianceOrganization.objects.get(id=org["id"])
+        record = self.create_missing_record(
+            repository,
+            organization,
+            change_key="mock-20001-006",
+            status=MISSING_MERGE_STATUS_FIXED,
+        )
+        now = timezone.now()
+
+        task = missing_merge_services.run_missing_merge_scan(
+            self.user,
+            MissingMergeScanRunIn(
+                merged_after=now - timedelta(days=1),
+                merged_before=now + timedelta(days=1),
+            ),
+        )
+
+        record.refresh_from_db()
+        self.assertEqual(task["status"], "success")
+        self.assertEqual(record.status, MISSING_MERGE_STATUS_OPEN)
+        self.assertTrue(
+            ComplianceMissingMergeOperationLog.objects.filter(
+                record=record,
+                operation_type=MISSING_MERGE_OPERATION_REOPENED,
             ).exists()
         )

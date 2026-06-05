@@ -293,6 +293,24 @@ MISSING_MERGE_SCAN_STATUS_CHOICES = (
     (MISSING_MERGE_SCAN_STATUS_FAILED, "失败"),
 )
 
+MISSING_MERGE_OPERATION_DETECTED = "detected"
+MISSING_MERGE_OPERATION_MANUAL_HANDLE = "manual_handle"
+MISSING_MERGE_OPERATION_AUTO_CLOSED = "auto_closed"
+MISSING_MERGE_OPERATION_REOPENED = "reopened"
+MISSING_MERGE_OPERATION_CHOICES = (
+    (MISSING_MERGE_OPERATION_DETECTED, "首次自动检测"),
+    (MISSING_MERGE_OPERATION_MANUAL_HANDLE, "人工处理"),
+    (MISSING_MERGE_OPERATION_AUTO_CLOSED, "自动闭环"),
+    (MISSING_MERGE_OPERATION_REOPENED, "重新检测为待处理"),
+)
+
+MISSING_MERGE_OPERATION_SOURCE_SYSTEM = "system"
+MISSING_MERGE_OPERATION_SOURCE_MANUAL = "manual"
+MISSING_MERGE_OPERATION_SOURCE_CHOICES = (
+    (MISSING_MERGE_OPERATION_SOURCE_SYSTEM, "系统"),
+    (MISSING_MERGE_OPERATION_SOURCE_MANUAL, "人工"),
+)
+
 
 class ComplianceMissingMergeRecord(RootModel):
     """自动化检测出的主干已合入但发布分支缺失的 CR 风险。"""
@@ -534,6 +552,100 @@ class ComplianceMissingMergeScanTask(RootModel):
 
     def __str__(self):
         return f"{self.trigger_type}:{self.status}:{self.merged_after}"
+
+
+class ComplianceMissingMergeOperationLog(RootModel):
+    """漏合风险操作历史台账，用于追溯自动检测、人工处理和自动闭环。"""
+
+    record = models.ForeignKey(
+        ComplianceMissingMergeRecord,
+        on_delete=models.CASCADE,
+        related_name="operation_logs",
+        db_constraint=False,
+        verbose_name="漏合风险",
+        help_text="关联漏合风险记录",
+    )
+    scan_task = models.ForeignKey(
+        ComplianceMissingMergeScanTask,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="operation_logs",
+        db_constraint=False,
+        verbose_name="扫描任务",
+        help_text="触发本次系统操作的扫描任务",
+    )
+    operation_type = models.CharField(
+        max_length=32,
+        choices=MISSING_MERGE_OPERATION_CHOICES,
+        db_index=True,
+        verbose_name="操作类型",
+        help_text="首次自动检测/人工处理/自动闭环/重新检测",
+    )
+    source = models.CharField(
+        max_length=16,
+        choices=MISSING_MERGE_OPERATION_SOURCE_CHOICES,
+        default=MISSING_MERGE_OPERATION_SOURCE_SYSTEM,
+        db_index=True,
+        verbose_name="操作来源",
+        help_text="系统/人工",
+    )
+    from_status = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        verbose_name="变更前状态",
+        help_text="操作前处理状态",
+    )
+    to_status = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        verbose_name="变更后状态",
+        help_text="操作后处理状态",
+    )
+    operator = models.ForeignKey(
+        "core.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="missing_merge_operation_logs",
+        db_constraint=False,
+        verbose_name="操作人",
+        help_text="人工操作人；系统操作为空",
+    )
+    operator_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        verbose_name="操作人快照",
+        help_text="操作发生时的人名快照",
+    )
+    remark = models.TextField(
+        blank=True,
+        default="",
+        verbose_name="操作备注",
+        help_text="系统自动备注或人工填写备注",
+    )
+    operated_at = models.DateTimeField(
+        db_index=True,
+        verbose_name="操作时间",
+        help_text="操作发生时间",
+    )
+
+    class Meta:
+        db_table = "compliance_missing_merge_operation_log"
+        ordering = ("-operated_at", "-sys_create_datetime")
+        verbose_name = "代码合规漏合风险操作历史"
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=["record", "operated_at"], name="cc_mm_log_record_time_idx"),
+            models.Index(fields=["operation_type", "source"], name="cc_mm_log_type_source_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.record_id}:{self.operation_type}:{self.operated_at}"
+
 
 class ComplianceRecord(RootModel):
     STATUS_CHOICES = (

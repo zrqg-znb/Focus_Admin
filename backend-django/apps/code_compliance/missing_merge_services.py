@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Iterable
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Prefetch, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -26,10 +28,19 @@ from .models import (
     MISSING_MERGE_SCAN_TRIGGER_CHOICES,
     MISSING_MERGE_SCAN_TRIGGER_MANUAL,
     MISSING_MERGE_SCAN_TRIGGER_SCHEDULED,
+    MISSING_MERGE_OPERATION_AUTO_CLOSED,
+    MISSING_MERGE_OPERATION_CHOICES,
+    MISSING_MERGE_OPERATION_DETECTED,
+    MISSING_MERGE_OPERATION_MANUAL_HANDLE,
+    MISSING_MERGE_OPERATION_REOPENED,
+    MISSING_MERGE_OPERATION_SOURCE_CHOICES,
+    MISSING_MERGE_OPERATION_SOURCE_MANUAL,
+    MISSING_MERGE_OPERATION_SOURCE_SYSTEM,
     MISSING_MERGE_STATUS_CHOICES,
     MISSING_MERGE_STATUS_FIXED,
     MISSING_MERGE_STATUS_IGNORED,
     MISSING_MERGE_STATUS_OPEN,
+    ComplianceMissingMergeOperationLog,
     ComplianceMissingMergeRecord,
     ComplianceMissingMergeScanTask,
     ComplianceRepository,
@@ -47,11 +58,17 @@ SCAN_STATUS_LABELS = {
     MISSING_MERGE_SCAN_STATUS_FAILED: "失败",
 }
 SCAN_TRIGGER_LABELS = dict(MISSING_MERGE_SCAN_TRIGGER_CHOICES)
+OPERATION_LABELS = dict(MISSING_MERGE_OPERATION_CHOICES)
+OPERATION_SOURCE_LABELS = dict(MISSING_MERGE_OPERATION_SOURCE_CHOICES)
 SUPPORTED_RECORD_STATUSES = {
     MISSING_MERGE_STATUS_OPEN,
     MISSING_MERGE_STATUS_FIXED,
     MISSING_MERGE_STATUS_IGNORED,
 }
+HANDLE_REMARK_MIN_LENGTH = 5
+HANDLE_REMARK_MAX_LENGTH = 500
+HANDLE_REMARK_FORBIDDEN_RE = re.compile(r"[\x00-\x1f\x7f<>`{}]")
+AUTO_CLOSED_REMARK = "后续自动数据刷新中检测到漏合风险已完成补合"
 
 
 @dataclass
@@ -116,9 +133,97 @@ def _normalize_status(status: str) -> str:
     return value
 
 
-def serialize_missing_merge_record(item: ComplianceMissingMergeRecord) -> dict:
+def validate_handle_remark(value: Any) -> str:
+    """校验人工处理备注，防止无说明或高风险字符进入处理台账。"""
+    remark = _clean_text(value)
+    if len(remark) < HANDLE_REMARK_MIN_LENGTH:
+        raise HttpError(400, "处理备注不能为空，且不少于 5 个字符")
+    if len(remark) > HANDLE_REMARK_MAX_LENGTH:
+        raise HttpError(400, "处理备注不能超过 500 个字符")
+    if HANDLE_REMARK_FORBIDDEN_RE.search(remark):
+        raise HttpError(400, "处理备注不能包含控制字符或 < > ` { } 等特殊字符")
+    return remark
+
+
+def _status_label(status: str) -> str:
+    """把状态编码转换为页面可读文案。"""
+    if not status:
+        return ""
+    return STATUS_LABELS.get(status, status)
+
+
+def _operator_name(user, source: str) -> str:
+    """按操作来源生成操作人快照。"""
+    if source == MISSING_MERGE_OPERATION_SOURCE_SYSTEM:
+        return "系统"
+    if not user:
+        return "人工处理"
+    return getattr(user, "name", None) or getattr(user, "username", None) or "人工处理"
+
+
+def _create_operation_log(
+    *,
+    record: ComplianceMissingMergeRecord,
+    operation_type: str,
+    source: str,
+    from_status: str,
+    to_status: str,
+    remark: str,
+    user=None,
+    scan_task: ComplianceMissingMergeScanTask | None = None,
+    operated_at=None,
+) -> ComplianceMissingMergeOperationLog:
+    """统一写入漏合风险操作历史，保证系统和人工操作轨迹一致。"""
+    operated_time = _to_model_datetime(operated_at or timezone.now())
+    item = ComplianceMissingMergeOperationLog(
+        record=record,
+        scan_task=scan_task,
+        operation_type=operation_type,
+        source=source,
+        from_status=from_status or "",
+        to_status=to_status or "",
+        operator=user if source == MISSING_MERGE_OPERATION_SOURCE_MANUAL and getattr(user, "id", None) else None,
+        operator_name=_operator_name(user, source),
+        remark=_clean_text(remark),
+        operated_at=operated_time,
+    )
+    _apply_audit_fields(item, user, is_create=True)
+    item.save()
+    return item
+
+
+def serialize_operation_log(item: ComplianceMissingMergeOperationLog) -> dict:
+    """把操作历史序列化为详情抽屉的时间轴数据。"""
+    return {
+        "id": str(item.id),
+        "operation_type": item.operation_type,
+        "operation_type_label": OPERATION_LABELS.get(item.operation_type, item.operation_type),
+        "source": item.source,
+        "source_label": OPERATION_SOURCE_LABELS.get(item.source, item.source),
+        "from_status": item.from_status or "",
+        "from_status_label": _status_label(item.from_status),
+        "to_status": item.to_status or "",
+        "to_status_label": _status_label(item.to_status),
+        "operator_id": str(item.operator_id) if item.operator_id else None,
+        "operator_name": item.operator_name or _operator_name(getattr(item, "operator", None), item.source),
+        "remark": item.remark or "",
+        "operated_at": item.operated_at,
+    }
+
+
+def serialize_missing_merge_record(item: ComplianceMissingMergeRecord, *, include_logs: bool = False) -> dict:
     """把漏合风险模型序列化为前端列表/详情数据。"""
     handled_by = getattr(item, "handled_by", None)
+    if include_logs:
+        logs = getattr(item, "active_operation_logs", None)
+        if logs is None:
+            logs = item.operation_logs.filter(is_deleted=False).select_related("operator").order_by(
+                "-operated_at",
+                "-sys_create_datetime",
+            )
+        operation_logs = [serialize_operation_log(log) for log in logs]
+    else:
+        operation_logs = []
     return {
         "id": str(item.id),
         "organization_id": str(item.organization_id) if item.organization_id else None,
@@ -151,6 +256,7 @@ def serialize_missing_merge_record(item: ComplianceMissingMergeRecord) -> dict:
         ),
         "handled_at": item.handled_at,
         "handle_remark": item.handle_remark or "",
+        "operation_logs": operation_logs,
         "sys_create_datetime": item.sys_create_datetime,
         "sys_update_datetime": item.sys_update_datetime,
     }
@@ -246,23 +352,46 @@ def get_missing_merge_record(record_id: str) -> dict:
             "organization",
             "repository",
             "handled_by",
+        ).prefetch_related(
+            Prefetch(
+                "operation_logs",
+                queryset=ComplianceMissingMergeOperationLog.objects.filter(is_deleted=False)
+                .select_related("operator")
+                .order_by("-operated_at", "-sys_create_datetime"),
+                to_attr="active_operation_logs",
+            )
         ),
         id=record_id,
         is_deleted=False,
     )
-    return serialize_missing_merge_record(item)
+    return serialize_missing_merge_record(item, include_logs=True)
 
 
 def update_missing_merge_status(user, record_id: str, payload) -> dict:
     """人工更新漏合风险处理状态和处理备注。"""
-    item = get_object_or_404(ComplianceMissingMergeRecord, id=record_id, is_deleted=False)
     data = payload.dict()
-    item.status = _normalize_status(data.get("status"))
-    item.handle_remark = _clean_text(data.get("handle_remark"))
-    item.handled_by = user if getattr(user, "id", None) else None
-    item.handled_at = _to_model_datetime(timezone.now())
-    _apply_audit_fields(item, user)
-    item.save()
+    next_status = _normalize_status(data.get("status"))
+    remark = validate_handle_remark(data.get("handle_remark"))
+    with transaction.atomic():
+        item = get_object_or_404(ComplianceMissingMergeRecord, id=record_id, is_deleted=False)
+        previous_status = item.status
+        handled_at = _to_model_datetime(timezone.now())
+        item.status = next_status
+        item.handle_remark = remark
+        item.handled_by = user if getattr(user, "id", None) else None
+        item.handled_at = handled_at
+        _apply_audit_fields(item, user)
+        item.save()
+        _create_operation_log(
+            record=item,
+            operation_type=MISSING_MERGE_OPERATION_MANUAL_HANDLE,
+            source=MISSING_MERGE_OPERATION_SOURCE_MANUAL,
+            from_status=previous_status,
+            to_status=next_status,
+            remark=remark,
+            user=user,
+            operated_at=handled_at,
+        )
     return get_missing_merge_record(str(item.id))
 
 
@@ -319,6 +448,7 @@ def run_missing_merge_scan(user, payload, *, trigger_type: str = MISSING_MERGE_S
     try:
         counters = _execute_scan(
             user=user,
+            task=task,
             merged_after=merged_after,
             merged_before=merged_before,
             organization_id=data.get("organization_id"),
@@ -356,6 +486,7 @@ def _finish_task(
 def _execute_scan(
     *,
     user,
+    task: ComplianceMissingMergeScanTask | None = None,
     merged_after,
     merged_before,
     organization_id: str | None = None,
@@ -404,6 +535,7 @@ def _execute_scan(
             for change_key in sorted(missing_keys):
                 created = _upsert_missing_record(
                     user=user,
+                    task=task,
                     pair=pair,
                     row=trunk_rows[change_key],
                 )
@@ -413,6 +545,7 @@ def _execute_scan(
                     counters.updated_count += 1
             counters.fixed_count += _mark_fixed_records(
                 user=user,
+                task=task,
                 pair=pair,
                 release_keys=release_keys,
             )
@@ -504,7 +637,13 @@ def _fetch_branch_rows(
     return branch_project_rows
 
 
-def _upsert_missing_record(*, user, pair: ScanPair, row: dict[str, Any]) -> bool:
+def _upsert_missing_record(
+    *,
+    user,
+    task: ComplianceMissingMergeScanTask | None = None,
+    pair: ScanPair,
+    row: dict[str, Any],
+) -> bool:
     """新增或更新单条漏合风险，已忽略记录只刷新 CR 信息不改处理状态。"""
     now = _to_model_datetime(timezone.now())
     repository = pair.repository
@@ -537,25 +676,60 @@ def _upsert_missing_record(*, user, pair: ScanPair, row: dict[str, Any]) -> bool
 
     item = ComplianceMissingMergeRecord.objects.filter(**lookup).first()
     created = item is None
+    previous_status = ""
     if created:
         item = ComplianceMissingMergeRecord(**lookup)
         item.status = MISSING_MERGE_STATUS_OPEN
         _apply_audit_fields(item, user, is_create=True)
+    else:
+        previous_status = item.status
     for field, value in defaults.items():
         setattr(item, field, value)
 
+    should_reopen = False
     if not created and item.status != MISSING_MERGE_STATUS_IGNORED:
         # 之前已补合的 CR 如果再次缺失，需要重新进入未处理状态。
+        should_reopen = item.status != MISSING_MERGE_STATUS_OPEN
         item.status = MISSING_MERGE_STATUS_OPEN
         item.handled_by = None
         item.handled_at = None
         item.handle_remark = ""
     _apply_audit_fields(item, user)
     item.save()
+    if created:
+        _create_operation_log(
+            record=item,
+            scan_task=task,
+            operation_type=MISSING_MERGE_OPERATION_DETECTED,
+            source=MISSING_MERGE_OPERATION_SOURCE_SYSTEM,
+            from_status="",
+            to_status=MISSING_MERGE_STATUS_OPEN,
+            remark="系统首次自动检测到漏合风险",
+            user=user,
+            operated_at=now,
+        )
+    elif should_reopen:
+        _create_operation_log(
+            record=item,
+            scan_task=task,
+            operation_type=MISSING_MERGE_OPERATION_REOPENED,
+            source=MISSING_MERGE_OPERATION_SOURCE_SYSTEM,
+            from_status=previous_status,
+            to_status=MISSING_MERGE_STATUS_OPEN,
+            remark="后续自动数据刷新中再次检测到该漏合风险",
+            user=user,
+            operated_at=now,
+        )
     return created
 
 
-def _mark_fixed_records(*, user, pair: ScanPair, release_keys: set[str]) -> int:
+def _mark_fixed_records(
+    *,
+    user,
+    task: ComplianceMissingMergeScanTask | None = None,
+    pair: ScanPair,
+    release_keys: set[str],
+) -> int:
     """把本轮已出现在发布分支的历史未处理风险自动标记为已补合。"""
     if not release_keys:
         return 0
@@ -568,17 +742,29 @@ def _mark_fixed_records(*, user, pair: ScanPair, release_keys: set[str]) -> int:
         status=MISSING_MERGE_STATUS_OPEN,
         change_key__in=release_keys,
     )
-    ids = list(qs.values_list("id", flat=True))
-    if not ids:
+    items = list(qs)
+    if not items:
         return 0
-    ComplianceMissingMergeRecord.objects.filter(id__in=ids).update(
-        status=MISSING_MERGE_STATUS_FIXED,
-        handled_by_id=_audit_user_id(user),
-        handled_at=now,
-        handle_remark="系统检测到发布分支已包含该 CR，自动标记已补合",
-        sys_update_datetime=now,
-    )
-    return len(ids)
+    for item in items:
+        previous_status = item.status
+        item.status = MISSING_MERGE_STATUS_FIXED
+        item.handled_by = None
+        item.handled_at = now
+        item.handle_remark = AUTO_CLOSED_REMARK
+        _apply_audit_fields(item, user)
+        item.save()
+        _create_operation_log(
+            record=item,
+            scan_task=task,
+            operation_type=MISSING_MERGE_OPERATION_AUTO_CLOSED,
+            source=MISSING_MERGE_OPERATION_SOURCE_SYSTEM,
+            from_status=previous_status,
+            to_status=MISSING_MERGE_STATUS_FIXED,
+            remark=AUTO_CLOSED_REMARK,
+            user=user,
+            operated_at=now,
+        )
+    return len(items)
 
 
 @scheduler_task
