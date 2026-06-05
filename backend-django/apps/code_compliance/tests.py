@@ -1,10 +1,14 @@
 import io
+from datetime import datetime, timedelta
 
 import openpyxl
+from django.test import override_settings
+from django.utils import timezone
 from django.test import TestCase
 from ninja.errors import HttpError
 
 from apps.code_compliance import base_services as services
+from apps.code_compliance import missing_merge_services
 from apps.code_compliance.base_schemas import (
     BatchBindBranchesIn,
     BatchBindRepositoriesIn,
@@ -13,8 +17,17 @@ from apps.code_compliance.base_schemas import (
     OrganizationPatch,
     RepositoryIn,
 )
+from apps.code_compliance.missing_merge_client import (
+    build_cr_encoded_query,
+    build_cr_request_params,
+)
+from apps.code_compliance.missing_merge_schemas import MissingMergeScanRunIn
 from apps.code_compliance.models import (
+    MISSING_MERGE_STATUS_FIXED,
+    MISSING_MERGE_STATUS_IGNORED,
+    MISSING_MERGE_STATUS_OPEN,
     ComplianceManagedBranch,
+    ComplianceMissingMergeRecord,
     ComplianceOrganization,
     ComplianceRepository,
     ComplianceRepositoryBranch,
@@ -100,12 +113,12 @@ class CodeComplianceFoundationTests(TestCase):
             ),
         )
 
-    def create_branch(self, branch_name: str = "master"):
+    def create_branch(self, branch_name: str = "master", branch_type: str = "trunk"):
         return services.create_branch(
             self.user,
             BranchIn(
                 branch_name=branch_name,
-                branch_type="trunk",
+                branch_type=branch_type,
                 domain="cockpit",
             ),
         )
@@ -256,3 +269,102 @@ class CodeComplianceFoundationTests(TestCase):
         response = self.client.get("/api/code-compliance/base/organizations/template")
 
         self.assertNotEqual(response.status_code, 405)
+
+    def test_cr_client_builds_encoded_get_query(self):
+        """数据湖 GET 参数必须包含固定 state、only_count 和 URL 编码时间。"""
+        merged_after = datetime(2026, 6, 11, 16, 20, 20, tzinfo=timezone.get_fixed_timezone(480))
+        merged_before = merged_after + timedelta(hours=1)
+
+        params = build_cr_request_params(
+            page=1,
+            per_page=50,
+            target_branch="master",
+            projects=["20001", "20002"],
+            merged_after=merged_after,
+            merged_before=merged_before,
+            only_count=True,
+        )
+        encoded = build_cr_encoded_query(params)
+
+        self.assertEqual(params["state"], "merged")
+        self.assertEqual(params["only_count"], "True")
+        self.assertEqual(params["projects"], "20001,20002")
+        self.assertIn("merged_after=2026-06-11T16%3A20%3A20.000%2B08%3A00", encoded)
+
+    @override_settings(CODE_COMPLIANCE_CR_FORCE_MOCK=True)
+    def test_missing_merge_scan_detects_fixed_and_preserves_ignored(self):
+        """扫描应识别主干差集，自动关闭已补合项，并不覆盖已忽略项。"""
+        org = self.create_org()
+        repo = self.create_repo(org["id"], "20001")
+        trunk = self.create_branch("master", "trunk")
+        release = self.create_branch("release/1.0", "release")
+        services.bind_branches_to_repositories(
+            [repo["id"]],
+            [trunk["id"], release["id"]],
+            "append",
+        )
+        repository = ComplianceRepository.objects.get(id=repo["id"])
+        organization = ComplianceOrganization.objects.get(id=org["id"])
+        now = timezone.now()
+        ComplianceMissingMergeRecord.objects.create(
+            organization=organization,
+            repository=repository,
+            organization_group_id=organization.group_id,
+            organization_name=organization.name,
+            repository_project_id=repository.project_id,
+            repository_name=repository.project_name,
+            project_id=repository.project_id,
+            trunk_branch="master",
+            release_branch="release/1.0",
+            change_request_iid="10001",
+            change_key="mock-20001-001",
+            title="existing fixed candidate",
+            merged_at=now,
+            target_branch="master",
+            author_username="user01",
+            detected_at=now,
+            status=MISSING_MERGE_STATUS_OPEN,
+        )
+        ignored = ComplianceMissingMergeRecord.objects.create(
+            organization=organization,
+            repository=repository,
+            organization_group_id=organization.group_id,
+            organization_name=organization.name,
+            repository_project_id=repository.project_id,
+            repository_name=repository.project_name,
+            project_id=repository.project_id,
+            trunk_branch="master",
+            release_branch="release/1.0",
+            change_request_iid="10003",
+            change_key="mock-20001-003",
+            title="ignored candidate",
+            merged_at=now,
+            target_branch="master",
+            author_username="user03",
+            detected_at=now,
+            status=MISSING_MERGE_STATUS_IGNORED,
+            handle_remark="人工忽略",
+        )
+
+        task = missing_merge_services.run_missing_merge_scan(
+            self.user,
+            MissingMergeScanRunIn(
+                merged_after=now - timedelta(days=1),
+                merged_before=now + timedelta(days=1),
+            ),
+        )
+
+        self.assertEqual(task["status"], "success")
+        self.assertGreater(task["detected_count"], 0)
+        self.assertGreater(task["created_count"], 0)
+        self.assertGreater(task["fixed_count"], 0)
+        fixed_record = ComplianceMissingMergeRecord.objects.get(change_key="mock-20001-001")
+        ignored.refresh_from_db()
+        self.assertEqual(fixed_record.status, MISSING_MERGE_STATUS_FIXED)
+        self.assertEqual(ignored.status, MISSING_MERGE_STATUS_IGNORED)
+        self.assertTrue(
+            ComplianceMissingMergeRecord.objects.filter(
+                change_key="mock-20001-006",
+                status=MISSING_MERGE_STATUS_OPEN,
+            ).exists()
+        )

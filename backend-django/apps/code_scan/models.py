@@ -142,8 +142,8 @@ class ScanFinding(models.Model):
             ),
         ]
         indexes = [
-            models.Index(fields=['project', 'shield_status'], name='scan_find_project_status_idx'),
-            models.Index(fields=['project', 'last_seen_at'], name='scan_find_project_last_seen_idx'),
+            models.Index(fields=['project', 'shield_status'], name='scan_find_proj_status_idx'),
+            models.Index(fields=['project', 'last_seen_at'], name='scan_find_proj_last_seen_idx'),
         ]
 
 

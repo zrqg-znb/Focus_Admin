@@ -265,6 +265,276 @@ class ComplianceRepositoryBranch(RootModel):
             models.Index(fields=["branch", "is_deleted"], name="cc_rb_branch_deleted_idx"),
         ]
 
+
+MISSING_MERGE_STATUS_OPEN = "open"
+MISSING_MERGE_STATUS_FIXED = "fixed"
+MISSING_MERGE_STATUS_IGNORED = "ignored"
+MISSING_MERGE_STATUS_CHOICES = (
+    (MISSING_MERGE_STATUS_OPEN, "未处理"),
+    (MISSING_MERGE_STATUS_FIXED, "已补合"),
+    (MISSING_MERGE_STATUS_IGNORED, "已忽略"),
+)
+
+MISSING_MERGE_SCAN_TRIGGER_MANUAL = "manual"
+MISSING_MERGE_SCAN_TRIGGER_SCHEDULED = "scheduled"
+MISSING_MERGE_SCAN_TRIGGER_CHOICES = (
+    (MISSING_MERGE_SCAN_TRIGGER_MANUAL, "手动"),
+    (MISSING_MERGE_SCAN_TRIGGER_SCHEDULED, "定时"),
+)
+
+MISSING_MERGE_SCAN_STATUS_PENDING = "pending"
+MISSING_MERGE_SCAN_STATUS_RUNNING = "running"
+MISSING_MERGE_SCAN_STATUS_SUCCESS = "success"
+MISSING_MERGE_SCAN_STATUS_FAILED = "failed"
+MISSING_MERGE_SCAN_STATUS_CHOICES = (
+    (MISSING_MERGE_SCAN_STATUS_PENDING, "待执行"),
+    (MISSING_MERGE_SCAN_STATUS_RUNNING, "执行中"),
+    (MISSING_MERGE_SCAN_STATUS_SUCCESS, "成功"),
+    (MISSING_MERGE_SCAN_STATUS_FAILED, "失败"),
+)
+
+
+class ComplianceMissingMergeRecord(RootModel):
+    """自动化检测出的主干已合入但发布分支缺失的 CR 风险。"""
+
+    organization = models.ForeignKey(
+        ComplianceOrganization,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="missing_merge_records",
+        db_constraint=False,
+        verbose_name="组织",
+        help_text="识别风险时对应的组织",
+    )
+    repository = models.ForeignKey(
+        ComplianceRepository,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="missing_merge_records",
+        db_constraint=False,
+        verbose_name="代码库",
+        help_text="识别风险时对应的代码库",
+    )
+    organization_group_id = models.CharField(
+        max_length=128,
+        db_index=True,
+        verbose_name="组织ID快照",
+        help_text="公司代码库系统组织ID快照",
+    )
+    organization_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        verbose_name="组织名快照",
+        help_text="组织名快照",
+    )
+    repository_project_id = models.CharField(
+        max_length=128,
+        db_index=True,
+        verbose_name="代码库ID快照",
+        help_text="公司代码库系统代码库ID快照",
+    )
+    repository_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        verbose_name="代码库名快照",
+        help_text="代码库名快照",
+    )
+    project_id = models.CharField(
+        max_length=128,
+        db_index=True,
+        verbose_name="项目ID",
+        help_text="数据湖查询使用的 project_id",
+    )
+    trunk_branch = models.CharField(
+        max_length=255,
+        db_index=True,
+        verbose_name="主干分支",
+        help_text="主干分支名称",
+    )
+    release_branch = models.CharField(
+        max_length=255,
+        db_index=True,
+        verbose_name="发布分支",
+        help_text="发布分支名称",
+    )
+    change_request_iid = models.CharField(
+        max_length=128,
+        blank=True,
+        default="",
+        verbose_name="CR内部ID",
+        help_text="CR内部ID",
+    )
+    change_key = models.CharField(
+        max_length=255,
+        db_index=True,
+        verbose_name="CR全局标识",
+        help_text="CR全局哈希标识",
+    )
+    title = models.CharField(
+        max_length=500,
+        blank=True,
+        default="",
+        verbose_name="CR标题",
+        help_text="CR标题",
+    )
+    description = models.TextField(
+        blank=True,
+        default="",
+        verbose_name="CR描述",
+        help_text="CR描述",
+    )
+    web_url = models.CharField(
+        max_length=1024,
+        blank=True,
+        default="",
+        verbose_name="CR链接",
+        help_text="CR访问链接",
+    )
+    added_lines = models.IntegerField(default=0, verbose_name="新增行数", help_text="新增代码行数")
+    removed_lines = models.IntegerField(default=0, verbose_name="删除行数", help_text="删除代码行数")
+    merged_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name="主干合入时间",
+        help_text="CR合入主干时间",
+    )
+    target_branch = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        verbose_name="目标合入分支",
+        help_text="数据湖返回的目标合入分支",
+    )
+    author_username = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        db_index=True,
+        verbose_name="创建人用户名",
+        help_text="CR创建人Focus系统用户名",
+    )
+    detected_at = models.DateTimeField(
+        db_index=True,
+        verbose_name="漏合识别时间",
+        help_text="最近一次识别为漏合的时间",
+    )
+    status = models.CharField(
+        max_length=32,
+        choices=MISSING_MERGE_STATUS_CHOICES,
+        default=MISSING_MERGE_STATUS_OPEN,
+        db_index=True,
+        verbose_name="处理状态",
+        help_text="未处理/已补合/已忽略",
+    )
+    handled_by = models.ForeignKey(
+        "core.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="handled_missing_merge_records",
+        db_constraint=False,
+        verbose_name="处理人",
+        help_text="最近一次处理人",
+    )
+    handled_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="处理时间",
+        help_text="最近一次处理时间",
+    )
+    handle_remark = models.TextField(
+        blank=True,
+        default="",
+        verbose_name="处理备注",
+        help_text="处理备注",
+    )
+
+    class Meta:
+        db_table = "compliance_missing_merge_record"
+        ordering = ("-detected_at", "-merged_at")
+        verbose_name = "代码合规漏合风险"
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=("repository", "trunk_branch", "release_branch", "change_key"),
+                name="cc_missing_merge_record_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["organization", "status"], name="cc_mm_org_status_idx"),
+            models.Index(fields=["repository", "status"], name="cc_mm_repo_status_idx"),
+            models.Index(fields=["trunk_branch", "release_branch"], name="cc_mm_branch_pair_idx"),
+            models.Index(fields=["detected_at", "status"], name="cc_mm_detect_status_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.repository_name}:{self.change_key}"
+
+
+class ComplianceMissingMergeScanTask(RootModel):
+    """漏合检测同步任务记录，用于页面展示同步结果和排障。"""
+
+    trigger_type = models.CharField(
+        max_length=32,
+        choices=MISSING_MERGE_SCAN_TRIGGER_CHOICES,
+        default=MISSING_MERGE_SCAN_TRIGGER_MANUAL,
+        db_index=True,
+        verbose_name="触发方式",
+        help_text="手动/定时",
+    )
+    status = models.CharField(
+        max_length=32,
+        choices=MISSING_MERGE_SCAN_STATUS_CHOICES,
+        default=MISSING_MERGE_SCAN_STATUS_PENDING,
+        db_index=True,
+        verbose_name="任务状态",
+        help_text="待执行/执行中/成功/失败",
+    )
+    merged_after = models.DateTimeField(
+        db_index=True,
+        verbose_name="合入开始时间",
+        help_text="数据湖 merged_after",
+    )
+    merged_before = models.DateTimeField(
+        db_index=True,
+        verbose_name="合入结束时间",
+        help_text="数据湖 merged_before",
+    )
+    filter_payload = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name="筛选条件",
+        help_text="手动或定时任务的组织/代码库筛选条件",
+    )
+    started_at = models.DateTimeField(null=True, blank=True, verbose_name="开始时间", help_text="开始时间")
+    finished_at = models.DateTimeField(null=True, blank=True, verbose_name="结束时间", help_text="结束时间")
+    scanned_organization_count = models.IntegerField(default=0, verbose_name="扫描组织数", help_text="扫描组织数")
+    scanned_repository_count = models.IntegerField(default=0, verbose_name="扫描代码库数", help_text="扫描代码库数")
+    scanned_branch_pair_count = models.IntegerField(default=0, verbose_name="扫描分支对数", help_text="扫描分支对数")
+    detected_count = models.IntegerField(default=0, verbose_name="识别风险数", help_text="本次识别漏合风险数")
+    created_count = models.IntegerField(default=0, verbose_name="新增风险数", help_text="本次新增风险数")
+    updated_count = models.IntegerField(default=0, verbose_name="更新风险数", help_text="本次更新风险数")
+    fixed_count = models.IntegerField(default=0, verbose_name="自动补合数", help_text="本次自动标记已补合数量")
+    error_message = models.TextField(blank=True, default="", verbose_name="错误信息", help_text="失败错误信息")
+
+    class Meta:
+        db_table = "compliance_missing_merge_scan_task"
+        ordering = ("-sys_create_datetime",)
+        verbose_name = "代码合规漏合检测任务"
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=["status", "trigger_type"], name="cc_mm_task_status_trigger_idx"),
+            models.Index(fields=["merged_after", "merged_before"], name="cc_mm_task_time_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.trigger_type}:{self.status}:{self.merged_after}"
+
 class ComplianceRecord(RootModel):
     STATUS_CHOICES = (
         (0, '待处理'), # Unresolved

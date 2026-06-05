@@ -65,15 +65,21 @@ const apis = [
     purpose: '维护分支主数据，并支持从分支侧批量绑定代码库',
     returns: 'PaginatedBranchOut / ImportResult / BindResult',
   },
+  {
+    consumer: '漏合风险',
+    method: 'GET / PUT / POST',
+    params: '组织、代码库、分支、状态、时间范围；手动同步时间窗口',
+    path: '/api/code-compliance/missing-merges/records* / /api/code-compliance/missing-merges/scan-tasks*',
+    purpose: '查询自动检测出的漏合 CR，更新处理状态，并手动触发数据湖同步',
+    returns: 'PaginatedMissingMergeRecordOut / MissingMergeScanTaskOut',
+  },
 ];
 </script>
 
 <FocusModuleHero :module="moduleMeta" />
 
-<FocusModuleSection
-  kicker="Module Purpose"
-  title="模块定位"
-  summary="代码合规模块把原本零散的 Change 风险整理成一套可聚合、可追踪、可整改的治理台账。它关注的不是“扫出了多少问题”，而是谁的哪些分支还没有处理完。"
+<FocusModuleSection kicker="Module Purpose" title="模块定位" summary="代码合规模块把原本零散的 Change 风险整理成一套可聚合、可追踪、可整改的治理台账。它关注的不是“扫出了多少问题”，而是谁的哪些分支还没有处理完。"
+
 >
 
 这个模块偏治理而不是分析，核心业务问题是：
@@ -86,40 +92,47 @@ const apis = [
 
 </FocusModuleSection>
 
-<FocusModuleSection
-  kicker="Foundation V1"
-  title="一期基础数据升级"
-  summary="新一期在保留旧 Excel 风险台账的前提下，新增组织、代码库、分支和代码库-分支绑定主数据。"
+<FocusModuleSection kicker="Foundation V1" title="一期基础数据升级" summary="新一期在保留旧 Excel 风险台账的前提下，新增组织、代码库、分支和代码库-分支绑定主数据。"
+
 >
 
 一期新增的基础数据不参与漏合风险检测，只为后续联动公司代码库系统做准备。
 
 新增模型包括：
 
-- `ComplianceOrganization`
-  公司代码库系统组织，使用外部 `group_id` 作为业务唯一标识
-- `ComplianceRepository`
-  公司代码库系统代码库，使用外部 `project_id` 作为业务唯一标识
-- `ComplianceManagedBranch`
-  分支主数据，为避免影响旧风险台账，未复用旧 `ComplianceBranch`
-- `ComplianceRepositoryBranch`
-  代码库和分支的绑定表，支持软删除恢复
+- `ComplianceOrganization` 公司代码库系统组织，使用外部 `group_id` 作为业务唯一标识
+- `ComplianceRepository` 公司代码库系统代码库，使用外部 `project_id` 作为业务唯一标识
+- `ComplianceManagedBranch` 分支主数据，为避免影响旧风险台账，未复用旧 `ComplianceBranch`
+- `ComplianceRepositoryBranch` 代码库和分支的绑定表，支持软删除恢复
 
 新增页面包括：
 
-- `代码库管理`
-  左侧组织树，右侧当前组织直接挂载的代码库列表，组织用 Dialog 编辑，代码库用 Drawer 编辑
-- `分支管理`
-  分支基础信息列表、CRUD、Excel 导入和批量绑定代码库
+- `代码库管理` 左侧组织树，右侧当前组织直接挂载的代码库列表，组织用 Dialog 编辑，代码库用 Drawer 编辑
+- `分支管理` 分支基础信息列表、CRUD、Excel 导入和批量绑定代码库
 
 详细一期说明见后端文档：`backend-django/docs/code-compliance-foundation-v1.md`。
 
 </FocusModuleSection>
 
-<FocusModuleSection
-  kicker="Data Model"
-  title="表结构与关系设计"
-  summary="代码合规模块只有两个核心表，但语义层次非常明确：记录表示 Change 风险主对象，分支表示治理粒度。"
+<FocusModuleSection kicker="Missing Merge" title="自动漏合检测" summary="新能力基于已维护的组织、代码库和分支绑定关系，从数据湖拉取 CR 明细并识别主干已合入但发布分支缺失的风险。"
+
+>
+
+本期按同一代码库下的 `trunk` 分支与 `release` 分支自动组合，不新增显式配对表。检测流程是：
+
+- 按组织聚合代码库 `project_id`，构造数据湖 GET 查询参数
+- 对每个目标分支先取 `only_count=True` 统计，再分页拉取 CR 明细
+- 按 `branch / project_id / change_key` 建索引
+- 计算 `trunk_change_keys - release_change_keys`
+- 将差集写入 `ComplianceMissingMergeRecord`
+- 发布分支已包含的历史未处理风险自动标记为 `已补合`
+
+开发环境未配置真实 `CODE_COMPLIANCE_CR_API_URL` 时，会自动走 mock 数据。详细设计见 `backend-django/docs/merge-compliance-missing-merge-v1.md`。
+
+</FocusModuleSection>
+
+<FocusModuleSection kicker="Data Model" title="表结构与关系设计" summary="代码合规模块只有两个核心表，但语义层次非常明确：记录表示 Change 风险主对象，分支表示治理粒度。"
+
 >
 
 ```mermaid
@@ -153,66 +166,47 @@ erDiagram
 
 记录级对象，对应一次 Change 风险，关键字段包括：
 
-- `user`
-  风险归属人，后续岗位和用户统计都依赖它
-- `change_id`
-  风险记录的业务主键语义
-- `title`、`url`
-  用于回溯源码或代码评审上下文
-- `update_time`
-  支持时间区间查询
-- `status`
-  记录级汇总状态，不是最细粒度状态
-- `remark`
-  记录整体说明，或承接历史导入备注
+- `user` 风险归属人，后续岗位和用户统计都依赖它
+- `change_id` 风险记录的业务主键语义
+- `title`、`url` 用于回溯源码或代码评审上下文
+- `update_time` 支持时间区间查询
+- `status` 记录级汇总状态，不是最细粒度状态
+- `remark` 记录整体说明，或承接历史导入备注
 
 ### `ComplianceBranch`
 
 分支级对象，表示这条风险在某一分支上的处理状态，关键字段包括：
 
-- `record`
-  所属风险记录
-- `branch_name`
-  分支名称
-- `status`
-  0 待处理、1 无风险、2 已修复
-- `remark`
-  分支级整改日志与备注
+- `record` 所属风险记录
+- `branch_name` 分支名称
+- `status` 0 待处理、1 无风险、2 已修复
+- `remark` 分支级整改日志与备注
 
 设计上真正的治理粒度在 `ComplianceBranch`，因为同一 Change 可能在不同分支进度不同。
 
 </FocusModuleSection>
 
-<FocusModuleSection
-  kicker="Aggregation Logic"
-  title="统计结构与聚合口径"
-  summary="代码合规模块的看板数据不是单独快照表，而是实时遍历记录与分支得到。"
+<FocusModuleSection kicker="Aggregation Logic" title="统计结构与聚合口径" summary="代码合规模块的看板数据不是单独快照表，而是实时遍历记录与分支得到。"
+
 >
 
 在 `backend-django/apps/code_compliance/services.py` 中：
 
-- `get_post_stats`
-  把所有记录按岗位聚合，输出岗位级总风险数、待处理数、分支总数、待处理分支数
-- `get_post_users_detail`
-  在岗位维度下进一步按用户聚合，并支持 `start_date / end_date`
-- `get_user_records`
-  返回某个用户下的风险明细和分支列表
+- `get_post_stats` 把所有记录按岗位聚合，输出岗位级总风险数、待处理数、分支总数、待处理分支数
+- `get_post_users_detail` 在岗位维度下进一步按用户聚合，并支持 `start_date / end_date`
+- `get_user_records` 返回某个用户下的风险明细和分支列表
 
 这里有两个很重要的统计口径：
 
-1. `total_risks / unresolved_risks`
-   统计的是记录数，也就是 Change 风险数
-2. `total_branch_risks / unresolved_branch_risks`
-   统计的是分支数，反映实际整改粒度
+1. `total_risks / unresolved_risks` 统计的是记录数，也就是 Change 风险数
+2. `total_branch_risks / unresolved_branch_risks` 统计的是分支数，反映实际整改粒度
 
 所以一个岗位可能 Change 数不高，但分支待处理量很高，这也是模块要保留双层统计的原因。
 
 </FocusModuleSection>
 
-<FocusModuleSection
-  kicker="Implementation"
-  title="关键实现原理"
-  summary="代码合规的核心实现不是 CRUD，而是导入规范化、状态同步和备注日志叠加。"
+<FocusModuleSection kicker="Implementation" title="关键实现原理" summary="代码合规的核心实现不是 CRUD，而是导入规范化、状态同步和备注日志叠加。"
+
 >
 
 ### 导入逻辑：`upload_compliance_data`
@@ -254,29 +248,21 @@ erDiagram
 
 </FocusModuleSection>
 
-<FocusModuleSection
-  kicker="Frontend Entry"
-  title="前端入口与页面结构"
-  summary="前端采用‘概览 -> 详情 -> 抽屉整改’三级展开，而不是在一个页面里堆满所有数据。"
+<FocusModuleSection kicker="Frontend Entry" title="前端入口与页面结构" summary="前端采用‘概览 -> 详情 -> 抽屉整改’三级展开，而不是在一个页面里堆满所有数据。"
+
 >
 
 前端入口位于：
 
-- `web/apps/web-ele/src/views/compliance/overview/index.vue`
-  合规风险概览页，消费 `getPostStats`
-- `web/apps/web-ele/src/views/compliance/detail/index.vue`
-  岗位详情页，消费 `getPostUsersStats`
-- `web/apps/web-ele/src/views/compliance/repository/index.vue`
-  代码库管理页，消费 `/api/code-compliance/base/organizations` 与 `/repositories`
-- `web/apps/web-ele/src/views/compliance/branch/index.vue`
-  分支管理页，消费 `/api/code-compliance/base/branches`
-- `web/apps/web-ele/src/views/compliance/components/RiskDrawer.vue`
-  用户风险抽屉，消费 `getUserRecords`
-- `web/apps/web-ele/src/views/compliance/components/RiskHandleDialog.vue`
-  分支整改对话框，消费 `updateBranchStatus`
+- `web/apps/web-ele/src/views/compliance/overview/index.vue` 合规风险概览页，消费 `getPostStats`
+- `web/apps/web-ele/src/views/compliance/detail/index.vue` 岗位详情页，消费 `getPostUsersStats`
+- `web/apps/web-ele/src/views/compliance/repository/index.vue` 代码库管理页，消费 `/api/code-compliance/base/organizations` 与 `/repositories`
+- `web/apps/web-ele/src/views/compliance/branch/index.vue` 分支管理页，消费 `/api/code-compliance/base/branches`
+- `web/apps/web-ele/src/views/compliance/missing-merge/index.vue` 漏合风险页，消费 `/api/code-compliance/missing-merges`
+- `web/apps/web-ele/src/views/compliance/components/RiskDrawer.vue` 用户风险抽屉，消费 `getUserRecords`
+- `web/apps/web-ele/src/views/compliance/components/RiskHandleDialog.vue` 分支整改对话框，消费 `updateBranchStatus`
 
-对应 API 类型定义位于 `web/apps/web-ele/src/api/compliance/index.ts`。
-基础数据 API 类型定义位于 `web/apps/web-ele/src/api/compliance/base.ts`。
+对应 API 类型定义位于 `web/apps/web-ele/src/api/compliance/index.ts`。基础数据 API 类型定义位于 `web/apps/web-ele/src/api/compliance/base.ts`。漏合风险 API 类型定义位于 `web/apps/web-ele/src/api/compliance/missing-merge.ts`。
 
 这套页面结构与数据结构是一一对应的：
 
@@ -287,10 +273,8 @@ erDiagram
 
 </FocusModuleSection>
 
-<FocusModuleSection
-  kicker="Sequence"
-  title="时序图：一次合规风险导入后如何进入整改"
-  summary="代码合规模块真正完成的是‘导入台账 -> 组织聚合 -> 分支整改 -> 状态回写’这一整条链。"
+<FocusModuleSection kicker="Sequence" title="时序图：一次合规风险导入后如何进入整改" summary="代码合规模块真正完成的是‘导入台账 -> 组织聚合 -> 分支整改 -> 状态回写’这一整条链。"
+
 >
 
 ```mermaid
@@ -323,20 +307,14 @@ sequenceDiagram
 
 </FocusModuleSection>
 
-<FocusModuleSection
-  kicker="Dependencies"
-  title="相关依赖与上下游"
-  summary="代码合规高度依赖组织主数据和用户主数据，但治理状态本身完全由本模块维护。"
+<FocusModuleSection kicker="Dependencies" title="相关依赖与上下游" summary="代码合规高度依赖组织主数据和用户主数据，但治理状态本身完全由本模块维护。"
+
 >
 
-- 上游依赖
-  `core.user` 与 `core.post`，用于归属用户和岗位
-- 上游输入
-  外部 Excel / CSV 风险清单
-- 下游消费
-  合规概览页、岗位详情页、用户风险整改抽屉
-- 关联模块
-  与代码扫描类似都属于治理类模块，但代码合规更偏 Change / 分支整改视角
+- 上游依赖 `core.user` 与 `core.post`，用于归属用户和岗位
+- 上游输入外部 Excel / CSV 风险清单
+- 下游消费合规概览页、岗位详情页、用户风险整改抽屉
+- 关联模块与代码扫描类似都属于治理类模块，但代码合规更偏 Change / 分支整改视角
 
 </FocusModuleSection>
 
@@ -350,6 +328,7 @@ sequenceDiagram
 
 - [后端技术参考](/backend/apps/code-compliance)
 - [前端页面参考](/frontend/views/code-compliance)
+- `backend-django/docs/merge-compliance-missing-merge-v1.md`
 - [代码扫描](/modules/code-scan)
 
 </FocusModuleSection>

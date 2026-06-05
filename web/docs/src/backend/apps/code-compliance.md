@@ -6,6 +6,7 @@
 
 - 旧风险台账：继续保留 Excel 上传、岗位概览、用户详情和旧分支整改能力。
 - 一期基础数据：新增组织、代码库、分支和代码库-分支绑定，为后续联动公司代码库系统做准备。
+- 漏合检测：基于组织、代码库和分支绑定关系自动拉取 CR 数据湖明细，识别主干已合入但发布分支缺失的风险。
 
 ## 架构概览
 
@@ -37,16 +38,17 @@
 | ComplianceRecord | ComplianceBranch | 1:N | 一条记录可能缺失多个分支的同步 |
 | ComplianceOrganization | ComplianceRepository | 1:N | 组织下直接挂载代码库 |
 | ComplianceRepository | ComplianceManagedBranch | M:N | 通过 ComplianceRepositoryBranch 维护绑定 |
+| ComplianceRepository | ComplianceMissingMergeRecord | 1:N | 代码库维度归档自动检测出的漏合风险 |
 
 ## 核心概念
 
 ### 状态定义
 
-| 状态值 | 状态名 | 说明 |
-| --- | --- | --- |
-| 0 | 待处理 | 变更未在目标分支同步，需要处理 |
-| 1 | 无风险 | 经评估确认无需同步或不存在风险 |
-| 2 | 已修复 | 已完成分支同步 |
+| 状态值 | 状态名 | 说明                           |
+| ------ | ------ | ------------------------------ |
+| 0      | 待处理 | 变更未在目标分支同步，需要处理 |
+| 1      | 无风险 | 经评估确认无需同步或不存在风险 |
+| 2      | 已修复 | 已完成分支同步                 |
 
 ### 业务场景
 
@@ -67,13 +69,13 @@ class ComplianceRecord(RootModel):
         (1, '无风险'),  # No Risk
         (2, '已修复'),  # Fixed
     )
-    
+
     user = models.ForeignKey(User, related_name='compliance_records')  # 提交用户
     change_id = models.CharField(max_length=255)                        # 变更ID
     title = models.CharField(max_length=500)                            # 变更标题
     update_time = models.DateTimeField()                                # 更新时间
     url = models.CharField(max_length=500)                              # 变更链接
-    
+
     status = models.IntegerField(choices=STATUS_CHOICES, default=0)     # 聚合状态
     remark = models.TextField()                                          # 备注
 ```
@@ -87,7 +89,7 @@ class ComplianceBranch(RootModel):
         (1, '无风险'),
         (2, '已修复'),
     )
-    
+
     record = models.ForeignKey(ComplianceRecord, related_name='branches')
     branch_name = models.CharField(max_length=255)  # 分支名称
     status = models.IntegerField(default=0)          # 分支状态
@@ -133,6 +135,25 @@ class ComplianceManagedBranch(RootModel):
     purpose = models.TextField(blank=True)
     domain = models.CharField(choices=(("cockpit", "座舱"), ("vehicle", "车控")))
 ```
+
+### ComplianceMissingMergeRecord（自动漏合风险）
+
+```python
+class ComplianceMissingMergeRecord(RootModel):
+    organization = models.ForeignKey(ComplianceOrganization, null=True)
+    repository = models.ForeignKey(ComplianceRepository, null=True)
+    project_id = models.CharField(max_length=128)
+    trunk_branch = models.CharField(max_length=255)
+    release_branch = models.CharField(max_length=255)
+    change_request_iid = models.CharField(max_length=128)
+    change_key = models.CharField(max_length=255)
+    title = models.CharField(max_length=500)
+    merged_at = models.DateTimeField(null=True)
+    author_username = models.CharField(max_length=255)
+    status = models.CharField(choices=(("open", "未处理"), ("fixed", "已补合"), ("ignored", "已忽略")))
+```
+
+`ComplianceMissingMergeScanTask` 记录每次手动或定时扫描的时间范围、扫描组织/代码库/分支对数量、识别/新增/自动补合数量和错误信息。
 
 ## 业务流程
 
@@ -181,24 +202,24 @@ class ComplianceManagedBranch(RootModel):
 
 ### 记录管理
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/api/code-compliance/records` | 获取合规记录列表 |
-| GET | `/api/code-compliance/records/{id}` | 获取记录详情 |
-| PUT | `/api/code-compliance/records/{id}` | 更新记录状态 |
+| 方法 | 路径                                | 说明             |
+| ---- | ----------------------------------- | ---------------- |
+| GET  | `/api/code-compliance/records`      | 获取合规记录列表 |
+| GET  | `/api/code-compliance/records/{id}` | 获取记录详情     |
+| PUT  | `/api/code-compliance/records/{id}` | 更新记录状态     |
 
 ### 分支管理
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| PUT | `/api/code-compliance/branches/{id}` | 更新分支状态 |
+| 方法 | 路径                                         | 说明         |
+| ---- | -------------------------------------------- | ------------ |
+| PUT  | `/api/code-compliance/branches/{id}`         | 更新分支状态 |
 | POST | `/api/code-compliance/branches/{id}/no-risk` | 标记为无风险 |
-| POST | `/api/code-compliance/branches/{id}/fixed` | 标记为已修复 |
+| POST | `/api/code-compliance/branches/{id}/fixed`   | 标记为已修复 |
 
 ### 数据同步
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
+| 方法 | 路径                        | 说明             |
+| ---- | --------------------------- | ---------------- |
 | POST | `/api/code-compliance/sync` | 手动触发数据同步 |
 
 ### 一期基础数据
@@ -215,6 +236,16 @@ class ComplianceManagedBranch(RootModel):
 | POST/PUT/DELETE | `/api/code-compliance/base/branches` | 分支新增、编辑、删除 |
 | POST | `/api/code-compliance/base/branches/batch-bind-repositories` | 从分支侧批量绑定代码库，支持 `append` / `replace` |
 
+### 自动漏合检测
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/code-compliance/missing-merges/records` | 查询漏合风险列表 |
+| GET | `/api/code-compliance/missing-merges/records/{id}` | 查询漏合风险详情 |
+| PUT | `/api/code-compliance/missing-merges/records/{id}/status` | 更新漏合风险状态 |
+| GET | `/api/code-compliance/missing-merges/scan-tasks` | 查询扫描任务历史 |
+| POST | `/api/code-compliance/missing-merges/scan-tasks/run` | 手动触发漏合检测 |
+
 ## 目录结构
 
 ```
@@ -223,6 +254,10 @@ apps/code_compliance/
 ├── base_api.py        # 一期基础数据 API
 ├── base_schemas.py    # 一期基础数据 Schema
 ├── base_services.py   # 一期基础数据服务
+├── missing_merge_api.py       # 自动漏合检测 API
+├── missing_merge_client.py    # CR 数据湖 GET client 与 mock
+├── missing_merge_schemas.py   # 自动漏合检测 Schema
+├── missing_merge_services.py  # 自动漏合检测服务
 ├── models.py          # 数据模型 (Record, Branch)
 ├── schemas.py         # Pydantic Schema
 ├── services.py        # 业务服务
@@ -242,11 +277,13 @@ python manage.py init_code_compliance
 
 命令补齐菜单、权限和 `code_compliance_repo_type` 字典。旧风险入口保持可见，后续等新检测能力稳定后再做日落。
 
+命令也会创建默认禁用的定时任务 `code_compliance_missing_merge_scan`。配置数据湖地址和认证后，可在调度器中启用该任务。
+
 ## 数据同步
 
 ### 外部数据源
 
-合规数据通过定时任务从外部代码审查系统同步：
+旧风险台账通过 Excel/CSV 导入；新漏合检测通过数据湖 GET 接口同步 CR 明细。开发环境未配置 `CODE_COMPLIANCE_CR_API_URL` 时，`missing_merge_client` 会自动走 mock。
 
 ```
 ┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐

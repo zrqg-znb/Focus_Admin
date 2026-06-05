@@ -8,10 +8,12 @@ from core.dict_item.dict_item_model import DictItem
 from core.menu.menu_model import Menu
 from core.permission.permission_model import Permission
 from core.user.user_model import User
+from scheduler.models import SchedulerJob
 
 
 HTTP_METHOD_MAP = {"GET": 0, "POST": 1, "PUT": 2, "DELETE": 3, "PATCH": 4, "ALL": 5}
 REPO_TYPE_DICT_CODE = "code_compliance_repo_type"
+MISSING_MERGE_SCAN_JOB_CODE = "code_compliance_missing_merge_scan"
 
 
 @dataclass(frozen=True)
@@ -91,6 +93,17 @@ MENU_SEEDS = [
         order=4,
         auth_code="code_compliance:branch",
         icon="lucide:git-branch-plus",
+    ),
+    MenuSeed(
+        key="missing_merge",
+        parent_key="code_compliance",
+        name="ComplianceMissingMerge",
+        title="漏合风险",
+        path="/compliance/missing-merge",
+        component="/compliance/missing-merge/index",
+        order=5,
+        auth_code="code_compliance:missing_merge",
+        icon="lucide:git-compare-arrows",
     ),
 ]
 
@@ -251,6 +264,37 @@ PERMISSION_SEEDS = {
             "http_method": "POST",
         },
     ],
+    "missing_merge": [
+        {"name": "查看漏合风险", "code": "code_compliance:missing_merge:view", "permission_type": 0},
+        {
+            "name": "漏合风险列表接口",
+            "code": "code_compliance:api:missing_merge:records:list",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/missing-merges/records*",
+            "http_method": "GET",
+        },
+        {
+            "name": "漏合风险状态更新接口",
+            "code": "code_compliance:api:missing_merge:records:status",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/missing-merges/records/:id/status",
+            "http_method": "PUT",
+        },
+        {
+            "name": "漏合检测任务列表接口",
+            "code": "code_compliance:api:missing_merge:tasks:list",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/missing-merges/scan-tasks",
+            "http_method": "GET",
+        },
+        {
+            "name": "手动触发漏合检测接口",
+            "code": "code_compliance:api:missing_merge:tasks:run",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/missing-merges/scan-tasks/run",
+            "http_method": "POST",
+        },
+    ],
 }
 
 REPO_TYPE_ITEMS = [
@@ -271,13 +315,14 @@ class Command(BaseCommand):
         menus = self._seed_menus(operator)
         permission_count = self._seed_permissions(menus, operator)
         dict_count = self._seed_repo_type_dict(operator)
+        scheduler_count = self._seed_missing_merge_scan_job(operator)
 
         MenuCacheManager.invalidate_menu_cache()
         PermissionCacheManager.invalidate_permission_cache()
         PermissionCacheManager.invalidate_global_permissions()
         self.stdout.write(
             self.style.SUCCESS(
-                f"代码合规初始化完成：菜单 {len(menus)} 项，权限 {permission_count} 项，字典项 {dict_count} 项。"
+                f"代码合规初始化完成：菜单 {len(menus)} 项，权限 {permission_count} 项，字典项 {dict_count} 项，定时任务 {scheduler_count} 项。"
             )
         )
 
@@ -357,3 +402,31 @@ class Command(BaseCommand):
             item.save()
             count += 1
         return count
+
+    def _seed_missing_merge_scan_job(self, operator):
+        """初始化漏合检测定时任务，默认禁用，待数据湖配置完成后手动启用。"""
+        SchedulerJob.objects.update_or_create(
+            code=MISSING_MERGE_SCAN_JOB_CODE,
+            defaults={
+                "name": "代码合规漏合检测",
+                "description": "按组织下代码库和分支绑定关系自动扫描漏合风险",
+                "group": "code_compliance",
+                "trigger_type": "cron",
+                "cron_expression": "0 2 * * *",
+                "interval_seconds": None,
+                "run_date": None,
+                "task_func": "apps.code_compliance.missing_merge_services.run_scheduled_missing_merge_scan",
+                "task_args": "[]",
+                "task_kwargs": "{}",
+                "status": 0,
+                "priority": 10,
+                "max_instances": 1,
+                "max_retries": 0,
+                "timeout": 3600,
+                "coalesce": True,
+                "allow_concurrent": False,
+                "sys_creator": operator,
+                "sys_modifier": operator,
+            },
+        )
+        return 1

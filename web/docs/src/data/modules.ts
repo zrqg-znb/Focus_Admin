@@ -132,12 +132,14 @@ export const focusModules: FocusModuleMeta[] = [
     titleEn: 'Code Compliance',
     aliases: ['code-compliance', 'code compliance', '代码合规'],
     summary:
-      '保留旧 Excel 风险台账，同时维护组织、代码库、分支和绑定关系，为后续自动漏合检测铺底。',
-    tagline: '先把代码库主数据看护起来，再让后续自动检测有可靠的组织和分支上下文。',
+      '保留旧 Excel 风险台账，同时维护组织、代码库、分支和绑定关系，并通过数据湖同步识别漏合风险。',
+    tagline:
+      '先把代码库主数据看护起来，再用自动检测把主干和发布分支的 CR 差异照出来。',
     highlights: [
       '旧风险概览、详情和 Excel 上传入口继续保留',
       '新增代码库管理页，左侧组织树、右侧代码库列表',
       '新增分支管理页，支持分支 CRUD 和批量绑定代码库',
+      '新增漏合风险页，支持手动同步、详情查看和状态处理',
       '代码仓类型来自 core 字典，责任领域绑定 core PL 组',
     ],
     audience: ['CIE', '代码治理负责人', '项目技术负责人'],
@@ -147,10 +149,12 @@ export const focusModules: FocusModuleMeta[] = [
       '/compliance/detail',
       '/compliance/repository',
       '/compliance/branch',
+      '/compliance/missing-merge',
     ],
     apiFiles: [
       'web/apps/web-ele/src/api/compliance/index.ts',
       'web/apps/web-ele/src/api/compliance/base.ts',
+      'web/apps/web-ele/src/api/compliance/missing-merge.ts',
     ],
     viewDirs: ['web/apps/web-ele/src/views/compliance'],
     relatedDocs: [
@@ -252,7 +256,8 @@ export const focusModules: FocusModuleMeta[] = [
     aliases: ['auto-test-report', 'auto test report', '自动化测试报告'],
     summary:
       '用于管理自动化测试的座舱 / 车控双领域主数据、测试用例和日报结果，构建从平台配置到结果沉淀的测试报表链路。',
-    tagline: '同一模块内切换座舱与车控视图，分别承接 MCU 平台与 VIU 维度的数据看护。',
+    tagline:
+      '同一模块内切换座舱与车控视图，分别承接 MCU 平台与 VIU 维度的数据看护。',
     highlights: [
       '支持座舱 / 车控双领域切换，前端视图与路由状态保持同步',
       '车控车型可配置 VIU0~VIU4 的子集，用例与上报按 VIU 编号解析',
@@ -326,7 +331,10 @@ export const focusModules: FocusModuleMeta[] = [
     apiFiles: ['web/apps/web-deepaudit/src/shared/utils/apiInterceptor.ts'],
     viewDirs: ['web/apps/web-deepaudit/src'],
     relatedDocs: [
-      { label: '使用指南（精简版）', link: '/modules/deepaudit-user-guide-quick' },
+      {
+        label: '使用指南（精简版）',
+        link: '/modules/deepaudit-user-guide-quick',
+      },
       { label: '使用指南（完整版）', link: '/modules/deepaudit-user-guide' },
       { label: '后端技术参考', link: '/backend/apps/deepaudit' },
       { label: '系统架构', link: '/overview/architecture' },
