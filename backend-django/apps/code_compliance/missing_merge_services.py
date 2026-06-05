@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from collections import defaultdict
+from collections.abc import Iterable as RuntimeIterable
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Iterable
@@ -69,6 +70,7 @@ HANDLE_REMARK_MIN_LENGTH = 5
 HANDLE_REMARK_MAX_LENGTH = 500
 HANDLE_REMARK_FORBIDDEN_RE = re.compile(r"[\x00-\x1f\x7f<>`{}]")
 AUTO_CLOSED_REMARK = "后续自动数据刷新中检测到漏合风险已完成补合"
+DEFAULT_SCHEDULE_WINDOW_DAYS = 1
 
 
 @dataclass
@@ -94,6 +96,27 @@ def _clean_text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _normalize_id_list(values: Any) -> list[str]:
+    """把前端多选 ID 或旧逗号字符串统一成去重后的 ID 列表。"""
+    if not values:
+        return []
+    if isinstance(values, str):
+        candidates = values.split(",")
+    elif isinstance(values, RuntimeIterable):
+        candidates = values
+    else:
+        candidates = [values]
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        value = _clean_text(item)
+        if value and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
 
 
 def _audit_user_id(user) -> str | None:
@@ -428,6 +451,9 @@ def run_missing_merge_scan(user, payload, *, trigger_type: str = MISSING_MERGE_S
     data = payload.dict()
     merged_after = _to_model_datetime(data["merged_after"])
     merged_before = _to_model_datetime(data["merged_before"])
+    repository_ids = _normalize_id_list(data.get("repository_ids"))
+    if not repository_ids and data.get("repository_id"):
+        repository_ids = _normalize_id_list([data.get("repository_id")])
     if merged_after > merged_before:
         raise HttpError(400, "merged_after 不能晚于 merged_before")
 
@@ -438,7 +464,7 @@ def run_missing_merge_scan(user, payload, *, trigger_type: str = MISSING_MERGE_S
         merged_before=merged_before,
         filter_payload={
             "organization_id": data.get("organization_id") or "",
-            "repository_id": data.get("repository_id") or "",
+            "repository_ids": repository_ids,
         },
         started_at=_to_model_datetime(timezone.now()),
     )
@@ -452,7 +478,7 @@ def run_missing_merge_scan(user, payload, *, trigger_type: str = MISSING_MERGE_S
             merged_after=merged_after,
             merged_before=merged_before,
             organization_id=data.get("organization_id"),
-            repository_id=data.get("repository_id"),
+            repository_ids=repository_ids,
         )
         _finish_task(task, counters, MISSING_MERGE_SCAN_STATUS_SUCCESS)
     except Exception as exc:  # noqa: BLE001 - 任务失败需要落库给前端展示完整原因。
@@ -490,10 +516,10 @@ def _execute_scan(
     merged_after,
     merged_before,
     organization_id: str | None = None,
-    repository_id: str | None = None,
+    repository_ids: list[str] | None = None,
 ) -> ScanCounters:
     """执行完整检测流程：加载配置、拉取数据、差异比对并更新风险表。"""
-    pairs = _load_scan_pairs(organization_id=organization_id, repository_id=repository_id)
+    pairs = _load_scan_pairs(organization_id=organization_id, repository_ids=repository_ids)
     counters = ScanCounters(
         scanned_organization_count=len({str(pair.repository.organization_id) for pair in pairs}),
         scanned_repository_count=len({str(repository.id) for repository in _iter_pair_repositories(pairs)}),
@@ -503,9 +529,9 @@ def _execute_scan(
         return counters
 
     client = CodeComplianceCRClient()
-    per_page = int(getattr(settings, "CODE_COMPLIANCE_CR_PAGE_SIZE", DEFAULT_PAGE_SIZE) or DEFAULT_PAGE_SIZE)
+    per_page = DEFAULT_PAGE_SIZE
 
-    for org_id, org_pairs in _group_pairs_by_organization(pairs).items():
+    for group_id, org_pairs in _group_pairs_by_organization(pairs).items():
         project_ids = sorted({pair.repository.project_id for pair in org_pairs if pair.repository.project_id})
         branch_names = sorted(
             {
@@ -517,6 +543,7 @@ def _execute_scan(
         )
         branch_project_rows = _fetch_branch_rows(
             client=client,
+            group_id=group_id,
             branch_names=branch_names,
             project_ids=project_ids,
             merged_after=merged_after,
@@ -561,7 +588,7 @@ def _iter_pair_repositories(pairs: Iterable[ScanPair]) -> Iterable[ComplianceRep
 def _load_scan_pairs(
     *,
     organization_id: str | None = None,
-    repository_id: str | None = None,
+    repository_ids: list[str] | None = None,
 ) -> list[ScanPair]:
     """按现有绑定关系自动组合每个代码库下的主干-发布分支对。"""
     branch_link_qs = ComplianceRepositoryBranch.objects.filter(
@@ -575,8 +602,8 @@ def _load_scan_pairs(
     )
     if organization_id:
         qs = qs.filter(organization_id=organization_id)
-    if repository_id:
-        qs = qs.filter(id=repository_id)
+    if repository_ids:
+        qs = qs.filter(id__in=repository_ids)
 
     pairs: list[ScanPair] = []
     for repository in qs:
@@ -602,16 +629,17 @@ def _load_scan_pairs(
 
 
 def _group_pairs_by_organization(pairs: list[ScanPair]) -> dict[str, list[ScanPair]]:
-    """将扫描配对按组织分组，以便符合数据湖 projects 参数约定。"""
+    """将扫描配对按公司代码库系统 group_id 分组，用于数据湖路径参数。"""
     grouped: dict[str, list[ScanPair]] = defaultdict(list)
     for pair in pairs:
-        grouped[str(pair.repository.organization_id)].append(pair)
+        grouped[str(pair.repository.organization.group_id)].append(pair)
     return grouped
 
 
 def _fetch_branch_rows(
     *,
     client: CodeComplianceCRClient,
+    group_id: str,
     branch_names: Iterable[str],
     project_ids: list[str],
     merged_after,
@@ -622,6 +650,7 @@ def _fetch_branch_rows(
     branch_project_rows: dict[str, dict[str, dict[str, dict[str, Any]]]] = defaultdict(lambda: defaultdict(dict))
     for branch_name in branch_names:
         rows = client.fetch_all(
+            group_id=group_id,
             target_branch=branch_name,
             projects=project_ids,
             merged_after=merged_after,
@@ -770,9 +799,8 @@ def _mark_fixed_records(
 @scheduler_task
 def run_scheduled_missing_merge_scan(**kwargs):
     """定时任务入口，默认扫描最近一天的 CR 合入窗口。"""
-    days = int(getattr(settings, "CODE_COMPLIANCE_CR_SCHEDULE_WINDOW_DAYS", 1) or 1)
     merged_before = _to_model_datetime(timezone.now())
-    merged_after = merged_before - timedelta(days=max(days, 1))
+    merged_after = merged_before - timedelta(days=DEFAULT_SCHEDULE_WINDOW_DAYS)
 
     class _Payload:
         def dict(self):
@@ -780,7 +808,7 @@ def run_scheduled_missing_merge_scan(**kwargs):
                 "merged_after": merged_after,
                 "merged_before": merged_before,
                 "organization_id": None,
-                "repository_id": None,
+                "repository_ids": [],
             }
 
     return run_missing_merge_scan(

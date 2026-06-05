@@ -127,7 +127,7 @@ const apis = [
 - 将差集写入 `ComplianceMissingMergeRecord`
 - 发布分支已包含的历史未处理风险自动标记为 `已补合`
 
-开发环境未配置真实 `CODE_COMPLIANCE_CR_API_URL` 时，会自动走 mock 数据。详细设计见 `backend-django/docs/merge-compliance-missing-merge-v1.md`。
+数据湖 URL 使用固定组织路径模板，`group_id` 会在同步时动态注入；开发环境可通过 `CODE_COMPLIANCE_CR_FORCE_MOCK` 走 mock 数据。详细设计见 `backend-django/docs/merge-compliance-missing-merge-v1.md`。
 
 </FocusModuleSection>
 

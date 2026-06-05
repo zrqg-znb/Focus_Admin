@@ -19,7 +19,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PAGE_SIZE = 100
 MAX_PAGE_SIZE = 500
+DEFAULT_API_TIMEOUT = 15.0
+DEFAULT_API_VERIFY_SSL = True
 BEIJING_TZ = timezone.get_fixed_timezone(8 * 60)
+DEFAULT_CR_API_URL_TEMPLATE = "http://apig.yinwang.com/api/v4/groups/{group_id}/change_requests"
+CRRequestParams = dict[str, list[str] | str]
 
 
 def _clean_text(value: Any) -> str:
@@ -86,7 +90,7 @@ def build_cr_request_params(
     merged_after: datetime,
     merged_before: datetime,
     only_count: bool,
-) -> dict[str, str]:
+) -> CRRequestParams:
     """校验并构造 CR 数据湖 GET 查询参数。"""
     branch = _clean_text(target_branch)
     if not branch:
@@ -106,16 +110,31 @@ def build_cr_request_params(
         "per_page": str(safe_per_page),
         "state": "merged",
         "target_branch": branch,
-        "projects": ",".join(project_values),
+        "projects": project_values,
         "merged_after": format_data_lake_datetime(merged_after),
         "merged_before": format_data_lake_datetime(merged_before),
         "only_count": "True" if only_count else "False",
     }
 
 
-def build_cr_encoded_query(params: dict[str, str]) -> str:
+def build_cr_encoded_query(params: CRRequestParams) -> str:
     """将查询参数 URL 编码，尤其保证 +08:00 中的加号不会被误解为空格。"""
-    return urlencode(params, quote_via=quote)
+    return urlencode(params, doseq=True, quote_via=quote)
+
+
+def build_cr_request_url(url_template: str, group_id: str, params: CRRequestParams) -> str:
+    """把组织 group_id 注入固定数据湖 URL 模板，并拼接 GET 查询串。"""
+    group = _clean_text(group_id)
+    if not group:
+        raise HttpError(400, "group_id 不能为空")
+
+    template = _clean_text(url_template) or DEFAULT_CR_API_URL_TEMPLATE
+    if "{group_id}" not in template:
+        raise HttpError(500, "代码合规数据湖 URL 模板必须包含 {group_id}")
+
+    endpoint = template.replace("{group_id}", quote(group, safe=""))
+    separator = "&" if "?" in endpoint else "?"
+    return f"{endpoint}{separator}{build_cr_encoded_query(params)}"
 
 
 def normalize_cr_detail(row: dict[str, Any]) -> dict[str, Any] | None:
@@ -222,14 +241,15 @@ class CodeComplianceCRClient:
     """代码合规 CR 数据湖 client，封装真实 GET 请求和开发期 mock。"""
 
     def __init__(self):
-        self.url = _clean_text(_get_setting("CODE_COMPLIANCE_CR_API_URL", ""))
+        self.url_template = DEFAULT_CR_API_URL_TEMPLATE
         self.force_mock = _to_bool(_get_setting("CODE_COMPLIANCE_CR_FORCE_MOCK", False), False)
-        self.timeout = float(_get_setting("CODE_COMPLIANCE_CR_API_TIMEOUT", 15))
-        self.verify_ssl = _to_bool(_get_setting("CODE_COMPLIANCE_CR_API_VERIFY_SSL", True), True)
+        self.timeout = DEFAULT_API_TIMEOUT
+        self.verify_ssl = DEFAULT_API_VERIFY_SSL
 
     def fetch_count(
         self,
         *,
+        group_id: str,
         target_branch: str,
         projects: Iterable[str],
         merged_after: datetime,
@@ -245,11 +265,12 @@ class CodeComplianceCRClient:
             merged_before=merged_before,
             only_count=True,
         )
-        return _extract_count(self._request(params))
+        return _extract_count(self._request(params, group_id=group_id))
 
     def fetch_page(
         self,
         *,
+        group_id: str,
         page: int,
         per_page: int,
         target_branch: str,
@@ -267,12 +288,13 @@ class CodeComplianceCRClient:
             merged_before=merged_before,
             only_count=False,
         )
-        rows = _extract_detail_rows(self._request(params))
+        rows = _extract_detail_rows(self._request(params, group_id=group_id))
         return [item for item in (normalize_cr_detail(row) for row in rows) if item]
 
     def fetch_all(
         self,
         *,
+        group_id: str,
         target_branch: str,
         projects: Iterable[str],
         merged_after: datetime,
@@ -282,6 +304,7 @@ class CodeComplianceCRClient:
         """先取总数再分页拉取全量 CR 明细。"""
         project_values = [_clean_text(item) for item in projects if _clean_text(item)]
         total = self.fetch_count(
+            group_id=group_id,
             target_branch=target_branch,
             projects=project_values,
             merged_after=merged_after,
@@ -296,6 +319,7 @@ class CodeComplianceCRClient:
         for page in range(1, total_pages + 1):
             rows.extend(
                 self.fetch_page(
+                    group_id=group_id,
                     page=page,
                     per_page=safe_per_page,
                     target_branch=target_branch,
@@ -306,15 +330,13 @@ class CodeComplianceCRClient:
             )
         return rows
 
-    def _request(self, params: dict[str, str]) -> Any:
+    def _request(self, params: CRRequestParams, *, group_id: str) -> Any:
         """按配置在 mock 和真实数据湖 GET 请求之间切换。"""
-        if self.force_mock or not self.url:
-            logger.info("CodeCompliance CR data lake mock params=%s", params)
+        if self.force_mock:
+            logger.info("CodeCompliance CR data lake mock group_id=%s params=%s", group_id, params)
             return _mock_response(params)
 
-        encoded_query = build_cr_encoded_query(params)
-        separator = "&" if "?" in self.url else "?"
-        request_url = f"{self.url}{separator}{encoded_query}"
+        request_url = build_cr_request_url(self.url_template, group_id, params)
         try:
             response = requests.get(
                 request_url,
@@ -333,7 +355,7 @@ class CodeComplianceCRClient:
             raise HttpError(502, "代码合规数据湖响应不是合法 JSON") from exc
 
 
-def _mock_response(params: dict[str, str]) -> Any:
+def _mock_response(params: CRRequestParams) -> Any:
     """返回与真实 CR 数据湖同构的开发期 mock 数据。"""
     rows = _mock_rows(params)
     if params.get("only_count") == "True":
@@ -351,10 +373,18 @@ def _mock_response(params: dict[str, str]) -> Any:
     return rows[start:end]
 
 
-def _mock_rows(params: dict[str, str]) -> list[dict[str, Any]]:
+def _get_project_values(params: CRRequestParams) -> list[str]:
+    """兼容数组项目参数和旧逗号字符串，供 mock 与测试复用。"""
+    raw_projects = params.get("projects", [])
+    if isinstance(raw_projects, list):
+        return [_clean_text(item) for item in raw_projects if _clean_text(item)]
+    return [_clean_text(item) for item in _clean_text(raw_projects).split(",") if _clean_text(item)]
+
+
+def _mock_rows(params: CRRequestParams) -> list[dict[str, Any]]:
     """按项目和分支生成稳定 mock；发布分支固定缺少部分主干 change_key。"""
-    projects = [item for item in params.get("projects", "").split(",") if item]
-    branch = params.get("target_branch", "")
+    projects = _get_project_values(params)
+    branch = _clean_text(params.get("target_branch"))
     merged_after = parse_data_lake_datetime(params.get("merged_after")) or timezone.now()
     rows: list[dict[str, Any]] = []
     for project_id in projects:

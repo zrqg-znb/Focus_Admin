@@ -18,8 +18,10 @@ from apps.code_compliance.base_schemas import (
     RepositoryIn,
 )
 from apps.code_compliance.missing_merge_client import (
+    DEFAULT_CR_API_URL_TEMPLATE,
     build_cr_encoded_query,
     build_cr_request_params,
+    build_cr_request_url,
 )
 from apps.code_compliance.missing_merge_schemas import MissingMergeRecordStatusIn, MissingMergeScanRunIn
 from apps.code_compliance.models import (
@@ -321,8 +323,27 @@ class CodeComplianceFoundationTests(TestCase):
 
         self.assertEqual(params["state"], "merged")
         self.assertEqual(params["only_count"], "True")
-        self.assertEqual(params["projects"], "20001,20002")
+        self.assertEqual(params["projects"], ["20001", "20002"])
+        self.assertIn("projects=20001&projects=20002", encoded)
         self.assertIn("merged_after=2026-06-11T16%3A20%3A20.000%2B08%3A00", encoded)
+
+    def test_cr_client_builds_group_path_url(self):
+        """数据湖 URL 固定为组织路径模板，group_id 需要动态注入并编码。"""
+        merged_after = datetime(2026, 6, 11, 16, 20, 20, tzinfo=timezone.get_fixed_timezone(480))
+        params = build_cr_request_params(
+            page=1,
+            per_page=50,
+            target_branch="master",
+            projects=["20001"],
+            merged_after=merged_after,
+            merged_before=merged_after + timedelta(hours=1),
+            only_count=False,
+        )
+
+        url = build_cr_request_url(DEFAULT_CR_API_URL_TEMPLATE, "A 组/10001", params)
+
+        self.assertTrue(url.startswith("http://apig.yinwang.com/api/v4/groups/A%20%E7%BB%84%2F10001/change_requests?"))
+        self.assertIn("projects=20001", url)
 
     def test_missing_merge_status_requires_valid_remark_and_logs_manual_history(self):
         """人工处理必须填写合规备注，并写入操作历史。"""
@@ -437,6 +458,38 @@ class CodeComplianceFoundationTests(TestCase):
             ).count(),
             1,
         )
+
+    @override_settings(CODE_COMPLIANCE_CR_FORCE_MOCK=True)
+    def test_missing_merge_scan_accepts_multiple_repository_ids(self):
+        """手动同步支持多选代码库，并把多个 project_id 作为 projects 数组传给数据湖。"""
+        org = self.create_org()
+        repo_a = self.create_repo(org["id"], "20001")
+        repo_b = self.create_repo(org["id"], "20002")
+        repo_c = self.create_repo(org["id"], "20003")
+        trunk = self.create_branch("master", "trunk")
+        release = self.create_branch("release/1.0", "release")
+        services.bind_branches_to_repositories(
+            [repo_a["id"], repo_b["id"], repo_c["id"]],
+            [trunk["id"], release["id"]],
+            "append",
+        )
+        now = timezone.now()
+
+        task = missing_merge_services.run_missing_merge_scan(
+            self.user,
+            MissingMergeScanRunIn(
+                merged_after=now - timedelta(days=1),
+                merged_before=now + timedelta(days=1),
+                repository_ids=[repo_a["id"], repo_b["id"]],
+            ),
+        )
+
+        self.assertEqual(task["status"], "success")
+        self.assertEqual(task["scanned_repository_count"], 2)
+        self.assertEqual(set(task["filter_payload"]["repository_ids"]), {repo_a["id"], repo_b["id"]})
+        self.assertTrue(ComplianceMissingMergeRecord.objects.filter(project_id="20001").exists())
+        self.assertTrue(ComplianceMissingMergeRecord.objects.filter(project_id="20002").exists())
+        self.assertFalse(ComplianceMissingMergeRecord.objects.filter(project_id="20003").exists())
 
     @override_settings(CODE_COMPLIANCE_CR_FORCE_MOCK=True)
     def test_missing_merge_scan_reopens_previously_fixed_record(self):

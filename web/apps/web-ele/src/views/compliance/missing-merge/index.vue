@@ -96,11 +96,11 @@ const statusForm = reactive<StatusFormState>({
 
 const scanForm = reactive<{
   organization_id: string;
-  repository_id: string;
+  repository_ids: string[];
   timeRange: string[];
 }>({
   organization_id: '',
-  repository_id: '',
+  repository_ids: [],
   timeRange: [],
 });
 
@@ -312,20 +312,20 @@ async function openScanDialog() {
     formatApiTime(now),
   ];
   scanForm.organization_id = selectedOrganizationId.value;
-  scanForm.repository_id = selectedRepositoryId.value;
+  scanForm.repository_ids = selectedRepositoryId.value
+    ? [selectedRepositoryId.value]
+    : [];
   scanDialogVisible.value = true;
 }
 
 function handleScanOrganizationChange() {
-  // 扫描范围切换组织时，清掉不属于该组织的代码库。
-  if (
-    scanForm.repository_id &&
-    !scanRepositoryOptions.value.some(
-      (item) => item.id === scanForm.repository_id,
-    )
-  ) {
-    scanForm.repository_id = '';
-  }
+  // 扫描范围切换组织时，只保留仍属于该组织的多选代码库。
+  const validRepositoryIds = new Set(
+    scanRepositoryOptions.value.map((item) => item.id),
+  );
+  scanForm.repository_ids = scanForm.repository_ids.filter((id) =>
+    validRepositoryIds.has(id),
+  );
 }
 
 async function submitScan() {
@@ -340,7 +340,9 @@ async function submitScan() {
       merged_after: mergedAfter!,
       merged_before: mergedBefore!,
       organization_id: scanForm.organization_id || undefined,
-      repository_id: scanForm.repository_id || undefined,
+      repository_ids: scanForm.repository_ids.length
+        ? scanForm.repository_ids
+        : undefined,
     });
     if (task.status === 'failed') {
       ElMessage.warning(`扫描失败：${task.error_message || '请查看任务记录'}`);
@@ -776,11 +778,14 @@ onMounted(async () => {
         </ElFormItem>
         <ElFormItem label="代码库">
           <ElSelect
-            v-model="scanForm.repository_id"
+            v-model="scanForm.repository_ids"
             class="w-full"
             clearable
+            collapse-tags
+            collapse-tags-tooltip
             filterable
             :loading="optionsLoading"
+            multiple
             placeholder="不选则扫描组织下全部代码库"
           >
             <ElOption

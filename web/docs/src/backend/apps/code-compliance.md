@@ -277,13 +277,13 @@ python manage.py init_code_compliance
 
 命令补齐菜单、权限和 `code_compliance_repo_type` 字典。旧风险入口保持可见，后续等新检测能力稳定后再做日落。
 
-命令也会创建默认禁用的定时任务 `code_compliance_missing_merge_scan`。配置数据湖地址和认证后，可在调度器中启用该任务。
+命令也会创建默认禁用的定时任务 `code_compliance_missing_merge_scan`。补齐数据湖认证配置后，可在调度器中启用该任务。
 
 ## 数据同步
 
 ### 外部数据源
 
-旧风险台账通过 Excel/CSV 导入；新漏合检测通过数据湖 GET 接口同步 CR 明细。开发环境未配置 `CODE_COMPLIANCE_CR_API_URL` 时，`missing_merge_client` 会自动走 mock。
+旧风险台账通过 Excel/CSV 导入；新漏合检测通过固定数据湖 GET 模板同步 CR 明细。同步时按组织动态注入 `group_id`，开发环境可通过 `CODE_COMPLIANCE_CR_FORCE_MOCK` 走 mock。
 
 ```
 ┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐

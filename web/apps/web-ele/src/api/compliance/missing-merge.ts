@@ -109,6 +109,7 @@ export interface MissingMergeScanRunPayload {
   merged_before: string;
   organization_id?: string;
   repository_id?: string;
+  repository_ids?: string[];
 }
 
 export interface PaginatedResponse<T> {

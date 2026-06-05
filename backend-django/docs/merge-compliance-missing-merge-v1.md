@@ -8,29 +8,24 @@
 
 ## 数据湖对接
 
-专用 client 位于 `apps.code_compliance.missing_merge_client`，使用 `GET + 查询串`。开发环境若未配置真实地址或打开 `CODE_COMPLIANCE_CR_FORCE_MOCK`，会返回同结构 mock 数据。
+专用 client 位于 `apps.code_compliance.missing_merge_client`，使用 `GET + 查询串`。数据湖 URL 固定为 `http://apig.yinwang.com/api/v4/groups/{group_id}/change_requests`，其中 `{group_id}` 由同步服务按当前组织动态替换。开发环境打开 `CODE_COMPLIANCE_CR_FORCE_MOCK` 时会返回同结构 mock 数据。
 
 配置项：
 
-本地开发默认值写在 `backend-django/.env`，Django 侧统一在 `application/settings.py` 暴露为同名 setting；测试和部署环境可直接用同名系统环境变量覆盖。
+固定 URL、超时、分页大小、SSL 校验和定时扫描窗口统一写在 client/service 模块常量中，避免把不会变化的值散落到 `.env` 或 settings。`application/settings.py` 和本地 `.env` 只保留鉴权、额外 header 和 mock 开关；测试和部署环境可用同名系统环境变量覆盖这些环境相关项。
 
 | 配置 | 说明 |
 | --- | --- |
-| `CODE_COMPLIANCE_CR_API_URL` | 公司数据湖 CR 查询地址；为空时走 mock |
 | `CODE_COMPLIANCE_CR_API_TOKEN` | Bearer Token，可为空 |
 | `CODE_COMPLIANCE_CR_API_HEADERS_JSON` | 额外请求头 JSON 对象 |
 | `CODE_COMPLIANCE_CR_FORCE_MOCK` | 是否强制 mock |
-| `CODE_COMPLIANCE_CR_API_TIMEOUT` | 请求超时，默认 15 秒 |
-| `CODE_COMPLIANCE_CR_API_VERIFY_SSL` | 是否校验证书 |
-| `CODE_COMPLIANCE_CR_PAGE_SIZE` | 明细分页大小，默认 100 |
-| `CODE_COMPLIANCE_CR_SCHEDULE_WINDOW_DAYS` | 定时任务默认扫描窗口，默认 1 天 |
 
 请求参数由 client 统一校验和格式化：
 
 - `page`、`per_page`
 - `state=merged`
 - `target_branch`
-- `projects`：当前组织下扫描范围内代码库 `project_id` 的逗号分隔集合
+- `projects`：当前组织下扫描范围内代码库 `project_id` 数组，GET 查询串按多值参数编码
 - `merged_after`、`merged_before`：格式为 `2026-06-11T16:20:20.000+08:00`，并进行 URL 编码
 - `only_count=True/False`
 

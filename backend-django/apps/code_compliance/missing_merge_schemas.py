@@ -104,3 +104,4 @@ class MissingMergeScanRunIn(Schema):
     merged_before: datetime
     organization_id: Optional[str] = None
     repository_id: Optional[str] = None
+    repository_ids: List[str] = Field(default_factory=list)
