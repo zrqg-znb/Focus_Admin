@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import datetime
+from io import BytesIO
 from types import SimpleNamespace
 from unittest import mock
 
+import openpyxl
 from django.test import TransactionTestCase
 from django.utils import timezone
 
 from .dts_statistics_model import DtsExtension
 from .dts_statistics_schemas import (
     DtsResponsibilityQualityQuerySchema,
+    DtsStatisticsExportSchema,
     DtsStatisticsQuerySchema,
 )
 from . import dts_statistics_services
@@ -581,6 +584,74 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
         self.assertEqual(
             [item["dtsBizNo"] for item in response_page_2["items"]],
             ["D-4"],
+        )
+
+    @mock.patch(
+        "apps.project_manager.dts_statistics.dts_statistics_services._resolve_runtime_defects"
+    )
+    def test_low_level_export_filters_runtime_defects(self, mocked_resolve):
+        defects = [
+            self._defect(
+                "D-1",
+                dts004_reason_analysis="<div>内存泄露</div>",
+            ),
+            self._defect(
+                "D-2",
+                dts004_reason_analysis="正常原因",
+                dts009_reason_analyses="无关键字",
+                s_achieve_descibe="无关键字",
+            ),
+            self._defect(
+                "D-3",
+                s_achieve_descibe="<p>数组越界</p>",
+            ),
+        ]
+        mocked_resolve.return_value = (defects, {"version": "v1"})
+
+        low_level_defects, _snapshot = dts_statistics_services._resolve_export_defects(
+            DtsStatisticsExportSchema(lowLevelOnly=True),
+            user=SimpleNamespace(id=1),
+        )
+        normal_defects, _snapshot = dts_statistics_services._resolve_export_defects(
+            DtsStatisticsExportSchema(lowLevelOnly=False),
+            user=SimpleNamespace(id=1),
+        )
+
+        self.assertEqual(
+            [item["dtsBizNo"] for item in low_level_defects],
+            ["D-1", "D-3"],
+        )
+        self.assertEqual(
+            [item["dtsBizNo"] for item in normal_defects],
+            ["D-1", "D-2", "D-3"],
+        )
+
+    def test_export_workbook_headers_match_detail_export_columns(self):
+        workbook = dts_statistics_services._build_export_workbook(
+            [self._defect("D-1")]
+        )
+        buffer = BytesIO()
+        workbook.save(buffer)
+        buffer.seek(0)
+
+        loaded = openpyxl.load_workbook(buffer, read_only=True)
+        worksheet = loaded.active
+        header = next(worksheet.iter_rows(values_only=True))
+
+        self.assertEqual(tuple(header), dts_statistics_services._EXPORT_HEADERS)
+
+    def test_low_level_export_file_prefix(self):
+        self.assertEqual(
+            dts_statistics_services._resolve_export_file_prefix(
+                DtsStatisticsExportSchema(lowLevelOnly=True)
+            ),
+            "dts-low-level-issues",
+        )
+        self.assertEqual(
+            dts_statistics_services._resolve_export_file_prefix(
+                DtsStatisticsExportSchema(lowLevelOnly=False)
+            ),
+            "dts-statistics",
         )
 
 

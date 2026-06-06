@@ -930,6 +930,7 @@ class DtsStatisticsExportSchema(Schema):
     test_asset_link_keyword: str = ""
     test_status_values: list[str] = Field(default_factory=list)
     test_remark_keyword: str = ""
+    lowLevelOnly: bool = False
 
     @field_validator("productId", mode="before")
     @classmethod
@@ -1037,6 +1038,20 @@ class DtsStatisticsExportSchema(Schema):
     @classmethod
     def normalize_local_filter_list(cls, value: Any):
         return _normalize_text_list(value)
+
+    @field_validator("lowLevelOnly", mode="before")
+    @classmethod
+    def normalize_low_level_only(cls, value: Any):
+        if value is None:
+            return False
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        text = str(value).strip().lower()
+        if not text:
+            return False
+        return text in {"1", "true", "yes", "y", "on"}
 
 
 class DtsFieldSetRequestSchema(DtsStatisticsExportSchema):

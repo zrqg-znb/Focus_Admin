@@ -74,6 +74,10 @@ export interface DtsStatisticsQuery extends DtsStatisticsFilters {
   pageSize: number;
 }
 
+export interface DtsExportRequest extends DtsStatisticsFilters {
+  lowLevelOnly?: boolean;
+}
+
 export interface DtsMergedDefect {
   dtsBizNo: string;
   briefDesc?: null | string;
@@ -539,13 +543,13 @@ export async function getDtsQueryTask(taskId: string) {
   return requestClient.get<DtsQueryTask>(`${base}/query-task/${taskId}`);
 }
 
-export async function exportDtsStatistics(data: DtsStatisticsFilters) {
+export async function exportDtsStatistics(data: DtsExportRequest) {
   return requestClient.post<Blob>(`${base}/export`, data, {
     responseType: 'blob',
   });
 }
 
-export async function prepareDtsExport(data: DtsStatisticsFilters) {
+export async function prepareDtsExport(data: DtsExportRequest) {
   return requestClient.post<DtsExportPrepareResponse>(
     `${base}/export-prepare`,
     data,

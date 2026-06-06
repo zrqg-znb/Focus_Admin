@@ -414,6 +414,10 @@ Schema：`DtsExtensionSaveSchema`
 
 Schema：`DtsStatisticsExportSchema`（不包含分页字段）
 
+导出参数：
+
+- `lowLevelOnly`：默认 `false`。传 `true` 时仅导出当前筛选范围内命中低级问题关键词的 DTS 问题，字段仍复用 DTS 明细导出的完整列集合。
+
 导出流程：
 
 - 各分组 scan 缓存拉全量 -> 去重排序
@@ -461,6 +465,7 @@ Schema：`DtsStatisticsQuerySchema`
 
 - 为统计看板「低级问题」卡片提供独立分页明细接口
 - 仅返回命中低级问题关键词的缺陷，不影响 `summary` 的计数口径
+- 统计看板「低级问题」导出按钮不复用弹窗分页数据，而是通过 `POST /export-prepare` 传 `lowLevelOnly=true` 创建异步导出任务，下载文件列与 DTS 明细表导出列保持一致
 
 返回结构：
 

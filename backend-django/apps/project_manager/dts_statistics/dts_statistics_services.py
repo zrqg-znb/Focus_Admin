@@ -4061,14 +4061,38 @@ def _build_export_row(item: dict[str, Any]) -> list[Any]:
     return [resolver(item) for _, resolver in _EXPORT_COLUMN_SPECS]
 
 
-def _build_export_response(workbook: openpyxl.Workbook) -> HttpResponse:
+def _is_low_level_only_export(query: DtsStatisticsExportSchema) -> bool:
+    return bool(getattr(query, "lowLevelOnly", False))
+
+
+def _resolve_export_file_prefix(query: DtsStatisticsExportSchema) -> str:
+    if _is_low_level_only_export(query):
+        return "dts-low-level-issues"
+    return "dts-statistics"
+
+
+def _resolve_export_defects(
+    query: DtsStatisticsExportSchema,
+    *,
+    user: Any = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    defects, snapshot = _resolve_runtime_defects(query, user=user)
+    if _is_low_level_only_export(query):
+        defects = [defect for defect in defects if _has_low_level_issue(defect)]
+    return defects, snapshot
+
+
+def _build_export_response(
+    workbook: openpyxl.Workbook,
+    *,
+    file_prefix: str = "dts-statistics",
+) -> HttpResponse:
     timestamp = timezone.now().strftime("%Y%m%d-%H%M%S")
     response = HttpResponse(
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-    response["Content-Disposition"] = (
-        f'attachment; filename="dts-statistics-{timestamp}.xlsx"'
-    )
+    safe_prefix = _clean_text(file_prefix) or "dts-statistics"
+    response["Content-Disposition"] = f'attachment; filename="{safe_prefix}-{timestamp}.xlsx"'
     workbook.save(response)
     return response
 
@@ -4142,7 +4166,7 @@ def _run_dts_statistics_export_task(task_id: str) -> None:
             message="正在读取快照缓存",
             progress=18,
         )
-        defects, _snapshot = _get_filtered_snapshot_rows(query)
+        defects, _snapshot = _resolve_export_defects(query, user=task.user)
         _update_export_task_progress(
             task_id,
             message="快照筛选完成，正在生成导出文件",
@@ -4158,7 +4182,10 @@ def _run_dts_statistics_export_task(task_id: str) -> None:
         )
 
         timestamp = timezone.now().strftime("%Y%m%d-%H%M%S")
-        file_name = f"dts-statistics-{timestamp}-{str(task.id)[:8]}.xlsx"
+        file_name = (
+            f"{_resolve_export_file_prefix(query)}-"
+            f"{timestamp}-{str(task.id)[:8]}.xlsx"
+        )
         file_path = _resolve_export_temp_dir() / file_name
         generated_file_path = file_path
         workbook.save(str(file_path))
@@ -4296,9 +4323,12 @@ def export_dts_statistics(
     *,
     user: Any = None,
 ) -> HttpResponse:
-    defects, _snapshot = _resolve_runtime_defects(query, user=user)
+    defects, _snapshot = _resolve_export_defects(query, user=user)
     workbook = _build_export_workbook(defects)
-    return _build_export_response(workbook)
+    return _build_export_response(
+        workbook,
+        file_prefix=_resolve_export_file_prefix(query),
+    )
 
 
 def _is_closed(defect: dict[str, Any]) -> bool:

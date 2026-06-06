@@ -1034,10 +1034,20 @@ watch(
 
 const dataResultCount = computed(() => Number(gridApi.total.value || 0));
 const selectedDtsCount = computed(() => selectedDtsBizNos.value.length);
+const lowLevelIssueCount = computed(() =>
+  Number(summary.value.low_level_count || 0),
+);
 const canExport = computed(
   () =>
     hasAppliedFilters.value &&
     dataResultCount.value > 0 &&
+    !queryLoading.value &&
+    !exportPreparing.value,
+);
+const canExportLowLevelIssues = computed(
+  () =>
+    hasAppliedFilters.value &&
+    lowLevelIssueCount.value > 0 &&
     !queryLoading.value &&
     !exportPreparing.value,
 );
@@ -2632,13 +2642,23 @@ function startExportPreparePolling(taskId: string) {
   }, 1000);
 }
 
-async function handleExport() {
+async function handleExport(
+  {
+    emptyCount = dataResultCount.value,
+    emptyMessage = '当前没有可导出的数据',
+    lowLevelOnly = false,
+  }: {
+    emptyCount?: number;
+    emptyMessage?: string;
+    lowLevelOnly?: boolean;
+  } = {},
+) {
   if (!appliedFilters.value) {
     ElMessage.warning('请先查询明细数据');
     return;
   }
-  if (dataResultCount.value <= 0) {
-    ElMessage.warning('当前没有可导出的数据');
+  if (Number(emptyCount || 0) <= 0) {
+    ElMessage.warning(emptyMessage);
     return;
   }
 
@@ -2646,7 +2666,10 @@ async function handleExport() {
   exportPreparing.value = true;
   exportPrepareTask.value = null;
   try {
-    const payload = cloneFilters(appliedFilters.value);
+    const payload = {
+      ...cloneFilters(appliedFilters.value),
+      ...(lowLevelOnly ? { lowLevelOnly: true } : {}),
+    };
     const prepareResponse = await prepareDtsExport(payload);
     if (prepareResponse.mode === 'ready') {
       exportPreparing.value = false;
@@ -2673,6 +2696,14 @@ async function handleExport() {
       resolveErrorMessage(error, '导出失败，请检查筛选条件后重试'),
     );
   }
+}
+
+async function handleLowLevelIssueExport() {
+  await handleExport({
+    emptyCount: lowLevelIssueCount.value,
+    emptyMessage: '当前没有可导出的低级问题',
+    lowLevelOnly: true,
+  });
 }
 
 async function refreshCurrentView() {
@@ -3365,7 +3396,7 @@ function renderRankBar(
 function renderPlGroupCompletionBar(
   render: (options: Record<string, any>) => void,
   rows?: null | SummaryPlGroupCompletionRow[],
-  title: string,
+  title = '',
 ) {
   const chartRows = normalizePlGroupCompletionRows(rows).sort((left, right) => {
     if (right.filled_rate !== left.filled_rate) {
@@ -3972,7 +4003,7 @@ onUnmounted(() => {
                     plain
                     :disabled="!canExport"
                     :loading="exportPreparing"
-                    @click="handleExport"
+                    @click="() => handleExport()"
                   >
                     导出当前查询结果
                   </ElButton>
@@ -6780,6 +6811,16 @@ onUnmounted(() => {
                         >
                           明细
                         </ElButton>
+                        <ElButton
+                          link
+                          type="warning"
+                          size="small"
+                          :disabled="!canExportLowLevelIssues"
+                          :loading="exportPreparing"
+                          @click="handleLowLevelIssueExport"
+                        >
+                          导出
+                        </ElButton>
                       </div>
                     </div>
                   </div>
@@ -7801,6 +7842,7 @@ onUnmounted(() => {
 
 .dense-metric-block__actions {
   display: flex;
+  gap: 8px;
   justify-content: flex-end;
   margin-top: 10px;
 }
