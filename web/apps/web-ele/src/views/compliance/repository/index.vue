@@ -61,7 +61,6 @@ import {
   downloadRepositoryTemplateApi,
   importOrganizationsApi,
   importRepositoriesApi,
-  listBranchesApi,
   listOrganizationsApi,
   listRepositoriesApi,
   listValidOrganizationParentsApi,
@@ -72,8 +71,8 @@ import { getDictItemByCodeApi } from '#/api/core/dict';
 import { getAllPlApi } from '#/api/core/pl';
 import { useZqTable } from '#/components/zq-table';
 
+import BranchBindDialog from '../components/BranchBindDialog.vue';
 import {
-  BIND_MODE_OPTIONS,
   DOMAIN_OPTIONS,
   MODE_OPTIONS,
   useRepositoryColumns,
@@ -133,7 +132,6 @@ const repositoryTotal = ref(0);
 const repoTypeOptions = ref<DictItem[]>([]);
 const plGroupOptions = ref<PlGroup[]>([]);
 const parentOptions = ref<OrganizationOption[]>([]);
-const branchOptions = ref<any[]>([]);
 
 const importing = ref(false);
 const organizationDialogVisible = ref(false);
@@ -170,14 +168,6 @@ const repositoryForm = reactive<RepositoryFormState>({
   repo_type: '',
   responsibility_group_ids: [],
   sort: 0,
-});
-
-const bindForm = reactive<{
-  branch_ids: string[];
-  mode: ComplianceBindMode;
-}>({
-  branch_ids: [],
-  mode: 'append',
 });
 
 const organizationRules: FormRules<OrganizationFormState> = {
@@ -646,30 +636,29 @@ function handleSelectionChange(rows: RepositoryItem[]) {
   selectedRepositories.value = rows;
 }
 
-async function openBindBranches() {
-  // 绑定从当前表格勾选的代码库出发，弹窗中只选择目标分支。
+function openBindBranches() {
+  // 绑定从当前表格勾选的代码库出发，选择器负责分页选择目标分支。
   if (!selectedRepositories.value.length) {
     ElMessage.warning('请先选择要绑定分支的代码库');
     return;
   }
-  bindForm.branch_ids = [];
-  bindForm.mode = 'append';
-  const result = await listBranchesApi({ page: 1, pageSize: 1000 });
-  branchOptions.value = result.items || [];
   bindDialogVisible.value = true;
 }
 
-async function submitBindBranches() {
+async function submitBindBranches(payload: {
+  branch_ids: string[];
+  mode: ComplianceBindMode;
+}) {
   // append 只追加缺失绑定，replace 会以弹窗选择结果替换所选代码库绑定。
-  if (!bindForm.branch_ids.length) {
+  if (!payload.branch_ids.length) {
     ElMessage.warning('请选择要绑定的分支');
     return;
   }
   bindLoading.value = true;
   try {
     const result = await bindBranchesToRepositoriesApi({
-      branch_ids: bindForm.branch_ids,
-      mode: bindForm.mode,
+      branch_ids: payload.branch_ids,
+      mode: payload.mode,
       repository_ids: selectedRepositories.value.map((item) => item.id),
     });
     ElMessage.success(
@@ -1318,54 +1307,11 @@ onBeforeUnmount(() => {
       </template>
     </ElDrawer>
 
-    <ElDialog
+    <BranchBindDialog
       v-model="bindDialogVisible"
-      title="批量绑定分支"
-      width="520px"
-      destroy-on-close
-    >
-      <ElForm label-width="92px">
-        <ElFormItem label="绑定方式">
-          <ElRadioGroup v-model="bindForm.mode">
-            <ElRadioButton
-              v-for="item in BIND_MODE_OPTIONS"
-              :key="item.value"
-              :label="item.value"
-            >
-              {{ item.label }}
-            </ElRadioButton>
-          </ElRadioGroup>
-        </ElFormItem>
-        <ElFormItem label="分支">
-          <ElSelect
-            v-model="bindForm.branch_ids"
-            class="w-full"
-            collapse-tags
-            collapse-tags-tooltip
-            filterable
-            multiple
-            placeholder="选择要绑定的分支"
-          >
-            <ElOption
-              v-for="item in branchOptions"
-              :key="item.id"
-              :label="`${item.branch_name}（${item.domain_label}）`"
-              :value="item.id"
-            />
-          </ElSelect>
-        </ElFormItem>
-      </ElForm>
-      <template #footer>
-        <ElButton @click="bindDialogVisible = false">取消</ElButton>
-        <ElButton
-          type="primary"
-          :loading="bindLoading"
-          @click="submitBindBranches"
-        >
-          确定绑定
-        </ElButton>
-      </template>
-    </ElDialog>
+      :confirm-loading="bindLoading"
+      @confirm="submitBindBranches"
+    />
   </Page>
 </template>
 

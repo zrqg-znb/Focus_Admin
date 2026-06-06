@@ -6,7 +6,6 @@ import type {
   ComplianceBranchType,
   ComplianceDomain,
   ImportResult,
-  RepositoryItem,
 } from '#/api/compliance/base';
 import type {
   FormInstance,
@@ -22,7 +21,6 @@ import { Plus, Search, Upload } from '@vben/icons';
 import {
   ElButton,
   ElDatePicker,
-  ElDialog,
   ElDrawer,
   ElForm,
   ElFormItem,
@@ -31,8 +29,6 @@ import {
   ElMessage,
   ElMessageBox,
   ElOption,
-  ElRadioButton,
-  ElRadioGroup,
   ElSelect,
   ElTag,
   ElUpload,
@@ -45,13 +41,12 @@ import {
   downloadBranchTemplateApi,
   importBranchesApi,
   listBranchesApi,
-  listRepositoriesApi,
   updateBranchApi,
 } from '#/api/compliance/base';
 import { useZqTable } from '#/components/zq-table';
 
+import RepositoryBindDialog from '../components/RepositoryBindDialog.vue';
 import {
-  BIND_MODE_OPTIONS,
   BRANCH_TYPE_OPTIONS,
   DOMAIN_OPTIONS,
   useBranchColumns,
@@ -71,7 +66,6 @@ const keyword = ref('');
 const selectedDomain = ref('');
 const selectedBranchType = ref('');
 const selectedBranches = ref<BranchItem[]>([]);
-const repositoryOptions = ref<RepositoryItem[]>([]);
 
 const drawerVisible = ref(false);
 const drawerTitle = ref('新增分支');
@@ -89,14 +83,6 @@ const branchForm = reactive<BranchFormState>({
   purpose: '',
   remark: '',
   sort: 0,
-});
-
-const bindForm = reactive<{
-  mode: ComplianceBindMode;
-  repository_ids: string[];
-}>({
-  mode: 'append',
-  repository_ids: [],
 });
 
 const branchRules: FormRules<BranchFormState> = {
@@ -233,22 +219,21 @@ function handleSelectionChange(rows: BranchItem[]) {
   selectedBranches.value = rows;
 }
 
-async function openBindRepositories() {
-  // 从分支侧绑定时，弹窗里只选择目标代码库和绑定模式。
+function openBindRepositories() {
+  // 从分支侧绑定时，选择器负责跨组织选择代码库。
   if (!selectedBranches.value.length) {
     ElMessage.warning('请先选择要绑定代码库的分支');
     return;
   }
-  bindForm.mode = 'append';
-  bindForm.repository_ids = [];
-  const result = await listRepositoriesApi({ page: 1, pageSize: 1000 });
-  repositoryOptions.value = result.items || [];
   bindDialogVisible.value = true;
 }
 
-async function submitBindRepositories() {
+async function submitBindRepositories(payload: {
+  mode: ComplianceBindMode;
+  repository_ids: string[];
+}) {
   // append 只追加缺失绑定，replace 会以弹窗选择结果替换所选分支绑定。
-  if (!bindForm.repository_ids.length) {
+  if (!payload.repository_ids.length) {
     ElMessage.warning('请选择要绑定的代码库');
     return;
   }
@@ -256,8 +241,8 @@ async function submitBindRepositories() {
   try {
     const result = await bindRepositoriesToBranchesApi({
       branch_ids: selectedBranches.value.map((item) => item.id),
-      mode: bindForm.mode,
-      repository_ids: bindForm.repository_ids,
+      mode: payload.mode,
+      repository_ids: payload.repository_ids,
     });
     ElMessage.success(
       `绑定完成：新增${result.created_count}，恢复${result.restored_count}，移除${result.removed_count}`,
@@ -520,54 +505,11 @@ onMounted(() => {
       </template>
     </ElDrawer>
 
-    <ElDialog
+    <RepositoryBindDialog
       v-model="bindDialogVisible"
-      title="批量绑定代码库"
-      width="560px"
-      destroy-on-close
-    >
-      <ElForm label-width="92px">
-        <ElFormItem label="绑定方式">
-          <ElRadioGroup v-model="bindForm.mode">
-            <ElRadioButton
-              v-for="item in BIND_MODE_OPTIONS"
-              :key="item.value"
-              :label="item.value"
-            >
-              {{ item.label }}
-            </ElRadioButton>
-          </ElRadioGroup>
-        </ElFormItem>
-        <ElFormItem label="代码库">
-          <ElSelect
-            v-model="bindForm.repository_ids"
-            class="w-full"
-            collapse-tags
-            collapse-tags-tooltip
-            filterable
-            multiple
-            placeholder="选择要绑定的代码库"
-          >
-            <ElOption
-              v-for="item in repositoryOptions"
-              :key="item.id"
-              :label="`${item.project_name}（${item.organization_name}）`"
-              :value="item.id"
-            />
-          </ElSelect>
-        </ElFormItem>
-      </ElForm>
-      <template #footer>
-        <ElButton @click="bindDialogVisible = false">取消</ElButton>
-        <ElButton
-          type="primary"
-          :loading="bindLoading"
-          @click="submitBindRepositories"
-        >
-          确定绑定
-        </ElButton>
-      </template>
-    </ElDialog>
+      :confirm-loading="bindLoading"
+      @confirm="submitBindRepositories"
+    />
   </Page>
 </template>
 
