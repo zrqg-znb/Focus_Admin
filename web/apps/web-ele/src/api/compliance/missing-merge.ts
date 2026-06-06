@@ -1,6 +1,10 @@
 import { requestClient } from '#/api/request';
 
-import type { OrganizationItem, RepositoryItem } from './base';
+import type {
+  OrganizationItem,
+  RepositoryItem,
+  RepositoryListParams,
+} from './base';
 
 export type MissingMergeStatus = 'fixed' | 'ignored' | 'open';
 export type MissingMergeScanStatus =
@@ -73,10 +77,12 @@ export interface MissingMergeRecordListParams {
   merged_after?: string;
   merged_before?: string;
   organization_id?: string;
+  organization_ids?: string[];
   page?: number;
   pageSize?: number;
   release_branch?: string;
   repository_id?: string;
+  repository_ids?: string[];
   status?: MissingMergeStatus;
   trunk_branch?: string;
 }
@@ -127,9 +133,18 @@ const base = '/api/code-compliance/missing-merges';
 export function listMissingMergeRecordsApi(
   params?: MissingMergeRecordListParams,
 ) {
+  const normalizedParams = {
+    ...params,
+    organization_ids: params?.organization_ids?.length
+      ? params.organization_ids.join(',')
+      : undefined,
+    repository_ids: params?.repository_ids?.length
+      ? params.repository_ids.join(',')
+      : undefined,
+  };
   return requestClient.get<PaginatedResponse<MissingMergeRecordItem>>(
     `${base}/records`,
-    { params },
+    { params: normalizedParams },
   );
 }
 
@@ -139,6 +154,18 @@ export function getMissingMergeRecordApi(id: string) {
 
 export function listMissingMergeOptionsApi() {
   return requestClient.get<MissingMergeOptions>(`${base}/records/options`);
+}
+
+export function listMissingMergeRepositoryOptionsApi(
+  params?: Pick<
+    RepositoryListParams,
+    'keyword' | 'organization_id' | 'page' | 'pageSize'
+  >,
+) {
+  return requestClient.get<PaginatedResponse<RepositoryItem>>(
+    `${base}/repositories/options`,
+    { params },
+  );
 }
 
 export function updateMissingMergeRecordStatusApi(

@@ -214,6 +214,101 @@ class CodeComplianceFoundationTests(TestCase):
         self.assertEqual(item["repo_type_label"], "业务仓")
         self.assertEqual(item["responsibility_group_names"], ["座舱PL组"])
 
+    def test_missing_merge_repository_options_support_pagination_and_filters(self):
+        """漏合风险手动同步代码库选项支持分页、组织和关键词过滤。"""
+        org = self.create_org()
+        repo_a = self.create_repo(org["id"], "20001")
+        repo_b = self.create_repo(org["id"], "20002")
+        other_org = self.create_org("10003", "车控组织")
+        self.create_repo(other_org["id"], "30001")
+
+        page = missing_merge_services.list_repository_options(
+            page=1,
+            page_size=1,
+            organization_id=org["id"],
+        )
+
+        self.assertEqual(page["total"], 2)
+        self.assertEqual(len(page["items"]), 1)
+
+        keyword_page = missing_merge_services.list_repository_options(
+            keyword=repo_b["project_id"],
+            organization_id=org["id"],
+        )
+        self.assertEqual(keyword_page["total"], 1)
+        self.assertEqual(keyword_page["items"][0]["id"], repo_b["id"])
+        self.assertNotEqual(keyword_page["items"][0]["id"], repo_a["id"])
+
+    def test_missing_merge_records_support_scope_union_filters(self):
+        """漏合风险级联筛选支持组织子树、多个代码库和混选并集。"""
+        root = self.create_org()
+        child = services.create_organization(
+            self.user,
+            OrganizationIn(
+                group_id="10002",
+                name="座舱子组织",
+                parent_id=root["id"],
+                mode="CR",
+                domain="cockpit",
+            ),
+        )
+        other = self.create_org("10003", "车控组织")
+        root_repo = self.create_repo(root["id"], "20001")
+        child_repo = self.create_repo(child["id"], "20002")
+        other_repo = self.create_repo(other["id"], "30001")
+        root_record = self.create_missing_record(
+            ComplianceRepository.objects.get(id=root_repo["id"]),
+            ComplianceOrganization.objects.get(id=root["id"]),
+            change_key="root-risk",
+        )
+        child_record = self.create_missing_record(
+            ComplianceRepository.objects.get(id=child_repo["id"]),
+            ComplianceOrganization.objects.get(id=child["id"]),
+            change_key="child-risk",
+        )
+        other_record = self.create_missing_record(
+            ComplianceRepository.objects.get(id=other_repo["id"]),
+            ComplianceOrganization.objects.get(id=other["id"]),
+            change_key="other-risk",
+        )
+
+        old_org_page = missing_merge_services.list_missing_merge_records(
+            organization_id=root["id"],
+            page_size=10,
+        )
+        old_repo_page = missing_merge_services.list_missing_merge_records(
+            repository_id=child_repo["id"],
+            page_size=10,
+        )
+        parent_scope_page = missing_merge_services.list_missing_merge_records(
+            organization_ids=root["id"],
+            page_size=10,
+        )
+        multi_repo_page = missing_merge_services.list_missing_merge_records(
+            repository_ids=f"{child_repo['id']},{other_repo['id']}",
+            page_size=10,
+        )
+        union_page = missing_merge_services.list_missing_merge_records(
+            organization_ids=[root["id"]],
+            repository_ids=[other_repo["id"]],
+            page_size=10,
+        )
+
+        self.assertEqual({item["id"] for item in old_org_page["items"]}, {str(root_record.id)})
+        self.assertEqual({item["id"] for item in old_repo_page["items"]}, {str(child_record.id)})
+        self.assertEqual(
+            {item["id"] for item in parent_scope_page["items"]},
+            {str(root_record.id), str(child_record.id)},
+        )
+        self.assertEqual(
+            {item["id"] for item in multi_repo_page["items"]},
+            {str(child_record.id), str(other_record.id)},
+        )
+        self.assertEqual(
+            {item["id"] for item in union_page["items"]},
+            {str(root_record.id), str(child_record.id), str(other_record.id)},
+        )
+
     def test_batch_bind_supports_append_and_replace_from_both_sides(self):
         org = self.create_org()
         repo_a = self.create_repo(org["id"], "20001")

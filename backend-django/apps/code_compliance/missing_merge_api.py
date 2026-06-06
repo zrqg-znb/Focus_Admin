@@ -8,6 +8,7 @@ from .missing_merge_schemas import (
     MissingMergeRecordOut,
     MissingMergeRecordStatusIn,
     MissingMergeOptionsOut,
+    MissingMergeRepositoryOptionsOut,
     MissingMergeScanRunIn,
     MissingMergeScanTaskOut,
     PaginatedMissingMergeRecordOut,
@@ -25,6 +26,8 @@ def list_missing_merge_records(
     pageSize: int = Query(20),
     organization_id: Optional[str] = Query(None),
     repository_id: Optional[str] = Query(None),
+    organization_ids: Optional[str] = Query(None),
+    repository_ids: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     author_username: Optional[str] = Query(None),
     keyword: Optional[str] = Query(None),
@@ -41,6 +44,8 @@ def list_missing_merge_records(
         page_size=pageSize,
         organization_id=organization_id,
         repository_id=repository_id,
+        organization_ids=organization_ids,
+        repository_ids=repository_ids,
         status=status,
         author_username=author_username,
         keyword=keyword,
@@ -57,6 +62,27 @@ def list_missing_merge_records(
 def list_missing_merge_options(request):
     """返回漏合风险页面使用的组织和代码库选项。"""
     return services.list_filter_options()
+
+
+@router.get(
+    "/repositories/options",
+    response=MissingMergeRepositoryOptionsOut,
+    summary="获取漏合风险代码库选项",
+)
+def list_missing_merge_repository_options(
+    request,
+    page: int = Query(1),
+    pageSize: int = Query(20),
+    organization_id: Optional[str] = Query(None),
+    keyword: Optional[str] = Query(None),
+):
+    """分页返回手动同步弹窗使用的代码库选项。"""
+    return services.list_repository_options(
+        page=page,
+        page_size=pageSize,
+        organization_id=organization_id,
+        keyword=keyword,
+    )
 
 
 @router.get("/records/{record_id}", response=MissingMergeRecordOut, summary="获取漏合风险详情")

@@ -3,6 +3,7 @@ import type { OrganizationItem, RepositoryItem } from '#/api/compliance/base';
 import type {
   MissingMergeOperationLogItem,
   MissingMergeRecordItem,
+  MissingMergeScanRunPayload,
   MissingMergeScanTaskItem,
   MissingMergeStatus,
 } from '#/api/compliance/missing-merge';
@@ -16,6 +17,7 @@ import { Search } from '@vben/icons';
 import dayjs from 'dayjs';
 import {
   ElButton,
+  ElCascader,
   ElDatePicker,
   ElDescriptions,
   ElDescriptionsItem,
@@ -51,12 +53,14 @@ import {
   STATUS_OPTIONS,
   useMissingMergeColumns,
 } from './data';
+import MissingMergeScanDialog from '../components/MissingMergeScanDialog.vue';
 
 defineOptions({ name: 'ComplianceMissingMerge' });
 
-interface OrganizationOption {
-  id: string;
+interface ScopeCascaderOption extends Record<string, unknown> {
   label: string;
+  value: string;
+  children?: ScopeCascaderOption[];
 }
 
 interface StatusFormState {
@@ -66,8 +70,7 @@ interface StatusFormState {
 }
 
 const keyword = ref('');
-const selectedOrganizationId = ref('');
-const selectedRepositoryId = ref('');
+const selectedScopeValues = ref<string[]>([]);
 const selectedStatus = ref('');
 const authorUsername = ref('');
 const trunkBranch = ref('');
@@ -75,7 +78,7 @@ const releaseBranch = ref('');
 const mergedRange = ref<string[]>([]);
 const detectedRange = ref<string[]>([]);
 
-const organizationOptions = ref<OrganizationOption[]>([]);
+const organizationTree = ref<OrganizationItem[]>([]);
 const repositoryOptions = ref<RepositoryItem[]>([]);
 const latestTasks = ref<MissingMergeScanTaskItem[]>([]);
 const optionsLoading = ref(false);
@@ -87,6 +90,8 @@ const statusDialogVisible = ref(false);
 const statusSubmitting = ref(false);
 const scanDialogVisible = ref(false);
 const scanning = ref(false);
+const scanInitialOrganizationId = ref('');
+const scanInitialRepositories = ref<RepositoryItem[]>([]);
 
 const statusForm = reactive<StatusFormState>({
   handle_remark: '',
@@ -94,17 +99,17 @@ const statusForm = reactive<StatusFormState>({
   status: 'open',
 });
 
-const scanForm = reactive<{
-  organization_id: string;
-  repository_ids: string[];
-  timeRange: string[];
-}>({
-  organization_id: '',
-  repository_ids: [],
-  timeRange: [],
-});
-
 const remarkForbiddenPattern = /[\u0000-\u001F\u007F<>`{}]/;
+const ORG_SCOPE_PREFIX = 'org:';
+const REPO_SCOPE_PREFIX = 'repo:';
+const scopeCascaderProps = {
+  checkStrictly: true,
+  children: 'children',
+  emitPath: false,
+  label: 'label',
+  multiple: true,
+  value: 'value',
+};
 
 const statusRules: FormRules<StatusFormState> = {
   handle_remark: [
@@ -132,21 +137,11 @@ const statusRules: FormRules<StatusFormState> = {
   status: [{ message: '请选择处理状态', required: true, trigger: 'change' }],
 };
 
-const filteredRepositoryOptions = computed(() => {
-  if (!selectedOrganizationId.value) return repositoryOptions.value;
-  return repositoryOptions.value.filter(
-    (item) => item.organization_id === selectedOrganizationId.value,
-  );
-});
-
-const scanRepositoryOptions = computed(() => {
-  if (!scanForm.organization_id) return repositoryOptions.value;
-  return repositoryOptions.value.filter(
-    (item) => item.organization_id === scanForm.organization_id,
-  );
-});
-
 const latestTask = computed(() => latestTasks.value[0]);
+
+const scopeCascaderOptions = computed(() =>
+  buildScopeCascaderOptions(organizationTree.value, repositoryOptions.value),
+);
 
 const [Grid, gridApi] = useZqTable<MissingMergeRecordItem>({
   showSearchForm: false,
@@ -167,6 +162,7 @@ const [Grid, gridApi] = useZqTable<MissingMergeRecordItem>({
         }: {
           page: { currentPage: number; pageSize: number };
         }) => {
+          const scope = parseScopeSelection();
           return listMissingMergeRecordsApi({
             author_username: authorUsername.value || undefined,
             detected_after: detectedRange.value[0] || undefined,
@@ -174,11 +170,11 @@ const [Grid, gridApi] = useZqTable<MissingMergeRecordItem>({
             keyword: keyword.value || undefined,
             merged_after: mergedRange.value[0] || undefined,
             merged_before: mergedRange.value[1] || undefined,
-            organization_id: selectedOrganizationId.value || undefined,
+            organization_ids: scope.organization_ids,
             page: page.currentPage,
             pageSize: page.pageSize,
             release_branch: releaseBranch.value || undefined,
-            repository_id: selectedRepositoryId.value || undefined,
+            repository_ids: scope.repository_ids,
             status: (selectedStatus.value as MissingMergeStatus) || undefined,
             trunk_branch: trunkBranch.value || undefined,
           });
@@ -200,11 +196,6 @@ function formatTime(value?: null | string) {
   return value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '-';
 }
 
-function formatApiTime(value = dayjs()) {
-  // 后端和数据湖均接受带时区的 ISO-like 字符串。
-  return dayjs(value).format('YYYY-MM-DDTHH:mm:ssZ');
-}
-
 function getOperationLogColor(item: MissingMergeOperationLogItem) {
   // 时间轴颜色按操作语义区分，便于快速扫出人工处理和系统闭环。
   if (item.operation_type === 'auto_closed') return 'var(--el-color-success)';
@@ -213,18 +204,53 @@ function getOperationLogColor(item: MissingMergeOperationLogItem) {
   return 'var(--el-text-color-secondary)';
 }
 
-function flattenOrganizations(
-  items: OrganizationItem[],
-  parents: string[] = [],
-): OrganizationOption[] {
-  // 组织树在筛选下拉中展开为路径文案，避免同名组织难以区分。
-  return items.flatMap((item) => {
-    const path = [...parents, item.name];
-    return [
-      { id: item.id, label: `${path.join(' / ')}（${item.group_id}）` },
-      ...flattenOrganizations(item.children || [], path),
-    ];
+function buildScopeCascaderOptions(
+  organizations: OrganizationItem[],
+  repositories: RepositoryItem[],
+): ScopeCascaderOption[] {
+  // 级联树把代码库挂在直接所属组织下，组织节点自身也允许被选择。
+  const repositoriesByOrg = new Map<string, RepositoryItem[]>();
+  repositories.forEach((repository) => {
+    const rows = repositoriesByOrg.get(repository.organization_id) || [];
+    rows.push(repository);
+    repositoriesByOrg.set(repository.organization_id, rows);
   });
+  const buildOrgNode = (item: OrganizationItem): ScopeCascaderOption => {
+    const childOrganizations = (item.children || []).map(buildOrgNode);
+    const childRepositories = (repositoriesByOrg.get(item.id) || [])
+      .slice()
+      .sort((left, right) =>
+        left.project_name.localeCompare(right.project_name, 'zh-CN'),
+      )
+      .map((repository) => ({
+        label: `${repository.project_name}（${repository.project_id}）`,
+        value: `${REPO_SCOPE_PREFIX}${repository.id}`,
+      }));
+    return {
+      children: [...childOrganizations, ...childRepositories],
+      label: `${item.name}（${item.group_id}）`,
+      value: `${ORG_SCOPE_PREFIX}${item.id}`,
+    };
+  };
+  return organizations.map(buildOrgNode);
+}
+
+function parseScopeSelection(values = selectedScopeValues.value) {
+  // 前端使用前缀区分组织与代码库，查询前拆成两个 ID 数组交给后端做并集过滤。
+  const organizationIds = new Set<string>();
+  const repositoryIds = new Set<string>();
+  values.forEach((value) => {
+    if (value.startsWith(ORG_SCOPE_PREFIX)) {
+      organizationIds.add(value.slice(ORG_SCOPE_PREFIX.length));
+    }
+    if (value.startsWith(REPO_SCOPE_PREFIX)) {
+      repositoryIds.add(value.slice(REPO_SCOPE_PREFIX.length));
+    }
+  });
+  return {
+    organization_ids: [...organizationIds],
+    repository_ids: [...repositoryIds],
+  };
 }
 
 async function loadOptions() {
@@ -232,9 +258,7 @@ async function loadOptions() {
   optionsLoading.value = true;
   try {
     const result = await listMissingMergeOptionsApi();
-    organizationOptions.value = flattenOrganizations(
-      result.organizations || [],
-    );
+    organizationTree.value = result.organizations || [];
     repositoryOptions.value = result.repositories || [];
   } finally {
     optionsLoading.value = false;
@@ -255,18 +279,6 @@ async function loadLatestTasks(showMessage = false) {
 function reloadRecords(resetPage = false) {
   if (resetPage) gridApi.pagination.currentPage = 1;
   gridApi.query();
-}
-
-function handleOrganizationChange() {
-  if (
-    selectedRepositoryId.value &&
-    !filteredRepositoryOptions.value.some(
-      (item) => item.id === selectedRepositoryId.value,
-    )
-  ) {
-    selectedRepositoryId.value = '';
-  }
-  reloadRecords(true);
 }
 
 async function openDetail(row: MissingMergeRecordItem) {
@@ -306,44 +318,23 @@ async function submitStatus() {
 
 async function openScanDialog() {
   await loadOptions();
-  const now = dayjs();
-  scanForm.timeRange = [
-    formatApiTime(now.subtract(1, 'day')),
-    formatApiTime(now),
-  ];
-  scanForm.organization_id = selectedOrganizationId.value;
-  scanForm.repository_ids = selectedRepositoryId.value
-    ? [selectedRepositoryId.value]
+  const scope = parseScopeSelection();
+  scanInitialOrganizationId.value =
+    scope.repository_ids.length === 0 && scope.organization_ids.length === 1
+      ? scope.organization_ids[0]!
+      : '';
+  scanInitialRepositories.value = scope.repository_ids.length
+    ? repositoryOptions.value.filter((item) =>
+        scope.repository_ids.includes(item.id),
+      )
     : [];
   scanDialogVisible.value = true;
 }
 
-function handleScanOrganizationChange() {
-  // 扫描范围切换组织时，只保留仍属于该组织的多选代码库。
-  const validRepositoryIds = new Set(
-    scanRepositoryOptions.value.map((item) => item.id),
-  );
-  scanForm.repository_ids = scanForm.repository_ids.filter((id) =>
-    validRepositoryIds.has(id),
-  );
-}
-
-async function submitScan() {
-  if (scanForm.timeRange.length !== 2) {
-    ElMessage.warning('请选择扫描时间范围');
-    return;
-  }
+async function submitScan(payload: MissingMergeScanRunPayload) {
   scanning.value = true;
   try {
-    const [mergedAfter, mergedBefore] = scanForm.timeRange;
-    const task = await runMissingMergeScanApi({
-      merged_after: mergedAfter!,
-      merged_before: mergedBefore!,
-      organization_id: scanForm.organization_id || undefined,
-      repository_ids: scanForm.repository_ids.length
-        ? scanForm.repository_ids
-        : undefined,
-    });
+    const task = await runMissingMergeScanApi(payload);
     if (task.status === 'failed') {
       ElMessage.warning(`扫描失败：${task.error_message || '请查看任务记录'}`);
     } else {
@@ -439,39 +430,20 @@ onMounted(async () => {
                 />
               </ElSelect>
             </ElFormItem>
-            <ElFormItem class="toolbar-filter" label="组织">
-              <ElSelect
-                v-model="selectedOrganizationId"
+            <ElFormItem class="toolbar-filter toolbar-filter-scope" label="组织/代码库">
+              <ElCascader
+                v-model="selectedScopeValues"
                 clearable
+                collapse-tags
+                collapse-tags-tooltip
                 filterable
-                placeholder="选择组织"
-                @change="handleOrganizationChange"
-                @clear="handleOrganizationChange"
-              >
-                <ElOption
-                  v-for="item in organizationOptions"
-                  :key="item.id"
-                  :label="item.label"
-                  :value="item.id"
-                />
-              </ElSelect>
-            </ElFormItem>
-            <ElFormItem class="toolbar-filter" label="代码库">
-              <ElSelect
-                v-model="selectedRepositoryId"
-                clearable
-                filterable
-                placeholder="选择代码库"
+                :max-collapse-tags="1"
+                :options="scopeCascaderOptions"
+                placeholder="选择组织或代码库（支持多选）"
+                :props="scopeCascaderProps"
                 @change="reloadRecords(true)"
                 @clear="reloadRecords(true)"
-              >
-                <ElOption
-                  v-for="item in filteredRepositoryOptions"
-                  :key="item.id"
-                  :label="`${item.project_name}（${item.project_id}）`"
-                  :value="item.id"
-                />
-              </ElSelect>
+              />
             </ElFormItem>
             <ElFormItem class="toolbar-filter" label="创建人">
               <ElInput
@@ -739,71 +711,14 @@ onMounted(async () => {
       </template>
     </ElDialog>
 
-    <ElDialog
+    <MissingMergeScanDialog
       v-model="scanDialogVisible"
-      title="手动同步漏合数据"
-      width="620px"
-      destroy-on-close
-    >
-      <ElForm label-width="92px">
-        <ElFormItem label="时间范围" required>
-          <ElDatePicker
-            v-model="scanForm.timeRange"
-            class="w-full"
-            end-placeholder="合入结束"
-            range-separator="至"
-            start-placeholder="合入开始"
-            type="datetimerange"
-            value-format="YYYY-MM-DDTHH:mm:ssZ"
-          />
-        </ElFormItem>
-        <ElFormItem label="组织">
-          <ElSelect
-            v-model="scanForm.organization_id"
-            class="w-full"
-            clearable
-            filterable
-            :loading="optionsLoading"
-            placeholder="不选则扫描全部组织"
-            @change="handleScanOrganizationChange"
-            @clear="handleScanOrganizationChange"
-          >
-            <ElOption
-              v-for="item in organizationOptions"
-              :key="item.id"
-              :label="item.label"
-              :value="item.id"
-            />
-          </ElSelect>
-        </ElFormItem>
-        <ElFormItem label="代码库">
-          <ElSelect
-            v-model="scanForm.repository_ids"
-            class="w-full"
-            clearable
-            collapse-tags
-            collapse-tags-tooltip
-            filterable
-            :loading="optionsLoading"
-            multiple
-            placeholder="不选则扫描组织下全部代码库"
-          >
-            <ElOption
-              v-for="item in scanRepositoryOptions"
-              :key="item.id"
-              :label="`${item.project_name}（${item.project_id}）`"
-              :value="item.id"
-            />
-          </ElSelect>
-        </ElFormItem>
-      </ElForm>
-      <template #footer>
-        <ElButton @click="scanDialogVisible = false">取消</ElButton>
-        <ElButton type="primary" :loading="scanning" @click="submitScan">
-          开始同步
-        </ElButton>
-      </template>
-    </ElDialog>
+      :confirm-loading="scanning"
+      :initial-organization-id="scanInitialOrganizationId"
+      :initial-repositories="scanInitialRepositories"
+      :organizations="organizationTree"
+      @confirm="submitScan"
+    />
   </Page>
 </template>
 
@@ -859,6 +774,7 @@ onMounted(async () => {
 }
 
 .missing-merge-toolbar :deep(.el-input),
+.missing-merge-toolbar :deep(.el-cascader),
 .missing-merge-toolbar :deep(.el-select),
 .missing-merge-toolbar :deep(.el-date-editor) {
   width: 100%;
@@ -870,6 +786,10 @@ onMounted(async () => {
 
 .toolbar-filter-keyword {
   width: 320px;
+}
+
+.toolbar-filter-scope {
+  width: 420px;
 }
 
 .toolbar-filter-range {
@@ -945,6 +865,7 @@ onMounted(async () => {
 
   .toolbar-filter,
   .toolbar-filter-keyword,
+  .toolbar-filter-scope,
   .toolbar-filter-range,
   .toolbar-actions-item {
     width: 100%;

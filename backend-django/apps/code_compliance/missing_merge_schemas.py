@@ -4,7 +4,7 @@ from typing import List, Optional
 from ninja import Schema
 from pydantic import Field
 
-from .base_schemas import OrganizationOut, RepositoryOut
+from .base_schemas import OrganizationOut, PaginatedRepositoryOut, RepositoryOut
 
 
 class MissingMergeOperationLogOut(Schema):
@@ -97,6 +97,10 @@ class PaginatedMissingMergeScanTaskOut(Schema):
 class MissingMergeOptionsOut(Schema):
     organizations: List[OrganizationOut] = Field(default_factory=list)
     repositories: List[RepositoryOut] = Field(default_factory=list)
+
+
+class MissingMergeRepositoryOptionsOut(PaginatedRepositoryOut):
+    pass
 
 
 class MissingMergeScanRunIn(Schema):

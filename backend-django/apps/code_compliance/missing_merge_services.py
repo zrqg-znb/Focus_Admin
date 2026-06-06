@@ -44,6 +44,7 @@ from .models import (
     ComplianceMissingMergeOperationLog,
     ComplianceMissingMergeRecord,
     ComplianceMissingMergeScanTask,
+    ComplianceOrganization,
     ComplianceRepository,
     ComplianceRepositoryBranch,
 )
@@ -117,6 +118,34 @@ def _normalize_id_list(values: Any) -> list[str]:
             seen.add(value)
             result.append(value)
     return result
+
+
+def _expand_organization_ids_with_descendants(organization_ids: list[str]) -> list[str]:
+    """展开组织筛选范围：选中父组织时包含其全部下级组织。"""
+    selected_ids = _normalize_id_list(organization_ids)
+    if not selected_ids:
+        return []
+
+    rows = ComplianceOrganization.objects.filter(is_deleted=False).values_list("id", "parent_id")
+    children_by_parent: dict[str, list[str]] = defaultdict(list)
+    active_ids: set[str] = set()
+    for org_id, parent_id in rows:
+        org_id_text = str(org_id)
+        active_ids.add(org_id_text)
+        if parent_id:
+            children_by_parent[str(parent_id)].append(org_id_text)
+
+    expanded: list[str] = []
+    visited: set[str] = set()
+    stack = [org_id for org_id in selected_ids if org_id in active_ids]
+    while stack:
+        org_id = stack.pop()
+        if org_id in visited:
+            continue
+        visited.add(org_id)
+        expanded.append(org_id)
+        stack.extend(children_by_parent.get(org_id, []))
+    return expanded
 
 
 def _audit_user_id(user) -> str | None:
@@ -317,6 +346,8 @@ def list_missing_merge_records(
     page_size: int = 20,
     organization_id: str | None = None,
     repository_id: str | None = None,
+    organization_ids: Any = None,
+    repository_ids: Any = None,
     status: str | None = None,
     author_username: str | None = None,
     keyword: str | None = None,
@@ -333,9 +364,24 @@ def list_missing_merge_records(
         "repository",
         "handled_by",
     )
-    if organization_id:
+    selected_organization_ids = _normalize_id_list(organization_ids)
+    selected_repository_ids = _normalize_id_list(repository_ids)
+    if selected_organization_ids or selected_repository_ids:
+        # 新级联筛选按并集处理：命中任一组织子树或任一精确代码库即可返回。
+        scope_filter = None
+        expanded_org_ids = _expand_organization_ids_with_descendants(selected_organization_ids)
+        if expanded_org_ids:
+            scope_filter = Q(organization_id__in=expanded_org_ids)
+        if selected_repository_ids:
+            repo_filter = Q(repository_id__in=selected_repository_ids)
+            scope_filter = repo_filter if scope_filter is None else scope_filter | repo_filter
+        if scope_filter is not None:
+            qs = qs.filter(scope_filter)
+        else:
+            qs = qs.none()
+    elif organization_id:
         qs = qs.filter(organization_id=organization_id)
-    if repository_id:
+    if not (selected_organization_ids or selected_repository_ids) and repository_id:
         qs = qs.filter(repository_id=repository_id)
     if status:
         qs = qs.filter(status=_normalize_status(status))
@@ -444,6 +490,22 @@ def list_filter_options() -> dict:
         "organizations": base_services.list_organization_tree(),
         "repositories": repositories["items"],
     }
+
+
+def list_repository_options(
+    *,
+    page: int = 1,
+    page_size: int = 20,
+    organization_id: str | None = None,
+    keyword: str | None = None,
+) -> dict:
+    """分页返回漏合风险手动同步弹窗可选代码库，避免一次性加载全量仓库。"""
+    return base_services.list_repositories(
+        page=page,
+        page_size=page_size,
+        organization_id=organization_id,
+        keyword=keyword,
+    )
 
 
 def run_missing_merge_scan(user, payload, *, trigger_type: str = MISSING_MERGE_SCAN_TRIGGER_MANUAL) -> dict:
