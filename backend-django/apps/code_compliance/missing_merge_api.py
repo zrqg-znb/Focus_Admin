@@ -10,6 +10,7 @@ from .missing_merge_schemas import (
     MissingMergeOptionsOut,
     MissingMergeRepositoryOptionsOut,
     MissingMergeScanRunIn,
+    MissingMergeScanRunOut,
     MissingMergeScanTaskOut,
     PaginatedMissingMergeRecordOut,
     PaginatedMissingMergeScanTaskOut,
@@ -104,6 +105,10 @@ def list_missing_merge_scan_tasks(
     pageSize: int = Query(20),
     status: Optional[str] = Query(None),
     trigger_type: Optional[str] = Query(None),
+    merged_after: Optional[datetime] = Query(None),
+    merged_before: Optional[datetime] = Query(None),
+    started_after: Optional[datetime] = Query(None),
+    started_before: Optional[datetime] = Query(None),
 ):
     """分页查询漏合检测同步任务历史。"""
     return services.list_scan_tasks(
@@ -111,10 +116,20 @@ def list_missing_merge_scan_tasks(
         page_size=pageSize,
         status=status,
         trigger_type=trigger_type,
+        merged_after=merged_after,
+        merged_before=merged_before,
+        started_after=started_after,
+        started_before=started_before,
     )
 
 
-@router.post("/scan-tasks/run", response=MissingMergeScanTaskOut, summary="手动触发漏合检测")
+@router.get("/scan-tasks/{task_id}", response=MissingMergeScanTaskOut, summary="获取漏合检测任务详情")
+def get_missing_merge_scan_task(request, task_id: str):
+    """读取单条漏合检测任务详情。"""
+    return services.get_scan_task(task_id)
+
+
+@router.post("/scan-tasks/run", response=MissingMergeScanRunOut, summary="手动触发漏合检测")
 def run_missing_merge_scan(request, payload: MissingMergeScanRunIn):
-    """手动触发一次漏合检测，返回任务执行结果。"""
+    """提交一次手动漏合检测任务，后台异步执行。"""
     return services.run_missing_merge_scan(request.auth, payload)

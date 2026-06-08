@@ -334,11 +334,11 @@ async function openScanDialog() {
 async function submitScan(payload: MissingMergeScanRunPayload) {
   scanning.value = true;
   try {
-    const task = await runMissingMergeScanApi(payload);
-    if (task.status === 'failed') {
-      ElMessage.warning(`扫描失败：${task.error_message || '请查看任务记录'}`);
+    const result = await runMissingMergeScanApi(payload);
+    if (result.accepted) {
+      ElMessage.success(result.message || '漏合同步任务已提交');
     } else {
-      ElMessage.success(`扫描完成，识别 ${task.detected_count} 条漏合风险`);
+      ElMessage.warning(result.message || '已有同步任务正在执行');
     }
     scanDialogVisible.value = false;
     await loadLatestTasks();

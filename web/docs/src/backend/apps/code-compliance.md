@@ -244,7 +244,8 @@ class ComplianceMissingMergeRecord(RootModel):
 | GET | `/api/code-compliance/missing-merges/records/{id}` | 查询漏合风险详情 |
 | PUT | `/api/code-compliance/missing-merges/records/{id}/status` | 更新漏合风险状态 |
 | GET | `/api/code-compliance/missing-merges/scan-tasks` | 查询扫描任务历史 |
-| POST | `/api/code-compliance/missing-merges/scan-tasks/run` | 手动触发漏合检测 |
+| GET | `/api/code-compliance/missing-merges/scan-tasks/{id}` | 查询扫描任务详情 |
+| POST | `/api/code-compliance/missing-merges/scan-tasks/run` | 手动提交漏合检测任务，后台异步执行 |
 
 ## 目录结构
 
@@ -275,9 +276,11 @@ apps/code_compliance/
 python manage.py init_code_compliance
 ```
 
-命令补齐菜单、权限和 `code_compliance_repo_type` 字典。旧风险入口保持可见，后续等新检测能力稳定后再做日落。
+命令补齐菜单、权限和 `code_compliance_repo_type` 字典。旧风险入口保持可见，新增菜单包括 `代码库管理`、`分支管理`、`漏合风险` 和 `同步任务历史`，后续等新检测能力稳定后再做旧入口日落。
 
 命令也会创建默认禁用的定时任务 `code_compliance_missing_merge_scan`。补齐数据湖认证配置后，可在调度器中启用该任务。
+
+手动漏合同步采用进程内后台线程异步执行：接口创建 `pending` 任务后立即返回，任务历史页用于跟踪 `running/success/failed` 状态。当前实现不引入 Celery/RQ，也不做服务重启后的任务恢复。
 
 ## 数据同步
 

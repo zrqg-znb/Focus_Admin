@@ -59,6 +59,8 @@ client 先以 `only_count=True` 获取统计数量，再以 `only_count=False` �
 7. 发布分支已出现的历史 `open` 风险自动标记为 `fixed`。
 8. 扫描结果写入 `ComplianceMissingMergeScanTask`。
 
+手动同步采用进程内 daemon thread 异步执行：接口只创建 `pending` 任务并立即返回，后台线程负责把任务流转为 `running/success/failed`。如果服务进程重启，正在执行的线程不做跨进程恢复；这是本期不引入 Celery/RQ 的约束。手动提交前会检查是否已有 `pending/running` 漏合同步任务，存在时不创建新任务，直接返回当前任务用于页面提示。
+
 ## API
 
 接口统一挂在 `/api/code-compliance/missing-merges`。
@@ -68,29 +70,40 @@ client 先以 `only_count=True` 获取统计数量，再以 `only_count=False` �
 | GET | `/records` | 分页查询漏合风险，支持组织、代码库、分支、状态、创建人、时间范围筛选 |
 | GET | `/records/{id}` | 查询漏合风险详情 |
 | PUT | `/records/{id}/status` | 更新处理状态和备注 |
-| GET | `/scan-tasks` | 查询扫描任务历史 |
-| POST | `/scan-tasks/run` | 手动触发扫描 |
+| GET | `/scan-tasks` | 分页查询扫描任务历史，支持状态、触发方式和时间范围筛选 |
+| GET | `/scan-tasks/{id}` | 查询单条扫描任务详情 |
+| POST | `/scan-tasks/run` | 手动提交扫描任务，立即返回 `{ accepted, message, task }` |
 
 定时任务入口为 `apps.code_compliance.missing_merge_services.run_scheduled_missing_merge_scan`。`init_code_compliance` 会创建默认禁用的定时任务 `code_compliance_missing_merge_scan`，Cron 为每天 02:00。
 
 ## 前端
 
-新增页面 `web/apps/web-ele/src/views/compliance/missing-merge/index.vue`，菜单名为 `漏合风险`。
+新增页面：
 
-页面能力：
+- `web/apps/web-ele/src/views/compliance/missing-merge/index.vue`，菜单名为 `漏合风险`。
+- `web/apps/web-ele/src/views/compliance/missing-merge-task/index.vue`，菜单名为 `同步任务历史`。
+
+漏合风险页面能力：
 
 - 顶部展示最近一次同步任务摘要。
 - 支持按关键词、状态、组织、代码库、创建人、主干分支、发布分支、合入时间、识别时间筛选。
 - 表格展示漏合 CR、状态、代码库、组织、分支配对、创建人、合入时间、识别时间和代码行变化。
 - 详情抽屉展示 CR 描述、链接、分支配对和处理备注。
 - 状态弹窗支持 `未处理/已补合/已忽略` 更新。
-- 手动同步弹窗支持选择时间范围、组织和代码库。
+- 手动同步弹窗支持选择时间范围、组织和代码库；提交后只等待任务创建结果，不等待完整扫描。
+
+同步任务历史页面能力：
+
+- 展示手动同步和定时扫描任务。
+- 支持按状态、触发方式、合入时间范围、任务开始时间范围筛选。
+- 详情抽屉展示筛选范围、扫描计数、风险计数、耗时和失败错误信息。
 
 ## 验收标准
 
 - 开发环境未配置数据湖 URL 时，手动同步可通过 mock 生成稳定漏合风险。
 - URL 编码、时间格式、`only_count` 两种模式有单元测试覆盖。
 - 重复扫描不会重复新增同一 `change_key` 风险。
+- 手动同步接口在已有 `pending/running` 任务时返回 `accepted=false`，不创建重复任务。
 - 发布分支已包含的历史 `open` 风险会自动标记为 `fixed`。
 - 人工 `ignored` 风险不会被扫描自动改回 `open` 或 `fixed`。
 - 旧 Excel 风险台账、代码库管理和分支管理能力不受影响。

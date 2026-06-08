@@ -105,6 +105,17 @@ MENU_SEEDS = [
         auth_code="code_compliance:missing_merge",
         icon="lucide:git-compare-arrows",
     ),
+    MenuSeed(
+        key="missing_merge_task",
+        parent_key="code_compliance",
+        name="ComplianceMissingMergeTask",
+        title="同步任务历史",
+        path="/compliance/missing-merge-tasks",
+        component="/compliance/missing-merge-task/index",
+        order=6,
+        auth_code="code_compliance:missing_merge_task",
+        icon="lucide:history",
+    ),
 ]
 
 PERMISSION_SEEDS = {
@@ -274,6 +285,13 @@ PERMISSION_SEEDS = {
             "http_method": "GET",
         },
         {
+            "name": "漏合风险代码库选项接口",
+            "code": "code_compliance:api:missing_merge:repositories:options",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/missing-merges/repositories/options*",
+            "http_method": "GET",
+        },
+        {
             "name": "漏合风险状态更新接口",
             "code": "code_compliance:api:missing_merge:records:status",
             "permission_type": 1,
@@ -284,7 +302,7 @@ PERMISSION_SEEDS = {
             "name": "漏合检测任务列表接口",
             "code": "code_compliance:api:missing_merge:tasks:list",
             "permission_type": 1,
-            "api_path": "/api/code-compliance/missing-merges/scan-tasks",
+            "api_path": "/api/code-compliance/missing-merges/scan-tasks*",
             "http_method": "GET",
         },
         {
@@ -293,6 +311,30 @@ PERMISSION_SEEDS = {
             "permission_type": 1,
             "api_path": "/api/code-compliance/missing-merges/scan-tasks/run",
             "http_method": "POST",
+        },
+    ],
+    "missing_merge_task": [
+        {"name": "查看同步任务历史", "code": "code_compliance:missing_merge_task:view", "permission_type": 0},
+        {
+            "name": "同步任务历史列表接口",
+            "code": "code_compliance:api:missing_merge_task:tasks:list",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/missing-merges/scan-tasks*",
+            "http_method": "GET",
+        },
+        {
+            "name": "同步任务详情接口",
+            "code": "code_compliance:api:missing_merge_task:tasks:detail",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/missing-merges/scan-tasks/:id",
+            "http_method": "GET",
+        },
+        {
+            "name": "同步任务筛选选项接口",
+            "code": "code_compliance:api:missing_merge_task:records:options",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/missing-merges/records/options",
+            "http_method": "GET",
         },
     ],
 }

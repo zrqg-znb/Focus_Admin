@@ -118,6 +118,12 @@ export interface MissingMergeScanRunPayload {
   repository_ids?: string[];
 }
 
+export interface MissingMergeScanRunResult {
+  accepted: boolean;
+  message: string;
+  task: MissingMergeScanTaskItem;
+}
+
 export interface PaginatedResponse<T> {
   items: T[];
   total: number;
@@ -179,8 +185,12 @@ export function updateMissingMergeRecordStatusApi(
 }
 
 export function listMissingMergeScanTasksApi(params?: {
+  merged_after?: string;
+  merged_before?: string;
   page?: number;
   pageSize?: number;
+  started_after?: string;
+  started_before?: string;
   status?: MissingMergeScanStatus;
   trigger_type?: MissingMergeTriggerType;
 }) {
@@ -190,8 +200,14 @@ export function listMissingMergeScanTasksApi(params?: {
   );
 }
 
+export function getMissingMergeScanTaskApi(id: string) {
+  return requestClient.get<MissingMergeScanTaskItem>(
+    `${base}/scan-tasks/${id}`,
+  );
+}
+
 export function runMissingMergeScanApi(data: MissingMergeScanRunPayload) {
-  return requestClient.post<MissingMergeScanTaskItem>(
+  return requestClient.post<MissingMergeScanRunResult>(
     `${base}/scan-tasks/run`,
     data,
   );

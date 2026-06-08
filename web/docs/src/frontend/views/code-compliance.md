@@ -1,6 +1,6 @@
 # 代码合规前端附录
 
-代码合规前端位于 `web/apps/web-ele/src/views/compliance/`。旧风险台账采用“岗位概览 -> 用户详情 -> 风险抽屉 -> 分支处理对话框”四层展开；一期基础数据新增“代码库管理”和“分支管理”两个维护入口；自动漏合检测新增“漏合风险”入口。
+代码合规前端位于 `web/apps/web-ele/src/views/compliance/`。旧风险台账采用“岗位概览 -> 用户详情 -> 风险抽屉 -> 分支处理对话框”四层展开；一期基础数据新增“代码库管理”和“分支管理”两个维护入口；自动漏合检测新增“漏合风险”和“同步任务历史”入口。
 
 ## 页面结构
 
@@ -11,6 +11,7 @@
 - `repository/index.vue` 代码库管理，左侧组织树，右侧代码库列表
 - `branch/index.vue` 分支管理，表格 CRUD 与批量绑定代码库
 - `missing-merge/index.vue` 漏合风险，查询自动检测出的漏合 CR、查看详情、更新状态并手动触发同步
+- `missing-merge-task/index.vue` 同步任务历史，统一查看手动同步和定时扫描任务
 
 ## API 入口
 
@@ -31,6 +32,8 @@
 - `bindBranchesToRepositoriesApi`
 - `bindRepositoriesToBranchesApi`
 - `listMissingMergeRecordsApi`
+- `listMissingMergeScanTasksApi`
+- `getMissingMergeScanTaskApi`
 - `runMissingMergeScanApi`
 - `updateMissingMergeRecordStatusApi`
 
@@ -53,6 +56,8 @@ flowchart TD
     MissingMerge["missing-merge/index.vue"] --> MissingRecords["/missing-merges/records"]
     MissingMerge --> MissingTasks["/missing-merges/scan-tasks"]
     MissingMerge --> RunScan["/missing-merges/scan-tasks/run"]
+    MissingMergeTask["missing-merge-task/index.vue"] --> TaskList["/missing-merges/scan-tasks"]
+    MissingMergeTask --> TaskDetail["/missing-merges/scan-tasks/{id}"]
 ```
 
 ## 实现特点
@@ -64,6 +69,8 @@ flowchart TD
 - 组织新增/编辑使用 `ElDialog`，代码库新增/编辑使用 `ElDrawer`
 - 分支管理页使用 `zq-table`，支持 Excel 导入和批量绑定代码库
 - 漏合风险页使用 `zq-table`，顶部展示最近同步任务，详情用 Drawer，状态更新和手动同步用 Dialog
+- 手动同步提交后只等待任务创建结果，后台扫描进度通过 `同步任务历史` 页面和最近任务摘要追踪
+- 同步任务历史页使用固定宽度筛选项和详情 Drawer，展示扫描范围、风险计数、耗时和失败原因
 
 ## 对应主线文档
 

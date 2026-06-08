@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from collections import defaultdict
 from collections.abc import Iterable as RuntimeIterable
 from dataclasses import dataclass
@@ -9,13 +10,14 @@ from datetime import timedelta
 from typing import Any, Iterable
 
 from django.conf import settings
-from django.db import transaction
+from django.db import close_old_connections, transaction
 from django.db.models import Prefetch, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from ninja.errors import HttpError
 
 from scheduler.module.executor import scheduler_task
+from core.user.user_model import User
 
 from . import base_services
 from .missing_merge_client import CodeComplianceCRClient, DEFAULT_PAGE_SIZE
@@ -470,6 +472,10 @@ def list_scan_tasks(
     page_size: int = 20,
     status: str | None = None,
     trigger_type: str | None = None,
+    merged_after: Any = None,
+    merged_before: Any = None,
+    started_after: Any = None,
+    started_before: Any = None,
 ) -> dict:
     """分页查询漏合检测任务历史。"""
     qs = ComplianceMissingMergeScanTask.objects.filter(is_deleted=False)
@@ -477,10 +483,24 @@ def list_scan_tasks(
         qs = qs.filter(status=_clean_text(status))
     if trigger_type:
         qs = qs.filter(trigger_type=_clean_text(trigger_type))
+    if merged_after:
+        qs = qs.filter(merged_after__gte=_to_model_datetime(merged_after))
+    if merged_before:
+        qs = qs.filter(merged_before__lte=_to_model_datetime(merged_before))
+    if started_after:
+        qs = qs.filter(started_at__gte=_to_model_datetime(started_after))
+    if started_before:
+        qs = qs.filter(started_at__lte=_to_model_datetime(started_before))
     total = qs.count()
     offset = max(page - 1, 0) * page_size
     items = list(qs.order_by("-sys_create_datetime")[offset : offset + page_size])
     return {"items": [serialize_scan_task(item) for item in items], "total": total}
+
+
+def get_scan_task(task_id: str) -> dict:
+    """读取单条漏合检测任务详情。"""
+    item = get_object_or_404(ComplianceMissingMergeScanTask, id=task_id, is_deleted=False)
+    return serialize_scan_task(item)
 
 
 def list_filter_options() -> dict:
@@ -508,8 +528,8 @@ def list_repository_options(
     )
 
 
-def run_missing_merge_scan(user, payload, *, trigger_type: str = MISSING_MERGE_SCAN_TRIGGER_MANUAL) -> dict:
-    """创建并执行一次漏合检测任务，失败时保留任务记录供页面排障。"""
+def _normalize_scan_payload(payload) -> dict:
+    """校验并标准化扫描入参，供手动和定时任务共同使用。"""
     data = payload.dict()
     merged_after = _to_model_datetime(data["merged_after"])
     merged_before = _to_model_datetime(data["merged_before"])
@@ -518,29 +538,61 @@ def run_missing_merge_scan(user, payload, *, trigger_type: str = MISSING_MERGE_S
         repository_ids = _normalize_id_list([data.get("repository_id")])
     if merged_after > merged_before:
         raise HttpError(400, "merged_after 不能晚于 merged_before")
+    return {
+        "merged_after": merged_after,
+        "merged_before": merged_before,
+        "organization_id": data.get("organization_id") or "",
+        "repository_ids": repository_ids,
+    }
 
+
+def _get_active_scan_task() -> ComplianceMissingMergeScanTask | None:
+    """返回当前未完成的漏合扫描任务，手动提交时用于并发保护。"""
+    return (
+        ComplianceMissingMergeScanTask.objects.filter(
+            is_deleted=False,
+            status__in=[MISSING_MERGE_SCAN_STATUS_PENDING, MISSING_MERGE_SCAN_STATUS_RUNNING],
+        )
+        .order_by("-sys_create_datetime")
+        .first()
+    )
+
+
+def create_scan_task(user, payload, *, trigger_type: str = MISSING_MERGE_SCAN_TRIGGER_MANUAL) -> ComplianceMissingMergeScanTask:
+    """创建一条待执行扫描任务，不在接口线程里执行耗时扫描。"""
+    normalized = _normalize_scan_payload(payload)
     task = ComplianceMissingMergeScanTask.objects.create(
         trigger_type=trigger_type,
-        status=MISSING_MERGE_SCAN_STATUS_RUNNING,
-        merged_after=merged_after,
-        merged_before=merged_before,
+        status=MISSING_MERGE_SCAN_STATUS_PENDING,
+        merged_after=normalized["merged_after"],
+        merged_before=normalized["merged_before"],
         filter_payload={
-            "organization_id": data.get("organization_id") or "",
-            "repository_ids": repository_ids,
+            "organization_id": normalized["organization_id"],
+            "repository_ids": normalized["repository_ids"],
         },
-        started_at=_to_model_datetime(timezone.now()),
     )
     _apply_audit_fields(task, user, is_create=True)
     task.save()
+    return task
 
+
+def execute_scan_task(task_id: str, user_id: str | None = None) -> dict:
+    """执行已创建的扫描任务，并把成功或失败状态完整回写到任务表。"""
+    user = User.objects.filter(id=user_id).first() if user_id else None
+    task = get_object_or_404(ComplianceMissingMergeScanTask, id=task_id, is_deleted=False)
+    task.status = MISSING_MERGE_SCAN_STATUS_RUNNING
+    task.started_at = _to_model_datetime(timezone.now())
+    task.error_message = ""
+    task.save()
+    payload = task.filter_payload or {}
     try:
         counters = _execute_scan(
             user=user,
             task=task,
-            merged_after=merged_after,
-            merged_before=merged_before,
-            organization_id=data.get("organization_id"),
-            repository_ids=repository_ids,
+            merged_after=task.merged_after,
+            merged_before=task.merged_before,
+            organization_id=payload.get("organization_id") or None,
+            repository_ids=_normalize_id_list(payload.get("repository_ids")),
         )
         _finish_task(task, counters, MISSING_MERGE_SCAN_STATUS_SUCCESS)
     except Exception as exc:  # noqa: BLE001 - 任务失败需要落库给前端展示完整原因。
@@ -550,6 +602,41 @@ def run_missing_merge_scan(user, payload, *, trigger_type: str = MISSING_MERGE_S
         task.error_message = str(exc)
         task.save()
     return serialize_scan_task(task)
+
+
+def _start_scan_task_thread(task_id: str, user_id: str | None) -> None:
+    """启动进程内后台线程执行手动同步，避免 API 请求等待完整扫描。"""
+    def _worker():
+        close_old_connections()
+        try:
+            execute_scan_task(task_id, user_id)
+        finally:
+            close_old_connections()
+
+    threading.Thread(
+        target=_worker,
+        name=f"code-compliance-missing-merge-{task_id}",
+        daemon=True,
+    ).start()
+
+
+def run_missing_merge_scan(user, payload, *, trigger_type: str = MISSING_MERGE_SCAN_TRIGGER_MANUAL) -> dict:
+    """提交一次手动漏合检测任务，后台异步执行并立即返回任务记录。"""
+    if trigger_type == MISSING_MERGE_SCAN_TRIGGER_MANUAL:
+        active_task = _get_active_scan_task()
+        if active_task:
+            return {
+                "accepted": False,
+                "message": "已有漏合同步任务正在执行，请稍后再试",
+                "task": serialize_scan_task(active_task),
+            }
+    task = create_scan_task(user, payload, trigger_type=trigger_type)
+    _start_scan_task_thread(str(task.id), _audit_user_id(user))
+    return {
+        "accepted": True,
+        "message": "漏合同步任务已提交，后台正在执行",
+        "task": serialize_scan_task(task),
+    }
 
 
 def _finish_task(
@@ -873,8 +960,9 @@ def run_scheduled_missing_merge_scan(**kwargs):
                 "repository_ids": [],
             }
 
-    return run_missing_merge_scan(
+    task = create_scan_task(
         None,
         _Payload(),
         trigger_type=MISSING_MERGE_SCAN_TRIGGER_SCHEDULED,
     )
+    return execute_scan_task(str(task.id))

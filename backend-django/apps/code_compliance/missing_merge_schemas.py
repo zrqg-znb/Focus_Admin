@@ -94,6 +94,12 @@ class PaginatedMissingMergeScanTaskOut(Schema):
     total: int
 
 
+class MissingMergeScanRunOut(Schema):
+    accepted: bool
+    message: str
+    task: MissingMergeScanTaskOut
+
+
 class MissingMergeOptionsOut(Schema):
     organizations: List[OrganizationOut] = Field(default_factory=list)
     repositories: List[RepositoryOut] = Field(default_factory=list)

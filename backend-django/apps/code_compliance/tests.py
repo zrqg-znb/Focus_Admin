@@ -1,5 +1,6 @@
 import io
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 import openpyxl
 from django.test import override_settings
@@ -25,6 +26,11 @@ from apps.code_compliance.missing_merge_client import (
 )
 from apps.code_compliance.missing_merge_schemas import MissingMergeRecordStatusIn, MissingMergeScanRunIn
 from apps.code_compliance.models import (
+    MISSING_MERGE_SCAN_STATUS_FAILED,
+    MISSING_MERGE_SCAN_STATUS_PENDING,
+    MISSING_MERGE_SCAN_STATUS_RUNNING,
+    MISSING_MERGE_SCAN_STATUS_SUCCESS,
+    MISSING_MERGE_SCAN_TRIGGER_SCHEDULED,
     MISSING_MERGE_OPERATION_AUTO_CLOSED,
     MISSING_MERGE_OPERATION_DETECTED,
     MISSING_MERGE_OPERATION_MANUAL_HANDLE,
@@ -35,6 +41,7 @@ from apps.code_compliance.models import (
     ComplianceManagedBranch,
     ComplianceMissingMergeOperationLog,
     ComplianceMissingMergeRecord,
+    ComplianceMissingMergeScanTask,
     ComplianceOrganization,
     ComplianceRepository,
     ComplianceRepositoryBranch,
@@ -157,6 +164,11 @@ class CodeComplianceFoundationTests(TestCase):
             detected_at=timezone.now(),
             status=status,
         )
+
+    def run_missing_scan_now(self, payload: MissingMergeScanRunIn):
+        """测试中同步执行已创建任务，避免后台线程带来竞态。"""
+        task = missing_merge_services.create_scan_task(self.user, payload)
+        return missing_merge_services.execute_scan_task(str(task.id), str(self.user.id))
 
     def test_organization_tree_counts_direct_repositories(self):
         root = self.create_org()
@@ -472,6 +484,84 @@ class CodeComplianceFoundationTests(TestCase):
         self.assertEqual(result["operation_logs"][0]["operation_type"], MISSING_MERGE_OPERATION_MANUAL_HANDLE)
         self.assertEqual(result["operation_logs"][0]["remark"], "确认无需补合处理")
 
+    def test_missing_merge_manual_run_submits_async_task_and_blocks_active(self):
+        """手动同步只提交后台任务，已有未完成任务时不再重复创建。"""
+        now = timezone.now()
+        payload = MissingMergeScanRunIn(
+            merged_after=now - timedelta(days=1),
+            merged_before=now,
+        )
+
+        with patch.object(missing_merge_services, "_start_scan_task_thread") as start_thread:
+            result = missing_merge_services.run_missing_merge_scan(self.user, payload)
+            blocked = missing_merge_services.run_missing_merge_scan(self.user, payload)
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["task"]["status"], MISSING_MERGE_SCAN_STATUS_PENDING)
+        start_thread.assert_called_once()
+        self.assertFalse(blocked["accepted"])
+        self.assertEqual(blocked["task"]["id"], result["task"]["id"])
+        self.assertEqual(ComplianceMissingMergeScanTask.objects.count(), 1)
+
+    def test_execute_scan_task_records_failure(self):
+        """后台执行异常必须回写 failed 状态和错误信息，供历史页排障。"""
+        now = timezone.now()
+        task = missing_merge_services.create_scan_task(
+            self.user,
+            MissingMergeScanRunIn(
+                merged_after=now - timedelta(days=1),
+                merged_before=now,
+            ),
+        )
+
+        with patch.object(missing_merge_services, "_execute_scan", side_effect=RuntimeError("mock failure")):
+            result = missing_merge_services.execute_scan_task(str(task.id), str(self.user.id))
+
+        task.refresh_from_db()
+        self.assertEqual(result["status"], MISSING_MERGE_SCAN_STATUS_FAILED)
+        self.assertEqual(task.status, MISSING_MERGE_SCAN_STATUS_FAILED)
+        self.assertIn("mock failure", task.error_message)
+        self.assertIsNotNone(task.finished_at)
+
+    def test_scan_task_detail_and_filters(self):
+        """任务历史支持详情读取和触发方式、状态、时间范围筛选。"""
+        now = timezone.now()
+        old_task = missing_merge_services.create_scan_task(
+            self.user,
+            MissingMergeScanRunIn(
+                merged_after=now - timedelta(days=3),
+                merged_before=now - timedelta(days=2),
+            ),
+        )
+        new_task = missing_merge_services.create_scan_task(
+            self.user,
+            MissingMergeScanRunIn(
+                merged_after=now - timedelta(hours=2),
+                merged_before=now,
+            ),
+            trigger_type=MISSING_MERGE_SCAN_TRIGGER_SCHEDULED,
+        )
+        ComplianceMissingMergeScanTask.objects.filter(id=old_task.id).update(
+            status=MISSING_MERGE_SCAN_STATUS_FAILED,
+            started_at=now - timedelta(days=3),
+        )
+        ComplianceMissingMergeScanTask.objects.filter(id=new_task.id).update(
+            status=MISSING_MERGE_SCAN_STATUS_SUCCESS,
+            started_at=now - timedelta(hours=1),
+        )
+
+        detail = missing_merge_services.get_scan_task(str(new_task.id))
+        page = missing_merge_services.list_scan_tasks(
+            status=MISSING_MERGE_SCAN_STATUS_SUCCESS,
+            trigger_type=MISSING_MERGE_SCAN_TRIGGER_SCHEDULED,
+            merged_after=now - timedelta(days=1),
+            started_after=now - timedelta(hours=2),
+        )
+
+        self.assertEqual(detail["id"], str(new_task.id))
+        self.assertEqual(page["total"], 1)
+        self.assertEqual(page["items"][0]["id"], str(new_task.id))
+
     @override_settings(CODE_COMPLIANCE_CR_FORCE_MOCK=True)
     def test_missing_merge_scan_detects_fixed_and_preserves_ignored(self):
         """扫描应识别主干差集，自动关闭已补合项，并不覆盖已忽略项。"""
@@ -502,8 +592,7 @@ class CodeComplianceFoundationTests(TestCase):
         ignored.handle_remark = "人工忽略"
         ignored.save()
 
-        task = missing_merge_services.run_missing_merge_scan(
-            self.user,
+        task = self.run_missing_scan_now(
             MissingMergeScanRunIn(
                 merged_after=now - timedelta(days=1),
                 merged_before=now + timedelta(days=1),
@@ -539,8 +628,7 @@ class CodeComplianceFoundationTests(TestCase):
             ).exists()
         )
 
-        missing_merge_services.run_missing_merge_scan(
-            self.user,
+        self.run_missing_scan_now(
             MissingMergeScanRunIn(
                 merged_after=now - timedelta(days=1),
                 merged_before=now + timedelta(days=1),
@@ -570,8 +658,7 @@ class CodeComplianceFoundationTests(TestCase):
         )
         now = timezone.now()
 
-        task = missing_merge_services.run_missing_merge_scan(
-            self.user,
+        task = self.run_missing_scan_now(
             MissingMergeScanRunIn(
                 merged_after=now - timedelta(days=1),
                 merged_before=now + timedelta(days=1),
@@ -585,6 +672,30 @@ class CodeComplianceFoundationTests(TestCase):
         self.assertTrue(ComplianceMissingMergeRecord.objects.filter(project_id="20001").exists())
         self.assertTrue(ComplianceMissingMergeRecord.objects.filter(project_id="20002").exists())
         self.assertFalse(ComplianceMissingMergeRecord.objects.filter(project_id="20003").exists())
+
+    @override_settings(CODE_COMPLIANCE_CR_FORCE_MOCK=True)
+    def test_scheduled_missing_merge_scan_writes_task_history(self):
+        """定时扫描复用任务历史表，并标记为 scheduled 触发。"""
+        org = self.create_org()
+        repo = self.create_repo(org["id"], "20001")
+        trunk = self.create_branch("master", "trunk")
+        release = self.create_branch("release/1.0", "release")
+        services.bind_branches_to_repositories(
+            [repo["id"]],
+            [trunk["id"], release["id"]],
+            "append",
+        )
+
+        result = missing_merge_services.run_scheduled_missing_merge_scan.__wrapped__()
+
+        self.assertEqual(result["status"], MISSING_MERGE_SCAN_STATUS_SUCCESS)
+        self.assertEqual(result["trigger_type"], MISSING_MERGE_SCAN_TRIGGER_SCHEDULED)
+        self.assertTrue(
+            ComplianceMissingMergeScanTask.objects.filter(
+                id=result["id"],
+                trigger_type=MISSING_MERGE_SCAN_TRIGGER_SCHEDULED,
+            ).exists()
+        )
 
     @override_settings(CODE_COMPLIANCE_CR_FORCE_MOCK=True)
     def test_missing_merge_scan_reopens_previously_fixed_record(self):
@@ -608,8 +719,7 @@ class CodeComplianceFoundationTests(TestCase):
         )
         now = timezone.now()
 
-        task = missing_merge_services.run_missing_merge_scan(
-            self.user,
+        task = self.run_missing_scan_now(
             MissingMergeScanRunIn(
                 merged_after=now - timedelta(days=1),
                 merged_before=now + timedelta(days=1),
