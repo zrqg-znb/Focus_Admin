@@ -122,6 +122,7 @@ vi.mock("./components", () => ({
 	AgentTreeNodeItem: () => null,
 	AgentDetailPanel: () => null,
 	StatsPanel: () => null,
+	InventoryReportPanel: () => null,
 	AgentErrorBoundary: ({ children }: { children?: ReactNode }) => (
 		<>{children}</>
 	),

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from .base import BaseAgent, AgentConfig, AgentResult, AgentType, AgentPattern, TaskHandoff
 from ..json_parser import AgentJsonParser
 from ..prompts import TOOL_USAGE_GUIDE
-from apps.deepaudit.scenario_profile import build_scenario_prompt_block, build_scenario_task_block
+from apps.deepaudit.scenario_profile import build_scenario_prompt_block, build_scenario_task_block, is_inventory_profile
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +213,35 @@ Action Input: {"directory": "."}
 """
 
 
+INVENTORY_RECON_SYSTEM_PROMPT = """你是 DeepAudit 的代码梳理 Recon Agent，负责为 inventory 场景定位代码范围和证据线索。
+
+当前任务不是漏洞审计。你不要推荐 semgrep、gitleaks、bandit、safety、npm_audit、osv、kunlun、PoC 或沙箱工具。
+
+## 你的职责
+1. 识别项目结构、主要语言、入口点和模块边界。
+2. 按场景关键词定位 API 调用点、锁/共享资源、资源访问点和调用链起点。
+3. 只输出实际通过工具看到的文件、行号和线索，不编造路径。
+4. high_risk_areas 在本模式下代表“相关代码区域”，不是漏洞定级。
+5. initial_findings 在本模式下代表“初步梳理线索”，不是漏洞 Finding。
+
+## 工作方式
+Thought: [当前侦察思路]
+Action: [list_files|search_code|rag_query|read_file|function_context|pattern_match|smart_scan|think|reflect]
+Action Input: [JSON 参数]
+
+## Final Answer
+输出 JSON:
+{
+  "project_structure": {},
+  "tech_stack": {"languages": [], "frameworks": [], "databases": []},
+  "recommended_tools": {"must_use": [], "recommended": ["search_code", "rag_query", "read_file"], "reason": "inventory 模式仅使用搜索和轻扫工具"},
+  "entry_points": [],
+  "high_risk_areas": [],
+  "initial_findings": [],
+  "summary": "侦察总结"
+}"""
+
+
 # ... (上文导入)
 # ...
 
@@ -390,6 +419,9 @@ class ReconAgent(BaseAgent):
         else:
             task_context = str(task_context or "").strip()
         scenario_profile = dict(config.get("scenario_profile") or {})
+        inventory_mode = is_inventory_profile(scenario_profile)
+        if inventory_mode:
+            self.config.system_prompt = INVENTORY_RECON_SYSTEM_PROMPT
         scenario_prompt_block = build_scenario_prompt_block(scenario_profile, self.name.lower())
         if scenario_prompt_block and "<scenario_profile>" not in (self.config.system_prompt or ""):
             self.config.system_prompt = f"{self.config.system_prompt or ''}\n\n{scenario_prompt_block}".strip()
@@ -402,17 +434,17 @@ class ReconAgent(BaseAgent):
         exclude_patterns = config.get("exclude_patterns", [])
         
         if not resume_mode:
-            initial_message = f"""请开始收集项目信息。
+            initial_message = f"""请开始收集{'代码梳理线索' if inventory_mode else '项目信息'}。
 
 ## 项目基本信息
 - 名称: {project_info.get('name', 'unknown')}
 - 根目录: {project_info.get('root', '.')}
 - 文件数量: {project_info.get('file_count', 'unknown')}
 
-## 审计范围
+## {'梳理范围' if inventory_mode else '审计范围'}
 """
             if target_files:
-                initial_message += f"""⚠️ **重要**: 用户指定了 {len(target_files)} 个目标文件进行审计：
+                initial_message += f"""⚠️ **重要**: 用户指定了 {len(target_files)} 个目标文件进行{'梳理' if inventory_mode else '审计'}：
 """
                 for tf in target_files[:10]:
                     initial_message += f"- {tf}\n"
@@ -422,14 +454,14 @@ class ReconAgent(BaseAgent):
 请直接读取和分析这些指定的文件，不要浪费时间遍历其他目录。
 """
             else:
-                initial_message += "全项目审计（无特定文件限制）\n"
+                initial_message += f"全项目{'梳理' if inventory_mode else '审计'}（无特定文件限制）\n"
 
             if exclude_patterns:
                 initial_message += f"\n排除模式: {', '.join(exclude_patterns[:5])}\n"
 
             initial_message += f"""
 ## 任务上下文
-{task_context or task or '进行全面的信息收集，为安全审计做准备。'}
+{task_context or task or ('定位场景相关代码位置，为代码梳理报告做准备。' if inventory_mode else '进行全面的信息收集，为安全审计做准备。')}
 
 ## 可用工具
 {self.get_tools_description()}

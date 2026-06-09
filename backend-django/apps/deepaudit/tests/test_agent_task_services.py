@@ -169,6 +169,7 @@ class AgentTaskServicesTestCase(TestCase):
                     'audit_scope': {
                         'scenario_key': scenario.scenario_key,
                     },
+                    'verification_level': 'sandbox',
                 },
             )
 
@@ -176,6 +177,32 @@ class AgentTaskServicesTestCase(TestCase):
         self.assertEqual(task.audit_scope['effective_profile']['scenario_key'], scenario.scenario_key)
         self.assertEqual(task.audit_scope['effective_profile']['objective_type'], ScenarioObjectiveType.INVENTORY)
         self.assertEqual(task.agent_config['scenario_profile']['scenario_key'], scenario.scenario_key)
+        self.assertEqual(task.agent_config['result_mode'], 'inventory')
+        self.assertEqual(task.verification_level, 'analysis_only')
+
+    def test_create_task_for_builtin_inventory_scenario_forces_analysis_only(self) -> None:
+        access = SimpleNamespace(project=self.project, role='owner')
+
+        with patch('apps.deepaudit.agent_task.agent_task_services.require_project_role', return_value=access):
+            task = create_task(
+                self.user,
+                {
+                    'project_id': str(self.project.id),
+                    'name': 'API Chain Inventory',
+                    'audit_scope': {
+                        'scenario_key': 'api_chain',
+                    },
+                    'verification_level': 'sandbox',
+                },
+            )
+
+        self.assertEqual(task.audit_scope['effective_profile']['scenario_key'], 'api_chain')
+        self.assertEqual(task.audit_scope['effective_profile']['objective_type'], ScenarioObjectiveType.INVENTORY)
+        self.assertEqual(task.agent_config['result_mode'], 'inventory')
+        self.assertEqual(task.verification_level, 'analysis_only')
+        payload = serialize_task(task)
+        self.assertEqual(payload['inventory_items_count'], 0)
+        self.assertEqual(payload['inventory_report'], {})
 
     def test_create_task_ignores_mismatched_requested_repository_type(self) -> None:
         access = SimpleNamespace(project=self.project, role='owner')
@@ -544,6 +571,63 @@ class AgentTaskServicesTestCase(TestCase):
         self.assertEqual(self.task.audit_scope["effective_profile"]["resolved_scenario_key"], "legacy_c_family")
         self.assertEqual(self.task.agent_config["scenario_profile"]["resolved_scenario_key"], "legacy_c_family")
         self.assertEqual(self.task.target_vulnerabilities, C_FAMILY_TARGET_VULNERABILITIES)
+
+    def test_execute_agent_task_forces_inventory_verification_level_before_runner(self) -> None:
+        inventory_profile = resolve_scenario_profile(
+            "api_chain",
+            project=self.project,
+            file_paths=["src/module/main.c"],
+        )
+        self.task.verification_level = "sandbox"
+        self.task.target_files = ["src/module/main.c"]
+        self.task.audit_scope = {
+            "scenario_key": "api_chain",
+            "requested_scenario_key": "api_chain",
+            "effective_profile": inventory_profile,
+        }
+        self.task.agent_config = {
+            "requested_scenario_key": "api_chain",
+            "requested_target_vulnerabilities": [],
+            "scenario_profile": inventory_profile,
+            "scenario_key": inventory_profile.get("scenario_key"),
+        }
+        self.task.save(
+            update_fields=[
+                "verification_level",
+                "target_files",
+                "audit_scope",
+                "agent_config",
+                "sys_update_datetime",
+            ]
+        )
+
+        with (
+            patch('apps.deepaudit.agent_task.agent_task_services.close_runtime_db_connections'),
+            patch('apps.deepaudit.agent_task.agent_task_services.docker_available', return_value=True),
+            patch(
+                'apps.deepaudit.agent_task.agent_task_services.prepare_repository_workspace',
+                return_value=(Path('/tmp/focusaudit-agent-workspace'), _multi_runtime_payload()),
+            ),
+            patch(
+                'apps.deepaudit.agent_task.agent_task_services.validate_selected_file_paths',
+                return_value={'existing': ['src/module/main.c'], 'missing': []},
+            ),
+            patch(
+                'apps.deepaudit.agent_task.agent_task_services.resolve_selected_file_paths',
+                return_value=['src/module/main.c'],
+            ),
+            patch('apps.deepaudit.agent_task.agent_runner.run_orchestrator_agent_sync') as mock_runner,
+            patch('apps.deepaudit.agent_task.agent_task_services.cleanup_runtime_workspace'),
+        ):
+            execute_agent_task(str(self.task.id))
+
+        input_data = mock_runner.call_args.args[1]
+        self.assertEqual(input_data["verification_level"], "analysis_only")
+        self.assertEqual(input_data["agent_config"]["result_mode"], "inventory")
+        self.assertEqual(input_data["agent_config"]["scenario_profile"]["scenario_key"], "api_chain")
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.verification_level, "analysis_only")
+        self.assertEqual(self.task.agent_config["result_mode"], "inventory")
 
     def test_execute_agent_task_fails_when_all_selected_paths_disappear(self) -> None:
         self.task.target_files = ['src/missing-module']

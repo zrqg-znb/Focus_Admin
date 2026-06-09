@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Terminal, Bot, Loader2, Radio, Filter, Maximize2, ArrowDown } from "lucide-react";
+import { Terminal, Bot, Loader2, Filter, ArrowDown, ListChecks } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { useAgentStream } from "@/hooks/useAgentStream";
@@ -31,6 +31,7 @@ import {
   StatsPanel,
   AgentErrorBoundary,
   CheckpointDialog,
+  InventoryReportPanel,
 } from "./components";
 import ReportExportDialog from "./components/ReportExportDialog";
 import { useAgentAuditState } from "./hooks";
@@ -97,6 +98,7 @@ function AgentAuditPageContent() {
   const [isCancelling, setIsCancelling] = useState(false);
   const [statusVerb, setStatusVerb] = useState(ACTION_VERBS[0]);
   const [statusDots, setStatusDots] = useState(0);
+  const [leftPanelView, setLeftPanelView] = useState<"activity" | "inventory">("activity");
 
   const logEndRef = useRef<HTMLDivElement>(null);
   const agentTreeRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -166,6 +168,11 @@ function AgentAuditPageContent() {
     }
     return `已选 ${selectedCount} 项`;
   }, [task?.selected_directory_count, task?.selected_target_count]);
+  const inventoryItemsCount = Number(task?.inventory_items_count || 0);
+  const hasInventoryReport = Boolean(
+    inventoryItemsCount > 0 ||
+      (task?.inventory_report && Object.keys(task.inventory_report).length > 0),
+  );
 
   // 🔥 当 taskId 变化时立即重置状态（新建任务时清理旧日志）
   useEffect(() => {
@@ -187,6 +194,7 @@ function AgentAuditPageContent() {
       hasLoadedHistoricalEventsRef.current = false; // 🔥 重置历史事件加载标志
       setHistoricalEventsLoaded(false); // 🔥 重置历史事件加载状态
       setAfterSequence(0); // 🔥 重置 afterSequence state
+      setLeftPanelView("activity");
     }
     previousTaskIdRef.current = taskId;
   }, [taskId, reset]);
@@ -849,6 +857,12 @@ function AgentAuditPageContent() {
     }
   }, [logs, isAutoScroll]);
 
+  useEffect(() => {
+    if (!hasInventoryReport && leftPanelView === "inventory") {
+      setLeftPanelView("activity");
+    }
+  }, [hasInventoryReport, leftPanelView]);
+
   // ============ Handlers ============
 
   const handleAgentSelect = useCallback((agentId: string) => {
@@ -951,102 +965,145 @@ function AgentAuditPageContent() {
           {/* Log header */}
           <div className="flex-shrink-0 h-12 border-b border-border flex items-center justify-between px-5 bg-card">
             <div className="flex items-center gap-4 text-xs text-muted-foreground">
-              <div className="flex items-center gap-2.5">
-                <Terminal className="w-4 h-4 text-primary" />
-                <span className="uppercase font-bold tracking-wider text-foreground text-sm">Activity Log</span>
-              </div>
-              {isConnected && (
+              {hasInventoryReport ? (
+                <div className="flex items-center gap-1 rounded-md border border-border bg-background/70 p-1">
+                  <button
+                    className={`flex h-8 items-center gap-2 rounded px-3 font-mono text-xs font-bold uppercase ${
+                      leftPanelView === "activity"
+                        ? "bg-primary/15 text-primary"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    onClick={() => setLeftPanelView("activity")}
+                    type="button"
+                  >
+                    <Terminal className="h-3.5 w-3.5" />
+                    Activity
+                  </button>
+                  <button
+                    className={`flex h-8 items-center gap-2 rounded px-3 font-mono text-xs font-bold uppercase ${
+                      leftPanelView === "inventory"
+                        ? "bg-cyan-500/15 text-cyan-600 dark:text-cyan-300"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    onClick={() => setLeftPanelView("inventory")}
+                    type="button"
+                  >
+                    <ListChecks className="h-3.5 w-3.5" />
+                    梳理报告
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2.5">
+                  <Terminal className="w-4 h-4 text-primary" />
+                  <span className="uppercase font-bold tracking-wider text-foreground text-sm">Activity Log</span>
+                </div>
+              )}
+              {leftPanelView === "activity" && isConnected && (
                 <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30">
                   <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                   <span className="text-xs font-mono uppercase tracking-wider text-emerald-600 dark:text-emerald-400 font-semibold">Live</span>
                 </div>
               )}
-              <Badge variant="outline" className="h-6 px-2 text-xs border-border text-muted-foreground font-mono bg-muted">
-                {filteredLogs.length}{!showAllLogs && logs.length !== filteredLogs.length ? ` / ${logs.length}` : ''} entries
-              </Badge>
+              {leftPanelView === "activity" ? (
+                <Badge variant="outline" className="h-6 px-2 text-xs border-border text-muted-foreground font-mono bg-muted">
+                  {filteredLogs.length}{!showAllLogs && logs.length !== filteredLogs.length ? ` / ${logs.length}` : ''} entries
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="h-6 px-2 text-xs border-cyan-500/30 text-cyan-600 dark:text-cyan-300 font-mono bg-cyan-500/10">
+                  {inventoryItemsCount} items
+                </Badge>
+              )}
             </div>
 
-            <button
-              onClick={() => setAutoScroll(!isAutoScroll)}
-              className={`
-                flex items-center gap-2 text-xs px-3 py-1.5 rounded-md font-mono uppercase tracking-wider
-                ${isAutoScroll
-                  ? 'bg-primary/15 text-primary border border-primary/50'
-                  : 'text-muted-foreground hover:text-foreground border border-border hover:bg-muted'
-                }
-              `}
-            >
-              <ArrowDown className="w-3.5 h-3.5" />
-              <span>Auto-scroll</span>
-            </button>
+            {leftPanelView === "activity" && (
+              <button
+                onClick={() => setAutoScroll(!isAutoScroll)}
+                className={`
+                  flex items-center gap-2 text-xs px-3 py-1.5 rounded-md font-mono uppercase tracking-wider
+                  ${isAutoScroll
+                    ? 'bg-primary/15 text-primary border border-primary/50'
+                    : 'text-muted-foreground hover:text-foreground border border-border hover:bg-muted'
+                  }
+                `}
+                type="button"
+              >
+                <ArrowDown className="w-3.5 h-3.5" />
+                <span>Auto-scroll</span>
+              </button>
+            )}
           </div>
 
-          {/* Log content */}
-          <div className="flex-1 overflow-y-auto p-5 custom-scrollbar bg-muted/30">
-            {/* Filter indicator */}
-            {selectedAgentId && !showAllLogs && (
-              <div className="mb-4 px-4 py-2.5 bg-primary/10 border border-primary/30 rounded-lg flex items-center justify-between">
-                <div className="flex items-center gap-2.5 text-sm text-primary">
-                  <Filter className="w-3.5 h-3.5" />
-                  <span className="font-medium">Filtering logs for selected agent</span>
+          {leftPanelView === "inventory" ? (
+            <InventoryReportPanel
+              itemsCount={inventoryItemsCount}
+              report={task?.inventory_report}
+            />
+          ) : (
+            <div className="flex-1 overflow-y-auto p-5 custom-scrollbar bg-muted/30">
+              {selectedAgentId && !showAllLogs && (
+                <div className="mb-4 px-4 py-2.5 bg-primary/10 border border-primary/30 rounded-lg flex items-center justify-between">
+                  <div className="flex items-center gap-2.5 text-sm text-primary">
+                    <Filter className="w-3.5 h-3.5" />
+                    <span className="font-medium">Filtering logs for selected agent</span>
+                  </div>
+                  <button
+                    onClick={() => selectAgent(null)}
+                    className="text-xs text-muted-foreground hover:text-primary font-mono uppercase px-2 py-1 rounded hover:bg-primary/10"
+                    type="button"
+                  >
+                    Clear Filter
+                  </button>
                 </div>
-                <button
-                  onClick={() => selectAgent(null)}
-                  className="text-xs text-muted-foreground hover:text-primary font-mono uppercase px-2 py-1 rounded hover:bg-primary/10"
-                >
-                  Clear Filter
-                </button>
-              </div>
-            )}
+              )}
 
-            {/* Logs */}
-            {filteredLogs.length === 0 ? (
-              <div className="h-full flex items-center justify-center">
-                <div className="text-center text-muted-foreground">
-                  {isRunning ? (
-                    shouldShowStartupSyncHint ? (
-                      <div className="flex max-w-md flex-col items-center gap-3 px-4">
-                        <Loader2 className="w-6 h-6 animate-spin text-primary" />
-                        <span className="text-sm font-medium tracking-wide text-foreground">
-                          正在同步代码并准备审计上下文...
-                        </span>
-                        <p className="text-xs leading-6 text-muted-foreground">
-                          {startupSyncDetail}
-                        </p>
-                      </div>
+              {filteredLogs.length === 0 ? (
+                <div className="h-full flex items-center justify-center">
+                  <div className="text-center text-muted-foreground">
+                    {isRunning ? (
+                      shouldShowStartupSyncHint ? (
+                        <div className="flex max-w-md flex-col items-center gap-3 px-4">
+                          <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                          <span className="text-sm font-medium tracking-wide text-foreground">
+                            正在同步代码并准备审计上下文...
+                          </span>
+                          <p className="text-xs leading-6 text-muted-foreground">
+                            {startupSyncDetail}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center gap-3">
+                          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                          <span className="text-sm font-mono tracking-wide">
+                            {selectedAgentId && !showAllLogs
+                              ? 'WAITING FOR ACTIVITY FROM SELECTED AGENT...'
+                              : 'WAITING FOR AGENT ACTIVITY...'}
+                          </span>
+                        </div>
+                      )
                     ) : (
-                      <div className="flex flex-col items-center gap-3">
-                        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-                        <span className="text-sm font-mono tracking-wide">
-                          {selectedAgentId && !showAllLogs
-                            ? 'WAITING FOR ACTIVITY FROM SELECTED AGENT...'
-                            : 'WAITING FOR AGENT ACTIVITY...'}
-                        </span>
-                      </div>
-                    )
-                  ) : (
-                    <span className="text-sm font-mono tracking-wide">
-                      {selectedAgentId && !showAllLogs
-                        ? 'NO ACTIVITY FROM SELECTED AGENT'
-                        : 'NO ACTIVITY YET'}
-                    </span>
-                  )}
+                      <span className="text-sm font-mono tracking-wide">
+                        {selectedAgentId && !showAllLogs
+                          ? 'NO ACTIVITY FROM SELECTED AGENT'
+                          : 'NO ACTIVITY YET'}
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {filteredLogs.map(item => (
-                  <LogEntry
-                    key={item.id}
-                    item={item}
-                    isExpanded={expandedLogIds.has(item.id)}
-                    onToggle={() => toggleLogExpanded(item.id)}
-                  />
-                ))}
-              </div>
-            )}
-            <div ref={logEndRef} />
-          </div>
+              ) : (
+                <div className="space-y-3">
+                  {filteredLogs.map(item => (
+                    <LogEntry
+                      key={item.id}
+                      item={item}
+                      isExpanded={expandedLogIds.has(item.id)}
+                      onToggle={() => toggleLogExpanded(item.id)}
+                    />
+                  ))}
+                </div>
+              )}
+              <div ref={logEndRef} />
+            </div>
+          )}
 
           {/* Status bar */}
           {task && (

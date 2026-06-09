@@ -20,7 +20,8 @@ from dataclasses import dataclass
 from .base import BaseAgent, AgentConfig, AgentResult, AgentType, AgentPattern, TaskHandoff
 from ..json_parser import AgentJsonParser
 from ..prompts import CORE_SECURITY_PRINCIPLES, VULNERABILITY_PRIORITIES
-from apps.deepaudit.scenario_profile import build_scenario_prompt_block, build_scenario_task_block
+from apps.deepaudit.inventory_report import extract_inventory_report, inventory_items_count
+from apps.deepaudit.scenario_profile import build_scenario_prompt_block, build_scenario_task_block, is_inventory_profile
 
 logger = logging.getLogger(__name__)
 
@@ -274,6 +275,39 @@ Action Input: {"scan_type": "security", "max_files": 50}
 现在开始你的安全分析！首先使用外部工具进行全面扫描。"""
 
 
+INVENTORY_ANALYSIS_SYSTEM_PROMPT = """你是 DeepAudit 的代码梳理 Analysis Agent。
+
+当前任务目标是 inventory，不是漏洞审计。你的主产物是结构化 inventory_report，用于梳理代码位置、调用链、资源边界和证据，不生成漏洞 findings，不生成 PoC，不进行沙箱验证。
+
+## 工作方式
+每一步输出:
+Thought: [当前梳理思路]
+Action: [search_code|rag_query|list_files|read_file|function_context|pattern_match|smart_scan|think|reflect]
+Action Input: [JSON 参数]
+
+## 工具策略
+1. 优先用 search_code、rag_query、list_files 定位关键词、入口点、API 调用点、锁/共享资源。
+2. 用 read_file 和 function_context 读取上下文，确认文件、行号、符号、证据片段和上下游关系。
+3. pattern_match 和 smart_scan 只能作为轻量辅助匹配，不能把结果直接当漏洞报告。
+4. 禁止使用 semgrep_scan、gitleaks_scan、bandit_scan、safety_scan、npm_audit、osv_scan、kunlun_scan、run_code、extract_function、PoC 或沙箱验证工具。
+
+## Final Answer 格式
+必须输出 JSON 对象，且包含 inventory_report:
+{
+  "inventory_report": {
+    "scenario": {"key": "", "name": "", "objective": "inventory"},
+    "scope": {"target_files": [], "keywords": [], "description": ""},
+    "overview": {"summary": "", "coverage": "", "limitations": ""},
+    "items": [],
+    "chains": [],
+    "resources": [],
+    "qa": {"status": "unchecked", "checked_items": 0, "warnings": []}
+  }
+}
+
+items 中疑似风险只能写入 risk_note 与 suggested_followup，不要自动创建漏洞发现。"""
+
+
 @dataclass
 class AnalysisStep:
     """分析步骤"""
@@ -451,6 +485,9 @@ class AnalysisAgent(BaseAgent):
         else:
             task_context = str(task_context or "").strip()
         scenario_profile = dict(config.get("scenario_profile") or {})
+        inventory_mode = is_inventory_profile(scenario_profile)
+        if inventory_mode:
+            self.config.system_prompt = INVENTORY_ANALYSIS_SYSTEM_PROMPT
         scenario_prompt_block = build_scenario_prompt_block(scenario_profile, self.name.lower())
         if scenario_prompt_block and "<scenario_profile>" not in (self.config.system_prompt or ""):
             self.config.system_prompt = f"{self.config.system_prompt or ''}\n\n{scenario_prompt_block}".strip()
@@ -482,7 +519,39 @@ class AnalysisAgent(BaseAgent):
         # 🔥 获取目标文件列表
         target_files = config.get("target_files", [])
         
-        initial_message = f"""请开始对项目进行安全漏洞分析。
+        if inventory_mode:
+            inventory_schema = """{
+    "inventory_report": {
+        "scenario": {"key": "", "name": "", "objective": "inventory"},
+        "scope": {"target_files": [], "keywords": [], "description": ""},
+        "overview": {"summary": "", "coverage": "", "limitations": ""},
+        "items": [
+            {
+                "file_path": "相对路径",
+                "line_start": 1,
+                "line_end": 1,
+                "symbol": "函数/变量/API/资源名",
+                "item_type": "api_call|shared_resource|lock|entrypoint|callsite|lifecycle",
+                "evidence": "实际代码片段",
+                "risk_note": "只记录疑似风险备注，不升级为漏洞",
+                "suggested_followup": "建议人工跟进动作"
+            }
+        ],
+        "chains": [],
+        "resources": [],
+        "qa": {"status": "unchecked", "checked_items": 0, "warnings": []}
+    }
+}"""
+            initial_message = f"""请开始对项目进行代码梳理，当前任务不是漏洞审计。
+
+## 项目信息
+- 名称: {project_info.get('name', 'unknown')}
+- 语言: {tech_stack.get('languages', [])}
+- 框架: {tech_stack.get('frameworks', [])}
+
+"""
+        else:
+            initial_message = f"""请开始对项目进行安全漏洞分析。
 
 ## 项目信息
 - 名称: {project_info.get('name', 'unknown')}
@@ -492,8 +561,10 @@ class AnalysisAgent(BaseAgent):
 """
         # 🔥 如果指定了目标文件，明确告知 Agent
         if target_files:
-            initial_message += f"""## ⚠️ 审计范围
-用户指定了 {len(target_files)} 个目标文件进行审计：
+            scope_label = "梳理范围" if inventory_mode else "审计范围"
+            scope_action = "梳理" if inventory_mode else "审计"
+            initial_message += f"""## ⚠️ {scope_label}
+用户指定了 {len(target_files)} 个目标文件进行{scope_action}：
 """
             for tf in target_files[:10]:
                 initial_message += f"- {tf}\n"
@@ -503,8 +574,40 @@ class AnalysisAgent(BaseAgent):
 请直接分析这些指定的文件，不要分析其他文件。
 
 """
-        
-        initial_message += f"""{handoff_context if handoff_context else f'''## 上下文信息
+
+        if inventory_mode:
+            initial_message += f"""{handoff_context if handoff_context else f'''## 上下文信息
+### 相关区域（来自 Recon Agent，优先梳理）
+以下是 Recon Agent 识别的相关区域，请优先读取和梳理这些文件：
+{json.dumps(high_risk_areas[:20], ensure_ascii=False)}
+
+### 入口点 (前10个)
+{json.dumps(entry_points[:10], ensure_ascii=False, indent=2)}
+
+### 初步线索 (如果有)
+{json.dumps(initial_findings[:5], ensure_ascii=False, indent=2) if initial_findings else "无"}'''}
+
+## 任务
+{task_context or task or '围绕当前场景完成代码梳理报告。'}
+
+## 梳理策略要求
+1. 先使用 search_code / rag_query / list_files 定位关键词、入口和候选文件。
+2. 再使用 read_file / function_context 读取上下文，提取真实文件、行号、符号和证据片段。
+3. 可使用 pattern_match / smart_scan 做辅助匹配，但只作为轻扫线索，不输出漏洞 findings。
+4. 不要调用漏洞扫描、依赖扫描、PoC、run_code 或沙箱验证工具。
+
+## 输出要求
+Final Answer 必须是 JSON，并包含 inventory_report 对象。固定骨架如下：
+```json
+{inventory_schema}
+```
+
+## 可用工具
+{self.get_tools_description()}
+
+请开始代码梳理。优先定位相关调用点/资源访问点，然后读取上下文并记录证据。"""
+        else:
+            initial_message += f"""{handoff_context if handoff_context else f'''## 上下文信息
 ### ⚠️ 高风险区域（来自 Recon Agent，必须优先分析）
 以下是 Recon Agent 识别的高风险区域，请**务必优先**读取和分析这些文件：
 {json.dumps(high_risk_areas[:20], ensure_ascii=False)}
@@ -536,7 +639,7 @@ class AnalysisAgent(BaseAgent):
 请开始你的安全分析。首先读取高风险区域的文件，然后**立即**分析其中的安全问题（输出 Action）。"""
         
         # 🔥 记录工作开始
-        self.record_work("开始安全漏洞分析")
+        self.record_work("开始代码梳理" if inventory_mode else "开始安全漏洞分析")
 
         if not resume_mode:
             self._conversation_history = [
@@ -545,13 +648,22 @@ class AnalysisAgent(BaseAgent):
             ]
             self._steps = []
         all_findings = []
+        inventory_report: Dict[str, Any] = {}
         error_message = None  # 🔥 跟踪错误信息
         
-        await self.emit_thinking(
-            "🔬 Analysis Agent 从检查点恢复，继续安全分析..."
-            if resume_mode
-            else "🔬 Analysis Agent 启动，LLM 开始自主安全分析..."
-        )
+        if inventory_mode:
+            startup_message = (
+                "🔬 Analysis Agent 从检查点恢复，继续代码梳理..."
+                if resume_mode
+                else "🔬 Analysis Agent 启动，LLM 开始自主代码梳理..."
+            )
+        else:
+            startup_message = (
+                "🔬 Analysis Agent 从检查点恢复，继续安全分析..."
+                if resume_mode
+                else "🔬 Analysis Agent 启动，LLM 开始自主安全分析..."
+            )
+        await self.emit_thinking(startup_message)
         
         try:
             start_iteration = max(int(self._iteration or 0), 0)
@@ -598,7 +710,20 @@ class AnalysisAgent(BaseAgent):
                         break
                     
                     # 🔥 更有针对性的重试提示
-                    retry_prompt = f"""收到空响应。请根据以下格式输出你的思考和行动：
+                    if inventory_mode:
+                        retry_prompt = f"""收到空响应。请根据以下格式输出你的思考和行动：
+
+Thought: [你对当前代码梳理情况的思考]
+Action: [工具名称，如 search_code, rag_query, read_file, function_context, pattern_match]
+Action Input: {{"参数名": "参数值"}}
+
+可用工具: {', '.join(self.tools.keys())}
+
+如果你已完成梳理，请输出：
+Thought: [总结梳理覆盖范围]
+Final Answer: {inventory_schema}"""
+                    else:
+                        retry_prompt = f"""收到空响应。请根据以下格式输出你的思考和行动：
 
 Thought: [你对当前安全分析情况的思考]
 Action: [工具名称，如 read_file, search_code, pattern_match, semgrep_scan]
@@ -635,6 +760,20 @@ Final Answer: {{"findings": [...], "summary": "..."}}"""
                 
                 # 检查是否完成
                 if step.is_final:
+                    if inventory_mode:
+                        await self.emit_llm_decision("完成代码梳理", "LLM 判断梳理已充分")
+                        inventory_report = extract_inventory_report(step.final_answer or {})
+                        if not inventory_report and isinstance(step.final_answer, dict):
+                            inventory_report = step.final_answer
+                        item_count = inventory_items_count(inventory_report)
+                        logger.info(f"[{self.name}] Final Answer contains inventory_report with {item_count} items")
+                        self.record_work(f"完成代码梳理，输出 {item_count} 个条目")
+                        await self.emit_llm_complete(
+                            f"梳理完成，输出 {item_count} 个条目",
+                            self._total_tokens
+                        )
+                        break
+
                     await self.emit_llm_decision("完成安全分析", "LLM 判断分析已充分")
                     logger.info(f"[{self.name}] Received Final Answer: {step.final_answer}")
                     if step.final_answer and "findings" in step.final_answer:
@@ -732,13 +871,23 @@ Final Answer: {{"findings": [...], "summary": "..."}}"""
                     })
             
             # 🔥 如果循环结束但没有发现，强制 LLM 总结
-            if not all_findings and not self.is_cancelled and not error_message:
-                await self.emit_thinking("📝 分析阶段结束，正在生成漏洞总结...")
+            if not all_findings and not inventory_report and not self.is_cancelled and not error_message:
+                await self.emit_thinking("📝 分析阶段结束，正在生成代码梳理报告..." if inventory_mode else "📝 分析阶段结束，正在生成漏洞总结...")
                 
                 # 添加强制总结的提示
-                self._conversation_history.append({
-                    "role": "user",
-                    "content": """分析阶段已结束。请立即输出 Final Answer，总结你发现的所有安全问题。
+                if inventory_mode:
+                    summary_prompt = f"""分析阶段已结束。请立即输出 Final Answer，生成结构化 inventory_report。
+
+请只记录代码梳理条目、调用链、资源访问点、证据和风险备注；不要输出漏洞 findings，不要生成 PoC。
+
+请按以下 JSON 格式输出：
+```json
+{inventory_schema}
+```
+
+Final Answer:"""
+                else:
+                    summary_prompt = """分析阶段已结束。请立即输出 Final Answer，总结你发现的所有安全问题。
 
 即使没有发现严重漏洞，也请总结你的分析过程和观察到的潜在风险点。
 
@@ -761,7 +910,10 @@ Final Answer: {{"findings": [...], "summary": "..."}}"""
 }
 ```
 
-Final Answer:""",
+Final Answer:"""
+                self._conversation_history.append({
+                    "role": "user",
+                    "content": summary_prompt,
                 })
                 
                 try:
@@ -778,9 +930,13 @@ Final Answer:""",
                         summary_text = re.sub(r'```\s*', '', summary_text)
                         parsed_result = AgentJsonParser.parse(
                             summary_text,
-                            default={"findings": [], "summary": ""}
+                            default={"inventory_report": {}} if inventory_mode else {"findings": [], "summary": ""}
                         )
-                        if "findings" in parsed_result:
+                        if inventory_mode:
+                            inventory_report = extract_inventory_report(parsed_result)
+                            if not inventory_report and isinstance(parsed_result, dict):
+                                inventory_report = parsed_result
+                        elif "findings" in parsed_result:
                             all_findings = parsed_result["findings"]
                 except Exception as e:
                     logger.warning(f"[{self.name}] Failed to generate summary: {e}")
@@ -792,13 +948,19 @@ Final Answer:""",
             if self.is_cancelled:
                 await self.emit_event(
                     "info",
-                    f"🛑 Analysis Agent 已取消: {len(all_findings)} 个发现, {self._iteration} 轮迭代",
-                    metadata={"status": "stopped", "findings_count": len(all_findings)},
+                    f"🛑 Analysis Agent 已取消: {inventory_items_count(inventory_report)} 个梳理条目, {self._iteration} 轮迭代"
+                    if inventory_mode
+                    else f"🛑 Analysis Agent 已取消: {len(all_findings)} 个发现, {self._iteration} 轮迭代",
+                    metadata={
+                        "status": "stopped",
+                        "findings_count": 0 if inventory_mode else len(all_findings),
+                        "inventory_items_count": inventory_items_count(inventory_report) if inventory_mode else 0,
+                    },
                 )
                 return AgentResult(
                     success=False,
                     error="任务已取消",
-                    data={"findings": all_findings},
+                    data={"inventory_report": inventory_report, "findings": []} if inventory_mode else {"findings": all_findings},
                     iterations=self._iteration,
                     tool_calls=self._tool_calls,
                     tokens_used=self._total_tokens,
@@ -810,12 +972,49 @@ Final Answer:""",
                 await self.emit_event(
                     "error",
                     f"❌ Analysis Agent 失败: {error_message}",
-                    metadata={"status": "failed", "findings_count": len(all_findings)},
+                    metadata={
+                        "status": "failed",
+                        "findings_count": 0 if inventory_mode else len(all_findings),
+                        "inventory_items_count": inventory_items_count(inventory_report) if inventory_mode else 0,
+                    },
                 )
                 return AgentResult(
                     success=False,
                     error=error_message,
-                    data={"findings": all_findings},
+                    data={"inventory_report": inventory_report, "findings": []} if inventory_mode else {"findings": all_findings},
+                    iterations=self._iteration,
+                    tool_calls=self._tool_calls,
+                    tokens_used=self._total_tokens,
+                    duration_ms=duration_ms,
+                )
+
+            if inventory_mode:
+                item_count = inventory_items_count(inventory_report)
+                await self.emit_event(
+                    "info",
+                    f"Analysis Agent 完成代码梳理: {item_count} 个条目, {self._iteration} 轮迭代, {self._tool_calls} 次工具调用",
+                    metadata={
+                        "status": "completed",
+                        "findings_count": 0,
+                        "inventory_items_count": item_count,
+                        "result_mode": "inventory",
+                    },
+                )
+                return AgentResult(
+                    success=True,
+                    data={
+                        "inventory_report": inventory_report,
+                        "findings": [],
+                        "steps": [
+                            {
+                                "thought": s.thought,
+                                "action": s.action,
+                                "action_input": s.action_input,
+                                "observation": s.observation[:500] if s.observation else None,
+                            }
+                            for s in self._steps
+                        ],
+                    },
                     iterations=self._iteration,
                     tool_calls=self._tool_calls,
                     tokens_used=self._total_tokens,

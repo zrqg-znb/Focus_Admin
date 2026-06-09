@@ -272,7 +272,7 @@ describe("CreateAgentTaskDialog", () => {
     vi.clearAllMocks();
   });
 
-  it("submits only the selected scenario key in the audit scope payload", async () => {
+  it("submits inventory scenarios with analysis-only verification", async () => {
     renderDialog();
     await flushMicrotasks();
 
@@ -313,7 +313,7 @@ describe("CreateAgentTaskDialog", () => {
       expect.objectContaining({
         project_id: "zip-project-1",
         name: "Agent审计-ZIP Scenario Project",
-        verification_level: "sandbox",
+        verification_level: "analysis_only",
       }),
     );
     expect(payloadRecord?.audit_scope).toEqual({ scenario_key: "api_chain" });

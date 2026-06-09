@@ -6,7 +6,7 @@
  */
 
 import { memo } from "react";
-import { Activity, FileCode, Repeat, Zap, Bug, Shield, AlertTriangle, TrendingUp, Clock } from "lucide-react";
+import { Activity, FileCode, Repeat, Zap, Bug, Shield, AlertTriangle, TrendingUp, ListChecks } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { StatsPanelProps } from "../types";
 
@@ -119,6 +119,7 @@ export const StatsPanel = memo(function StatsPanel({ task, findings }: StatsPane
     low: task.low_count || 0,
   };
   const totalFindings = task.findings_count || 0;
+  const inventoryItemsCount = task.inventory_items_count || 0;
   const progressPercent = task.progress_percentage || 0;
   const displayTotalFiles = task.resolved_file_count && task.resolved_file_count > 0
     ? task.resolved_file_count
@@ -237,6 +238,15 @@ export const StatsPanel = memo(function StatsPanel({ task, findings }: StatsPane
           colorClass={totalFindings > 0 ? "text-rose-500" : "text-muted-foreground"}
           bgClass={totalFindings > 0 ? "border-rose-500/20" : ""}
         />
+        {inventoryItemsCount > 0 && (
+          <MetricCard
+            icon={<ListChecks className="w-4 h-4" />}
+            label="Inventory"
+            value={inventoryItemsCount}
+            colorClass="text-cyan-500"
+            bgClass="border-cyan-500/20"
+          />
+        )}
       </div>
 
       {/* Findings breakdown with enhanced styling */}

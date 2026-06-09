@@ -29,7 +29,8 @@ from apps.deepaudit.constants import (
 from .base import BaseAgent, AgentConfig, AgentResult, AgentType, AgentPattern, TaskHandoff
 from ..json_parser import AgentJsonParser
 from ..prompts import MULTI_AGENT_RULES, CORE_SECURITY_PRINCIPLES
-from apps.deepaudit.scenario_profile import build_scenario_prompt_block, build_scenario_task_block
+from apps.deepaudit.inventory_report import extract_inventory_report, inventory_items_count
+from apps.deepaudit.scenario_profile import build_scenario_prompt_block, build_scenario_task_block, is_inventory_profile
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +122,26 @@ Action Input: [JSON 参数]
 现在，基于项目信息开始你的审计工作！"""
 
 
+INVENTORY_ORCHESTRATOR_SYSTEM_PROMPT = """你是 DeepAudit 的代码梳理编排 Agent，负责自主协调整个 inventory 流程。
+
+当前任务不是漏洞审计，目标是完成结构化代码梳理报告 inventory_report。
+
+## 子 Agent
+1. recon: 定位相关文件、入口点、API 调用点、锁、共享资源和候选代码区域。
+2. analysis: 梳理调用链、资源访问链、上下文边界和代码证据，输出 inventory_report。
+3. verification: 只做证据 QA，校验文件、行号、证据片段和链路自洽，不生成 PoC。
+
+## 操作格式
+Thought: [你的思考过程]
+Action: [dispatch_agent|summarize|finish]
+Action Input: [JSON 参数]
+
+## 流程建议
+先调度 recon，再调度 analysis。verification 可在 analysis 后用于报告 QA。完成时使用 finish，并确保最终结果包含 inventory_report 或能从 analysis/verification 结果中提取 inventory_report。
+
+禁止要求子 Agent 做完整漏洞扫描、依赖漏洞扫描、密钥扫描、沙箱运行或 PoC 验证。疑似漏洞只作为 risk_note 和 suggested_followup。"""
+
+
 @dataclass
 class AgentStep:
     """执行步骤"""
@@ -187,6 +208,24 @@ class OrchestratorAgent(BaseAgent):
     def register_sub_agent(self, name: str, agent: BaseAgent):
         """注册子 Agent"""
         self.sub_agents[name] = agent
+
+    def _is_inventory_mode(self) -> bool:
+        config = dict((self._runtime_context or {}).get("config") or {})
+        return is_inventory_profile(dict(config.get("scenario_profile") or {}))
+
+    def _collect_inventory_report(self, final_result: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        report = extract_inventory_report(final_result or {})
+        if report:
+            return report
+        for agent_name in ("verification", "analysis", "recon"):
+            report = extract_inventory_report(self._agent_results.get(agent_name) or {})
+            if report:
+                return report
+        for data in self._agent_results.values():
+            report = extract_inventory_report(data)
+            if report:
+                return report
+        return {}
 
     def _get_sub_agent_timeout(self, agent_name: str) -> int:
         default_sub_agent_timeout = int(self._timeout_config.get('sub_agent_timeout', 600) or 600)
@@ -296,6 +335,8 @@ class OrchestratorAgent(BaseAgent):
         if agent_name == "verification":
             if "analysis" not in dispatched_agents:
                 return "verification 必须在 analysis 之后执行，请先完成深度分析。"
+            if self._is_inventory_mode():
+                return None
             candidate_findings = [item for item in self._all_findings if isinstance(item, dict)]
             if not candidate_findings:
                 return "当前还没有候选发现，verification 只能在已有候选漏洞时执行。"
@@ -322,6 +363,9 @@ class OrchestratorAgent(BaseAgent):
         config = input_data.get("config", {})
         resume_mode = bool(self._conversation_history)
         scenario_profile = dict(config.get("scenario_profile") or {})
+        inventory_mode = is_inventory_profile(scenario_profile)
+        if inventory_mode:
+            self.config.system_prompt = INVENTORY_ORCHESTRATOR_SYSTEM_PROMPT
         scenario_prompt_block = build_scenario_prompt_block(scenario_profile, self.name.lower())
         if scenario_prompt_block and "<scenario_profile>" not in (self.config.system_prompt or ""):
             self.config.system_prompt = f"{self.config.system_prompt or ''}\n\n{scenario_prompt_block}".strip()
@@ -394,6 +438,12 @@ class OrchestratorAgent(BaseAgent):
                     # 🔥 添加短暂延迟，避免快速重试
                     await asyncio.sleep(1.0)
 
+                    progress_label = (
+                        f"当前已收集梳理条目: {inventory_items_count(self._collect_inventory_report())} 个"
+                        if inventory_mode
+                        else f"当前已收集发现: {len(self._all_findings)} 个"
+                    )
+
                     # 🔥 更详细的重试提示
                     retry_prompt = f"""收到空响应（第 {empty_retry_count} 次）。请严格按照以下格式输出你的决策：
 
@@ -402,7 +452,7 @@ Action: [dispatch_agent|summarize|finish]
 Action Input: {{"参数": "值"}}
 
 当前可调度的子 Agent: {list(self.sub_agents.keys())}
-当前已收集发现: {len(self._all_findings)} 个
+{progress_label}
 
 请立即输出你的下一步决策。"""
 
@@ -510,9 +560,14 @@ Action Input: {{"参数": "值"}}
                 # 执行 LLM 决定的操作
                 if step.action == "finish":
                     # 🔥 LLM 决定完成审计
-                    await self.emit_llm_decision("完成审计", "LLM 判断审计已充分完成")
+                    await self.emit_llm_decision(
+                        "完成代码梳理" if inventory_mode else "完成审计",
+                        "LLM 判断代码梳理报告已充分完成" if inventory_mode else "LLM 判断审计已充分完成",
+                    )
                     await self.emit_llm_complete(
-                        f"编排完成，发现 {len(self._all_findings)} 个漏洞",
+                        "编排完成，已生成代码梳理报告"
+                        if inventory_mode
+                        else f"编排完成，发现 {len(self._all_findings)} 个漏洞",
                         self._total_tokens
                     )
                     final_result = step.action_input
@@ -561,16 +616,27 @@ Action Input: {{"参数": "值"}}
             
             # 🔥 如果被取消，返回取消结果
             if self.is_cancelled:
+                inventory_report = self._collect_inventory_report() if inventory_mode else {}
+                inventory_count = inventory_items_count(inventory_report)
                 await self.emit_event(
                     "info",
-                    f"🛑 Orchestrator 已取消: {len(self._all_findings)} 个发现, {self._iteration} 轮决策",
-                    metadata={"status": "stopped", "findings_count": len(self._all_findings)},
+                    (
+                        f"🛑 Orchestrator 已取消: {inventory_count} 个梳理条目, {self._iteration} 轮决策"
+                        if inventory_mode
+                        else f"🛑 Orchestrator 已取消: {len(self._all_findings)} 个发现, {self._iteration} 轮决策"
+                    ),
+                    metadata={
+                        "status": "stopped",
+                        "findings_count": 0 if inventory_mode else len(self._all_findings),
+                        "inventory_items_count": inventory_count if inventory_mode else 0,
+                    },
                 )
                 return AgentResult(
                     success=False,
                     error="任务已取消",
                     data={
-                        "findings": self._all_findings,
+                        "findings": [] if inventory_mode else self._all_findings,
+                        "inventory_report": inventory_report,
                         "steps": [
                             {
                                 "thought": s.thought,
@@ -589,16 +655,23 @@ Action Input: {{"参数": "值"}}
             
             # 🔥 如果有错误，返回失败结果
             if error_message:
+                inventory_report = self._collect_inventory_report() if inventory_mode else {}
+                inventory_count = inventory_items_count(inventory_report)
                 await self.emit_event(
                     "error",
                     f"❌ Orchestrator 失败: {error_message}",
-                    metadata={"status": "failed", "findings_count": len(self._all_findings)},
+                    metadata={
+                        "status": "failed",
+                        "findings_count": 0 if inventory_mode else len(self._all_findings),
+                        "inventory_items_count": inventory_count if inventory_mode else 0,
+                    },
                 )
                 return AgentResult(
                     success=False,
                     error=error_message,
                     data={
-                        "findings": self._all_findings,
+                        "findings": [] if inventory_mode else self._all_findings,
+                        "inventory_report": inventory_report,
                         "steps": [
                             {
                                 "thought": s.thought,
@@ -615,6 +688,42 @@ Action Input: {{"参数": "值"}}
                     duration_ms=duration_ms,
                 )
             
+            if inventory_mode:
+                inventory_report = self._collect_inventory_report(final_result)
+                item_count = inventory_items_count(inventory_report)
+                await self.emit_event(
+                    "info",
+                    f"🎯 Orchestrator 完成代码梳理: {item_count} 个条目, {self._iteration} 轮决策",
+                    metadata={
+                        "status": "completed",
+                        "findings_count": 0,
+                        "inventory_items_count": item_count,
+                        "result_mode": "inventory",
+                    },
+                )
+                logger.info(f"[Orchestrator] Inventory result: {item_count} items collected")
+                return AgentResult(
+                    success=True,
+                    data={
+                        "findings": [],
+                        "inventory_report": inventory_report,
+                        "summary": final_result or self._generate_default_summary(),
+                        "steps": [
+                            {
+                                "thought": s.thought,
+                                "action": s.action,
+                                "action_input": s.action_input,
+                                "observation": s.observation[:500] if s.observation else None,
+                            }
+                            for s in self._steps
+                        ],
+                    },
+                    iterations=self._iteration,
+                    tool_calls=self._tool_calls,
+                    tokens_used=self._total_tokens,
+                    duration_ms=duration_ms,
+                )
+
             await self.emit_event(
                 "info",
                 f"🎯 Orchestrator 完成: {len(self._all_findings)} 个发现, {self._iteration} 轮决策",
@@ -668,12 +777,13 @@ Action Input: {{"参数": "值"}}
     ) -> str:
         """构建初始消息"""
         structure = project_info.get('structure', {})
+        inventory_mode = is_inventory_profile(config.get('scenario_profile') or {})
         
         # 🔥 检查是否是限定范围的审计
         scope_limited = structure.get('scope_limited', False)
         scope_message = structure.get('scope_message', '')
         
-        msg = f"""请开始对以下项目进行安全审计。
+        msg = f"""请开始对以下项目进行{'代码梳理' if inventory_mode else '安全审计'}。
 
 ## 项目信息
 - 名称: {project_info.get('name', 'unknown')}
@@ -708,7 +818,7 @@ Action Input: {{"参数": "值"}}
         if target_files:
             msg += f"""
 ## ⚠️ 重要提示
-用户指定了 **{len(target_files)}** 个目标文件进行审计。
+用户指定了 **{len(target_files)}** 个目标文件进行{'梳理' if inventory_mode else '审计'}。
 请确保你的分析集中在这些指定的文件上，不要浪费时间分析其他文件。
 """
 
@@ -720,14 +830,14 @@ Action Input: {{"参数": "值"}}
         
         msg += f"""
 ## 用户配置
-- 目标漏洞: {config.get('target_vulnerabilities', ['all'])}
+- {'关注类型' if inventory_mode else '目标漏洞'}: {config.get('target_vulnerabilities', ['all'])}
 - 验证级别: {config.get('verification_level', 'sandbox')}
 - 排除模式: {config.get('exclude_patterns', [])}
 
 ## 可用子 Agent
 {', '.join(self.sub_agents.keys()) if self.sub_agents else '(暂无子 Agent)'}
 
-请开始你的审计工作。首先思考应该如何开展，然后决定第一步做什么。"""
+请开始你的{'代码梳理' if inventory_mode else '审计'}工作。首先思考应该如何开展，然后决定第一步做什么。"""
         
         return msg
     
@@ -954,6 +1064,73 @@ Action Input: {{"参数": "值"}}
                         f"[Orchestrator] Saved {agent_name} handoff: "
                         f"summary={result.handoff.summary[:50]}..."
                     )
+
+                if self._is_inventory_mode():
+                    inventory_report = extract_inventory_report(data)
+                    item_count = inventory_items_count(inventory_report)
+                    await self.emit_event(
+                        "dispatch_complete",
+                        f"✅ {agent_name} Agent 完成",
+                        agent=agent_name,
+                        findings_count=0,
+                        inventory_items_count=item_count,
+                    )
+
+                    if agent_name == "recon":
+                        observation = f"""## Recon Agent 执行结果
+
+**状态**: 成功
+**迭代次数**: {result.iterations}
+**耗时**: {result.duration_ms}ms
+
+### 项目结构
+{json.dumps(data.get('project_structure', {}), ensure_ascii=False, indent=2)}
+
+### 技术栈
+- 语言: {data.get('tech_stack', {}).get('languages', [])}
+- 框架: {data.get('tech_stack', {}).get('frameworks', [])}
+- 数据库: {data.get('tech_stack', {}).get('databases', [])}
+
+### 入口点 ({len(data.get('entry_points', []))} 个)
+"""
+                        for i, ep in enumerate(data.get('entry_points', [])[:10]):
+                            if isinstance(ep, dict):
+                                observation += f"{i+1}. [{ep.get('type', 'unknown')}] {ep.get('file', '')}:{ep.get('line', '')}\n"
+
+                        observation += f"""
+### 相关区域
+{data.get('high_risk_areas', [])}
+
+### 初步线索 ({len(data.get('initial_findings', []))} 个)
+"""
+                        for finding in data.get('initial_findings', [])[:5]:
+                            if isinstance(finding, str):
+                                observation += f"- {finding}\n"
+                            elif isinstance(finding, dict):
+                                observation += f"- {finding.get('title', finding)}\n"
+                    else:
+                        overview = inventory_report.get("overview") if isinstance(inventory_report, dict) else {}
+                        observation = f"""## {agent_name} Agent 执行结果
+
+**状态**: 成功
+**梳理条目**: {item_count}
+**迭代次数**: {result.iterations}
+**耗时**: {result.duration_ms}ms
+
+### 梳理摘要
+{(overview or {}).get('summary') or data.get('summary') or '当前 Agent 已完成梳理。'}
+"""
+                        for i, item in enumerate((inventory_report.get("items") or [])[:10] if isinstance(inventory_report, dict) else []):
+                            if not isinstance(item, dict):
+                                continue
+                            observation += f"""
+{i+1}. [{item.get('item_type', 'code_reference')}] {item.get('symbol', '')}
+   - 文件: {item.get('file_path', 'unknown')}:{item.get('line_start', '')}
+   - 证据: {str(item.get('evidence') or '')[:200]}...
+"""
+                    if data.get("summary"):
+                        observation += f"\n\n### Agent 总结\n{data['summary']}"
+                    return observation
 
                 # 🔥 CRITICAL FIX: 收集发现 - 支持多种字段名
                 # findings 字段通常来自 Analysis/Verification Agent

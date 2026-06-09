@@ -14,6 +14,28 @@ import { apiClient } from './serverClient';
 
 // ============ Types ============
 
+export interface InventoryReportItem {
+  file_path?: string;
+  line_start?: null | number;
+  line_end?: null | number;
+  symbol?: string;
+  item_type?: string;
+  evidence?: string;
+  risk_note?: string;
+  suggested_followup?: string;
+  extras?: Record<string, unknown>;
+}
+
+export interface InventoryReport {
+  scenario?: Record<string, unknown>;
+  scope?: Record<string, unknown>;
+  overview?: Record<string, unknown>;
+  items?: InventoryReportItem[];
+  chains?: unknown[];
+  resources?: unknown[];
+  qa?: Record<string, unknown>;
+}
+
 export interface AgentTask {
   id: string;
   project_id: string;
@@ -31,6 +53,8 @@ export interface AgentTask {
   files_with_findings: number; // 有漏洞发现的文件数
   total_chunks: number;
   findings_count: number;
+  inventory_report?: InventoryReport;
+  inventory_items_count?: number;
   verified_count: number;
   false_positive_count: number;
 
@@ -161,6 +185,7 @@ export interface AgentTaskSummary {
     false_positive_count: number;
     files_with_findings: number;
     findings_count: number;
+    inventory_items_count?: number;
     indexed_files: number;
     total_chunks: number;
     total_files: number;

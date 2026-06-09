@@ -14,3 +14,4 @@ export { AgentErrorBoundary } from './AgentErrorBoundary';
 export { ConnectionStatus } from './ConnectionStatus';
 export { ReportExportDialog } from './ReportExportDialog';
 export { CheckpointDialog } from './CheckpointDialog';
+export { InventoryReportPanel } from './InventoryReportPanel';

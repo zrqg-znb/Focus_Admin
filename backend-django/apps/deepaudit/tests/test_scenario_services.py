@@ -14,6 +14,8 @@ from apps.deepaudit.scenario_profile import (
     API_CHAIN_SCENARIO_KEY,
     CONCURRENCY_SCENARIO_KEY,
     GENERAL_SCENARIO_KEY,
+    INVENTORY_ALLOWED_TOOLS,
+    INVENTORY_BLOCKED_TOOLS,
     resolve_scenario_profile,
 )
 from core.user.user_model import User
@@ -47,8 +49,56 @@ class ScenarioServicesTestCase(TestCase):
         self.assertEqual(runtime_profile['target_vulnerabilities'], [])
         self.assertEqual(runtime_profile['focus_keywords'], [])
         self.assertEqual(runtime_profile['tool_policy']['search_code']['keywords'], [])
+        self.assertEqual(runtime_profile['tool_policy']['allowed_tools'], INVENTORY_ALLOWED_TOOLS)
+        self.assertEqual(runtime_profile['tool_policy']['blocked_tools'], INVENTORY_BLOCKED_TOOLS)
+        self.assertNotIn('semgrep_scan', runtime_profile['tool_policy']['first_pass_order'])
         self.assertIsNone(serialized['prompt_template_name'])
         self.assertIsNone(serialized['rule_set_name'])
+
+    def test_create_inventory_scenario_normalizes_partial_tool_policy(self) -> None:
+        scenario = create_scenario(
+            self.user,
+            {
+                'scenario_key': 'partial_inventory',
+                'name': '部分策略梳理',
+                'objective_type': ScenarioObjectiveType.INVENTORY,
+                'tool_policy': {
+                    'allowed_tools': ['search_code', 'semgrep_scan', 'run_code'],
+                    'blocked_tools': ['custom_tool'],
+                    'search_code': {'keywords': ['pthread_']},
+                    'first_pass_order': ['semgrep_scan', 'search_code', 'run_code'],
+                },
+            },
+        )
+
+        runtime_profile = resolve_scenario_profile(scenario.scenario_key)
+        tool_policy = runtime_profile['tool_policy']
+
+        self.assertEqual(tool_policy['result_mode'], 'inventory')
+        self.assertEqual(tool_policy['allowed_tools'], ['search_code'])
+        self.assertEqual(tool_policy['blocked_tools'], [*INVENTORY_BLOCKED_TOOLS, 'custom_tool'])
+        self.assertEqual(tool_policy['search_code']['keywords'], ['pthread_'])
+        self.assertEqual(tool_policy['first_pass_order'], ['search_code'])
+
+    def test_create_audit_scenario_does_not_inherit_inventory_result_mode(self) -> None:
+        scenario = create_scenario(
+            self.user,
+            {
+                'scenario_key': 'audit_with_stale_policy',
+                'name': '审计策略回归',
+                'objective_type': ScenarioObjectiveType.AUDIT,
+                'tool_policy': {
+                    'result_mode': 'inventory',
+                    'first_pass_order': ['search_code'],
+                },
+            },
+        )
+
+        runtime_profile = resolve_scenario_profile(scenario.scenario_key)
+
+        self.assertEqual(runtime_profile['objective_type'], ScenarioObjectiveType.AUDIT)
+        self.assertEqual(runtime_profile['result_mode'], 'audit')
+        self.assertEqual(runtime_profile['tool_policy']['result_mode'], 'audit')
 
     def test_copy_scenario_preserves_inventory_objective(self) -> None:
         scenario = create_scenario(

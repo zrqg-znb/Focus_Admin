@@ -25,6 +25,7 @@ from apps.deepaudit.constants import (
     FINDING_STATUS_CHOICES,
 )
 from apps.deepaudit.heuristics import DEFAULT_RULE_PATTERNS, normalize_severity_weight
+from apps.deepaudit.inventory_report import inventory_items_count
 from apps.deepaudit.permissions import require_project_role, serialize_user_brief
 from apps.deepaudit.realtime import push_task_event
 from apps.deepaudit.reporting import ReportBuilder
@@ -40,7 +41,7 @@ from apps.deepaudit.repo_specs import (
 )
 from apps.deepaudit.runtime import cleanup_runtime_workspace, docker_available, prepare_repository_workspace
 from apps.deepaudit.runtime import resolve_selected_file_paths, summarize_selected_targets, validate_selected_file_paths
-from apps.deepaudit.scenario_profile import resolve_scenario_profile
+from apps.deepaudit.scenario_profile import is_inventory_profile, resolve_scenario_profile
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact
 from apps.deepaudit.serialization import format_datetime_text, normalize_json_payload
 from apps.deepaudit.db_runtime import close_runtime_db_connections, ensure_runtime_db_connection, run_with_fresh_connection
@@ -459,6 +460,8 @@ def _extract_file_count_hints(message: str | None) -> tuple[int, int]:
 
 def _serialize_report_payload(instance: AgentTask) -> dict:
     findings = list(instance.findings.filter(is_deleted=False).order_by('-sys_create_datetime'))
+    inventory_report = _task_inventory_report(instance)
+    inventory_count = _task_inventory_items_count(instance)
     return normalize_json_payload(
         {
             'task': serialize_task(instance),
@@ -466,14 +469,121 @@ def _serialize_report_payload(instance: AgentTask) -> dict:
             'checkpoints': build_phase_checkpoints(instance),
             'findings': [serialize_finding(item) for item in findings],
             'events': [serialize_event(item) for item in instance.events.filter(is_deleted=False).order_by('sequence')[:1000]],
+            'inventory_report': inventory_report,
+            'inventory_items_count': inventory_count,
         }
     )
+
+
+def _task_inventory_report(instance: AgentTask) -> dict:
+    agent_config = normalize_json_payload(instance.agent_config or {})
+    report = agent_config.get('inventory_report')
+    return report if isinstance(report, dict) else {}
+
+
+def _task_inventory_items_count(instance: AgentTask) -> int:
+    agent_config = normalize_json_payload(instance.agent_config or {})
+    explicit_count = _to_int(agent_config.get('inventory_items_count'))
+    if explicit_count > 0:
+        return explicit_count
+    return inventory_items_count(_task_inventory_report(instance))
+
+
+def update_task_inventory_report(task_id: str, report: dict, items_count: int = 0) -> AgentTask | None:
+    instance = AgentTask.objects.filter(id=task_id, is_deleted=False).first()
+    if not instance:
+        return None
+    agent_config = normalize_json_payload(instance.agent_config or {})
+    agent_config['result_mode'] = 'inventory'
+    agent_config['inventory_report'] = normalize_json_payload(report or {})
+    agent_config['inventory_items_count'] = int(items_count or inventory_items_count(report))
+    instance.agent_config = agent_config
+    instance.save(update_fields=['agent_config', 'sys_update_datetime'])
+    return instance
+
+
+def _append_inventory_markdown(lines: list[str], report: dict, *, items_count: int) -> None:
+    if not report:
+        return
+    scenario = report.get('scenario') or {}
+    scope = report.get('scope') or {}
+    overview = report.get('overview') or {}
+    qa = report.get('qa') or {}
+
+    lines.extend(
+        [
+            '',
+            '## 梳理报告',
+            '',
+            f"- 场景: {scenario.get('name') or scenario.get('key') or '-'}",
+            f"- 输出目标: {scenario.get('objective') or 'inventory'}",
+            f"- 梳理条目: {items_count}",
+            f"- 关键词: {', '.join(scope.get('keywords') or []) or '-'}",
+            '',
+            '### 概览',
+            '',
+            str(overview.get('summary') or '暂无摘要。'),
+            '',
+            f"- 覆盖情况: {overview.get('coverage') or '-'}",
+            f"- 限制说明: {overview.get('limitations') or '-'}",
+            '',
+            f"### 梳理条目 ({items_count})",
+            '',
+        ]
+    )
+
+    items = report.get('items') or []
+    if not items:
+        lines.append('当前没有梳理条目。')
+    for index, item in enumerate(items, start=1):
+        lines.extend(
+            [
+                f"#### {index}. {item.get('symbol') or item.get('item_type') or '代码位置'}",
+                '',
+                f"- 文件: {item.get('file_path') or '-'}",
+                f"- 行号: {item.get('line_start') or '-'}",
+                f"- 类型: {item.get('item_type') or '-'}",
+                f"- 风险备注: {item.get('risk_note') or '-'}",
+                f"- 建议跟进: {item.get('suggested_followup') or '-'}",
+                '',
+                '证据:',
+                '',
+                str(item.get('evidence') or '-'),
+                '',
+            ]
+        )
+
+    chains = report.get('chains') or []
+    if chains:
+        lines.extend(['### 调用链 / 资源访问链', ''])
+        for index, chain in enumerate(chains, start=1):
+            lines.append(f"{index}. {json.dumps(chain, ensure_ascii=False) if isinstance(chain, (dict, list)) else chain}")
+        lines.append('')
+
+    resources = report.get('resources') or []
+    if resources:
+        lines.extend(['### 资源清单', ''])
+        for index, resource in enumerate(resources, start=1):
+            lines.append(f"{index}. {json.dumps(resource, ensure_ascii=False) if isinstance(resource, (dict, list)) else resource}")
+        lines.append('')
+
+    warnings = qa.get('warnings') or []
+    lines.extend(['### QA 校验', ''])
+    lines.append(f"- 状态: {qa.get('status') or 'unchecked'}")
+    lines.append(f"- 已校验条目: {qa.get('checked_items') or 0}")
+    if warnings:
+        for warning in warnings:
+            lines.append(f"- {json.dumps(warning, ensure_ascii=False) if isinstance(warning, dict) else warning}")
+    else:
+        lines.append('- 未发现引用一致性告警。')
 
 
 def _render_agent_markdown_report(instance: AgentTask, payload: dict) -> str:
     task = payload.get('task') or {}
     summary = payload.get('summary') or {}
     findings = payload.get('findings') or []
+    inventory_report = payload.get('inventory_report') or {}
+    inventory_count = int(payload.get('inventory_items_count') or inventory_items_count(inventory_report))
     severity_distribution = summary.get('severity_distribution') or {}
     vulnerability_types = summary.get('vulnerability_types') or {}
 
@@ -492,6 +602,7 @@ def _render_agent_markdown_report(instance: AgentTask, payload: dict) -> str:
         f"- 安全评分: {task.get('security_score', 0):.2f} / 100",
         f"- 质量评分: {task.get('quality_score', 0):.2f} / 100",
         f"- 漏洞总数: {task.get('findings_count', len(findings))}",
+        f"- 梳理条目: {inventory_count}",
         f"- 已验证漏洞: {task.get('verified_count', 0)}",
         f"- 误报数量: {task.get('false_positive_count', 0)}",
         f"- 工具调用: {task.get('tool_calls_count', 0)}",
@@ -507,6 +618,9 @@ def _render_agent_markdown_report(instance: AgentTask, payload: dict) -> str:
         '## 漏洞类型分布',
         '',
     ]
+
+    if inventory_report:
+        _append_inventory_markdown(lines, inventory_report, items_count=inventory_count)
 
     if vulnerability_types:
         for vuln_type, count in sorted(vulnerability_types.items(), key=lambda item: (-item[1], item[0])):
@@ -768,6 +882,8 @@ def serialize_task(instance: AgentTask) -> dict:
     agent_config = dict(instance.agent_config or {})
     selection_stats = dict(agent_config.get('selection_stats') or {})
     repository_runtime = dict(agent_config.get('repository_runtime') or {})
+    inventory_report = _task_inventory_report(instance)
+    inventory_count = _task_inventory_items_count(instance)
     return {
         'id': str(instance.id),
         'project_id': str(instance.project_id),
@@ -812,6 +928,8 @@ def serialize_task(instance: AgentTask) -> dict:
         'tool_calls_count': instance.tool_calls_count,
         'tokens_used': instance.tokens_used,
         'findings_count': instance.findings_count,
+        'inventory_report': inventory_report,
+        'inventory_items_count': inventory_count,
         'verified_count': instance.verified_count,
         'false_positive_count': instance.false_positive_count,
         'critical_count': instance.critical_count,
@@ -992,6 +1110,9 @@ def create_task(user, payload: dict) -> AgentTask:
         'effective_profile': scenario_profile,
     }
     target_vulnerabilities = list(scenario_profile.get('target_vulnerabilities') or [])
+    verification_level = payload.get('verification_level') or 'sandbox'
+    if is_inventory_profile(scenario_profile):
+        verification_level = 'analysis_only'
     agent_config = _persist_repository_signature_metadata(
         agent_config,
         repository_signature=repository_signature,
@@ -1001,6 +1122,8 @@ def create_task(user, payload: dict) -> AgentTask:
     agent_config['requested_target_vulnerabilities'] = manual_target_vulnerabilities
     agent_config['scenario_profile'] = scenario_profile
     agent_config['scenario_key'] = scenario_profile.get('scenario_key')
+    if is_inventory_profile(scenario_profile):
+        agent_config['result_mode'] = 'inventory'
     agent_config.setdefault(
         'selection_stats',
         {
@@ -1016,7 +1139,7 @@ def create_task(user, payload: dict) -> AgentTask:
         description=payload.get('description') or '',
         audit_scope=audit_scope,
         target_vulnerabilities=target_vulnerabilities,
-        verification_level=payload.get('verification_level') or 'sandbox',
+        verification_level=verification_level,
         repository_url=repository_spec['repository_url'] or None,
         repository_type=repository_spec['repository_type'],
         branch_name=repository_spec['branch_name'],
@@ -1502,6 +1625,7 @@ def build_summary(instance: AgentTask, *, findings: list[AgentFinding] | None = 
             'files_with_findings': instance.files_with_findings,
             'total_chunks': instance.total_chunks,
             'findings_count': instance.findings_count,
+            'inventory_items_count': _task_inventory_items_count(instance),
             'verified_count': instance.verified_count,
             'false_positive_count': instance.false_positive_count,
         },
@@ -2428,6 +2552,8 @@ def execute_agent_task(task_id: str) -> None:
                 agent_config=current_agent_config,
             ),
         )
+        if is_inventory_profile(effective_scenario_profile):
+            effective_verification = 'analysis_only'
         logger.info(
             'DeepAudit agent task %s prepared resolved target scope before runner: selected_count=%s directory_count=%s resolved_file_count=%s directory_samples=%s resolved_samples=%s %s',
             instance.id,
@@ -2462,16 +2588,19 @@ def execute_agent_task(task_id: str) -> None:
             ),
             'scenario_profile': effective_scenario_profile,
             'scenario_key': effective_scenario_profile.get('scenario_key'),
+            'result_mode': 'inventory' if is_inventory_profile(effective_scenario_profile) else 'audit',
             'selection_stats': selection_stats,
             'selection_runtime': selection_runtime,
             'repository_runtime': repository_runtime,
         }
+        instance.verification_level = effective_verification
         instance.total_files = len(resolved_target_files) if validated_target_files else instance.total_files
         run_with_fresh_connection(
             instance.save,
             update_fields=[
                 'audit_scope',
                 'target_vulnerabilities',
+                'verification_level',
                 'agent_config',
                 'total_files',
                 'sys_update_datetime',

@@ -16,6 +16,7 @@ from apps.deepaudit.agent_engine.tools.file_tool import (
 )
 from apps.deepaudit.agent_task.agent_runner import (
     _effective_target_files_from_input,
+    _filter_tool_groups_for_scenario,
     _normalize_finding_payload,
     _normalize_agent_input,
     run_orchestrator_agent_async,
@@ -28,13 +29,17 @@ class AgentRunnerScopeTestCase(SimpleTestCase):
 
     def setUp(self) -> None:
         self.workspace = Path(tempfile.mkdtemp(prefix='focusaudit-agent-runner-'))
+        self.sibling_workspace = Path(f'{self.workspace}-sibling')
         (self.workspace / 'src').mkdir(parents=True, exist_ok=True)
         (self.workspace / 'src' / 'module').mkdir(parents=True, exist_ok=True)
         (self.workspace / 'src' / 'module' / 'main.c').write_text('int main(void) { return 0; }\n', encoding='utf-8')
         (self.workspace / 'src' / 'module' / 'helper.h').write_text('#pragma once\n', encoding='utf-8')
+        self.sibling_workspace.mkdir(parents=True, exist_ok=True)
+        (self.sibling_workspace / 'outside.c').write_text('int outside(void) { return 1; }\n', encoding='utf-8')
 
     def tearDown(self) -> None:
         shutil.rmtree(self.workspace, ignore_errors=True)
+        shutil.rmtree(self.sibling_workspace, ignore_errors=True)
 
     def test_effective_target_files_prefers_selection_runtime_resolved_files(self) -> None:
         input_data = {
@@ -61,6 +66,15 @@ class AgentRunnerScopeTestCase(SimpleTestCase):
         self.assertEqual(validation['missing_files'], ['src/missing.c'])
         self.assertEqual(validation['outside_targets'], [])
 
+    def test_validate_runtime_target_files_rejects_sibling_prefix_paths(self) -> None:
+        validation = _validate_runtime_target_files(
+            str(self.workspace),
+            [f'../{self.sibling_workspace.name}/outside.c'],
+        )
+
+        self.assertEqual(validation['valid_files'], [])
+        self.assertEqual(validation['outside_targets'], [f'../{self.sibling_workspace.name}/outside.c'])
+
     def test_normalize_agent_input_preserves_explicit_general_scenario(self) -> None:
         normalized = _normalize_agent_input(
             'task-1',
@@ -79,6 +93,53 @@ class AgentRunnerScopeTestCase(SimpleTestCase):
         self.assertFalse(scenario_profile['legacy_c_family'])
         self.assertEqual(normalized['config']['verification_level'], 'analysis_only')
         self.assertIn('buffer_overflow', normalized['config']['target_vulnerabilities'])
+
+    def test_inventory_tool_policy_filters_vulnerability_and_poc_tools(self) -> None:
+        tool_groups = {
+            "recon": {
+                "list_files": object(),
+                "search_code": object(),
+                "semgrep_scan": object(),
+                "gitleaks_scan": object(),
+            },
+            "analysis": {
+                "read_file": object(),
+                "smart_scan": object(),
+                "run_code": object(),
+                "create_vulnerability_report": object(),
+            },
+            "verification": {
+                "read_file": object(),
+                "vulnerability_validation": object(),
+                "run_code": object(),
+            },
+        }
+
+        filtered = _filter_tool_groups_for_scenario(
+            tool_groups,
+            {
+                "objective_type": "inventory",
+                "tool_policy": {
+                    "allowed_tools": [
+                        "list_files",
+                        "read_file",
+                        "search_code",
+                        "smart_scan",
+                    ],
+                    "blocked_tools": [
+                        "semgrep_scan",
+                        "gitleaks_scan",
+                        "run_code",
+                        "vulnerability_validation",
+                        "create_vulnerability_report",
+                    ],
+                },
+            },
+        )
+
+        self.assertEqual(set(filtered["recon"]), {"list_files", "search_code"})
+        self.assertEqual(set(filtered["analysis"]), {"read_file", "smart_scan"})
+        self.assertEqual(set(filtered["verification"]), {"read_file"})
 
     def test_normalize_finding_payload_promotes_validation_evidence_and_fix_details(self) -> None:
         normalized = _normalize_finding_payload(

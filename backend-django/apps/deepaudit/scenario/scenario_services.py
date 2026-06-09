@@ -91,11 +91,40 @@ def _normalize_objective_type(value: str | None) -> str:
     return objective_type
 
 
-def _normalize_tool_policy(payload: dict[str, Any] | None, *, target_vulnerabilities: Iterable[str], search_keywords: Iterable[str]) -> dict[str, Any]:
+def _normalize_tool_policy(
+    payload: dict[str, Any] | None,
+    *,
+    target_vulnerabilities: Iterable[str],
+    search_keywords: Iterable[str],
+    objective_type: str = ScenarioObjectiveType.AUDIT,
+) -> dict[str, Any]:
     policy = normalize_json_payload(payload or {})
     if policy:
+        if objective_type == ScenarioObjectiveType.INVENTORY:
+            inventory_defaults = _build_tool_policy(
+                focus_vulnerabilities=target_vulnerabilities,
+                search_keywords=search_keywords,
+                quick_mode=True,
+                objective_type=objective_type,
+            )
+            policy = {**inventory_defaults, **policy}
+            policy['result_mode'] = 'inventory'
+            default_allowed = _unique_list(inventory_defaults.get('allowed_tools') or [])
+            default_blocked = _unique_list(inventory_defaults.get('blocked_tools') or [])
+            custom_allowed = _unique_list((payload or {}).get('allowed_tools') or [])
+            custom_blocked = _unique_list((payload or {}).get('blocked_tools') or [])
+            allowed_set = set(default_allowed)
+            policy['allowed_tools'] = [
+                tool
+                for tool in (custom_allowed or default_allowed)
+                if tool in allowed_set
+            ] or default_allowed
+            policy['blocked_tools'] = _unique_list([*default_blocked, *custom_blocked])
+        else:
+            policy['result_mode'] = 'audit'
+
         smart_scan = dict(policy.get('smart_scan') or {})
-        smart_scan.setdefault('quick_mode', False)
+        smart_scan.setdefault('quick_mode', objective_type == ScenarioObjectiveType.INVENTORY)
         smart_scan.setdefault('scan_types', ['pattern'])
         smart_scan.setdefault('focus_vulnerabilities', _unique_list(target_vulnerabilities))
         policy['smart_scan'] = smart_scan
@@ -107,13 +136,29 @@ def _normalize_tool_policy(payload: dict[str, Any] | None, *, target_vulnerabili
         search_code = dict(policy.get('search_code') or {})
         search_code.setdefault('keywords', _unique_list(search_keywords))
         policy['search_code'] = search_code
-        policy.setdefault('first_pass_order', ['semgrep_scan', 'smart_scan', 'pattern_match'])
+        policy.setdefault(
+            'first_pass_order',
+            (
+                ['search_code', 'rag_query', 'read_file', 'function_context', 'pattern_match', 'smart_scan']
+                if objective_type == ScenarioObjectiveType.INVENTORY
+                else ['semgrep_scan', 'smart_scan', 'pattern_match']
+            ),
+        )
+        if objective_type == ScenarioObjectiveType.INVENTORY:
+            blocked = {str(item).strip() for item in policy.get('blocked_tools') or [] if str(item).strip()}
+            allowed = {str(item).strip() for item in policy.get('allowed_tools') or [] if str(item).strip()}
+            policy['first_pass_order'] = [
+                tool
+                for tool in _unique_list(policy.get('first_pass_order') or [])
+                if tool not in blocked and (not allowed or tool in allowed)
+            ]
         return policy
 
     return _build_tool_policy(
         focus_vulnerabilities=target_vulnerabilities,
         search_keywords=search_keywords,
         quick_mode=False,
+        objective_type=objective_type,
     )
 
 
@@ -209,6 +254,7 @@ def _build_default_tool_policy_for_scenario(
         None,
         target_vulnerabilities=target_vulnerabilities,
         search_keywords=search_keywords or knowledge_modules,
+        objective_type=objective_type,
     )
 
 
@@ -307,6 +353,7 @@ def create_scenario(user, payload: dict) -> AuditScenarioProfile:
             payload.get('tool_policy') or {},
             target_vulnerabilities=_collect_rule_categories(rule_set),
             search_keywords=_default_search_keywords(objective_type, rule_set, scenario_key),
+            objective_type=objective_type,
         )
     else:
         tool_policy = _build_default_tool_policy_for_scenario(
@@ -369,6 +416,7 @@ def update_scenario(user, scenario_id: str, payload: dict) -> AuditScenarioProfi
             payload.get('tool_policy') or {},
             target_vulnerabilities=_collect_rule_categories(scenario.rule_set),
             search_keywords=_default_search_keywords(scenario.objective_type, scenario.rule_set, scenario.scenario_key),
+            objective_type=scenario.objective_type,
         )
     elif 'objective_type' in payload or 'rule_set_id' in payload:
         scenario.tool_policy = _build_default_tool_policy_for_scenario(
@@ -495,6 +543,7 @@ def ensure_default_scenarios() -> int:
                 focus_vulnerabilities=definition.get('target_vulnerabilities') or [],
                 search_keywords=definition.get('focus_keywords') or [],
                 quick_mode=False,
+                objective_type=str(definition.get('objective_type') or ScenarioObjectiveType.AUDIT),
             ),
             is_default=bool(definition.get('scenario_code') == 'D'),
             is_system=True,

@@ -26,7 +26,13 @@ from apps.deepaudit.c_family import (
     C_FAMILY_TARGET_VULNERABILITIES,
     build_language_profile,
 )
-from apps.deepaudit.scenario_profile import resolve_scenario_profile
+from apps.deepaudit.inventory_report import (
+    extract_inventory_report,
+    inventory_items_count,
+    normalize_inventory_report,
+)
+from apps.deepaudit.scenario_profile import is_inventory_profile, resolve_scenario_profile
+from apps.deepaudit.serialization import normalize_json_payload
 
 if TYPE_CHECKING:
     from apps.deepaudit.agent_task.agent_task_model import AgentCheckpoint, AgentFinding
@@ -145,7 +151,7 @@ def _validate_runtime_target_files(project_root: str, target_files: list[str]) -
         if not normalized:
             continue
         full_path = os.path.realpath(os.path.join(real_root, normalized))
-        if not full_path.startswith(real_root):
+        if os.path.commonpath([real_root, full_path]) != real_root:
             outside_targets.append(normalized)
             continue
         if not os.path.exists(full_path):
@@ -263,7 +269,9 @@ def _normalize_agent_input(task_id: str, input_data: Dict[str, Any], workspace: 
     if not target_vulnerabilities and language_profile.get("is_c_family_dominant") and scenario_profile.get("legacy_c_family"):
         target_vulnerabilities = list(C_FAMILY_TARGET_VULNERABILITIES)
 
-    if input_data.get("verification_level"):
+    if is_inventory_profile(scenario_profile):
+        verification_level = "analysis_only"
+    elif input_data.get("verification_level"):
         verification_level = input_data.get("verification_level")
     elif scenario_profile.get("legacy_c_family") or (
         language_profile.get("is_c_family_dominant")
@@ -296,6 +304,7 @@ async def _initialize_tools(
     input_data: Dict[str, Any],
     *,
     enable_c_family_rag_fallback: bool = False,
+    scenario_profile: Dict[str, Any] | None = None,
 ) -> Dict[str, Dict[str, Any]]:
     from apps.deepaudit.agent_engine.tools import (
         BanditTool,
@@ -473,12 +482,34 @@ async def _initialize_tools(
 
     CreateVulnerabilityReportTool.clear_all_reports()
 
-    return {
+    tool_groups = {
         "orchestrator": orchestrator_tools,
         "recon": recon_tools,
         "analysis": analysis_tools,
         "verification": verification_tools,
     }
+    return _filter_tool_groups_for_scenario(tool_groups, scenario_profile)
+
+
+def _filter_tool_groups_for_scenario(
+    tool_groups: Dict[str, Dict[str, Any]],
+    scenario_profile: Dict[str, Any] | None = None,
+) -> Dict[str, Dict[str, Any]]:
+    if not is_inventory_profile(scenario_profile):
+        return tool_groups
+
+    policy = dict((scenario_profile or {}).get("tool_policy") or {})
+    allowed = {str(item).strip() for item in policy.get("allowed_tools") or [] if str(item).strip()}
+    blocked = {str(item).strip() for item in policy.get("blocked_tools") or [] if str(item).strip()}
+    filtered_groups: Dict[str, Dict[str, Any]] = {}
+    for group_name, group_tools in tool_groups.items():
+        filtered = dict(group_tools)
+        if allowed:
+            filtered = {name: tool for name, tool in filtered.items() if name in allowed}
+        if blocked:
+            filtered = {name: tool for name, tool in filtered.items() if name not in blocked}
+        filtered_groups[group_name] = filtered
+    return filtered_groups
 
 
 def _normalize_finding_payload(item: Dict[str, Any]) -> Dict[str, Any] | None:
@@ -833,6 +864,7 @@ async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any],
         llm_service,
         input_data,
         enable_c_family_rag_fallback=bool(scenario_profile.get("legacy_c_family")),
+        scenario_profile=scenario_profile,
     )
 
     recon_agent = ReconAgent(
@@ -926,6 +958,33 @@ async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any],
         if not findings and report_findings:
             findings = report_findings
             result_data["findings"] = findings
+
+        if is_inventory_profile(scenario_profile):
+            raw_inventory_report = extract_inventory_report(result_data)
+            inventory_report = normalize_inventory_report(
+                raw_inventory_report,
+                scenario_profile=scenario_profile,
+                target_files=list(normalized_input.get("config", {}).get("target_files") or []),
+                project_root=workspace,
+            )
+            from apps.deepaudit.agent_task.agent_task_services import update_task_inventory_report
+
+            await sync_to_async(update_task_inventory_report)(
+                task_id,
+                inventory_report,
+                inventory_items_count(inventory_report),
+            )
+            findings = []
+            result_data["inventory_report"] = inventory_report
+            await event_manager.emit(
+                event_type="info",
+                phase=AGENT_PHASE_REPORTING,
+                message=f"Inventory 梳理报告已生成，条目数 {inventory_items_count(inventory_report)}",
+                event_metadata={
+                    "result_mode": "inventory",
+                    "inventory_items_count": inventory_items_count(inventory_report),
+                },
+            )
 
         current_phase = event_emitter.current_phase
         if current_phase and current_phase != AGENT_PHASE_REPORTING:

@@ -38,6 +38,47 @@ SYSTEM_SCENARIO_KEYS = {
     API_CHAIN_SCENARIO_KEY,
 }
 
+INVENTORY_ALLOWED_TOOLS = [
+    "list_files",
+    "read_file",
+    "search_files",
+    "search_code",
+    "rag_query",
+    "function_context",
+    "pattern_match",
+    "smart_scan",
+    "think",
+    "reflect",
+]
+
+INVENTORY_BLOCKED_TOOLS = [
+    "semgrep",
+    "semgrep_scan",
+    "gitleaks",
+    "gitleaks_scan",
+    "bandit",
+    "bandit_scan",
+    "safety",
+    "safety_scan",
+    "npm_audit",
+    "osv_scanner",
+    "osv_scan",
+    "kunlun_scan",
+    "cppcheck_scan",
+    "clang_tidy_scan",
+    "valgrind_scan",
+    "run_code",
+    "extract_function",
+    "vulnerability_validation",
+    "command_injection_test",
+    "sql_injection_test",
+    "xss_test",
+    "path_traversal_test",
+    "ssti_test",
+    "deserialization_test",
+    "create_vulnerability_report",
+]
+
 SCENARIO_KEY_ALIASES = {
     "": AUTO_SCENARIO_KEY,
     "auto": AUTO_SCENARIO_KEY,
@@ -382,7 +423,7 @@ SCENARIO_DEFINITIONS: dict[str, dict[str, Any]] = {
         "scenario_code": "C",
         "scenario_name": "临界区与硬件访问检查",
         "description": "聚焦 ISR、DMA、寄存器访问、临界区和接口契约。",
-        "objective_type": ScenarioObjectiveType.INVENTORY,
+        "objective_type": ScenarioObjectiveType.AUDIT,
         "prompt_template_name": "场景 C - 临界区与硬件访问检查",
         "rule_set_name": "场景 C - 临界区与硬件访问规则集",
         "knowledge_modules": ["embedded_concurrency", "deadlock", "api_contract_violation", "hardware_access"],
@@ -618,10 +659,33 @@ def _build_tool_policy(
     focus_vulnerabilities: Iterable[str],
     search_keywords: Iterable[str],
     quick_mode: bool = False,
+    objective_type: str | None = None,
 ) -> dict[str, Any]:
     focus = _unique_list(focus_vulnerabilities)
     keywords = _unique_list(search_keywords)
+    if str(objective_type or "").strip().lower() == ScenarioObjectiveType.INVENTORY:
+        return {
+            "result_mode": "inventory",
+            "allowed_tools": list(INVENTORY_ALLOWED_TOOLS),
+            "blocked_tools": list(INVENTORY_BLOCKED_TOOLS),
+            "smart_scan": {
+                "quick_mode": True,
+                "focus_vulnerabilities": focus,
+                "scan_types": ["pattern"],
+            },
+            "pattern_match": {"pattern_types": focus},
+            "search_code": {"keywords": keywords},
+            "first_pass_order": [
+                "search_code",
+                "rag_query",
+                "read_file",
+                "function_context",
+                "pattern_match",
+                "smart_scan",
+            ],
+        }
     return {
+        "result_mode": "audit",
         "semgrep_scan": {"rules": "auto"},
         "smart_scan": {
             "quick_mode": quick_mode,
@@ -797,6 +861,68 @@ def _build_focus_summary(
     )
 
 
+def is_inventory_profile(profile: dict[str, Any] | None) -> bool:
+    scenario = dict(profile or {})
+    return (
+        str(scenario.get("objective_type") or "").strip().lower() == ScenarioObjectiveType.INVENTORY
+        or str((scenario.get("tool_policy") or {}).get("result_mode") or "").strip().lower() == "inventory"
+        or str(scenario.get("result_mode") or "").strip().lower() == "inventory"
+    )
+
+
+def _normalize_runtime_tool_policy(
+    tool_policy: dict[str, Any],
+    *,
+    objective_type: str,
+    target_vulnerabilities: Iterable[str],
+    search_keywords: Iterable[str],
+) -> dict[str, Any]:
+    normalized = normalize_json_payload(tool_policy or {})
+    if str(objective_type or "").strip().lower() != ScenarioObjectiveType.INVENTORY:
+        normalized["result_mode"] = "audit"
+        return normalized
+
+    inventory_defaults = _build_tool_policy(
+        focus_vulnerabilities=target_vulnerabilities,
+        search_keywords=search_keywords,
+        quick_mode=True,
+        objective_type=ScenarioObjectiveType.INVENTORY,
+    )
+    merged = {**inventory_defaults, **normalized}
+    merged["result_mode"] = "inventory"
+    default_allowed = _unique_list(inventory_defaults.get("allowed_tools") or INVENTORY_ALLOWED_TOOLS)
+    default_blocked = _unique_list(inventory_defaults.get("blocked_tools") or INVENTORY_BLOCKED_TOOLS)
+    custom_allowed = _unique_list(normalized.get("allowed_tools") or [])
+    custom_blocked = _unique_list(normalized.get("blocked_tools") or [])
+    allowed_set = set(default_allowed)
+    merged["allowed_tools"] = [
+        tool
+        for tool in (custom_allowed or default_allowed)
+        if tool in allowed_set
+    ] or default_allowed
+    merged["blocked_tools"] = _unique_list([*default_blocked, *custom_blocked])
+    merged["first_pass_order"] = [
+        tool
+        for tool in _unique_list(merged.get("first_pass_order") or inventory_defaults["first_pass_order"])
+        if tool not in set(merged["blocked_tools"]) and tool in set(merged["allowed_tools"])
+    ]
+
+    smart_scan = dict(merged.get("smart_scan") or {})
+    smart_scan.setdefault("quick_mode", True)
+    smart_scan.setdefault("focus_vulnerabilities", _unique_list(target_vulnerabilities))
+    smart_scan.setdefault("scan_types", ["pattern"])
+    merged["smart_scan"] = smart_scan
+
+    pattern_match = dict(merged.get("pattern_match") or {})
+    pattern_match.setdefault("pattern_types", _unique_list(target_vulnerabilities))
+    merged["pattern_match"] = pattern_match
+
+    search_code = dict(merged.get("search_code") or {})
+    search_code.setdefault("keywords", _unique_list(search_keywords))
+    merged["search_code"] = search_code
+    return merged
+
+
 def _resolve_database_scenario_profile(scenario_key: str | None) -> AuditScenarioProfile | None:
     normalized_key = _normalize_key(scenario_key)
     if not normalized_key or normalized_key in {AUTO_SCENARIO_KEY}:
@@ -888,6 +1014,7 @@ def _build_runtime_profile_from_record(
             focus_vulnerabilities=target_vulnerabilities,
             search_keywords=search_keywords,
             quick_mode=False,
+            objective_type=objective_type,
         )
     else:
         smart_scan = dict(tool_policy.get("smart_scan") or {})
@@ -902,6 +1029,13 @@ def _build_runtime_profile_from_record(
         search_code.setdefault("keywords", search_keywords)
         tool_policy["search_code"] = search_code
         tool_policy.setdefault("first_pass_order", ["semgrep_scan", "smart_scan", "pattern_match"])
+
+    tool_policy = _normalize_runtime_tool_policy(
+        tool_policy,
+        objective_type=objective_type,
+        target_vulnerabilities=target_vulnerabilities,
+        search_keywords=search_keywords,
+    )
 
     knowledge_modules = _unique_list(
         scenario.knowledge_modules or definition.get("knowledge_modules") or []
@@ -948,6 +1082,7 @@ def _build_runtime_profile_from_record(
         "tool_policy": tool_policy,
         "agent_instructions": agent_instructions,
         "focus_summary": focus_summary,
+        "result_mode": tool_policy.get("result_mode") or ("inventory" if objective_type == ScenarioObjectiveType.INVENTORY else "audit"),
         "language_profile": normalize_json_payload(language_profile),
         "legacy_c_family": resolved_scenario_key == LEGACY_C_FAMILY_SCENARIO_KEY,
     }
@@ -1073,6 +1208,7 @@ def resolve_scenario_profile(
         focus_vulnerabilities=target_vulnerabilities,
         search_keywords=search_keywords,
         quick_mode=False,
+        objective_type=objective_type,
     )
     agent_instructions = _build_agent_instructions(
         scenario_name=scenario_name,
@@ -1108,6 +1244,7 @@ def resolve_scenario_profile(
         "tool_policy": tool_policy,
         "agent_instructions": agent_instructions,
         "focus_summary": focus_summary,
+        "result_mode": tool_policy.get("result_mode") or ("inventory" if objective_type == ScenarioObjectiveType.INVENTORY else "audit"),
         "language_profile": normalize_json_payload(language_profile),
         "legacy_c_family": resolved_scenario_key == LEGACY_C_FAMILY_SCENARIO_KEY,
     }
@@ -1149,6 +1286,7 @@ def build_scenario_prompt_block(profile: dict[str, Any] | None, agent_role: str)
     smart_scan_policy = dict(tool_policy.get("smart_scan") or {})
     pattern_policy = dict(tool_policy.get("pattern_match") or {})
     search_policy = dict(tool_policy.get("search_code") or {})
+    is_inventory = is_inventory_profile(scenario)
 
     lines = [
         "<scenario_profile>",
@@ -1166,6 +1304,20 @@ def build_scenario_prompt_block(profile: dict[str, Any] | None, agent_role: str)
         lines.extend(["", "### 提示词模板内容", prompt_content])
     if rule_lines:
         lines.extend(["", "### 规则集重点", *rule_lines])
+
+    if is_inventory:
+        lines.extend(
+            [
+                "",
+                "### Inventory 输出约束",
+                "- 当前任务是代码梳理，不是漏洞审计；主产物必须是 inventory_report，而不是漏洞 findings。",
+                "- 不要生成 PoC，不要判断可利用性，不要把疑似风险自动升级为漏洞。",
+                "- 若发现疑似真实漏洞，只写入 risk_note 与 suggested_followup。",
+                "- Final Answer 必须包含 JSON 对象 inventory_report，字段包括 scenario、scope、overview、items、chains、resources、qa。",
+                "- items 每条必须尽量包含 file_path、line_start、symbol、item_type、evidence、risk_note、suggested_followup。",
+                "- verification 阶段只校验文件/行号/证据一致性与调用链自洽性。",
+            ]
+        )
 
     if (
         str(scenario.get("resolved_scenario_key") or scenario.get("scenario_key") or "").strip().lower()
@@ -1186,7 +1338,10 @@ def build_scenario_prompt_block(profile: dict[str, Any] | None, agent_role: str)
         [
             "",
             "### 工具策略",
-            f"- semgrep_scan: rules={dict(tool_policy.get('semgrep_scan') or {}).get('rules', 'auto')}",
+            f"- result_mode: {tool_policy.get('result_mode') or scenario.get('result_mode') or 'audit'}",
+            f"- allowed_tools: {', '.join(_unique_list(tool_policy.get('allowed_tools') or [])) or '默认'}",
+            f"- blocked_tools: {', '.join(_unique_list(tool_policy.get('blocked_tools') or [])) or '无'}",
+            f"- semgrep_scan: rules={dict(tool_policy.get('semgrep_scan') or {}).get('rules', '未启用')}",
             f"- smart_scan: focus_vulnerabilities={', '.join(_unique_list(smart_scan_policy.get('focus_vulnerabilities') or [])) or '无'}",
             f"- pattern_match: pattern_types={', '.join(_unique_list(pattern_policy.get('pattern_types') or [])) or '无'}",
             f"- search_code: keywords={', '.join(_unique_list(search_policy.get('keywords') or [])) or '无'}",
@@ -1212,6 +1367,7 @@ def build_scenario_task_block(profile: dict[str, Any] | None, agent_role: str) -
     smart_scan_policy = dict(tool_policy.get("smart_scan") or {})
     pattern_policy = dict(tool_policy.get("pattern_match") or {})
     search_policy = dict(tool_policy.get("search_code") or {})
+    is_inventory = is_inventory_profile(scenario)
 
     lines = [
         "## 场景预设",
@@ -1228,5 +1384,14 @@ def build_scenario_task_block(profile: dict[str, Any] | None, agent_role: str) -
 
     if instruction.get("task"):
         lines.extend(["", "### 场景任务", instruction["task"]])
+
+    if is_inventory:
+        lines.extend(
+            [
+                "",
+                "### Inventory 报告要求",
+                "请输出结构化 inventory_report，聚焦代码位置、调用链、资源边界和证据一致性；不要输出漏洞 PoC 或自动创建漏洞发现。",
+            ]
+        )
 
     return "\n".join(lines)

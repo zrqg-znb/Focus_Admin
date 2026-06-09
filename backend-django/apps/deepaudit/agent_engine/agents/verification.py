@@ -21,7 +21,8 @@ from datetime import datetime, timezone
 from .base import BaseAgent, AgentConfig, AgentResult, AgentType, AgentPattern, TaskHandoff
 from ..json_parser import AgentJsonParser
 from ..prompts import CORE_SECURITY_PRINCIPLES, VULNERABILITY_PRIORITIES
-from apps.deepaudit.scenario_profile import build_scenario_prompt_block, build_scenario_task_block
+from apps.deepaudit.inventory_report import extract_inventory_report, inventory_items_count, normalize_inventory_report
+from apps.deepaudit.scenario_profile import build_scenario_prompt_block, build_scenario_task_block, is_inventory_profile
 
 logger = logging.getLogger(__name__)
 
@@ -514,6 +515,46 @@ class VerificationAgent(BaseAgent):
         scenario_task_block = build_scenario_task_block(scenario_profile, self.name.lower())
         if scenario_task_block:
             task_context = f"{scenario_task_block}\n\n{task_context}".strip() if task_context else scenario_task_block
+
+        if is_inventory_profile(scenario_profile):
+            raw_inventory_report = extract_inventory_report(previous_results)
+            if not raw_inventory_report and isinstance(previous_results, dict):
+                for value in previous_results.values():
+                    if isinstance(value, dict):
+                        raw_inventory_report = extract_inventory_report(value)
+                        if raw_inventory_report:
+                            break
+            inventory_report = normalize_inventory_report(
+                raw_inventory_report,
+                scenario_profile=scenario_profile,
+                target_files=list(config.get("target_files") or []),
+                project_root=str(input_data.get("project_root") or ""),
+            )
+            item_count = inventory_items_count(inventory_report)
+            warnings = list((inventory_report.get("qa") or {}).get("warnings") or [])
+            await self.emit_event(
+                "info",
+                f"Verification Agent 完成梳理报告证据校验: {item_count} 个条目, {len(warnings)} 个告警",
+                metadata={
+                    "status": "completed",
+                    "result_mode": "inventory",
+                    "findings_count": 0,
+                    "inventory_items_count": item_count,
+                    "qa_warnings_count": len(warnings),
+                },
+            )
+            return AgentResult(
+                success=True,
+                data={
+                    "inventory_report": inventory_report,
+                    "findings": [],
+                    "qa": inventory_report.get("qa") or {},
+                },
+                iterations=self._iteration,
+                tool_calls=self._tool_calls,
+                tokens_used=self._total_tokens,
+                duration_ms=int((time.time() - start_time) * 1000),
+            )
         
         # 🔥 处理交接信息
         handoff = input_data.get("handoff")

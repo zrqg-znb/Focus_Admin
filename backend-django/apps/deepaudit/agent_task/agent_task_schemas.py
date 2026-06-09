@@ -69,6 +69,8 @@ class AgentTaskSchema(Schema):
     tool_calls_count: int = 0
     tokens_used: int = 0
     findings_count: int = 0
+    inventory_report: dict[str, Any] = Field(default_factory=dict)
+    inventory_items_count: int = 0
     verified_count: int = 0
     false_positive_count: int = 0
     critical_count: int = 0

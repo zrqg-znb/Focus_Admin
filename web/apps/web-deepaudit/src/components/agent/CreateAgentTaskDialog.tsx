@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { validateZipFile } from '@/features/projects/services/repoZipScan';
 import { createAgentTask } from '@/shared/api/agentTasks';
+import type { ScenarioProfile } from '@/shared/api/scenarios';
 import { api } from '@/shared/config/database';
 import { useAuth } from '@/shared/context/AuthContext';
 import { DEEPAUDIT_ACTION_CODES } from '@/shared/focus/focusPermission';
@@ -105,6 +106,8 @@ export default function CreateAgentTaskDialog({
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [excludePatterns, setExcludePatterns] = useState(DEFAULT_EXCLUDES);
   const [selectedScenarioKey, setSelectedScenarioKey] = useState('auto');
+  const [selectedScenarioProfile, setSelectedScenarioProfile] =
+    useState<ScenarioProfile | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [creating, setCreating] = useState(false);
 
@@ -148,6 +151,7 @@ export default function CreateAgentTaskDialog({
       setGroup('');
       setExcludePatterns(DEFAULT_EXCLUDES);
       setSelectedScenarioKey('auto');
+      setSelectedScenarioProfile(null);
       setShowAdvanced(false);
       setZipFile(null);
       setStoredZipInfo(null);
@@ -317,6 +321,11 @@ export default function CreateAgentTaskDialog({
     return `${selectedScopeSummary.totalCount} items selected${parts.length > 0 ? ` (${parts.join(', ')})` : ''}`;
   }, [selectedFiles, selectedScopeSummary]);
 
+  const isInventoryScenario =
+    selectedScenarioProfile?.objective_type === 'inventory' ||
+    selectedScenarioKey === 'api_chain' ||
+    selectedScenarioKey === 'concurrency';
+
   // 创建任务
   const handleCreate = async () => {
     if (!selectedProject) return;
@@ -361,7 +370,7 @@ export default function CreateAgentTaskDialog({
         audit_scope: {
           scenario_key: selectedScenarioKey,
         },
-        verification_level: 'sandbox',
+        verification_level: isInventoryScenario ? 'analysis_only' : 'sandbox',
       });
 
       onOpenChange(false);
@@ -478,6 +487,7 @@ export default function CreateAgentTaskDialog({
             <div className="space-y-4">
               <ScenarioSelector
                 onChange={setSelectedScenarioKey}
+                onSelectScenario={setSelectedScenarioProfile}
                 showAutoOption
                 showCFamilyHint={isCFamilyProject(selectedProject)}
                 value={selectedScenarioKey}

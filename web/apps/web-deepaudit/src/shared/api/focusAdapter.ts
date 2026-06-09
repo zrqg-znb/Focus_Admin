@@ -491,6 +491,11 @@ export function normalizeAuditTask(raw: JsonRecord | null | undefined) {
     selected_target_count: raw.selected_target_count || 0,
     selected_directory_count: raw.selected_directory_count || 0,
     resolved_file_count: raw.resolved_file_count || 0,
+    inventory_report:
+      raw.inventory_report && typeof raw.inventory_report === 'object'
+        ? raw.inventory_report
+        : {},
+    inventory_items_count: Number(raw.inventory_items_count || 0),
     workspace_source: raw.workspace_source || '',
     started_at: raw.started_at || null,
     completed_at: raw.completed_at || null,

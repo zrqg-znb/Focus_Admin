@@ -66,6 +66,7 @@ interface ScenarioSelectorProps {
   showCFamilyHint?: boolean;
   value: string;
   onChange: (scenarioKey: string) => void;
+  onSelectScenario?: (scenario: ScenarioProfile | null) => void;
 }
 
 export function ScenarioSelector({
@@ -75,6 +76,7 @@ export function ScenarioSelector({
   showCFamilyHint = false,
   value,
   onChange,
+  onSelectScenario,
 }: ScenarioSelectorProps) {
   const [scenarios, setScenarios] = useState<ScenarioProfile[]>(BUILTIN_SCENARIO_FALLBACKS);
   const [loading, setLoading] = useState(true);
@@ -154,7 +156,10 @@ export function ScenarioSelector({
                   : 'border-border bg-background/70 text-foreground hover:bg-muted/70'
               }`}
               disabled={disabled}
-              onClick={() => onChange('auto')}
+                onClick={() => {
+                  onChange('auto');
+                  onSelectScenario?.(null);
+                }}
               type="button"
               variant="outline"
             >
@@ -182,7 +187,10 @@ export function ScenarioSelector({
                 }`}
                 disabled={disabled}
                 key={scenario.id || scenario.scenario_key}
-                onClick={() => onChange(scenario.scenario_key)}
+                onClick={() => {
+                  onChange(scenario.scenario_key);
+                  onSelectScenario?.(scenario);
+                }}
                 type="button"
                 variant="outline"
               >
