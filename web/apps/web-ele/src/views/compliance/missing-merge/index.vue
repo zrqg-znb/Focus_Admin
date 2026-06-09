@@ -2,7 +2,9 @@
 import type { OrganizationItem, RepositoryItem } from '#/api/compliance/base';
 import type {
   MissingMergeOperationLogItem,
+  MissingMergePlGroupOption,
   MissingMergeRecordItem,
+  MissingMergeRecordListParams,
   MissingMergeScanRunPayload,
   MissingMergeScanTaskItem,
   MissingMergeStatus,
@@ -54,6 +56,7 @@ import {
   useMissingMergeColumns,
 } from './data';
 import MissingMergeScanDialog from '../components/MissingMergeScanDialog.vue';
+import MissingMergePlDashboard from './MissingMergePlDashboard.vue';
 
 defineOptions({ name: 'ComplianceMissingMerge' });
 
@@ -73,13 +76,16 @@ const keyword = ref('');
 const selectedScopeValues = ref<string[]>([]);
 const selectedStatus = ref('');
 const authorUsername = ref('');
+const selectedPlGroupIds = ref<string[]>([]);
 const trunkBranch = ref('');
 const releaseBranch = ref('');
 const mergedRange = ref<string[]>([]);
 const detectedRange = ref<string[]>([]);
+const activeView = ref<'dashboard' | 'list'>('list');
 
 const organizationTree = ref<OrganizationItem[]>([]);
 const repositoryOptions = ref<RepositoryItem[]>([]);
+const plGroupOptions = ref<MissingMergePlGroupOption[]>([]);
 const latestTasks = ref<MissingMergeScanTaskItem[]>([]);
 const optionsLoading = ref(false);
 
@@ -143,6 +149,8 @@ const scopeCascaderOptions = computed(() =>
   buildScopeCascaderOptions(organizationTree.value, repositoryOptions.value),
 );
 
+const dashboardParams = computed(() => buildRecordQueryParams());
+
 const [Grid, gridApi] = useZqTable<MissingMergeRecordItem>({
   showSearchForm: false,
   separator: false,
@@ -162,21 +170,10 @@ const [Grid, gridApi] = useZqTable<MissingMergeRecordItem>({
         }: {
           page: { currentPage: number; pageSize: number };
         }) => {
-          const scope = parseScopeSelection();
           return listMissingMergeRecordsApi({
-            author_username: authorUsername.value || undefined,
-            detected_after: detectedRange.value[0] || undefined,
-            detected_before: detectedRange.value[1] || undefined,
-            keyword: keyword.value || undefined,
-            merged_after: mergedRange.value[0] || undefined,
-            merged_before: mergedRange.value[1] || undefined,
-            organization_ids: scope.organization_ids,
+            ...buildRecordQueryParams(),
             page: page.currentPage,
             pageSize: page.pageSize,
-            release_branch: releaseBranch.value || undefined,
-            repository_ids: scope.repository_ids,
-            status: (selectedStatus.value as MissingMergeStatus) || undefined,
-            trunk_branch: trunkBranch.value || undefined,
           });
         },
       },
@@ -253,6 +250,25 @@ function parseScopeSelection(values = selectedScopeValues.value) {
   };
 }
 
+function buildRecordQueryParams(): MissingMergeRecordListParams {
+  // 列表和看板共用同一套筛选参数，避免视图切换后统计口径变化。
+  const scope = parseScopeSelection();
+  return {
+    author_username: authorUsername.value || undefined,
+    detected_after: detectedRange.value[0] || undefined,
+    detected_before: detectedRange.value[1] || undefined,
+    keyword: keyword.value || undefined,
+    merged_after: mergedRange.value[0] || undefined,
+    merged_before: mergedRange.value[1] || undefined,
+    organization_ids: scope.organization_ids,
+    pl_group_ids: selectedPlGroupIds.value,
+    release_branch: releaseBranch.value || undefined,
+    repository_ids: scope.repository_ids,
+    status: (selectedStatus.value as MissingMergeStatus) || undefined,
+    trunk_branch: trunkBranch.value || undefined,
+  };
+}
+
 async function loadOptions() {
   // 选项接口挂在漏合风险权限下，避免依赖代码库管理页的 API 权限。
   optionsLoading.value = true;
@@ -260,6 +276,7 @@ async function loadOptions() {
     const result = await listMissingMergeOptionsApi();
     organizationTree.value = result.organizations || [];
     repositoryOptions.value = result.repositories || [];
+    plGroupOptions.value = result.pl_groups || [];
   } finally {
     optionsLoading.value = false;
   }
@@ -370,148 +387,171 @@ onMounted(async () => {
             基于组织、代码库和分支绑定关系自动比对主干与发布分支 CR。
           </div>
         </div>
-        <div class="summary-task" v-if="latestTask">
-          <ElTag
-            :type="
-              latestTask.status === 'success'
-                ? 'success'
-                : latestTask.status === 'failed'
-                  ? 'danger'
-                  : 'warning'
-            "
-          >
-            {{ latestTask.status_label }}
-          </ElTag>
-          <span
-            >最近同步：{{
-              formatTime(latestTask.finished_at || latestTask.started_at)
-            }}</span
-          >
-          <span>识别 {{ latestTask.detected_count }} 条</span>
-          <span>补合 {{ latestTask.fixed_count }} 条</span>
-        </div>
-        <div v-else class="text-xs text-[var(--el-text-color-secondary)]">
-          暂无同步任务
+        <div class="summary-right">
+          <ElRadioGroup v-model="activeView" class="view-switch">
+            <ElRadioButton label="list">风险列表</ElRadioButton>
+            <ElRadioButton label="dashboard">PL组看板</ElRadioButton>
+          </ElRadioGroup>
+          <div class="summary-task" v-if="latestTask">
+            <ElTag
+              :type="
+                latestTask.status === 'success'
+                  ? 'success'
+                  : latestTask.status === 'failed'
+                    ? 'danger'
+                    : 'warning'
+              "
+            >
+              {{ latestTask.status_label }}
+            </ElTag>
+            <span
+              >最近同步：{{
+                formatTime(latestTask.finished_at || latestTask.started_at)
+              }}</span
+            >
+            <span>识别 {{ latestTask.detected_count }} 条</span>
+            <span>补合 {{ latestTask.fixed_count }} 条</span>
+          </div>
+          <div v-else class="text-xs text-[var(--el-text-color-secondary)]">
+            暂无同步任务
+          </div>
         </div>
       </div>
 
-      <Grid class="min-h-0 flex-1">
-        <template #toolbar-actions>
-          <!-- 统一筛选表单用固定宽度和显式 label，避免多段工具栏割裂。 -->
-          <ElForm
-            class="missing-merge-toolbar"
-            inline
-            label-position="left"
-            label-width="72px"
+      <!-- 列表和看板共用这一组筛选条件，避免切换视图后统计口径割裂。 -->
+      <ElForm
+        class="missing-merge-toolbar"
+        inline
+        label-position="left"
+        label-width="72px"
+      >
+        <ElFormItem class="toolbar-filter toolbar-filter-keyword" label="关键词">
+          <ElInput
+            v-model="keyword"
+            clearable
+            placeholder="标题 / Change Key / 代码库"
+            :prefix-icon="Search"
+            @clear="reloadRecords(true)"
+            @keyup.enter="reloadRecords(true)"
+          />
+        </ElFormItem>
+        <ElFormItem class="toolbar-filter" label="状态">
+          <ElSelect
+            v-model="selectedStatus"
+            clearable
+            placeholder="全部状态"
+            @change="reloadRecords(true)"
+            @clear="reloadRecords(true)"
           >
-            <ElFormItem class="toolbar-filter toolbar-filter-keyword" label="关键词">
-              <ElInput
-                v-model="keyword"
-                clearable
-                placeholder="标题 / Change Key / 代码库"
-                :prefix-icon="Search"
-                @clear="reloadRecords(true)"
-                @keyup.enter="reloadRecords(true)"
-              />
-            </ElFormItem>
-            <ElFormItem class="toolbar-filter" label="状态">
-              <ElSelect
-                v-model="selectedStatus"
-                clearable
-                placeholder="全部状态"
-                @change="reloadRecords(true)"
-                @clear="reloadRecords(true)"
-              >
-                <ElOption
-                  v-for="item in STATUS_OPTIONS"
-                  :key="item.value"
-                  :label="item.label"
-                  :value="item.value"
-                />
-              </ElSelect>
-            </ElFormItem>
-            <ElFormItem class="toolbar-filter toolbar-filter-scope" label="组织/代码库">
-              <ElCascader
-                v-model="selectedScopeValues"
-                clearable
-                collapse-tags
-                collapse-tags-tooltip
-                filterable
-                :max-collapse-tags="1"
-                :options="scopeCascaderOptions"
-                placeholder="选择组织或代码库（支持多选）"
-                :props="scopeCascaderProps"
-                @change="reloadRecords(true)"
-                @clear="reloadRecords(true)"
-              />
-            </ElFormItem>
-            <ElFormItem class="toolbar-filter" label="创建人">
-              <ElInput
-                v-model="authorUsername"
-                clearable
-                placeholder="Focus 用户名"
-                @clear="reloadRecords(true)"
-                @keyup.enter="reloadRecords(true)"
-              />
-            </ElFormItem>
-            <ElFormItem class="toolbar-filter" label="主干分支">
-              <ElInput
-                v-model="trunkBranch"
-                clearable
-                placeholder="分支名"
-                @clear="reloadRecords(true)"
-                @keyup.enter="reloadRecords(true)"
-              />
-            </ElFormItem>
-            <ElFormItem class="toolbar-filter" label="发布分支">
-              <ElInput
-                v-model="releaseBranch"
-                clearable
-                placeholder="分支名"
-                @clear="reloadRecords(true)"
-                @keyup.enter="reloadRecords(true)"
-              />
-            </ElFormItem>
-            <ElFormItem class="toolbar-filter toolbar-filter-range" label="合入时间">
-              <ElDatePicker
-                v-model="mergedRange"
-                clearable
-                end-placeholder="合入结束"
-                range-separator="至"
-                start-placeholder="合入开始"
-                type="datetimerange"
-                value-format="YYYY-MM-DDTHH:mm:ssZ"
-                @change="reloadRecords(true)"
-              />
-            </ElFormItem>
-            <ElFormItem class="toolbar-filter toolbar-filter-range" label="识别时间">
-              <ElDatePicker
-                v-model="detectedRange"
-                clearable
-                end-placeholder="识别结束"
-                range-separator="至"
-                start-placeholder="识别开始"
-                type="datetimerange"
-                value-format="YYYY-MM-DDTHH:mm:ssZ"
-                @change="reloadRecords(true)"
-              />
-            </ElFormItem>
-            <ElFormItem class="toolbar-actions-item">
-              <div class="toolbar-actions-content">
-                <ElButton @click="reloadRecords(true)">查询</ElButton>
-                <ElButton @click="loadLatestTasks(true)">刷新任务</ElButton>
-                <ElButton
-                  type="primary"
-                  :loading="optionsLoading"
-                  @click="openScanDialog"
-                >
-                  手动同步
-                </ElButton>
-              </div>
-            </ElFormItem>
-          </ElForm>
-        </template>
+            <ElOption
+              v-for="item in STATUS_OPTIONS"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </ElSelect>
+        </ElFormItem>
+        <ElFormItem class="toolbar-filter toolbar-filter-scope" label="组织/代码库">
+          <ElCascader
+            v-model="selectedScopeValues"
+            clearable
+            collapse-tags
+            collapse-tags-tooltip
+            filterable
+            :max-collapse-tags="1"
+            :options="scopeCascaderOptions"
+            placeholder="选择组织或代码库（支持多选）"
+            :props="scopeCascaderProps"
+            @change="reloadRecords(true)"
+            @clear="reloadRecords(true)"
+          />
+        </ElFormItem>
+        <ElFormItem class="toolbar-filter" label="创建人">
+          <ElInput
+            v-model="authorUsername"
+            clearable
+            placeholder="Focus 用户名"
+            @clear="reloadRecords(true)"
+            @keyup.enter="reloadRecords(true)"
+          />
+        </ElFormItem>
+        <ElFormItem class="toolbar-filter" label="PL组">
+          <ElSelect
+            v-model="selectedPlGroupIds"
+            clearable
+            collapse-tags
+            collapse-tags-tooltip
+            multiple
+            placeholder="全部PL组"
+            @change="reloadRecords(true)"
+            @clear="reloadRecords(true)"
+          >
+            <ElOption
+              v-for="item in plGroupOptions"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
+          </ElSelect>
+        </ElFormItem>
+        <ElFormItem class="toolbar-filter" label="主干分支">
+          <ElInput
+            v-model="trunkBranch"
+            clearable
+            placeholder="分支名"
+            @clear="reloadRecords(true)"
+            @keyup.enter="reloadRecords(true)"
+          />
+        </ElFormItem>
+        <ElFormItem class="toolbar-filter" label="发布分支">
+          <ElInput
+            v-model="releaseBranch"
+            clearable
+            placeholder="分支名"
+            @clear="reloadRecords(true)"
+            @keyup.enter="reloadRecords(true)"
+          />
+        </ElFormItem>
+        <ElFormItem class="toolbar-filter toolbar-filter-range" label="合入时间">
+          <ElDatePicker
+            v-model="mergedRange"
+            clearable
+            end-placeholder="合入结束"
+            range-separator="至"
+            start-placeholder="合入开始"
+            type="datetimerange"
+            value-format="YYYY-MM-DDTHH:mm:ssZ"
+            @change="reloadRecords(true)"
+          />
+        </ElFormItem>
+        <ElFormItem class="toolbar-filter toolbar-filter-range" label="识别时间">
+          <ElDatePicker
+            v-model="detectedRange"
+            clearable
+            end-placeholder="识别结束"
+            range-separator="至"
+            start-placeholder="识别开始"
+            type="datetimerange"
+            value-format="YYYY-MM-DDTHH:mm:ssZ"
+            @change="reloadRecords(true)"
+          />
+        </ElFormItem>
+        <ElFormItem class="toolbar-actions-item">
+          <div class="toolbar-actions-content">
+            <ElButton @click="reloadRecords(true)">查询</ElButton>
+            <ElButton @click="loadLatestTasks(true)">刷新任务</ElButton>
+            <ElButton
+              type="primary"
+              :loading="optionsLoading"
+              @click="openScanDialog"
+            >
+              手动同步
+            </ElButton>
+          </div>
+        </ElFormItem>
+      </ElForm>
 
+      <Grid v-if="activeView === 'list'" class="min-h-0 flex-1">
         <template #cell-title="{ row }">
           <div class="min-w-0 text-left">
             <div class="truncate font-medium" :title="row.title">
@@ -526,6 +566,14 @@ onMounted(async () => {
         <template #cell-status_label="{ row }">
           <ElTag :type="getStatusTagType(row.status)">
             {{ row.status_label }}
+          </ElTag>
+        </template>
+
+        <template #cell-author_pl_group_name="{ row }">
+          <ElTag
+            :type="row.author_pl_group_name === '非底软领域' ? 'info' : 'primary'"
+          >
+            {{ row.author_pl_group_name || '非底软领域' }}
           </ElTag>
         </template>
 
@@ -558,6 +606,13 @@ onMounted(async () => {
           </div>
         </template>
       </Grid>
+
+      <MissingMergePlDashboard
+        v-else
+        class="min-h-0 flex-1"
+        :active="activeView === 'dashboard'"
+        :params="dashboardParams"
+      />
     </div>
 
     <ElDrawer
@@ -590,6 +645,12 @@ onMounted(async () => {
           </ElDescriptionsItem>
           <ElDescriptionsItem label="创建人">
             {{ currentRecord.author_username || '-' }}
+          </ElDescriptionsItem>
+          <ElDescriptionsItem label="Focus用户">
+            {{ currentRecord.author_user_name || '-' }}
+          </ElDescriptionsItem>
+          <ElDescriptionsItem label="PL组归属">
+            {{ currentRecord.author_pl_group_name || '非底软领域' }}
           </ElDescriptionsItem>
           <ElDescriptionsItem label="主干合入时间">
             {{ formatTime(currentRecord.merged_at) }}
@@ -744,6 +805,18 @@ onMounted(async () => {
   color: var(--el-text-color-secondary);
 }
 
+.summary-right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px 14px;
+}
+
+.view-switch {
+  flex-shrink: 0;
+}
+
 .missing-merge-toolbar {
   // 固定宽度筛选项按自然顺序换行，避免搜索栏出现无规律断行。
   display: flex;
@@ -859,6 +932,11 @@ onMounted(async () => {
 
 @media (max-width: 768px) {
   .summary-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .summary-right {
     align-items: flex-start;
     flex-direction: column;
   }

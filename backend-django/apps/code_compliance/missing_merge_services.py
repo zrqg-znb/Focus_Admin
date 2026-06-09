@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+from collections import Counter
 from collections import defaultdict
 from collections.abc import Iterable as RuntimeIterable
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from django.utils import timezone
 from ninja.errors import HttpError
 
 from scheduler.module.executor import scheduler_task
+from core.pl.pl_model import PlGroup
 from core.user.user_model import User
 
 from . import base_services
@@ -74,6 +76,8 @@ HANDLE_REMARK_MAX_LENGTH = 500
 HANDLE_REMARK_FORBIDDEN_RE = re.compile(r"[\x00-\x1f\x7f<>`{}]")
 AUTO_CLOSED_REMARK = "后续自动数据刷新中检测到漏合风险已完成补合"
 DEFAULT_SCHEDULE_WINDOW_DAYS = 1
+UNKNOWN_PL_GROUP_ID = "unknown"
+UNKNOWN_PL_GROUP_NAME = "非底软领域"
 
 
 @dataclass
@@ -92,6 +96,14 @@ class ScanCounters:
     created_count: int = 0
     updated_count: int = 0
     fixed_count: int = 0
+
+
+@dataclass(frozen=True)
+class AuthorPlAssignment:
+    user_id: str | None
+    user_name: str
+    pl_group_id: str | None
+    pl_group_name: str
 
 
 def _clean_text(value: Any) -> str:
@@ -120,6 +132,66 @@ def _normalize_id_list(values: Any) -> list[str]:
             seen.add(value)
             result.append(value)
     return result
+
+
+def _default_author_pl_assignment() -> AuthorPlAssignment:
+    """返回未匹配用户或未命中启用 PL 组时的统一归属。"""
+    return AuthorPlAssignment(
+        user_id=None,
+        user_name="",
+        pl_group_id=None,
+        pl_group_name=UNKNOWN_PL_GROUP_NAME,
+    )
+
+
+def _load_author_pl_assignments(usernames: Iterable[str]) -> dict[str, AuthorPlAssignment]:
+    """按 CR 创建人 username 批量解析 Focus 用户和启用 PL 组归属。"""
+    unique_usernames = _normalize_id_list([_clean_text(item) for item in usernames])
+    if not unique_usernames:
+        return {}
+
+    users = {
+        _clean_text(row["username"]): row
+        for row in User.objects.filter(username__in=unique_usernames).values("id", "username", "name")
+    }
+    group_rows = (
+        PlGroup.objects.filter(status=True, members__username__in=unique_usernames)
+        .values("id", "name", "sort", "members__username")
+        .order_by("-sort", "name", "id")
+    )
+    group_by_username: dict[str, dict[str, Any]] = {}
+    for row in group_rows:
+        username = _clean_text(row.get("members__username"))
+        if username and username not in group_by_username:
+            group_by_username[username] = row
+
+    result: dict[str, AuthorPlAssignment] = {}
+    for username in unique_usernames:
+        user_row = users.get(username)
+        group_row = group_by_username.get(username)
+        if not user_row:
+            result[username] = _default_author_pl_assignment()
+            continue
+        result[username] = AuthorPlAssignment(
+            user_id=str(user_row["id"]),
+            user_name=_clean_text(user_row.get("name")) or _clean_text(user_row.get("username")),
+            pl_group_id=str(group_row["id"]) if group_row else None,
+            pl_group_name=_clean_text(group_row.get("name")) if group_row else UNKNOWN_PL_GROUP_NAME,
+        )
+    return result
+
+
+def _resolve_author_pl_assignment(
+    username: str,
+    assignments: dict[str, AuthorPlAssignment] | None = None,
+) -> AuthorPlAssignment:
+    """从批量映射中读取作者归属，缺失时兜底为非底软领域。"""
+    clean_username = _clean_text(username)
+    if not clean_username:
+        return _default_author_pl_assignment()
+    if assignments is None:
+        assignments = _load_author_pl_assignments([clean_username])
+    return assignments.get(clean_username, _default_author_pl_assignment())
 
 
 def _expand_organization_ids_with_descendants(organization_ids: list[str]) -> list[str]:
@@ -299,6 +371,10 @@ def serialize_missing_merge_record(item: ComplianceMissingMergeRecord, *, includ
         "merged_at": item.merged_at,
         "target_branch": item.target_branch,
         "author_username": item.author_username,
+        "author_user_id": str(item.author_user_id) if item.author_user_id else None,
+        "author_user_name": item.author_user_name or "",
+        "author_pl_group_id": str(item.author_pl_group_id) if item.author_pl_group_id else None,
+        "author_pl_group_name": item.author_pl_group_name or UNKNOWN_PL_GROUP_NAME,
         "detected_at": item.detected_at,
         "status": item.status,
         "status_label": STATUS_LABELS.get(item.status, item.status),
@@ -350,6 +426,7 @@ def list_missing_merge_records(
     repository_id: str | None = None,
     organization_ids: Any = None,
     repository_ids: Any = None,
+    pl_group_ids: Any = None,
     status: str | None = None,
     author_username: str | None = None,
     keyword: str | None = None,
@@ -361,13 +438,56 @@ def list_missing_merge_records(
     detected_before: Any = None,
 ) -> dict:
     """分页查询漏合风险列表，支持页面筛选条件。"""
-    qs = ComplianceMissingMergeRecord.objects.filter(is_deleted=False).select_related(
+    qs = _build_missing_merge_record_queryset(
+        organization_id=organization_id,
+        repository_id=repository_id,
+        organization_ids=organization_ids,
+        repository_ids=repository_ids,
+        pl_group_ids=pl_group_ids,
+        status=status,
+        author_username=author_username,
+        keyword=keyword,
+        trunk_branch=trunk_branch,
+        release_branch=release_branch,
+        merged_after=merged_after,
+        merged_before=merged_before,
+        detected_after=detected_after,
+        detected_before=detected_before,
+    ).select_related(
         "organization",
         "repository",
         "handled_by",
+        "author_user",
+        "author_pl_group",
     )
+    total = qs.count()
+    offset = max(page - 1, 0) * page_size
+    items = list(qs.order_by("-detected_at", "-merged_at")[offset : offset + page_size])
+    return {"items": [serialize_missing_merge_record(item) for item in items], "total": total}
+
+
+def _build_missing_merge_record_queryset(
+    *,
+    organization_id: str | None = None,
+    repository_id: str | None = None,
+    organization_ids: Any = None,
+    repository_ids: Any = None,
+    pl_group_ids: Any = None,
+    status: str | None = None,
+    author_username: str | None = None,
+    keyword: str | None = None,
+    trunk_branch: str | None = None,
+    release_branch: str | None = None,
+    merged_after: Any = None,
+    merged_before: Any = None,
+    detected_after: Any = None,
+    detected_before: Any = None,
+):
+    """构建漏合风险查询集，供列表和 PL 看板复用同一套筛选口径。"""
+    qs = ComplianceMissingMergeRecord.objects.filter(is_deleted=False)
     selected_organization_ids = _normalize_id_list(organization_ids)
     selected_repository_ids = _normalize_id_list(repository_ids)
+    selected_pl_group_ids = _normalize_id_list(pl_group_ids)
     if selected_organization_ids or selected_repository_ids:
         # 新级联筛选按并集处理：命中任一组织子树或任一精确代码库即可返回。
         scope_filter = None
@@ -385,6 +505,13 @@ def list_missing_merge_records(
         qs = qs.filter(organization_id=organization_id)
     if not (selected_organization_ids or selected_repository_ids) and repository_id:
         qs = qs.filter(repository_id=repository_id)
+    if selected_pl_group_ids:
+        real_pl_group_ids = [item for item in selected_pl_group_ids if item != UNKNOWN_PL_GROUP_ID]
+        pl_filter = Q(author_pl_group_id__in=real_pl_group_ids) if real_pl_group_ids else None
+        if UNKNOWN_PL_GROUP_ID in selected_pl_group_ids:
+            unknown_filter = Q(author_pl_group_id__isnull=True) | Q(author_pl_group_name=UNKNOWN_PL_GROUP_NAME)
+            pl_filter = unknown_filter if pl_filter is None else pl_filter | unknown_filter
+        qs = qs.filter(pl_filter) if pl_filter is not None else qs.none()
     if status:
         qs = qs.filter(status=_normalize_status(status))
     if author_username:
@@ -409,11 +536,7 @@ def list_missing_merge_records(
         qs = qs.filter(detected_at__gte=_to_model_datetime(detected_after))
     if detected_before:
         qs = qs.filter(detected_at__lte=_to_model_datetime(detected_before))
-
-    total = qs.count()
-    offset = max(page - 1, 0) * page_size
-    items = list(qs.order_by("-detected_at", "-merged_at")[offset : offset + page_size])
-    return {"items": [serialize_missing_merge_record(item) for item in items], "total": total}
+    return qs
 
 
 def get_missing_merge_record(record_id: str) -> dict:
@@ -423,6 +546,8 @@ def get_missing_merge_record(record_id: str) -> dict:
             "organization",
             "repository",
             "handled_by",
+            "author_user",
+            "author_pl_group",
         ).prefetch_related(
             Prefetch(
                 "operation_logs",
@@ -509,7 +634,22 @@ def list_filter_options() -> dict:
     return {
         "organizations": base_services.list_organization_tree(),
         "repositories": repositories["items"],
+        "pl_groups": list_pl_group_options(),
     }
+
+
+def list_pl_group_options() -> list[dict[str, str | None]]:
+    """返回漏合风险筛选项使用的启用 PL 组，并追加非底软领域。"""
+    rows = [
+        {
+            "id": str(item.id),
+            "name": item.name,
+            "code": item.code or "",
+        }
+        for item in PlGroup.objects.filter(status=True).order_by("-sort", "name", "id")
+    ]
+    rows.append({"id": UNKNOWN_PL_GROUP_ID, "name": UNKNOWN_PL_GROUP_NAME, "code": ""})
+    return rows
 
 
 def list_repository_options(
@@ -526,6 +666,185 @@ def list_repository_options(
         organization_id=organization_id,
         keyword=keyword,
     )
+
+
+def _month_start(value) -> Any:
+    """把时间归到当月第一天，用于 PL 看板默认月份窗口。"""
+    local_value = timezone.localtime(value, timezone.get_current_timezone()) if timezone.is_aware(value) else value
+    return local_value.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _add_months(value, months: int):
+    """不引入额外依赖的月份加减工具。"""
+    month_index = value.month - 1 + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    return value.replace(year=year, month=month)
+
+
+def _month_key(value) -> str:
+    """按主干合入时间生成 YYYY-MM 月份键。"""
+    local_value = timezone.localtime(value, timezone.get_current_timezone()) if timezone.is_aware(value) else value
+    return local_value.strftime("%Y-%m")
+
+
+def _dashboard_time_range(merged_after: Any = None, merged_before: Any = None):
+    """看板默认展示最近 12 个自然月；显式时间范围优先。"""
+    if merged_after or merged_before:
+        start = _to_model_datetime(merged_after) if merged_after else None
+        end = _to_model_datetime(merged_before) if merged_before else None
+        if start is None and end is not None:
+            start = _to_model_datetime(_add_months(_month_start(end), -11))
+        if end is None:
+            end = _to_model_datetime(timezone.now())
+    else:
+        end = _to_model_datetime(timezone.now())
+        start = _to_model_datetime(_add_months(_month_start(end), -11))
+    return start, end
+
+
+def _build_month_labels(start, end) -> list[str]:
+    """生成看板横轴月份，避免前端自己推导时间窗口。"""
+    if not start or not end:
+        return []
+    labels: list[str] = []
+    current = _month_start(start)
+    end_month = _month_start(end)
+    while current <= end_month:
+        labels.append(current.strftime("%Y-%m"))
+        current = _add_months(current, 1)
+    return labels
+
+
+def get_pl_dashboard(
+    *,
+    organization_id: str | None = None,
+    repository_id: str | None = None,
+    organization_ids: Any = None,
+    repository_ids: Any = None,
+    pl_group_ids: Any = None,
+    status: str | None = None,
+    author_username: str | None = None,
+    keyword: str | None = None,
+    trunk_branch: str | None = None,
+    release_branch: str | None = None,
+    merged_after: Any = None,
+    merged_before: Any = None,
+    detected_after: Any = None,
+    detected_before: Any = None,
+) -> dict:
+    """按 PL 组和主干合入月份聚合漏合风险，用于漏合风险看板。"""
+    dashboard_merged_after, dashboard_merged_before = _dashboard_time_range(merged_after, merged_before)
+    qs = _build_missing_merge_record_queryset(
+        organization_id=organization_id,
+        repository_id=repository_id,
+        organization_ids=organization_ids,
+        repository_ids=repository_ids,
+        pl_group_ids=pl_group_ids,
+        status=status,
+        author_username=author_username,
+        keyword=keyword,
+        trunk_branch=trunk_branch,
+        release_branch=release_branch,
+        detected_after=detected_after,
+        detected_before=detected_before,
+    )
+    # 看板汇总保留 merged_at 为空的记录；趋势图只统计落在月份窗口内的记录。
+    if dashboard_merged_after:
+        qs = qs.filter(Q(merged_at__gte=dashboard_merged_after) | Q(merged_at__isnull=True))
+    if dashboard_merged_before:
+        qs = qs.filter(Q(merged_at__lte=dashboard_merged_before) | Q(merged_at__isnull=True))
+
+    rows = list(
+        qs.values(
+            "id",
+            "status",
+            "merged_at",
+            "detected_at",
+            "author_pl_group_id",
+            "author_pl_group_name",
+        )
+    )
+    months = _build_month_labels(dashboard_merged_after, dashboard_merged_before)
+    month_set = set(months)
+    status_counter: Counter[str] = Counter()
+    trend_counter: dict[str, Counter[str]] = defaultdict(Counter)
+    pl_group_counter: dict[str, Counter[str]] = defaultdict(Counter)
+    latest_detected_at: dict[str, Any] = {}
+    pl_group_names: dict[str, str] = {}
+    missing_merged_at_count = 0
+
+    for row in rows:
+        status_value = _clean_text(row.get("status"))
+        group_id = str(row.get("author_pl_group_id") or UNKNOWN_PL_GROUP_ID)
+        group_name = _clean_text(row.get("author_pl_group_name")) or UNKNOWN_PL_GROUP_NAME
+        pl_group_names[group_id] = group_name
+        status_counter[status_value] += 1
+        pl_group_counter[group_id]["total"] += 1
+        pl_group_counter[group_id][status_value] += 1
+
+        detected_at = row.get("detected_at")
+        if detected_at and (group_id not in latest_detected_at or detected_at > latest_detected_at[group_id]):
+            latest_detected_at[group_id] = detected_at
+
+        merged_at = row.get("merged_at")
+        if not merged_at:
+            missing_merged_at_count += 1
+            continue
+        month = _month_key(merged_at)
+        if month in month_set:
+            trend_counter[group_id][month] += 1
+
+    pl_groups = []
+    for group_id, counter in pl_group_counter.items():
+        pl_groups.append(
+            {
+                "pl_group_id": None if group_id == UNKNOWN_PL_GROUP_ID else group_id,
+                "pl_group_name": pl_group_names.get(group_id) or UNKNOWN_PL_GROUP_NAME,
+                "total_count": int(counter["total"]),
+                "open_count": int(counter[MISSING_MERGE_STATUS_OPEN]),
+                "fixed_count": int(counter[MISSING_MERGE_STATUS_FIXED]),
+                "ignored_count": int(counter[MISSING_MERGE_STATUS_IGNORED]),
+                "latest_detected_at": latest_detected_at.get(group_id),
+            }
+        )
+    pl_groups.sort(key=lambda item: (-item["total_count"], item["pl_group_name"]))
+
+    trend_series = [
+        {
+            "pl_group_id": None if group_id == UNKNOWN_PL_GROUP_ID else group_id,
+            "pl_group_name": pl_group_names.get(group_id) or UNKNOWN_PL_GROUP_NAME,
+            "data": [int(counter.get(month, 0)) for month in months],
+        }
+        for group_id, counter in sorted(
+            trend_counter.items(),
+            key=lambda item: (-sum(item[1].values()), pl_group_names.get(item[0]) or UNKNOWN_PL_GROUP_NAME),
+        )
+    ]
+
+    return {
+        "summary": {
+            "total_count": len(rows),
+            "open_count": int(status_counter[MISSING_MERGE_STATUS_OPEN]),
+            "fixed_count": int(status_counter[MISSING_MERGE_STATUS_FIXED]),
+            "ignored_count": int(status_counter[MISSING_MERGE_STATUS_IGNORED]),
+            "pl_group_count": len(pl_group_counter),
+            "missing_merged_at_count": missing_merged_at_count,
+            "merged_after": dashboard_merged_after,
+            "merged_before": dashboard_merged_before,
+        },
+        "months": months,
+        "trend_series": trend_series,
+        "status_distribution": [
+            {
+                "status": value,
+                "status_label": STATUS_LABELS.get(value, value),
+                "count": int(status_counter[value]),
+            }
+            for value in [MISSING_MERGE_STATUS_OPEN, MISSING_MERGE_STATUS_FIXED, MISSING_MERGE_STATUS_IGNORED]
+        ],
+        "pl_groups": pl_groups,
+    }
 
 
 def _normalize_scan_payload(payload) -> dict:
@@ -699,6 +1018,12 @@ def _execute_scan(
             merged_before=merged_before,
             per_page=per_page,
         )
+        author_assignments = _load_author_pl_assignments(
+            _clean_text(row.get("author_username"))
+            for branch_rows in branch_project_rows.values()
+            for project_rows in branch_rows.values()
+            for row in project_rows.values()
+        )
         # 同一组织的一批项目共用数据湖请求结果，再按 project_id 分流到具体代码库。
         for pair in org_pairs:
             trunk_rows = branch_project_rows[pair.trunk_branch].get(pair.repository.project_id, {})
@@ -714,6 +1039,7 @@ def _execute_scan(
                     task=task,
                     pair=pair,
                     row=trunk_rows[change_key],
+                    author_assignments=author_assignments,
                 )
                 if created:
                     counters.created_count += 1
@@ -821,6 +1147,7 @@ def _upsert_missing_record(
     task: ComplianceMissingMergeScanTask | None = None,
     pair: ScanPair,
     row: dict[str, Any],
+    author_assignments: dict[str, AuthorPlAssignment] | None = None,
 ) -> bool:
     """新增或更新单条漏合风险，已忽略记录只刷新 CR 信息不改处理状态。"""
     now = _to_model_datetime(timezone.now())
@@ -832,6 +1159,8 @@ def _upsert_missing_record(
         "release_branch": pair.release_branch,
         "change_key": row["change_key"],
     }
+    author_username = _clean_text(row.get("author_username"))
+    author_assignment = _resolve_author_pl_assignment(author_username, author_assignments)
     defaults = {
         "organization": organization,
         "organization_group_id": organization.group_id,
@@ -847,7 +1176,11 @@ def _upsert_missing_record(
         "removed_lines": int(row.get("removed_lines") or 0),
         "merged_at": _to_model_datetime(row.get("merged_at")),
         "target_branch": _clean_text(row.get("target_branch")) or pair.trunk_branch,
-        "author_username": _clean_text(row.get("author_username")),
+        "author_username": author_username,
+        "author_user_id": author_assignment.user_id,
+        "author_user_name": author_assignment.user_name,
+        "author_pl_group_id": author_assignment.pl_group_id,
+        "author_pl_group_name": author_assignment.pl_group_name,
         "detected_at": now,
         "is_deleted": False,
     }

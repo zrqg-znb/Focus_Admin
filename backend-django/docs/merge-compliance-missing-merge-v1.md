@@ -40,6 +40,14 @@ client 先以 `only_count=True` 获取统计数量，再以 `only_count=False` �
 | `ComplianceMissingMergeRecord` | 漏合风险记录，保存组织/代码库快照、主干/发布分支、CR 核心字段和处理状态 |
 | `ComplianceMissingMergeScanTask` | 漏合检测任务记录，保存触发方式、时间范围、扫描计数、识别/新增/补合数量和错误信息 |
 
+`ComplianceMissingMergeRecord` 会在扫描落库时同步写入作者归属：
+
+- `author_username` 来自数据湖 CR 明细中的 `author.username`。
+- `author_user`、`author_user_name` 按 `core.User.username` 精确匹配。
+- `author_pl_group`、`author_pl_group_name` 按启用的 `core.PlGroup.members` 匹配。
+- 作者不存在、作者未加入启用 PL 组、PL 组被禁用时统一归为 `非底软领域`，此时 `author_pl_group=NULL`。
+- 同一用户命中多个启用 PL 组时，按 PL 组现有排序 `-sort, name, id` 取第一个，确保单条 CR 只计入一个 PL 组。
+
 漏合风险唯一键为 `repository + trunk_branch + release_branch + change_key`。风险状态为：
 
 - `open`：未处理
@@ -54,10 +62,11 @@ client 先以 `only_count=True` 获取统计数量，再以 `only_count=False` �
 2. 过滤至少同时绑定一个 `trunk` 和一个 `release` 分支的代码库。
 3. 按组织分组，使用该组织下扫描范围内所有 `project_id` 作为 `projects` 参数。
 4. 对每个目标分支拉取已合入 CR 明细，并按 `branch/project_id/change_key` 建索引。
-5. 对每个代码库的主干-发布组合执行集合差异：`trunk_change_keys - release_change_keys`。
-6. 差集写入或更新 `ComplianceMissingMergeRecord`。
-7. 发布分支已出现的历史 `open` 风险自动标记为 `fixed`。
-8. 扫描结果写入 `ComplianceMissingMergeScanTask`。
+5. 对同批 CR 创建人批量加载 Focus 用户和启用 PL 组映射，避免逐条查询。
+6. 对每个代码库的主干-发布组合执行集合差异：`trunk_change_keys - release_change_keys`。
+7. 差集写入或更新 `ComplianceMissingMergeRecord`，同步刷新作者用户与 PL 组归属快照。
+8. 发布分支已出现的历史 `open` 风险自动标记为 `fixed`。
+9. 扫描结果写入 `ComplianceMissingMergeScanTask`。
 
 手动同步采用进程内 daemon thread 异步执行：接口只创建 `pending` 任务并立即返回，后台线程负责把任务流转为 `running/success/failed`。如果服务进程重启，正在执行的线程不做跨进程恢复；这是本期不引入 Celery/RQ 的约束。手动提交前会检查是否已有 `pending/running` 漏合同步任务，存在时不创建新任务，直接返回当前任务用于页面提示。
 
@@ -70,9 +79,12 @@ client 先以 `only_count=True` 获取统计数量，再以 `only_count=False` �
 | GET | `/records` | 分页查询漏合风险，支持组织、代码库、分支、状态、创建人、时间范围筛选 |
 | GET | `/records/{id}` | 查询漏合风险详情 |
 | PUT | `/records/{id}/status` | 更新处理状态和备注 |
+| GET | `/pl-dashboard` | 查询 PL 组漏合看板，按主干合入月份聚合趋势和状态分布 |
 | GET | `/scan-tasks` | 分页查询扫描任务历史，支持状态、触发方式和时间范围筛选 |
 | GET | `/scan-tasks/{id}` | 查询单条扫描任务详情 |
 | POST | `/scan-tasks/run` | 手动提交扫描任务，立即返回 `{ accepted, message, task }` |
+
+`/records` 和 `/pl-dashboard` 均支持 `pl_group_ids` 筛选，多个 ID 使用逗号分隔。特殊值 `unknown` 表示 `非底软领域`，与真实 PL 组多选时按并集命中，随后再与状态、时间、组织/代码库等筛选条件取交集。
 
 定时任务入口为 `apps.code_compliance.missing_merge_services.run_scheduled_missing_merge_scan`。`init_code_compliance` 会创建默认禁用的定时任务 `code_compliance_missing_merge_scan`，Cron 为每天 02:00。
 
@@ -86,11 +98,13 @@ client 先以 `only_count=True` 获取统计数量，再以 `only_count=False` �
 漏合风险页面能力：
 
 - 顶部展示最近一次同步任务摘要。
-- 支持按关键词、状态、组织、代码库、创建人、主干分支、发布分支、合入时间、识别时间筛选。
-- 表格展示漏合 CR、状态、代码库、组织、分支配对、创建人、合入时间、识别时间和代码行变化。
-- 详情抽屉展示 CR 描述、链接、分支配对和处理备注。
+- 顶部通过 `风险列表 / PL组看板` 分段切换，两个视图共用同一组筛选条件。
+- 支持按关键词、状态、组织/代码库级联、创建人、PL 组、主干分支、发布分支、合入时间、识别时间筛选。
+- 表格展示漏合 CR、状态、PL 组、代码库、组织、分支配对、创建人、合入时间、识别时间和代码行变化。
+- 详情抽屉展示 CR 描述、链接、分支配对、Focus 用户、PL 组归属和处理备注。
 - 状态弹窗支持 `未处理/已补合/已忽略` 更新。
 - 手动同步弹窗支持选择时间范围、组织和代码库；提交后只等待任务创建结果，不等待完整扫描。
+- PL 组看板按 `merged_at` 所属自然月展示各 PL 组漏合趋势；未传合入时间范围时默认展示最近 12 个自然月。`merged_at` 为空的记录进入汇总和 PL 组明细，但不进入月度趋势，并通过 `missing_merged_at_count` 标识。
 
 同步任务历史页面能力：
 
@@ -103,6 +117,9 @@ client 先以 `only_count=True` 获取统计数量，再以 `only_count=False` �
 - 开发环境未配置数据湖 URL 时，手动同步可通过 mock 生成稳定漏合风险。
 - URL 编码、时间格式、`only_count` 两种模式有单元测试覆盖。
 - 重复扫描不会重复新增同一 `change_key` 风险。
+- 扫描新增和重复更新都会刷新作者 Focus 用户与 PL 组归属；未知归属统一显示为 `非底软领域`。
+- 风险列表支持真实 PL 组和 `unknown` 混合筛选。
+- PL 组看板按 `merged_at` 月份统计趋势，状态计数、未知归属和空合入时间均有覆盖。
 - 手动同步接口在已有 `pending/running` 任务时返回 `accepted=false`，不创建重复任务。
 - 发布分支已包含的历史 `open` 风险会自动标记为 `fixed`。
 - 人工 `ignored` 风险不会被扫描自动改回 `open` 或 `fixed`。

@@ -8,6 +8,7 @@ from .missing_merge_schemas import (
     MissingMergeRecordOut,
     MissingMergeRecordStatusIn,
     MissingMergeOptionsOut,
+    MissingMergePlDashboardOut,
     MissingMergeRepositoryOptionsOut,
     MissingMergeScanRunIn,
     MissingMergeScanRunOut,
@@ -29,6 +30,7 @@ def list_missing_merge_records(
     repository_id: Optional[str] = Query(None),
     organization_ids: Optional[str] = Query(None),
     repository_ids: Optional[str] = Query(None),
+    pl_group_ids: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     author_username: Optional[str] = Query(None),
     keyword: Optional[str] = Query(None),
@@ -47,6 +49,7 @@ def list_missing_merge_records(
         repository_id=repository_id,
         organization_ids=organization_ids,
         repository_ids=repository_ids,
+        pl_group_ids=pl_group_ids,
         status=status,
         author_username=author_username,
         keyword=keyword,
@@ -83,6 +86,43 @@ def list_missing_merge_repository_options(
         page_size=pageSize,
         organization_id=organization_id,
         keyword=keyword,
+    )
+
+
+@router.get("/pl-dashboard", response=MissingMergePlDashboardOut, summary="查询漏合风险PL组看板")
+def get_missing_merge_pl_dashboard(
+    request,
+    organization_id: Optional[str] = Query(None),
+    repository_id: Optional[str] = Query(None),
+    organization_ids: Optional[str] = Query(None),
+    repository_ids: Optional[str] = Query(None),
+    pl_group_ids: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    author_username: Optional[str] = Query(None),
+    keyword: Optional[str] = Query(None),
+    trunk_branch: Optional[str] = Query(None),
+    release_branch: Optional[str] = Query(None),
+    merged_after: Optional[datetime] = Query(None),
+    merged_before: Optional[datetime] = Query(None),
+    detected_after: Optional[datetime] = Query(None),
+    detected_before: Optional[datetime] = Query(None),
+):
+    """按 PL 组和主干合入月份聚合漏合风险。"""
+    return services.get_pl_dashboard(
+        organization_id=organization_id,
+        repository_id=repository_id,
+        organization_ids=organization_ids,
+        repository_ids=repository_ids,
+        pl_group_ids=pl_group_ids,
+        status=status,
+        author_username=author_username,
+        keyword=keyword,
+        trunk_branch=trunk_branch,
+        release_branch=release_branch,
+        merged_after=merged_after,
+        merged_before=merged_before,
+        detected_after=detected_after,
+        detected_before=detected_before,
     )
 
 

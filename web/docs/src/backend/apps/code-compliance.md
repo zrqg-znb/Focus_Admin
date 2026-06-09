@@ -39,6 +39,7 @@
 | ComplianceOrganization | ComplianceRepository | 1:N | 组织下直接挂载代码库 |
 | ComplianceRepository | ComplianceManagedBranch | M:N | 通过 ComplianceRepositoryBranch 维护绑定 |
 | ComplianceRepository | ComplianceMissingMergeRecord | 1:N | 代码库维度归档自动检测出的漏合风险 |
+| User / PlGroup | ComplianceMissingMergeRecord | 1:N | 按 CR 创建人 username 解析 Focus 用户和作者所属 PL 组 |
 
 ## 核心概念
 
@@ -150,10 +151,16 @@ class ComplianceMissingMergeRecord(RootModel):
     title = models.CharField(max_length=500)
     merged_at = models.DateTimeField(null=True)
     author_username = models.CharField(max_length=255)
+    author_user = models.ForeignKey("core.User", null=True)
+    author_user_name = models.CharField(max_length=255)
+    author_pl_group = models.ForeignKey("core.PlGroup", null=True)
+    author_pl_group_name = models.CharField(max_length=255)  # 未识别时为“非底软领域”
     status = models.CharField(choices=(("open", "未处理"), ("fixed", "已补合"), ("ignored", "已忽略")))
 ```
 
 `ComplianceMissingMergeScanTask` 记录每次手动或定时扫描的时间范围、扫描组织/代码库/分支对数量、识别/新增/自动补合数量和错误信息。
+
+作者归属规则固定为：数据湖 `author.username` 精确匹配 `core.User.username`，再查询启用的 `PlGroup.members`。未匹配用户、未加入启用 PL 组或 PL 组被禁用时统一归为 `非底软领域`；同一用户命中多个启用 PL 组时按 `-sort, name, id` 取第一个。
 
 ## 业务流程
 
@@ -243,6 +250,7 @@ class ComplianceMissingMergeRecord(RootModel):
 | GET | `/api/code-compliance/missing-merges/records` | 查询漏合风险列表 |
 | GET | `/api/code-compliance/missing-merges/records/{id}` | 查询漏合风险详情 |
 | PUT | `/api/code-compliance/missing-merges/records/{id}/status` | 更新漏合风险状态 |
+| GET | `/api/code-compliance/missing-merges/pl-dashboard` | 按 PL 组和主干合入月份聚合漏合趋势、状态分布和排行 |
 | GET | `/api/code-compliance/missing-merges/scan-tasks` | 查询扫描任务历史 |
 | GET | `/api/code-compliance/missing-merges/scan-tasks/{id}` | 查询扫描任务详情 |
 | POST | `/api/code-compliance/missing-merges/scan-tasks/run` | 手动提交漏合检测任务，后台异步执行 |
@@ -286,7 +294,7 @@ python manage.py init_code_compliance
 
 ### 外部数据源
 
-旧风险台账通过 Excel/CSV 导入；新漏合检测通过固定数据湖 GET 模板同步 CR 明细。同步时按组织动态注入 `group_id`，开发环境可通过 `CODE_COMPLIANCE_CR_FORCE_MOCK` 走 mock。
+旧风险台账通过 Excel/CSV 导入；新漏合检测通过固定数据湖 GET 模板同步 CR 明细。同步时按组织动态注入 `group_id`，开发环境可通过 `CODE_COMPLIANCE_CR_FORCE_MOCK` 走 mock。扫描落库时会批量解析 CR 作者的 Focus 用户和 PL 组归属，供风险列表筛选和 PL 组看板聚合使用。
 
 ```
 ┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐

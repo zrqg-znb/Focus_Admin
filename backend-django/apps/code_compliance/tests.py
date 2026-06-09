@@ -142,7 +142,12 @@ class CodeComplianceFoundationTests(TestCase):
         repository: ComplianceRepository,
         organization: ComplianceOrganization,
         *,
+        author_pl_group: PlGroup | None = None,
+        author_user: User | None = None,
+        author_username: str = "user01",
         change_key: str = "mock-20001-001",
+        detected_at=None,
+        merged_at=None,
         status: str = MISSING_MERGE_STATUS_OPEN,
     ):
         return ComplianceMissingMergeRecord.objects.create(
@@ -158,10 +163,18 @@ class CodeComplianceFoundationTests(TestCase):
             change_request_iid="10001",
             change_key=change_key,
             title=f"record {change_key}",
-            merged_at=timezone.now(),
+            merged_at=merged_at or timezone.now(),
             target_branch="master",
-            author_username="user01",
-            detected_at=timezone.now(),
+            author_username=author_username,
+            author_user=author_user,
+            author_user_name=(author_user.name or author_user.username) if author_user else "",
+            author_pl_group=author_pl_group,
+            author_pl_group_name=(
+                author_pl_group.name
+                if author_pl_group
+                else missing_merge_services.UNKNOWN_PL_GROUP_NAME
+            ),
+            detected_at=detected_at or timezone.now(),
             status=status,
         )
 
@@ -672,6 +685,225 @@ class CodeComplianceFoundationTests(TestCase):
         self.assertTrue(ComplianceMissingMergeRecord.objects.filter(project_id="20001").exists())
         self.assertTrue(ComplianceMissingMergeRecord.objects.filter(project_id="20002").exists())
         self.assertFalse(ComplianceMissingMergeRecord.objects.filter(project_id="20003").exists())
+
+    @override_settings(CODE_COMPLIANCE_CR_FORCE_MOCK=True)
+    def test_missing_merge_scan_resolves_author_pl_group(self):
+        """扫描落库时按 CR 作者 username 匹配 Focus 用户和启用 PL 组。"""
+        author = User.objects.create(username="user06", password="secret", name="Mock Author")
+        self.pl_group.members.add(author)
+        org = self.create_org()
+        repo = self.create_repo(org["id"], "20001")
+        trunk = self.create_branch("master", "trunk")
+        release = self.create_branch("release/1.0", "release")
+        services.bind_branches_to_repositories(
+            [repo["id"]],
+            [trunk["id"], release["id"]],
+            "append",
+        )
+        now = timezone.now()
+
+        self.run_missing_scan_now(
+            MissingMergeScanRunIn(
+                merged_after=now - timedelta(days=1),
+                merged_before=now + timedelta(days=1),
+            ),
+        )
+
+        record = ComplianceMissingMergeRecord.objects.get(change_key="mock-20001-006")
+        self.assertEqual(record.author_username, "user06")
+        self.assertEqual(record.author_user_id, author.id)
+        self.assertEqual(record.author_pl_group_id, self.pl_group.id)
+        self.assertEqual(record.author_pl_group_name, self.pl_group.name)
+
+    def test_missing_merge_unknown_author_falls_back_to_non_base_soft(self):
+        """作者不存在或无启用 PL 组时，风险统一归属为非底软领域。"""
+        org = self.create_org()
+        repo = self.create_repo(org["id"], "20001")
+        repository = ComplianceRepository.objects.get(id=repo["id"])
+        pair = missing_merge_services.ScanPair(
+            repository=repository,
+            trunk_branch="master",
+            release_branch="release/1.0",
+        )
+
+        missing_merge_services._upsert_missing_record(
+            user=self.user,
+            pair=pair,
+            row={
+                "added_lines": 1,
+                "author_username": "ghost-user",
+                "change_key": "unknown-author-risk",
+                "change_request_iid": "90001",
+                "merged_at": timezone.now(),
+                "removed_lines": 0,
+                "target_branch": "master",
+                "title": "unknown author",
+            },
+        )
+
+        record = ComplianceMissingMergeRecord.objects.get(change_key="unknown-author-risk")
+        self.assertIsNone(record.author_user_id)
+        self.assertIsNone(record.author_pl_group_id)
+        self.assertEqual(
+            record.author_pl_group_name,
+            missing_merge_services.UNKNOWN_PL_GROUP_NAME,
+        )
+
+    def test_missing_merge_multiple_pl_groups_uses_sorted_first(self):
+        """同一作者命中多个启用 PL 组时，按现有排序口径只取第一个。"""
+        author = User.objects.create(username="multi-pl", password="secret", name="Multi PL")
+        low_group = PlGroup.objects.create(
+            name="低优先级PL组",
+            code="low-pl",
+            status=True,
+            pl_user=self.pl_user,
+            sort=1,
+        )
+        high_group = PlGroup.objects.create(
+            name="高优先级PL组",
+            code="high-pl",
+            status=True,
+            pl_user=self.pl_user,
+            sort=20,
+        )
+        low_group.members.add(author)
+        high_group.members.add(author)
+        org = self.create_org()
+        repo = self.create_repo(org["id"], "20001")
+        repository = ComplianceRepository.objects.get(id=repo["id"])
+        pair = missing_merge_services.ScanPair(
+            repository=repository,
+            trunk_branch="master",
+            release_branch="release/1.0",
+        )
+
+        missing_merge_services._upsert_missing_record(
+            user=self.user,
+            pair=pair,
+            row={
+                "added_lines": 1,
+                "author_username": "multi-pl",
+                "change_key": "multi-pl-risk",
+                "change_request_iid": "90002",
+                "merged_at": timezone.now(),
+                "removed_lines": 0,
+                "target_branch": "master",
+                "title": "multi pl",
+            },
+        )
+
+        record = ComplianceMissingMergeRecord.objects.get(change_key="multi-pl-risk")
+        self.assertEqual(record.author_pl_group_id, high_group.id)
+        self.assertEqual(record.author_pl_group_name, high_group.name)
+
+    def test_missing_merge_records_filter_by_pl_group_and_unknown(self):
+        """漏合风险列表支持真实 PL 组和 unknown 特殊值筛选。"""
+        org = self.create_org()
+        repo = self.create_repo(org["id"], "20001")
+        repository = ComplianceRepository.objects.get(id=repo["id"])
+        organization = ComplianceOrganization.objects.get(id=org["id"])
+        known = self.create_missing_record(
+            repository,
+            organization,
+            author_pl_group=self.pl_group,
+            author_user=self.pl_user,
+            change_key="known-pl-risk",
+        )
+        unknown = self.create_missing_record(
+            repository,
+            organization,
+            author_username="ghost-user",
+            change_key="unknown-pl-risk",
+        )
+
+        known_page = missing_merge_services.list_missing_merge_records(
+            page_size=10,
+            pl_group_ids=[str(self.pl_group.id)],
+        )
+        unknown_page = missing_merge_services.list_missing_merge_records(
+            page_size=10,
+            pl_group_ids=missing_merge_services.UNKNOWN_PL_GROUP_ID,
+        )
+
+        self.assertEqual({item["id"] for item in known_page["items"]}, {str(known.id)})
+        self.assertEqual({item["id"] for item in unknown_page["items"]}, {str(unknown.id)})
+
+    def test_missing_merge_pl_dashboard_uses_merged_month_and_counts_unknown(self):
+        """PL 看板按主干合入月份聚合，空 merged_at 只进入汇总和明细。"""
+        def model_dt(year: int, month: int, day: int):
+            value = timezone.make_aware(
+                datetime(year, month, day, 10, 0, 0),
+                timezone.get_current_timezone(),
+            )
+            return missing_merge_services._to_model_datetime(value)
+
+        org = self.create_org()
+        repo = self.create_repo(org["id"], "20001")
+        repository = ComplianceRepository.objects.get(id=repo["id"])
+        organization = ComplianceOrganization.objects.get(id=org["id"])
+        self.create_missing_record(
+            repository,
+            organization,
+            author_pl_group=self.pl_group,
+            author_user=self.pl_user,
+            change_key="pl-jan-open",
+            detected_at=model_dt(2026, 1, 12),
+            merged_at=model_dt(2026, 1, 10),
+            status=MISSING_MERGE_STATUS_OPEN,
+        )
+        self.create_missing_record(
+            repository,
+            organization,
+            author_pl_group=self.pl_group,
+            author_user=self.pl_user,
+            change_key="pl-feb-fixed",
+            detected_at=model_dt(2026, 2, 12),
+            merged_at=model_dt(2026, 2, 10),
+            status=MISSING_MERGE_STATUS_FIXED,
+        )
+        self.create_missing_record(
+            repository,
+            organization,
+            author_username="ghost-user",
+            change_key="unknown-jan-ignored",
+            detected_at=model_dt(2026, 1, 13),
+            merged_at=model_dt(2026, 1, 11),
+            status=MISSING_MERGE_STATUS_IGNORED,
+        )
+        missing_merged_at = self.create_missing_record(
+            repository,
+            organization,
+            author_username="ghost-user",
+            change_key="unknown-no-merged-at",
+            detected_at=model_dt(2026, 2, 13),
+            status=MISSING_MERGE_STATUS_OPEN,
+        )
+        missing_merged_at.merged_at = None
+        missing_merged_at.save(update_fields=["merged_at"])
+
+        dashboard = missing_merge_services.get_pl_dashboard(
+            merged_after=model_dt(2026, 1, 1),
+            merged_before=model_dt(2026, 2, 28),
+        )
+
+        self.assertEqual(dashboard["months"], ["2026-01", "2026-02"])
+        self.assertEqual(dashboard["summary"]["total_count"], 4)
+        self.assertEqual(dashboard["summary"]["open_count"], 2)
+        self.assertEqual(dashboard["summary"]["fixed_count"], 1)
+        self.assertEqual(dashboard["summary"]["ignored_count"], 1)
+        self.assertEqual(dashboard["summary"]["missing_merged_at_count"], 1)
+        trend_by_name = {item["pl_group_name"]: item["data"] for item in dashboard["trend_series"]}
+        self.assertEqual(trend_by_name[self.pl_group.name], [1, 1])
+        self.assertEqual(
+            trend_by_name[missing_merge_services.UNKNOWN_PL_GROUP_NAME],
+            [1, 0],
+        )
+        groups_by_name = {item["pl_group_name"]: item for item in dashboard["pl_groups"]}
+        self.assertEqual(groups_by_name[self.pl_group.name]["total_count"], 2)
+        self.assertEqual(
+            groups_by_name[missing_merge_services.UNKNOWN_PL_GROUP_NAME]["total_count"],
+            2,
+        )
 
     @override_settings(CODE_COMPLIANCE_CR_FORCE_MOCK=True)
     def test_scheduled_missing_merge_scan_writes_task_history(self):

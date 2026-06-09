@@ -292,6 +292,13 @@ PERMISSION_SEEDS = {
             "http_method": "GET",
         },
         {
+            "name": "漏合风险PL组看板接口",
+            "code": "code_compliance:api:missing_merge:pl_dashboard",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/missing-merges/pl-dashboard*",
+            "http_method": "GET",
+        },
+        {
             "name": "漏合风险状态更新接口",
             "code": "code_compliance:api:missing_merge:records:status",
             "permission_type": 1,

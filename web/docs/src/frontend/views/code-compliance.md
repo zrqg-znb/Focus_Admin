@@ -32,6 +32,7 @@
 - `bindBranchesToRepositoriesApi`
 - `bindRepositoriesToBranchesApi`
 - `listMissingMergeRecordsApi`
+- `getMissingMergePlDashboardApi`
 - `listMissingMergeScanTasksApi`
 - `getMissingMergeScanTaskApi`
 - `runMissingMergeScanApi`
@@ -54,6 +55,7 @@ flowchart TD
     Branch["branch/index.vue"] --> BranchList["/base/branches"]
     Branch --> BindRepo["/base/branches/batch-bind-repositories"]
     MissingMerge["missing-merge/index.vue"] --> MissingRecords["/missing-merges/records"]
+    MissingMerge --> PlDashboard["/missing-merges/pl-dashboard"]
     MissingMerge --> MissingTasks["/missing-merges/scan-tasks"]
     MissingMerge --> RunScan["/missing-merges/scan-tasks/run"]
     MissingMergeTask["missing-merge-task/index.vue"] --> TaskList["/missing-merges/scan-tasks"]
@@ -68,7 +70,9 @@ flowchart TD
 - 代码库管理页合并组织和代码库维护，默认选中第一个真实组织展示直接挂载的代码库
 - 组织新增/编辑使用 `ElDialog`，代码库新增/编辑使用 `ElDrawer`
 - 分支管理页使用 `zq-table`，支持 Excel 导入和批量绑定代码库
-- 漏合风险页使用 `zq-table`，顶部展示最近同步任务，详情用 Drawer，状态更新和手动同步用 Dialog
+- 漏合风险页顶部提供 `风险列表 / PL组看板` 视图切换，两种视图共用关键词、组织/代码库级联、PL 组、分支和时间范围筛选
+- 风险列表使用 `zq-table`，新增 PL 组列；详情 Drawer 展示 CR 创建人、Focus 用户和 PL 组归属
+- PL 组看板使用 ECharts 展示按主干合入月份统计的 PL 组漏合趋势和状态分布，明细表展示各 PL 组总量、未处理、已补合、已忽略和最近识别时间
 - 手动同步提交后只等待任务创建结果，后台扫描进度通过 `同步任务历史` 页面和最近任务摘要追踪
 - 同步任务历史页使用固定宽度筛选项和详情 Drawer，展示扫描范围、风险计数、耗时和失败原因
 

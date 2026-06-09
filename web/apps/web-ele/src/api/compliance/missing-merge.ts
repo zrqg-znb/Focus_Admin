@@ -38,6 +38,10 @@ export interface MissingMergeOperationLogItem {
 
 export interface MissingMergeRecordItem {
   added_lines: number;
+  author_pl_group_id?: null | string;
+  author_pl_group_name: string;
+  author_user_id?: null | string;
+  author_user_name: string;
   author_username: string;
   change_key: string;
   change_request_iid: string;
@@ -80,6 +84,7 @@ export interface MissingMergeRecordListParams {
   organization_ids?: string[];
   page?: number;
   pageSize?: number;
+  pl_group_ids?: string[];
   release_branch?: string;
   repository_id?: string;
   repository_ids?: string[];
@@ -131,7 +136,55 @@ export interface PaginatedResponse<T> {
 
 export interface MissingMergeOptions {
   organizations: OrganizationItem[];
+  pl_groups: MissingMergePlGroupOption[];
   repositories: RepositoryItem[];
+}
+
+export interface MissingMergePlGroupOption {
+  code: string;
+  id: string;
+  name: string;
+}
+
+export interface MissingMergePlDashboardSummary {
+  fixed_count: number;
+  ignored_count: number;
+  merged_after?: null | string;
+  merged_before?: null | string;
+  missing_merged_at_count: number;
+  open_count: number;
+  pl_group_count: number;
+  total_count: number;
+}
+
+export interface MissingMergePlDashboardTrendSeries {
+  data: number[];
+  pl_group_id?: null | string;
+  pl_group_name: string;
+}
+
+export interface MissingMergePlDashboardStatus {
+  count: number;
+  status: MissingMergeStatus;
+  status_label: string;
+}
+
+export interface MissingMergePlDashboardGroup {
+  fixed_count: number;
+  ignored_count: number;
+  latest_detected_at?: null | string;
+  open_count: number;
+  pl_group_id?: null | string;
+  pl_group_name: string;
+  total_count: number;
+}
+
+export interface MissingMergePlDashboard {
+  months: string[];
+  pl_groups: MissingMergePlDashboardGroup[];
+  status_distribution: MissingMergePlDashboardStatus[];
+  summary: MissingMergePlDashboardSummary;
+  trend_series: MissingMergePlDashboardTrendSeries[];
 }
 
 const base = '/api/code-compliance/missing-merges';
@@ -143,6 +196,9 @@ export function listMissingMergeRecordsApi(
     ...params,
     organization_ids: params?.organization_ids?.length
       ? params.organization_ids.join(',')
+      : undefined,
+    pl_group_ids: params?.pl_group_ids?.length
+      ? params.pl_group_ids.join(',')
       : undefined,
     repository_ids: params?.repository_ids?.length
       ? params.repository_ids.join(',')
@@ -160,6 +216,26 @@ export function getMissingMergeRecordApi(id: string) {
 
 export function listMissingMergeOptionsApi() {
   return requestClient.get<MissingMergeOptions>(`${base}/records/options`);
+}
+
+export function getMissingMergePlDashboardApi(
+  params?: MissingMergeRecordListParams,
+) {
+  const normalizedParams = {
+    ...params,
+    organization_ids: params?.organization_ids?.length
+      ? params.organization_ids.join(',')
+      : undefined,
+    pl_group_ids: params?.pl_group_ids?.length
+      ? params.pl_group_ids.join(',')
+      : undefined,
+    repository_ids: params?.repository_ids?.length
+      ? params.repository_ids.join(',')
+      : undefined,
+  };
+  return requestClient.get<MissingMergePlDashboard>(`${base}/pl-dashboard`, {
+    params: normalizedParams,
+  });
 }
 
 export function listMissingMergeRepositoryOptionsApi(

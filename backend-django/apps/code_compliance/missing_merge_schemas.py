@@ -44,6 +44,10 @@ class MissingMergeRecordOut(Schema):
     merged_at: Optional[datetime] = None
     target_branch: str
     author_username: str
+    author_user_id: Optional[str] = None
+    author_user_name: str
+    author_pl_group_id: Optional[str] = None
+    author_pl_group_name: str
     detected_at: datetime
     status: str
     status_label: str
@@ -100,9 +104,57 @@ class MissingMergeScanRunOut(Schema):
     task: MissingMergeScanTaskOut
 
 
+class MissingMergePlGroupOptionOut(Schema):
+    id: str
+    name: str
+    code: str = ""
+
+
 class MissingMergeOptionsOut(Schema):
     organizations: List[OrganizationOut] = Field(default_factory=list)
     repositories: List[RepositoryOut] = Field(default_factory=list)
+    pl_groups: List[MissingMergePlGroupOptionOut] = Field(default_factory=list)
+
+
+class MissingMergePlDashboardSummaryOut(Schema):
+    total_count: int
+    open_count: int
+    fixed_count: int
+    ignored_count: int
+    pl_group_count: int
+    missing_merged_at_count: int
+    merged_after: Optional[datetime] = None
+    merged_before: Optional[datetime] = None
+
+
+class MissingMergePlDashboardTrendSeriesOut(Schema):
+    pl_group_id: Optional[str] = None
+    pl_group_name: str
+    data: List[int] = Field(default_factory=list)
+
+
+class MissingMergePlDashboardStatusOut(Schema):
+    status: str
+    status_label: str
+    count: int
+
+
+class MissingMergePlDashboardGroupOut(Schema):
+    pl_group_id: Optional[str] = None
+    pl_group_name: str
+    total_count: int
+    open_count: int
+    fixed_count: int
+    ignored_count: int
+    latest_detected_at: Optional[datetime] = None
+
+
+class MissingMergePlDashboardOut(Schema):
+    summary: MissingMergePlDashboardSummaryOut
+    months: List[str] = Field(default_factory=list)
+    trend_series: List[MissingMergePlDashboardTrendSeriesOut] = Field(default_factory=list)
+    status_distribution: List[MissingMergePlDashboardStatusOut] = Field(default_factory=list)
+    pl_groups: List[MissingMergePlDashboardGroupOut] = Field(default_factory=list)
 
 
 class MissingMergeRepositoryOptionsOut(PaginatedRepositoryOut):

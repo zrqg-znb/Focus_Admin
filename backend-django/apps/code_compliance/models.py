@@ -436,6 +436,41 @@ class ComplianceMissingMergeRecord(RootModel):
         verbose_name="创建人用户名",
         help_text="CR创建人Focus系统用户名",
     )
+    author_user = models.ForeignKey(
+        "core.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="authored_missing_merge_records",
+        db_constraint=False,
+        verbose_name="创建人用户",
+        help_text="按 CR 创建人 username 匹配到的 Focus 用户",
+    )
+    author_user_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        verbose_name="创建人姓名快照",
+        help_text="识别风险时匹配到的 Focus 用户姓名快照",
+    )
+    author_pl_group = models.ForeignKey(
+        "core.PlGroup",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="missing_merge_records",
+        db_constraint=False,
+        verbose_name="创建人PL组",
+        help_text="按创建人所属 PL 资源组自动识别的归属",
+    )
+    author_pl_group_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        db_index=True,
+        verbose_name="创建人PL组快照",
+        help_text="创建人所属 PL 资源组名称快照；未识别时为非底软领域",
+    )
     detected_at = models.DateTimeField(
         db_index=True,
         verbose_name="漏合识别时间",
@@ -488,6 +523,7 @@ class ComplianceMissingMergeRecord(RootModel):
             models.Index(fields=["repository", "status"], name="cc_mm_repo_status_idx"),
             models.Index(fields=["trunk_branch", "release_branch"], name="cc_mm_branch_pair_idx"),
             models.Index(fields=["detected_at", "status"], name="cc_mm_detect_status_idx"),
+            models.Index(fields=["author_pl_group", "status"], name="cc_mm_pl_status_idx"),
         ]
 
     def __str__(self):

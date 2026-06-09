@@ -67,6 +67,12 @@ export function useMissingMergeColumns(): ZqTableGridOptions<MissingMergeRecordI
       width: 120,
     },
     {
+      key: 'author_pl_group_name',
+      dataKey: 'author_pl_group_name',
+      title: 'PL组',
+      width: 160,
+    },
+    {
       key: 'merged_at',
       dataKey: 'merged_at',
       title: '主干合入时间',
