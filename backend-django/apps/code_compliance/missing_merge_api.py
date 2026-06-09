@@ -163,13 +163,13 @@ def list_missing_merge_scan_tasks(
     )
 
 
-@router.get("/scan-tasks/{task_id}", response=MissingMergeScanTaskOut, summary="获取漏合检测任务详情")
-def get_missing_merge_scan_task(request, task_id: str):
-    """读取单条漏合检测任务详情。"""
-    return services.get_scan_task(task_id)
-
-
 @router.post("/scan-tasks/run", response=MissingMergeScanRunOut, summary="手动触发漏合检测")
 def run_missing_merge_scan(request, payload: MissingMergeScanRunIn):
     """提交一次手动漏合检测任务，后台异步执行。"""
     return services.run_missing_merge_scan(request.auth, payload)
+
+
+@router.get("/scan-tasks/{task_id}", response=MissingMergeScanTaskOut, summary="获取漏合检测任务详情")
+def get_missing_merge_scan_task(request, task_id: str):
+    """读取单条漏合检测任务详情。"""
+    return services.get_scan_task(task_id)
