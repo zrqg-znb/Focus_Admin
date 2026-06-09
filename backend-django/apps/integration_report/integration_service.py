@@ -182,15 +182,17 @@ def _count_results_for_sub_modules(
             status="success",
             sys_create_datetime__date__lte=record_date,
         )
-        .exclude(sub_module="")
         .order_by("-sys_create_datetime")
         .values("id", "sub_module")
     )
 
     latest_task_by_module: Dict[str, str] = {}
+    unscoped_fallback_task_id = ""
     for task in tasks:
         module_value = str(task.get("sub_module") or "").strip()
         if not module_value:
+            if not unscoped_fallback_task_id:
+                unscoped_fallback_task_id = str(task["id"])
             continue
         lowered = module_value.lower()
         if lowered not in module_lower_set:
@@ -202,6 +204,15 @@ def _count_results_for_sub_modules(
             break
 
     task_ids = list(set(latest_task_by_module.values()))
+    if not task_ids and unscoped_fallback_task_id:
+        task_ids = [unscoped_fallback_task_id]
+        logger.warning(
+            "code_scan sub_module fallback: project_key=%s tool=%s configured_sub_modules=%s fallback_task_id=%s",
+            scan_project.project_key,
+            tool_name,
+            sub_modules,
+            unscoped_fallback_task_id,
+        )
     if not task_ids:
         return 0.0, []
     count = sum(_count_code_scan_results_by_task(task_ids).values())

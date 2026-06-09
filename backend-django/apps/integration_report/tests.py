@@ -1,9 +1,18 @@
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import patch
 
 from django.test import RequestFactory, TestCase
+from django.utils import timezone
 
 from apps.integration_report import integration_service
+from apps.code_scan.models import (
+    ScanFinding,
+    ScanProject,
+    ScanResultDetail,
+    ScanResultOccurrence,
+    ScanTask,
+)
+from apps.code_scan.services import ScanService
 from apps.integration_report.integration_api import create_config, history, update_config
 from apps.integration_report.integration_email import CODE_COLUMNS
 from apps.integration_report.integration_models import (
@@ -23,6 +32,75 @@ class IntegrationReportTests(TestCase):
             password="secret",
             name="Integration Report Tester",
             is_active=True,
+        )
+
+    def _create_scan_project(self, *, project_key: str = "scan-key") -> ScanProject:
+        return ScanProject.objects.create(
+            name="Code Scan Project",
+            repo_url="https://example.com/code-scan.git",
+            branch="main",
+            project_key=project_key,
+        )
+
+    def _create_scan_task(
+        self,
+        scan_project: ScanProject,
+        *,
+        tool_name: str,
+        sub_module: str = "",
+        created_at=None,
+    ) -> ScanTask:
+        task = ScanTask.objects.create(
+            project=scan_project,
+            tool_name=tool_name,
+            status="success",
+            source="pipeline",
+            sub_module=sub_module,
+        )
+        if created_at is not None:
+            ScanTask.objects.filter(id=task.id).update(
+                sys_create_datetime=created_at,
+                sys_update_datetime=created_at,
+            )
+            task.refresh_from_db()
+        return task
+
+    def _create_scan_occurrence(
+        self,
+        task: ScanTask,
+        *,
+        index: int,
+    ) -> ScanResultOccurrence:
+        detail_payload = {
+            "file_path": f"src/{task.tool_name}_{index}.cpp",
+            "defect_type": "RaceCondition" if task.tool_name == "tsan" else "MemoryLeak",
+            "severity": "High",
+            "description": f"{task.tool_name} defect {index}",
+            "help_info": "",
+            "code_snippet": "",
+        }
+        fingerprint = ScanService.build_fingerprint(detail_payload)
+        finding, _ = ScanFinding.objects.get_or_create(
+            project=task.project,
+            fingerprint=fingerprint,
+            defaults={
+                "first_seen_task": task,
+                "last_seen_task": task,
+                "first_seen_at": timezone.now(),
+                "last_seen_at": timezone.now(),
+            },
+        )
+        detail_hash = ScanService.build_detail_hash(detail_payload)
+        detail, _ = ScanResultDetail.objects.get_or_create(
+            content_hash=detail_hash,
+            defaults=detail_payload,
+        )
+        return ScanResultOccurrence.objects.create(
+            task=task,
+            finding=finding,
+            detail=detail,
+            line_number=index,
+            shield_status="Normal",
         )
 
     def test_config_supports_dt_bin_and_cooddy_check_task_ids(self):
@@ -192,3 +270,97 @@ class IntegrationReportTests(TestCase):
         self.assertIsNone(dt_bin_cell.text)
         self.assertIsNone(cooddy_check_cell.value)
         self.assertIsNone(cooddy_check_cell.text)
+
+    def test_code_scan_metrics_fallback_to_unscoped_submodule_tasks(self):
+        record_date = timezone.now().date()
+        scan_project = self._create_scan_project(project_key="scan-key-fallback")
+        config = IntegrationProjectConfig.objects.create(
+            name="Code Scan Config",
+            enabled=True,
+            code_scan_project_key=scan_project.project_key,
+            valgrind_sub_modules=["engine"],
+        )
+        valgrind_task = self._create_scan_task(scan_project, tool_name="valgrind")
+        tsan_task = self._create_scan_task(scan_project, tool_name="tsan")
+        self._create_scan_occurrence(valgrind_task, index=1)
+        self._create_scan_occurrence(valgrind_task, index=2)
+        self._create_scan_occurrence(tsan_task, index=3)
+
+        payload = integration_service._fetch_code_scan_metrics(config, record_date)
+
+        self.assertEqual(payload["valgrind_error_num"][0], 2.0)
+        self.assertEqual(payload["tsan_error_num"][0], 1.0)
+        self.assertIn("sub_modules=engine", payload["valgrind_error_num"][1])
+
+    def test_code_scan_metrics_prefer_matching_submodule_tasks(self):
+        record_date = timezone.now().date()
+        base_time = timezone.now().replace(microsecond=0)
+        scan_project = self._create_scan_project(project_key="scan-key-match")
+        config = IntegrationProjectConfig.objects.create(
+            name="Code Scan Config",
+            enabled=True,
+            code_scan_project_key=scan_project.project_key,
+            valgrind_sub_modules=["engine"],
+        )
+        unscoped_task = self._create_scan_task(
+            scan_project,
+            tool_name="valgrind",
+            created_at=base_time + timedelta(hours=2),
+        )
+        engine_task = self._create_scan_task(
+            scan_project,
+            tool_name="valgrind",
+            sub_module="engine",
+            created_at=base_time + timedelta(hours=1),
+        )
+        for index in range(3):
+            self._create_scan_occurrence(unscoped_task, index=index + 1)
+        self._create_scan_occurrence(engine_task, index=10)
+
+        payload = integration_service._fetch_code_scan_metrics(config, record_date)
+
+        self.assertEqual(payload["valgrind_error_num"][0], 1.0)
+
+    def test_collect_daily_metrics_refreshes_code_scan_values(self):
+        record_date = timezone.now().date()
+        scan_project = self._create_scan_project(project_key="scan-key-refresh")
+        config = IntegrationProjectConfig.objects.create(
+            name="Code Scan Refresh Config",
+            enabled=True,
+            code_scan_project_key=scan_project.project_key,
+            valgrind_sub_modules=["engine"],
+        )
+        valgrind_task = self._create_scan_task(
+            scan_project,
+            tool_name="valgrind",
+            sub_module="engine",
+        )
+        tsan_task = self._create_scan_task(
+            scan_project,
+            tool_name="tsan",
+            sub_module="engine",
+        )
+        self._create_scan_occurrence(valgrind_task, index=1)
+        self._create_scan_occurrence(valgrind_task, index=2)
+        self._create_scan_occurrence(tsan_task, index=3)
+
+        integration_service.collect_daily_metrics(
+            record_date=record_date,
+            config_ids=[str(config.id)],
+        )
+
+        valgrind_value = IntegrationProjectMetricValue.objects.select_related("metric").get(
+            config=config,
+            record_date=record_date,
+            metric__key="valgrind_error_num",
+        )
+        tsan_value = IntegrationProjectMetricValue.objects.select_related("metric").get(
+            config=config,
+            record_date=record_date,
+            metric__key="tsan_error_num",
+        )
+
+        self.assertEqual(valgrind_value.value_number, 2.0)
+        self.assertEqual(tsan_value.value_number, 1.0)
+        self.assertIn("sub_modules=engine", valgrind_value.detail_url)
+        self.assertIn("sub_modules=engine", tsan_value.detail_url)

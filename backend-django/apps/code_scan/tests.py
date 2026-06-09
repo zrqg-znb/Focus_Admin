@@ -1,7 +1,11 @@
 from datetime import timedelta
+from io import StringIO
+import tempfile
 from unittest.mock import patch
 
-from django.test import RequestFactory, TestCase
+from django.core.management import call_command
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import RequestFactory, TestCase, override_settings
 from django.utils import timezone
 
 from apps.code_scan.api import list_latest_results, list_project_overview
@@ -289,6 +293,77 @@ class CodeScanApiTests(TestCase):
         self.assertEqual(len(payload['items']), 1)
         self.assertEqual(payload['items'][0]['id'], str(target.id))
 
+    def test_latest_results_fallback_to_unscoped_submodule_task(self):
+        task = self._create_task(tool_name='valgrind', sub_module='')
+        occurrence = self._create_occurrence(
+            task,
+            index=1,
+            file_path='src/unscoped.cpp',
+        )
+
+        request = self.factory.get(
+            f'/api/code-scan/projects/{self.project.id}/latest-results'
+        )
+
+        latest_payload = list_latest_results(
+            request,
+            self.project.id,
+            tool_name='valgrind',
+            sub_modules='engine',
+        )
+        overview_payload = list_project_overview(
+            self.factory.get('/api/code-scan/projects/overview'),
+            page=1,
+            pageSize=20,
+            project_id=self.project.id,
+            sub_modules='engine',
+        )
+
+        self.assertEqual(latest_payload['total'], 1)
+        self.assertEqual(latest_payload['items'][0]['id'], str(occurrence.id))
+        self.assertEqual(overview_payload['items'][0]['tool_counts']['valgrind'], 1)
+
+    def test_submodule_task_preferred_over_unscoped_fallback(self):
+        base_time = timezone.now().replace(microsecond=0)
+        unscoped_task = self._create_task(
+            tool_name='valgrind',
+            sub_module='',
+            created_at=base_time + timedelta(hours=2),
+        )
+        engine_task = self._create_task(
+            tool_name='valgrind',
+            sub_module='engine',
+            created_at=base_time + timedelta(hours=1),
+        )
+        self._create_occurrence(unscoped_task, index=1, file_path='src/unscoped.cpp')
+        engine_occurrence = self._create_occurrence(
+            engine_task,
+            index=2,
+            file_path='src/engine.cpp',
+        )
+
+        request = self.factory.get(
+            f'/api/code-scan/projects/{self.project.id}/latest-results'
+        )
+
+        latest_payload = list_latest_results(
+            request,
+            self.project.id,
+            tool_name='valgrind',
+            sub_modules='engine',
+        )
+        overview_payload = list_project_overview(
+            self.factory.get('/api/code-scan/projects/overview'),
+            page=1,
+            pageSize=20,
+            project_id=self.project.id,
+            sub_modules='engine',
+        )
+
+        self.assertEqual(latest_payload['total'], 1)
+        self.assertEqual(latest_payload['items'][0]['id'], str(engine_occurrence.id))
+        self.assertEqual(overview_payload['items'][0]['tool_counts']['valgrind'], 1)
+
     def test_project_overview_counts_include_shielded_results(self):
         task = self._create_task(tool_name='tscan')
         self._create_result(task, shield_status='Normal', index=1)
@@ -519,6 +594,78 @@ class CodeScanApiTests(TestCase):
         occurrence = ScanResultOccurrence.objects.get(task=task)
         self.assertEqual(occurrence.shield_status, 'Shielded')
 
+    def test_handle_upload_preserves_submodule_and_latest_results(self):
+        defect = {
+            'file_path': 'src/engine/tsan.cpp',
+            'line_number': 8,
+            'defect_type': 'RaceCondition',
+            'severity': 'High',
+            'description': 'tsan race',
+        }
+        parser = type('Parser', (), {'parse': lambda self, path: [defect]})()
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                with patch('apps.code_scan.services.ParserFactory.get_parser', return_value=parser):
+                    task = ScanService.handle_upload(
+                        str(self.project.project_key),
+                        'tsan',
+                        SimpleUploadedFile('tsan.json', b'[]'),
+                        sub_module='engine',
+                    )
+
+        payload = list_latest_results(
+            self.factory.get(f'/api/code-scan/projects/{self.project.id}/latest-results'),
+            self.project.id,
+            tool_name='tsan',
+            sub_modules='engine',
+        )
+
+        self.assertEqual(task.status, 'success')
+        self.assertEqual(task.sub_module, 'engine')
+        self.assertEqual(payload['total'], 1)
+        self.assertEqual(payload['items'][0]['sub_module'], 'engine')
+
+    def test_handle_upload_without_submodule_uses_unscoped_fallback(self):
+        defect = {
+            'file_path': 'src/unscoped/tsan.cpp',
+            'line_number': 8,
+            'defect_type': 'RaceCondition',
+            'severity': 'High',
+            'description': 'unscoped tsan race',
+        }
+        parser = type('Parser', (), {'parse': lambda self, path: [defect]})()
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                with patch('apps.code_scan.services.ParserFactory.get_parser', return_value=parser):
+                    task = ScanService.handle_upload(
+                        str(self.project.project_key),
+                        'tsan',
+                        SimpleUploadedFile('tsan.json', b'[]'),
+                        sub_module='',
+                    )
+
+        latest_payload = list_latest_results(
+            self.factory.get(f'/api/code-scan/projects/{self.project.id}/latest-results'),
+            self.project.id,
+            tool_name='tsan',
+            sub_modules='engine',
+        )
+        overview_payload = list_project_overview(
+            self.factory.get('/api/code-scan/projects/overview'),
+            page=1,
+            pageSize=20,
+            project_id=self.project.id,
+            sub_modules='engine',
+        )
+
+        self.assertEqual(task.status, 'success')
+        self.assertEqual(task.sub_module, '')
+        self.assertEqual(latest_payload['total'], 1)
+        self.assertEqual(latest_payload['items'][0]['sub_module'], '')
+        self.assertEqual(overview_payload['items'][0]['tool_counts']['tsan'], 1)
+
     def test_apply_and_audit_shield_for_normalized_occurrence(self):
         task = self._create_task(tool_name='tscan')
         occurrence = self._create_occurrence(task)
@@ -547,3 +694,45 @@ class CodeScanApiTests(TestCase):
         self.assertEqual(processed, 1)
         self.assertEqual(occurrence.shield_status, 'Shielded')
         self.assertEqual(occurrence.finding.shield_status, 'Shielded')
+
+    def test_purge_legacy_scan_results_preserves_shield_application(self):
+        task = self._create_task(tool_name='tscan')
+        legacy_result = self._create_result(task, index=1)
+        occurrence = self._create_occurrence(task, index=2)
+        occurrence.legacy_result = legacy_result
+        occurrence.save(update_fields=['legacy_result', 'updated_at'])
+        application = ShieldApplication.objects.create(
+            result=legacy_result,
+            applicant=self.user,
+            approver=self.user,
+            reason='legacy false positive',
+            status='Approved',
+        )
+
+        dry_run_stdout = StringIO()
+        call_command(
+            'purge_legacy_scan_results',
+            '--batch-size',
+            '10',
+            '--dry-run',
+            stdout=dry_run_stdout,
+        )
+        self.assertTrue(ScanResult.objects.filter(id=legacy_result.id).exists())
+        application.refresh_from_db()
+        self.assertEqual(str(application.result_id), str(legacy_result.id))
+        self.assertIsNone(application.occurrence_id)
+
+        stdout = StringIO()
+        call_command(
+            'purge_legacy_scan_results',
+            '--batch-size',
+            '10',
+            stdout=stdout,
+        )
+
+        self.assertFalse(ScanResult.objects.filter(id=legacy_result.id).exists())
+        application.refresh_from_db()
+        occurrence.refresh_from_db()
+        self.assertIsNone(application.result_id)
+        self.assertEqual(application.occurrence_id, occurrence.id)
+        self.assertIsNone(occurrence.legacy_result_id)

@@ -233,6 +233,12 @@ def main() -> int:
     mode = args.upload_mode
     if mode == "auto":
         mode = "chunk" if file_size > args.chunk_size else "direct"
+    if not args.sub_module.strip():
+        print(
+            "[pipeline-tsan] warning: sub_module is empty; "
+            "integration reports configured with sub_modules may fallback or show 0.",
+            file=sys.stderr,
+        )
 
     if mode == "direct":
         upload_result = upload_direct(
@@ -260,6 +266,7 @@ def main() -> int:
     print(f"[pipeline-tsan] parsed_json: {output_path}")
     print(f"[pipeline-tsan] findings: {findings_count}")
     print(f"[pipeline-tsan] upload_mode: {mode}")
+    print(f"[pipeline-tsan] sub_module: {args.sub_module or '-'}")
     print(
         "[pipeline-tsan] upload_result: "
         f"{json.dumps(upload_result, ensure_ascii=False)}",

@@ -18,7 +18,28 @@
 - 新上传任务写入规范化三表，不再继续写入旧 `scan_result`。
 - 查询最新结果、项目概览、屏蔽记录、审批列表、集成日报时优先读 occurrence。
 - 未回填或部分回填的数据自动从旧 `scan_result` fallback，避免切换期间页面空洞。
+- `valgrind` / `tsan` 按子模块统计时，优先读取匹配 `sub_module` 的最新任务；如果配置了子模块但生产上传任务未带 `sub_module`，会兼容回退到该工具最新的无子模块任务，避免页面和日报显示 0。
 - 旧 `scan_result` 保持只读保留，真正释放空间需要回填校验和观察期后再单独归档/清理。
+
+## Valgrind / TSan 子模块上传要求
+
+集成报告里的 `valgrind_sub_modules` 同时用于 Valgrind 和 TSan 指标筛选。流水线应保证上传任务的 `sub_module` 与这里配置的子模块名称一致。
+
+推荐使用包装脚本上传：
+
+```bash
+CODE_SCAN_API_BASE=http://focus.example.com \
+CODE_SCAN_PROJECT_KEY=xxx \
+VALGRIND_SUB_MODULE=engine \
+bash apps/code_scan/utils/ci_upload_valgrind.sh
+
+CODE_SCAN_API_BASE=http://focus.example.com \
+CODE_SCAN_PROJECT_KEY=xxx \
+TSAN_SUB_MODULE=engine \
+bash apps/code_scan/utils/ci_upload_tsan.sh
+```
+
+直接调用 `pipeline_tsan_parse_and_upload.py` 仍保持兼容，但未传 `--sub-module` 时会打印 warning；这种数据只能依赖后端 fallback，建议尽快修正流水线。
 
 ## 运维命令
 
@@ -40,11 +61,11 @@ python manage.py audit_code_scan_storage --chunk-size 100 --progress-every 5000
 python manage.py backfill_code_scan_occurrences --batch-size 1000
 ```
 
-生产大表回填同样使用主键窗口扫描，避免 `normalized_occurrence__isnull=True` 这类反连接。建议先小批验证：
+生产大表回填同样使用主键窗口扫描，避免 `normalized_occurrence__isnull=True` 这类反连接。真正读取 `description / help_info / code_snippet` 等大文本字段时会再拆成 `--detail-batch-size` 小批，默认 `min(batch-size, 50)`，防止 MySQL 长连接或单包过大导致 `2013 Lost connection`。建议先小批验证：
 
 ```bash
-python manage.py backfill_code_scan_occurrences --batch-size 50 --scan-window-size 500 --limit 500 --dry-run
-python manage.py backfill_code_scan_occurrences --batch-size 50 --scan-window-size 500 --limit 500
+python manage.py backfill_code_scan_occurrences --batch-size 50 --detail-batch-size 10 --scan-window-size 500 --limit 500 --dry-run
+python manage.py backfill_code_scan_occurrences --batch-size 50 --detail-batch-size 10 --scan-window-size 500 --limit 500
 ```
 
 如果已经回填过一部分，窗口里可能大多是已处理行，可以逐步增大 `--scan-window-size`，例如 `2000` 或 `5000`；`--batch-size` 仍控制单次真正写入的行数。
@@ -53,6 +74,20 @@ python manage.py backfill_code_scan_occurrences --batch-size 50 --scan-window-si
 
 ```bash
 python manage.py verify_code_scan_occurrences --strict
+```
+
+安全清理已回填旧结果：
+
+```bash
+python manage.py purge_legacy_scan_results --dry-run --batch-size 50
+python manage.py purge_legacy_scan_results --batch-size 50 --sleep-seconds 0.2
+```
+
+该命令只从 `scan_result_occurrence.legacy_result_id` 扫描已回填记录，不从巨大 `scan_result` 表做全表反查。删除前会先把历史屏蔽申请补齐 `occurrence_id` 并置空 `result_id`，避免旧外键 `CASCADE` 误删审批记录。建议先按项目灰度：
+
+```bash
+python manage.py purge_legacy_scan_results --project-id <scan_project_id> --dry-run --batch-size 50
+python manage.py purge_legacy_scan_results --project-id <scan_project_id> --batch-size 50 --sleep-seconds 0.2
 ```
 
 建议先对 1-2 个项目带 `--project-id` 灰度执行，确认结果页与集成日报一致后再扩大范围。

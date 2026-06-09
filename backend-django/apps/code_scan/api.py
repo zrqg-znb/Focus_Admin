@@ -101,9 +101,12 @@ def _select_latest_task_rows(
 
         if normalized_tool in SUB_MODULE_SCOPED_TOOLS:
             latest_task_by_module: dict[str, dict] = {}
+            unscoped_fallback: dict | None = None
             for row in filtered_rows:
                 module_value = str(row.get("sub_module") or "").strip()
                 if not module_value:
+                    if unscoped_fallback is None:
+                        unscoped_fallback = row
                     continue
                 module_lower = module_value.lower()
                 if module_lower_set and module_lower not in module_lower_set:
@@ -117,6 +120,8 @@ def _select_latest_task_rows(
             selected_rows = list(latest_task_by_module.values())
             if selected_rows:
                 return selected_rows
+            if module_lower_set and unscoped_fallback:
+                return [unscoped_fallback]
             if module_lower_set:
                 return []
             return filtered_rows[:1]
@@ -124,7 +129,9 @@ def _select_latest_task_rows(
         return filtered_rows[:1]
 
     latest_task_by_tool: dict[tuple[str, str], dict] = {}
+    unscoped_fallback_by_tool: dict[str, dict] = {}
     module_tool_seen: set[str] = set()
+    matched_module_tools: set[str] = set()
     for row in task_rows:
         current_tool = _normalize_tool_name(row.get("tool_name"))
         if not current_tool:
@@ -135,9 +142,13 @@ def _select_latest_task_rows(
 
         if current_tool in SUB_MODULE_SCOPED_TOOLS:
             if module_lower_set:
-                if not current_sub_module_lower or current_sub_module_lower not in module_lower_set:
+                if current_sub_module_lower and current_sub_module_lower in module_lower_set:
+                    key = (current_tool, current_sub_module_lower)
+                    matched_module_tools.add(current_tool)
+                else:
+                    if not current_sub_module_lower and current_tool not in unscoped_fallback_by_tool:
+                        unscoped_fallback_by_tool[current_tool] = row
                     continue
-                key = (current_tool, current_sub_module_lower)
             elif current_sub_module_lower:
                 key = (current_tool, current_sub_module_lower)
                 module_tool_seen.add(current_tool)
@@ -148,6 +159,12 @@ def _select_latest_task_rows(
 
         if key not in latest_task_by_tool:
             latest_task_by_tool[key] = row
+
+    if module_lower_set:
+        for current_tool, row in unscoped_fallback_by_tool.items():
+            if current_tool in matched_module_tools:
+                continue
+            latest_task_by_tool.setdefault((current_tool, ""), row)
 
     selected_rows: list[dict] = []
     for (current_tool, current_sub_module), row in latest_task_by_tool.items():

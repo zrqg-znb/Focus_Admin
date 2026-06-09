@@ -2,7 +2,7 @@ from collections import defaultdict
 import time
 
 from django.core.management.base import BaseCommand
-from django.db import OperationalError, close_old_connections, transaction
+from django.db import OperationalError, close_old_connections, connections, transaction
 from django.utils import timezone
 
 from apps.code_scan.models import ScanResult, ScanResultOccurrence, ScanTask, ShieldApplication
@@ -15,6 +15,12 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--project-id", dest="project_id", help="仅回填指定扫描项目")
         parser.add_argument("--batch-size", type=int, default=1000, help="每批处理的旧结果行数")
+        parser.add_argument(
+            "--detail-batch-size",
+            type=int,
+            default=0,
+            help="每次读取带大文本字段并写入 occurrence 的行数，默认 min(batch-size, 50)",
+        )
         parser.add_argument("--limit", type=int, default=0, help="最多处理多少行，0 表示不限")
         parser.add_argument("--dry-run", action="store_true", help="只统计待回填数量，不写入")
         parser.add_argument("--max-retries", type=int, default=3, help="单批查询断线后的重试次数")
@@ -27,7 +33,11 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         project_id = options.get("project_id")
-        batch_size = options["batch_size"]
+        batch_size = max(int(options["batch_size"] or 1000), 1)
+        detail_batch_size = int(options["detail_batch_size"] or 0)
+        if detail_batch_size <= 0:
+            detail_batch_size = min(batch_size, 50)
+        detail_batch_size = max(min(detail_batch_size, batch_size), 1)
         limit = options["limit"]
         dry_run = options["dry_run"]
         max_retries = max(int(options["max_retries"] or 0), 0)
@@ -88,73 +98,29 @@ class Command(BaseCommand):
                 )
                 continue
 
-            batch = self._fetch_result_batch(
-                missing_ids,
-                max_retries=max_retries,
-            )
-            if not batch:
-                continue
+            for start in range(0, len(missing_ids), detail_batch_size):
+                chunk_ids = missing_ids[start:start + detail_batch_size]
+                batch = self._fetch_result_batch(
+                    chunk_ids,
+                    max_retries=max_retries,
+                )
+                if not batch:
+                    continue
 
-            if dry_run:
+                if dry_run:
+                    processed += len(batch)
+                    self.stdout.write(
+                        f"would process legacy rows: {processed}, scanned candidate rows: {scanned}"
+                    )
+                    connections.close_all()
+                    continue
+
+                self._persist_result_batch(batch, max_retries=max_retries)
                 processed += len(batch)
                 self.stdout.write(
-                    f"would process legacy rows: {processed}, scanned candidate rows: {scanned}"
+                    f"processed legacy rows: {processed}, scanned candidate rows: {scanned}"
                 )
-                continue
-
-            grouped_results: dict[str, list[ScanResult]] = defaultdict(list)
-            task_by_id = {}
-            for result in batch:
-                task_id = str(result.task_id)
-                grouped_results[task_id].append(result)
-                task_by_id[task_id] = result.task
-
-            with transaction.atomic():
-                for task_id, results in grouped_results.items():
-                    defects = [
-                        {
-                            "file_path": result.file_path,
-                            "line_number": result.line_number,
-                            "defect_type": result.defect_type,
-                            "severity": result.severity,
-                            "description": result.description,
-                            "help_info": result.help_info,
-                            "code_snippet": result.code_snippet,
-                        }
-                        for result in results
-                    ]
-                    ScanService.persist_normalized_results(
-                        task_by_id[task_id],
-                        defects,
-                        legacy_results=results,
-                    )
-
-                occurrence_map = {
-                    str(item.legacy_result_id): item.id
-                    for item in ScanResultOccurrence.objects.filter(
-                        legacy_result_id__in=[result.id for result in batch],
-                    )
-                }
-                applications = list(
-                    ShieldApplication.objects.filter(
-                        result_id__in=occurrence_map.keys(),
-                        occurrence__isnull=True,
-                    )
-                )
-                update_time = timezone.now()
-                for app in applications:
-                    app.occurrence_id = occurrence_map.get(str(app.result_id))
-                    app.sys_update_datetime = update_time
-                if applications:
-                    ShieldApplication.objects.bulk_update(
-                        applications,
-                        ["occurrence", "sys_update_datetime"],
-                    )
-
-            processed += len(batch)
-            self.stdout.write(
-                f"processed legacy rows: {processed}, scanned candidate rows: {scanned}"
-            )
+                connections.close_all()
 
         action = "dry-run finished" if dry_run else "backfill finished"
         self.stdout.write(self.style.SUCCESS(f"{action}, processed={processed}"))
@@ -255,13 +221,86 @@ class Command(BaseCommand):
         }
         return [result_by_id[result_id] for result_id in result_ids if result_id in result_by_id]
 
+    def _persist_result_batch(
+        self,
+        batch: list[ScanResult],
+        *,
+        max_retries: int,
+    ) -> None:
+        for attempt in range(max_retries + 1):
+            try:
+                close_old_connections()
+                with transaction.atomic():
+                    self._persist_result_batch_once(batch)
+                return
+            except OperationalError as exc:
+                connections.close_all()
+                if attempt >= max_retries:
+                    raise
+                sleep_seconds = min(2 ** attempt, 8)
+                self.stderr.write(
+                    f"scan_result write batch failed, retry "
+                    f"{attempt + 1}/{max_retries} after {sleep_seconds}s: {exc}"
+                )
+                time.sleep(sleep_seconds)
+        return None
+
+    def _persist_result_batch_once(self, batch: list[ScanResult]) -> None:
+        grouped_results: dict[str, list[ScanResult]] = defaultdict(list)
+        task_by_id = {}
+        for result in batch:
+            task_id = str(result.task_id)
+            grouped_results[task_id].append(result)
+            task_by_id[task_id] = result.task
+
+        for task_id, results in grouped_results.items():
+            defects = [
+                {
+                    "file_path": result.file_path,
+                    "line_number": result.line_number,
+                    "defect_type": result.defect_type,
+                    "severity": result.severity,
+                    "description": result.description,
+                    "help_info": result.help_info,
+                    "code_snippet": result.code_snippet,
+                }
+                for result in results
+            ]
+            ScanService.persist_normalized_results(
+                task_by_id[task_id],
+                defects,
+                legacy_results=results,
+            )
+
+        occurrence_map = {
+            str(item.legacy_result_id): item.id
+            for item in ScanResultOccurrence.objects.filter(
+                legacy_result_id__in=[result.id for result in batch],
+            )
+        }
+        applications = list(
+            ShieldApplication.objects.filter(
+                result_id__in=occurrence_map.keys(),
+                occurrence__isnull=True,
+            )
+        )
+        update_time = timezone.now()
+        for app in applications:
+            app.occurrence_id = occurrence_map.get(str(app.result_id))
+            app.sys_update_datetime = update_time
+        if applications:
+            ShieldApplication.objects.bulk_update(
+                applications,
+                ["occurrence", "sys_update_datetime"],
+            )
+
     def _retrying_query(self, qs, *, max_retries: int, label: str):
         for attempt in range(max_retries + 1):
             try:
                 close_old_connections()
                 return list(qs)
             except OperationalError as exc:
-                close_old_connections()
+                connections.close_all()
                 if attempt >= max_retries:
                     raise
                 sleep_seconds = min(2 ** attempt, 8)
