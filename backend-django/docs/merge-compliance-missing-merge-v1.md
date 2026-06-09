@@ -47,6 +47,7 @@ client 先以 `only_count=True` 获取统计数量，再以 `only_count=False` �
 - `author_pl_group`、`author_pl_group_name` 按启用的 `core.PlGroup.members` 匹配。
 - 作者不存在、作者未加入启用 PL 组、PL 组被禁用时统一归为 `非底软领域`，此时 `author_pl_group=NULL`。
 - 同一用户命中多个启用 PL 组时，按 PL 组现有排序 `-sort, name, id` 取第一个，确保单条 CR 只计入一个 PL 组。
+- 前端创建人展示口径为：匹配 Focus 用户且存在姓名时显示 `姓名（工号）`，未匹配 Focus 用户时显示数据湖返回的原始工号；创建人筛选支持姓名和工号双字段命中。
 
 漏合风险唯一键为 `repository + trunk_branch + release_branch + change_key`。风险状态为：
 

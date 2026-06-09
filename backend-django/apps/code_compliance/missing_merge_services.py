@@ -515,7 +515,9 @@ def _build_missing_merge_record_queryset(
     if status:
         qs = qs.filter(status=_normalize_status(status))
     if author_username:
-        qs = qs.filter(author_username__icontains=_clean_text(author_username))
+        # 参数名保持 author_username 兼容旧前端，实际语义扩展为姓名/工号均可搜索。
+        word = _clean_text(author_username)
+        qs = qs.filter(Q(author_username__icontains=word) | Q(author_user_name__icontains=word))
     if trunk_branch:
         qs = qs.filter(trunk_branch__icontains=_clean_text(trunk_branch))
     if release_branch:

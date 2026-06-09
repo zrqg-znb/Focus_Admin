@@ -828,6 +828,43 @@ class CodeComplianceFoundationTests(TestCase):
         self.assertEqual({item["id"] for item in known_page["items"]}, {str(known.id)})
         self.assertEqual({item["id"] for item in unknown_page["items"]}, {str(unknown.id)})
 
+    def test_missing_merge_records_filter_author_by_username_or_name(self):
+        """创建人筛选参数保持兼容，但支持按工号或 Focus 姓名查询。"""
+        org = self.create_org()
+        repo = self.create_repo(org["id"], "20001")
+        repository = ComplianceRepository.objects.get(id=repo["id"])
+        organization = ComplianceOrganization.objects.get(id=org["id"])
+        known = self.create_missing_record(
+            repository,
+            organization,
+            author_user=self.pl_user,
+            author_username=self.pl_user.username,
+            change_key="known-author-risk",
+        )
+        unknown = self.create_missing_record(
+            repository,
+            organization,
+            author_username="external-user",
+            change_key="unknown-author-risk",
+        )
+
+        username_page = missing_merge_services.list_missing_merge_records(
+            author_username=self.pl_user.username,
+            page_size=10,
+        )
+        name_page = missing_merge_services.list_missing_merge_records(
+            author_username=self.pl_user.name,
+            page_size=10,
+        )
+        external_page = missing_merge_services.list_missing_merge_records(
+            author_username="external-user",
+            page_size=10,
+        )
+
+        self.assertEqual({item["id"] for item in username_page["items"]}, {str(known.id)})
+        self.assertEqual({item["id"] for item in name_page["items"]}, {str(known.id)})
+        self.assertEqual({item["id"] for item in external_page["items"]}, {str(unknown.id)})
+
     def test_missing_merge_pl_dashboard_uses_merged_month_and_counts_unknown(self):
         """PL 看板按主干合入月份聚合，空 merged_at 只进入汇总和明细。"""
         def model_dt(year: int, month: int, day: int):

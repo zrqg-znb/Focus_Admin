@@ -64,7 +64,7 @@ export function useMissingMergeColumns(): ZqTableGridOptions<MissingMergeRecordI
       key: 'author_username',
       dataKey: 'author_username',
       title: '创建人',
-      width: 120,
+      width: 180,
     },
     {
       key: 'author_pl_group_name',

@@ -193,6 +193,16 @@ function formatTime(value?: null | string) {
   return value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '-';
 }
 
+function formatAuthorDisplay(
+  item?: Pick<MissingMergeRecordItem, 'author_user_name' | 'author_username'>,
+) {
+  // Focus 匹配成功时优先展示姓名，同时保留工号方便回查 CR。
+  const username = `${item?.author_username || ''}`.trim();
+  const name = `${item?.author_user_name || ''}`.trim();
+  if (name && username && name !== username) return `${name}（${username}）`;
+  return name || username || '-';
+}
+
 function getOperationLogColor(item: MissingMergeOperationLogItem) {
   // 时间轴颜色按操作语义区分，便于快速扫出人工处理和系统闭环。
   if (item.operation_type === 'auto_closed') return 'var(--el-color-success)';
@@ -470,7 +480,7 @@ onMounted(async () => {
           <ElInput
             v-model="authorUsername"
             clearable
-            placeholder="Focus 用户名"
+            placeholder="姓名 / 工号"
             @clear="reloadRecords(true)"
             @keyup.enter="reloadRecords(true)"
           />
@@ -569,6 +579,10 @@ onMounted(async () => {
           </ElTag>
         </template>
 
+        <template #cell-author_username="{ row }">
+          <span>{{ formatAuthorDisplay(row) }}</span>
+        </template>
+
         <template #cell-author_pl_group_name="{ row }">
           <ElTag
             :type="row.author_pl_group_name === '非底软领域' ? 'info' : 'primary'"
@@ -644,10 +658,7 @@ onMounted(async () => {
             {{ currentRecord.release_branch }}
           </ElDescriptionsItem>
           <ElDescriptionsItem label="创建人">
-            {{ currentRecord.author_username || '-' }}
-          </ElDescriptionsItem>
-          <ElDescriptionsItem label="Focus用户">
-            {{ currentRecord.author_user_name || '-' }}
+            {{ formatAuthorDisplay(currentRecord) }}
           </ElDescriptionsItem>
           <ElDescriptionsItem label="PL组归属">
             {{ currentRecord.author_pl_group_name || '非底软领域' }}
