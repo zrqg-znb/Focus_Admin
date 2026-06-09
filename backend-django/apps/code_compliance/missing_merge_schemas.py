@@ -151,6 +151,7 @@ class MissingMergePlDashboardGroupOut(Schema):
 
 class MissingMergePlDashboardOut(Schema):
     summary: MissingMergePlDashboardSummaryOut
+    weeks: List[str] = Field(default_factory=list)
     months: List[str] = Field(default_factory=list)
     trend_series: List[MissingMergePlDashboardTrendSeriesOut] = Field(default_factory=list)
     status_distribution: List[MissingMergePlDashboardStatusOut] = Field(default_factory=list)

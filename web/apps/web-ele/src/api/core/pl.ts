@@ -82,7 +82,10 @@ export async function updatePlApi(plId: string, data: PlGroupUpdateInput) {
 }
 
 export async function patchPlApi(plId: string, data: PlGroupUpdateInput) {
-  return requestClient.patch<PlGroup>(`/api/core/pl/${plId}`, data);
+  return requestClient.request<PlGroup>(`/api/core/pl/${plId}`, {
+    data,
+    method: 'PATCH',
+  });
 }
 
 export async function deletePlApi(plId: string) {

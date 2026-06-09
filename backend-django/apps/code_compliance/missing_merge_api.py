@@ -107,7 +107,7 @@ def get_missing_merge_pl_dashboard(
     detected_after: Optional[datetime] = Query(None),
     detected_before: Optional[datetime] = Query(None),
 ):
-    """按 PL 组和主干合入月份聚合漏合风险。"""
+    """按 PL 组和主干合入周聚合漏合风险。"""
     return services.get_pl_dashboard(
         organization_id=organization_id,
         repository_id=repository_id,

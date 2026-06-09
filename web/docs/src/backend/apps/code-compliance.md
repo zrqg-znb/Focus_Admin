@@ -250,7 +250,7 @@ class ComplianceMissingMergeRecord(RootModel):
 | GET | `/api/code-compliance/missing-merges/records` | 查询漏合风险列表 |
 | GET | `/api/code-compliance/missing-merges/records/{id}` | 查询漏合风险详情 |
 | PUT | `/api/code-compliance/missing-merges/records/{id}/status` | 更新漏合风险状态 |
-| GET | `/api/code-compliance/missing-merges/pl-dashboard` | 按 PL 组和主干合入月份聚合漏合趋势、状态分布和排行 |
+| GET | `/api/code-compliance/missing-merges/pl-dashboard` | 按 PL 组和主干合入周聚合漏合趋势、状态分布和排行 |
 | GET | `/api/code-compliance/missing-merges/scan-tasks` | 查询扫描任务历史 |
 | GET | `/api/code-compliance/missing-merges/scan-tasks/{id}` | 查询扫描任务详情 |
 | POST | `/api/code-compliance/missing-merges/scan-tasks/run` | 手动提交漏合检测任务，后台异步执行 |

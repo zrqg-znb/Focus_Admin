@@ -129,7 +129,7 @@ const apis = [
 
 手动同步入口只负责创建 `ComplianceMissingMergeScanTask` 并立即返回，后台进程内线程继续执行扫描；定时任务也复用同一张任务历史表，用户可在 `同步任务历史` 页面查看手动和定时任务的状态、范围、计数和错误信息。
 
-每条漏合记录会根据 CR `author.username` 精确匹配 Focus 用户，再按启用的 `PlGroup.members` 识别作者所在 PL 组。未匹配用户、未加入启用 PL 组或 PL 组禁用时统一标记为 `非底软领域`。漏合风险页新增 `风险列表 / PL组看板` 切换，列表展示 PL 组列，看板按主干合入时间 `merged_at` 的月份维度展示各 PL 组漏合趋势、状态分布和排行。
+每条漏合记录会根据 CR `author.username` 精确匹配 Focus 用户，再按启用的 `PlGroup.members` 识别作者所在 PL 组。未匹配用户、未加入启用 PL 组或 PL 组禁用时统一标记为 `非底软领域`。漏合风险页新增 `风险列表 / PL组看板` 切换，列表展示 PL 组列，看板按主干合入时间 `merged_at` 的周维度展示各 PL 组漏合趋势、状态分布和排行。
 
 数据湖 URL 使用固定组织路径模板，`group_id` 会在同步时动态注入；开发环境可通过 `CODE_COMPLIANCE_CR_FORCE_MOCK` 走 mock 数据。详细设计见 `backend-django/docs/merge-compliance-missing-merge-v1.md`。
 

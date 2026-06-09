@@ -865,8 +865,8 @@ class CodeComplianceFoundationTests(TestCase):
         self.assertEqual({item["id"] for item in name_page["items"]}, {str(known.id)})
         self.assertEqual({item["id"] for item in external_page["items"]}, {str(unknown.id)})
 
-    def test_missing_merge_pl_dashboard_uses_merged_month_and_counts_unknown(self):
-        """PL 看板按主干合入月份聚合，空 merged_at 只进入汇总和明细。"""
+    def test_missing_merge_pl_dashboard_uses_merged_week_and_counts_unknown(self):
+        """PL 看板按主干合入周聚合，空 merged_at 只进入汇总和明细。"""
         def model_dt(year: int, month: int, day: int):
             value = timezone.make_aware(
                 datetime(year, month, day, 10, 0, 0),
@@ -923,18 +923,20 @@ class CodeComplianceFoundationTests(TestCase):
             merged_before=model_dt(2026, 2, 28),
         )
 
-        self.assertEqual(dashboard["months"], ["2026-01", "2026-02"])
+        self.assertIn("2026-W02", dashboard["weeks"])
+        self.assertIn("2026-W07", dashboard["weeks"])
         self.assertEqual(dashboard["summary"]["total_count"], 4)
         self.assertEqual(dashboard["summary"]["open_count"], 2)
         self.assertEqual(dashboard["summary"]["fixed_count"], 1)
         self.assertEqual(dashboard["summary"]["ignored_count"], 1)
         self.assertEqual(dashboard["summary"]["missing_merged_at_count"], 1)
         trend_by_name = {item["pl_group_name"]: item["data"] for item in dashboard["trend_series"]}
-        self.assertEqual(trend_by_name[self.pl_group.name], [1, 1])
-        self.assertEqual(
-            trend_by_name[missing_merge_services.UNKNOWN_PL_GROUP_NAME],
-            [1, 0],
-        )
+        week_02_index = dashboard["weeks"].index("2026-W02")
+        week_07_index = dashboard["weeks"].index("2026-W07")
+        self.assertEqual(trend_by_name[self.pl_group.name][week_02_index], 1)
+        self.assertEqual(trend_by_name[self.pl_group.name][week_07_index], 1)
+        self.assertEqual(trend_by_name[missing_merge_services.UNKNOWN_PL_GROUP_NAME][week_02_index], 1)
+        self.assertEqual(trend_by_name[missing_merge_services.UNKNOWN_PL_GROUP_NAME][week_07_index], 0)
         groups_by_name = {item["pl_group_name"]: item for item in dashboard["pl_groups"]}
         self.assertEqual(groups_by_name[self.pl_group.name]["total_count"], 2)
         self.assertEqual(

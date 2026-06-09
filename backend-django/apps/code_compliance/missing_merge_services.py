@@ -670,51 +670,54 @@ def list_repository_options(
     )
 
 
-def _month_start(value) -> Any:
-    """把时间归到当月第一天，用于 PL 看板默认月份窗口。"""
+def _week_start(value) -> Any:
+    """把时间归到本周周一，用于 PL 看板默认周窗口。"""
     local_value = timezone.localtime(value, timezone.get_current_timezone()) if timezone.is_aware(value) else value
-    return local_value.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return (local_value - timedelta(days=local_value.weekday())).replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
 
 
-def _add_months(value, months: int):
-    """不引入额外依赖的月份加减工具。"""
-    month_index = value.month - 1 + months
-    year = value.year + month_index // 12
-    month = month_index % 12 + 1
-    return value.replace(year=year, month=month)
+def _add_weeks(value, weeks: int):
+    """按自然周加减时间，保持看板横轴稳定。"""
+    return value + timedelta(weeks=weeks)
 
 
-def _month_key(value) -> str:
-    """按主干合入时间生成 YYYY-MM 月份键。"""
+def _week_key(value) -> str:
+    """按主干合入时间生成 ISO 周键。"""
     local_value = timezone.localtime(value, timezone.get_current_timezone()) if timezone.is_aware(value) else value
-    return local_value.strftime("%Y-%m")
+    iso_year, iso_week, _ = local_value.isocalendar()
+    return f"{iso_year}-W{iso_week:02d}"
 
 
 def _dashboard_time_range(merged_after: Any = None, merged_before: Any = None):
-    """看板默认展示最近 12 个自然月；显式时间范围优先。"""
+    """看板默认展示最近 12 个自然周；显式时间范围优先。"""
     if merged_after or merged_before:
         start = _to_model_datetime(merged_after) if merged_after else None
         end = _to_model_datetime(merged_before) if merged_before else None
         if start is None and end is not None:
-            start = _to_model_datetime(_add_months(_month_start(end), -11))
+            start = _to_model_datetime(_add_weeks(_week_start(end), -11))
         if end is None:
             end = _to_model_datetime(timezone.now())
     else:
         end = _to_model_datetime(timezone.now())
-        start = _to_model_datetime(_add_months(_month_start(end), -11))
+        start = _to_model_datetime(_add_weeks(_week_start(end), -11))
     return start, end
 
 
-def _build_month_labels(start, end) -> list[str]:
-    """生成看板横轴月份，避免前端自己推导时间窗口。"""
+def _build_week_labels(start, end) -> list[str]:
+    """生成看板横轴周标签，避免前端自己推导时间窗口。"""
     if not start or not end:
         return []
     labels: list[str] = []
-    current = _month_start(start)
-    end_month = _month_start(end)
-    while current <= end_month:
-        labels.append(current.strftime("%Y-%m"))
-        current = _add_months(current, 1)
+    current = _week_start(start)
+    end_week = _week_start(end)
+    while current <= end_week:
+        labels.append(_week_key(current))
+        current = _add_weeks(current, 1)
     return labels
 
 
@@ -735,7 +738,7 @@ def get_pl_dashboard(
     detected_after: Any = None,
     detected_before: Any = None,
 ) -> dict:
-    """按 PL 组和主干合入月份聚合漏合风险，用于漏合风险看板。"""
+    """按 PL 组和主干合入周聚合漏合风险，用于漏合风险看板。"""
     dashboard_merged_after, dashboard_merged_before = _dashboard_time_range(merged_after, merged_before)
     qs = _build_missing_merge_record_queryset(
         organization_id=organization_id,
@@ -751,7 +754,7 @@ def get_pl_dashboard(
         detected_after=detected_after,
         detected_before=detected_before,
     )
-    # 看板汇总保留 merged_at 为空的记录；趋势图只统计落在月份窗口内的记录。
+    # 看板汇总保留 merged_at 为空的记录；趋势图只统计落在周窗口内的记录。
     if dashboard_merged_after:
         qs = qs.filter(Q(merged_at__gte=dashboard_merged_after) | Q(merged_at__isnull=True))
     if dashboard_merged_before:
@@ -767,8 +770,8 @@ def get_pl_dashboard(
             "author_pl_group_name",
         )
     )
-    months = _build_month_labels(dashboard_merged_after, dashboard_merged_before)
-    month_set = set(months)
+    weeks = _build_week_labels(dashboard_merged_after, dashboard_merged_before)
+    week_set = set(weeks)
     status_counter: Counter[str] = Counter()
     trend_counter: dict[str, Counter[str]] = defaultdict(Counter)
     pl_group_counter: dict[str, Counter[str]] = defaultdict(Counter)
@@ -793,9 +796,9 @@ def get_pl_dashboard(
         if not merged_at:
             missing_merged_at_count += 1
             continue
-        month = _month_key(merged_at)
-        if month in month_set:
-            trend_counter[group_id][month] += 1
+        week = _week_key(merged_at)
+        if week in week_set:
+            trend_counter[group_id][week] += 1
 
     pl_groups = []
     for group_id, counter in pl_group_counter.items():
@@ -816,7 +819,7 @@ def get_pl_dashboard(
         {
             "pl_group_id": None if group_id == UNKNOWN_PL_GROUP_ID else group_id,
             "pl_group_name": pl_group_names.get(group_id) or UNKNOWN_PL_GROUP_NAME,
-            "data": [int(counter.get(month, 0)) for month in months],
+            "data": [int(counter.get(week, 0)) for week in weeks],
         }
         for group_id, counter in sorted(
             trend_counter.items(),
@@ -835,7 +838,8 @@ def get_pl_dashboard(
             "merged_after": dashboard_merged_after,
             "merged_before": dashboard_merged_before,
         },
-        "months": months,
+        "weeks": weeks,
+        "months": weeks,
         "trend_series": trend_series,
         "status_distribution": [
             {

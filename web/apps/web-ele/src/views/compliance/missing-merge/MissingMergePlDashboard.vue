@@ -41,6 +41,7 @@ function renderCharts() {
   // 图表只读取 dashboard 快照，避免列表筛选变化时出现半更新状态。
   const data = dashboard.value;
   if (!data) return;
+  const weekLabels = data.weeks?.length ? data.weeks : data.months;
   renderTrendChart({
     color: ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#0891b2'],
     grid: {
@@ -66,7 +67,7 @@ function renderCharts() {
     },
     xAxis: {
       boundaryGap: false,
-      data: data.months,
+      data: weekLabels,
       type: 'category',
     },
     yAxis: {
@@ -120,39 +121,16 @@ watch(
       <div>
         <div class="dashboard-title">PL组漏合趋势</div>
         <div class="dashboard-subtitle">
-          按主干合入时间统计月份趋势，空合入时间记录计入汇总但不进入趋势。
+          按主干合入时间统计周趋势，空合入时间记录计入明细但不进入趋势。
         </div>
       </div>
       <ElButton @click="loadDashboard">刷新看板</ElButton>
     </div>
 
     <template v-if="dashboard">
-      <div class="metric-row">
-        <div class="metric-item">
-          <span>总风险</span>
-          <strong>{{ dashboard.summary.total_count }}</strong>
-        </div>
-        <div class="metric-item metric-danger">
-          <span>未处理</span>
-          <strong>{{ dashboard.summary.open_count }}</strong>
-        </div>
-        <div class="metric-item metric-success">
-          <span>已补合</span>
-          <strong>{{ dashboard.summary.fixed_count }}</strong>
-        </div>
-        <div class="metric-item">
-          <span>PL组数</span>
-          <strong>{{ dashboard.summary.pl_group_count }}</strong>
-        </div>
-        <div class="metric-item">
-          <span>无合入时间</span>
-          <strong>{{ dashboard.summary.missing_merged_at_count }}</strong>
-        </div>
-      </div>
-
       <div class="chart-grid">
         <div class="chart-panel chart-panel-wide">
-          <div class="panel-title">月度趋势</div>
+          <div class="panel-title">周趋势</div>
           <EchartsUI ref="trendChartRef" class="chart-body" />
         </div>
         <div class="chart-panel">
@@ -197,7 +175,6 @@ watch(
 }
 
 .dashboard-header,
-.metric-row,
 .chart-grid {
   display: flex;
   gap: 12px;
@@ -219,40 +196,6 @@ watch(
   margin-top: 4px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
-}
-
-.metric-row {
-  flex-wrap: wrap;
-}
-
-.metric-item {
-  min-width: 132px;
-  padding: 12px;
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 6px;
-  background: var(--el-fill-color-extra-light);
-}
-
-.metric-item span {
-  display: block;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
-
-.metric-item strong {
-  display: block;
-  margin-top: 6px;
-  font-size: 24px;
-  line-height: 1;
-  color: var(--el-text-color-primary);
-}
-
-.metric-danger strong {
-  color: var(--el-color-danger);
-}
-
-.metric-success strong {
-  color: var(--el-color-success);
 }
 
 .chart-grid {

@@ -9,6 +9,7 @@ import type {
   MissingMergeScanTaskItem,
   MissingMergeStatus,
 } from '#/api/compliance/missing-merge';
+import type { PlGroup } from '#/api/core/pl';
 import type { FormInstance, FormRules } from 'element-plus';
 
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
@@ -48,6 +49,7 @@ import {
   runMissingMergeScanApi,
   updateMissingMergeRecordStatusApi,
 } from '#/api/compliance/missing-merge';
+import { getPlListApi } from '#/api/core/pl';
 import { useZqTable } from '#/components/zq-table';
 
 import {
@@ -108,6 +110,8 @@ const statusForm = reactive<StatusFormState>({
 const remarkForbiddenPattern = /[\u0000-\u001F\u007F<>`{}]/;
 const ORG_SCOPE_PREFIX = 'org:';
 const REPO_SCOPE_PREFIX = 'repo:';
+const UNKNOWN_PL_GROUP_ID = 'unknown';
+const UNKNOWN_PL_GROUP_NAME = '非底软领域';
 const scopeCascaderProps = {
   checkStrictly: true,
   children: 'children',
@@ -260,6 +264,23 @@ function parseScopeSelection(values = selectedScopeValues.value) {
   };
 }
 
+function buildPlGroupFilterOptions(
+  groups: PlGroup[],
+): MissingMergePlGroupOption[] {
+  // PL 组选项直接复用 core/pl 模块，末尾追加漏合风险专属的未知归属。
+  const rows = (groups || [])
+    .filter((item) => item.status)
+    .map((item) => ({
+      code: item.code || '',
+      id: item.id,
+      name: item.name,
+    }));
+  return [
+    ...rows,
+    { code: '', id: UNKNOWN_PL_GROUP_ID, name: UNKNOWN_PL_GROUP_NAME },
+  ];
+}
+
 function buildRecordQueryParams(): MissingMergeRecordListParams {
   // 列表和看板共用同一套筛选参数，避免视图切换后统计口径变化。
   const scope = parseScopeSelection();
@@ -280,13 +301,16 @@ function buildRecordQueryParams(): MissingMergeRecordListParams {
 }
 
 async function loadOptions() {
-  // 选项接口挂在漏合风险权限下，避免依赖代码库管理页的 API 权限。
+  // 组织/代码库仍走漏合风险接口；PL 组直接复用 core/pl 列表接口，避免选项口径漂移。
   optionsLoading.value = true;
   try {
-    const result = await listMissingMergeOptionsApi();
+    const [result, plGroupPage] = await Promise.all([
+      listMissingMergeOptionsApi(),
+      getPlListApi({ page: 1, pageSize: 1000, status: true }),
+    ]);
     organizationTree.value = result.organizations || [];
     repositoryOptions.value = result.repositories || [];
-    plGroupOptions.value = result.pl_groups || [];
+    plGroupOptions.value = buildPlGroupFilterOptions(plGroupPage.items || []);
   } finally {
     optionsLoading.value = false;
   }

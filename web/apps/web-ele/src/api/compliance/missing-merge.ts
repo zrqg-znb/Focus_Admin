@@ -185,6 +185,7 @@ export interface MissingMergePlDashboard {
   status_distribution: MissingMergePlDashboardStatus[];
   summary: MissingMergePlDashboardSummary;
   trend_series: MissingMergePlDashboardTrendSeries[];
+  weeks: string[];
 }
 
 const base = '/api/code-compliance/missing-merges';
