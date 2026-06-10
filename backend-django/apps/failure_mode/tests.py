@@ -15,6 +15,7 @@ from .failure_mode_model import (
     FailureModeHandlingMeasureRel,
     FailureModeObservationMethodRel,
     FailureModeProduct,
+    FailureModeRoleAssignment,
     HandlingMeasure,
     HuatuoDiagnosis,
     InterceptionStrategy,
@@ -823,6 +824,23 @@ class ProductFailureModeSearchTests(TestCase):
 
         self.assertEqual(len(rows), 3)
         self.assertIsInstance(rows, list)
+
+    def test_list_products_compact_skips_role_preview(self):
+        feature_user = User.objects.create(username='fm-product-feature-se')
+        FailureModeRoleAssignment.objects.create(
+            user=feature_user,
+            product=self.product,
+            role=FailureModeRoleAssignment.ROLE_FEATURE_SE,
+            subsystem='Engine',
+        )
+
+        full_rows = ProductWorkflowService.list_products(self.user)
+        compact_rows = ProductWorkflowService.list_products(self.user, compact=True)
+        full_row = next(item for item in full_rows if item['id'] == str(self.product.id))
+        compact_row = next(item for item in compact_rows if item['id'] == str(self.product.id))
+
+        self.assertEqual(full_row['role_preview'][0]['subsystem'], 'Engine')
+        self.assertEqual(compact_row['role_preview'], [])
 
 
 class FailureModeDictDrivenCategoryTests(TestCase):

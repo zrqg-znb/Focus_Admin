@@ -35,11 +35,17 @@ router = Router(tags=['FailureModeWorkflow'], auth=GlobalAuth())
 
 
 @router.get('/products', response=List[FailureModeProductOutSchema], summary='获取产品(项目)列表')
-def list_products(request, owner_id: str = None, project_type: str = None):
+def list_products(
+    request,
+    owner_id: str = None,
+    project_type: str = None,
+    compact: bool = False,
+):
     return ProductWorkflowService.list_products(
         request.auth,
         owner_id=owner_id,
         project_type=project_type,
+        compact=compact,
     )
 
 

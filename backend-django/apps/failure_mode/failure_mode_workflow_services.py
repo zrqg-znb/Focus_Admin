@@ -311,12 +311,20 @@ def _build_role_preview(assignments: list[FailureModeRoleAssignment]) -> list[di
 def _serialize_product(
     product: FailureModeProduct,
     policy: 'FailureModeAccessPolicy',
+    *,
+    include_role_preview: bool = True,
 ) -> dict[str, Any]:
     owner_assignment = None
-    prefetched = getattr(product, '_prefetched_objects_cache', {})
-    assignments = prefetched.get('role_assignments') or []
-    visible_assignments = _filter_visible_role_assignments(product, assignments, policy)
-    if assignments is not None:
+    assignments = []
+    if include_role_preview:
+        prefetched = getattr(product, '_prefetched_objects_cache', {})
+        assignments = prefetched.get('role_assignments') or []
+    visible_assignments = (
+        _filter_visible_role_assignments(product, assignments, policy)
+        if include_role_preview
+        else []
+    )
+    if include_role_preview:
         owner_assignment = next(
             (
                 item
@@ -333,7 +341,9 @@ def _serialize_product(
         'owner_info': _format_user(product.owner),
         'owner_assignment_id': str(owner_assignment.id) if owner_assignment else None,
         'can_manage_roles': policy.can_manage_product_roles(product),
-        'role_preview': _build_role_preview(visible_assignments),
+        'role_preview': _build_role_preview(visible_assignments)
+        if include_role_preview
+        else [],
         'sys_create_datetime': _format_datetime(product.sys_create_datetime),
         'sys_update_datetime': _format_datetime(product.sys_update_datetime),
     }
@@ -1491,18 +1501,30 @@ class ProductWorkflowService:
         user: User,
         owner_id: str | None = None,
         project_type: str | None = None,
+        compact: bool = False,
     ) -> list[dict[str, Any]]:
         cls.sync_projects()
         policy = FailureModeAccessPolicy(user)
-        queryset = FailureModeProduct.objects.select_related('project', 'owner').prefetch_related(
-            Prefetch('role_assignments', queryset=FailureModeRoleAssignment.objects.filter(is_active=True).select_related('user'))
-        )
+        queryset = FailureModeProduct.objects.select_related('project', 'owner')
+        if not compact:
+            queryset = queryset.prefetch_related(
+                Prefetch(
+                    'role_assignments',
+                    queryset=FailureModeRoleAssignment.objects.filter(
+                        is_active=True,
+                    ).select_related('user'),
+                )
+            )
         queryset = policy.filter_products(queryset)
         queryset = _filter_product_queryset_by_project_type(queryset, project_type)
         if owner_id:
             queryset = queryset.filter(owner_id=owner_id)
         return [
-            _serialize_product(item, policy)
+            _serialize_product(
+                item,
+                policy,
+                include_role_preview=not compact,
+            )
             for item in queryset.order_by('project__name', '-sys_create_datetime')
         ]
 

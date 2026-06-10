@@ -182,6 +182,7 @@ function normalizeTaskLogItem(
 }
 
 export function listProductsApi(params?: {
+  compact?: boolean;
   owner_id?: string;
   project_type?: string;
 }) {

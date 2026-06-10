@@ -16,6 +16,7 @@ import {
   ElInput,
   ElOption,
   ElSelect,
+  ElSelectV2,
   ElTag,
 } from 'element-plus';
 
@@ -44,6 +45,13 @@ const selectedProduct = computed(() => {
   return (
     products.value.find((item) => item.id === selectedProductId.value) || null
   );
+});
+
+const productSelectOptions = computed(() => {
+  return products.value.map((item) => ({
+    label: item.project_name,
+    value: item.id,
+  }));
 });
 
 const baselineEmptyDescription = computed(() => {
@@ -87,7 +95,10 @@ const [BaselineGrid, baselineGridApi] = useZqTable<ProductFailureModeItem>({
 async function loadProducts() {
   loadingProducts.value = true;
   try {
-    products.value = await listProductsApi();
+    products.value = await listProductsApi({
+      compact: true,
+      project_type: '平台项目',
+    });
     if (!selectedProductId.value && products.value.length > 0) {
       selectedProductId.value = products.value[0]!.id;
       await loadSubsystems();
@@ -157,20 +168,14 @@ onMounted(() => {
         <div
           class="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_220px_minmax(220px,0.8fr)_140px]"
         >
-          <ElSelect
+          <ElSelectV2
             v-model="selectedProductId"
             filterable
+            :options="productSelectOptions"
             placeholder="请选择产品"
             :loading="loadingProducts"
             @change="handleProductChange"
-          >
-            <ElOption
-              v-for="item in products"
-              :key="item.id"
-              :label="item.project_name"
-              :value="item.id"
-            />
-          </ElSelect>
+          />
           <ElSelect
             v-model="selectedSubsystem"
             clearable
