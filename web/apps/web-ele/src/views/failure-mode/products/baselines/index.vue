@@ -91,6 +91,7 @@ async function loadProducts() {
     if (!selectedProductId.value && products.value.length > 0) {
       selectedProductId.value = products.value[0]!.id;
       await loadSubsystems();
+      await handleSearch();
     }
   } finally {
     loadingProducts.value = false;
