@@ -42,6 +42,19 @@ export interface ProductFailureModeItem {
   sys_create_datetime?: null | string;
 }
 
+export interface ProductFailureModePage {
+  items: ProductFailureModeItem[];
+  total: number;
+}
+
+export interface ProductFailureModeSearchPayload {
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
+  product_id: string;
+  subsystem?: string;
+}
+
 export interface VisibleSubsystemItem {
   label: string;
   value: string;
@@ -192,6 +205,15 @@ export function listProductFailureModesApi(
   return requestClient.get<ProductFailureModeItem[]>(
     `/api/failure-mode/workflow/products/${productId}/failure-modes`,
     { params },
+  );
+}
+
+export function searchProductFailureModesApi(
+  data: ProductFailureModeSearchPayload,
+) {
+  return requestClient.post<ProductFailureModePage>(
+    '/api/failure-mode/workflow/product-failure-modes/search',
+    data,
   );
 }
 

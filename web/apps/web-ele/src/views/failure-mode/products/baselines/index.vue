@@ -10,12 +10,19 @@ import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
-import { ElButton, ElEmpty, ElOption, ElSelect, ElTag } from 'element-plus';
+import {
+  ElButton,
+  ElEmpty,
+  ElInput,
+  ElOption,
+  ElSelect,
+  ElTag,
+} from 'element-plus';
 
 import {
-  listProductFailureModesApi,
   listProductsApi,
   listVisibleSubsystemsApi,
+  searchProductFailureModesApi,
 } from '#/api/failure_mode_workflow';
 import { useZqTable } from '#/components/zq-table';
 
@@ -28,13 +35,25 @@ const router = useRouter();
 const products = ref<FailureModeProductItem[]>([]);
 const selectedProductId = ref('');
 const selectedSubsystem = ref('');
+const keyword = ref('');
 const subsystemOptions = ref<VisibleSubsystemItem[]>([]);
 const loadingProducts = ref(false);
+const hasSearched = ref(false);
 
 const selectedProduct = computed(() => {
   return (
     products.value.find((item) => item.id === selectedProductId.value) || null
   );
+});
+
+const baselineEmptyDescription = computed(() => {
+  if (!selectedProductId.value) {
+    return '请先选择一个产品以查看基线结果';
+  }
+  if (!hasSearched.value) {
+    return '请选择产品后点击查询加载当前基线';
+  }
+  return '';
 });
 
 const [BaselineGrid, baselineGridApi] = useZqTable<ProductFailureModeItem>({
@@ -44,17 +63,21 @@ const [BaselineGrid, baselineGridApi] = useZqTable<ProductFailureModeItem>({
     proxyConfig: {
       autoLoad: false,
       ajax: {
-        query: async () => {
+        query: async ({
+          page,
+        }: {
+          page?: { currentPage?: number; pageSize?: number };
+        }) => {
           if (!selectedProductId.value) {
             return { items: [], total: 0 };
           }
-          const res = await listProductFailureModesApi(
-            selectedProductId.value,
-            {
-              subsystem: selectedSubsystem.value || undefined,
-            },
-          );
-          return { items: res as any, total: (res as any).length };
+          return searchProductFailureModesApi({
+            keyword: keyword.value.trim() || undefined,
+            page: page?.currentPage || 1,
+            pageSize: page?.pageSize || 20,
+            product_id: selectedProductId.value,
+            subsystem: selectedSubsystem.value || undefined,
+          });
         },
       },
     },
@@ -68,7 +91,6 @@ async function loadProducts() {
     if (!selectedProductId.value && products.value.length > 0) {
       selectedProductId.value = products.value[0]!.id;
       await loadSubsystems();
-      handleSearch();
     }
   } finally {
     loadingProducts.value = false;
@@ -89,10 +111,11 @@ async function loadSubsystems() {
 async function handleProductChange() {
   selectedSubsystem.value = '';
   await loadSubsystems();
-  handleSearch();
+  await handleSearch();
 }
 
 async function handleSearch() {
+  hasSearched.value = true;
   baselineGridApi.pagination.currentPage = 1;
   await baselineGridApi.query();
 }
@@ -131,7 +154,7 @@ onMounted(() => {
         </div>
 
         <div
-          class="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_220px_140px]"
+          class="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_220px_minmax(220px,0.8fr)_140px]"
         >
           <ElSelect
             v-model="selectedProductId"
@@ -161,8 +184,23 @@ onMounted(() => {
               :value="item.value"
             />
           </ElSelect>
+          <ElInput
+            v-model="keyword"
+            clearable
+            placeholder="搜索故障模式简述"
+            @clear="handleSearch"
+            @keyup.enter="handleSearch"
+          />
           <div class="flex items-center justify-end">
-            <ElButton type="primary" plain @click="handleSearch">查询</ElButton>
+            <ElButton
+              type="primary"
+              plain
+              :disabled="!selectedProductId"
+              :loading="baselineGridApi.loading.value"
+              @click="handleSearch"
+            >
+              查询
+            </ElButton>
           </div>
         </div>
 
@@ -185,10 +223,10 @@ onMounted(() => {
         class="relative min-h-0 flex-1 overflow-hidden rounded-xl bg-white p-4 shadow-sm"
       >
         <div
-          v-if="!selectedProductId"
+          v-if="!selectedProductId || !hasSearched"
           class="absolute inset-0 z-10 flex items-center justify-center bg-white"
         >
-          <ElEmpty description="请先选择一个产品以查看基线结果" />
+          <ElEmpty :description="baselineEmptyDescription" />
         </div>
         <div class="h-full">
           <BaselineGrid />

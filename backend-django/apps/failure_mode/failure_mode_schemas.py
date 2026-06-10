@@ -945,6 +945,21 @@ class TaskFailureModeLandingSaveSchema(Schema):
 class TaskFailureModeSearchSchema(SearchPaginationSchema):
     keyword: Optional[str] = Field(None, description='关键词')
 
+
+class ProductFailureModeSearchSchema(SearchPaginationSchema):
+    product_id: str
+    subsystem: Optional[str] = None
+    keyword: Optional[str] = Field(None, description='故障模式关键词')
+
+    @field_validator('product_id', 'subsystem', 'keyword', mode='before')
+    @classmethod
+    def normalize_product_failure_mode_search_text(cls, value: Any):
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+
 class ProductFailureModeOutSchema(Schema):
     id: str
     product_id: str

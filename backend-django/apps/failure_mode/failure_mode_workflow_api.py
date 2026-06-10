@@ -16,6 +16,8 @@ from apps.failure_mode.failure_mode_schemas import (
     FailureModeTaskScopeUpdateSchema,
     FailureModeUpdateSchema,
     ProductFailureModeOutSchema,
+    ProductFailureModePageSchema,
+    ProductFailureModeSearchSchema,
     ProductRoleAssignmentBatchSaveSchema,
     SaveSuccessSchema,
     TaskCloseSchema,
@@ -39,6 +41,11 @@ def list_products(request, owner_id: str = None, project_type: str = None):
         owner_id=owner_id,
         project_type=project_type,
     )
+
+
+@router.post('/product-failure-modes/search', response=ProductFailureModePageSchema, summary='分页搜索产品故障模式基线')
+def search_product_failure_modes(request, data: ProductFailureModeSearchSchema):
+    return ProductWorkflowService.search_product_failure_modes(request.auth, data)
 
 
 @router.put('/products/{product_id}/owner', response=FailureModeProductOutSchema, summary='更新产品主版本SE')

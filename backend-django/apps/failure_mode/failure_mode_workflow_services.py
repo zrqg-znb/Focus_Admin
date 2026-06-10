@@ -1547,6 +1547,46 @@ class ProductWorkflowService:
         return [_serialize_product_failure_mode(item) for item in queryset.order_by('subsystem', '-sys_create_datetime')]
 
     @classmethod
+    def search_product_failure_modes(
+        cls,
+        user: User,
+        filters: Any,
+    ) -> dict[str, Any]:
+        product_id = _normalize_text(getattr(filters, 'product_id', None))
+        product = get_object_or_404(
+            FailureModeProduct.objects.select_related('project', 'owner'),
+            id=product_id,
+        )
+        policy = FailureModeAccessPolicy(user)
+        if not policy.can_view_product(product):
+            raise HttpError(403, '无权查看当前产品基线。')
+
+        queryset = ProductFailureMode.objects.filter(
+            product_id=product_id,
+        ).select_related('failure_mode')
+        queryset = policy.filter_product_failure_modes(queryset)
+
+        subsystem = _normalize_text(getattr(filters, 'subsystem', None))
+        if subsystem:
+            queryset = queryset.filter(subsystem=subsystem)
+
+        keyword = _normalize_text(getattr(filters, 'keyword', None))
+        if keyword:
+            queryset = queryset.filter(failure_mode__brief__icontains=keyword)
+
+        page = max(int(getattr(filters, 'page', 1) or 1), 1)
+        page_size = min(max(int(getattr(filters, 'pageSize', 20) or 20), 1), 100)
+        total = queryset.count()
+        offset = page_size * (page - 1)
+        page_queryset = queryset.order_by('subsystem', '-sys_create_datetime')[
+            offset: offset + page_size
+        ]
+        return {
+            'items': [_serialize_product_failure_mode(item) for item in page_queryset],
+            'total': total,
+        }
+
+    @classmethod
     def list_product_role_assignments(cls, user: User, product_id: str) -> list[dict[str, Any]]:
         cls.sync_projects()
         policy = FailureModeAccessPolicy(user)

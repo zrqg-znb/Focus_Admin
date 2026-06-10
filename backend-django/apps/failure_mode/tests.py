@@ -32,6 +32,7 @@ from .failure_mode_services import (
     get_failure_mode_dict_options,
 )
 from .failure_mode_workflow_services import (
+    ProductWorkflowService,
     TaskWorkflowService,
     _build_product_failure_mode_landing_maps,
     _normalize_task_landing_payload_for_item,
@@ -703,6 +704,125 @@ class TaskLandingTengwuPersistenceTests(TestCase):
             ProductFailureModeHuatuoLanding.objects.get().tengwu_requirement_numbers,
             [],
         )
+
+
+class ProductFailureModeSearchTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create(
+            username='fm-product-baseline-admin',
+            password='x',
+            is_superuser=True,
+        )
+        self.forbidden_user = User.objects.create(
+            username='fm-product-baseline-viewer',
+            password='x',
+        )
+        self.project = Project.objects.create(
+            name='Baseline Product A',
+            domain='Domain',
+            type='Vehicle',
+            code='FM-PB-A',
+        )
+        self.product = FailureModeProduct.objects.create(project=self.project)
+        self.engine_mode = FailureMode.objects.create(
+            brief='发动机上电失败',
+            subsystem='Engine',
+        )
+        self.engine_mode_2 = FailureMode.objects.create(
+            brief='发动机降级保护',
+            subsystem='Engine',
+        )
+        self.chassis_mode = FailureMode.objects.create(
+            brief='底盘通信异常',
+            subsystem='Chassis',
+        )
+        ProductFailureMode.objects.create(
+            product=self.product,
+            subsystem='Engine',
+            failure_mode=self.engine_mode,
+        )
+        ProductFailureMode.objects.create(
+            product=self.product,
+            subsystem='Engine',
+            failure_mode=self.engine_mode_2,
+        )
+        ProductFailureMode.objects.create(
+            product=self.product,
+            subsystem='Chassis',
+            failure_mode=self.chassis_mode,
+        )
+
+    def test_search_product_failure_modes_is_paginated(self):
+        result = ProductWorkflowService.search_product_failure_modes(
+            self.user,
+            SimpleNamespace(
+                product_id=str(self.product.id),
+                page=1,
+                pageSize=2,
+                subsystem='',
+                keyword='',
+            ),
+        )
+
+        self.assertEqual(result['total'], 3)
+        self.assertEqual(len(result['items']), 2)
+
+    def test_search_product_failure_modes_filters_subsystem_and_keyword(self):
+        subsystem_result = ProductWorkflowService.search_product_failure_modes(
+            self.user,
+            SimpleNamespace(
+                product_id=str(self.product.id),
+                page=1,
+                pageSize=20,
+                subsystem='Engine',
+                keyword='',
+            ),
+        )
+        keyword_result = ProductWorkflowService.search_product_failure_modes(
+            self.user,
+            SimpleNamespace(
+                product_id=str(self.product.id),
+                page=1,
+                pageSize=20,
+                subsystem='',
+                keyword='通信',
+            ),
+        )
+
+        self.assertEqual(subsystem_result['total'], 2)
+        self.assertEqual(
+            {item['failure_mode_brief'] for item in subsystem_result['items']},
+            {'发动机上电失败', '发动机降级保护'},
+        )
+        self.assertEqual(keyword_result['total'], 1)
+        self.assertEqual(
+            keyword_result['items'][0]['failure_mode_brief'],
+            '底盘通信异常',
+        )
+
+    def test_search_product_failure_modes_rejects_unauthorized_product(self):
+        with self.assertRaises(HttpError) as context:
+            ProductWorkflowService.search_product_failure_modes(
+                self.forbidden_user,
+                SimpleNamespace(
+                    product_id=str(self.product.id),
+                    page=1,
+                    pageSize=20,
+                    subsystem='',
+                    keyword='',
+                ),
+            )
+
+        self.assertEqual(context.exception.status_code, 403)
+
+    def test_legacy_list_product_failure_modes_keeps_array_contract(self):
+        rows = ProductWorkflowService.list_product_failure_modes(
+            self.user,
+            str(self.product.id),
+        )
+
+        self.assertEqual(len(rows), 3)
+        self.assertIsInstance(rows, list)
 
 
 class FailureModeDictDrivenCategoryTests(TestCase):
