@@ -10,6 +10,7 @@ import { computed, ref, watch } from 'vue';
 import {
   ElDialog,
   ElEmpty,
+  ElLink,
   ElPagination,
   ElSkeleton,
   ElTag,
@@ -168,7 +169,17 @@ watch(selectedOrganizationId, () => {
                 class="repository-row"
               >
                 <div class="repo-main">
-                  <strong>{{ repo.project_name }}</strong>
+                  <ElLink
+                    v-if="repo.project_url"
+                    class="repo-link"
+                    :href="repo.project_url"
+                    target="_blank"
+                    type="primary"
+                    :underline="false"
+                  >
+                    {{ repo.project_name }}
+                  </ElLink>
+                  <strong v-else>{{ repo.project_name }}</strong>
                   <span>{{ repo.project_id }}</span>
                 </div>
                 <div class="repo-tags">
@@ -344,6 +355,23 @@ watch(selectedOrganizationId, () => {
 .repo-main strong,
 .repo-main span {
   display: block;
+}
+
+.repo-main strong,
+.repo-link {
+  max-width: 100%;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.repo-link :deep(.el-link__inner) {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+  text-align: left;
+  word-break: break-word;
+  -webkit-line-clamp: 2;
 }
 
 .repo-main span {

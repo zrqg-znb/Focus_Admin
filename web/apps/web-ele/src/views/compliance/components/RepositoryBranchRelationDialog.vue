@@ -7,6 +7,7 @@ import type {
 import { computed, ref, watch } from 'vue';
 
 import {
+  ElButton,
   ElDialog,
   ElEmpty,
   ElPagination,
@@ -31,6 +32,7 @@ const loading = ref(false);
 const relation = ref<RepositoryBranchRelation>();
 const branchPage = ref(1);
 const branchPageSize = ref(8);
+const fishboneFullscreen = ref(false);
 
 const visible = computed({
   get: () => props.modelValue,
@@ -38,12 +40,14 @@ const visible = computed({
 });
 
 const sortedBranches = computed(() => relation.value?.branches || []);
+const fishboneBranches = computed(() => sortedBranches.value);
 const pagedBranches = computed(() => {
   const start = (branchPage.value - 1) * branchPageSize.value;
   return sortedBranches.value.slice(start, start + branchPageSize.value);
 });
+// 鱼骨图始终使用全量绑定分支，底部表格才跟随分页变化。
 const fishboneWidth = computed(() =>
-  Math.max(820, pagedBranches.value.length * 220 + 72),
+  Math.max(900, fishboneBranches.value.length * 176 + 96),
 );
 
 function branchTone(branch: BranchItem) {
@@ -78,6 +82,7 @@ watch(
     } else {
       relation.value = undefined;
       branchPage.value = 1;
+      fishboneFullscreen.value = false;
     }
   },
 );
@@ -108,20 +113,32 @@ watch(
         </div>
 
         <template v-if="sortedBranches.length">
-          <section class="fishbone-panel">
+          <section
+            class="fishbone-panel"
+            :class="{ 'fishbone-panel-fullscreen': fishboneFullscreen }"
+          >
             <div class="panel-title">
               <div>
                 <span>分支演进鱼骨图</span>
-                <small>按创建时间排序，未知日期置于末尾；当前显示第 {{ branchPage }} 页</small>
+                <small>按创建时间排序，未知日期置于末尾；展示全部绑定分支，可横向滑动查看</small>
               </div>
-              <ElTag size="small" type="primary">Evolution</ElTag>
+              <div class="panel-actions">
+                <ElTag size="small" type="primary">{{ fishboneBranches.length }} 条</ElTag>
+                <ElButton
+                  size="small"
+                  plain
+                  @click="fishboneFullscreen = !fishboneFullscreen"
+                >
+                  {{ fishboneFullscreen ? '退出全屏' : '全屏查看' }}
+                </ElButton>
+              </div>
             </div>
             <div class="fishbone-scroll">
               <div class="fishbone-canvas" :style="{ width: `${fishboneWidth}px` }">
                 <div class="fishbone-line" />
                 <div class="fishbone-grid">
                   <div
-                    v-for="(branch, index) in pagedBranches"
+                    v-for="(branch, index) in fishboneBranches"
                     :key="branch.id"
                     class="fishbone-node"
                     :class="[branchTone(branch), index % 2 === 0 ? 'above' : 'below']"
@@ -253,6 +270,28 @@ watch(
   background: var(--el-bg-color);
 }
 
+.fishbone-panel {
+  transition:
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.fishbone-panel-fullscreen {
+  position: fixed;
+  inset: 48px 28px 28px;
+  z-index: 3000;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  background: var(--el-bg-color);
+  box-shadow: 0 18px 46px rgb(15 23 42 / 22%);
+}
+
+.fishbone-panel-fullscreen .fishbone-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
 .panel-title {
   display: flex;
   align-items: center;
@@ -260,6 +299,13 @@ watch(
   gap: 12px;
   margin-bottom: 12px;
   font-weight: 600;
+}
+
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .panel-title small {
@@ -271,25 +317,26 @@ watch(
 
 .fishbone-scroll {
   position: relative;
-  min-height: 392px;
+  min-height: 348px;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
   background:
-    linear-gradient(90deg, var(--el-fill-color-extra-light) 1px, transparent 1px) 0 0 / 32px 100%,
+    linear-gradient(90deg, var(--el-fill-color-extra-light) 1px, transparent 1px) 0 0 / 28px 100%,
     var(--el-fill-color-blank);
   overflow-x: auto;
   overflow-y: visible;
+  scrollbar-gutter: stable;
 }
 
 .fishbone-canvas {
   position: relative;
-  min-height: 392px;
-  padding: 18px 28px;
+  min-height: 348px;
+  padding: 16px 28px 18px;
 }
 
 .fishbone-line {
   position: absolute;
-  top: 195px;
+  top: 174px;
   left: 42px;
   right: 42px;
   height: 2px;
@@ -299,32 +346,32 @@ watch(
 .fishbone-grid {
   position: relative;
   display: grid;
-  grid-auto-columns: 220px;
+  grid-auto-columns: 168px;
   grid-auto-flow: column;
-  column-gap: 16px;
-  min-height: 356px;
+  column-gap: 8px;
+  min-height: 314px;
 }
 
 .fishbone-node {
   --node-color: var(--el-color-info);
 
   display: grid;
-  grid-template-rows: 154px 48px 154px;
+  grid-template-rows: 134px 44px 134px;
   min-width: 0;
 }
 
 .node-card {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
-  min-height: 144px;
-  padding: 10px;
+  min-height: 124px;
+  padding: 9px;
   border: 1px solid var(--node-color);
-  border-left-width: 4px;
+  border-left-width: 3px;
   border-radius: 6px;
   background: var(--el-bg-color);
-  box-shadow: 0 8px 18px rgb(15 23 42 / 8%);
+  box-shadow: 0 6px 14px rgb(15 23 42 / 8%);
 }
 
 .above .node-card {
@@ -346,7 +393,7 @@ watch(
   position: absolute;
   left: 50%;
   width: 2px;
-  height: 48px;
+  height: 44px;
   content: '';
   background: var(--node-color);
   transform: translateX(-50%);
@@ -365,8 +412,8 @@ watch(
   top: 50%;
   left: 50%;
   z-index: 1;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border: 2px solid var(--node-color);
   border-radius: 50%;
   background: var(--el-bg-color);
@@ -377,30 +424,42 @@ watch(
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
 }
 
 .node-date {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--node-color);
 }
 
 .node-card strong {
-  display: block;
+  display: -webkit-box;
   min-width: 0;
+  overflow: hidden;
   overflow-wrap: anywhere;
-  font-size: 13px;
+  -webkit-box-orient: vertical;
+  font-size: 12px;
   line-height: 1.35;
   color: var(--el-text-color-primary);
   word-break: break-word;
+  -webkit-line-clamp: 2;
 }
 
 .node-kind {
-  font-size: 12px;
+  overflow: hidden;
   color: var(--el-text-color-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-card :deep(.el-tag) {
+  height: 20px;
+  padding: 0 5px;
+  font-size: 11px;
 }
 
 .node-card p {
@@ -409,8 +468,8 @@ watch(
   overflow: hidden;
   -webkit-box-orient: vertical;
   color: var(--el-text-color-secondary);
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: 11px;
+  line-height: 1.42;
   overflow-wrap: anywhere;
   -webkit-line-clamp: 2;
 }
@@ -473,7 +532,11 @@ watch(
   }
 
   .fishbone-grid {
-    grid-auto-columns: 204px;
+    grid-auto-columns: 164px;
+  }
+
+  .fishbone-panel-fullscreen {
+    inset: 18px;
   }
 }
 </style>
