@@ -102,6 +102,7 @@ export interface MissingMergeScanTaskItem {
   id: string;
   merged_after: string;
   merged_before: string;
+  scan_diagnostics: Record<string, any>;
   scanned_branch_pair_count: number;
   scanned_organization_count: number;
   scanned_repository_count: number;

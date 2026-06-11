@@ -79,6 +79,7 @@ class MissingMergeScanTaskOut(Schema):
     merged_after: datetime
     merged_before: datetime
     filter_payload: dict = Field(default_factory=dict)
+    scan_diagnostics: dict = Field(default_factory=dict)
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     scanned_organization_count: int

@@ -71,6 +71,8 @@ client 先以 `only_count=True` 获取统计数量，再以 `only_count=False` �
 
 手动同步采用进程内 daemon thread 异步执行：接口只创建 `pending` 任务并立即返回，后台线程负责把任务流转为 `running/success/failed`。如果服务进程重启，正在执行的线程不做跨进程恢复；这是本期不引入 Celery/RQ 的约束。手动提交前会检查是否已有 `pending/running` 漏合同步任务，存在时不创建新任务，直接返回当前任务用于页面提示。
 
+跨天自动闭环按同一配对维度判断：`repository + trunk_branch + release_branch + change_key`。当前扫描窗口内发布分支出现某个历史 `open` 风险的 `change_key` 时，只闭环同一代码库、同一主干-发布配对下的旧记录；其他配对即使 `change_key` 相同也不受影响。当前扫描窗口内主干新增、发布缺失的新 `change_key` 会继续新增为新的 `open` 风险。
+
 ## API
 
 接口统一挂在 `/api/code-compliance/missing-merges`。
@@ -112,6 +114,7 @@ client 先以 `only_count=True` 获取统计数量，再以 `only_count=False` �
 - 展示手动同步和定时扫描任务。
 - 支持按状态、触发方式、合入时间范围、任务开始时间范围筛选。
 - 详情抽屉展示筛选范围、扫描计数、风险计数、耗时和失败错误信息。
+- 任务详情返回 `scan_diagnostics`，用于排查零结果任务：包含组织 `group_id`、项目数量、分支 only_count/detail_count、每个配对的 trunk/release/missing/fixed 计数。
 
 ## 验收标准
 
@@ -123,5 +126,6 @@ client 先以 `only_count=True` 获取统计数量，再以 `only_count=False` �
 - PL 组看板按 `merged_at` 周统计趋势，状态计数、未知归属和空合入时间均有覆盖。
 - 手动同步接口在已有 `pending/running` 任务时返回 `accepted=false`，不创建重复任务。
 - 发布分支已包含的历史 `open` 风险会自动标记为 `fixed`。
+- 自动闭环只影响同一代码库、同一主干-发布配对、同一 `change_key` 的历史 `open` 记录；同 key 不同配对不会互相闭环。
 - 人工 `ignored` 风险不会被扫描自动改回 `open` 或 `fixed`。
 - 旧 Excel 风险台账、代码库管理和分支管理能力不受影响。

@@ -403,6 +403,7 @@ def serialize_scan_task(item: ComplianceMissingMergeScanTask) -> dict:
         "merged_after": item.merged_after,
         "merged_before": item.merged_before,
         "filter_payload": item.filter_payload or {},
+        "scan_diagnostics": item.scan_diagnostics or {},
         "started_at": item.started_at,
         "finished_at": item.finished_at,
         "scanned_organization_count": item.scanned_organization_count,
@@ -994,12 +995,23 @@ def _execute_scan(
 ) -> ScanCounters:
     """执行完整检测流程：加载配置、拉取数据、差异比对并更新风险表。"""
     pairs = _load_scan_pairs(organization_id=organization_id, repository_ids=repository_ids)
+    diagnostics: dict[str, Any] = {
+        "organization_id": organization_id or "",
+        "repository_ids": repository_ids or [],
+        "merged_after": str(merged_after),
+        "merged_before": str(merged_before),
+        "groups": [],
+        "pairs": [],
+    }
     counters = ScanCounters(
         scanned_organization_count=len({str(pair.repository.organization_id) for pair in pairs}),
         scanned_repository_count=len({str(repository.id) for repository in _iter_pair_repositories(pairs)}),
         scanned_branch_pair_count=len(pairs),
     )
     if not pairs:
+        diagnostics["reason"] = "未生成扫描配对，请检查代码库是否同时绑定活跃主干和发布分支"
+        if task:
+            task.scan_diagnostics = diagnostics
         return counters
 
     client = CodeComplianceCRClient()
@@ -1023,6 +1035,19 @@ def _execute_scan(
             merged_after=merged_after,
             merged_before=merged_before,
             per_page=per_page,
+        )
+        if isinstance(branch_project_rows, tuple):
+            branch_project_rows, branch_diagnostics = branch_project_rows
+        else:
+            branch_diagnostics = []
+        diagnostics["groups"].append(
+            {
+                "group_id": group_id,
+                "project_count": len(project_ids),
+                "project_ids": project_ids,
+                "branch_count": len(branch_names),
+                "branches": branch_diagnostics,
+            }
         )
         author_assignments = _load_author_pl_assignments(
             _clean_text(row.get("author_username"))
@@ -1051,12 +1076,29 @@ def _execute_scan(
                     counters.created_count += 1
                 else:
                     counters.updated_count += 1
-            counters.fixed_count += _mark_fixed_records(
+            fixed_count = _mark_fixed_records(
                 user=user,
                 task=task,
                 pair=pair,
                 release_keys=release_keys,
             )
+            counters.fixed_count += fixed_count
+            diagnostics["pairs"].append(
+                {
+                    "group_id": group_id,
+                    "repository_id": str(pair.repository.id),
+                    "project_id": pair.repository.project_id,
+                    "repository_name": pair.repository.project_name,
+                    "trunk_branch": pair.trunk_branch,
+                    "release_branch": pair.release_branch,
+                    "trunk_key_count": len(trunk_keys),
+                    "release_key_count": len(release_keys),
+                    "missing_key_count": len(missing_keys),
+                    "fixed_count": fixed_count,
+                }
+            )
+    if task:
+        task.scan_diagnostics = diagnostics
     return counters
 
 
@@ -1127,25 +1169,51 @@ def _fetch_branch_rows(
     merged_after,
     merged_before,
     per_page: int,
-) -> dict[str, dict[str, dict[str, dict[str, Any]]]]:
+) -> tuple[dict[str, dict[str, dict[str, dict[str, Any]]]], list[dict[str, Any]]]:
     """拉取组织下各目标分支 CR，并按 branch/project/change_key 建索引。"""
     branch_project_rows: dict[str, dict[str, dict[str, dict[str, Any]]]] = defaultdict(lambda: defaultdict(dict))
+    diagnostics: list[dict[str, Any]] = []
     for branch_name in branch_names:
-        rows = client.fetch_all(
+        total = client.fetch_count(
             group_id=group_id,
             target_branch=branch_name,
             projects=project_ids,
             merged_after=merged_after,
             merged_before=merged_before,
-            per_page=per_page,
         )
+        rows: list[dict[str, Any]] = []
+        if total > 0:
+            page = 1
+            while len(rows) < total:
+                page_rows = client.fetch_page(
+                    group_id=group_id,
+                    page=page,
+                    per_page=per_page,
+                    target_branch=branch_name,
+                    projects=project_ids,
+                    merged_after=merged_after,
+                    merged_before=merged_before,
+                )
+                if not page_rows:
+                    break
+                rows.extend(page_rows)
+                page += 1
         for row in rows:
             project_id = _clean_text(row.get("project_id"))
             change_key = _clean_text(row.get("change_key"))
             if not project_id or not change_key:
                 continue
             branch_project_rows[branch_name][project_id][change_key] = row
-    return branch_project_rows
+        diagnostics.append(
+            {
+                "target_branch": branch_name,
+                "project_count": len(project_ids),
+                "project_ids": project_ids,
+                "only_count": total,
+                "detail_count": len(rows),
+            }
+        )
+    return branch_project_rows, diagnostics
 
 
 def _upsert_missing_record(

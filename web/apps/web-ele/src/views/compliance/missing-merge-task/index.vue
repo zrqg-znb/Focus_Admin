@@ -160,6 +160,42 @@ function getRiskSummary(item: MissingMergeScanTaskItem) {
   return `识别 ${item.detected_count} / 新增 ${item.created_count} / 更新 ${item.updated_count} / 补合 ${item.fixed_count}`;
 }
 
+function getDiagnosticReason(item?: MissingMergeScanTaskItem) {
+  return `${item?.scan_diagnostics?.reason || ''}`.trim();
+}
+
+function getDiagnosticGroups(item?: MissingMergeScanTaskItem) {
+  // 后端按组织 group_id 归集分支取数信息，这里展开成表格行便于排查 only_count 是否为 0。
+  const groups = item?.scan_diagnostics?.groups;
+  if (!Array.isArray(groups)) return [];
+  return groups.flatMap((group) => {
+    const branches = Array.isArray(group.branches) ? group.branches : [];
+    if (!branches.length) {
+      return [
+        {
+          detail_count: 0,
+          group_id: group.group_id || '-',
+          only_count: 0,
+          project_count: group.project_count || 0,
+          target_branch: '-',
+        },
+      ];
+    }
+    return branches.map((branch: Record<string, any>) => ({
+      detail_count: Number(branch.detail_count || 0),
+      group_id: group.group_id || '-',
+      only_count: Number(branch.only_count || 0),
+      project_count: Number(branch.project_count || group.project_count || 0),
+      target_branch: branch.target_branch || '-',
+    }));
+  });
+}
+
+function getDiagnosticPairs(item?: MissingMergeScanTaskItem) {
+  const pairs = item?.scan_diagnostics?.pairs;
+  return Array.isArray(pairs) ? pairs : [];
+}
+
 function reloadTasks(resetPage = false) {
   if (resetPage) gridApi.pagination.currentPage = 1;
   gridApi.query();
@@ -391,6 +427,82 @@ onMounted(() => {
             <span v-else>-</span>
           </ElDescriptionsItem>
         </ElDescriptions>
+
+        <section class="diagnostic-section">
+          <div class="diagnostic-title">
+            <span>扫描诊断</span>
+            <span class="diagnostic-subtitle">
+              用于判断任务为 0 是无数据、无配对还是数据湖取数异常
+            </span>
+          </div>
+          <div v-if="getDiagnosticReason(currentTask)" class="diagnostic-reason">
+            {{ getDiagnosticReason(currentTask) }}
+          </div>
+
+          <div class="diagnostic-block">
+            <div class="diagnostic-block-title">分支取数</div>
+            <div
+              v-if="getDiagnosticGroups(currentTask).length"
+              class="diagnostic-table"
+            >
+              <div class="diagnostic-row diagnostic-row-head">
+                <span>组织ID</span>
+                <span>目标分支</span>
+                <span>项目数</span>
+                <span>only_count</span>
+                <span>明细数</span>
+              </div>
+              <div
+                v-for="(item, index) in getDiagnosticGroups(currentTask)"
+                :key="`${item.group_id}-${item.target_branch}-${index}`"
+                class="diagnostic-row"
+              >
+                <span :title="item.group_id">{{ item.group_id }}</span>
+                <span :title="item.target_branch">{{ item.target_branch }}</span>
+                <span>{{ item.project_count }}</span>
+                <span>{{ item.only_count }}</span>
+                <span>{{ item.detail_count }}</span>
+              </div>
+            </div>
+            <ElEmpty v-else description="暂无分支取数诊断" />
+          </div>
+
+          <div class="diagnostic-block">
+            <div class="diagnostic-block-title">配对结果</div>
+            <div
+              v-if="getDiagnosticPairs(currentTask).length"
+              class="diagnostic-table diagnostic-pair-table"
+            >
+              <div class="diagnostic-row diagnostic-row-head">
+                <span>项目ID</span>
+                <span>主干分支</span>
+                <span>发布分支</span>
+                <span>主干Key</span>
+                <span>发布Key</span>
+                <span>漏合Key</span>
+                <span>闭环</span>
+              </div>
+              <div
+                v-for="(item, index) in getDiagnosticPairs(currentTask)"
+                :key="`${item.repository_id}-${item.trunk_branch}-${item.release_branch}-${index}`"
+                class="diagnostic-row"
+              >
+                <span :title="item.project_id">{{ item.project_id || '-' }}</span>
+                <span :title="item.trunk_branch">
+                  {{ item.trunk_branch || '-' }}
+                </span>
+                <span :title="item.release_branch">
+                  {{ item.release_branch || '-' }}
+                </span>
+                <span>{{ item.trunk_key_count || 0 }}</span>
+                <span>{{ item.release_key_count || 0 }}</span>
+                <span>{{ item.missing_key_count || 0 }}</span>
+                <span>{{ item.fixed_count || 0 }}</span>
+              </div>
+            </div>
+            <ElEmpty v-else description="暂无配对结果诊断" />
+          </div>
+        </section>
       </template>
       <ElEmpty v-else description="暂无任务详情" />
     </ElDrawer>
@@ -497,6 +609,95 @@ onMounted(() => {
   border-radius: 6px;
   color: var(--el-color-danger);
   background: var(--el-fill-color-extra-light);
+}
+
+.diagnostic-section {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 6px;
+  background: var(--el-bg-color);
+}
+
+.diagnostic-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.diagnostic-subtitle {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--el-text-color-secondary);
+}
+
+.diagnostic-reason {
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  border: 1px solid var(--el-color-warning-light-7);
+  border-radius: 6px;
+  color: var(--el-color-warning-dark-2);
+  background: var(--el-color-warning-light-9);
+}
+
+.diagnostic-block + .diagnostic-block {
+  margin-top: 12px;
+}
+
+.diagnostic-block-title {
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-regular);
+}
+
+.diagnostic-table {
+  overflow-x: auto;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+}
+
+.diagnostic-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 1.2fr) minmax(150px, 1.8fr) 72px 86px 72px;
+  min-width: 560px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.diagnostic-pair-table .diagnostic-row {
+  grid-template-columns:
+    minmax(96px, 0.9fr) minmax(140px, 1.4fr) minmax(140px, 1.4fr)
+    72px 72px 72px 58px;
+  min-width: 760px;
+}
+
+.diagnostic-row:first-child {
+  border-top: 0;
+}
+
+.diagnostic-row span {
+  min-width: 0;
+  padding: 8px 10px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--el-text-color-regular);
+}
+
+.diagnostic-row-head {
+  background: var(--el-fill-color-extra-light);
+}
+
+.diagnostic-row-head span {
+  font-weight: 600;
+  color: var(--el-text-color-primary);
 }
 
 @media (max-width: 768px) {

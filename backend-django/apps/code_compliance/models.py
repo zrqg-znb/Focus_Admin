@@ -636,6 +636,12 @@ class ComplianceMissingMergeScanTask(RootModel):
         verbose_name="筛选条件",
         help_text="手动或定时任务的组织/代码库筛选条件",
     )
+    scan_diagnostics = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name="扫描诊断信息",
+        help_text="记录组织、分支和配对维度的取数统计，便于排查零结果任务",
+    )
     started_at = models.DateTimeField(null=True, blank=True, verbose_name="开始时间", help_text="开始时间")
     finished_at = models.DateTimeField(null=True, blank=True, verbose_name="结束时间", help_text="结束时间")
     scanned_organization_count = models.IntegerField(default=0, verbose_name="扫描组织数", help_text="扫描组织数")

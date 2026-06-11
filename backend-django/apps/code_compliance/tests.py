@@ -753,6 +753,127 @@ class CodeComplianceFoundationTests(TestCase):
             1,
         )
 
+    def test_missing_merge_scan_closes_same_pair_old_record_and_creates_new_one(self):
+        """当前窗口发布分支出现旧 key 时，只闭环同配对历史风险，并新增当前窗口新风险。"""
+        org = self.create_org()
+        repo = self.create_repo(org["id"], "20001")
+        repository = ComplianceRepository.objects.get(id=repo["id"])
+        pair_a = missing_merge_services.ScanPair(
+            repository=repository,
+            trunk_branch="trunk-A",
+            release_branch="release-A",
+        )
+        pair_b = missing_merge_services.ScanPair(
+            repository=repository,
+            trunk_branch="trunk-B",
+            release_branch="release-B",
+        )
+        now = timezone.now()
+
+        def row(change_key: str, branch: str):
+            return {
+                "added_lines": 1,
+                "author_username": "user01",
+                "change_key": change_key,
+                "change_request_iid": change_key,
+                "merged_at": now,
+                "project_id": "20001",
+                "removed_lines": 0,
+                "target_branch": branch,
+                "title": f"CR {change_key}",
+            }
+
+        def branch_rows(day: int):
+            if day == 1:
+                data = {
+                    "trunk-A": {"20001": {"X": row("X", "trunk-A")}},
+                    "release-A": {"20001": {}},
+                    "trunk-B": {"20001": {"X": row("X", "trunk-B")}},
+                    "release-B": {"20001": {}},
+                }
+            else:
+                data = {
+                    "trunk-A": {"20001": {"Y": row("Y", "trunk-A")}},
+                    "release-A": {"20001": {"X": row("X", "release-A")}},
+                    "trunk-B": {"20001": {}},
+                    "release-B": {"20001": {}},
+                }
+            diagnostics = [
+                {
+                    "target_branch": branch,
+                    "project_count": 1,
+                    "project_ids": ["20001"],
+                    "only_count": sum(len(project_rows) for project_rows in projects.values()),
+                    "detail_count": sum(len(project_rows) for project_rows in projects.values()),
+                }
+                for branch, projects in data.items()
+            ]
+            return data, diagnostics
+
+        with patch.object(missing_merge_services, "_load_scan_pairs", return_value=[pair_a, pair_b]):
+            with patch.object(missing_merge_services, "_fetch_branch_rows", return_value=branch_rows(1)):
+                day1_task = missing_merge_services.create_scan_task(
+                    self.user,
+                    MissingMergeScanRunIn(
+                        merged_after=now - timedelta(days=2),
+                        merged_before=now - timedelta(days=1),
+                    ),
+                )
+                day1 = missing_merge_services.execute_scan_task(str(day1_task.id), str(self.user.id))
+
+            with patch.object(missing_merge_services, "_fetch_branch_rows", return_value=branch_rows(2)):
+                day2_task = missing_merge_services.create_scan_task(
+                    self.user,
+                    MissingMergeScanRunIn(
+                        merged_after=now - timedelta(days=1),
+                        merged_before=now,
+                    ),
+                )
+                day2 = missing_merge_services.execute_scan_task(str(day2_task.id), str(self.user.id))
+
+        record_a_x = ComplianceMissingMergeRecord.objects.get(
+            repository=repository,
+            trunk_branch="trunk-A",
+            release_branch="release-A",
+            change_key="X",
+        )
+        record_b_x = ComplianceMissingMergeRecord.objects.get(
+            repository=repository,
+            trunk_branch="trunk-B",
+            release_branch="release-B",
+            change_key="X",
+        )
+        record_a_y = ComplianceMissingMergeRecord.objects.get(
+            repository=repository,
+            trunk_branch="trunk-A",
+            release_branch="release-A",
+            change_key="Y",
+        )
+
+        self.assertEqual(day1["created_count"], 2)
+        self.assertEqual(day2["fixed_count"], 1)
+        self.assertEqual(day2["created_count"], 1)
+        self.assertEqual(record_a_x.status, MISSING_MERGE_STATUS_FIXED)
+        self.assertEqual(record_b_x.status, MISSING_MERGE_STATUS_OPEN)
+        self.assertEqual(record_a_y.status, MISSING_MERGE_STATUS_OPEN)
+        self.assertEqual(
+            ComplianceMissingMergeRecord.objects.filter(
+                repository=repository,
+                trunk_branch="trunk-A",
+                release_branch="release-A",
+                change_key="X",
+            ).count(),
+            1,
+        )
+        self.assertTrue(day2["scan_diagnostics"]["pairs"])
+        pair_diag = {
+            (item["trunk_branch"], item["release_branch"]): item
+            for item in day2["scan_diagnostics"]["pairs"]
+        }
+        self.assertEqual(pair_diag[("trunk-A", "release-A")]["fixed_count"], 1)
+        self.assertEqual(pair_diag[("trunk-A", "release-A")]["missing_key_count"], 1)
+        self.assertEqual(pair_diag[("trunk-B", "release-B")]["fixed_count"], 0)
+
     @override_settings(CODE_COMPLIANCE_CR_FORCE_MOCK=True)
     def test_missing_merge_scan_accepts_multiple_repository_ids(self):
         """手动同步支持多选代码库，并把多个 project_id 作为 projects 数组传给数据湖。"""
