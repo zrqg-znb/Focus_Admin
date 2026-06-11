@@ -30,6 +30,7 @@
 | `ComplianceRepository` | 公司代码库系统代码库主数据 | `project_id`、`project_name`、`project_url`、`organization`、`mode`、`repo_type`、`responsibility_groups`、`domain` |
 | `ComplianceManagedBranch` | 新分支主数据，区别于旧风险台账 `ComplianceBranch` | `branch_name`、`created_date`、`branch_type`、`alias`、`purpose`、`is_active`、`domain` |
 | `ComplianceRepositoryBranch` | 代码库与分支绑定关系 | `repository`、`branch`，唯一约束 `repository + branch` |
+| `ComplianceRepositoryExportTask` | 组织+代码库异步导出任务 | `scope`、`payload`、`status`、`progress`、`file_name`、`file_path`、`started_at`、`finished_at` |
 
 `repo_type` 使用 core 字典，编码固定为 `code_compliance_repo_type`。责任领域绑定 core `PlGroup`，不再用自由文本。
 
@@ -46,12 +47,30 @@
 | `/repositories/template`、`/repositories/import` | 代码库模板下载与 Excel 导入 |
 | `/repositories/batch-bind-branches` | 从代码库侧批量绑定分支，支持 `append` / `replace` |
 | `/repositories/{id}/branches` | 查看代码库绑定分支列表和分支演进图数据 |
+| `/repositories/export-tasks` | 创建组织+代码库异步导出任务 |
+| `/repositories/export-tasks/{id}`、`/repositories/export-tasks/{id}/download` | 查询导出任务状态、下载已完成导出文件 |
 | `/branches` | 分支分页列表和 CRUD，输出关联代码库数，支持按活跃状态筛选 |
 | `/branches/template`、`/branches/import` | 分支模板下载与 Excel 导入 |
 | `/branches/batch-bind-repositories` | 从分支侧批量绑定代码库，支持 `append` / `replace` |
 | `/branches/{id}/repositories` | 查看分支关联组织树和代码库列表 |
 
 Excel 导入只导入基础字段，不导入代码库-分支绑定关系。
+
+## 组织+代码库导出
+
+代码库管理页支持异步导出 Excel，避免生产环境大数据量导出导致请求超时。
+
+- `全量导出`：导出全部未删除组织下的全部未删除代码库，不带页面筛选条件。
+- `按当前筛选导出`：复用代码库列表筛选条件，包含当前组织、关键词、模式、领域和代码仓类型，但不受当前分页影响。
+- 导出任务采用 `pending -> running -> success/failed` 状态流转，前端提交后轮询任务状态；成功后通过下载接口获取文件。
+- 相同用户、相同导出条件下，运行中的任务会被复用；成功且未过期的文件也可直接复用。
+- 导出文件默认保留 24 小时，后续创建任务时会顺带清理过期临时文件。
+
+Excel Sheet 名称为 `组织代码库清单`，一行代表一个代码库，字段顺序为：
+
+`组织ID`、`组织名`、`父组织ID`、`父组织名`、`组织路径`、`组织模式`、`组织领域`、`组织备注`、`代码库ID`、`代码库名`、`代码库URL`、`代码库模式`、`代码库领域`、`代码仓类型`、`责任PL组`、`绑定分支数`、`代码库备注`、`创建时间`、`更新时间`。
+
+空组织本期不单独导出，导出清单以代码库为主行。
 
 ## 前端
 
@@ -79,6 +98,7 @@ Excel 导入只导入基础字段，不导入代码库-分支绑定关系。
 - 支持选中多个分支后批量绑定代码库。
 - 点击关联仓库数可查看该分支关联的组织树和代码库列表。
 - 代码库管理页点击分支数可查看绑定分支列表和按创建时间排序的分支演进鱼骨图。
+- 代码库管理页支持全量或按当前筛选条件异步导出组织+代码库 Excel。
 
 ## 初始化
 

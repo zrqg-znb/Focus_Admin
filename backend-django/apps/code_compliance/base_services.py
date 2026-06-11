@@ -1,14 +1,21 @@
+import hashlib
 import io
+import json
+import logging
 import re
+import tempfile
+import threading
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Iterable, Optional
 
 import openpyxl
-from django.db import transaction
+from django.db import close_old_connections, connection, transaction
 from django.db.models import Count, Q
-from django.http import HttpResponse
+from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from ninja.errors import HttpError
 
 from core.dict.dict_model import Dict
@@ -32,13 +39,45 @@ from .models import (
     ComplianceOrganization,
     ComplianceRepository,
     ComplianceRepositoryBranch,
+    ComplianceRepositoryExportTask,
 )
 
+
+logger = logging.getLogger(__name__)
 
 REPO_TYPE_DICT_CODE = "code_compliance_repo_type"
 BIND_MODE_APPEND = "append"
 BIND_MODE_REPLACE = "replace"
 SUPPORTED_BIND_MODES = {BIND_MODE_APPEND, BIND_MODE_REPLACE}
+REPOSITORY_EXPORT_SCOPE_ALL = "all"
+REPOSITORY_EXPORT_SCOPE_FILTERED = "filtered"
+REPOSITORY_EXPORT_SCOPES = {REPOSITORY_EXPORT_SCOPE_ALL, REPOSITORY_EXPORT_SCOPE_FILTERED}
+REPOSITORY_EXPORT_ACTIVE_STATUSES = {
+    ComplianceRepositoryExportTask.STATUS_PENDING,
+    ComplianceRepositoryExportTask.STATUS_RUNNING,
+}
+REPOSITORY_EXPORT_FILE_TTL_SECONDS = 24 * 60 * 60
+REPOSITORY_EXPORT_HEADERS = [
+    "组织ID",
+    "组织名",
+    "父组织ID",
+    "父组织名",
+    "组织路径",
+    "组织模式",
+    "组织领域",
+    "组织备注",
+    "代码库ID",
+    "代码库名",
+    "代码库URL",
+    "代码库模式",
+    "代码库领域",
+    "代码仓类型",
+    "责任PL组",
+    "绑定分支数",
+    "代码库备注",
+    "创建时间",
+    "更新时间",
+]
 
 MODE_LABELS = dict(COMPLIANCE_MODE_CHOICES)
 DOMAIN_LABELS = dict(COMPLIANCE_DOMAIN_CHOICES)
@@ -550,7 +589,7 @@ def _repository_queryset():
     """返回代码库列表基础查询，集中挂载组织和分支统计。"""
     return (
         _active_repositories()
-        .select_related("organization")
+        .select_related("organization", "organization__parent")
         .prefetch_related("responsibility_groups")
         .annotate(
             branch_count=Count(
@@ -565,18 +604,16 @@ def _repository_queryset():
     )
 
 
-def list_repositories(
+def _apply_repository_filters(
+    qs,
     *,
-    page: int = 1,
-    page_size: int = 20,
     organization_id: Optional[str] = None,
     keyword: Optional[str] = None,
     mode: Optional[str] = None,
     domain: Optional[str] = None,
     repo_type: Optional[str] = None,
-) -> dict:
-    """按页面筛选条件分页查询代码库。"""
-    qs = _repository_queryset()
+):
+    """统一应用代码库列表和导出的筛选条件。"""
     if organization_id:
         qs = qs.filter(organization_id=organization_id)
     if keyword:
@@ -592,11 +629,408 @@ def list_repositories(
         qs = qs.filter(domain=_normalize_domain(domain))
     if repo_type:
         qs = qs.filter(repo_type=_clean_text(repo_type))
+    return qs
+
+
+def list_repositories(
+    *,
+    page: int = 1,
+    page_size: int = 20,
+    organization_id: Optional[str] = None,
+    keyword: Optional[str] = None,
+    mode: Optional[str] = None,
+    domain: Optional[str] = None,
+    repo_type: Optional[str] = None,
+) -> dict:
+    """按页面筛选条件分页查询代码库。"""
+    qs = _apply_repository_filters(
+        _repository_queryset(),
+        organization_id=organization_id,
+        keyword=keyword,
+        mode=mode,
+        domain=domain,
+        repo_type=repo_type,
+    )
 
     total = qs.count()
     offset = max(page - 1, 0) * page_size
     items = list(qs.order_by("sort", "project_name")[offset : offset + page_size])
     return {"items": [serialize_repository(item) for item in items], "total": total}
+
+
+def _repository_export_temp_dir() -> Path:
+    """返回代码库导出临时文件目录，不依赖同步请求生命周期。"""
+    path = Path(tempfile.gettempdir()) / "focus_admin_code_compliance_exports"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _normalize_repository_export_payload(data) -> dict:
+    """把导出任务入参规范化，保证相同筛选能得到稳定指纹。"""
+    raw = data.dict() if hasattr(data, "dict") else dict(data or {})
+    scope = _clean_text(raw.get("scope")).lower() or REPOSITORY_EXPORT_SCOPE_ALL
+    if scope not in REPOSITORY_EXPORT_SCOPES:
+        raise HttpError(400, "导出范围仅支持 all 或 filtered")
+    payload = {"scope": scope}
+    if scope == REPOSITORY_EXPORT_SCOPE_FILTERED:
+        payload.update(
+            {
+                "organization_id": _clean_text(raw.get("organization_id")),
+                "keyword": _clean_text(raw.get("keyword")),
+                "mode": _clean_text(raw.get("mode")),
+                "domain": _clean_text(raw.get("domain")),
+                "repo_type": _clean_text(raw.get("repo_type")),
+            }
+        )
+    return payload
+
+
+def _repository_export_fingerprint(payload: dict) -> str:
+    """按规范化 payload 生成导出任务指纹。"""
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _serialize_repository_export_task(task: ComplianceRepositoryExportTask) -> dict:
+    """序列化导出任务状态，供前端轮询展示。"""
+    return {
+        "id": str(task.id),
+        "scope": task.scope,
+        "fingerprint": task.fingerprint,
+        "status": task.status,
+        "progress": int(task.progress or 0),
+        "message": task.message or "",
+        "error_message": task.error_message or "",
+        "file_name": task.file_name or None,
+        "file_size": int(task.file_size or 0),
+        "started_at": task.started_at,
+        "finished_at": task.finished_at,
+        "sys_create_datetime": task.sys_create_datetime,
+    }
+
+
+def _is_repository_export_task_expired(task: ComplianceRepositoryExportTask) -> bool:
+    """判断成功导出文件是否已超过保留时间。"""
+    if task.finished_at is None:
+        return False
+    return timezone.now() > task.finished_at + timedelta(seconds=REPOSITORY_EXPORT_FILE_TTL_SECONDS)
+
+
+def _is_repository_export_task_downloadable(task: ComplianceRepositoryExportTask) -> bool:
+    """判断任务是否具备可下载文件。"""
+    if task.status != ComplianceRepositoryExportTask.STATUS_SUCCESS:
+        return False
+    if _is_repository_export_task_expired(task):
+        return False
+    file_path = _clean_text(task.file_path)
+    return bool(file_path and Path(file_path).is_file())
+
+
+def _cleanup_repository_export_files(limit: int = 100):
+    """清理过期导出文件并保留任务历史。"""
+    expire_before = timezone.now() - timedelta(seconds=REPOSITORY_EXPORT_FILE_TTL_SECONDS)
+    stale_tasks = (
+        ComplianceRepositoryExportTask.objects.filter(
+            status=ComplianceRepositoryExportTask.STATUS_SUCCESS,
+            is_deleted=False,
+            finished_at__lt=expire_before,
+        )
+        .order_by("finished_at")[: max(int(limit or 0), 1)]
+    )
+    for task in stale_tasks:
+        file_path = _clean_text(task.file_path)
+        if file_path:
+            try:
+                path = Path(file_path)
+                if path.exists():
+                    path.unlink()
+            except Exception:
+                logger.warning("Cleanup repository export file failed task_id=%s", task.id, exc_info=True)
+        ComplianceRepositoryExportTask.objects.filter(id=task.id).update(
+            file_path="",
+            file_name="",
+            file_size=0,
+        )
+
+
+def _get_active_repository_export_task(user, fingerprint: str) -> Optional[ComplianceRepositoryExportTask]:
+    """查找同一用户同一筛选条件下仍在执行的导出任务。"""
+    if not user or not getattr(user, "id", None):
+        return None
+    return (
+        ComplianceRepositoryExportTask.objects.filter(
+            user=user,
+            fingerprint=fingerprint,
+            status__in=REPOSITORY_EXPORT_ACTIVE_STATUSES,
+            is_deleted=False,
+        )
+        .order_by("-sys_create_datetime")
+        .first()
+    )
+
+
+def _get_reusable_repository_export_task(user, fingerprint: str) -> Optional[ComplianceRepositoryExportTask]:
+    """复用同一用户近期已完成且文件仍存在的导出任务。"""
+    if not user or not getattr(user, "id", None):
+        return None
+    task = (
+        ComplianceRepositoryExportTask.objects.filter(
+            user=user,
+            fingerprint=fingerprint,
+            status=ComplianceRepositoryExportTask.STATUS_SUCCESS,
+            is_deleted=False,
+        )
+        .order_by("-finished_at", "-sys_create_datetime")
+        .first()
+    )
+    if task and _is_repository_export_task_downloadable(task):
+        return task
+    return None
+
+
+def _repository_export_queryset(payload: dict):
+    """根据导出范围构建不分页的代码库查询。"""
+    qs = _repository_queryset()
+    if payload.get("scope") == REPOSITORY_EXPORT_SCOPE_FILTERED:
+        qs = _apply_repository_filters(
+            qs,
+            organization_id=payload.get("organization_id") or None,
+            keyword=payload.get("keyword") or None,
+            mode=payload.get("mode") or None,
+            domain=payload.get("domain") or None,
+            repo_type=payload.get("repo_type") or None,
+        )
+    return qs.order_by("organization__sort", "organization__name", "sort", "project_name")
+
+
+def _organization_path_map() -> dict[str, str]:
+    """预加载组织路径，避免导出每一行递归查询父组织。"""
+    organizations = {
+        str(item.id): item
+        for item in _active_organizations().select_related("parent").order_by("sort", "name")
+    }
+    cache: dict[str, str] = {}
+
+    def build_path(org: ComplianceOrganization) -> str:
+        """递归构建组织路径并缓存结果。"""
+        org_id = str(org.id)
+        if org_id in cache:
+            return cache[org_id]
+        if org.parent_id and str(org.parent_id) in organizations:
+            value = f"{build_path(organizations[str(org.parent_id)])} / {org.name}"
+        else:
+            value = org.name
+        cache[org_id] = value
+        return value
+
+    for organization in organizations.values():
+        build_path(organization)
+    return cache
+
+
+def _format_export_datetime(value) -> str:
+    """把日期时间转换成 Excel 中稳定可读的字符串。"""
+    if not value:
+        return ""
+    return value.strftime("%Y-%m-%d %H:%M:%S") if hasattr(value, "strftime") else str(value)
+
+
+def _repository_export_row(
+    repo: ComplianceRepository,
+    path_map: dict[str, str],
+    repo_type_map: dict[str, str],
+) -> list:
+    """把单个代码库及其组织信息转换为 Excel 行。"""
+    organization = repo.organization
+    repo_type_label = repo_type_map.get(repo.repo_type, repo.repo_type or "")
+    responsibility_groups = [group for group in repo.responsibility_groups.all() if group.status]
+    return [
+        organization.group_id,
+        organization.name,
+        organization.parent.group_id if organization.parent else "",
+        organization.parent.name if organization.parent else "",
+        path_map.get(str(organization.id), organization.name),
+        MODE_LABELS.get(organization.mode, organization.mode),
+        DOMAIN_LABELS.get(organization.domain, organization.domain),
+        organization.remark or "",
+        repo.project_id,
+        repo.project_name,
+        repo.project_url or "",
+        MODE_LABELS.get(repo.mode, repo.mode),
+        DOMAIN_LABELS.get(repo.domain, repo.domain),
+        repo_type_label,
+        "、".join(group.name for group in responsibility_groups),
+        int(getattr(repo, "branch_count", 0) or 0),
+        repo.remark or "",
+        _format_export_datetime(repo.sys_create_datetime),
+        _format_export_datetime(repo.sys_update_datetime),
+    ]
+
+
+def _build_repository_export_workbook(payload: dict, task_id: str) -> openpyxl.Workbook:
+    """按任务 payload 生成组织+代码库 Excel。"""
+    qs = _repository_export_queryset(payload)
+    total = qs.count()
+    workbook = openpyxl.Workbook(write_only=True)
+    worksheet = workbook.create_sheet(title="组织代码库清单")
+    worksheet.append(REPOSITORY_EXPORT_HEADERS)
+    path_map = _organization_path_map()
+    repo_type_map = _repo_type_label_map()
+    for index, repo in enumerate(qs.iterator(chunk_size=500), start=1):
+        worksheet.append(_repository_export_row(repo, path_map, repo_type_map))
+        if index == 1 or index == total or index % 200 == 0:
+            progress = 10 + int((index / max(total, 1)) * 80)
+            _update_repository_export_task_progress(
+                task_id,
+                message=f"正在生成导出文件：{index}/{total}",
+                progress=min(progress, 95),
+            )
+    if total == 0:
+        _update_repository_export_task_progress(task_id, message="暂无匹配代码库，正在生成空文件", progress=90)
+    return workbook
+
+
+def _update_repository_export_task_progress(task_id: str, *, message: str, progress: int):
+    """更新导出任务进度，限制成功前最大进度为 99。"""
+    ComplianceRepositoryExportTask.objects.filter(id=task_id).update(
+        message=message,
+        progress=max(0, min(int(progress or 0), 99)),
+    )
+
+
+def _run_repository_export_task(task_id: str):
+    """后台线程执行代码库导出任务。"""
+    close_old_connections()
+    generated_file_path: Optional[Path] = None
+    try:
+        task = ComplianceRepositoryExportTask.objects.filter(id=task_id, is_deleted=False).first()
+        if task is None:
+            return
+        ComplianceRepositoryExportTask.objects.filter(id=task_id).update(
+            status=ComplianceRepositoryExportTask.STATUS_RUNNING,
+            progress=3,
+            message="正在准备导出数据",
+            error_message="",
+            started_at=timezone.now(),
+            finished_at=None,
+            file_path="",
+            file_name="",
+            file_size=0,
+        )
+        workbook = _build_repository_export_workbook(task.payload or {}, task_id)
+        timestamp = timezone.now().strftime("%Y%m%d-%H%M%S")
+        scope_label = "all" if task.scope == REPOSITORY_EXPORT_SCOPE_ALL else "filtered"
+        file_name = f"code_compliance_repositories_{scope_label}_{timestamp}_{str(task.id)[:8]}.xlsx"
+        generated_file_path = _repository_export_temp_dir() / file_name
+        workbook.save(str(generated_file_path))
+        file_size = generated_file_path.stat().st_size if generated_file_path.exists() else 0
+        ComplianceRepositoryExportTask.objects.filter(id=task_id).update(
+            status=ComplianceRepositoryExportTask.STATUS_SUCCESS,
+            progress=100,
+            message="导出文件生成完成",
+            error_message="",
+            file_path=str(generated_file_path),
+            file_name=file_name,
+            file_size=file_size,
+            finished_at=timezone.now(),
+        )
+    except Exception as exc:
+        if generated_file_path and generated_file_path.exists():
+            try:
+                generated_file_path.unlink()
+            except Exception:
+                logger.warning("Remove repository export temp file failed task_id=%s", task_id, exc_info=True)
+        logger.exception("Repository export task failed: task_id=%s", task_id)
+        ComplianceRepositoryExportTask.objects.filter(id=task_id).update(
+            status=ComplianceRepositoryExportTask.STATUS_FAILED,
+            message="导出任务失败",
+            error_message=str(exc),
+            finished_at=timezone.now(),
+        )
+    finally:
+        connection.close()
+
+
+def _start_repository_export_task_thread(task_id: str):
+    """启动进程内后台线程执行导出。"""
+    thread = threading.Thread(
+        target=_run_repository_export_task,
+        args=(task_id,),
+        daemon=True,
+    )
+    thread.start()
+
+
+def prepare_repository_export_task(user, payload) -> dict:
+    """创建或复用组织+代码库异步导出任务。"""
+    if not user or not getattr(user, "id", None):
+        raise HttpError(401, "用户未登录")
+    _cleanup_repository_export_files(limit=200)
+    normalized_payload = _normalize_repository_export_payload(payload)
+    fingerprint = _repository_export_fingerprint(normalized_payload)
+    active_task = _get_active_repository_export_task(user, fingerprint)
+    if active_task is not None:
+        return {"mode": "async", "task": _serialize_repository_export_task(active_task)}
+    reusable_task = _get_reusable_repository_export_task(user, fingerprint)
+    if reusable_task is not None:
+        return {"mode": "ready", "task": _serialize_repository_export_task(reusable_task)}
+
+    task = ComplianceRepositoryExportTask.objects.create(
+        user=user,
+        sys_creator=user,
+        scope=normalized_payload["scope"],
+        fingerprint=fingerprint,
+        payload=normalized_payload,
+        status=ComplianceRepositoryExportTask.STATUS_PENDING,
+        progress=0,
+        message="导出任务已提交，正在排队执行",
+    )
+    _start_repository_export_task_thread(str(task.id))
+    return {"mode": "async", "task": _serialize_repository_export_task(task)}
+
+
+def get_repository_export_task(user, task_id: str) -> dict:
+    """查询当前用户的导出任务状态。"""
+    if not user or not getattr(user, "id", None):
+        raise HttpError(401, "用户未登录")
+    task = ComplianceRepositoryExportTask.objects.filter(
+        id=task_id,
+        user=user,
+        is_deleted=False,
+    ).first()
+    if task is None:
+        raise HttpError(404, "导出任务不存在")
+    return _serialize_repository_export_task(task)
+
+
+def download_repository_export_task_file(user, task_id: str) -> FileResponse:
+    """下载当前用户已完成的导出文件。"""
+    if not user or not getattr(user, "id", None):
+        raise HttpError(401, "用户未登录")
+    _cleanup_repository_export_files(limit=200)
+    task = ComplianceRepositoryExportTask.objects.filter(
+        id=task_id,
+        user=user,
+        is_deleted=False,
+    ).first()
+    if task is None:
+        raise HttpError(404, "导出任务不存在")
+    if task.status != ComplianceRepositoryExportTask.STATUS_SUCCESS:
+        raise HttpError(409, "导出任务尚未完成")
+    if _is_repository_export_task_expired(task):
+        raise HttpError(410, "导出文件已过期，请重新导出")
+    file_path = _clean_text(task.file_path)
+    if not file_path:
+        raise HttpError(404, "导出文件不存在")
+    path = Path(file_path)
+    if not path.is_file():
+        raise HttpError(404, "导出文件不存在")
+    return FileResponse(
+        path.open("rb"),
+        as_attachment=True,
+        filename=_clean_text(task.file_name) or path.name,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 def get_repository(repo_id: str) -> dict:

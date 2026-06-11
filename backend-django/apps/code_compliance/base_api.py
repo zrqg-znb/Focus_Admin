@@ -17,6 +17,9 @@ from .base_schemas import (
     OrganizationPatch,
     PaginatedBranchOut,
     PaginatedRepositoryOut,
+    RepositoryExportTaskIn,
+    RepositoryExportTaskOut,
+    RepositoryExportTaskPrepareOut,
     RepositoryBranchRelationOut,
     RepositoryIn,
     RepositoryOut,
@@ -118,6 +121,35 @@ def batch_bind_repository_branches(request, payload: BatchBindBranchesIn):
         payload.branch_ids,
         payload.mode,
     )
+
+
+@router.post(
+    "/repositories/export-tasks",
+    response=RepositoryExportTaskPrepareOut,
+    summary="创建代码库异步导出任务",
+)
+def prepare_repository_export_task(request, payload: RepositoryExportTaskIn):
+    """创建或复用组织+代码库 Excel 异步导出任务。"""
+    return services.prepare_repository_export_task(request.auth, payload)
+
+
+@router.get(
+    "/repositories/export-tasks/{task_id}",
+    response=RepositoryExportTaskOut,
+    summary="查询代码库导出任务",
+)
+def get_repository_export_task(request, task_id: str):
+    """查询当前用户的代码库导出任务状态。"""
+    return services.get_repository_export_task(request.auth, task_id)
+
+
+@router.get(
+    "/repositories/export-tasks/{task_id}/download",
+    summary="下载代码库导出文件",
+)
+def download_repository_export_task_file(request, task_id: str):
+    """下载当前用户已完成的代码库导出文件。"""
+    return services.download_repository_export_task_file(request.auth, task_id)
 
 
 @router.get("/repositories/{repo_id}/branches", response=RepositoryBranchRelationOut, summary="获取代码库绑定分支")

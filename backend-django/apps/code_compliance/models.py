@@ -272,6 +272,71 @@ class ComplianceRepositoryBranch(RootModel):
         ]
 
 
+class ComplianceRepositoryExportTask(RootModel):
+    """代码库管理组织+代码库异步导出任务。"""
+
+    STATUS_PENDING = "pending"
+    STATUS_RUNNING = "running"
+    STATUS_SUCCESS = "success"
+    STATUS_FAILED = "failed"
+    STATUS_CHOICES = (
+        (STATUS_PENDING, "待执行"),
+        (STATUS_RUNNING, "执行中"),
+        (STATUS_SUCCESS, "成功"),
+        (STATUS_FAILED, "失败"),
+    )
+
+    SCOPE_ALL = "all"
+    SCOPE_FILTERED = "filtered"
+    SCOPE_CHOICES = (
+        (SCOPE_ALL, "全量导出"),
+        (SCOPE_FILTERED, "按筛选导出"),
+    )
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="compliance_repository_export_tasks",
+        verbose_name="导出用户",
+        help_text="导出用户",
+    )
+    scope = models.CharField(
+        max_length=16,
+        choices=SCOPE_CHOICES,
+        default=SCOPE_ALL,
+        db_index=True,
+        verbose_name="导出范围",
+        help_text="all/filtered",
+    )
+    fingerprint = models.CharField(max_length=64, db_index=True, verbose_name="任务指纹")
+    payload = models.JSONField(default=dict, blank=True, verbose_name="筛选条件")
+    status = models.CharField(
+        max_length=16,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        db_index=True,
+        verbose_name="状态",
+    )
+    progress = models.IntegerField(default=0, verbose_name="进度")
+    message = models.CharField(max_length=255, blank=True, default="", verbose_name="任务提示")
+    error_message = models.TextField(blank=True, default="", verbose_name="错误信息")
+    file_path = models.CharField(max_length=500, blank=True, default="", verbose_name="导出文件路径")
+    file_name = models.CharField(max_length=255, blank=True, default="", verbose_name="导出文件名")
+    file_size = models.BigIntegerField(default=0, verbose_name="导出文件大小")
+    started_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name="开始时间")
+    finished_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name="结束时间")
+
+    class Meta:
+        db_table = "compliance_repository_export_task"
+        ordering = ("-sys_create_datetime",)
+        verbose_name = "代码库导出任务"
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=["user", "fingerprint", "status"], name="cc_repo_export_user_fp_idx"),
+            models.Index(fields=["user", "sys_create_datetime"], name="cc_repo_export_user_time_idx"),
+        ]
+
+
 MISSING_MERGE_STATUS_OPEN = "open"
 MISSING_MERGE_STATUS_FIXED = "fixed"
 MISSING_MERGE_STATUS_IGNORED = "ignored"

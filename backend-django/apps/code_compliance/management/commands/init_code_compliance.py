@@ -236,6 +236,27 @@ PERMISSION_SEEDS = {
             "api_path": "/api/code-compliance/base/repositories/:id/branches",
             "http_method": "GET",
         },
+        {
+            "name": "代码库导出任务创建接口",
+            "code": "code_compliance:api:repositories:export:create",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/base/repositories/export-tasks",
+            "http_method": "POST",
+        },
+        {
+            "name": "代码库导出任务查询接口",
+            "code": "code_compliance:api:repositories:export:detail",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/base/repositories/export-tasks/:id",
+            "http_method": "GET",
+        },
+        {
+            "name": "代码库导出文件下载接口",
+            "code": "code_compliance:api:repositories:export:download",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/base/repositories/export-tasks/:id/download",
+            "http_method": "GET",
+        },
     ],
     "branch": [
         {"name": "查看分支管理", "code": "code_compliance:branch:view", "permission_type": 0},

@@ -102,6 +102,37 @@ export interface RepositoryListParams {
   repo_type?: string;
 }
 
+export type RepositoryExportScope = 'all' | 'filtered';
+export type RepositoryExportTaskStatus =
+  | 'failed'
+  | 'pending'
+  | 'running'
+  | 'success';
+
+export interface RepositoryExportTaskPayload extends RepositoryListParams {
+  scope: RepositoryExportScope;
+}
+
+export interface RepositoryExportTask {
+  error_message: string;
+  file_name?: null | string;
+  file_size: number;
+  fingerprint: string;
+  id: string;
+  message: string;
+  progress: number;
+  scope: RepositoryExportScope;
+  started_at?: null | string;
+  status: RepositoryExportTaskStatus;
+  sys_create_datetime?: null | string;
+  finished_at?: null | string;
+}
+
+export interface RepositoryExportTaskPrepareResult {
+  mode: 'async' | 'ready';
+  task: RepositoryExportTask;
+}
+
 export interface BranchItem {
   alias: string;
   branch_name: string;
@@ -246,6 +277,27 @@ export function importRepositoriesApi(file: File) {
 
 export function downloadRepositoryTemplateApi() {
   return requestClient.get(`${base}/repositories/template`, {
+    responseType: 'blob',
+  });
+}
+
+export function prepareRepositoryExportTaskApi(
+  data: RepositoryExportTaskPayload,
+) {
+  return requestClient.post<RepositoryExportTaskPrepareResult>(
+    `${base}/repositories/export-tasks`,
+    data,
+  );
+}
+
+export function getRepositoryExportTaskApi(id: string) {
+  return requestClient.get<RepositoryExportTask>(
+    `${base}/repositories/export-tasks/${id}`,
+  );
+}
+
+export function downloadRepositoryExportTaskApi(id: string) {
+  return requestClient.get(`${base}/repositories/export-tasks/${id}/download`, {
     responseType: 'blob',
   });
 }

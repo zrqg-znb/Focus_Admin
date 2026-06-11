@@ -116,6 +116,35 @@ class PaginatedRepositoryOut(Schema):
     total: int
 
 
+class RepositoryExportTaskIn(Schema):
+    scope: str = "all"
+    organization_id: Optional[str] = None
+    keyword: Optional[str] = None
+    mode: Optional[str] = None
+    domain: Optional[str] = None
+    repo_type: Optional[str] = None
+
+
+class RepositoryExportTaskOut(Schema):
+    id: str
+    scope: str
+    fingerprint: str = ""
+    status: str
+    progress: int
+    message: str = ""
+    error_message: str = ""
+    file_name: Optional[str] = None
+    file_size: int = 0
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    sys_create_datetime: Optional[datetime] = None
+
+
+class RepositoryExportTaskPrepareOut(Schema):
+    mode: str
+    task: RepositoryExportTaskOut
+
+
 class BranchIn(Schema):
     branch_name: str
     created_date: Optional[date] = None

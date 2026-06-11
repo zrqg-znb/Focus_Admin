@@ -5,6 +5,8 @@ import type {
   ComplianceMode,
   ImportResult,
   OrganizationItem,
+  RepositoryExportScope,
+  RepositoryExportTask,
   RepositoryItem,
   RepositoryPayload,
 } from '#/api/compliance/base';
@@ -31,6 +33,9 @@ import { Edit, Plus, Search, Trash2, Upload } from '@vben/icons';
 import {
   ElButton,
   ElDialog,
+  ElDropdown,
+  ElDropdownItem,
+  ElDropdownMenu,
   ElDrawer,
   ElForm,
   ElFormItem,
@@ -40,6 +45,7 @@ import {
   ElMessage,
   ElMessageBox,
   ElOption,
+  ElProgress,
   ElRadioButton,
   ElRadioGroup,
   ElSelect,
@@ -58,12 +64,15 @@ import {
   deleteOrganizationApi,
   deleteRepositoryApi,
   downloadOrganizationTemplateApi,
+  downloadRepositoryExportTaskApi,
   downloadRepositoryTemplateApi,
+  getRepositoryExportTaskApi,
   importOrganizationsApi,
   importRepositoriesApi,
   listOrganizationsApi,
   listRepositoriesApi,
   listValidOrganizationParentsApi,
+  prepareRepositoryExportTaskApi,
   updateOrganizationApi,
   updateRepositoryApi,
 } from '#/api/compliance/base';
@@ -145,10 +154,16 @@ const bindDialogVisible = ref(false);
 const bindLoading = ref(false);
 const branchRelationDialogVisible = ref(false);
 const branchRelationRepositoryId = ref('');
+const exportSubmitting = ref(false);
+const exportDownloading = ref(false);
+const exportDialogVisible = ref(false);
+const exportTask = ref<RepositoryExportTask>();
+const exportedTaskDownloadId = ref('');
 
 let sidebarResizeStartWidth = 320;
 let sidebarResizeStartX = 0;
 let sidebarResizing = false;
+let exportPollTimer: ReturnType<typeof setInterval> | undefined;
 
 const organizationForm = reactive<OrganizationFormState>({
   domain: 'cockpit',
@@ -273,6 +288,22 @@ const selectedOrganizationPath = computed(() => {
     selectedOrganizationId.value,
   );
   return path.length > 0 ? path.map((item) => item.name).join(' / ') : '-';
+});
+
+const exportStatusLabel = computed(() => {
+  const status = exportTask.value?.status;
+  if (status === 'pending') return '待执行';
+  if (status === 'running') return '执行中';
+  if (status === 'success') return '已完成';
+  if (status === 'failed') return '失败';
+  return '未提交';
+});
+
+const exportProgressStatus = computed(() => {
+  const status = exportTask.value?.status;
+  if (status === 'success') return 'success';
+  if (status === 'failed') return 'exception';
+  return undefined;
 });
 
 function cloneOrganizationTree(
@@ -746,6 +777,100 @@ async function downloadRepositoryTemplate() {
   saveBlob(data, 'code_compliance_repository_template.xlsx');
 }
 
+function buildRepositoryExportPayload(scope: RepositoryExportScope) {
+  // 全量导出不携带页面筛选；按筛选导出复用当前代码库列表筛选口径。
+  if (scope === 'all') {
+    return { scope };
+  }
+  return {
+    domain: getSelectedDomain(),
+    keyword: repositoryKeyword.value || undefined,
+    mode: (selectedMode.value as ComplianceMode) || undefined,
+    organization_id: selectedOrganizationId.value || undefined,
+    repo_type: selectedRepoType.value || undefined,
+    scope,
+  };
+}
+
+function stopExportPolling() {
+  if (!exportPollTimer) return;
+  clearInterval(exportPollTimer);
+  exportPollTimer = undefined;
+}
+
+async function downloadRepositoryExportTask(task?: RepositoryExportTask) {
+  const currentTask = task || exportTask.value;
+  if (!currentTask || currentTask.status !== 'success') return;
+  exportDownloading.value = true;
+  try {
+    const data = await downloadRepositoryExportTaskApi(currentTask.id);
+    saveBlob(data, currentTask.file_name || 'code_compliance_repositories.xlsx');
+    exportedTaskDownloadId.value = currentTask.id;
+  } finally {
+    exportDownloading.value = false;
+  }
+}
+
+async function refreshRepositoryExportTask(taskId: string) {
+  const task = await getRepositoryExportTaskApi(taskId);
+  exportTask.value = task;
+  if (task.status === 'success') {
+    stopExportPolling();
+    ElMessage.success('导出文件已生成');
+    if (exportedTaskDownloadId.value !== task.id) {
+      await downloadRepositoryExportTask(task);
+    }
+  }
+  if (task.status === 'failed') {
+    stopExportPolling();
+    ElMessage.error(task.error_message || '导出任务失败');
+  }
+}
+
+function startExportPolling(taskId: string) {
+  // 异步导出可能持续较久，弹窗关闭也不影响后端任务，只停止本页轮询。
+  stopExportPolling();
+  exportPollTimer = setInterval(() => {
+    refreshRepositoryExportTask(taskId).catch(() => {
+      stopExportPolling();
+      ElMessage.error('导出任务状态刷新失败');
+    });
+  }, 2000);
+}
+
+async function submitRepositoryExport(scope: RepositoryExportScope) {
+  if (exportSubmitting.value) return;
+  exportSubmitting.value = true;
+  try {
+    const result = await prepareRepositoryExportTaskApi(
+      buildRepositoryExportPayload(scope),
+    );
+    exportTask.value = result.task;
+    exportDialogVisible.value = true;
+    exportedTaskDownloadId.value = '';
+    if (result.mode === 'ready' || result.task.status === 'success') {
+      ElMessage.success('导出文件已准备好');
+      await downloadRepositoryExportTask(result.task);
+      return;
+    }
+    ElMessage.success(
+      result.mode === 'async'
+        ? '导出任务已提交'
+        : '已有相同导出任务正在执行',
+    );
+    startExportPolling(result.task.id);
+  } finally {
+    exportSubmitting.value = false;
+  }
+}
+
+function handleRepositoryExportCommand(command: string | number | object) {
+  const scope = String(command);
+  if (scope === 'all' || scope === 'filtered') {
+    submitRepositoryExport(scope);
+  }
+}
+
 function formatGroupNames(row: RepositoryItem) {
   return row.responsibility_group_names?.length
     ? row.responsibility_group_names.join('、')
@@ -760,6 +885,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   stopResizeSidebar();
+  stopExportPolling();
 });
 </script>
 
@@ -1006,6 +1132,24 @@ onBeforeUnmount(() => {
                       >
                         绑定分支
                       </ElButton>
+                      <ElDropdown
+                        trigger="click"
+                        @command="handleRepositoryExportCommand"
+                      >
+                        <ElButton :loading="exportSubmitting">
+                          导出
+                        </ElButton>
+                        <template #dropdown>
+                          <ElDropdownMenu>
+                            <ElDropdownItem command="all">
+                              全量导出
+                            </ElDropdownItem>
+                            <ElDropdownItem command="filtered">
+                              按当前筛选导出
+                            </ElDropdownItem>
+                          </ElDropdownMenu>
+                        </template>
+                      </ElDropdown>
                       <ElButton @click="downloadOrganizationTemplate">
                         组织模板
                       </ElButton>
@@ -1327,6 +1471,70 @@ onBeforeUnmount(() => {
       v-model="branchRelationDialogVisible"
       :repository-id="branchRelationRepositoryId"
     />
+
+    <ElDialog
+      v-model="exportDialogVisible"
+      title="代码库导出任务"
+      width="520px"
+      @closed="stopExportPolling"
+    >
+      <div v-if="exportTask" class="export-task-panel">
+        <div class="export-task-header">
+          <div>
+            <div class="export-task-title">
+              {{
+                exportTask.scope === 'all' ? '全量导出' : '按当前筛选导出'
+              }}
+            </div>
+            <div class="export-task-desc">
+              {{ exportTask.message || '导出任务已提交' }}
+            </div>
+          </div>
+          <ElTag
+            :type="
+              exportTask.status === 'success'
+                ? 'success'
+                : exportTask.status === 'failed'
+                  ? 'danger'
+                  : 'primary'
+            "
+          >
+            {{ exportStatusLabel }}
+          </ElTag>
+        </div>
+        <ElProgress
+          :percentage="exportTask.progress"
+          :status="exportProgressStatus"
+        />
+        <div class="export-task-meta">
+          <span v-if="exportTask.file_name">文件：{{ exportTask.file_name }}</span>
+          <span v-if="exportTask.file_size">
+            大小：{{ Math.ceil(exportTask.file_size / 1024) }} KB
+          </span>
+          <span v-if="exportTask.error_message" class="export-task-error">
+            {{ exportTask.error_message }}
+          </span>
+        </div>
+      </div>
+      <ElEmpty v-else description="暂无导出任务" />
+      <template #footer>
+        <ElButton @click="exportDialogVisible = false">关闭</ElButton>
+        <ElButton
+          v-if="exportTask?.status === 'failed'"
+          @click="submitRepositoryExport(exportTask.scope)"
+        >
+          重新导出
+        </ElButton>
+        <ElButton
+          v-if="exportTask?.status === 'success'"
+          type="primary"
+          :loading="exportDownloading"
+          @click="downloadRepositoryExportTask()"
+        >
+          下载文件
+        </ElButton>
+      </template>
+    </ElDialog>
   </Page>
 </template>
 
@@ -1445,6 +1653,47 @@ onBeforeUnmount(() => {
 
 :deep(.el-tree-node.is-current > .el-tree-node__content .org-tree-actions) {
   display: inline-flex;
+}
+
+.export-task-panel {
+  padding: 14px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  background: var(--el-fill-color-extra-light);
+}
+
+.export-task-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.export-task-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--el-text-color-primary);
+}
+
+.export-task-desc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.export-task-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  overflow-wrap: anywhere;
+}
+
+.export-task-error {
+  color: var(--el-color-danger);
 }
 
 @media (max-width: 768px) {
