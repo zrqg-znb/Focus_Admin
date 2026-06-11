@@ -123,6 +123,7 @@ class BranchIn(Schema):
     alias: str = ""
     purpose: str = ""
     remark: Optional[str] = None
+    is_active: bool = True
     domain: str = "cockpit"
     sort: int = 0
 
@@ -134,6 +135,7 @@ class BranchPatch(Schema):
     alias: Optional[str] = None
     purpose: Optional[str] = None
     remark: Optional[str] = None
+    is_active: Optional[bool] = None
     domain: Optional[str] = None
     sort: Optional[int] = None
 
@@ -147,6 +149,7 @@ class BranchOut(Schema):
     alias: str
     purpose: str
     remark: Optional[str] = None
+    is_active: bool
     domain: str
     domain_label: str
     sort: int
@@ -158,6 +161,35 @@ class BranchOut(Schema):
 class PaginatedBranchOut(Schema):
     items: List[BranchOut] = Field(default_factory=list)
     total: int
+
+
+class BranchRepositoryOrganizationOut(Schema):
+    id: str
+    group_id: str
+    name: str
+    parent_id: Optional[str] = None
+    parent_name: Optional[str] = None
+    mode: str
+    mode_label: str
+    domain: str
+    domain_label: str
+    remark: Optional[str] = None
+    sort: int
+    repository_count: int
+    sys_create_datetime: Optional[datetime] = None
+    sys_update_datetime: Optional[datetime] = None
+    repositories: List[RepositoryOut] = Field(default_factory=list)
+    children: List["BranchRepositoryOrganizationOut"] = Field(default_factory=list)
+
+
+class BranchRepositoryRelationOut(Schema):
+    branch: BranchOut
+    organizations: List[BranchRepositoryOrganizationOut] = Field(default_factory=list)
+
+
+class RepositoryBranchRelationOut(Schema):
+    repository: RepositoryOut
+    branches: List[BranchOut] = Field(default_factory=list)
 
 
 class BatchBindBranchesIn(Schema):
@@ -173,3 +205,4 @@ class BatchBindRepositoriesIn(Schema):
 
 
 OrganizationOut.update_forward_refs()
+BranchRepositoryOrganizationOut.update_forward_refs()

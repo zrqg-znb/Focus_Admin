@@ -1075,6 +1075,7 @@ def _load_scan_pairs(
     branch_link_qs = ComplianceRepositoryBranch.objects.filter(
         is_deleted=False,
         branch__is_deleted=False,
+        branch__is_active=True,
     ).select_related("branch")
     qs = (
         ComplianceRepository.objects.filter(is_deleted=False, organization__is_deleted=False)

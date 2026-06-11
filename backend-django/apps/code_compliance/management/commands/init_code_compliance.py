@@ -229,6 +229,13 @@ PERMISSION_SEEDS = {
             "api_path": "/api/code-compliance/base/repositories/batch-bind-branches",
             "http_method": "POST",
         },
+        {
+            "name": "代码库绑定分支详情接口",
+            "code": "code_compliance:api:repositories:branches",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/base/repositories/:id/branches",
+            "http_method": "GET",
+        },
     ],
     "branch": [
         {"name": "查看分支管理", "code": "code_compliance:branch:view", "permission_type": 0},
@@ -273,6 +280,13 @@ PERMISSION_SEEDS = {
             "permission_type": 1,
             "api_path": "/api/code-compliance/base/branches/batch-bind-repositories",
             "http_method": "POST",
+        },
+        {
+            "name": "分支关联代码库详情接口",
+            "code": "code_compliance:api:branches:repositories",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/base/branches/:id/repositories",
+            "http_method": "GET",
         },
     ],
     "missing_merge": [

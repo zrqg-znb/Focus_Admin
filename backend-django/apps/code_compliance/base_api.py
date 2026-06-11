@@ -10,12 +10,14 @@ from .base_schemas import (
     BranchIn,
     BranchOut,
     BranchPatch,
+    BranchRepositoryRelationOut,
     ImportResultOut,
     OrganizationIn,
     OrganizationOut,
     OrganizationPatch,
     PaginatedBranchOut,
     PaginatedRepositoryOut,
+    RepositoryBranchRelationOut,
     RepositoryIn,
     RepositoryOut,
     RepositoryPatch,
@@ -118,6 +120,12 @@ def batch_bind_repository_branches(request, payload: BatchBindBranchesIn):
     )
 
 
+@router.get("/repositories/{repo_id}/branches", response=RepositoryBranchRelationOut, summary="获取代码库绑定分支")
+def get_repository_branches(request, repo_id: str):
+    """获取代码库绑定分支和演进图所需字段。"""
+    return services.get_repository_branches(repo_id)
+
+
 @router.get("/repositories/{repo_id}", response=RepositoryOut, summary="获取代码库详情")
 def get_repository(request, repo_id: str):
     """获取代码库详情和派生统计字段。"""
@@ -144,6 +152,7 @@ def list_branches(
     keyword: Optional[str] = Query(None),
     branch_type: Optional[str] = Query(None),
     domain: Optional[str] = Query(None),
+    is_active: Optional[bool] = Query(None),
 ):
     """分页查询分支主数据并返回关联代码库数量。"""
     return services.list_branches(
@@ -152,6 +161,7 @@ def list_branches(
         keyword=keyword,
         branch_type=branch_type,
         domain=domain,
+        is_active=is_active,
     )
 
 
@@ -181,6 +191,12 @@ def batch_bind_branch_repositories(request, payload: BatchBindRepositoriesIn):
         payload.repository_ids,
         payload.mode,
     )
+
+
+@router.get("/branches/{branch_id}/repositories", response=BranchRepositoryRelationOut, summary="获取分支关联代码库")
+def get_branch_repositories(request, branch_id: str):
+    """获取分支关联组织树和代码库列表。"""
+    return services.get_branch_repositories(branch_id)
 
 
 @router.get("/branches/{branch_id}", response=BranchOut, summary="获取分支详情")

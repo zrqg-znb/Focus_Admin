@@ -59,8 +59,8 @@ client 先以 `only_count=True` 获取统计数量，再以 `only_count=False` �
 
 ## 检测流程
 
-1. 加载未删除的组织、代码库和代码库-分支绑定。
-2. 过滤至少同时绑定一个 `trunk` 和一个 `release` 分支的代码库。
+1. 加载未删除的组织、代码库和代码库-分支绑定，并在配对前排除已归档的非活跃分支。
+2. 过滤至少同时绑定一个活跃 `trunk` 和一个活跃 `release` 分支的代码库。
 3. 按组织分组，使用该组织下扫描范围内所有 `project_id` 作为 `projects` 参数。
 4. 对每个目标分支拉取已合入 CR 明细，并按 `branch/project_id/change_key` 建索引。
 5. 对同批 CR 创建人批量加载 Focus 用户和启用 PL 组映射，避免逐条查询。

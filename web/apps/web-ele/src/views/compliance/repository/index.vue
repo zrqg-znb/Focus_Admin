@@ -72,6 +72,7 @@ import { getAllPlApi } from '#/api/core/pl';
 import { useZqTable } from '#/components/zq-table';
 
 import BranchBindDialog from '../components/BranchBindDialog.vue';
+import RepositoryBranchRelationDialog from '../components/RepositoryBranchRelationDialog.vue';
 import {
   DOMAIN_OPTIONS,
   MODE_OPTIONS,
@@ -142,6 +143,8 @@ const repositoryDrawerTitle = ref('新增代码库');
 const repositoryEditingId = ref('');
 const bindDialogVisible = ref(false);
 const bindLoading = ref(false);
+const branchRelationDialogVisible = ref(false);
+const branchRelationRepositoryId = ref('');
 
 let sidebarResizeStartWidth = 320;
 let sidebarResizeStartX = 0;
@@ -645,6 +648,12 @@ function openBindBranches() {
   bindDialogVisible.value = true;
 }
 
+function openBranchRelation(row: RepositoryItem) {
+  // 分支数点击展示当前代码库的绑定分支和演进状态，不改变批量绑定勾选。
+  branchRelationRepositoryId.value = row.id;
+  branchRelationDialogVisible.value = true;
+}
+
 async function submitBindBranches(payload: {
   branch_ids: string[];
   mode: ComplianceBindMode;
@@ -1062,7 +1071,9 @@ onBeforeUnmount(() => {
                 </template>
 
                 <template #cell-branch_count="{ row }">
-                  <ElTag type="info" round>{{ row.branch_count }}</ElTag>
+                  <ElButton link type="primary" @click="openBranchRelation(row)">
+                    {{ row.branch_count }}
+                  </ElButton>
                 </template>
 
                 <template #cell-project_url="{ row }">
@@ -1311,6 +1322,10 @@ onBeforeUnmount(() => {
       v-model="bindDialogVisible"
       :confirm-loading="bindLoading"
       @confirm="submitBindBranches"
+    />
+    <RepositoryBranchRelationDialog
+      v-model="branchRelationDialogVisible"
+      :repository-id="branchRelationRepositoryId"
     />
   </Page>
 </template>

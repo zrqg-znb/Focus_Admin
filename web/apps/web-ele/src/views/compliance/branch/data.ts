@@ -49,6 +49,12 @@ export function useBranchColumns(): ZqTableGridOptions<BranchItem>['columns'] {
       width: 90,
     },
     {
+      key: 'is_active',
+      dataKey: 'is_active',
+      title: '状态',
+      width: 100,
+    },
+    {
       key: 'created_date',
       dataKey: 'created_date',
       title: '创建日期',

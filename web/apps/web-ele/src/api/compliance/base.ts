@@ -111,6 +111,7 @@ export interface BranchItem {
   domain: ComplianceDomain;
   domain_label: string;
   id: string;
+  is_active: boolean;
   purpose: string;
   remark?: null | string;
   repository_count: number;
@@ -125,6 +126,7 @@ export interface BranchPayload {
   branch_type: ComplianceBranchType;
   created_date?: null | string;
   domain: ComplianceDomain;
+  is_active?: boolean;
   purpose?: string;
   remark?: null | string;
   sort?: number;
@@ -133,9 +135,25 @@ export interface BranchPayload {
 export interface BranchListParams {
   branch_type?: ComplianceBranchType;
   domain?: ComplianceDomain;
+  is_active?: boolean;
   keyword?: string;
   page?: number;
   pageSize?: number;
+}
+
+export interface BranchRepositoryOrganizationItem extends OrganizationItem {
+  children?: BranchRepositoryOrganizationItem[];
+  repositories: RepositoryItem[];
+}
+
+export interface BranchRepositoryRelation {
+  branch: BranchItem;
+  organizations: BranchRepositoryOrganizationItem[];
+}
+
+export interface RepositoryBranchRelation {
+  branches: BranchItem[];
+  repository: RepositoryItem;
 }
 
 export interface PaginatedResponse<T> {
@@ -243,6 +261,12 @@ export function bindBranchesToRepositoriesApi(data: {
   );
 }
 
+export function getRepositoryBranchesApi(id: string) {
+  return requestClient.get<RepositoryBranchRelation>(
+    `${base}/repositories/${id}/branches`,
+  );
+}
+
 export function listBranchesApi(params?: BranchListParams) {
   return requestClient.get<PaginatedResponse<BranchItem>>(`${base}/branches`, {
     params,
@@ -285,5 +309,11 @@ export function bindRepositoriesToBranchesApi(data: {
   return requestClient.post<BindResult>(
     `${base}/branches/batch-bind-repositories`,
     data,
+  );
+}
+
+export function getBranchRepositoriesApi(id: string) {
+  return requestClient.get<BranchRepositoryRelation>(
+    `${base}/branches/${id}/repositories`,
   );
 }

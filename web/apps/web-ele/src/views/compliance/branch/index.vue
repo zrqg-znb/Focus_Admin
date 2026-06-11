@@ -30,6 +30,7 @@ import {
   ElMessageBox,
   ElOption,
   ElSelect,
+  ElSwitch,
   ElTag,
   ElUpload,
 } from 'element-plus';
@@ -46,6 +47,7 @@ import {
 import { useZqTable } from '#/components/zq-table';
 
 import RepositoryBindDialog from '../components/RepositoryBindDialog.vue';
+import BranchRepositoryRelationDialog from '../components/BranchRepositoryRelationDialog.vue';
 import {
   BRANCH_TYPE_OPTIONS,
   DOMAIN_OPTIONS,
@@ -65,6 +67,7 @@ const branchFormRef = ref<FormInstance>();
 const keyword = ref('');
 const selectedDomain = ref('');
 const selectedBranchType = ref('');
+const selectedActiveStatus = ref('');
 const selectedBranches = ref<BranchItem[]>([]);
 
 const drawerVisible = ref(false);
@@ -73,6 +76,8 @@ const editingId = ref('');
 const importing = ref(false);
 const bindDialogVisible = ref(false);
 const bindLoading = ref(false);
+const relationDialogVisible = ref(false);
+const relationBranchId = ref('');
 
 const branchForm = reactive<BranchFormState>({
   alias: '',
@@ -80,6 +85,7 @@ const branchForm = reactive<BranchFormState>({
   branch_type: 'development',
   created_date: null,
   domain: 'cockpit',
+  is_active: true,
   purpose: '',
   remark: '',
   sort: 0,
@@ -116,6 +122,10 @@ const [Grid, gridApi] = useZqTable<BranchItem>({
             branch_type:
               (selectedBranchType.value as ComplianceBranchType) || undefined,
             domain: (selectedDomain.value as ComplianceDomain) || undefined,
+            is_active:
+              selectedActiveStatus.value === ''
+                ? undefined
+                : selectedActiveStatus.value === 'active',
             keyword: keyword.value || undefined,
             page: page.currentPage,
             pageSize: page.pageSize,
@@ -149,6 +159,7 @@ function resetForm() {
     branch_type: 'development',
     created_date: null,
     domain: 'cockpit',
+    is_active: true,
     purpose: '',
     remark: '',
     sort: 0,
@@ -172,6 +183,7 @@ function openEdit(row: BranchItem) {
     branch_type: row.branch_type,
     created_date: row.created_date || null,
     domain: row.domain,
+    is_active: row.is_active,
     purpose: row.purpose || '',
     remark: row.remark || '',
     sort: row.sort || 0,
@@ -226,6 +238,12 @@ function openBindRepositories() {
     return;
   }
   bindDialogVisible.value = true;
+}
+
+function openRepositoryRelation(row: BranchItem) {
+  // 关联仓库数点击只负责打开只读关系弹窗，不影响表格当前勾选状态。
+  relationBranchId.value = row.id;
+  relationDialogVisible.value = true;
 }
 
 async function submitBindRepositories(payload: {
@@ -355,6 +373,17 @@ onMounted(() => {
                   :value="item.value"
                 />
               </ElSelect>
+              <ElSelect
+                v-model="selectedActiveStatus"
+                class="toolbar-select-sm"
+                clearable
+                placeholder="状态"
+                @change="reloadBranches(true)"
+                @clear="reloadBranches(true)"
+              >
+                <ElOption label="活跃" value="active" />
+                <ElOption label="已归档" value="archived" />
+              </ElSelect>
               <ElButton @click="reloadBranches(true)">查询</ElButton>
             </div>
             <div class="toolbar-row toolbar-row-actions">
@@ -409,8 +438,16 @@ onMounted(() => {
           <span class="line-clamp-2 text-left">{{ row.purpose || '-' }}</span>
         </template>
 
+        <template #cell-is_active="{ row }">
+          <ElTag :type="row.is_active ? 'success' : 'info'">
+            {{ row.is_active ? '活跃' : '已归档' }}
+          </ElTag>
+        </template>
+
         <template #cell-repository_count="{ row }">
-          <ElTag type="info" round>{{ row.repository_count }}</ElTag>
+          <ElButton link type="primary" @click="openRepositoryRelation(row)">
+            {{ row.repository_count }}
+          </ElButton>
         </template>
 
         <template #cell-actions="{ row }">
@@ -471,6 +508,13 @@ onMounted(() => {
             />
           </ElSelect>
         </ElFormItem>
+        <ElFormItem label="是否活跃">
+          <ElSwitch
+            v-model="branchForm.is_active"
+            active-text="活跃"
+            inactive-text="已归档"
+          />
+        </ElFormItem>
         <ElFormItem label="分支别名">
           <ElInput v-model="branchForm.alias" placeholder="请输入分支别名" />
         </ElFormItem>
@@ -509,6 +553,10 @@ onMounted(() => {
       v-model="bindDialogVisible"
       :confirm-loading="bindLoading"
       @confirm="submitBindRepositories"
+    />
+    <BranchRepositoryRelationDialog
+      v-model="relationDialogVisible"
+      :branch-id="relationBranchId"
     />
   </Page>
 </template>

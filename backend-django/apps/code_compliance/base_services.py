@@ -147,6 +147,22 @@ def _normalize_branch_type(value: Optional[str]) -> str:
     raise HttpError(400, f"分支类型仅支持 开发/主干/发布/其他: {value}")
 
 
+def _normalize_branch_active(value, *, default: bool = True) -> bool:
+    """规范化分支活跃状态输入，兼容 Excel 中的中英文和数字写法。"""
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    raw = _clean_text(value).lower()
+    truthy = {"1", "true", "yes", "y", "是", "活跃", "active", "启用"}
+    falsy = {"0", "false", "no", "n", "否", "归档", "已归档", "非活跃", "inactive", "archived", "停用"}
+    if raw in truthy:
+        return True
+    if raw in falsy:
+        return False
+    raise HttpError(400, f"是否活跃仅支持 是/否、true/false、1/0、活跃/归档: {value}")
+
+
 def _parse_date(value) -> Optional[date]:
     """解析 Excel 或表单传入的日期值。"""
     if value in (None, ""):
@@ -383,6 +399,7 @@ def serialize_branch(item: ComplianceManagedBranch) -> dict:
         "alias": item.alias or "",
         "purpose": item.purpose or "",
         "remark": item.remark,
+        "is_active": bool(item.is_active),
         "domain": item.domain,
         "domain_label": DOMAIN_LABELS.get(item.domain, item.domain),
         "sort": item.sort,
@@ -588,6 +605,33 @@ def get_repository(repo_id: str) -> dict:
     return serialize_repository(item)
 
 
+def get_repository_branches(repo_id: str) -> dict:
+    """读取代码库绑定的分支列表，供分支演进 Dialog 使用。"""
+    repository = get_object_or_404(_repository_queryset(), id=repo_id)
+    links = (
+        ComplianceRepositoryBranch.objects.filter(
+            repository=repository,
+            is_deleted=False,
+            branch__is_deleted=False,
+        )
+        .select_related("branch")
+        .order_by("branch__branch_name")
+    )
+    branches = [link.branch for link in links]
+    # Python 排序用于兼容 MySQL 对 NULLS LAST 的表达差异。
+    branches.sort(
+        key=lambda item: (
+            item.created_date is None,
+            item.created_date or date.max,
+            item.branch_name,
+        )
+    )
+    return {
+        "repository": serialize_repository(repository),
+        "branches": [serialize_branch(item) for item in branches],
+    }
+
+
 @transaction.atomic
 def create_repository(user, payload) -> dict:
     """创建代码库并写入责任 PL 组多对多关系。"""
@@ -698,6 +742,7 @@ def list_branches(
     keyword: Optional[str] = None,
     branch_type: Optional[str] = None,
     domain: Optional[str] = None,
+    is_active: Optional[bool] = None,
 ) -> dict:
     """按页面筛选条件分页查询分支主数据。"""
     qs = _branch_queryset()
@@ -712,6 +757,8 @@ def list_branches(
         qs = qs.filter(branch_type=_normalize_branch_type(branch_type))
     if domain:
         qs = qs.filter(domain=_normalize_domain(domain))
+    if is_active is not None:
+        qs = qs.filter(is_active=bool(is_active))
 
     total = qs.count()
     offset = max(page - 1, 0) * page_size
@@ -723,6 +770,75 @@ def get_branch(branch_id: str) -> dict:
     """读取单个分支详情。"""
     item = get_object_or_404(_branch_queryset(), id=branch_id)
     return serialize_branch(item)
+
+
+def get_branch_repositories(branch_id: str) -> dict:
+    """读取分支绑定的组织树和代码库列表，供关联仓库 Dialog 使用。"""
+    branch = get_object_or_404(_branch_queryset(), id=branch_id)
+    links = (
+        ComplianceRepositoryBranch.objects.filter(
+            branch=branch,
+            is_deleted=False,
+            repository__is_deleted=False,
+            repository__organization__is_deleted=False,
+        )
+        .select_related("repository__organization")
+        .prefetch_related("repository__responsibility_groups")
+    )
+    repositories = [link.repository for link in links]
+    organizations = _build_repository_organization_tree(repositories)
+    return {
+        "branch": serialize_branch(branch),
+        "organizations": organizations,
+    }
+
+
+def _build_repository_organization_tree(repositories: list[ComplianceRepository]) -> list[dict]:
+    """按绑定代码库归属组织构建只包含相关路径的组织树。"""
+    if not repositories:
+        return []
+
+    repo_map: dict[str, list[dict]] = {}
+    organization_ids = {str(repo.organization_id) for repo in repositories}
+    for repo in repositories:
+        repo_map.setdefault(str(repo.organization_id), []).append(serialize_repository(repo))
+
+    # 补齐所有命中组织的祖先节点，让左侧树能表达完整组织路径。
+    all_orgs = {
+        str(item.id): item
+        for item in _active_organizations().select_related("parent").order_by("sort", "name")
+    }
+    needed_ids: set[str] = set()
+    for org_id in organization_ids:
+        current = all_orgs.get(org_id)
+        while current:
+            current_id = str(current.id)
+            if current_id in needed_ids:
+                break
+            needed_ids.add(current_id)
+            current = all_orgs.get(str(current.parent_id)) if current.parent_id else None
+
+    nodes = {org_id: all_orgs[org_id] for org_id in needed_ids if org_id in all_orgs}
+    children_map: dict[str | None, list[ComplianceOrganization]] = {}
+    for node in nodes.values():
+        parent_id = str(node.parent_id) if node.parent_id and str(node.parent_id) in nodes else None
+        children_map.setdefault(parent_id, []).append(node)
+
+    for siblings in children_map.values():
+        siblings.sort(key=lambda item: (item.sort, item.name))
+
+    def build_node(item: ComplianceOrganization) -> dict:
+        """递归序列化相关组织节点，并挂载直接绑定代码库。"""
+        item.repository_count = len(repo_map.get(str(item.id), []))
+        payload = serialize_organization(item, include_children=False)
+        payload["children"] = [build_node(child) for child in children_map.get(str(item.id), [])]
+        payload["repositories"] = sorted(
+            repo_map.get(str(item.id), []),
+            key=lambda repo: (repo["sort"], repo["project_name"]),
+        )
+        return payload
+
+    return [build_node(item) for item in children_map.get(None, [])]
 
 
 @transaction.atomic
@@ -749,6 +865,7 @@ def create_branch(user, payload) -> dict:
     item.alias = _clean_text(data.get("alias"))
     item.purpose = _clean_text(data.get("purpose"))
     item.remark = _optional_text(data.get("remark"))
+    item.is_active = _normalize_branch_active(data.get("is_active"), default=True)
     item.sort = int(data.get("sort") or 0)
     item.is_deleted = False
     _apply_audit_fields(item, user, is_create=not existing)
@@ -790,6 +907,8 @@ def update_branch(user, branch_id: str, payload) -> dict:
         item.purpose = _clean_text(data.get("purpose"))
     if "remark" in data:
         item.remark = _optional_text(data.get("remark"))
+    if "is_active" in data:
+        item.is_active = _normalize_branch_active(data.get("is_active"), default=item.is_active)
     if "sort" in data:
         item.sort = int(data.get("sort") or 0)
 
@@ -1107,6 +1226,7 @@ def import_branches(user, file_obj) -> ImportResultOut:
                 "alias": _clean_text(_cell(row, "分支别名", "alias")),
                 "purpose": _clean_text(_cell(row, "分支用途", "purpose")),
                 "remark": _optional_text(_cell(row, "备注", "remark")),
+                "is_active": _normalize_branch_active(_cell(row, "是否活跃", "is_active"), default=True),
                 "is_deleted": False,
             }
             if not is_create and not item.is_deleted and _same_values(item, values):
@@ -1173,6 +1293,6 @@ def build_branch_template_response() -> HttpResponse:
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "分支导入模板"
-    sheet.append(["分支名称", "创建日期", "分支类型", "分支别名", "分支用途", "领域", "备注"])
-    sheet.append(["master", "2026-01-01", "主干", "主线", "主干开发", "cockpit", ""])
+    sheet.append(["分支名称", "创建日期", "分支类型", "分支别名", "分支用途", "领域", "是否活跃", "备注"])
+    sheet.append(["master", "2026-01-01", "主干", "主线", "主干开发", "cockpit", "是", ""])
     return _build_workbook_response(workbook, "code_compliance_branch_template.xlsx")

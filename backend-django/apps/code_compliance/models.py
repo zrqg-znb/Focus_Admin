@@ -194,6 +194,12 @@ class ComplianceManagedBranch(RootModel):
     )
     purpose = models.TextField(blank=True, default="", verbose_name="分支用途", help_text="分支用途")
     remark = models.TextField(null=True, blank=True, verbose_name="备注", help_text="备注")
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        verbose_name="是否活跃",
+        help_text="非活跃分支视为已归档，不参与漏合扫描配对",
+    )
     domain = models.CharField(
         max_length=16,
         choices=COMPLIANCE_DOMAIN_CHOICES,

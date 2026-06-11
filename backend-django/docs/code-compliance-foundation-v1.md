@@ -28,7 +28,7 @@
 | --- | --- | --- |
 | `ComplianceOrganization` | 公司代码库系统组织主数据 | `group_id`、`name`、`parent`、`mode`、`domain`、`remark` |
 | `ComplianceRepository` | 公司代码库系统代码库主数据 | `project_id`、`project_name`、`project_url`、`organization`、`mode`、`repo_type`、`responsibility_groups`、`domain` |
-| `ComplianceManagedBranch` | 新分支主数据，区别于旧风险台账 `ComplianceBranch` | `branch_name`、`created_date`、`branch_type`、`alias`、`purpose`、`domain` |
+| `ComplianceManagedBranch` | 新分支主数据，区别于旧风险台账 `ComplianceBranch` | `branch_name`、`created_date`、`branch_type`、`alias`、`purpose`、`is_active`、`domain` |
 | `ComplianceRepositoryBranch` | 代码库与分支绑定关系 | `repository`、`branch`，唯一约束 `repository + branch` |
 
 `repo_type` 使用 core 字典，编码固定为 `code_compliance_repo_type`。责任领域绑定 core `PlGroup`，不再用自由文本。
@@ -45,9 +45,11 @@
 | `/repositories` | 代码库分页列表和 CRUD，支持 `organization_id`、关键词、模式、领域、仓库类型过滤 |
 | `/repositories/template`、`/repositories/import` | 代码库模板下载与 Excel 导入 |
 | `/repositories/batch-bind-branches` | 从代码库侧批量绑定分支，支持 `append` / `replace` |
-| `/branches` | 分支分页列表和 CRUD，输出关联代码库数 |
+| `/repositories/{id}/branches` | 查看代码库绑定分支列表和分支演进图数据 |
+| `/branches` | 分支分页列表和 CRUD，输出关联代码库数，支持按活跃状态筛选 |
 | `/branches/template`、`/branches/import` | 分支模板下载与 Excel 导入 |
 | `/branches/batch-bind-repositories` | 从分支侧批量绑定代码库，支持 `append` / `replace` |
+| `/branches/{id}/repositories` | 查看分支关联组织树和代码库列表 |
 
 Excel 导入只导入基础字段，不导入代码库-分支绑定关系。
 
@@ -73,7 +75,10 @@ Excel 导入只导入基础字段，不导入代码库-分支绑定关系。
 分支管理采用 `zq-table`：
 
 - 支持分支 CRUD、Excel 导入、模板下载。
+- 分支维护 `活跃 / 已归档` 状态，已归档分支不参与后续漏合扫描配对。
 - 支持选中多个分支后批量绑定代码库。
+- 点击关联仓库数可查看该分支关联的组织树和代码库列表。
+- 代码库管理页点击分支数可查看绑定分支列表和按创建时间排序的分支演进鱼骨图。
 
 ## 初始化
 

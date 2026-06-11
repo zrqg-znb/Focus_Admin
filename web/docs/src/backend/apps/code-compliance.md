@@ -239,9 +239,11 @@ class ComplianceMissingMergeRecord(RootModel):
 | GET | `/api/code-compliance/base/repositories` | 代码库分页列表，支持组织、关键词、模式、领域、仓库类型过滤 |
 | POST/PUT/DELETE | `/api/code-compliance/base/repositories` | 代码库新增、编辑、删除 |
 | POST | `/api/code-compliance/base/repositories/batch-bind-branches` | 从代码库侧批量绑定分支，支持 `append` / `replace` |
-| GET | `/api/code-compliance/base/branches` | 分支分页列表，输出关联代码库数量 |
+| GET | `/api/code-compliance/base/repositories/{id}/branches` | 查看代码库绑定分支和分支演进图数据 |
+| GET | `/api/code-compliance/base/branches` | 分支分页列表，输出关联代码库数量，支持活跃状态筛选 |
 | POST/PUT/DELETE | `/api/code-compliance/base/branches` | 分支新增、编辑、删除 |
 | POST | `/api/code-compliance/base/branches/batch-bind-repositories` | 从分支侧批量绑定代码库，支持 `append` / `replace` |
+| GET | `/api/code-compliance/base/branches/{id}/repositories` | 查看分支关联组织树和代码库列表 |
 
 ### 自动漏合检测
 

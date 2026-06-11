@@ -108,7 +108,8 @@ const apis = [
 新增页面包括：
 
 - `代码库管理` 左侧组织树，右侧当前组织直接挂载的代码库列表，组织用 Dialog 编辑，代码库用 Drawer 编辑
-- `分支管理` 分支基础信息列表、CRUD、Excel 导入和批量绑定代码库
+- `分支管理` 分支基础信息列表、CRUD、活跃/归档状态、Excel 导入和批量绑定代码库
+- 数字型关系入口支持下钻：关联仓库数展示组织树与代码库列表，分支数展示绑定分支列表与演进鱼骨图
 
 详细一期说明见后端文档：`backend-django/docs/code-compliance-foundation-v1.md`。
 
@@ -122,7 +123,7 @@ const apis = [
 
 - 按组织聚合代码库 `project_id`，构造数据湖 GET 查询参数
 - 对每个目标分支先取 `only_count=True` 统计，再分页拉取 CR 明细
-- 按 `branch / project_id / change_key` 建索引
+- 排除已归档的非活跃分支后，按 `branch / project_id / change_key` 建索引
 - 计算 `trunk_change_keys - release_change_keys`
 - 将差集写入 `ComplianceMissingMergeRecord`
 - 发布分支已包含的历史未处理风险自动标记为 `已补合`

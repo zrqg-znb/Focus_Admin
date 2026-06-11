@@ -1,5 +1,5 @@
 import io
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
 import openpyxl
@@ -127,13 +127,22 @@ class CodeComplianceFoundationTests(TestCase):
             ),
         )
 
-    def create_branch(self, branch_name: str = "master", branch_type: str = "trunk"):
+    def create_branch(
+        self,
+        branch_name: str = "master",
+        branch_type: str = "trunk",
+        *,
+        is_active: bool = True,
+        created_date=None,
+    ):
         return services.create_branch(
             self.user,
             BranchIn(
                 branch_name=branch_name,
                 branch_type=branch_type,
+                created_date=created_date,
                 domain="cockpit",
+                is_active=is_active,
             ),
         )
 
@@ -377,6 +386,95 @@ class CodeComplianceFoundationTests(TestCase):
                 is_deleted=False,
             ).exists()
         )
+
+    def test_branch_active_state_filters_and_imports(self):
+        """分支活跃状态支持创建、列表筛选和 Excel 导入更新。"""
+        active = self.create_branch("master", is_active=True)
+        archived = self.create_branch("release/old", "release", is_active=False)
+
+        active_page = services.list_branches(is_active=True)
+        archived_page = services.list_branches(is_active=False)
+
+        self.assertEqual({item["id"] for item in active_page["items"]}, {active["id"]})
+        self.assertEqual({item["id"] for item in archived_page["items"]}, {archived["id"]})
+
+        file_obj = build_workbook_file(
+            ["分支名称", "创建日期", "分支类型", "分支别名", "分支用途", "领域", "是否活跃", "备注"],
+            [["release/old", "2026-01-02", "发布", "旧发布", "归档发布线", "cockpit", "活跃", ""]],
+            "branches.xlsx",
+        )
+        result = services.import_branches(self.user, file_obj)
+        updated = ComplianceManagedBranch.objects.get(id=archived["id"])
+
+        self.assertEqual(result.updated_count, 1)
+        self.assertTrue(updated.is_active)
+
+    def test_relation_details_return_branch_repository_tree_and_sorted_branches(self):
+        """关系详情接口返回弹窗所需组织树和按创建时间排序的分支。"""
+        parent = services.create_organization(
+            self.user,
+            OrganizationIn(group_id="10000", name="根组织", mode="CR", domain="cockpit"),
+        )
+        child = services.create_organization(
+            self.user,
+            OrganizationIn(
+                group_id="10001",
+                name="子组织",
+                parent_id=parent["id"],
+                mode="CR",
+                domain="cockpit",
+            ),
+        )
+        repo = self.create_repo(child["id"], "20001")
+        old_release = self.create_branch(
+            "release/old",
+            "release",
+            is_active=False,
+            created_date=date(2026, 1, 10),
+        )
+        trunk = self.create_branch("master", "trunk", created_date=date(2026, 1, 1))
+        unknown_date = self.create_branch("feature/no-date", "development")
+        services.bind_branches_to_repositories(
+            [repo["id"]],
+            [old_release["id"], trunk["id"], unknown_date["id"]],
+            "append",
+        )
+
+        branch_relation = services.get_branch_repositories(trunk["id"])
+        repo_relation = services.get_repository_branches(repo["id"])
+
+        self.assertEqual(branch_relation["branch"]["id"], trunk["id"])
+        self.assertEqual(branch_relation["organizations"][0]["children"][0]["repositories"][0]["id"], repo["id"])
+        self.assertEqual(
+            [item["branch_name"] for item in repo_relation["branches"]],
+            ["master", "release/old", "feature/no-date"],
+        )
+        self.assertFalse(repo_relation["branches"][1]["is_active"])
+
+    def test_missing_merge_scan_pairs_ignore_inactive_branches(self):
+        """漏合扫描配对前排除非活跃主干和发布分支。"""
+        org = self.create_org()
+        repo = self.create_repo(org["id"], "20001")
+        active_trunk = self.create_branch("master", "trunk")
+        inactive_trunk = self.create_branch("legacy-master", "trunk", is_active=False)
+        active_release = self.create_branch("release/1.0", "release")
+        inactive_release = self.create_branch("release/old", "release", is_active=False)
+        services.bind_branches_to_repositories(
+            [repo["id"]],
+            [
+                active_trunk["id"],
+                inactive_trunk["id"],
+                active_release["id"],
+                inactive_release["id"],
+            ],
+            "append",
+        )
+
+        pairs = missing_merge_services._load_scan_pairs(repository_ids=[repo["id"]])
+
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(pairs[0].trunk_branch, "master")
+        self.assertEqual(pairs[0].release_branch, "release/1.0")
 
     def test_import_repositories_returns_row_errors(self):
         org = self.create_org()
