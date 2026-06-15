@@ -2,7 +2,7 @@
 import type { MilestoneBoardItem } from '#/api/project-manager/milestone';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 import { IconifyIcon } from '@vben/icons';
@@ -10,6 +10,7 @@ import { IconifyIcon } from '@vben/icons';
 import { ElButton, ElTooltip } from 'element-plus';
 
 import { useVbenForm } from '#/adapter/form';
+import { listHardwareConfigOptionsApi } from '#/api/project-manager/hardware';
 import { getMilestoneOverviewApi } from '#/api/project-manager/milestone';
 import { useZqTable } from '#/components/zq-table';
 
@@ -105,6 +106,47 @@ const [Form, formApi] = useVbenForm({
   resetButtonOptions: {
     content: '重置',
   },
+});
+
+async function loadSupportingPlatformOptions() {
+  const options = await listHardwareConfigOptionsApi();
+  formApi.updateSchema([
+    {
+      fieldName: 'supporting_platform_filters',
+      componentProps: {
+        options: [
+          {
+            label: 'CDC 平台版本',
+            value: 'cdc',
+            children: (options.cdc_platforms || []).map((item) => ({
+              label: item.name,
+              value: item.id,
+            })),
+          },
+          {
+            label: '智慧屏版本',
+            value: 'smart_screen',
+            children: (options.smart_screen_versions || []).map((item) => ({
+              label: item.name,
+              value: item.id,
+            })),
+          },
+          {
+            label: 'IDVP 软件平台版本',
+            value: 'idvp',
+            children: (options.idvp_platforms || []).map((item) => ({
+              label: item.name,
+              value: item.id,
+            })),
+          },
+        ],
+      },
+    },
+  ]);
+}
+
+onMounted(() => {
+  loadSupportingPlatformOptions();
 });
 const [Grid, gridApi] = useZqTable({
   showSearchForm: false,

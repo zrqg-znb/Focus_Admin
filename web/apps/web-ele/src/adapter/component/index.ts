@@ -39,6 +39,12 @@ const ElCheckboxGroup = defineAsyncComponent(() =>
     import('element-plus/es/components/checkbox-group/style/css'),
   ]).then(([res]) => res.ElCheckboxGroup),
 );
+const ElCascader = defineAsyncComponent(() =>
+  Promise.all([
+    import('element-plus/es/components/cascader/index'),
+    import('element-plus/es/components/cascader/style/css'),
+  ]).then(([res]) => res.ElCascader),
+);
 const ElDatePicker = defineAsyncComponent(() =>
   Promise.all([
     import('element-plus/es/components/date-picker/index'),
@@ -199,6 +205,7 @@ const withDefaultPlaceholder = <T extends Component>(
 export type ComponentType =
   | 'ApiSelect'
   | 'ApiTreeSelect'
+  | 'Cascader'
   | 'Checkbox'
   | 'CheckboxGroup'
   | 'CronSelector'
@@ -258,6 +265,7 @@ async function initComponentAdapter() {
       },
     ),
     Checkbox: ElCheckbox,
+    Cascader: withDefaultPlaceholder(ElCascader, 'select'),
     CheckboxGroup: (props, { attrs, slots }) => {
       let defaultSlot;
       if (Reflect.has(slots, 'default')) {

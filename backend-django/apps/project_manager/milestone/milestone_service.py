@@ -64,6 +64,41 @@ def _format_supporting_platform(project) -> str:
     return ""
 
 
+def _build_supporting_platform_query(filters: list) -> Q:
+    cdc_ids: list[str] = []
+    smart_screen_ids: list[str] = []
+    idvp_ids: list[str] = []
+
+    for item in filters or []:
+        if not isinstance(item, list) or len(item) < 2:
+            continue
+        category = str(item[0] or "").strip()
+        value = str(item[1] or "").strip()
+        if not value:
+            continue
+        if category == "cdc":
+            _append_unique(cdc_ids, value)
+        elif category == "smart_screen":
+            _append_unique(smart_screen_ids, value)
+        elif category == "idvp":
+            _append_unique(idvp_ids, value)
+
+    query = Q()
+    if cdc_ids:
+        query |= Q(
+            project__phase_configs__is_deleted=False,
+            project__phase_configs__cdc_platform_id__in=cdc_ids,
+        )
+    if smart_screen_ids:
+        query |= Q(
+            project__phase_configs__is_deleted=False,
+            project__phase_configs__smart_screen_versions__id__in=smart_screen_ids,
+        )
+    if idvp_ids:
+        query |= Q(project__idvp_platform_id__in=idvp_ids)
+    return query
+
+
 def get_milestone_board(filters: dict):
     phase_config_queryset = ProjectPhaseConfig.objects.filter(
         is_deleted=False,
@@ -95,6 +130,12 @@ def get_milestone_board(filters: dict):
     manager_id = filters.get('manager_id')
     if manager_id:
         queryset = queryset.filter(project__managers__id=manager_id)
+
+    supporting_platform_filters = filters.get("supporting_platform_filters")
+    if supporting_platform_filters:
+        platform_query = _build_supporting_platform_query(supporting_platform_filters)
+        if platform_query:
+            queryset = queryset.filter(platform_query).distinct()
 
     # 构造扁平化数据
     result = []

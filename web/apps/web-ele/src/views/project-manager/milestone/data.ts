@@ -42,6 +42,22 @@ export function useSearchFormSchema(): VbenFormSchema[] {
         style: { width: '200px' },
       },
     },
+    {
+      component: 'Cascader',
+      fieldName: 'supporting_platform_filters',
+      label: '配套平台',
+      componentProps: {
+        clearable: true,
+        collapseTags: true,
+        collapseTagsTooltip: true,
+        options: [],
+        placeholder: '选择配套平台',
+        props: {
+          multiple: true,
+        },
+        style: { width: '260px' },
+      },
+    },
   ];
 }
 

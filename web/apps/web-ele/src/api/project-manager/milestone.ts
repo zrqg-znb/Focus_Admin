@@ -31,6 +31,7 @@ export interface MilestoneOverviewQuery {
   project_type?: string;
   manager_id?: string;
   qg_filters?: string[];
+  supporting_platform_filters?: string[][];
   sort_field?: 'qg3_date' | 'qg4_date' | 'qg5_date';
   sort_order?: 'asc' | 'desc';
 }
@@ -85,6 +86,14 @@ export async function getMilestoneOverviewApi(params?: MilestoneOverviewQuery) {
   const processedParams: Record<string, any> = { ...params };
   if (processedParams.qg_filters && Array.isArray(processedParams.qg_filters)) {
     processedParams.qg_filters = JSON.stringify(processedParams.qg_filters);
+  }
+  if (
+    processedParams.supporting_platform_filters &&
+    Array.isArray(processedParams.supporting_platform_filters)
+  ) {
+    processedParams.supporting_platform_filters = JSON.stringify(
+      processedParams.supporting_platform_filters,
+    );
   }
 
   return requestClient.get<MilestoneBoardItem[]>(
