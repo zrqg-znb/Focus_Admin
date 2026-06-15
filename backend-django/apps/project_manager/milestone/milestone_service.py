@@ -2,18 +2,82 @@ from datetime import date, timedelta
 from functools import cmp_to_key
 from typing import List, Optional
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.shortcuts import get_object_or_404
 from common import fu_crud
 from .milestone_model import Milestone, MilestoneQGConfig, MilestoneRiskItem, MilestoneRiskLog
 from .milestone_schema import MilestoneUpdateSchema, MilestoneBoardSchema, RiskItemOut, RiskLogOut
+from apps.project_manager.project.project_model import ProjectPhaseConfig
 from core.user.user_model import User
 
 
+def _append_unique(values: list[str], value: str | None):
+    normalized = (value or "").strip()
+    if normalized and normalized not in values:
+        values.append(normalized)
+
+
+def _format_supporting_platform(project) -> str:
+    if not project.enable_hardware_config:
+        return ""
+
+    phase_configs = list(project.phase_configs.all())
+    if not phase_configs:
+        return ""
+
+    parts: list[str] = []
+    domain = project.domain or ""
+
+    if "座舱" in domain:
+        cdc_names: list[str] = []
+        smart_screen_names: list[str] = []
+        for phase in phase_configs:
+            if getattr(phase, "scenario", "") != "cockpit":
+                continue
+            if phase.cdc_platform:
+                _append_unique(cdc_names, phase.cdc_platform.name)
+            for version in phase.smart_screen_versions.all():
+                _append_unique(smart_screen_names, version.name)
+
+        if cdc_names:
+            parts.append("、".join(cdc_names))
+        if smart_screen_names:
+            parts.append("、".join(smart_screen_names))
+        return " / ".join(parts)
+
+    if "车控" in domain:
+        if project.idvp_platform:
+            _append_unique(parts, project.idvp_platform.name)
+
+        config_types: list[str] = []
+        for phase in phase_configs:
+            if getattr(phase, "scenario", "") != "vehicle":
+                continue
+            for hardware in phase.vehicle_hardware or []:
+                if isinstance(hardware, dict):
+                    _append_unique(config_types, hardware.get("config_type"))
+
+        if config_types:
+            parts.append("、".join(config_types))
+        return " / ".join(parts)
+
+    return ""
+
+
 def get_milestone_board(filters: dict):
-    queryset = Milestone.objects.select_related('project').prefetch_related('project__managers').filter(
-        project__is_deleted=False,
-        project__enable_milestone=True
+    phase_config_queryset = ProjectPhaseConfig.objects.filter(
+        is_deleted=False,
+    ).select_related("cdc_platform").prefetch_related("smart_screen_versions")
+    queryset = (
+        Milestone.objects.select_related("project", "project__idvp_platform")
+        .prefetch_related(
+            "project__managers",
+            Prefetch("project__phase_configs", queryset=phase_config_queryset),
+        )
+        .filter(
+            project__is_deleted=False,
+            project__enable_milestone=True,
+        )
     )
     
     # 模糊搜索
@@ -94,6 +158,7 @@ def get_milestone_board(filters: dict):
             "project_id": m.project.id,
             "project_name": m.project.name,
             "project_domain": m.project.domain,
+            "supporting_platform": _format_supporting_platform(m.project),
             "manager_names": [u.name or u.username for u in m.project.managers.all()],
             "qg1_date": m.qg1_date,
             "qg2_date": m.qg2_date,

@@ -11,6 +11,7 @@ export interface MilestoneBoardItem {
   project_id: string;
   project_name: string;
   project_domain: string;
+  supporting_platform?: string;
   manager_names: string[];
   qg1_date: null | string;
   qg2_date: null | string;
@@ -81,7 +82,7 @@ export interface RiskLog {
 
 export async function getMilestoneOverviewApi(params?: MilestoneOverviewQuery) {
   // 手动处理数组参数，将其转换为 JSON 字符串
-  const processedParams = { ...params };
+  const processedParams: Record<string, any> = { ...params };
   if (processedParams.qg_filters && Array.isArray(processedParams.qg_filters)) {
     processedParams.qg_filters = JSON.stringify(processedParams.qg_filters);
   }

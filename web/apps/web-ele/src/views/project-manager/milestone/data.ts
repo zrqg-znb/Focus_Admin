@@ -57,6 +57,13 @@ export function useTableColumns(): VxeTableGridOptions<MilestoneBoardItem>['colu
     { key: 'project_domain', dataKey: 'project_domain', title: '领域', minWidth: 100 },
     { key: 'project_type', dataKey: 'project_type', title: '类型', minWidth: 100 },
     {
+      key: 'supporting_platform',
+      dataKey: 'supporting_platform',
+      title: '配套平台',
+      minWidth: 220,
+      formatter: ({ cellValue }) => cellValue || '-',
+    },
+    {
       key: 'manager_names',
       dataKey: 'manager_names',
       title: '负责人',

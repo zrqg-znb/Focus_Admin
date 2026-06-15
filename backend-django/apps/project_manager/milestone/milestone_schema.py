@@ -26,6 +26,7 @@ class MilestoneBoardSchema(Schema):
     project_id: str
     project_name: str
     project_domain: str
+    supporting_platform: str = ""
     manager_names: List[str]
     qg1_date: Optional[date] = None
     qg2_date: Optional[date] = None
