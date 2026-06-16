@@ -943,6 +943,9 @@ class CodeComplianceFoundationTests(TestCase):
         self.assertEqual(aggregate_count, 1)
         self.assertEqual(aggregate.cr_count, 1)
         self.assertEqual(aggregate.changed_lines, 25)
+        trend = contribution_services.get_dashboard_trend()
+        self.assertEqual(trend[0]["date"], contribution_date)
+        self.assertNotIn("contribution_date", trend[0])
 
     def test_contribution_unknown_author_keeps_username(self):
         """未匹配 Focus 用户时保留数据湖工号，并归属到非底软领域。"""

@@ -269,7 +269,17 @@ def get_dashboard_trend(**filters) -> list[dict]:
         )
         .order_by("contribution_date")
     )
-    return [{key: (value or 0) for key, value in row.items()} for row in rows]
+    return [
+        {
+            "date": row["contribution_date"],
+            "cr_count": int(row.get("cr_count") or 0),
+            "added_lines": int(row.get("added_lines") or 0),
+            "removed_lines": int(row.get("removed_lines") or 0),
+            "net_lines": int(row.get("net_lines") or 0),
+            "changed_lines": int(row.get("changed_lines") or 0),
+        }
+        for row in rows
+    ]
 
 
 def get_repository_ranking(limit: int = 20, **filters) -> list[dict]:
