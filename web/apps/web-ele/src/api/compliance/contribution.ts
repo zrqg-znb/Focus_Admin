@@ -18,11 +18,15 @@ export interface ContributionMetric {
   active_branch_count: number;
   active_repository_count: number;
   added_lines: number;
+  baseline_branch_count: number;
+  baseline_repository_count: number;
   changed_lines: number;
   contributor_count: number;
   cr_count: number;
+  missing_baseline_count: number;
   net_lines: number;
   removed_lines: number;
+  stock_lines: number;
 }
 
 export interface ContributionTrendPoint {
@@ -37,15 +41,20 @@ export interface ContributionTrendPoint {
 export interface ContributionRankingItem {
   added_lines: number;
   branch_name: string;
+  baseline_at?: null | string;
+  baseline_id?: null | string;
+  baseline_lines: number;
   changed_lines: number;
   contributor_count: number;
   cr_count: number;
+  has_baseline: boolean;
   id: string;
   name: string;
   net_lines: number;
   project_id: string;
   removed_lines: number;
   repository_name: string;
+  stock_lines: number;
 }
 
 export interface ContributionPersonRankingItem {
@@ -155,6 +164,27 @@ export interface ContributionExportTask {
   sys_create_datetime?: null | string;
 }
 
+export interface ContributionCodeBaseline {
+  baseline_at: string;
+  baseline_lines: number;
+  branch_id?: null | string;
+  branch_name: string;
+  branch_type: string;
+  id: string;
+  is_current: boolean;
+  operator_name: string;
+  organization_group_id: string;
+  organization_id?: null | string;
+  organization_name: string;
+  remark: string;
+  repository_id: string;
+  repository_name: string;
+  repository_project_id: string;
+  source: string;
+  source_label: string;
+  sys_create_datetime?: null | string;
+}
+
 export interface PaginatedResponse<T> {
   items: T[];
   total: number;
@@ -256,4 +286,46 @@ export function downloadContributionExportTaskApi(id: string) {
   return requestClient.get(`${base}/export-tasks/${id}/download`, {
     responseType: 'blob',
   });
+}
+
+export function listContributionCodeBaselinesApi(
+  params?: ContributionFilters & {
+    current_only?: boolean;
+    page?: number;
+    pageSize?: number;
+  },
+) {
+  return requestClient.get<PaginatedResponse<ContributionCodeBaseline>>(
+    `${base}/code-baselines`,
+    { params: normalizeParams(params) },
+  );
+}
+
+export function createContributionCodeBaselineApi(data: {
+  baseline_at: string;
+  baseline_lines: number;
+  branch_id: string;
+  remark?: string;
+  repository_id: string;
+}) {
+  return requestClient.post<ContributionCodeBaseline>(
+    `${base}/code-baselines`,
+    data,
+  );
+}
+
+export function downloadContributionBaselineTemplateApi() {
+  return requestClient.get(`${base}/code-baselines/template`, {
+    responseType: 'blob',
+  });
+}
+
+export function importContributionBaselinesApi(file: File) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return requestClient.post(
+    `${base}/code-baselines/import`,
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  );
 }

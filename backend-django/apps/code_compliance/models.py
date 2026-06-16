@@ -787,6 +787,13 @@ CONTRIBUTION_EXPORT_SCOPE_CHOICES = (
     (CONTRIBUTION_EXPORT_SCOPE_RECORDS, "CR明细"),
 )
 
+CONTRIBUTION_BASELINE_SOURCE_MANUAL = "manual"
+CONTRIBUTION_BASELINE_SOURCE_IMPORT = "import"
+CONTRIBUTION_BASELINE_SOURCE_CHOICES = (
+    (CONTRIBUTION_BASELINE_SOURCE_MANUAL, "手工维护"),
+    (CONTRIBUTION_BASELINE_SOURCE_IMPORT, "Excel导入"),
+)
+
 
 class ComplianceContributionRecord(RootModel):
     """代码贡献 CR 明细事实表，按仓库、分支和 change_key 幂等保存。"""
@@ -982,6 +989,77 @@ class ComplianceContributionDailyAggregate(RootModel):
             models.Index(fields=["author_username", "contribution_date"], name="cc_ctd_author_day_idx"),
             models.Index(fields=["author_pl_group", "contribution_date"], name="cc_ctd_pl_day_idx"),
         ]
+
+
+class ComplianceContributionCodeBaseline(RootModel):
+    """代码量存量基线，按代码库和分支保留历次校准记录。"""
+
+    organization = models.ForeignKey(
+        ComplianceOrganization,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contribution_code_baselines",
+        db_constraint=False,
+        verbose_name="组织",
+    )
+    repository = models.ForeignKey(
+        ComplianceRepository,
+        on_delete=models.CASCADE,
+        related_name="contribution_code_baselines",
+        db_constraint=False,
+        verbose_name="代码库",
+    )
+    branch = models.ForeignKey(
+        ComplianceManagedBranch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contribution_code_baselines",
+        db_constraint=False,
+        verbose_name="分支",
+    )
+    organization_group_id = models.CharField(max_length=128, db_index=True, verbose_name="组织ID快照")
+    organization_name = models.CharField(max_length=255, blank=True, default="", verbose_name="组织名快照")
+    repository_project_id = models.CharField(max_length=128, db_index=True, verbose_name="代码库ID快照")
+    repository_name = models.CharField(max_length=255, blank=True, default="", verbose_name="代码库名快照")
+    branch_name = models.CharField(max_length=255, db_index=True, verbose_name="分支名称快照")
+    branch_type = models.CharField(max_length=32, blank=True, default="", db_index=True, verbose_name="分支类型快照")
+    repo_type = models.CharField(max_length=100, blank=True, default="", db_index=True, verbose_name="代码仓类型快照")
+    domain = models.CharField(max_length=16, blank=True, default="", db_index=True, verbose_name="领域快照")
+    baseline_lines = models.BigIntegerField(default=0, verbose_name="基线代码量")
+    baseline_at = models.DateTimeField(db_index=True, verbose_name="基线统计时间")
+    source = models.CharField(
+        max_length=16,
+        choices=CONTRIBUTION_BASELINE_SOURCE_CHOICES,
+        default=CONTRIBUTION_BASELINE_SOURCE_MANUAL,
+        db_index=True,
+        verbose_name="维护方式",
+    )
+    remark = models.TextField(blank=True, default="", verbose_name="备注")
+    is_current = models.BooleanField(default=True, db_index=True, verbose_name="是否当前生效")
+    operator = models.ForeignKey(
+        "core.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contribution_code_baselines",
+        db_constraint=False,
+        verbose_name="操作人",
+    )
+
+    class Meta:
+        db_table = "compliance_contribution_code_baseline"
+        ordering = ("-baseline_at", "-sys_create_datetime")
+        verbose_name = "代码量基线"
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=["repository", "branch_name", "is_current"], name="cc_cbl_repo_branch_current_idx"),
+            models.Index(fields=["baseline_at", "is_current"], name="cc_cbl_time_current_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.repository_name}:{self.branch_name}:{self.baseline_lines}"
 
 
 class ComplianceContributionCollectTask(RootModel):

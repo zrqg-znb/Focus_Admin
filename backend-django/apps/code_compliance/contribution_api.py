@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from ninja import Query, Router
+from ninja import File, Query, Router, UploadedFile
 
 from . import contribution_services as services
 from .contribution_schemas import (
@@ -9,6 +9,8 @@ from .contribution_schemas import (
     ContributionCollectRunIn,
     ContributionCollectRunOut,
     ContributionCollectTaskOut,
+    ContributionCodeBaselineIn,
+    ContributionCodeBaselineOut,
     ContributionExportTaskIn,
     ContributionExportTaskOut,
     ContributionExportTaskPrepareOut,
@@ -18,6 +20,7 @@ from .contribution_schemas import (
     ContributionRecordOut,
     ContributionTrendPointOut,
     PaginatedContributionCollectTaskOut,
+    PaginatedContributionCodeBaselineOut,
     PaginatedContributionRecordOut,
 )
 
@@ -170,6 +173,46 @@ def list_contribution_records(
 ):
     """分页查询贡献 CR 明细。"""
     return services.list_records(page=page, page_size=pageSize, **_filters(**locals()))
+
+
+@router.get("/code-baselines", response=PaginatedContributionCodeBaselineOut, summary="代码量基线列表")
+def list_contribution_code_baselines(
+    request,
+    page: int = Query(1),
+    pageSize: int = Query(20),
+    current_only: bool = Query(True),
+    organization_ids: Optional[str] = Query(None),
+    repository_ids: Optional[str] = Query(None),
+    branch_ids: Optional[str] = Query(None),
+    branch_type: Optional[str] = Query(None),
+    repo_type: Optional[str] = Query(None),
+    domain: Optional[str] = Query(None),
+):
+    """分页查询代码量基线。"""
+    return services.list_code_baselines(
+        page=page,
+        page_size=pageSize,
+        current_only=current_only,
+        **_filters(**locals()),
+    )
+
+
+@router.post("/code-baselines", response=ContributionCodeBaselineOut, summary="维护代码量基线")
+def create_contribution_code_baseline(request, payload: ContributionCodeBaselineIn):
+    """新增一次代码量基线覆盖校准。"""
+    return services.save_code_baseline(request.auth, payload)
+
+
+@router.get("/code-baselines/template", summary="下载代码量基线模板")
+def download_contribution_code_baseline_template(request):
+    """下载代码量基线导入模板。"""
+    return services.build_baseline_template_response()
+
+
+@router.post("/code-baselines/import", summary="导入代码量基线")
+def import_contribution_code_baselines(request, file: UploadedFile = File(...)):
+    """批量导入代码量基线。"""
+    return services.import_code_baselines(request.auth, file)
 
 
 @router.get("/collect-tasks", response=PaginatedContributionCollectTaskOut, summary="代码贡献采集任务")

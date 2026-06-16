@@ -22,6 +22,10 @@ class ContributionFilterIn(Schema):
 class ContributionMetricOut(Schema):
     active_repository_count: int
     active_branch_count: int
+    baseline_repository_count: int = 0
+    baseline_branch_count: int = 0
+    missing_baseline_count: int = 0
+    stock_lines: int = 0
     cr_count: int
     contributor_count: int
     added_lines: int
@@ -45,6 +49,11 @@ class ContributionRankingItemOut(Schema):
     project_id: str = ""
     branch_name: str = ""
     repository_name: str = ""
+    baseline_id: Optional[str] = None
+    baseline_at: Optional[datetime] = None
+    baseline_lines: int = 0
+    stock_lines: int = 0
+    has_baseline: bool = False
     cr_count: int
     contributor_count: int
     added_lines: int
@@ -193,3 +202,36 @@ class ContributionExportTaskPrepareOut(Schema):
     mode: str
     task: ContributionExportTaskOut
 
+
+class ContributionCodeBaselineOut(Schema):
+    id: str
+    organization_id: Optional[str] = None
+    organization_group_id: str
+    organization_name: str
+    repository_id: str
+    repository_project_id: str
+    repository_name: str
+    branch_id: Optional[str] = None
+    branch_name: str
+    branch_type: str
+    baseline_lines: int
+    baseline_at: datetime
+    source: str
+    source_label: str
+    remark: str
+    is_current: bool
+    operator_name: str
+    sys_create_datetime: Optional[datetime] = None
+
+
+class PaginatedContributionCodeBaselineOut(Schema):
+    items: List[ContributionCodeBaselineOut] = Field(default_factory=list)
+    total: int
+
+
+class ContributionCodeBaselineIn(Schema):
+    repository_id: str
+    branch_id: str
+    baseline_lines: int
+    baseline_at: datetime
+    remark: str = ""

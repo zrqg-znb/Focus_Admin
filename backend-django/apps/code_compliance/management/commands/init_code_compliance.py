@@ -392,13 +392,20 @@ PERMISSION_SEEDS = {
         },
     ],
     "contribution": [
-        {"name": "查看代码贡献看板", "code": "code_compliance:contribution:view", "permission_type": 0},
+        {"name": "查看代码量看板", "code": "code_compliance:contribution:view", "permission_type": 0},
         {
-            "name": "代码贡献看板查询接口",
+            "name": "代码量看板查询接口",
             "code": "code_compliance:api:contribution:dashboard",
             "permission_type": 1,
             "api_path": "/api/code-compliance/contributions/dashboard*",
             "http_method": "GET",
+        },
+        {
+            "name": "代码量基线维护接口",
+            "code": "code_compliance:api:contribution:baseline",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/contributions/code-baselines*",
+            "http_method": "ALL",
         },
         {
             "name": "代码贡献明细接口",

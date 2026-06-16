@@ -15,7 +15,7 @@ import openpyxl
 from django.conf import settings
 from django.db import close_old_connections, transaction
 from django.db.models import Count, Q, Sum
-from django.http import FileResponse
+from django.http import FileResponse, HttpResponse
 from django.utils import dateparse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -32,6 +32,8 @@ from .models import (
     COMPLIANCE_DOMAIN_CHOICES,
     CONTRIBUTION_EXPORT_SCOPE_RECORDS,
     CONTRIBUTION_EXPORT_SCOPE_SUMMARY,
+    CONTRIBUTION_BASELINE_SOURCE_IMPORT,
+    CONTRIBUTION_BASELINE_SOURCE_MANUAL,
     CONTRIBUTION_TASK_STATUS_FAILED,
     CONTRIBUTION_TASK_STATUS_PENDING,
     CONTRIBUTION_TASK_STATUS_RUNNING,
@@ -40,6 +42,7 @@ from .models import (
     CONTRIBUTION_TASK_TRIGGER_CHOICES,
     CONTRIBUTION_TASK_TRIGGER_MANUAL,
     CONTRIBUTION_TASK_TRIGGER_SCHEDULED,
+    ComplianceContributionCodeBaseline,
     ComplianceContributionCollectTask,
     ComplianceContributionDailyAggregate,
     ComplianceContributionExportTask,
@@ -63,6 +66,10 @@ BRANCH_TYPE_LABELS = dict(COMPLIANCE_BRANCH_TYPE_CHOICES)
 DOMAIN_LABELS = dict(COMPLIANCE_DOMAIN_CHOICES)
 EXPORT_ACTIVE_STATUSES = {CONTRIBUTION_TASK_STATUS_PENDING, CONTRIBUTION_TASK_STATUS_RUNNING}
 EXPORT_TTL_SECONDS = 24 * 60 * 60
+BASELINE_SOURCE_LABELS = {
+    CONTRIBUTION_BASELINE_SOURCE_MANUAL: "手工维护",
+    CONTRIBUTION_BASELINE_SOURCE_IMPORT: "Excel导入",
+}
 
 
 @dataclass(frozen=True)
@@ -186,6 +193,15 @@ def _filter_payload_from_kwargs(**kwargs) -> dict:
     return payload
 
 
+def _stock_payload(payload: dict) -> dict:
+    """存量口径忽略时间、人员和 CR 关键词，只保留仓库分支范围。"""
+    return {
+        key: value
+        for key, value in (payload or {}).items()
+        if key in {"organization_ids", "repository_ids", "branch_ids", "branch_type", "repo_type", "domain"}
+    }
+
+
 def _apply_record_filters(queryset, payload: dict):
     """将看板筛选统一应用到贡献明细查询。"""
     organization_ids = _normalize_id_list(payload.get("organization_ids"))
@@ -249,9 +265,92 @@ def _sum_lines(queryset) -> dict:
     return {key: int(value or 0) for key, value in data.items()}
 
 
+def _load_current_baselines(payload: dict) -> dict[tuple[str, str], ComplianceContributionCodeBaseline]:
+    """按筛选范围加载当前生效基线，key 为 repository_id + branch_name。"""
+    queryset = ComplianceContributionCodeBaseline.objects.filter(is_deleted=False, is_current=True).select_related(
+        "repository", "branch", "operator"
+    )
+    payload = _stock_payload(payload)
+    if _normalize_id_list(payload.get("organization_ids")):
+        queryset = queryset.filter(organization_id__in=_normalize_id_list(payload.get("organization_ids")))
+    if _normalize_id_list(payload.get("repository_ids")):
+        queryset = queryset.filter(repository_id__in=_normalize_id_list(payload.get("repository_ids")))
+    if _normalize_id_list(payload.get("branch_ids")):
+        queryset = queryset.filter(branch_id__in=_normalize_id_list(payload.get("branch_ids")))
+    if payload.get("branch_type"):
+        queryset = queryset.filter(branch_type=payload["branch_type"])
+    if payload.get("repo_type"):
+        queryset = queryset.filter(repo_type=payload["repo_type"])
+    if payload.get("domain"):
+        queryset = queryset.filter(domain=payload["domain"])
+    return {(str(item.repository_id), item.branch_name): item for item in queryset}
+
+
+def _load_stock_bindings(payload: dict) -> list[ComplianceRepositoryBranch]:
+    """加载存量看板的仓库 x 分支范围，作为基线覆盖率分母。"""
+    queryset = (
+        ComplianceRepositoryBranch.objects.filter(
+            is_deleted=False,
+            repository__is_deleted=False,
+            branch__is_deleted=False,
+            branch__is_active=True,
+        )
+        .select_related("repository", "repository__organization", "branch")
+        .prefetch_related("repository__responsibility_groups")
+    )
+    payload = _stock_payload(payload)
+    if _normalize_id_list(payload.get("organization_ids")):
+        queryset = queryset.filter(repository__organization_id__in=_normalize_id_list(payload.get("organization_ids")))
+    if _normalize_id_list(payload.get("repository_ids")):
+        queryset = queryset.filter(repository_id__in=_normalize_id_list(payload.get("repository_ids")))
+    if _normalize_id_list(payload.get("branch_ids")):
+        queryset = queryset.filter(branch_id__in=_normalize_id_list(payload.get("branch_ids")))
+    if payload.get("branch_type"):
+        queryset = queryset.filter(branch__branch_type=payload["branch_type"])
+    if payload.get("repo_type"):
+        queryset = queryset.filter(repository__repo_type=payload["repo_type"])
+    if payload.get("domain"):
+        queryset = queryset.filter(repository__domain=payload["domain"])
+    return list(queryset)
+
+
+def _stock_increment_for_baseline(baseline: ComplianceContributionCodeBaseline) -> int:
+    """计算单条基线时点之后的净增代码量。"""
+    return int(
+        ComplianceContributionRecord.objects.filter(
+            is_deleted=False,
+            repository_id=baseline.repository_id,
+            branch_name=baseline.branch_name,
+            merged_at__gt=baseline.baseline_at,
+        ).aggregate(value=Sum("net_lines"))["value"]
+        or 0
+    )
+
+
+def _stock_metrics(payload: dict) -> dict:
+    """按当前基线和基线后净增计算存量指标。"""
+    bindings = _load_stock_bindings(payload)
+    baselines = _load_current_baselines(payload)
+    binding_keys = {(str(link.repository_id), link.branch.branch_name) for link in bindings}
+    stock_lines = 0
+    covered_keys = set()
+    for key, baseline in baselines.items():
+        if key not in binding_keys:
+            continue
+        covered_keys.add(key)
+        stock_lines += int(baseline.baseline_lines or 0) + _stock_increment_for_baseline(baseline)
+    return {
+        "baseline_repository_count": len({key[0] for key in covered_keys}),
+        "baseline_branch_count": len(covered_keys),
+        "missing_baseline_count": max(len(binding_keys) - len(covered_keys), 0),
+        "stock_lines": stock_lines,
+    }
+
+
 def get_dashboard_summary(**filters) -> dict:
     """查询贡献看板 8 项核心指标。"""
-    return _sum_lines(_base_record_queryset(_filter_payload_from_kwargs(**filters)))
+    payload = _filter_payload_from_kwargs(**filters)
+    return {**_sum_lines(_base_record_queryset(payload)), **_stock_metrics(payload)}
 
 
 def get_dashboard_trend(**filters) -> list[dict]:
@@ -283,9 +382,9 @@ def get_dashboard_trend(**filters) -> list[dict]:
 
 
 def get_repository_ranking(limit: int = 20, **filters) -> list[dict]:
-    """按仓库和分支维度返回贡献排行，默认用总变更行数排序。"""
+    """按仓库和分支维度返回当前存量和统计期内合入排行。"""
     payload = _filter_payload_from_kwargs(**filters)
-    rows = (
+    rows = list(
         _base_record_queryset(payload)
         .values("repository_id", "repository_name", "repository_project_id", "branch_name")
         .annotate(
@@ -296,19 +395,37 @@ def get_repository_ranking(limit: int = 20, **filters) -> list[dict]:
             net_lines=Sum("net_lines"),
             changed_lines=Sum("changed_lines"),
         )
-        .order_by("-changed_lines", "-cr_count")[: max(min(int(limit or 20), 100), 1)]
     )
-    return [
-        {
-            "id": f"{row['repository_id'] or ''}:{row['branch_name']}",
-            "name": row["repository_name"] or "-",
-            "project_id": row["repository_project_id"] or "",
-            "branch_name": row["branch_name"] or "",
-            "repository_name": row["repository_name"] or "",
-            **{key: int(row.get(key) or 0) for key in ("cr_count", "contributor_count", "added_lines", "removed_lines", "net_lines", "changed_lines")},
-        }
-        for row in rows
-    ]
+    period_by_key = {(str(row["repository_id"]), row["branch_name"]): row for row in rows}
+    baselines = _load_current_baselines(payload)
+    items: list[dict] = []
+    for link in _load_stock_bindings(payload):
+        key = (str(link.repository_id), link.branch.branch_name)
+        period = period_by_key.get(key, {})
+        baseline = baselines.get(key)
+        stock_lines = 0
+        if baseline:
+            stock_lines = int(baseline.baseline_lines or 0) + _stock_increment_for_baseline(baseline)
+        items.append(
+            {
+                "id": f"{link.repository_id}:{link.branch.branch_name}",
+                "name": link.repository.project_name,
+                "project_id": link.repository.project_id,
+                "branch_name": link.branch.branch_name,
+                "repository_name": link.repository.project_name,
+                "baseline_id": str(baseline.id) if baseline else None,
+                "baseline_at": baseline.baseline_at if baseline else None,
+                "baseline_lines": int(baseline.baseline_lines or 0) if baseline else 0,
+                "stock_lines": stock_lines,
+                "has_baseline": bool(baseline),
+                **{
+                    key_name: int(period.get(key_name) or 0)
+                    for key_name in ("cr_count", "contributor_count", "added_lines", "removed_lines", "net_lines", "changed_lines")
+                },
+            }
+        )
+    items.sort(key=lambda item: (item["stock_lines"], item["changed_lines"], item["cr_count"]), reverse=True)
+    return items[: max(min(int(limit or 20), 100), 1)]
 
 
 def get_person_ranking(limit: int = 20, **filters) -> list[dict]:
@@ -788,6 +905,134 @@ def get_collect_task(task_id: str) -> dict:
     return _serialize_collect_task(get_object_or_404(ComplianceContributionCollectTask, id=task_id, is_deleted=False))
 
 
+def _serialize_baseline(item: ComplianceContributionCodeBaseline) -> dict:
+    """序列化代码量基线记录。"""
+    return {
+        "id": str(item.id),
+        "organization_id": str(item.organization_id) if item.organization_id else None,
+        "organization_group_id": item.organization_group_id,
+        "organization_name": item.organization_name,
+        "repository_id": str(item.repository_id),
+        "repository_project_id": item.repository_project_id,
+        "repository_name": item.repository_name,
+        "branch_id": str(item.branch_id) if item.branch_id else None,
+        "branch_name": item.branch_name,
+        "branch_type": item.branch_type,
+        "baseline_lines": int(item.baseline_lines or 0),
+        "baseline_at": item.baseline_at,
+        "source": item.source,
+        "source_label": BASELINE_SOURCE_LABELS.get(item.source, item.source),
+        "remark": item.remark,
+        "is_current": item.is_current,
+        "operator_name": getattr(item.operator, "name", "") or getattr(item.operator, "username", "") or "",
+        "sys_create_datetime": item.sys_create_datetime,
+    }
+
+
+def list_code_baselines(page: int = 1, page_size: int = 20, current_only: bool = True, **filters) -> dict:
+    """分页查询代码量基线，默认只看当前生效记录。"""
+    payload = _stock_payload(_filter_payload_from_kwargs(**filters))
+    queryset = ComplianceContributionCodeBaseline.objects.filter(is_deleted=False).select_related("operator")
+    if current_only:
+        queryset = queryset.filter(is_current=True)
+    if _normalize_id_list(payload.get("organization_ids")):
+        queryset = queryset.filter(organization_id__in=_normalize_id_list(payload.get("organization_ids")))
+    if _normalize_id_list(payload.get("repository_ids")):
+        queryset = queryset.filter(repository_id__in=_normalize_id_list(payload.get("repository_ids")))
+    if _normalize_id_list(payload.get("branch_ids")):
+        queryset = queryset.filter(branch_id__in=_normalize_id_list(payload.get("branch_ids")))
+    if payload.get("branch_type"):
+        queryset = queryset.filter(branch_type=payload["branch_type"])
+    if payload.get("repo_type"):
+        queryset = queryset.filter(repo_type=payload["repo_type"])
+    if payload.get("domain"):
+        queryset = queryset.filter(domain=payload["domain"])
+    total = queryset.count()
+    safe_page = max(int(page or 1), 1)
+    safe_size = max(min(int(page_size or 20), 100), 1)
+    items = queryset.order_by("-is_current", "-baseline_at")[(safe_page - 1) * safe_size : safe_page * safe_size]
+    return {"items": [_serialize_baseline(item) for item in items], "total": total}
+
+
+def save_code_baseline(user, payload, source: str = CONTRIBUTION_BASELINE_SOURCE_MANUAL) -> dict:
+    """新增一次代码量基线校准，并把同仓库分支旧基线置为历史。"""
+    data = payload.dict() if hasattr(payload, "dict") else dict(payload or {})
+    repo = get_object_or_404(ComplianceRepository.objects.select_related("organization"), id=data.get("repository_id"), is_deleted=False)
+    branch = get_object_or_404(ComplianceManagedBranch, id=data.get("branch_id"), is_deleted=False)
+    baseline_lines = int(data.get("baseline_lines") or 0)
+    if baseline_lines < 0:
+        raise HttpError(400, "基线代码量不能小于 0")
+    baseline_at = _to_model_datetime(data.get("baseline_at"))
+    if not baseline_at:
+        raise HttpError(400, "请选择基线统计时间")
+    ComplianceContributionCodeBaseline.objects.filter(
+        is_deleted=False,
+        is_current=True,
+        repository=repo,
+        branch_name=branch.branch_name,
+    ).update(is_current=False)
+    item = ComplianceContributionCodeBaseline.objects.create(
+        organization=repo.organization,
+        repository=repo,
+        branch=branch,
+        organization_group_id=repo.organization.group_id,
+        organization_name=repo.organization.name,
+        repository_project_id=repo.project_id,
+        repository_name=repo.project_name,
+        branch_name=branch.branch_name,
+        branch_type=branch.branch_type,
+        repo_type=repo.repo_type,
+        domain=repo.domain,
+        baseline_lines=baseline_lines,
+        baseline_at=baseline_at,
+        source=source,
+        remark=_clean_text(data.get("remark")),
+        is_current=True,
+        operator=user,
+    )
+    return _serialize_baseline(item)
+
+
+def build_baseline_template_response() -> HttpResponse:
+    """生成代码量基线导入模板。"""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "代码量基线"
+    sheet.append(["代码库ID", "分支名称", "基线代码量", "基线统计时间", "备注"])
+    sheet.append(["project_id_1", "master", 120000, "2026-06-16 00:00:00", "初始化基线"])
+    response = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    response["Content-Disposition"] = 'attachment; filename="code_contribution_baseline_template.xlsx"'
+    workbook.save(response)
+    return response
+
+
+def import_code_baselines(user, file_obj) -> dict:
+    """按 Excel 批量导入代码量基线。"""
+    workbook = openpyxl.load_workbook(file_obj, data_only=True)
+    sheet = workbook.active
+    created_count = 0
+    errors = []
+    for row_no, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+        project_id, branch_name, baseline_lines, baseline_at, remark = (list(row) + [None] * 5)[:5]
+        if not any([project_id, branch_name, baseline_lines, baseline_at]):
+            continue
+        try:
+            repo = ComplianceRepository.objects.get(project_id=_clean_text(project_id), is_deleted=False)
+            branch = ComplianceManagedBranch.objects.get(branch_name=_clean_text(branch_name), domain=repo.domain, is_deleted=False)
+            payload = {
+                "repository_id": str(repo.id),
+                "branch_id": str(branch.id),
+                "baseline_lines": int(baseline_lines or 0),
+                "baseline_at": baseline_at,
+                "remark": _clean_text(remark),
+            }
+            save_code_baseline(user, payload, CONTRIBUTION_BASELINE_SOURCE_IMPORT)
+            created_count += 1
+        except Exception as exc:
+            errors.append({"row_no": row_no, "message": str(exc)})
+    return {"created_count": created_count, "updated_count": 0, "ignored_count": 0, "errors": errors}
+
+
 @scheduler_task
 def run_scheduled_contribution_collect():
     """每日凌晨采集前一天所有活跃绑定分支的贡献数据。"""
@@ -914,14 +1159,18 @@ def _build_export_workbook(task: ComplianceContributionExportTask):
                 item.merged_at,
             ])
     else:
-        sheet.title = "聚合排行"
-        headers = ["代码库", "项目ID", "分支", "CR数", "贡献人数", "新增", "删除", "净增", "总变更"]
+        sheet.title = "代码量看板"
+        headers = ["代码库", "项目ID", "分支", "当前存量", "基线代码量", "基线时间", "是否有基线", "本期CR数", "贡献人数", "本期新增", "本期删除", "本期净增", "本期总变更"]
         sheet.append(headers)
         for item in get_repository_ranking(limit=1000, **filters):
             sheet.append([
                 item["repository_name"],
                 item["project_id"],
                 item["branch_name"],
+                item["stock_lines"],
+                item["baseline_lines"],
+                item["baseline_at"],
+                "是" if item["has_baseline"] else "否",
                 item["cr_count"],
                 item["contributor_count"],
                 item["added_lines"],
