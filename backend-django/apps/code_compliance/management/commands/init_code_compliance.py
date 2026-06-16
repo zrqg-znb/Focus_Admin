@@ -14,6 +14,7 @@ from scheduler.models import SchedulerJob
 HTTP_METHOD_MAP = {"GET": 0, "POST": 1, "PUT": 2, "DELETE": 3, "PATCH": 4, "ALL": 5}
 REPO_TYPE_DICT_CODE = "code_compliance_repo_type"
 MISSING_MERGE_SCAN_JOB_CODE = "code_compliance_missing_merge_scan"
+CONTRIBUTION_COLLECT_JOB_CODE = "code_compliance_contribution_collect"
 
 
 @dataclass(frozen=True)
@@ -106,13 +107,24 @@ MENU_SEEDS = [
         icon="lucide:git-compare-arrows",
     ),
     MenuSeed(
+        key="contribution",
+        parent_key="code_compliance",
+        name="ComplianceContribution",
+        title="代码贡献看板",
+        path="/compliance/contribution",
+        component="/compliance/contribution/index",
+        order=6,
+        auth_code="code_compliance:contribution",
+        icon="lucide:chart-no-axes-combined",
+    ),
+    MenuSeed(
         key="missing_merge_task",
         parent_key="code_compliance",
         name="ComplianceMissingMergeTask",
         title="同步任务历史",
         path="/compliance/missing-merge-tasks",
         component="/compliance/missing-merge-task/index",
-        order=6,
+        order=7,
         auth_code="code_compliance:missing_merge_task",
         icon="lucide:history",
     ),
@@ -379,6 +391,44 @@ PERMISSION_SEEDS = {
             "http_method": "GET",
         },
     ],
+    "contribution": [
+        {"name": "查看代码贡献看板", "code": "code_compliance:contribution:view", "permission_type": 0},
+        {
+            "name": "代码贡献看板查询接口",
+            "code": "code_compliance:api:contribution:dashboard",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/contributions/dashboard*",
+            "http_method": "GET",
+        },
+        {
+            "name": "代码贡献明细接口",
+            "code": "code_compliance:api:contribution:records",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/contributions/records*",
+            "http_method": "GET",
+        },
+        {
+            "name": "代码贡献采集任务接口",
+            "code": "code_compliance:api:contribution:tasks",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/contributions/collect-tasks*",
+            "http_method": "GET",
+        },
+        {
+            "name": "手动触发代码贡献采集接口",
+            "code": "code_compliance:api:contribution:tasks:run",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/contributions/collect-tasks/run",
+            "http_method": "POST",
+        },
+        {
+            "name": "代码贡献导出接口",
+            "code": "code_compliance:api:contribution:export",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/contributions/export-tasks*",
+            "http_method": "ALL",
+        },
+    ],
 }
 
 REPO_TYPE_ITEMS = [
@@ -399,7 +449,7 @@ class Command(BaseCommand):
         menus = self._seed_menus(operator)
         permission_count = self._seed_permissions(menus, operator)
         dict_count = self._seed_repo_type_dict(operator)
-        scheduler_count = self._seed_missing_merge_scan_job(operator)
+        scheduler_count = self._seed_scheduler_jobs(operator)
 
         MenuCacheManager.invalidate_menu_cache()
         PermissionCacheManager.invalidate_permission_cache()
@@ -487,8 +537,8 @@ class Command(BaseCommand):
             count += 1
         return count
 
-    def _seed_missing_merge_scan_job(self, operator):
-        """初始化漏合检测定时任务，默认禁用，待数据湖配置完成后手动启用。"""
+    def _seed_scheduler_jobs(self, operator):
+        """初始化代码合规定时任务，默认禁用，待生产配置确认后手动启用。"""
         SchedulerJob.objects.update_or_create(
             code=MISSING_MERGE_SCAN_JOB_CODE,
             defaults={
@@ -513,4 +563,28 @@ class Command(BaseCommand):
                 "sys_modifier": operator,
             },
         )
-        return 1
+        SchedulerJob.objects.update_or_create(
+            code=CONTRIBUTION_COLLECT_JOB_CODE,
+            defaults={
+                "name": "代码贡献数据采集",
+                "description": "每日采集前一天活跃代码库分支的 CR 贡献数据",
+                "group": "code_compliance",
+                "trigger_type": "cron",
+                "cron_expression": "30 2 * * *",
+                "interval_seconds": None,
+                "run_date": None,
+                "task_func": "apps.code_compliance.contribution_services.run_scheduled_contribution_collect",
+                "task_args": "[]",
+                "task_kwargs": "{}",
+                "status": 0,
+                "priority": 10,
+                "max_instances": 1,
+                "max_retries": 0,
+                "timeout": 3600,
+                "coalesce": True,
+                "allow_concurrent": False,
+                "sys_creator": operator,
+                "sys_modifier": operator,
+            },
+        )
+        return 2

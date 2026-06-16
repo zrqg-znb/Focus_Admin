@@ -7,6 +7,7 @@ from .services import get_post_stats, get_post_users_detail, get_user_records, u
 from .models import ComplianceRecord, ComplianceBranch
 from core.user.user_model import User
 from .base_api import router as base_router
+from .contribution_api import router as contribution_router
 from .missing_merge_api import router as missing_merge_router
 import openpyxl
 import csv
@@ -15,6 +16,7 @@ import re
 
 router = Router()
 router.add_router("/base", base_router)
+router.add_router("/contributions", contribution_router)
 router.add_router("/missing-merges", missing_merge_router)
 
 @router.get("/stats/post", response=OverviewSummarySchema)

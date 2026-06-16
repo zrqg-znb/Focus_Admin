@@ -9,6 +9,7 @@ from django.test import TestCase
 from ninja.errors import HttpError
 
 from apps.code_compliance import base_services as services
+from apps.code_compliance import contribution_services
 from apps.code_compliance import missing_merge_services
 from apps.code_compliance.base_schemas import (
     BatchBindBranchesIn,
@@ -39,6 +40,8 @@ from apps.code_compliance.models import (
     MISSING_MERGE_STATUS_IGNORED,
     MISSING_MERGE_STATUS_OPEN,
     ComplianceManagedBranch,
+    ComplianceContributionDailyAggregate,
+    ComplianceContributionRecord,
     ComplianceMissingMergeOperationLog,
     ComplianceMissingMergeRecord,
     ComplianceMissingMergeScanTask,
@@ -873,6 +876,102 @@ class CodeComplianceFoundationTests(TestCase):
         self.assertEqual(pair_diag[("trunk-A", "release-A")]["fixed_count"], 1)
         self.assertEqual(pair_diag[("trunk-A", "release-A")]["missing_key_count"], 1)
         self.assertEqual(pair_diag[("trunk-B", "release-B")]["fixed_count"], 0)
+
+    def test_contribution_record_upsert_and_daily_aggregate(self):
+        """贡献明细按仓库、分支、change_key 幂等写入，并按受影响日期重算日聚合。"""
+        org = self.create_org()
+        repo_data = self.create_repo(org["id"], "20001")
+        branch_data = self.create_branch("master", "trunk")
+        services.bind_branches_to_repositories([repo_data["id"]], [branch_data["id"]], "append")
+        repository = ComplianceRepository.objects.get(id=repo_data["id"])
+        branch = ComplianceManagedBranch.objects.get(id=branch_data["id"])
+        author = User.objects.create(username="dev01", password="secret", name="开发一")
+        self.pl_group.members.add(author)
+        merged_at = timezone.now()
+        row = {
+            "added_lines": 12,
+            "author_username": "dev01",
+            "change_key": "change-001",
+            "change_request_iid": "1",
+            "merged_at": merged_at,
+            "project_id": repository.project_id,
+            "removed_lines": 5,
+            "target_branch": branch.branch_name,
+            "title": "Feature A",
+            "web_url": "https://git.example.com/cr/1",
+        }
+        assignments = contribution_services._load_author_assignments(["dev01"])
+
+        first_created = contribution_services._upsert_contribution_record(
+            repository,
+            branch,
+            row,
+            assignments,
+        )
+        row["added_lines"] = 20
+        second_created = contribution_services._upsert_contribution_record(
+            repository,
+            branch,
+            row,
+            assignments,
+        )
+        contribution_date = contribution_services._date_from_datetime(merged_at)
+        aggregate_count = contribution_services._rebuild_daily_aggregates(
+            {contribution_date},
+            {},
+        )
+
+        record = ComplianceContributionRecord.objects.get(
+            repository=repository,
+            branch_name=branch.branch_name,
+            change_key="change-001",
+        )
+        aggregate = ComplianceContributionDailyAggregate.objects.get(
+            repository=repository,
+            branch_name=branch.branch_name,
+            author_username="dev01",
+        )
+        self.assertTrue(first_created)
+        self.assertFalse(second_created)
+        self.assertEqual(ComplianceContributionRecord.objects.count(), 1)
+        self.assertEqual(record.added_lines, 20)
+        self.assertEqual(record.removed_lines, 5)
+        self.assertEqual(record.net_lines, 15)
+        self.assertEqual(record.changed_lines, 25)
+        self.assertEqual(record.author_user, author)
+        self.assertEqual(record.author_pl_group, self.pl_group)
+        self.assertEqual(aggregate_count, 1)
+        self.assertEqual(aggregate.cr_count, 1)
+        self.assertEqual(aggregate.changed_lines, 25)
+
+    def test_contribution_unknown_author_keeps_username(self):
+        """未匹配 Focus 用户时保留数据湖工号，并归属到非底软领域。"""
+        org = self.create_org()
+        repo_data = self.create_repo(org["id"], "20002")
+        branch_data = self.create_branch("release/1.0", "release")
+        repository = ComplianceRepository.objects.get(id=repo_data["id"])
+        branch = ComplianceManagedBranch.objects.get(id=branch_data["id"])
+        row = {
+            "added_lines": 1,
+            "author_username": "external01",
+            "change_key": "change-unknown",
+            "merged_at": timezone.now(),
+            "project_id": repository.project_id,
+            "removed_lines": 0,
+            "target_branch": branch.branch_name,
+        }
+
+        contribution_services._upsert_contribution_record(
+            repository,
+            branch,
+            row,
+            contribution_services._load_author_assignments(["external01"]),
+        )
+
+        record = ComplianceContributionRecord.objects.get(change_key="change-unknown")
+        self.assertIsNone(record.author_user)
+        self.assertEqual(record.author_username, "external01")
+        self.assertEqual(record.author_pl_group_name, contribution_services.UNKNOWN_PL_GROUP_NAME)
 
     @override_settings(CODE_COMPLIANCE_CR_FORCE_MOCK=True)
     def test_missing_merge_scan_accepts_multiple_repository_ids(self):

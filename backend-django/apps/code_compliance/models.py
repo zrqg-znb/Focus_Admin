@@ -760,6 +760,319 @@ class ComplianceMissingMergeOperationLog(RootModel):
         return f"{self.record_id}:{self.operation_type}:{self.operated_at}"
 
 
+CONTRIBUTION_TASK_TRIGGER_MANUAL = "manual"
+CONTRIBUTION_TASK_TRIGGER_SCHEDULED = "scheduled"
+CONTRIBUTION_TASK_TRIGGER_BACKFILL = "backfill"
+CONTRIBUTION_TASK_TRIGGER_CHOICES = (
+    (CONTRIBUTION_TASK_TRIGGER_MANUAL, "手动"),
+    (CONTRIBUTION_TASK_TRIGGER_SCHEDULED, "定时"),
+    (CONTRIBUTION_TASK_TRIGGER_BACKFILL, "历史回补"),
+)
+
+CONTRIBUTION_TASK_STATUS_PENDING = "pending"
+CONTRIBUTION_TASK_STATUS_RUNNING = "running"
+CONTRIBUTION_TASK_STATUS_SUCCESS = "success"
+CONTRIBUTION_TASK_STATUS_FAILED = "failed"
+CONTRIBUTION_TASK_STATUS_CHOICES = (
+    (CONTRIBUTION_TASK_STATUS_PENDING, "待执行"),
+    (CONTRIBUTION_TASK_STATUS_RUNNING, "执行中"),
+    (CONTRIBUTION_TASK_STATUS_SUCCESS, "成功"),
+    (CONTRIBUTION_TASK_STATUS_FAILED, "失败"),
+)
+
+CONTRIBUTION_EXPORT_SCOPE_SUMMARY = "summary"
+CONTRIBUTION_EXPORT_SCOPE_RECORDS = "records"
+CONTRIBUTION_EXPORT_SCOPE_CHOICES = (
+    (CONTRIBUTION_EXPORT_SCOPE_SUMMARY, "聚合排行"),
+    (CONTRIBUTION_EXPORT_SCOPE_RECORDS, "CR明细"),
+)
+
+
+class ComplianceContributionRecord(RootModel):
+    """代码贡献 CR 明细事实表，按仓库、分支和 change_key 幂等保存。"""
+
+    contribution_date = models.DateField(db_index=True, verbose_name="贡献日期", help_text="按 merged_at 转换得到的日期")
+    organization = models.ForeignKey(
+        ComplianceOrganization,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contribution_records",
+        db_constraint=False,
+        verbose_name="组织",
+        help_text="贡献发生时对应的组织",
+    )
+    repository = models.ForeignKey(
+        ComplianceRepository,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contribution_records",
+        db_constraint=False,
+        verbose_name="代码库",
+        help_text="贡献发生时对应的代码库",
+    )
+    branch = models.ForeignKey(
+        ComplianceManagedBranch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contribution_records",
+        db_constraint=False,
+        verbose_name="分支",
+        help_text="贡献发生时对应的分支主数据",
+    )
+    organization_group_id = models.CharField(max_length=128, db_index=True, verbose_name="组织ID快照")
+    organization_name = models.CharField(max_length=255, blank=True, default="", verbose_name="组织名快照")
+    repository_project_id = models.CharField(max_length=128, db_index=True, verbose_name="代码库ID快照")
+    repository_name = models.CharField(max_length=255, blank=True, default="", verbose_name="代码库名快照")
+    branch_name = models.CharField(max_length=255, db_index=True, verbose_name="分支名称快照")
+    branch_type = models.CharField(
+        max_length=32,
+        choices=COMPLIANCE_BRANCH_TYPE_CHOICES,
+        default=COMPLIANCE_BRANCH_TYPE_OTHER,
+        db_index=True,
+        verbose_name="分支类型快照",
+    )
+    repo_type = models.CharField(max_length=100, blank=True, default="", db_index=True, verbose_name="代码仓类型快照")
+    domain = models.CharField(
+        max_length=16,
+        choices=COMPLIANCE_DOMAIN_CHOICES,
+        default=COMPLIANCE_DOMAIN_COCKPIT,
+        db_index=True,
+        verbose_name="领域快照",
+    )
+    responsibility_group_names = models.JSONField(default=list, blank=True, verbose_name="责任PL组快照")
+    change_request_iid = models.CharField(max_length=128, blank=True, default="", verbose_name="CR内部ID")
+    change_key = models.CharField(max_length=255, db_index=True, verbose_name="CR全局标识")
+    title = models.CharField(max_length=500, blank=True, default="", verbose_name="CR标题")
+    description = models.TextField(blank=True, default="", verbose_name="CR描述")
+    web_url = models.CharField(max_length=1024, blank=True, default="", verbose_name="CR链接")
+    merged_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name="合入时间")
+    target_branch = models.CharField(max_length=255, blank=True, default="", verbose_name="目标合入分支")
+    author_username = models.CharField(max_length=255, blank=True, default="", db_index=True, verbose_name="创建人工号")
+    author_user = models.ForeignKey(
+        "core.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contribution_records",
+        db_constraint=False,
+        verbose_name="创建人用户",
+    )
+    author_user_name = models.CharField(max_length=255, blank=True, default="", verbose_name="创建人姓名快照")
+    author_pl_group = models.ForeignKey(
+        "core.PlGroup",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contribution_records",
+        db_constraint=False,
+        verbose_name="创建人PL组",
+    )
+    author_pl_group_name = models.CharField(max_length=255, blank=True, default="", db_index=True, verbose_name="创建人PL组快照")
+    added_lines = models.IntegerField(default=0, verbose_name="新增行数")
+    removed_lines = models.IntegerField(default=0, verbose_name="删除行数")
+    net_lines = models.IntegerField(default=0, verbose_name="净增行数")
+    changed_lines = models.IntegerField(default=0, verbose_name="总变更行数")
+
+    class Meta:
+        db_table = "compliance_contribution_record"
+        ordering = ("-contribution_date", "-merged_at")
+        verbose_name = "代码贡献CR明细"
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=("repository", "branch_name", "change_key"),
+                name="cc_contribution_record_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["repository", "branch_name", "contribution_date"], name="cc_ctr_repo_branch_day_idx"),
+            models.Index(fields=["author_user", "contribution_date"], name="cc_ctr_author_day_idx"),
+            models.Index(fields=["author_pl_group", "contribution_date"], name="cc_ctr_pl_day_idx"),
+            models.Index(fields=["repo_type", "domain"], name="cc_ctr_type_domain_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.repository_name}:{self.branch_name}:{self.change_key}"
+
+
+class ComplianceContributionDailyAggregate(RootModel):
+    """代码贡献日聚合表，支撑看板高频筛选与排行查询。"""
+
+    contribution_date = models.DateField(db_index=True, verbose_name="贡献日期")
+    organization = models.ForeignKey(
+        ComplianceOrganization,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contribution_daily_aggregates",
+        db_constraint=False,
+        verbose_name="组织",
+    )
+    repository = models.ForeignKey(
+        ComplianceRepository,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contribution_daily_aggregates",
+        db_constraint=False,
+        verbose_name="代码库",
+    )
+    branch = models.ForeignKey(
+        ComplianceManagedBranch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contribution_daily_aggregates",
+        db_constraint=False,
+        verbose_name="分支",
+    )
+    author_user = models.ForeignKey(
+        "core.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contribution_daily_aggregates",
+        db_constraint=False,
+        verbose_name="创建人用户",
+    )
+    author_pl_group = models.ForeignKey(
+        "core.PlGroup",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contribution_daily_aggregates",
+        db_constraint=False,
+        verbose_name="创建人PL组",
+    )
+    organization_group_id = models.CharField(max_length=128, db_index=True, verbose_name="组织ID快照")
+    organization_name = models.CharField(max_length=255, blank=True, default="", verbose_name="组织名快照")
+    repository_project_id = models.CharField(max_length=128, db_index=True, verbose_name="代码库ID快照")
+    repository_name = models.CharField(max_length=255, blank=True, default="", verbose_name="代码库名快照")
+    branch_name = models.CharField(max_length=255, db_index=True, verbose_name="分支名称快照")
+    branch_type = models.CharField(max_length=32, blank=True, default="", db_index=True, verbose_name="分支类型快照")
+    repo_type = models.CharField(max_length=100, blank=True, default="", db_index=True, verbose_name="代码仓类型快照")
+    domain = models.CharField(max_length=16, blank=True, default="", db_index=True, verbose_name="领域快照")
+    author_username = models.CharField(max_length=255, blank=True, default="", db_index=True, verbose_name="创建人工号")
+    author_user_name = models.CharField(max_length=255, blank=True, default="", verbose_name="创建人姓名快照")
+    author_pl_group_name = models.CharField(max_length=255, blank=True, default="", db_index=True, verbose_name="创建人PL组快照")
+    cr_count = models.IntegerField(default=0, verbose_name="CR数")
+    contributor_count = models.IntegerField(default=0, verbose_name="贡献人数")
+    added_lines = models.IntegerField(default=0, verbose_name="新增行数")
+    removed_lines = models.IntegerField(default=0, verbose_name="删除行数")
+    net_lines = models.IntegerField(default=0, verbose_name="净增行数")
+    changed_lines = models.IntegerField(default=0, verbose_name="总变更行数")
+
+    class Meta:
+        db_table = "compliance_contribution_daily_aggregate"
+        ordering = ("-contribution_date",)
+        verbose_name = "代码贡献日聚合"
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=("contribution_date", "repository", "branch_name", "author_username"),
+                name="cc_contribution_daily_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["contribution_date", "repository"], name="cc_ctd_day_repo_idx"),
+            models.Index(fields=["repository", "branch_name"], name="cc_ctd_repo_branch_idx"),
+            models.Index(fields=["author_username", "contribution_date"], name="cc_ctd_author_day_idx"),
+            models.Index(fields=["author_pl_group", "contribution_date"], name="cc_ctd_pl_day_idx"),
+        ]
+
+
+class ComplianceContributionCollectTask(RootModel):
+    """代码贡献数据采集任务，记录定时、回补和管理员手动采集过程。"""
+
+    trigger_type = models.CharField(
+        max_length=32,
+        choices=CONTRIBUTION_TASK_TRIGGER_CHOICES,
+        default=CONTRIBUTION_TASK_TRIGGER_MANUAL,
+        db_index=True,
+        verbose_name="触发方式",
+    )
+    status = models.CharField(
+        max_length=32,
+        choices=CONTRIBUTION_TASK_STATUS_CHOICES,
+        default=CONTRIBUTION_TASK_STATUS_PENDING,
+        db_index=True,
+        verbose_name="任务状态",
+    )
+    merged_after = models.DateTimeField(db_index=True, verbose_name="合入开始时间")
+    merged_before = models.DateTimeField(db_index=True, verbose_name="合入结束时间")
+    filter_payload = models.JSONField(default=dict, blank=True, verbose_name="筛选条件")
+    collect_diagnostics = models.JSONField(default=dict, blank=True, verbose_name="采集诊断信息")
+    started_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name="开始时间")
+    finished_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name="结束时间")
+    scanned_organization_count = models.IntegerField(default=0, verbose_name="扫描组织数")
+    scanned_repository_count = models.IntegerField(default=0, verbose_name="扫描代码库数")
+    scanned_branch_count = models.IntegerField(default=0, verbose_name="扫描分支数")
+    fetched_count = models.IntegerField(default=0, verbose_name="拉取CR数")
+    created_count = models.IntegerField(default=0, verbose_name="新增明细数")
+    updated_count = models.IntegerField(default=0, verbose_name="更新明细数")
+    skipped_count = models.IntegerField(default=0, verbose_name="跳过明细数")
+    aggregate_count = models.IntegerField(default=0, verbose_name="重算聚合数")
+    error_message = models.TextField(blank=True, default="", verbose_name="错误信息")
+
+    class Meta:
+        db_table = "compliance_contribution_collect_task"
+        ordering = ("-sys_create_datetime",)
+        verbose_name = "代码贡献采集任务"
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=["status", "trigger_type"], name="cc_ct_task_status_trigger_idx"),
+            models.Index(fields=["merged_after", "merged_before"], name="cc_ct_task_time_idx"),
+        ]
+
+
+class ComplianceContributionExportTask(RootModel):
+    """代码贡献看板异步导出任务。"""
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="compliance_contribution_export_tasks",
+        verbose_name="导出用户",
+    )
+    scope = models.CharField(
+        max_length=16,
+        choices=CONTRIBUTION_EXPORT_SCOPE_CHOICES,
+        default=CONTRIBUTION_EXPORT_SCOPE_SUMMARY,
+        db_index=True,
+        verbose_name="导出范围",
+    )
+    fingerprint = models.CharField(max_length=64, db_index=True, verbose_name="任务指纹")
+    payload = models.JSONField(default=dict, blank=True, verbose_name="筛选条件")
+    status = models.CharField(
+        max_length=16,
+        choices=CONTRIBUTION_TASK_STATUS_CHOICES,
+        default=CONTRIBUTION_TASK_STATUS_PENDING,
+        db_index=True,
+        verbose_name="状态",
+    )
+    progress = models.IntegerField(default=0, verbose_name="进度")
+    message = models.CharField(max_length=255, blank=True, default="", verbose_name="任务提示")
+    error_message = models.TextField(blank=True, default="", verbose_name="错误信息")
+    file_path = models.CharField(max_length=500, blank=True, default="", verbose_name="导出文件路径")
+    file_name = models.CharField(max_length=255, blank=True, default="", verbose_name="导出文件名")
+    file_size = models.BigIntegerField(default=0, verbose_name="导出文件大小")
+    started_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name="开始时间")
+    finished_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name="结束时间")
+
+    class Meta:
+        db_table = "compliance_contribution_export_task"
+        ordering = ("-sys_create_datetime",)
+        verbose_name = "代码贡献导出任务"
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=["user", "fingerprint", "status"], name="cc_ct_export_user_fp_idx"),
+            models.Index(fields=["user", "sys_create_datetime"], name="cc_ct_export_user_time_idx"),
+        ]
+
+
 class ComplianceRecord(RootModel):
     STATUS_CHOICES = (
         (0, '待处理'), # Unresolved
