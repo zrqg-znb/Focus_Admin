@@ -4,6 +4,9 @@ from common.fu_auth import BearerAuth as GlobalAuth
 
 from . import services
 from .schemas import (
+    DeviceOptionNode,
+    DeviceTypeIn,
+    DeviceTypeOut,
     EnvironmentActionOut,
     EnvironmentIn,
     EnvironmentListQuery,
@@ -11,9 +14,59 @@ from .schemas import (
     EnvironmentPageOut,
     QueueItemOut,
     RecordPageOut,
+    TestDeviceIn,
+    TestDeviceOut,
 )
 
 router = Router(tags=['EnvironmentManagement'], auth=GlobalAuth())
+
+
+@router.get('/device-types', response=list[DeviceTypeOut], summary='测试设备类型树')
+def list_device_types(request, active_only: bool = False):
+    services.require_manager(request.auth)
+    return services.list_device_type_tree(active_only=active_only)
+
+
+@router.post('/device-types', response=list[DeviceTypeOut], summary='新建测试设备类型')
+def create_device_type(request, payload: DeviceTypeIn):
+    return services.create_device_type(request.auth, payload)
+
+
+@router.put('/device-types/{type_id}', response=list[DeviceTypeOut], summary='更新测试设备类型')
+def update_device_type(request, type_id: str, payload: DeviceTypeIn):
+    return services.update_device_type(request.auth, type_id, payload)
+
+
+@router.delete('/device-types/{type_id}', response=bool, summary='删除测试设备类型')
+def delete_device_type(request, type_id: str):
+    return services.delete_device_type(request.auth, type_id)
+
+
+@router.get('/devices', response=list[TestDeviceOut], summary='测试设备列表')
+def list_devices(request, device_type_id: str = '', keyword: str = '', active_only: bool = False):
+    services.require_manager(request.auth)
+    return services.list_devices(device_type_id or None, keyword or None, active_only=active_only)
+
+
+@router.post('/devices', response=TestDeviceOut, summary='新建测试设备')
+def create_device(request, payload: TestDeviceIn):
+    return services.create_device(request.auth, payload)
+
+
+@router.put('/devices/{device_id}', response=TestDeviceOut, summary='更新测试设备')
+def update_device(request, device_id: str, payload: TestDeviceIn):
+    return services.update_device(request.auth, device_id, payload)
+
+
+@router.delete('/devices/{device_id}', response=bool, summary='删除测试设备')
+def delete_device(request, device_id: str):
+    return services.delete_device(request.auth, device_id)
+
+
+@router.get('/device-options', response=list[DeviceOptionNode], summary='测试设备级联选择项')
+def list_device_options(request):
+    services.require_manager(request.auth)
+    return services.list_device_options()
 
 
 @router.get('/environments', response=EnvironmentPageOut, summary='环境列表')

@@ -10,8 +10,15 @@ from ninja.errors import HttpError
 from apps.deepaudit.encryption import decrypt_value, encrypt_value
 from core.user.user_model import User
 
-from .models import EnvironmentFavorite, EnvironmentQueue, EnvironmentRecord, TestEnvironment
-from .schemas import EnvironmentIn, EnvironmentListQuery
+from .models import (
+    EnvironmentDeviceType,
+    EnvironmentFavorite,
+    EnvironmentQueue,
+    EnvironmentRecord,
+    EnvironmentTestDevice,
+    TestEnvironment,
+)
+from .schemas import DeviceTypeIn, EnvironmentIn, EnvironmentListQuery, TestDeviceIn
 
 ENV_ADMIN_ROLE = 'env_admin'
 ENVIRONMENT_USER_ROLE = 'environment_user'
@@ -83,11 +90,52 @@ def _waiting_queues(environment_id: str):
 
 def _renumber_waiting_queue(environment_id: str):
     """取消或完成队列项后重新编号，避免前端展示出现 1、3、4 这类断档位置。"""
-    waiting = list(_waiting_queues(environment_id).only('id'))
+    # 不能复用 _waiting_queues().only('id')：该查询已 select_related('user')，
+    # 再 defer 掉 user 会触发 Django 的 "cannot be both deferred and traversed" 报错。
+    waiting = list(
+        EnvironmentQueue.objects.filter(environment_id=environment_id, status='waiting')
+        .only('id', 'position')
+        .order_by('position', 'requested_at')
+    )
     for index, row in enumerate(waiting, start=1):
         if row.position != index:
             row.position = index
             row.save(update_fields=['position', 'sys_update_datetime'])
+
+
+def _device_type_path(device_type: EnvironmentDeviceType | None) -> str:
+    """把设备类型向上追溯为路径，用于列表 Tag 展示和级联选项文案。"""
+    if not device_type:
+        return ''
+    names = []
+    current = device_type
+    visited = set()
+    while current and current.id not in visited:
+        visited.add(current.id)
+        names.append(current.name)
+        current = current.parent
+    return ' / '.join(reversed(names))
+
+
+def serialize_device(device: EnvironmentTestDevice) -> dict:
+    type_path = _device_type_path(device.device_type)
+    return {
+        'id': str(device.id),
+        'device_type_id': str(device.device_type_id),
+        'device_type_name': device.device_type.name,
+        'device_type_path': type_path,
+        'name': device.name,
+        'display_name': f'{type_path} / {device.name}' if type_path else device.name,
+        'sort': device.sort,
+        'is_active': device.is_active,
+        'remark': device.remark or '',
+        'sys_create_datetime': device.sys_create_datetime,
+        'sys_update_datetime': device.sys_update_datetime,
+    }
+
+
+def _environment_devices(env: TestEnvironment) -> list[EnvironmentTestDevice]:
+    return list(env.devices.select_related('device_type', 'device_type__parent').all())
 
 
 def serialize_environment(env: TestEnvironment, user: User | None) -> dict:
@@ -96,18 +144,21 @@ def serialize_environment(env: TestEnvironment, user: User | None) -> dict:
     roles_can_use = can_use_environment(user)
     raw_password = decrypt_value(env.password_encrypted)
     favorite_ids = getattr(env, '_favorite_user_ids', None)
-    queue_rows = list(getattr(env, '_prefetched_waiting_queues', []))
+    # 列表页会预灌等待队列；用 None 区分“未预取”和“已预取但队列为空”，避免空队列环境额外 N+1 查询。
+    prefetched_queue_rows = getattr(env, '_prefetched_waiting_queues', None)
+    queue_rows = list(prefetched_queue_rows) if prefetched_queue_rows is not None else None
 
     if favorite_ids is None and user:
         is_favorite = EnvironmentFavorite.objects.filter(environment=env, user=user).exists()
     else:
         is_favorite = bool(user and str(user.id) in {str(v) for v in (favorite_ids or [])})
 
-    if not queue_rows:
+    if queue_rows is None:
         queue_rows = list(_waiting_queues(env.id))
 
     my_queue = next((q for q in queue_rows if user and str(q.user_id) == str(user.id)), None)
     first_queue = queue_rows[0] if queue_rows else None
+    devices = [serialize_device(device) for device in _environment_devices(env)]
 
     return {
         'id': str(env.id),
@@ -122,11 +173,12 @@ def serialize_environment(env: TestEnvironment, user: User | None) -> dict:
         'category_label': dict(TestEnvironment.CATEGORY_CHOICES).get(env.category, env.category),
         'project_name': env.project_name,
         'vehicle_model': env.vehicle_model,
-        'device_material': env.device_material,
-        'asset_number': env.asset_number,
-        'device_display': ' / '.join([v for v in [env.device_material, env.asset_number] if v]),
-        'config': env.config or {},
+        'device_ids': [device['id'] for device in devices],
+        'devices': devices,
+        'device_display': '，'.join([device['display_name'] for device in devices]),
+        'config_description': env.config_description or '',
         'shelf_location': env.shelf_location,
+        'remark': env.remark or '',
         'status': env.status,
         'status_label': dict(TestEnvironment.STATUS_CHOICES).get(env.status, env.status),
         'current_user_id': str(env.current_user_id) if env.current_user_id else None,
@@ -161,11 +213,204 @@ def _record(env: TestEnvironment, user: User | None, action: str, message: str =
     )
 
 
+def _get_active_devices(device_ids: list[str]) -> list[EnvironmentTestDevice]:
+    """校验环境绑定的设备 ID，避免前端传入已禁用或不存在的设备。"""
+    normalized_ids = [str(item).strip() for item in device_ids if str(item).strip()]
+    if not normalized_ids:
+        return []
+    devices = list(
+        EnvironmentTestDevice.objects.filter(id__in=normalized_ids, is_active=True, is_deleted=False)
+        .select_related('device_type')
+    )
+    if len(devices) != len(set(normalized_ids)):
+        raise HttpError(400, '存在无效或已禁用的测试设备')
+    return devices
+
+
+def _serialize_device_type_node(device_type: EnvironmentDeviceType, children_map: dict[str | None, list[EnvironmentDeviceType]]) -> dict:
+    return {
+        'id': str(device_type.id),
+        'parent_id': str(device_type.parent_id) if device_type.parent_id else None,
+        'name': device_type.name,
+        'sort': device_type.sort,
+        'is_active': device_type.is_active,
+        'children': [
+            _serialize_device_type_node(child, children_map)
+            for child in children_map.get(device_type.id, [])
+        ],
+    }
+
+
+def list_device_type_tree(active_only: bool = False) -> list[dict]:
+    """返回测试设备类型树，供管理端左侧树和级联选择器复用。"""
+    qs = EnvironmentDeviceType.objects.filter(is_deleted=False).select_related('parent').order_by('sort', 'name')
+    if active_only:
+        qs = qs.filter(is_active=True)
+    rows = list(qs)
+    children_map: dict[str | None, list[EnvironmentDeviceType]] = {}
+    for row in rows:
+        children_map.setdefault(row.parent_id, []).append(row)
+    return [_serialize_device_type_node(row, children_map) for row in children_map.get(None, [])]
+
+
+def create_device_type(user: User, payload: DeviceTypeIn) -> dict:
+    """新增测试设备类型；类型支持多级树，但同一父级下名称不能重复。"""
+    require_manager(user)
+    parent = None
+    if payload.parent_id:
+        parent = get_object_or_404(EnvironmentDeviceType, id=payload.parent_id, is_deleted=False)
+    if EnvironmentDeviceType.objects.filter(parent=parent, name=payload.name.strip(), is_deleted=False).exists():
+        raise HttpError(400, '同级下已存在相同设备类型')
+    EnvironmentDeviceType.objects.create(
+        parent=parent,
+        name=payload.name.strip(),
+        sort=payload.sort,
+        is_active=payload.is_active,
+        sys_creator=user,
+        sys_modifier=user,
+    )
+    return list_device_type_tree()
+
+
+def update_device_type(user: User, type_id: str, payload: DeviceTypeIn) -> dict:
+    """更新测试设备类型；禁止把节点挂到自己或自己的后代下面。"""
+    require_manager(user)
+    device_type = get_object_or_404(EnvironmentDeviceType, id=type_id, is_deleted=False)
+    parent = None
+    if payload.parent_id:
+        if str(payload.parent_id) == str(type_id):
+            raise HttpError(400, '父级类型不能选择自己')
+        parent = get_object_or_404(EnvironmentDeviceType, id=payload.parent_id, is_deleted=False)
+        current = parent
+        while current:
+            if str(current.id) == str(type_id):
+                raise HttpError(400, '父级类型不能选择自己的子级')
+            current = current.parent
+    duplicate = EnvironmentDeviceType.objects.filter(
+        parent=parent,
+        name=payload.name.strip(),
+        is_deleted=False,
+    ).exclude(id=type_id).exists()
+    if duplicate:
+        raise HttpError(400, '同级下已存在相同设备类型')
+    device_type.parent = parent
+    device_type.name = payload.name.strip()
+    device_type.sort = payload.sort
+    device_type.is_active = payload.is_active
+    device_type.sys_modifier = user
+    device_type.save()
+    return list_device_type_tree()
+
+
+def delete_device_type(user: User, type_id: str) -> bool:
+    """删除类型前检查子类型和设备，避免留下孤立设备。"""
+    require_manager(user)
+    device_type = get_object_or_404(EnvironmentDeviceType, id=type_id, is_deleted=False)
+    if EnvironmentDeviceType.objects.filter(parent=device_type, is_deleted=False).exists():
+        raise HttpError(400, '该类型下存在子类型，不能删除')
+    if EnvironmentTestDevice.objects.filter(device_type=device_type, is_deleted=False).exists():
+        raise HttpError(400, '该类型下存在测试设备，不能删除')
+    device_type.soft_delete()
+    return True
+
+
+def list_devices(device_type_id: str | None = None, keyword: str | None = None, active_only: bool = False) -> list[dict]:
+    qs = EnvironmentTestDevice.objects.filter(is_deleted=False).select_related('device_type', 'device_type__parent')
+    if active_only:
+        qs = qs.filter(is_active=True, device_type__is_active=True)
+    if device_type_id:
+        qs = qs.filter(device_type_id=device_type_id)
+    if keyword:
+        qs = qs.filter(Q(name__icontains=keyword) | Q(remark__icontains=keyword) | Q(device_type__name__icontains=keyword))
+    return [serialize_device(device) for device in qs.order_by('device_type__sort', 'sort', 'name')]
+
+
+def create_device(user: User, payload: TestDeviceIn) -> dict:
+    """在某个设备类型下新增具体测试外设。"""
+    require_manager(user)
+    device_type = get_object_or_404(EnvironmentDeviceType, id=payload.device_type_id, is_deleted=False)
+    if EnvironmentTestDevice.objects.filter(device_type=device_type, name=payload.name.strip(), is_deleted=False).exists():
+        raise HttpError(400, '该类型下已存在相同设备名称')
+    device = EnvironmentTestDevice.objects.create(
+        device_type=device_type,
+        name=payload.name.strip(),
+        sort=payload.sort,
+        is_active=payload.is_active,
+        remark=payload.remark or '',
+        sys_creator=user,
+        sys_modifier=user,
+    )
+    return serialize_device(device)
+
+
+def update_device(user: User, device_id: str, payload: TestDeviceIn) -> dict:
+    """更新测试设备基础信息，已绑定环境的设备也允许改名以同步展示。"""
+    require_manager(user)
+    device = get_object_or_404(EnvironmentTestDevice, id=device_id, is_deleted=False)
+    device_type = get_object_or_404(EnvironmentDeviceType, id=payload.device_type_id, is_deleted=False)
+    duplicate = EnvironmentTestDevice.objects.filter(
+        device_type=device_type,
+        name=payload.name.strip(),
+        is_deleted=False,
+    ).exclude(id=device_id).exists()
+    if duplicate:
+        raise HttpError(400, '该类型下已存在相同设备名称')
+    device.device_type = device_type
+    device.name = payload.name.strip()
+    device.sort = payload.sort
+    device.is_active = payload.is_active
+    device.remark = payload.remark or ''
+    device.sys_modifier = user
+    device.save()
+    return serialize_device(device)
+
+
+def delete_device(user: User, device_id: str) -> bool:
+    """删除设备前检查环境绑定关系，防止环境列表出现失效引用。"""
+    require_manager(user)
+    device = get_object_or_404(EnvironmentTestDevice, id=device_id, is_deleted=False)
+    if device.environments.filter(is_deleted=False).exists():
+        raise HttpError(400, '该测试设备已绑定环境，请先解绑后再删除')
+    device.soft_delete()
+    return True
+
+
+def list_device_options() -> list[dict]:
+    """构造级联多选数据：类型节点禁选，只有具体设备叶子可选。"""
+    type_rows = list(
+        EnvironmentDeviceType.objects.filter(is_deleted=False, is_active=True)
+        .select_related('parent')
+        .order_by('sort', 'name')
+    )
+    devices = list(
+        EnvironmentTestDevice.objects.filter(is_deleted=False, is_active=True, device_type__is_active=True)
+        .select_related('device_type')
+        .order_by('sort', 'name')
+    )
+    type_children: dict[str | None, list[EnvironmentDeviceType]] = {}
+    for row in type_rows:
+        type_children.setdefault(row.parent_id, []).append(row)
+    device_children: dict[str, list[EnvironmentTestDevice]] = {}
+    for device in devices:
+        device_children.setdefault(device.device_type_id, []).append(device)
+
+    def build_type_node(row: EnvironmentDeviceType) -> dict:
+        children = [build_type_node(child) for child in type_children.get(row.id, [])]
+        children.extend(
+            {'value': str(device.id), 'label': device.name, 'disabled': False, 'children': []}
+            for device in device_children.get(row.id, [])
+        )
+        return {'value': f'type:{row.id}', 'label': row.name, 'disabled': True, 'children': children}
+
+    return [build_type_node(row) for row in type_children.get(None, [])]
+
+
 def list_environments(user: User, query: EnvironmentListQuery) -> dict:
     """用户端和管理端共用列表查询；前端能力差异由角色字段和菜单权限控制。"""
     qs = (
         TestEnvironment.objects.filter(is_deleted=False)
         .select_related('current_user')
+        .prefetch_related('devices__device_type__parent')
         .annotate(waiting_count=Count('queues', filter=Q(queues__status='waiting')))
     )
     if query.domain:
@@ -181,9 +426,11 @@ def list_environments(user: User, query: EnvironmentListQuery) -> dict:
             Q(ip_address__icontains=query.keyword)
             | Q(project_name__icontains=query.keyword)
             | Q(vehicle_model__icontains=query.keyword)
-            | Q(device_material__icontains=query.keyword)
-            | Q(asset_number__icontains=query.keyword)
+            | Q(devices__name__icontains=query.keyword)
+            | Q(devices__device_type__name__icontains=query.keyword)
+            | Q(config_description__icontains=query.keyword)
             | Q(shelf_location__icontains=query.keyword)
+            | Q(remark__icontains=query.keyword)
         )
     if query.favorite_only:
         qs = qs.filter(favorites__user=user)
@@ -221,12 +468,14 @@ def create_environment(user: User, payload: EnvironmentIn) -> dict:
     require_manager(user)
     data = payload.dict()
     password = data.pop('password', None)
+    device_ids = data.pop('device_ids', [])
     env = TestEnvironment.objects.create(
         **data,
         password_encrypted=encrypt_value(password or ''),
         sys_creator=user,
         sys_modifier=user,
     )
+    env.devices.set(_get_active_devices(device_ids))
     _record(env, user, 'admin_update', '创建环境配置')
     return serialize_environment(env, user)
 
@@ -237,12 +486,14 @@ def update_environment(user: User, environment_id: str, payload: EnvironmentIn) 
     env = get_object_or_404(TestEnvironment, id=environment_id, is_deleted=False)
     data = payload.dict()
     password = data.pop('password', None)
+    device_ids = data.pop('device_ids', [])
     for field, value in data.items():
         setattr(env, field, value)
     if password is not None:
         env.password_encrypted = encrypt_value(password)
     env.sys_modifier = user
     env.save()
+    env.devices.set(_get_active_devices(device_ids))
     _record(env, user, 'admin_update', '更新环境配置')
     return serialize_environment(env, user)
 

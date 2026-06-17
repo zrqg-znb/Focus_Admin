@@ -5,9 +5,13 @@ from core.role.role_model import Role
 from core.user.user_model import User
 
 from .models import EnvironmentQueue, TestEnvironment
-from .schemas import EnvironmentIn, EnvironmentListQuery
+from .schemas import DeviceTypeIn, EnvironmentIn, EnvironmentListQuery, TestDeviceIn
 from .services import (
     create_environment,
+    create_device,
+    create_device_type,
+    delete_device,
+    delete_device_type,
     enqueue_environment,
     list_environments,
     occupy_environment,
@@ -33,10 +37,10 @@ def payload(ip: str = '192.168.1.10', password: str = 'secret') -> EnvironmentIn
         category='test',
         project_name='P1',
         vehicle_model='V1',
-        device_material='MAT',
-        asset_number='ASSET',
-        config={'版本': 'v1'},
+        device_ids=[],
+        config_description='版本 v1',
         shelf_location='A-01',
+        remark='remark',
         sort=0,
     )
 
@@ -71,6 +75,42 @@ class EnvironmentManagementServiceTests(TestCase):
         env_data = create_environment(self.admin, payload())
         with self.assertRaises(HttpError):
             update_environment(self.user, env_data['id'], payload(ip='192.168.1.11'))
+
+    def test_device_type_device_and_environment_binding(self):
+        tree = create_device_type(
+            self.admin,
+            DeviceTypeIn(parent_id=None, name='电源设备', sort=1, is_active=True),
+        )
+        parent_id = tree[0]['id']
+        tree = create_device_type(
+            self.admin,
+            DeviceTypeIn(parent_id=parent_id, name='程控电源', sort=1, is_active=True),
+        )
+        child_id = tree[0]['children'][0]['id']
+        device = create_device(
+            self.admin,
+            TestDeviceIn(
+                device_type_id=child_id,
+                name='Power-01',
+                sort=1,
+                is_active=True,
+                remark='bench',
+            ),
+        )
+
+        env_payload = payload()
+        env_payload.device_ids = [device['id']]
+        env_data = create_environment(self.admin, env_payload)
+
+        self.assertEqual(env_data['device_ids'], [device['id']])
+        self.assertEqual(env_data['devices'][0]['display_name'], '电源设备 / 程控电源 / Power-01')
+        self.assertEqual(env_data['config_description'], '版本 v1')
+        self.assertEqual(env_data['remark'], 'remark')
+
+        with self.assertRaises(HttpError):
+            delete_device(self.admin, device['id'])
+        with self.assertRaises(HttpError):
+            delete_device_type(self.admin, child_id)
 
     def test_occupy_queue_jump_and_release_do_not_auto_transfer(self):
         env_id = create_environment(self.admin, payload())['id']

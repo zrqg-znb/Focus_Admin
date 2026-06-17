@@ -82,6 +82,15 @@ PERMISSION_SEEDS = {
         {'name': '环境创建接口', 'code': 'environment-management:api:environments:create', 'permission_type': 1, 'api_path': '/api/environment-management/environments', 'http_method': 'POST'},
         {'name': '环境更新接口', 'code': 'environment-management:api:environments:update', 'permission_type': 1, 'api_path': '/api/environment-management/environments/:id', 'http_method': 'PUT'},
         {'name': '环境删除接口', 'code': 'environment-management:api:environments:delete', 'permission_type': 1, 'api_path': '/api/environment-management/environments/:id', 'http_method': 'DELETE'},
+        {'name': '测试设备类型树接口', 'code': 'environment-management:api:device-types:list', 'permission_type': 1, 'api_path': '/api/environment-management/device-types', 'http_method': 'GET'},
+        {'name': '测试设备类型创建接口', 'code': 'environment-management:api:device-types:create', 'permission_type': 1, 'api_path': '/api/environment-management/device-types', 'http_method': 'POST'},
+        {'name': '测试设备类型更新接口', 'code': 'environment-management:api:device-types:update', 'permission_type': 1, 'api_path': '/api/environment-management/device-types/:id', 'http_method': 'PUT'},
+        {'name': '测试设备类型删除接口', 'code': 'environment-management:api:device-types:delete', 'permission_type': 1, 'api_path': '/api/environment-management/device-types/:id', 'http_method': 'DELETE'},
+        {'name': '测试设备列表接口', 'code': 'environment-management:api:devices:list', 'permission_type': 1, 'api_path': '/api/environment-management/devices', 'http_method': 'GET'},
+        {'name': '测试设备创建接口', 'code': 'environment-management:api:devices:create', 'permission_type': 1, 'api_path': '/api/environment-management/devices', 'http_method': 'POST'},
+        {'name': '测试设备更新接口', 'code': 'environment-management:api:devices:update', 'permission_type': 1, 'api_path': '/api/environment-management/devices/:id', 'http_method': 'PUT'},
+        {'name': '测试设备删除接口', 'code': 'environment-management:api:devices:delete', 'permission_type': 1, 'api_path': '/api/environment-management/devices/:id', 'http_method': 'DELETE'},
+        {'name': '测试设备级联选项接口', 'code': 'environment-management:api:device-options:list', 'permission_type': 1, 'api_path': '/api/environment-management/device-options', 'http_method': 'GET'},
     ],
 }
 

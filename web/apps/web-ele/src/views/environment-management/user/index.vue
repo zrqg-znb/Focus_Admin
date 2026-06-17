@@ -191,11 +191,6 @@ async function openRecords(row: EnvironmentItem) {
   recordDialogVisible.value = true;
 }
 
-function configEntries(row: EnvironmentItem) {
-  // 配置情况是 JSON 对象，用户端统一按 Tag 展示非空键值。
-  return Object.entries(row.config || {}).filter(([, value]) => value !== '');
-}
-
 onMounted(() => {
   loadData();
   timer = window.setInterval(() => {
@@ -306,20 +301,24 @@ onBeforeUnmount(() => {
             <div class="muted">{{ row.vehicle_model || '-' }}</div>
           </template>
         </ElTableColumn>
-        <ElTableColumn label="测试设备" min-width="170" prop="device_display" />
-        <ElTableColumn label="配置情况" min-width="220">
+        <ElTableColumn label="测试设备" min-width="220">
           <template #default="{ row }">
             <div class="tag-wrap">
               <ElTag
-                v-for="[key, value] in configEntries(row)"
-                :key="key"
+                v-for="device in row.devices"
+                :key="device.id"
                 size="small"
                 type="success"
               >
-                {{ key }}: {{ value }}
+                {{ device.display_name }}
               </ElTag>
-              <span v-if="configEntries(row).length === 0" class="muted">-</span>
+              <span v-if="!row.devices?.length" class="muted">-</span>
             </div>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="配置情况" min-width="220">
+          <template #default="{ row }">
+            <span>{{ row.config_description || '-' }}</span>
           </template>
         </ElTableColumn>
         <ElTableColumn label="占用情况" min-width="140">
@@ -414,7 +413,6 @@ onBeforeUnmount(() => {
           <div class="card-meta">
             <ElTag size="small">{{ row.domain_label }}</ElTag>
             <ElTag size="small" type="info">{{ row.category_label }}</ElTag>
-            <span>{{ row.device_display || '未配置设备' }}</span>
             <span>{{ row.shelf_location || '未配置货架' }}</span>
           </div>
           <div class="card-secret">
@@ -423,13 +421,16 @@ onBeforeUnmount(() => {
           </div>
           <div class="tag-wrap">
             <ElTag
-              v-for="[key, value] in configEntries(row)"
-              :key="key"
+              v-for="device in row.devices"
+              :key="device.id"
               size="small"
               type="success"
             >
-              {{ key }}: {{ value }}
+              {{ device.display_name }}
             </ElTag>
+          </div>
+          <div v-if="row.config_description" class="config-text">
+            {{ row.config_description }}
           </div>
           <footer>
             <span>
@@ -615,6 +616,13 @@ onBeforeUnmount(() => {
   gap: 8px;
   color: var(--el-text-color-regular);
   font-size: 13px;
+}
+
+.config-text {
+  color: var(--el-text-color-regular);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
 }
 
 .pager {

@@ -1,7 +1,61 @@
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from ninja import Field, Schema
+
+
+class DeviceTypeIn(Schema):
+    parent_id: Optional[str] = None
+    name: str
+    sort: int = 0
+    is_active: bool = True
+
+
+class DeviceTypeOut(Schema):
+    id: str
+    parent_id: Optional[str] = None
+    name: str
+    sort: int = 0
+    is_active: bool = True
+    children: List['DeviceTypeOut'] = Field(default_factory=list)
+
+
+class TestDeviceIn(Schema):
+    device_type_id: str
+    name: str
+    sort: int = 0
+    is_active: bool = True
+    remark: str = ''
+
+
+class TestDeviceOut(Schema):
+    id: str
+    device_type_id: str
+    device_type_name: str
+    device_type_path: str
+    name: str
+    display_name: str
+    sort: int = 0
+    is_active: bool = True
+    remark: str = ''
+    sys_create_datetime: Optional[datetime] = None
+    sys_update_datetime: Optional[datetime] = None
+
+
+class DeviceOptionNode(Schema):
+    value: str
+    label: str
+    disabled: bool = False
+    children: List['DeviceOptionNode'] = Field(default_factory=list)
+
+
+class EnvironmentDeviceBrief(Schema):
+    id: str
+    name: str
+    device_type_id: str
+    device_type_name: str
+    device_type_path: str
+    display_name: str
 
 
 class EnvironmentIn(Schema):
@@ -12,10 +66,10 @@ class EnvironmentIn(Schema):
     category: str = 'test'
     project_name: str = ''
     vehicle_model: str = ''
-    device_material: str = ''
-    asset_number: str = ''
-    config: Dict[str, Any] = Field(default_factory=dict)
+    device_ids: List[str] = Field(default_factory=list)
+    config_description: str = ''
     shelf_location: str = ''
+    remark: str = ''
     sort: int = 0
 
 
@@ -32,11 +86,12 @@ class EnvironmentOut(Schema):
     category_label: str
     project_name: str
     vehicle_model: str
-    device_material: str
-    asset_number: str
+    device_ids: List[str] = Field(default_factory=list)
+    devices: List[EnvironmentDeviceBrief] = Field(default_factory=list)
     device_display: str
-    config: Dict[str, Any]
+    config_description: str = ''
     shelf_location: str
+    remark: str = ''
     status: str
     status_label: str
     current_user_id: Optional[str] = None

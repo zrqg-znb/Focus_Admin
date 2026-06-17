@@ -4,6 +4,59 @@ from common.fu_model import RootModel
 from core.user.user_model import User
 
 
+class EnvironmentDeviceType(RootModel):
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='children',
+        verbose_name='父级类型',
+    )
+    name = models.CharField(max_length=100, verbose_name='类型名称')
+    is_active = models.BooleanField(default=True, db_index=True, verbose_name='是否启用')
+
+    class Meta:
+        db_table = 'environment_management_device_type'
+        verbose_name = '测试设备类型'
+        verbose_name_plural = verbose_name
+        unique_together = ('parent', 'name')
+        indexes = [
+            models.Index(fields=['parent', 'is_active']),
+            models.Index(fields=['name']),
+        ]
+        ordering = ['sort', 'name']
+
+    def __str__(self):
+        return self.name
+
+
+class EnvironmentTestDevice(RootModel):
+    device_type = models.ForeignKey(
+        EnvironmentDeviceType,
+        on_delete=models.PROTECT,
+        related_name='devices',
+        verbose_name='设备类型',
+    )
+    name = models.CharField(max_length=100, verbose_name='设备名称')
+    is_active = models.BooleanField(default=True, db_index=True, verbose_name='是否启用')
+    remark = models.TextField(blank=True, default='', verbose_name='备注')
+
+    class Meta:
+        db_table = 'environment_management_test_device'
+        verbose_name = '测试设备'
+        verbose_name_plural = verbose_name
+        unique_together = ('device_type', 'name')
+        indexes = [
+            models.Index(fields=['device_type', 'is_active']),
+            models.Index(fields=['name']),
+        ]
+        ordering = ['device_type__sort', 'sort', 'name']
+
+    def __str__(self):
+        return self.name
+
+
 class TestEnvironment(RootModel):
     DOMAIN_CHOICES = (
         ('cockpit', '座舱'),
@@ -26,10 +79,10 @@ class TestEnvironment(RootModel):
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='test', db_index=True, verbose_name='环境分类')
     project_name = models.CharField(max_length=100, blank=True, default='', db_index=True, verbose_name='项目名称')
     vehicle_model = models.CharField(max_length=100, blank=True, default='', db_index=True, verbose_name='车型')
-    device_material = models.CharField(max_length=100, blank=True, default='', verbose_name='测试设备物料')
-    asset_number = models.CharField(max_length=100, blank=True, default='', verbose_name='资产编号')
-    config = models.JSONField(default=dict, blank=True, verbose_name='配置情况')
+    devices = models.ManyToManyField(EnvironmentTestDevice, blank=True, related_name='environments', verbose_name='测试设备')
+    config_description = models.TextField(blank=True, default='', verbose_name='配置情况')
     shelf_location = models.CharField(max_length=200, blank=True, default='', verbose_name='货架位置')
+    remark = models.TextField(blank=True, default='', verbose_name='备注')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='idle', db_index=True, verbose_name='状态')
     current_user = models.ForeignKey(
         User,

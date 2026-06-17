@@ -2,17 +2,23 @@
 import type { FormInstance } from 'element-plus';
 
 import type {
+  DeviceOptionNode,
+  DeviceTypeItem,
+  DeviceTypePayload,
   EnvironmentItem,
   EnvironmentPayload,
+  TestDeviceItem,
+  TestDevicePayload,
 } from '#/api/environment-management';
 
-import { ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 import { Edit, Plus, Trash2 } from '@vben/icons';
 
 import {
   ElButton,
+  ElCascader,
   ElDialog,
   ElForm,
   ElFormItem,
@@ -22,12 +28,28 @@ import {
   ElMessageBox,
   ElOption,
   ElSelect,
+  ElSwitch,
+  ElTabPane,
+  ElTable,
+  ElTableColumn,
+  ElTabs,
+  ElTag,
+  ElTree,
 } from 'element-plus';
 
 import {
+  createDeviceApi,
+  createDeviceTypeApi,
   createEnvironmentApi,
+  deleteDeviceApi,
+  deleteDeviceTypeApi,
   deleteEnvironmentApi,
+  listDeviceOptionsApi,
+  listDevicesApi,
+  listDeviceTypesApi,
   listEnvironmentsApi,
+  updateDeviceApi,
+  updateDeviceTypeApi,
   updateEnvironmentApi,
 } from '#/api/environment-management';
 import { useZqTable } from '#/components/zq-table';
@@ -41,13 +63,14 @@ import {
 
 defineOptions({ name: 'EnvironmentManagementAdmin' });
 
-const dialogVisible = ref(false);
-const dialogMode = ref<'create' | 'edit'>('create');
-const dialogSaving = ref(false);
-const formRef = ref<FormInstance>();
-const configText = ref('{}');
+const activeTab = ref('environments');
+const environmentDialogVisible = ref(false);
+const environmentDialogMode = ref<'create' | 'edit'>('create');
+const environmentDialogSaving = ref(false);
+const environmentFormRef = ref<FormInstance>();
+const deviceOptions = ref<DeviceOptionNode[]>([]);
 
-const emptyForm = (): EnvironmentPayload & { id?: string } => ({
+const emptyEnvironmentForm = (): EnvironmentPayload & { id?: string } => ({
   ip_address: '',
   account: '',
   password: '',
@@ -55,14 +78,26 @@ const emptyForm = (): EnvironmentPayload & { id?: string } => ({
   category: 'test',
   project_name: '',
   vehicle_model: '',
-  device_material: '',
-  asset_number: '',
-  config: {},
+  device_ids: [],
+  config_description: '',
   shelf_location: '',
+  remark: '',
   sort: 0,
 });
 
-const form = ref<EnvironmentPayload & { id?: string }>(emptyForm());
+const environmentForm = ref<EnvironmentPayload & { id?: string }>(
+  emptyEnvironmentForm(),
+);
+
+const cascaderProps = {
+  checkStrictly: false,
+  emitPath: false,
+  multiple: true,
+  value: 'value',
+  label: 'label',
+  children: 'children',
+  disabled: 'disabled',
+};
 
 const [Grid, gridApi] = useZqTable({
   tableTitle: '环境配置',
@@ -91,30 +126,85 @@ const [Grid, gridApi] = useZqTable({
   },
 });
 
-function parseConfigText() {
+const deviceTypeTree = ref<DeviceTypeItem[]>([]);
+const selectedTypeId = ref('');
+const deviceRows = ref<TestDeviceItem[]>([]);
+const deviceKeyword = ref('');
+const deviceLoading = ref(false);
+
+const typeDialogVisible = ref(false);
+const typeDialogMode = ref<'create' | 'edit'>('create');
+const typeDialogSaving = ref(false);
+const typeFormRef = ref<FormInstance>();
+const typeForm = ref<DeviceTypePayload & { id?: string }>({
+  parent_id: null,
+  name: '',
+  sort: 0,
+  is_active: true,
+});
+
+const deviceDialogVisible = ref(false);
+const deviceDialogMode = ref<'create' | 'edit'>('create');
+const deviceDialogSaving = ref(false);
+const deviceFormRef = ref<FormInstance>();
+const deviceForm = ref<TestDevicePayload & { id?: string }>({
+  device_type_id: '',
+  name: '',
+  sort: 0,
+  is_active: true,
+  remark: '',
+});
+
+const selectedTypeName = computed(() => {
+  const target = findTypeNode(deviceTypeTree.value, selectedTypeId.value);
+  return target?.name || '全部类型';
+});
+
+async function loadDeviceOptions() {
+  // 环境表单的测试设备选择只允许选中具体设备；后端已把类型节点标记为 disabled。
+  deviceOptions.value = await listDeviceOptionsApi();
+}
+
+function findTypeNode(nodes: DeviceTypeItem[], id: string): DeviceTypeItem | null {
+  // 设备类型是多级树，递归查找用于左侧树选中态和右侧标题回显。
+  for (const node of nodes) {
+    if (node.id === id) return node;
+    const found = findTypeNode(node.children || [], id);
+    if (found) return found;
+  }
+  return null;
+}
+
+async function loadDeviceTypes() {
+  deviceTypeTree.value = await listDeviceTypesApi();
+}
+
+async function loadDevices() {
+  deviceLoading.value = true;
   try {
-    const parsed = JSON.parse(configText.value || '{}');
-    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
-      ElMessage.warning('配置情况必须是 JSON 对象');
-      return null;
-    }
-    return parsed;
-  } catch {
-    ElMessage.warning('配置情况不是合法 JSON');
-    return null;
+    deviceRows.value = await listDevicesApi({
+      device_type_id: selectedTypeId.value || undefined,
+      keyword: deviceKeyword.value || undefined,
+    });
+  } finally {
+    deviceLoading.value = false;
   }
 }
 
-function openCreate() {
-  dialogMode.value = 'create';
-  form.value = emptyForm();
-  configText.value = '{}';
-  dialogVisible.value = true;
+function handleTypeNodeClick(row: DeviceTypeItem) {
+  selectedTypeId.value = row.id;
+  loadDevices();
 }
 
-function openEdit(row: EnvironmentItem) {
-  dialogMode.value = 'edit';
-  form.value = {
+function openEnvironmentCreate() {
+  environmentDialogMode.value = 'create';
+  environmentForm.value = emptyEnvironmentForm();
+  environmentDialogVisible.value = true;
+}
+
+function openEnvironmentEdit(row: EnvironmentItem) {
+  environmentDialogMode.value = 'edit';
+  environmentForm.value = {
     id: row.id,
     ip_address: row.ip_address,
     account: row.can_view_secret ? row.account : '',
@@ -123,39 +213,35 @@ function openEdit(row: EnvironmentItem) {
     category: row.category,
     project_name: row.project_name,
     vehicle_model: row.vehicle_model,
-    device_material: row.device_material,
-    asset_number: row.asset_number,
-    config: row.config || {},
+    device_ids: row.device_ids || [],
+    config_description: row.config_description || '',
     shelf_location: row.shelf_location,
+    remark: row.remark || '',
     sort: row.sort,
   };
-  configText.value = JSON.stringify(row.config || {}, null, 2);
-  dialogVisible.value = true;
+  environmentDialogVisible.value = true;
 }
 
-async function submitForm() {
-  await formRef.value?.validate();
-  const config = parseConfigText();
-  if (!config) return;
-
-  dialogSaving.value = true;
+async function submitEnvironmentForm() {
+  await environmentFormRef.value?.validate();
+  environmentDialogSaving.value = true;
   try {
+    // 编辑时密码留空代表不修改；这里转成 undefined，避免把旧密码误清空。
     const payload: EnvironmentPayload = {
-      ...form.value,
-      config,
-      password: form.value.password || undefined,
+      ...environmentForm.value,
+      password: environmentForm.value.password || undefined,
     };
-    if (dialogMode.value === 'create') {
+    if (environmentDialogMode.value === 'create') {
       await createEnvironmentApi(payload);
       ElMessage.success('环境创建成功');
     } else {
-      await updateEnvironmentApi(form.value.id!, payload);
+      await updateEnvironmentApi(environmentForm.value.id!, payload);
       ElMessage.success('环境更新成功');
     }
-    dialogVisible.value = false;
+    environmentDialogVisible.value = false;
     await gridApi.reload();
   } finally {
-    dialogSaving.value = false;
+    environmentDialogSaving.value = false;
   }
 }
 
@@ -167,54 +253,266 @@ async function removeEnvironment(row: EnvironmentItem) {
   ElMessage.success('环境删除成功');
   await gridApi.reload();
 }
+
+function openTypeCreate(parentId?: string) {
+  typeDialogMode.value = 'create';
+  typeForm.value = {
+    parent_id: parentId || selectedTypeId.value || null,
+    name: '',
+    sort: 0,
+    is_active: true,
+  };
+  typeDialogVisible.value = true;
+}
+
+function openTypeEdit(row: DeviceTypeItem) {
+  typeDialogMode.value = 'edit';
+  typeForm.value = {
+    id: row.id,
+    parent_id: row.parent_id || null,
+    name: row.name,
+    sort: row.sort,
+    is_active: row.is_active,
+  };
+  typeDialogVisible.value = true;
+}
+
+async function submitTypeForm() {
+  await typeFormRef.value?.validate();
+  typeDialogSaving.value = true;
+  try {
+    // 类型树变化会影响设备级联路径，保存后同步刷新树和环境表单的级联选项。
+    if (typeDialogMode.value === 'create') {
+      deviceTypeTree.value = await createDeviceTypeApi(typeForm.value);
+      ElMessage.success('类型创建成功');
+    } else {
+      deviceTypeTree.value = await updateDeviceTypeApi(
+        typeForm.value.id!,
+        typeForm.value,
+      );
+      ElMessage.success('类型更新成功');
+    }
+    typeDialogVisible.value = false;
+    await loadDeviceOptions();
+  } finally {
+    typeDialogSaving.value = false;
+  }
+}
+
+async function removeType(row: DeviceTypeItem) {
+  await ElMessageBox.confirm(`确定删除设备类型 ${row.name} 吗？`, '提示', {
+    type: 'warning',
+  });
+  await deleteDeviceTypeApi(row.id);
+  if (selectedTypeId.value === row.id) selectedTypeId.value = '';
+  await loadDeviceTypes();
+  await loadDeviceOptions();
+  await loadDevices();
+  ElMessage.success('类型删除成功');
+}
+
+function openDeviceCreate() {
+  if (!selectedTypeId.value) {
+    ElMessage.warning('请先选择一个设备类型');
+    return;
+  }
+  deviceDialogMode.value = 'create';
+  deviceForm.value = {
+    device_type_id: selectedTypeId.value,
+    name: '',
+    sort: 0,
+    is_active: true,
+    remark: '',
+  };
+  deviceDialogVisible.value = true;
+}
+
+function openDeviceEdit(row: TestDeviceItem) {
+  deviceDialogMode.value = 'edit';
+  deviceForm.value = {
+    id: row.id,
+    device_type_id: row.device_type_id,
+    name: row.name,
+    sort: row.sort,
+    is_active: row.is_active,
+    remark: row.remark || '',
+  };
+  deviceDialogVisible.value = true;
+}
+
+async function submitDeviceForm() {
+  await deviceFormRef.value?.validate();
+  deviceDialogSaving.value = true;
+  try {
+    // 设备主数据会被环境列表直接展示，保存后同时刷新设备表、级联选项和环境表格。
+    if (deviceDialogMode.value === 'create') {
+      await createDeviceApi(deviceForm.value);
+      ElMessage.success('设备创建成功');
+    } else {
+      await updateDeviceApi(deviceForm.value.id!, deviceForm.value);
+      ElMessage.success('设备更新成功');
+    }
+    deviceDialogVisible.value = false;
+    await loadDevices();
+    await loadDeviceOptions();
+    await gridApi.reload();
+  } finally {
+    deviceDialogSaving.value = false;
+  }
+}
+
+async function removeDevice(row: TestDeviceItem) {
+  await ElMessageBox.confirm(`确定删除测试设备 ${row.name} 吗？`, '提示', {
+    type: 'warning',
+  });
+  await deleteDeviceApi(row.id);
+  await loadDevices();
+  await loadDeviceOptions();
+  await gridApi.reload();
+  ElMessage.success('设备删除成功');
+}
+
+onMounted(async () => {
+  await Promise.all([loadDeviceTypes(), loadDeviceOptions(), loadDevices()]);
+});
 </script>
 
 <template>
   <Page auto-content-height>
-    <Grid>
-      <template #toolbar-tools>
-        <ElButton type="primary" @click="openCreate">
-          <Plus class="mr-1 size-4" />
-          新建环境
-        </ElButton>
-      </template>
-      <template #actions="{ row }">
-        <div class="flex items-center justify-center gap-2">
-          <ElButton link type="primary" @click="openEdit(row)">
-            <Edit class="mr-1 size-4" />
-            编辑
-          </ElButton>
-          <ElButton link type="danger" @click="removeEnvironment(row)">
-            <Trash2 class="mr-1 size-4" />
-            删除
-          </ElButton>
+    <ElTabs v-model="activeTab" class="environment-admin-tabs">
+      <ElTabPane label="环境管理" name="environments">
+        <Grid>
+          <template #toolbar-tools>
+            <ElButton type="primary" @click="openEnvironmentCreate">
+              <Plus class="mr-1 size-4" />
+              新建环境
+            </ElButton>
+          </template>
+          <template #device_display="{ row }">
+            <div class="tag-wrap">
+              <ElTag
+                v-for="device in row.devices"
+                :key="device.id"
+                size="small"
+                type="success"
+              >
+                {{ device.display_name }}
+              </ElTag>
+              <span v-if="!row.devices?.length" class="muted">-</span>
+            </div>
+          </template>
+          <template #actions="{ row }">
+            <div class="flex items-center justify-center gap-2">
+              <ElButton link type="primary" @click="openEnvironmentEdit(row)">
+                <Edit class="mr-1 size-4" />
+                编辑
+              </ElButton>
+              <ElButton link type="danger" @click="removeEnvironment(row)">
+                <Trash2 class="mr-1 size-4" />
+                删除
+              </ElButton>
+            </div>
+          </template>
+        </Grid>
+      </ElTabPane>
+
+      <ElTabPane label="测试设备管理" name="devices">
+        <div class="device-workbench">
+          <aside class="device-tree-panel">
+            <div class="panel-header">
+              <span>设备类型</span>
+              <ElButton link type="primary" @click="openTypeCreate()">
+                <Plus class="mr-1 size-4" />
+                新建
+              </ElButton>
+            </div>
+            <ElTree
+              :data="deviceTypeTree"
+              :expand-on-click-node="false"
+              default-expand-all
+              node-key="id"
+              @node-click="handleTypeNodeClick"
+            >
+              <template #default="{ data }">
+                <div class="tree-node">
+                  <span>{{ data.name }}</span>
+                  <span class="tree-actions">
+                    <ElButton link size="small" type="primary" @click.stop="openTypeCreate(data.id)">子级</ElButton>
+                    <ElButton link size="small" type="primary" @click.stop="openTypeEdit(data)">编辑</ElButton>
+                    <ElButton link size="small" type="danger" @click.stop="removeType(data)">删除</ElButton>
+                  </span>
+                </div>
+              </template>
+            </ElTree>
+          </aside>
+
+          <section class="device-list-panel">
+            <div class="panel-header">
+              <div>
+                <strong>{{ selectedTypeName }}</strong>
+                <span class="muted ml-2">测试设备</span>
+              </div>
+              <div class="device-actions">
+                <ElInput
+                  v-model="deviceKeyword"
+                  clearable
+                  placeholder="搜索设备名称/备注"
+                  style="width: 220px"
+                  @keyup.enter="loadDevices"
+                />
+                <ElButton @click="loadDevices">查询</ElButton>
+                <ElButton type="primary" @click="openDeviceCreate">
+                  <Plus class="mr-1 size-4" />
+                  新建设备
+                </ElButton>
+              </div>
+            </div>
+            <ElTable v-loading="deviceLoading" :data="deviceRows" border stripe>
+              <ElTableColumn label="设备名称" min-width="160" prop="name" />
+              <ElTableColumn label="类型路径" min-width="220" prop="device_type_path" />
+              <ElTableColumn label="状态" width="90">
+                <template #default="{ row }">
+                  <ElTag :type="row.is_active ? 'success' : 'info'">
+                    {{ row.is_active ? '启用' : '禁用' }}
+                  </ElTag>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn label="备注" min-width="180" prop="remark" />
+              <ElTableColumn label="操作" width="150">
+                <template #default="{ row }">
+                  <ElButton link type="primary" @click="openDeviceEdit(row)">编辑</ElButton>
+                  <ElButton link type="danger" @click="removeDevice(row)">删除</ElButton>
+                </template>
+              </ElTableColumn>
+            </ElTable>
+          </section>
         </div>
-      </template>
-    </Grid>
+      </ElTabPane>
+    </ElTabs>
 
     <ElDialog
-      v-model="dialogVisible"
-      :title="dialogMode === 'create' ? '新建环境' : '编辑环境'"
-      width="760px"
+      v-model="environmentDialogVisible"
+      :title="environmentDialogMode === 'create' ? '新建环境' : '编辑环境'"
+      width="780px"
     >
-      <ElForm ref="formRef" :model="form" label-width="108px">
+      <ElForm ref="environmentFormRef" :model="environmentForm" label-width="108px">
         <div class="grid grid-cols-2 gap-x-4">
           <ElFormItem label="IP地址" prop="ip_address" required>
-            <ElInput v-model="form.ip_address" placeholder="请输入 IP 地址" />
+            <ElInput v-model="environmentForm.ip_address" placeholder="请输入 IP 地址" />
           </ElFormItem>
           <ElFormItem label="账号" prop="account">
-            <ElInput v-model="form.account" placeholder="请输入账号" />
+            <ElInput v-model="environmentForm.account" placeholder="请输入账号" />
           </ElFormItem>
           <ElFormItem label="密码" prop="password">
             <ElInput
-              v-model="form.password"
+              v-model="environmentForm.password"
               placeholder="编辑时留空表示不修改"
               show-password
               type="password"
             />
           </ElFormItem>
           <ElFormItem label="领域" prop="domain" required>
-            <ElSelect v-model="form.domain" class="w-full">
+            <ElSelect v-model="environmentForm.domain" class="w-full">
               <ElOption
                 v-for="item in domainOptions"
                 :key="item.value"
@@ -224,7 +522,7 @@ async function removeEnvironment(row: EnvironmentItem) {
             </ElSelect>
           </ElFormItem>
           <ElFormItem label="环境分类" prop="category" required>
-            <ElSelect v-model="form.category" class="w-full">
+            <ElSelect v-model="environmentForm.category" class="w-full">
               <ElOption
                 v-for="item in categoryOptions"
                 :key="item.value"
@@ -234,39 +532,192 @@ async function removeEnvironment(row: EnvironmentItem) {
             </ElSelect>
           </ElFormItem>
           <ElFormItem label="项目名称" prop="project_name">
-            <ElInput v-model="form.project_name" />
+            <ElInput v-model="environmentForm.project_name" />
           </ElFormItem>
           <ElFormItem label="车型" prop="vehicle_model">
-            <ElInput v-model="form.vehicle_model" />
-          </ElFormItem>
-          <ElFormItem label="设备物料" prop="device_material">
-            <ElInput v-model="form.device_material" />
-          </ElFormItem>
-          <ElFormItem label="资产编号" prop="asset_number">
-            <ElInput v-model="form.asset_number" />
+            <ElInput v-model="environmentForm.vehicle_model" />
           </ElFormItem>
           <ElFormItem label="货架位置" prop="shelf_location">
-            <ElInput v-model="form.shelf_location" />
+            <ElInput v-model="environmentForm.shelf_location" />
           </ElFormItem>
           <ElFormItem label="排序" prop="sort">
-            <ElInputNumber v-model="form.sort" class="w-full" />
+            <ElInputNumber v-model="environmentForm.sort" class="w-full" />
           </ElFormItem>
         </div>
+        <ElFormItem label="测试设备">
+          <ElCascader
+            v-model="environmentForm.device_ids"
+            :options="deviceOptions"
+            :props="cascaderProps"
+            class="w-full"
+            clearable
+            collapse-tags
+            collapse-tags-tooltip
+            filterable
+            placeholder="请选择测试设备"
+          />
+        </ElFormItem>
         <ElFormItem label="配置情况">
           <ElInput
-            v-model="configText"
-            :rows="7"
-            placeholder='例如 {"系统版本":"v1.0","刷写状态":"已完成"}'
+            v-model="environmentForm.config_description"
+            :rows="4"
+            placeholder="请输入环境配置描述"
+            type="textarea"
+          />
+        </ElFormItem>
+        <ElFormItem label="备注">
+          <ElInput
+            v-model="environmentForm.remark"
+            :rows="3"
+            placeholder="请输入备注"
             type="textarea"
           />
         </ElFormItem>
       </ElForm>
       <template #footer>
-        <ElButton @click="dialogVisible = false">取消</ElButton>
-        <ElButton :loading="dialogSaving" type="primary" @click="submitForm">
+        <ElButton @click="environmentDialogVisible = false">取消</ElButton>
+        <ElButton
+          :loading="environmentDialogSaving"
+          type="primary"
+          @click="submitEnvironmentForm"
+        >
+          保存
+        </ElButton>
+      </template>
+    </ElDialog>
+
+    <ElDialog
+      v-model="typeDialogVisible"
+      :title="typeDialogMode === 'create' ? '新建设备类型' : '编辑设备类型'"
+      width="520px"
+    >
+      <ElForm ref="typeFormRef" :model="typeForm" label-width="96px">
+        <ElFormItem label="类型名称" prop="name" required>
+          <ElInput v-model="typeForm.name" />
+        </ElFormItem>
+        <ElFormItem label="父级类型">
+          <ElCascader
+            v-model="typeForm.parent_id"
+            :options="deviceTypeTree"
+            :props="{ value: 'id', label: 'name', children: 'children', emitPath: false, checkStrictly: true }"
+            class="w-full"
+            clearable
+            placeholder="不选择则为顶级类型"
+          />
+        </ElFormItem>
+        <ElFormItem label="排序">
+          <ElInputNumber v-model="typeForm.sort" class="w-full" />
+        </ElFormItem>
+        <ElFormItem label="启用">
+          <ElSwitch v-model="typeForm.is_active" />
+        </ElFormItem>
+      </ElForm>
+      <template #footer>
+        <ElButton @click="typeDialogVisible = false">取消</ElButton>
+        <ElButton :loading="typeDialogSaving" type="primary" @click="submitTypeForm">
+          保存
+        </ElButton>
+      </template>
+    </ElDialog>
+
+    <ElDialog
+      v-model="deviceDialogVisible"
+      :title="deviceDialogMode === 'create' ? '新建测试设备' : '编辑测试设备'"
+      width="560px"
+    >
+      <ElForm ref="deviceFormRef" :model="deviceForm" label-width="96px">
+        <ElFormItem label="设备类型" prop="device_type_id" required>
+          <ElCascader
+            v-model="deviceForm.device_type_id"
+            :options="deviceTypeTree"
+            :props="{ value: 'id', label: 'name', children: 'children', emitPath: false, checkStrictly: true }"
+            class="w-full"
+            clearable
+            placeholder="请选择设备类型"
+          />
+        </ElFormItem>
+        <ElFormItem label="设备名称" prop="name" required>
+          <ElInput v-model="deviceForm.name" />
+        </ElFormItem>
+        <ElFormItem label="排序">
+          <ElInputNumber v-model="deviceForm.sort" class="w-full" />
+        </ElFormItem>
+        <ElFormItem label="启用">
+          <ElSwitch v-model="deviceForm.is_active" />
+        </ElFormItem>
+        <ElFormItem label="备注">
+          <ElInput v-model="deviceForm.remark" :rows="3" type="textarea" />
+        </ElFormItem>
+      </ElForm>
+      <template #footer>
+        <ElButton @click="deviceDialogVisible = false">取消</ElButton>
+        <ElButton :loading="deviceDialogSaving" type="primary" @click="submitDeviceForm">
           保存
         </ElButton>
       </template>
     </ElDialog>
   </Page>
 </template>
+
+<style scoped>
+.environment-admin-tabs {
+  min-height: 100%;
+}
+
+.device-workbench {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.device-tree-panel,
+.device-list-panel {
+  min-height: 560px;
+  padding: 12px;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 6px;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tree-node {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+}
+
+.tree-actions {
+  display: none;
+}
+
+.tree-node:hover .tree-actions {
+  display: inline-flex;
+}
+
+.device-actions,
+.tag-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.muted {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+@media (max-width: 960px) {
+  .device-workbench {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

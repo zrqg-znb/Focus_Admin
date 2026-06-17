@@ -6,6 +6,60 @@ export type EnvironmentDomain = 'cockpit' | 'vehicle';
 export type EnvironmentCategory = 'ci' | 'dev' | 'test';
 export type EnvironmentStatus = 'idle' | 'occupied';
 
+export interface DeviceTypeItem {
+  id: string;
+  parent_id?: null | string;
+  name: string;
+  sort: number;
+  is_active: boolean;
+  children: DeviceTypeItem[];
+}
+
+export interface DeviceTypePayload {
+  parent_id?: null | string;
+  name: string;
+  sort: number;
+  is_active: boolean;
+}
+
+export interface TestDeviceItem {
+  id: string;
+  device_type_id: string;
+  device_type_name: string;
+  device_type_path: string;
+  name: string;
+  display_name: string;
+  sort: number;
+  is_active: boolean;
+  remark: string;
+  sys_create_datetime?: string;
+  sys_update_datetime?: string;
+}
+
+export interface TestDevicePayload {
+  device_type_id: string;
+  name: string;
+  sort: number;
+  is_active: boolean;
+  remark: string;
+}
+
+export interface DeviceOptionNode {
+  value: string;
+  label: string;
+  disabled: boolean;
+  children: DeviceOptionNode[];
+}
+
+export interface EnvironmentDeviceBrief {
+  id: string;
+  name: string;
+  device_type_id: string;
+  device_type_name: string;
+  device_type_path: string;
+  display_name: string;
+}
+
 export interface EnvironmentItem {
   id: string;
   ip_address: string;
@@ -19,11 +73,12 @@ export interface EnvironmentItem {
   category_label: string;
   project_name: string;
   vehicle_model: string;
-  device_material: string;
-  asset_number: string;
+  device_ids: string[];
+  devices: EnvironmentDeviceBrief[];
   device_display: string;
-  config: Record<string, any>;
+  config_description: string;
   shelf_location: string;
+  remark: string;
   status: EnvironmentStatus;
   status_label: string;
   current_user_id?: null | string;
@@ -49,10 +104,10 @@ export interface EnvironmentPayload {
   category: EnvironmentCategory;
   project_name: string;
   vehicle_model: string;
-  device_material: string;
-  asset_number: string;
-  config: Record<string, any>;
+  device_ids: string[];
+  config_description: string;
   shelf_location: string;
+  remark: string;
   sort: number;
 }
 
@@ -98,6 +153,47 @@ export interface RecordPage {
   total: number;
   page: number;
   limit: number;
+}
+
+export async function listDeviceTypesApi(params?: { active_only?: boolean }) {
+  return requestClient.get<DeviceTypeItem[]>(`${base}/device-types`, {
+    params,
+  });
+}
+
+export async function createDeviceTypeApi(data: DeviceTypePayload) {
+  return requestClient.post<DeviceTypeItem[]>(`${base}/device-types`, data);
+}
+
+export async function updateDeviceTypeApi(
+  id: string,
+  data: DeviceTypePayload,
+) {
+  return requestClient.put<DeviceTypeItem[]>(`${base}/device-types/${id}`, data);
+}
+
+export async function deleteDeviceTypeApi(id: string) {
+  return requestClient.delete<boolean>(`${base}/device-types/${id}`);
+}
+
+export async function listDevicesApi(params?: Record<string, any>) {
+  return requestClient.get<TestDeviceItem[]>(`${base}/devices`, { params });
+}
+
+export async function createDeviceApi(data: TestDevicePayload) {
+  return requestClient.post<TestDeviceItem>(`${base}/devices`, data);
+}
+
+export async function updateDeviceApi(id: string, data: TestDevicePayload) {
+  return requestClient.put<TestDeviceItem>(`${base}/devices/${id}`, data);
+}
+
+export async function deleteDeviceApi(id: string) {
+  return requestClient.delete<boolean>(`${base}/devices/${id}`);
+}
+
+export async function listDeviceOptionsApi() {
+  return requestClient.get<DeviceOptionNode[]>(`${base}/device-options`);
 }
 
 export async function listEnvironmentsApi(params?: Record<string, any>) {
