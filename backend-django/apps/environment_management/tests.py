@@ -1,0 +1,104 @@
+from django.test import TestCase
+from ninja.errors import HttpError
+
+from core.role.role_model import Role
+from core.user.user_model import User
+
+from .models import EnvironmentQueue, TestEnvironment
+from .schemas import EnvironmentIn, EnvironmentListQuery
+from .services import (
+    create_environment,
+    enqueue_environment,
+    list_environments,
+    occupy_environment,
+    release_environment,
+    update_environment,
+)
+
+
+def make_user(username: str, *role_codes: str, is_superuser: bool = False) -> User:
+    user = User.objects.create(username=username, password='pass', name=username, is_superuser=is_superuser)
+    for code in role_codes:
+        role, _ = Role.objects.get_or_create(code=code, defaults={'name': code, 'status': True})
+        user.core_roles.add(role)
+    return user
+
+
+def payload(ip: str = '192.168.1.10', password: str = 'secret') -> EnvironmentIn:
+    return EnvironmentIn(
+        ip_address=ip,
+        account='tester',
+        password=password,
+        domain='cockpit',
+        category='test',
+        project_name='P1',
+        vehicle_model='V1',
+        device_material='MAT',
+        asset_number='ASSET',
+        config={'版本': 'v1'},
+        shelf_location='A-01',
+        sort=0,
+    )
+
+
+class EnvironmentManagementServiceTests(TestCase):
+    def setUp(self):
+        self.admin = make_user('admin', 'env_admin')
+        self.env_user = make_user('env_user', 'environment_user')
+        self.user = make_user('user')
+        self.user2 = make_user('user2')
+        self.user3 = make_user('user3')
+
+    def test_password_is_encrypted_and_only_environment_user_gets_plain_text(self):
+        env_data = create_environment(self.admin, payload(password='Pa55w0rd'))
+        env = TestEnvironment.objects.get(id=env_data['id'])
+
+        self.assertNotEqual(env.password_encrypted, 'Pa55w0rd')
+        normal_page = list_environments(self.user, EnvironmentListQuery(page=1, pageSize=20))
+        env_user_page = list_environments(self.env_user, EnvironmentListQuery(page=1, pageSize=20))
+
+        self.assertEqual(normal_page['items'][0]['password'], 'Pa****rd')
+        self.assertFalse(normal_page['items'][0]['can_view_secret'])
+        self.assertFalse(normal_page['items'][0]['can_use_environment'])
+        self.assertEqual(env_user_page['items'][0]['password'], 'Pa55w0rd')
+        self.assertTrue(env_user_page['items'][0]['can_view_secret'])
+        self.assertTrue(env_user_page['items'][0]['can_use_environment'])
+
+    def test_non_admin_cannot_create_or_update_environment(self):
+        with self.assertRaises(HttpError):
+            create_environment(self.user, payload())
+
+        env_data = create_environment(self.admin, payload())
+        with self.assertRaises(HttpError):
+            update_environment(self.user, env_data['id'], payload(ip='192.168.1.11'))
+
+    def test_occupy_queue_jump_and_release_do_not_auto_transfer(self):
+        env_id = create_environment(self.admin, payload())['id']
+
+        with self.assertRaises(HttpError):
+            occupy_environment(self.user, env_id)
+
+        occupied = occupy_environment(self.env_user, env_id)
+        self.assertTrue(occupied['success'])
+        self.assertEqual(occupied['environment']['current_user_name'], 'env_user')
+
+        with self.assertRaises(HttpError):
+            occupy_environment(self.user2, env_id)
+
+        environment_user2 = make_user('environment_user2', 'environment_user')
+        environment_user3 = make_user('environment_user3', 'environment_user')
+        enqueue_environment(environment_user2, env_id, 'normal')
+        enqueue_environment(environment_user3, env_id, 'jump')
+        queues = list(EnvironmentQueue.objects.filter(environment_id=env_id, status='waiting').order_by('position'))
+        self.assertEqual([row.user.username for row in queues], ['environment_user3', 'environment_user2'])
+
+        released = release_environment(self.env_user, env_id)
+        self.assertIn('队首用户 environment_user3', released['message'])
+        env = TestEnvironment.objects.get(id=env_id)
+        self.assertEqual(env.status, 'idle')
+        self.assertIsNone(env.current_user_id)
+
+        with self.assertRaises(HttpError):
+            occupy_environment(environment_user2, env_id)
+        next_occupied = occupy_environment(environment_user3, env_id)
+        self.assertEqual(next_occupied['environment']['current_user_name'], 'environment_user3')

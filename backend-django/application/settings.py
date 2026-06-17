@@ -103,6 +103,7 @@ INSTALLED_APPS = [
     'apps.delivery_matrix',
     'apps.code_scan',
     'apps.deepaudit',
+    'apps.environment_management',
 ]
 
 TEMPLATES = [
