@@ -260,7 +260,7 @@ def delete_environment(user: User, environment_id: str) -> bool:
 
 
 def set_favorite(user: User, environment_id: str, enabled: bool) -> dict:
-    """收藏是个人视图偏好，平台默认用户也可以使用，不参与占用权限判断。"""
+    """收藏是环境用户的个人视图偏好；平台默认用户在权限层保持只读。"""
     env = get_object_or_404(TestEnvironment, id=environment_id, is_deleted=False)
     if enabled:
         EnvironmentFavorite.objects.get_or_create(environment=env, user=user)
