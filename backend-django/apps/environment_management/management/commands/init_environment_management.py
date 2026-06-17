@@ -67,6 +67,7 @@ PERMISSION_SEEDS = {
     'environment_user': [
         {'name': '环境使用查看', 'code': 'environment-management:user:view', 'permission_type': 0},
         {'name': '环境列表接口', 'code': 'environment-management:api:environments:list', 'permission_type': 1, 'api_path': '/api/environment-management/environments', 'http_method': 'GET'},
+        {'name': '环境公告查看接口', 'code': 'environment-management:api:announcement:view', 'permission_type': 1, 'api_path': '/api/environment-management/announcement', 'http_method': 'GET'},
         {'name': '环境收藏接口', 'code': 'environment-management:api:favorite', 'permission_type': 1, 'api_path': '/api/environment-management/environments/:id/favorite', 'http_method': 'POST'},
         {'name': '环境取消收藏接口', 'code': 'environment-management:api:unfavorite', 'permission_type': 1, 'api_path': '/api/environment-management/environments/:id/favorite', 'http_method': 'DELETE'},
         {'name': '环境占用接口', 'code': 'environment-management:api:occupy', 'permission_type': 1, 'api_path': '/api/environment-management/environments/:id/occupy', 'http_method': 'POST'},
@@ -82,6 +83,7 @@ PERMISSION_SEEDS = {
         {'name': '环境创建接口', 'code': 'environment-management:api:environments:create', 'permission_type': 1, 'api_path': '/api/environment-management/environments', 'http_method': 'POST'},
         {'name': '环境更新接口', 'code': 'environment-management:api:environments:update', 'permission_type': 1, 'api_path': '/api/environment-management/environments/:id', 'http_method': 'PUT'},
         {'name': '环境删除接口', 'code': 'environment-management:api:environments:delete', 'permission_type': 1, 'api_path': '/api/environment-management/environments/:id', 'http_method': 'DELETE'},
+        {'name': '环境公告保存接口', 'code': 'environment-management:api:announcement:update', 'permission_type': 1, 'api_path': '/api/environment-management/announcement', 'http_method': 'PUT'},
         {'name': '测试设备类型树接口', 'code': 'environment-management:api:device-types:list', 'permission_type': 1, 'api_path': '/api/environment-management/device-types', 'http_method': 'GET'},
         {'name': '测试设备类型创建接口', 'code': 'environment-management:api:device-types:create', 'permission_type': 1, 'api_path': '/api/environment-management/device-types', 'http_method': 'POST'},
         {'name': '测试设备类型更新接口', 'code': 'environment-management:api:device-types:update', 'permission_type': 1, 'api_path': '/api/environment-management/device-types/:id', 'http_method': 'PUT'},
@@ -195,6 +197,7 @@ class Command(BaseCommand):
         readonly_permissions = Permission.objects.filter(
             code__in=[
                 'environment-management:api:environments:list',
+                'environment-management:api:announcement:view',
                 'environment-management:api:queue:list',
                 'environment-management:api:records:list',
             ]
@@ -202,6 +205,7 @@ class Command(BaseCommand):
         environment_user_permissions = Permission.objects.filter(
             code__in=[
                 'environment-management:api:environments:list',
+                'environment-management:api:announcement:view',
                 'environment-management:api:favorite',
                 'environment-management:api:unfavorite',
                 'environment-management:api:occupy',

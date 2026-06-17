@@ -178,3 +178,14 @@ class EnvironmentRecord(RootModel):
             models.Index(fields=['operator', '-sys_create_datetime']),
         ]
         ordering = ['-sys_create_datetime']
+
+
+class EnvironmentAnnouncement(RootModel):
+    title = models.CharField(max_length=200, blank=True, default='', verbose_name='公告标题')
+    content_html = models.TextField(blank=True, default='', verbose_name='公告内容')
+    enabled = models.BooleanField(default=False, db_index=True, verbose_name='是否启用')
+
+    class Meta:
+        db_table = 'environment_management_announcement'
+        verbose_name = '环境操作公告'
+        verbose_name_plural = verbose_name

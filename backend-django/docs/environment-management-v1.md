@@ -8,6 +8,7 @@ v1 的核心目标：
 
 - 管理端维护环境基础信息：IP、账号、加密密码、领域、分类、项目、车型、测试设备、配置情况文本、货架位置和备注。
 - 管理端提供测试设备管理能力，支持多级设备类型树和类型下设备 CRUD。
+- 管理端提供环境操作公告配置，管理员可维护占用、排队、插队前的富文本确认内容。
 - 用户端提供列表和平铺视图，默认展示全部环境，支持收藏视图。
 - 环境使用流程支持占用、释放、排队、插队、查看队列和占用记录。
 - 密码明文只允许环境用户和环境管理员查看；平台默认用户只拿到脱敏字段。
@@ -40,6 +41,7 @@ python manage.py init_environment_management
 - `EnvironmentFavorite`：用户收藏表，用户与环境唯一关联。
 - `EnvironmentQueue`：等待队列表，按 `position` 和 `requested_at` 排序，`queue_type` 区分普通排队和插队。
 - `EnvironmentRecord`：操作记录表，记录占用、释放、排队、取消排队、插队和管理员配置变更。
+- `EnvironmentAnnouncement`：环境操作公告配置，保存标题、富文本内容和启用状态。
 
 密码字段只存 `password_encrypted`，使用 `apps.deepaudit.encryption` 的 Fernet 实现，密钥来源是 `DJANGO_SECRET_KEY`。更换生产密钥会影响历史密码解密，必须谨慎。
 
@@ -65,6 +67,9 @@ python manage.py init_environment_management
 - 测试设备类型删除前必须确认没有子类型和测试设备。
 - 测试设备删除前必须确认没有被任何环境绑定。
 - 队列重排必须使用不带 `select_related('user')` 的独立查询，避免 Django 抛出 `deferred and traversed using select_related` 错误。
+- 事务内锁定等待队列时必须使用独立查询，不复用展示用的 `_waiting_queues()`。
+- 测试设备级联中的类型节点只作为路径容器，提交环境绑定时只能提交具体设备 ID。
+- 如果环境操作公告启用，用户端占用、排队、插队前必须先弹窗确认；释放环境不弹公告。
 
 ## API 与前端页面
 
@@ -85,11 +90,13 @@ python manage.py init_environment_management
 - `GET /device-types`、`POST /device-types`、`PUT /device-types/{id}`、`DELETE /device-types/{id}`：测试设备类型树管理，仅环境管理员可用。
 - `GET /devices`、`POST /devices`、`PUT /devices/{id}`、`DELETE /devices/{id}`：测试设备管理，仅环境管理员可用。
 - `GET /device-options`：环境表单的测试设备级联多选项，仅环境管理员可用。
+- `GET /announcement`：读取环境操作公告，平台用户、环境用户和管理员均可读取。
+- `PUT /announcement`：保存环境操作公告，仅环境管理员可用。
 
 前端页面：
 
-- `/environment-management/user`：用户端，支持列表/平铺、全部/收藏、筛选、占用时长、队列和记录抽屉。
-- `/environment-management/admin`：管理端，使用 Tab 分为“环境管理”和“测试设备管理”。环境管理使用 `zq-table` 和弹窗表单，测试设备管理使用左侧类型树和右侧设备列表。
+- `/environment-management/user`：用户端，列表模式使用 `zq-table`，平铺模式使用宽卡片控制台布局，支持全部/收藏、筛选、占用时长、队列和记录抽屉。
+- `/environment-management/admin`：管理端，使用 Tab 分为“环境管理”“测试设备管理”“公告配置”。环境管理和测试设备列表均使用 `zq-table`，页面高度默认撑满可用屏幕。
 
 ## 后续维护约定
 

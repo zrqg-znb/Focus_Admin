@@ -7,6 +7,8 @@ from .schemas import (
     DeviceOptionNode,
     DeviceTypeIn,
     DeviceTypeOut,
+    EnvironmentAnnouncementIn,
+    EnvironmentAnnouncementOut,
     EnvironmentActionOut,
     EnvironmentIn,
     EnvironmentListQuery,
@@ -67,6 +69,16 @@ def delete_device(request, device_id: str):
 def list_device_options(request):
     services.require_manager(request.auth)
     return services.list_device_options()
+
+
+@router.get('/announcement', response=EnvironmentAnnouncementOut, summary='环境操作公告')
+def get_announcement(request):
+    return services.get_announcement()
+
+
+@router.put('/announcement', response=EnvironmentAnnouncementOut, summary='保存环境操作公告')
+def save_announcement(request, payload: EnvironmentAnnouncementIn):
+    return services.save_announcement(request.auth, payload)
 
 
 @router.get('/environments', response=EnvironmentPageOut, summary='环境列表')

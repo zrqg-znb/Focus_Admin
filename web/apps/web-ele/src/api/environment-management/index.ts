@@ -48,7 +48,22 @@ export interface DeviceOptionNode {
   value: string;
   label: string;
   disabled: boolean;
+  node_type: 'device' | 'type';
   children: DeviceOptionNode[];
+}
+
+export interface EnvironmentAnnouncement {
+  id?: null | string;
+  title: string;
+  content_html: string;
+  enabled: boolean;
+  updated_at?: null | string;
+}
+
+export interface EnvironmentAnnouncementPayload {
+  title: string;
+  content_html: string;
+  enabled: boolean;
 }
 
 export interface EnvironmentDeviceBrief {
@@ -194,6 +209,16 @@ export async function deleteDeviceApi(id: string) {
 
 export async function listDeviceOptionsApi() {
   return requestClient.get<DeviceOptionNode[]>(`${base}/device-options`);
+}
+
+export async function getEnvironmentAnnouncementApi() {
+  return requestClient.get<EnvironmentAnnouncement>(`${base}/announcement`);
+}
+
+export async function saveEnvironmentAnnouncementApi(
+  data: EnvironmentAnnouncementPayload,
+) {
+  return requestClient.put<EnvironmentAnnouncement>(`${base}/announcement`, data);
 }
 
 export async function listEnvironmentsApi(params?: Record<string, any>) {

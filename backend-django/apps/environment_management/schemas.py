@@ -46,7 +46,22 @@ class DeviceOptionNode(Schema):
     value: str
     label: str
     disabled: bool = False
+    node_type: str = 'type'
     children: List['DeviceOptionNode'] = Field(default_factory=list)
+
+
+class EnvironmentAnnouncementIn(Schema):
+    title: str = ''
+    content_html: str = ''
+    enabled: bool = False
+
+
+class EnvironmentAnnouncementOut(Schema):
+    id: Optional[str] = None
+    title: str = ''
+    content_html: str = ''
+    enabled: bool = False
+    updated_at: Optional[datetime] = None
 
 
 class EnvironmentDeviceBrief(Schema):

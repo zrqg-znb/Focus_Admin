@@ -8,11 +8,7 @@ import type {
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
-import {
-  Clock,
-  IconifyIcon,
-  RefreshCw,
-} from '@vben/icons';
+import { Clock, IconifyIcon, RefreshCw } from '@vben/icons';
 
 import {
   ElButton,
@@ -22,18 +18,20 @@ import {
   ElFormItem,
   ElInput,
   ElMessage,
+  ElMessageBox,
   ElOption,
   ElPagination,
   ElSegmented,
   ElSelect,
+  ElTag,
   ElTable,
   ElTableColumn,
-  ElTag,
 } from 'element-plus';
 
 import {
   cancelMyQueueApi,
   favoriteEnvironmentApi,
+  getEnvironmentAnnouncementApi,
   jumpQueueEnvironmentApi,
   listEnvironmentQueueApi,
   listEnvironmentRecordsApi,
@@ -43,6 +41,7 @@ import {
   releaseEnvironmentApi,
   unfavoriteEnvironmentApi,
 } from '#/api/environment-management';
+import { useZqTable } from '#/components/zq-table';
 
 const domainOptions = [
   { label: '全部领域', value: '' },
@@ -56,15 +55,15 @@ const categoryOptions = [
   { label: 'CI', value: 'ci' },
 ];
 
-const loading = ref(false);
+const cardLoading = ref(false);
 const rows = ref<EnvironmentItem[]>([]);
 const total = ref(0);
 const page = ref(1);
-const pageSize = ref(20);
+const pageSize = ref(12);
 const viewMode = ref<'card' | 'table'>('table');
 const scopeMode = ref<'all' | 'favorite'>('all');
 const tick = ref(Date.now());
-let timer: any = null;
+let timer: null | number = null;
 
 const filters = ref({
   category: '',
@@ -94,6 +93,46 @@ const favoriteCount = computed(
   () => rows.value.filter((item) => item.is_favorite).length,
 );
 
+const [Grid, gridApi] = useZqTable<EnvironmentItem>({
+  tableTitle: '环境使用',
+  class: 'environment-grid',
+  gridOptions: {
+    columns: [
+      { key: 'favorite', dataKey: 'favorite', title: '收藏', width: 64, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
+      { key: 'ip_address', dataKey: 'ip_address', title: 'IP地址', width: 140, align: 'center', headerAlign: 'center' },
+      { key: 'secret', dataKey: 'secret', title: '账号密码', width: 160, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
+      { key: 'domain_category', dataKey: 'domain_category', title: '领域/分类', width: 128, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
+      { key: 'project_vehicle', dataKey: 'project_vehicle', title: '项目/车型', minWidth: 160, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
+      { key: 'device_display', dataKey: 'device_display', title: '测试设备', minWidth: 240, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
+      { key: 'config_description', dataKey: 'config_description', title: '配置情况', minWidth: 220, align: 'center', headerAlign: 'center' },
+      { key: 'occupy_state', dataKey: 'occupy_state', title: '占用情况', width: 150, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
+      { key: 'queue_state', dataKey: 'queue_state', title: '排队', width: 130, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
+      { key: 'shelf_location', dataKey: 'shelf_location', title: '货架位置', width: 130, align: 'center', headerAlign: 'center' },
+      { key: 'actions', dataKey: 'actions', title: '操作', width: 270, align: 'center', headerAlign: 'center', fixed: true, showOverflowTooltip: false },
+    ],
+    border: true,
+    stripe: true,
+    proxyConfig: {
+      autoLoad: true,
+      ajax: {
+        query: async ({ page: tablePage }: any) => {
+          const result = await listEnvironmentsApi({
+            ...filters.value,
+            favorite_only: scopeMode.value === 'favorite',
+            page: tablePage.currentPage,
+            pageSize: tablePage.pageSize,
+          });
+          rows.value = result.items || [];
+          total.value = result.total || 0;
+          return result;
+        },
+      },
+    },
+    pagerConfig: { enabled: true, pageSize: 20, pageSizes: [12, 20, 40, 80] },
+    toolbarConfig: { custom: true, refresh: true, search: false, zoom: true },
+  },
+});
+
 function formatDuration(seconds: number) {
   const safeSeconds = Math.max(Number(seconds || 0), 0);
   const h = Math.floor(safeSeconds / 3600);
@@ -105,7 +144,7 @@ function formatDuration(seconds: number) {
 }
 
 function occupiedSeconds(row: EnvironmentItem) {
-  // 占用时长以后端 occupied_at 为准，本地 tick 只负责让 UI 每秒刷新。
+  // 占用时长以后端 occupied_at 为准，本地 tick 只负责让 UI 每秒刷新，不改变真实占用记录。
   if (row.status !== 'occupied' || !row.occupied_at) return 0;
   return Math.max(
     Math.floor((tick.value - new Date(row.occupied_at).getTime()) / 1000),
@@ -113,8 +152,8 @@ function occupiedSeconds(row: EnvironmentItem) {
   );
 }
 
-async function loadData() {
-  loading.value = true;
+async function loadCards() {
+  cardLoading.value = true;
   try {
     const result = await listEnvironmentsApi({
       ...filters.value,
@@ -125,13 +164,38 @@ async function loadData() {
     rows.value = result.items || [];
     total.value = result.total || 0;
   } finally {
-    loading.value = false;
+    cardLoading.value = false;
+  }
+}
+
+async function loadData() {
+  if (viewMode.value === 'table') {
+    await gridApi.reload();
+  } else {
+    await loadCards();
   }
 }
 
 function resetPageAndLoad() {
   page.value = 1;
   loadData();
+}
+
+async function requireOperationAnnouncement() {
+  const announcement = await getEnvironmentAnnouncementApi();
+  if (!announcement.enabled) return true;
+  await ElMessageBox.confirm(
+    `<div class="environment-announcement-content">${announcement.content_html || '请确认已了解本次操作说明。'}</div>`,
+    announcement.title || '环境操作确认',
+    {
+      confirmButtonText: '我已了解，继续',
+      cancelButtonText: '取消',
+      dangerouslyUseHTMLString: true,
+      customClass: 'environment-announcement-dialog',
+      type: 'warning',
+    },
+  );
+  return true;
 }
 
 async function toggleFavorite(row: EnvironmentItem) {
@@ -143,10 +207,11 @@ async function toggleFavorite(row: EnvironmentItem) {
 }
 
 async function occupy(row: EnvironmentItem) {
+  // 占用会打开 RDP，先弹管理员公告，用户取消时不触发后端占用接口。
+  await requireOperationAnnouncement();
   const result = await occupyEnvironmentApi(row.id);
   ElMessage.success(result.message);
   Object.assign(row, result.environment);
-  // Web 页面不能携带账号密码启动 mstsc；这里只跳转自定义协议，Windows 端负责协议处理。
   window.location.href = result.environment.rdp_url;
 }
 
@@ -157,11 +222,13 @@ async function release(row: EnvironmentItem) {
 }
 
 async function queue(row: EnvironmentItem) {
+  await requireOperationAnnouncement();
   Object.assign(row, await queueEnvironmentApi(row.id));
   ElMessage.success('排队成功');
 }
 
 async function jumpQueue(row: EnvironmentItem) {
+  await requireOperationAnnouncement();
   Object.assign(row, await jumpQueueEnvironmentApi(row.id));
   ElMessage.success('插队成功');
 }
@@ -206,7 +273,7 @@ onBeforeUnmount(() => {
 <template>
   <Page auto-content-height>
     <div class="environment-user-page">
-      <div class="toolbar">
+      <section class="environment-command-bar">
         <ElForm :inline="true" :model="filters" class="toolbar-form">
           <ElFormItem label="关键词">
             <ElInput
@@ -218,22 +285,12 @@ onBeforeUnmount(() => {
           </ElFormItem>
           <ElFormItem label="领域">
             <ElSelect v-model="filters.domain" class="filter-select" @change="resetPageAndLoad">
-              <ElOption
-                v-for="item in domainOptions"
-                :key="item.value"
-                :label="item.label"
-                :value="item.value"
-              />
+              <ElOption v-for="item in domainOptions" :key="item.value" :label="item.label" :value="item.value" />
             </ElSelect>
           </ElFormItem>
           <ElFormItem label="分类">
             <ElSelect v-model="filters.category" class="filter-select" @change="resetPageAndLoad">
-              <ElOption
-                v-for="item in categoryOptions"
-                :key="item.value"
-                :label="item.label"
-                :value="item.value"
-              />
+              <ElOption v-for="item in categoryOptions" :key="item.value" :label="item.label" :value="item.value" />
             </ElSelect>
           </ElFormItem>
           <ElFormItem label="项目">
@@ -252,9 +309,9 @@ onBeforeUnmount(() => {
         </ElForm>
         <div class="toolbar-actions">
           <ElSegmented v-model="scopeMode" :options="scopeOptions" @change="resetPageAndLoad" />
-          <ElSegmented v-model="viewMode" :options="viewOptions" />
+          <ElSegmented v-model="viewMode" :options="viewOptions" @change="resetPageAndLoad" />
         </div>
-      </div>
+      </section>
 
       <div class="summary-line">
         <span>共 {{ total }} 个环境</span>
@@ -262,216 +319,126 @@ onBeforeUnmount(() => {
         <span>密码策略：仅环境用户和环境管理员可见明文</span>
       </div>
 
-      <ElTable
-        v-if="viewMode === 'table'"
-        v-loading="loading"
-        :data="rows"
-        border
-        stripe
-        class="environment-table"
-      >
-        <ElTableColumn width="56">
-          <template #default="{ row }">
-            <ElButton
-              v-if="row.can_use_environment"
-              link
-              type="warning"
-              @click="toggleFavorite(row)"
-            >
-              <IconifyIcon :class="['size-4', row.is_favorite ? 'favorite-on' : '']" icon="lucide:star" />
-            </ElButton>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn label="IP地址" min-width="132" prop="ip_address" />
-        <ElTableColumn label="账号密码" min-width="150">
-          <template #default="{ row }">
-            <div>{{ row.account || '-' }}</div>
-            <div class="muted">{{ row.password || '-' }}</div>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn label="领域/分类" min-width="120">
-          <template #default="{ row }">
-            <ElTag size="small">{{ row.domain_label }}</ElTag>
-            <ElTag class="ml-1" size="small" type="info">{{ row.category_label }}</ElTag>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn label="项目/车型" min-width="150">
-          <template #default="{ row }">
-            <div>{{ row.project_name || '-' }}</div>
-            <div class="muted">{{ row.vehicle_model || '-' }}</div>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn label="测试设备" min-width="220">
-          <template #default="{ row }">
-            <div class="tag-wrap">
-              <ElTag
-                v-for="device in row.devices"
-                :key="device.id"
-                size="small"
-                type="success"
-              >
-                {{ device.display_name }}
-              </ElTag>
-              <span v-if="!row.devices?.length" class="muted">-</span>
-            </div>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn label="配置情况" min-width="220">
-          <template #default="{ row }">
-            <span>{{ row.config_description || '-' }}</span>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn label="占用情况" min-width="140">
-          <template #default="{ row }">
-            <ElTag :type="row.status === 'idle' ? 'success' : 'danger'">
-              {{ row.status_label }}
+      <Grid v-if="viewMode === 'table'">
+        <template #cell-favorite="{ row }">
+          <ElButton v-if="row.can_use_environment" link type="warning" @click="toggleFavorite(row)">
+            <IconifyIcon :class="['size-4', row.is_favorite ? 'favorite-on' : '']" icon="lucide:star" />
+          </ElButton>
+        </template>
+        <template #cell-secret="{ row }">
+          <div>{{ row.account || '-' }}</div>
+          <div class="muted">{{ row.password || '-' }}</div>
+        </template>
+        <template #cell-domain_category="{ row }">
+          <ElTag size="small">{{ row.domain_label }}</ElTag>
+          <ElTag class="ml-1" size="small" type="info">{{ row.category_label }}</ElTag>
+        </template>
+        <template #cell-project_vehicle="{ row }">
+          <div>{{ row.project_name || '-' }}</div>
+          <div class="muted">{{ row.vehicle_model || '-' }}</div>
+        </template>
+        <template #cell-device_display="{ row }">
+          <div class="tag-wrap">
+            <ElTag v-for="device in row.devices" :key="device.id" size="small" type="success">
+              {{ device.display_name }}
             </ElTag>
-            <div class="muted">
-              {{ row.current_user_name || '无人占用' }}
-            </div>
-            <div v-if="row.status === 'occupied'" class="muted">
-              {{ formatDuration(occupiedSeconds(row)) }}
-            </div>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn label="排队" min-width="130">
-          <template #default="{ row }">
-            <ElButton link type="primary" @click="openQueue(row)">
-              {{ row.queue_count }} 人
-            </ElButton>
-            <div v-if="row.my_queue_position" class="muted">
-              我的位置 {{ row.my_queue_position }}
-            </div>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn label="货架位置" min-width="130" prop="shelf_location" />
-        <ElTableColumn fixed="right" label="操作" min-width="250">
-          <template #default="{ row }">
-            <div class="action-group">
-              <ElButton
-                v-if="row.can_use_environment && row.status === 'idle'"
-                size="small"
-                type="primary"
-                @click="occupy(row)"
-              >
-                占用
-              </ElButton>
-              <ElButton
-                v-else-if="row.can_use_environment"
-                size="small"
-                type="warning"
-                @click="release(row)"
-              >
-                释放
-              </ElButton>
-              <ElButton v-if="row.can_use_environment" size="small" @click="openRdp(row)">
-                <IconifyIcon class="mr-1 size-4" icon="lucide:monitor-up" />
-                RDP
-              </ElButton>
-              <ElButton
-                v-if="row.can_use_environment && row.my_queue_id"
-                size="small"
-                @click="cancelQueue(row)"
-              >
-                取消排队
-              </ElButton>
-              <template v-else-if="row.can_use_environment">
-                <ElButton size="small" @click="queue(row)">排队</ElButton>
-                <ElButton size="small" type="danger" @click="jumpQueue(row)">
-                  插队
-                </ElButton>
-              </template>
-              <ElButton link type="primary" @click="openRecords(row)">
-                记录
-              </ElButton>
-            </div>
-          </template>
-        </ElTableColumn>
-      </ElTable>
+            <span v-if="!row.devices?.length" class="muted">-</span>
+          </div>
+        </template>
+        <template #cell-occupy_state="{ row }">
+          <ElTag :type="row.status === 'idle' ? 'success' : 'danger'">
+            {{ row.status_label }}
+          </ElTag>
+          <div class="muted">{{ row.current_user_name || '无人占用' }}</div>
+          <div v-if="row.status === 'occupied'" class="muted">
+            {{ formatDuration(occupiedSeconds(row)) }}
+          </div>
+        </template>
+        <template #cell-queue_state="{ row }">
+          <ElButton link type="primary" @click="openQueue(row)">{{ row.queue_count }} 人</ElButton>
+          <div v-if="row.my_queue_position" class="muted">我的位置 {{ row.my_queue_position }}</div>
+        </template>
+        <template #cell-actions="{ row }">
+          <div class="action-group">
+            <ElButton v-if="row.can_use_environment && row.status === 'idle'" size="small" type="primary" @click="occupy(row)">占用</ElButton>
+            <ElButton v-else-if="row.can_use_environment" size="small" type="warning" @click="release(row)">释放</ElButton>
+            <ElButton v-if="row.can_use_environment" size="small" @click="openRdp(row)">RDP</ElButton>
+            <ElButton v-if="row.can_use_environment && row.my_queue_id" size="small" @click="cancelQueue(row)">取消排队</ElButton>
+            <template v-else-if="row.can_use_environment">
+              <ElButton size="small" @click="queue(row)">排队</ElButton>
+              <ElButton size="small" type="danger" @click="jumpQueue(row)">插队</ElButton>
+            </template>
+            <ElButton link type="primary" @click="openRecords(row)">记录</ElButton>
+          </div>
+        </template>
+      </Grid>
 
-      <div v-else v-loading="loading" class="card-grid">
-        <article v-for="row in rows" :key="row.id" class="env-card">
+      <div v-else v-loading="cardLoading" class="card-grid">
+        <article v-for="row in rows" :key="row.id" class="env-card" :class="{ 'is-idle': row.status === 'idle' }">
           <header>
             <div>
               <div class="card-title">
-                {{ row.ip_address }}
-                <ElTag :type="row.status === 'idle' ? 'success' : 'danger'" size="small">
-                  {{ row.status_label }}
-                </ElTag>
+                <span>{{ row.ip_address }}</span>
+                <ElTag :type="row.status === 'idle' ? 'success' : 'danger'" size="small">{{ row.status_label }}</ElTag>
               </div>
-              <div class="muted">{{ row.project_name || '-' }} / {{ row.vehicle_model || '-' }}</div>
+              <div class="card-subtitle">{{ row.project_name || '未配置项目' }} / {{ row.vehicle_model || '未配置车型' }}</div>
             </div>
-            <ElButton
-              v-if="row.can_use_environment"
-              link
-              type="warning"
-              @click="toggleFavorite(row)"
-            >
+            <ElButton v-if="row.can_use_environment" link type="warning" @click="toggleFavorite(row)">
               <IconifyIcon :class="['size-5', row.is_favorite ? 'favorite-on' : '']" icon="lucide:star" />
             </ElButton>
           </header>
-          <div class="card-meta">
+
+          <div class="card-dashboard">
+            <div>
+              <span class="metric-label">占用人</span>
+              <strong>{{ row.current_user_name || '无人占用' }}</strong>
+            </div>
+            <div>
+              <span class="metric-label">已占用</span>
+              <strong>{{ row.status === 'occupied' ? formatDuration(occupiedSeconds(row)) : '-' }}</strong>
+            </div>
+            <div>
+              <span class="metric-label">排队</span>
+              <strong>{{ row.queue_count }} 人</strong>
+            </div>
+          </div>
+
+          <div class="card-tags">
             <ElTag size="small">{{ row.domain_label }}</ElTag>
             <ElTag size="small" type="info">{{ row.category_label }}</ElTag>
-            <span>{{ row.shelf_location || '未配置货架' }}</span>
+            <ElTag v-if="row.shelf_location" size="small" type="warning">{{ row.shelf_location }}</ElTag>
           </div>
-          <div class="card-secret">
-            <span>账号 {{ row.account || '-' }}</span>
-            <span>密码 {{ row.password || '-' }}</span>
-          </div>
-          <div class="tag-wrap">
-            <ElTag
-              v-for="device in row.devices"
-              :key="device.id"
-              size="small"
-              type="success"
-            >
+
+          <div class="device-strip">
+            <ElTag v-for="device in row.devices.slice(0, 3)" :key="device.id" size="small" type="success">
               {{ device.display_name }}
             </ElTag>
+            <span v-if="row.devices.length > 3" class="muted">+{{ row.devices.length - 3 }} 个设备</span>
+            <span v-if="!row.devices.length" class="muted">未绑定测试设备</span>
           </div>
-          <div v-if="row.config_description" class="config-text">
-            {{ row.config_description }}
-          </div>
+
           <footer>
             <span>
               <Clock class="mr-1 size-4" />
-              {{ row.current_user_name || '无人占用' }}
-              <template v-if="row.status === 'occupied'">
-                · {{ formatDuration(occupiedSeconds(row)) }}
-              </template>
+              {{ row.first_queue_user_name ? `队首：${row.first_queue_user_name}` : '暂无等待队列' }}
             </span>
-            <span>排队 {{ row.queue_count }} 人</span>
+            <div class="card-actions">
+              <ElButton v-if="row.can_use_environment && row.status === 'idle'" size="small" type="primary" @click="occupy(row)">占用</ElButton>
+              <ElButton v-else-if="row.can_use_environment" size="small" type="warning" @click="release(row)">释放</ElButton>
+              <ElButton v-if="row.can_use_environment && row.my_queue_id" size="small" @click="cancelQueue(row)">取消排队</ElButton>
+              <template v-else-if="row.can_use_environment">
+                <ElButton size="small" @click="queue(row)">排队</ElButton>
+                <ElButton size="small" type="danger" @click="jumpQueue(row)">插队</ElButton>
+              </template>
+              <ElButton size="small" @click="openQueue(row)">队列</ElButton>
+              <ElButton size="small" @click="openRecords(row)">记录</ElButton>
+            </div>
           </footer>
-          <div class="card-actions">
-            <ElButton
-              v-if="row.can_use_environment && row.status === 'idle'"
-              size="small"
-              type="primary"
-              @click="occupy(row)"
-            >
-              占用
-            </ElButton>
-            <ElButton v-else-if="row.can_use_environment" size="small" type="warning" @click="release(row)">
-              释放
-            </ElButton>
-            <ElButton v-if="row.can_use_environment" size="small" @click="openRdp(row)">RDP</ElButton>
-            <ElButton v-if="row.can_use_environment && row.my_queue_id" size="small" @click="cancelQueue(row)">
-              取消排队
-            </ElButton>
-            <template v-else-if="row.can_use_environment">
-              <ElButton size="small" @click="queue(row)">排队</ElButton>
-              <ElButton size="small" type="danger" @click="jumpQueue(row)">
-                插队
-              </ElButton>
-            </template>
-            <ElButton size="small" @click="openQueue(row)">队列</ElButton>
-            <ElButton size="small" @click="openRecords(row)">记录</ElButton>
-          </div>
         </article>
         <ElEmpty v-if="rows.length === 0" description="暂无环境" />
       </div>
 
-      <div class="pager">
+      <div v-if="viewMode === 'card'" class="pager">
         <ElPagination
           v-model:current-page="page"
           v-model:page-size="pageSize"
@@ -479,7 +446,7 @@ onBeforeUnmount(() => {
           :total="total"
           background
           layout="total, sizes, prev, pager, next"
-          @current-change="loadData"
+          @current-change="loadCards"
           @size-change="resetPageAndLoad"
         />
       </div>
@@ -515,16 +482,16 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: 100%;
+  min-height: calc(100vh - 120px);
 }
 
-.toolbar {
+.environment-command-bar {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   padding: 12px;
-  background: var(--el-bg-color);
+  background: linear-gradient(180deg, var(--el-bg-color), var(--el-fill-color-extra-light));
   border: 1px solid var(--el-border-color-light);
   border-radius: 6px;
 }
@@ -550,8 +517,13 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
-.environment-table {
-  width: 100%;
+.environment-grid {
+  flex: 1;
+  min-height: calc(100vh - 250px);
+}
+
+.environment-grid :deep(.bg-card.flex.h-full) {
+  min-height: calc(100vh - 250px);
 }
 
 .muted {
@@ -560,14 +532,11 @@ onBeforeUnmount(() => {
   line-height: 1.6;
 }
 
-.tag-wrap {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
+.tag-wrap,
 .action-group,
-.card-actions {
+.card-actions,
+.card-tags,
+.device-strip {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -579,18 +548,27 @@ onBeforeUnmount(() => {
 
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 14px;
 }
 
 .env-card {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
-  background: var(--el-bg-color);
+  gap: 14px;
+  min-height: 260px;
+  padding: 16px;
+  overflow: hidden;
+  background: linear-gradient(145deg, var(--el-bg-color), var(--el-fill-color-extra-light));
   border: 1px solid var(--el-border-color-light);
+  border-left: 4px solid var(--el-color-danger);
   border-radius: 6px;
+  box-shadow: 0 12px 30px rgb(15 23 42 / 6%);
+}
+
+.env-card.is-idle {
+  border-left-color: var(--el-color-success);
 }
 
 .env-card header,
@@ -601,28 +579,52 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+.env-card footer {
+  align-items: center;
+  margin-top: auto;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
 .card-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 17px;
-  font-weight: 650;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0;
 }
 
-.card-meta,
-.card-secret {
-  display: flex;
-  flex-wrap: wrap;
+.card-subtitle {
+  margin-top: 4px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.card-dashboard {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  color: var(--el-text-color-regular);
-  font-size: 13px;
 }
 
-.config-text {
-  color: var(--el-text-color-regular);
-  font-size: 13px;
-  line-height: 1.6;
-  white-space: pre-wrap;
+.card-dashboard > div {
+  min-height: 64px;
+  padding: 10px;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+}
+
+.metric-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.card-dashboard strong {
+  color: var(--el-text-color-primary);
+  font-size: 15px;
 }
 
 .pager {
@@ -631,8 +633,18 @@ onBeforeUnmount(() => {
   padding: 8px 0;
 }
 
+:global(.environment-announcement-dialog .environment-announcement-content) {
+  max-height: 360px;
+  overflow: auto;
+  line-height: 1.7;
+}
+
+:global(.environment-announcement-dialog .environment-announcement-content p) {
+  margin: 0 0 8px;
+}
+
 @media (max-width: 900px) {
-  .toolbar {
+  .environment-command-bar {
     flex-direction: column;
   }
 
@@ -641,6 +653,10 @@ onBeforeUnmount(() => {
   }
 
   .card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .card-dashboard {
     grid-template-columns: 1fr;
   }
 }

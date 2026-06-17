@@ -5,7 +5,7 @@ from core.role.role_model import Role
 from core.user.user_model import User
 
 from .models import EnvironmentQueue, TestEnvironment
-from .schemas import DeviceTypeIn, EnvironmentIn, EnvironmentListQuery, TestDeviceIn
+from .schemas import DeviceTypeIn, EnvironmentAnnouncementIn, EnvironmentIn, EnvironmentListQuery, TestDeviceIn
 from .services import (
     create_environment,
     create_device,
@@ -13,9 +13,11 @@ from .services import (
     delete_device,
     delete_device_type,
     enqueue_environment,
+    get_announcement,
     list_environments,
     occupy_environment,
     release_environment,
+    save_announcement,
     update_environment,
 )
 
@@ -142,3 +144,32 @@ class EnvironmentManagementServiceTests(TestCase):
             occupy_environment(environment_user2, env_id)
         next_occupied = occupy_environment(environment_user3, env_id)
         self.assertEqual(next_occupied['environment']['current_user_name'], 'environment_user3')
+
+    def test_reject_device_type_value_when_binding_environment(self):
+        tree = create_device_type(
+            self.admin,
+            DeviceTypeIn(parent_id=None, name='空类型', sort=1, is_active=True),
+        )
+        env_payload = payload()
+        env_payload.device_ids = [f"type:{tree[0]['id']}"]
+
+        with self.assertRaises(HttpError):
+            create_environment(self.admin, env_payload)
+
+    def test_announcement_can_only_be_saved_by_admin(self):
+        initial = get_announcement()
+        self.assertFalse(initial['enabled'])
+
+        with self.assertRaises(HttpError):
+            save_announcement(
+                self.env_user,
+                EnvironmentAnnouncementIn(title='提示', content_html='<p>hello</p>', enabled=True),
+            )
+
+        saved = save_announcement(
+            self.admin,
+            EnvironmentAnnouncementIn(title='操作前确认', content_html='<p>请确认</p>', enabled=True),
+        )
+        self.assertTrue(saved['enabled'])
+        self.assertEqual(saved['title'], '操作前确认')
+        self.assertEqual(get_announcement()['content_html'], '<p>请确认</p>')

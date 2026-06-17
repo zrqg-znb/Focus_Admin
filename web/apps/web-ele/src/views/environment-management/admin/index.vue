@@ -5,6 +5,7 @@ import type {
   DeviceOptionNode,
   DeviceTypeItem,
   DeviceTypePayload,
+  EnvironmentAnnouncementPayload,
   EnvironmentItem,
   EnvironmentPayload,
   TestDeviceItem,
@@ -14,7 +15,6 @@ import type {
 import { computed, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
-import { Edit, Plus, Trash2 } from '@vben/icons';
 
 import {
   ElButton,
@@ -30,8 +30,6 @@ import {
   ElSelect,
   ElSwitch,
   ElTabPane,
-  ElTable,
-  ElTableColumn,
   ElTabs,
   ElTag,
   ElTree,
@@ -44,15 +42,18 @@ import {
   deleteDeviceApi,
   deleteDeviceTypeApi,
   deleteEnvironmentApi,
+  getEnvironmentAnnouncementApi,
   listDeviceOptionsApi,
   listDevicesApi,
   listDeviceTypesApi,
   listEnvironmentsApi,
+  saveEnvironmentAnnouncementApi,
   updateDeviceApi,
   updateDeviceTypeApi,
   updateEnvironmentApi,
 } from '#/api/environment-management';
 import { useZqTable } from '#/components/zq-table';
+import { RichTextEditor } from '#/components/zq-form/rich-text-editor';
 
 import {
   categoryOptions,
@@ -96,7 +97,6 @@ const cascaderProps = {
   value: 'value',
   label: 'label',
   children: 'children',
-  disabled: 'disabled',
 };
 
 const [Grid, gridApi] = useZqTable({
@@ -128,9 +128,7 @@ const [Grid, gridApi] = useZqTable({
 
 const deviceTypeTree = ref<DeviceTypeItem[]>([]);
 const selectedTypeId = ref('');
-const deviceRows = ref<TestDeviceItem[]>([]);
 const deviceKeyword = ref('');
-const deviceLoading = ref(false);
 
 const typeDialogVisible = ref(false);
 const typeDialogMode = ref<'create' | 'edit'>('create');
@@ -155,13 +153,48 @@ const deviceForm = ref<TestDevicePayload & { id?: string }>({
   remark: '',
 });
 
+const announcementSaving = ref(false);
+const announcementForm = ref<EnvironmentAnnouncementPayload>({
+  title: '',
+  content_html: '',
+  enabled: false,
+});
+
+const [DeviceGrid, deviceGridApi] = useZqTable<TestDeviceItem>({
+  tableTitle: '测试设备',
+  class: 'device-grid',
+  gridOptions: {
+    columns: [
+      { key: 'name', dataKey: 'name', title: '设备名称', minWidth: 160, align: 'center', headerAlign: 'center' },
+      { key: 'device_type_path', dataKey: 'device_type_path', title: '类型路径', minWidth: 220, align: 'center', headerAlign: 'center' },
+      { key: 'is_active', dataKey: 'is_active', title: '状态', width: 90, align: 'center', headerAlign: 'center' },
+      { key: 'remark', dataKey: 'remark', title: '备注', minWidth: 180, align: 'center', headerAlign: 'center' },
+      { key: 'actions', dataKey: 'actions', title: '操作', width: 150, align: 'center', headerAlign: 'center', fixed: true, showOverflowTooltip: false },
+    ],
+    border: true,
+    stripe: true,
+    proxyConfig: {
+      autoLoad: false,
+      ajax: {
+        query: async () =>
+          listDevicesApi({
+            device_type_id: selectedTypeId.value || undefined,
+            keyword: deviceKeyword.value || undefined,
+          }),
+      },
+    },
+    pagerConfig: { enabled: false },
+    toolbarConfig: { custom: true, refresh: true, search: false, zoom: true },
+  },
+});
+
 const selectedTypeName = computed(() => {
   const target = findTypeNode(deviceTypeTree.value, selectedTypeId.value);
   return target?.name || '全部类型';
 });
 
 async function loadDeviceOptions() {
-  // 环境表单的测试设备选择只允许选中具体设备；后端已把类型节点标记为 disabled。
+  // 类型节点只作为级联路径容器，真正保存前会过滤 type: 前缀并由后端再次校验。
   deviceOptions.value = await listDeviceOptionsApi();
 }
 
@@ -180,15 +213,7 @@ async function loadDeviceTypes() {
 }
 
 async function loadDevices() {
-  deviceLoading.value = true;
-  try {
-    deviceRows.value = await listDevicesApi({
-      device_type_id: selectedTypeId.value || undefined,
-      keyword: deviceKeyword.value || undefined,
-    });
-  } finally {
-    deviceLoading.value = false;
-  }
+  await deviceGridApi.reload();
 }
 
 function handleTypeNodeClick(row: DeviceTypeItem) {
@@ -226,9 +251,14 @@ async function submitEnvironmentForm() {
   await environmentFormRef.value?.validate();
   environmentDialogSaving.value = true;
   try {
+    // 级联类型节点的 value 使用 type: 前缀，只允许真实设备 ID 提交，后端也会做同样校验。
+    const deviceIds = (environmentForm.value.device_ids || []).filter(
+      (id) => !String(id).startsWith('type:'),
+    );
     // 编辑时密码留空代表不修改；这里转成 undefined，避免把旧密码误清空。
     const payload: EnvironmentPayload = {
       ...environmentForm.value,
+      device_ids: deviceIds,
       password: environmentForm.value.password || undefined,
     };
     if (environmentDialogMode.value === 'create') {
@@ -372,8 +402,27 @@ async function removeDevice(row: TestDeviceItem) {
   ElMessage.success('设备删除成功');
 }
 
+async function loadAnnouncement() {
+  const data = await getEnvironmentAnnouncementApi();
+  announcementForm.value = {
+    title: data.title || '',
+    content_html: data.content_html || '',
+    enabled: data.enabled,
+  };
+}
+
+async function submitAnnouncement() {
+  announcementSaving.value = true;
+  try {
+    await saveEnvironmentAnnouncementApi(announcementForm.value);
+    ElMessage.success('公告配置已保存');
+  } finally {
+    announcementSaving.value = false;
+  }
+}
+
 onMounted(async () => {
-  await Promise.all([loadDeviceTypes(), loadDeviceOptions(), loadDevices()]);
+  await Promise.all([loadDeviceTypes(), loadDeviceOptions(), loadDevices(), loadAnnouncement()]);
 });
 </script>
 
@@ -384,11 +433,10 @@ onMounted(async () => {
         <Grid>
           <template #toolbar-tools>
             <ElButton type="primary" @click="openEnvironmentCreate">
-              <Plus class="mr-1 size-4" />
               新建环境
             </ElButton>
           </template>
-          <template #device_display="{ row }">
+          <template #cell-device_display="{ row }">
             <div class="tag-wrap">
               <ElTag
                 v-for="device in row.devices"
@@ -401,14 +449,12 @@ onMounted(async () => {
               <span v-if="!row.devices?.length" class="muted">-</span>
             </div>
           </template>
-          <template #actions="{ row }">
+          <template #cell-actions="{ row }">
             <div class="flex items-center justify-center gap-2">
               <ElButton link type="primary" @click="openEnvironmentEdit(row)">
-                <Edit class="mr-1 size-4" />
                 编辑
               </ElButton>
               <ElButton link type="danger" @click="removeEnvironment(row)">
-                <Trash2 class="mr-1 size-4" />
                 删除
               </ElButton>
             </div>
@@ -422,7 +468,6 @@ onMounted(async () => {
             <div class="panel-header">
               <span>设备类型</span>
               <ElButton link type="primary" @click="openTypeCreate()">
-                <Plus class="mr-1 size-4" />
                 新建
               </ElButton>
             </div>
@@ -462,31 +507,64 @@ onMounted(async () => {
                 />
                 <ElButton @click="loadDevices">查询</ElButton>
                 <ElButton type="primary" @click="openDeviceCreate">
-                  <Plus class="mr-1 size-4" />
                   新建设备
                 </ElButton>
               </div>
             </div>
-            <ElTable v-loading="deviceLoading" :data="deviceRows" border stripe>
-              <ElTableColumn label="设备名称" min-width="160" prop="name" />
-              <ElTableColumn label="类型路径" min-width="220" prop="device_type_path" />
-              <ElTableColumn label="状态" width="90">
-                <template #default="{ row }">
+            <DeviceGrid>
+              <template #cell-is_active="{ row }">
+                <div class="flex justify-center">
                   <ElTag :type="row.is_active ? 'success' : 'info'">
                     {{ row.is_active ? '启用' : '禁用' }}
                   </ElTag>
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="备注" min-width="180" prop="remark" />
-              <ElTableColumn label="操作" width="150">
-                <template #default="{ row }">
+                </div>
+              </template>
+              <template #cell-actions="{ row }">
+                <div class="flex items-center justify-center gap-2">
                   <ElButton link type="primary" @click="openDeviceEdit(row)">编辑</ElButton>
                   <ElButton link type="danger" @click="removeDevice(row)">删除</ElButton>
-                </template>
-              </ElTableColumn>
-            </ElTable>
+                </div>
+              </template>
+            </DeviceGrid>
           </section>
         </div>
+      </ElTabPane>
+
+      <ElTabPane label="公告配置" name="announcement">
+        <section class="announcement-panel">
+          <div class="panel-header">
+            <div>
+              <strong>占用/排队操作公告</strong>
+              <span class="muted ml-2">用户点击占用、排队、插队前展示</span>
+            </div>
+            <ElSwitch
+              v-model="announcementForm.enabled"
+              active-text="启用"
+              inactive-text="停用"
+            />
+          </div>
+          <ElForm label-width="96px">
+            <ElFormItem label="公告标题">
+              <ElInput v-model="announcementForm.title" maxlength="200" show-word-limit />
+            </ElFormItem>
+            <ElFormItem label="公告内容">
+              <RichTextEditor
+                v-model="announcementForm.content_html"
+                class="announcement-editor"
+                placeholder="请输入占用、排队、插队前需要用户确认的说明"
+              />
+            </ElFormItem>
+            <ElFormItem>
+              <ElButton
+                :loading="announcementSaving"
+                type="primary"
+                @click="submitAnnouncement"
+              >
+                保存公告
+              </ElButton>
+            </ElFormItem>
+          </ElForm>
+        </section>
       </ElTabPane>
     </ElTabs>
 
@@ -661,22 +739,43 @@ onMounted(async () => {
 
 <style scoped>
 .environment-admin-tabs {
-  min-height: 100%;
+  min-height: calc(100vh - 120px);
+}
+
+.environment-admin-tabs :deep(.el-tabs__content),
+.environment-admin-tabs :deep(.el-tab-pane) {
+  min-height: calc(100vh - 170px);
+}
+
+.environment-admin-tabs :deep(.zq-table),
+.environment-admin-tabs :deep(.bg-card.flex.h-full) {
+  min-height: calc(100vh - 190px);
 }
 
 .device-workbench {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
   gap: 12px;
+  min-height: calc(100vh - 180px);
 }
 
 .device-tree-panel,
 .device-list-panel {
-  min-height: 560px;
+  min-height: calc(100vh - 180px);
   padding: 12px;
   background: var(--el-bg-color);
   border: 1px solid var(--el-border-color-light);
   border-radius: 6px;
+}
+
+.device-list-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.device-grid {
+  flex: 1;
+  min-height: 0;
 }
 
 .panel-header {
@@ -713,6 +812,18 @@ onMounted(async () => {
 .muted {
   color: var(--el-text-color-secondary);
   font-size: 12px;
+}
+
+.announcement-panel {
+  min-height: calc(100vh - 180px);
+  padding: 16px;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 6px;
+}
+
+.announcement-editor {
+  width: 100%;
 }
 
 @media (max-width: 960px) {

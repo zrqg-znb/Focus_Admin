@@ -11,6 +11,7 @@ from apps.deepaudit.encryption import decrypt_value, encrypt_value
 from core.user.user_model import User
 
 from .models import (
+    EnvironmentAnnouncement,
     EnvironmentDeviceType,
     EnvironmentFavorite,
     EnvironmentQueue,
@@ -18,7 +19,7 @@ from .models import (
     EnvironmentTestDevice,
     TestEnvironment,
 )
-from .schemas import DeviceTypeIn, EnvironmentIn, EnvironmentListQuery, TestDeviceIn
+from .schemas import DeviceTypeIn, EnvironmentAnnouncementIn, EnvironmentIn, EnvironmentListQuery, TestDeviceIn
 
 ENV_ADMIN_ROLE = 'env_admin'
 ENVIRONMENT_USER_ROLE = 'environment_user'
@@ -86,6 +87,16 @@ def _waiting_queues(environment_id: str):
         .select_related('user')
         .order_by('position', 'requested_at')
     )
+
+
+def _waiting_queues_for_update(environment_id: str):
+    """事务内锁定等待队列。
+
+    这里刻意不复用 _waiting_queues()，因为展示查询带 select_related('user')。
+    业务锁定和重排只需要队列自身字段，混用关联预取再配合 only/defer 或 select_for_update
+    容易触发 Django 的 deferred + select_related 冲突。
+    """
+    return EnvironmentQueue.objects.filter(environment_id=environment_id, status='waiting').order_by('position', 'requested_at')
 
 
 def _renumber_waiting_queue(environment_id: str):
@@ -216,6 +227,9 @@ def _record(env: TestEnvironment, user: User | None, action: str, message: str =
 def _get_active_devices(device_ids: list[str]) -> list[EnvironmentTestDevice]:
     """校验环境绑定的设备 ID，避免前端传入已禁用或不存在的设备。"""
     normalized_ids = [str(item).strip() for item in device_ids if str(item).strip()]
+    invalid_type_ids = [item for item in normalized_ids if item.startswith('type:')]
+    if invalid_type_ids:
+        raise HttpError(400, '测试设备只能选择具体设备，不能选择设备类型')
     if not normalized_ids:
         return []
     devices = list(
@@ -376,7 +390,11 @@ def delete_device(user: User, device_id: str) -> bool:
 
 
 def list_device_options() -> list[dict]:
-    """构造级联多选数据：类型节点禁选，只有具体设备叶子可选。"""
+    """构造级联多选数据。
+
+    类型节点只承担路径容器职责，不能作为最终绑定值；前端会过滤 type: 前缀，
+    后端 _get_active_devices() 也会再次拒绝 type: 值，避免绕过前端提交类型节点。
+    """
     type_rows = list(
         EnvironmentDeviceType.objects.filter(is_deleted=False, is_active=True)
         .select_related('parent')
@@ -397,10 +415,10 @@ def list_device_options() -> list[dict]:
     def build_type_node(row: EnvironmentDeviceType) -> dict:
         children = [build_type_node(child) for child in type_children.get(row.id, [])]
         children.extend(
-            {'value': str(device.id), 'label': device.name, 'disabled': False, 'children': []}
+            {'value': str(device.id), 'label': device.name, 'disabled': False, 'node_type': 'device', 'children': []}
             for device in device_children.get(row.id, [])
         )
-        return {'value': f'type:{row.id}', 'label': row.name, 'disabled': True, 'children': children}
+        return {'value': f'type:{row.id}', 'label': row.name, 'disabled': False, 'node_type': 'type', 'children': children}
 
     return [build_type_node(row) for row in type_children.get(None, [])]
 
@@ -529,9 +547,10 @@ def occupy_environment(user: User, environment_id: str) -> dict:
             return {'success': True, 'message': '你已占用该环境', 'environment': serialize_environment(env, user)}
         if env.status == 'occupied':
             raise HttpError(400, '环境正在被占用，请先排队')
-        waiting = list(_waiting_queues(env.id).select_for_update())
+        waiting = list(_waiting_queues_for_update(env.id).select_for_update())
         if waiting and str(waiting[0].user_id) != str(user.id):
-            raise HttpError(400, f'当前队首为 {_display_name(waiting[0].user)}，暂不能占用')
+            queue_user = User.objects.filter(id=waiting[0].user_id).first()
+            raise HttpError(400, f'当前队首为 {_display_name(queue_user)}，暂不能占用')
 
         # 只有环境空闲且无他人排在前面时才直接占用；如果本人是队首，占用成功后关闭自己的等待记录。
         env.status = 'occupied'
@@ -584,7 +603,7 @@ def enqueue_environment(user: User, environment_id: str, queue_type: str) -> dic
             raise HttpError(400, '你已在该环境队列中')
 
         # 插队只改变等待队列顺序，不会抢占当前占用人；为了保持队列稳定，插队排在所有已有插队之后、普通队列之前。
-        waiting = list(_waiting_queues(env.id).select_for_update())
+        waiting = list(_waiting_queues_for_update(env.id).select_for_update())
         if queue_type == 'jump':
             jump_count = sum(1 for row in waiting if row.queue_type == 'jump')
             insert_position = jump_count + 1
@@ -665,3 +684,36 @@ def list_records(environment_id: str, page: int = 1, page_size: int = 20) -> dic
         'page': page,
         'limit': page_size,
     }
+
+
+def _serialize_announcement(row: EnvironmentAnnouncement | None) -> dict:
+    return {
+        'id': str(row.id) if row else None,
+        'title': row.title if row else '',
+        'content_html': row.content_html if row else '',
+        'enabled': row.enabled if row else False,
+        'updated_at': row.sys_update_datetime if row else None,
+    }
+
+
+def get_announcement() -> dict:
+    """读取环境操作公告；没有配置时返回禁用空公告，方便前端直接判断 enabled。"""
+    row = EnvironmentAnnouncement.objects.filter(is_deleted=False).order_by('-sys_update_datetime').first()
+    return _serialize_announcement(row)
+
+
+def save_announcement(user: User, payload: EnvironmentAnnouncementIn) -> dict:
+    """保存环境操作公告。
+
+    本模块只保留一份当前公告配置，管理员反复编辑同一条记录，避免用户端弹出多条公告造成干扰。
+    """
+    require_manager(user)
+    row = EnvironmentAnnouncement.objects.filter(is_deleted=False).order_by('-sys_update_datetime').first()
+    if not row:
+        row = EnvironmentAnnouncement(sys_creator=user)
+    row.title = (payload.title or '').strip()
+    row.content_html = payload.content_html or ''
+    row.enabled = payload.enabled
+    row.sys_modifier = user
+    row.save()
+    return _serialize_announcement(row)
