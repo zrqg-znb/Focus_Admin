@@ -101,14 +101,16 @@ const [Grid, gridApi] = useZqTable<EnvironmentItem>({
       { key: 'favorite', dataKey: 'favorite', title: '收藏', width: 64, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
       { key: 'ip_address', dataKey: 'ip_address', title: 'IP地址', width: 140, align: 'center', headerAlign: 'center' },
       { key: 'secret', dataKey: 'secret', title: '账号密码', width: 160, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
-      { key: 'domain_category', dataKey: 'domain_category', title: '领域/分类', width: 128, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
-      { key: 'project_vehicle', dataKey: 'project_vehicle', title: '项目/车型', minWidth: 160, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
+      { key: 'domain', dataKey: 'domain', title: '领域', width: 90, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
+      { key: 'category', dataKey: 'category', title: '分类', width: 90, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
+      { key: 'project_name', dataKey: 'project_name', title: '项目', minWidth: 120, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
+      { key: 'vehicle_model', dataKey: 'vehicle_model', title: '车型', minWidth: 120, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
       { key: 'device_display', dataKey: 'device_display', title: '测试设备', minWidth: 240, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
       { key: 'config_description', dataKey: 'config_description', title: '配置情况', minWidth: 220, align: 'center', headerAlign: 'center' },
       { key: 'occupy_state', dataKey: 'occupy_state', title: '占用情况', width: 150, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
       { key: 'queue_state', dataKey: 'queue_state', title: '排队', width: 130, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
       { key: 'shelf_location', dataKey: 'shelf_location', title: '货架位置', width: 130, align: 'center', headerAlign: 'center' },
-      { key: 'actions', dataKey: 'actions', title: '操作', width: 270, align: 'center', headerAlign: 'center', fixed: true, showOverflowTooltip: false },
+      { key: 'actions', dataKey: 'actions', title: '操作', width: 320, align: 'center', headerAlign: 'center', fixed: 'right', showOverflowTooltip: false },
     ],
     border: true,
     stripe: true,
@@ -181,34 +183,53 @@ function resetPageAndLoad() {
   loadData();
 }
 
-async function requireOperationAnnouncement() {
+async function requireOperationAnnouncement(actionName: string) {
   const announcement = await getEnvironmentAnnouncementApi();
-  if (!announcement.enabled) return true;
-  await ElMessageBox.confirm(
-    `<div class="environment-announcement-content">${announcement.content_html || '请确认已了解本次操作说明。'}</div>`,
-    announcement.title || '环境操作确认',
-    {
-      confirmButtonText: '我已了解，继续',
-      cancelButtonText: '取消',
-      dangerouslyUseHTMLString: true,
-      customClass: 'environment-announcement-dialog',
+  if (announcement.enabled) {
+    await ElMessageBox.confirm(
+      `<div class="environment-announcement-content">${announcement.content_html || ''}</div>`,
+      announcement.title || '公告',
+      {
+        confirmButtonText: '我已了解并继续',
+        cancelButtonText: '取消',
+        dangerouslyUseHTMLString: true,
+        customClass: 'environment-announcement-dialog',
+        type: 'warning',
+      },
+    );
+  } else {
+    await ElMessageBox.confirm(`确定要${actionName}该环境吗？`, '操作确认', {
       type: 'warning',
-    },
-  );
+    });
+  }
   return true;
 }
 
 async function toggleFavorite(row: EnvironmentItem) {
-  const updated = row.is_favorite
+  const isCurrentlyFavorite = row.is_favorite;
+  const updated = isCurrentlyFavorite
     ? await unfavoriteEnvironmentApi(row.id)
     : await favoriteEnvironmentApi(row.id);
   Object.assign(row, updated);
   rows.value.sort((a, b) => Number(b.is_favorite) - Number(a.is_favorite));
+
+  if (!isCurrentlyFavorite) {
+    ElMessage({
+      message: `已将 ${row.ip_address} 加入收藏`,
+      type: 'success',
+      duration: 2000,
+    });
+  } else {
+    ElMessage({
+      message: `已取消收藏 ${row.ip_address}`,
+      type: 'info',
+      duration: 2000,
+    });
+  }
 }
 
 async function occupy(row: EnvironmentItem) {
-  // 占用会打开 RDP，先弹管理员公告，用户取消时不触发后端占用接口。
-  await requireOperationAnnouncement();
+  await requireOperationAnnouncement('占用');
   const result = await occupyEnvironmentApi(row.id);
   ElMessage.success(result.message);
   Object.assign(row, result.environment);
@@ -216,19 +237,20 @@ async function occupy(row: EnvironmentItem) {
 }
 
 async function release(row: EnvironmentItem) {
+  await ElMessageBox.confirm(`确定要释放该环境吗？`, '操作确认', { type: 'warning' });
   const result = await releaseEnvironmentApi(row.id);
   ElMessage.success(result.message);
   Object.assign(row, result.environment);
 }
 
 async function queue(row: EnvironmentItem) {
-  await requireOperationAnnouncement();
+  await requireOperationAnnouncement('排队');
   Object.assign(row, await queueEnvironmentApi(row.id));
   ElMessage.success('排队成功');
 }
 
 async function jumpQueue(row: EnvironmentItem) {
-  await requireOperationAnnouncement();
+  await requireOperationAnnouncement('插队');
   Object.assign(row, await jumpQueueEnvironmentApi(row.id));
   ElMessage.success('插队成功');
 }
@@ -271,7 +293,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Page auto-content-height>
+  <Page auto-content-height content-class="flex h-full min-h-0 flex-col">
     <div class="environment-user-page">
       <section class="environment-command-bar">
         <ElForm :inline="true" :model="filters" class="toolbar-form">
@@ -321,21 +343,25 @@ onBeforeUnmount(() => {
 
       <Grid v-if="viewMode === 'table'">
         <template #cell-favorite="{ row }">
-          <ElButton v-if="row.can_use_environment" link type="warning" @click="toggleFavorite(row)">
-            <IconifyIcon :class="['size-4', row.is_favorite ? 'favorite-on' : '']" icon="lucide:star" />
+          <ElButton v-if="row.can_use_environment" link class="favorite-btn" @click="toggleFavorite(row)">
+            <IconifyIcon :class="['size-5', row.is_favorite ? 'favorite-on' : 'favorite-off']" icon="svg:my-favorite" />
           </ElButton>
         </template>
         <template #cell-secret="{ row }">
           <div>{{ row.account || '-' }}</div>
           <div class="muted">{{ row.password || '-' }}</div>
         </template>
-        <template #cell-domain_category="{ row }">
+        <template #cell-domain="{ row }">
           <ElTag size="small">{{ row.domain_label }}</ElTag>
-          <ElTag class="ml-1" size="small" type="info">{{ row.category_label }}</ElTag>
         </template>
-        <template #cell-project_vehicle="{ row }">
+        <template #cell-category="{ row }">
+          <ElTag size="small" type="info">{{ row.category_label }}</ElTag>
+        </template>
+        <template #cell-project_name="{ row }">
           <div>{{ row.project_name || '-' }}</div>
-          <div class="muted">{{ row.vehicle_model || '-' }}</div>
+        </template>
+        <template #cell-vehicle_model="{ row }">
+          <div>{{ row.vehicle_model || '-' }}</div>
         </template>
         <template #cell-device_display="{ row }">
           <div class="tag-wrap">
@@ -361,12 +387,14 @@ onBeforeUnmount(() => {
         <template #cell-actions="{ row }">
           <div class="action-group">
             <ElButton v-if="row.can_use_environment && row.status === 'idle'" size="small" type="primary" @click="occupy(row)">占用</ElButton>
-            <ElButton v-else-if="row.can_use_environment" size="small" type="warning" @click="release(row)">释放</ElButton>
+            <ElButton v-else-if="row.can_use_environment && row.status === 'occupied'" size="small" type="warning" @click="release(row)">释放</ElButton>
             <ElButton v-if="row.can_use_environment" size="small" @click="openRdp(row)">RDP</ElButton>
-            <ElButton v-if="row.can_use_environment && row.my_queue_id" size="small" @click="cancelQueue(row)">取消排队</ElButton>
-            <template v-else-if="row.can_use_environment">
-              <ElButton size="small" @click="queue(row)">排队</ElButton>
-              <ElButton size="small" type="danger" @click="jumpQueue(row)">插队</ElButton>
+            <template v-if="row.can_use_environment && row.status !== 'idle'">
+              <ElButton v-if="row.my_queue_id" size="small" @click="cancelQueue(row)">取消排队</ElButton>
+              <template v-else>
+                <ElButton size="small" @click="queue(row)">排队</ElButton>
+                <ElButton size="small" type="danger" @click="jumpQueue(row)">插队</ElButton>
+              </template>
             </template>
             <ElButton link type="primary" @click="openRecords(row)">记录</ElButton>
           </div>
@@ -374,61 +402,85 @@ onBeforeUnmount(() => {
       </Grid>
 
       <div v-else v-loading="cardLoading" class="card-grid">
-        <article v-for="row in rows" :key="row.id" class="env-card" :class="{ 'is-idle': row.status === 'idle' }">
-          <header>
-            <div>
-              <div class="card-title">
-                <span>{{ row.ip_address }}</span>
-                <ElTag :type="row.status === 'idle' ? 'success' : 'danger'" size="small">{{ row.status_label }}</ElTag>
-              </div>
-              <div class="card-subtitle">{{ row.project_name || '未配置项目' }} / {{ row.vehicle_model || '未配置车型' }}</div>
+        <article v-for="row in rows" :key="row.id" class="env-card">
+          <header class="card-header">
+            <div class="card-header-left">
+              <span class="status-dot" :class="row.status === 'idle' ? 'is-idle' : 'is-occupied'"></span>
+              <span class="card-title">{{ row.ip_address }}</span>
+              <ElTag :type="row.status === 'idle' ? 'success' : 'danger'" size="small" effect="plain" class="status-tag">
+                {{ row.status_label }}
+              </ElTag>
             </div>
-            <ElButton v-if="row.can_use_environment" link type="warning" @click="toggleFavorite(row)">
-              <IconifyIcon :class="['size-5', row.is_favorite ? 'favorite-on' : '']" icon="lucide:star" />
-            </ElButton>
+            <div class="card-header-right">
+              <ElButton v-if="row.can_use_environment" link class="favorite-btn" @click="toggleFavorite(row)">
+                <IconifyIcon :class="['size-5', row.is_favorite ? 'favorite-on' : 'favorite-off']" icon="svg:my-favorite" />
+              </ElButton>
+            </div>
           </header>
 
-          <div class="card-dashboard">
-            <div>
-              <span class="metric-label">占用人</span>
-              <strong>{{ row.current_user_name || '无人占用' }}</strong>
+          <div class="card-body">
+            <div class="card-meta">
+              <span class="meta-item" title="项目">
+                <IconifyIcon icon="lucide:folder" class="meta-icon" />
+                {{ row.project_name || '未配置项目' }}
+              </span>
+              <span class="meta-divider"></span>
+              <span class="meta-item" title="车型">
+                <IconifyIcon icon="lucide:car" class="meta-icon" />
+                {{ row.vehicle_model || '未配置车型' }}
+              </span>
             </div>
-            <div>
-              <span class="metric-label">已占用</span>
-              <strong>{{ row.status === 'occupied' ? formatDuration(occupiedSeconds(row)) : '-' }}</strong>
+
+            <div class="card-metrics">
+              <div class="metric-block">
+                <span class="metric-label">占用人</span>
+                <span class="metric-value" :class="{'is-active': row.current_user_name}">
+                  {{ row.current_user_name || '无人占用' }}
+                </span>
+              </div>
+              <div class="metric-divider"></div>
+              <div class="metric-block">
+                <span class="metric-label">已占用</span>
+                <span class="metric-value">{{ row.status === 'occupied' ? formatDuration(occupiedSeconds(row)) : '-' }}</span>
+              </div>
+              <div class="metric-divider"></div>
+              <div class="metric-block">
+                <span class="metric-label">排队人数</span>
+                <span class="metric-value">{{ row.queue_count }} 人</span>
+              </div>
             </div>
-            <div>
-              <span class="metric-label">排队</span>
-              <strong>{{ row.queue_count }} 人</strong>
+
+            <div class="card-tags">
+              <ElTag size="small" effect="plain" round>{{ row.domain_label }}</ElTag>
+              <ElTag size="small" type="info" effect="plain" round>{{ row.category_label }}</ElTag>
+              <ElTag v-if="row.shelf_location" size="small" type="warning" effect="plain" round>货架: {{ row.shelf_location }}</ElTag>
+            </div>
+
+            <div class="device-strip" v-if="row.devices.length">
+              <ElTag v-for="device in row.devices.slice(0, 3)" :key="device.id" size="small" type="success" effect="light" class="device-tag">
+                {{ device.display_name }}
+              </ElTag>
+              <span v-if="row.devices.length > 3" class="device-more">+{{ row.devices.length - 3 }}</span>
+            </div>
+            <div class="device-strip empty" v-else>
+              <span class="device-more">未绑定测试设备</span>
             </div>
           </div>
 
-          <div class="card-tags">
-            <ElTag size="small">{{ row.domain_label }}</ElTag>
-            <ElTag size="small" type="info">{{ row.category_label }}</ElTag>
-            <ElTag v-if="row.shelf_location" size="small" type="warning">{{ row.shelf_location }}</ElTag>
-          </div>
-
-          <div class="device-strip">
-            <ElTag v-for="device in row.devices.slice(0, 3)" :key="device.id" size="small" type="success">
-              {{ device.display_name }}
-            </ElTag>
-            <span v-if="row.devices.length > 3" class="muted">+{{ row.devices.length - 3 }} 个设备</span>
-            <span v-if="!row.devices.length" class="muted">未绑定测试设备</span>
-          </div>
-
-          <footer>
-            <span>
+          <footer class="card-footer">
+            <span class="footer-queue-info">
               <Clock class="mr-1 size-4" />
               {{ row.first_queue_user_name ? `队首：${row.first_queue_user_name}` : '暂无等待队列' }}
             </span>
             <div class="card-actions">
               <ElButton v-if="row.can_use_environment && row.status === 'idle'" size="small" type="primary" @click="occupy(row)">占用</ElButton>
-              <ElButton v-else-if="row.can_use_environment" size="small" type="warning" @click="release(row)">释放</ElButton>
-              <ElButton v-if="row.can_use_environment && row.my_queue_id" size="small" @click="cancelQueue(row)">取消排队</ElButton>
-              <template v-else-if="row.can_use_environment">
-                <ElButton size="small" @click="queue(row)">排队</ElButton>
-                <ElButton size="small" type="danger" @click="jumpQueue(row)">插队</ElButton>
+              <ElButton v-else-if="row.can_use_environment && row.status === 'occupied'" size="small" type="warning" @click="release(row)">释放</ElButton>
+              <template v-if="row.can_use_environment && row.status !== 'idle'">
+                <ElButton v-if="row.my_queue_id" size="small" @click="cancelQueue(row)">取消排队</ElButton>
+                <template v-else>
+                  <ElButton size="small" @click="queue(row)">排队</ElButton>
+                  <ElButton size="small" type="danger" @click="jumpQueue(row)">插队</ElButton>
+                </template>
               </template>
               <ElButton size="small" @click="openQueue(row)">队列</ElButton>
               <ElButton size="small" @click="openRecords(row)">记录</ElButton>
@@ -482,28 +534,39 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: calc(100vh - 120px);
+  flex: 1;
+  min-height: 0;
 }
 
 .environment-command-bar {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px;
-  background: linear-gradient(180deg, var(--el-bg-color), var(--el-fill-color-extra-light));
+  padding: 12px 16px;
+  background: var(--el-bg-color);
   border: 1px solid var(--el-border-color-light);
-  border-radius: 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
 }
 
 .toolbar-form {
   flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.toolbar-form :deep(.el-form-item) {
+  margin-bottom: 0;
+  margin-right: 16px;
 }
 
 .toolbar-actions {
   display: flex;
   flex-shrink: 0;
   gap: 8px;
+  align-items: center;
 }
 
 .filter-select {
@@ -515,15 +578,21 @@ onBeforeUnmount(() => {
   gap: 18px;
   color: var(--el-text-color-secondary);
   font-size: 13px;
+  flex-shrink: 0;
 }
 
 .environment-grid {
   flex: 1;
-  min-height: calc(100vh - 250px);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .environment-grid :deep(.bg-card.flex.h-full) {
-  min-height: calc(100vh - 250px);
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .muted {
@@ -542,89 +611,247 @@ onBeforeUnmount(() => {
   gap: 6px;
 }
 
+.favorite-btn {
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  padding: 4px;
+}
+
+.favorite-btn:active {
+  transform: scale(0.7);
+}
+
+.favorite-btn .size-5 {
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
 .favorite-on {
-  fill: currentColor;
+  fill: #eab308;
+  color: #eab308;
+  filter: drop-shadow(0 0 6px rgba(234, 179, 8, 0.6));
+  animation: favorite-pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.favorite-off {
+  color: var(--el-text-color-placeholder);
+}
+
+.favorite-btn:hover .favorite-off {
+  color: var(--el-text-color-secondary);
+  transform: scale(1.1);
+}
+
+@keyframes favorite-pop {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(1.3);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: 16px;
 }
 
 .env-card {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  min-height: 260px;
-  padding: 16px;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-extra-light);
+  border-radius: 12px;
+  box-shadow: 0 4px 24px -4px rgba(0, 0, 0, 0.03);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   overflow: hidden;
-  background: linear-gradient(145deg, var(--el-bg-color), var(--el-fill-color-extra-light));
-  border: 1px solid var(--el-border-color-light);
-  border-left: 4px solid var(--el-color-danger);
-  border-radius: 6px;
-  box-shadow: 0 12px 30px rgb(15 23 42 / 6%);
 }
 
-.env-card.is-idle {
-  border-left-color: var(--el-color-success);
+.env-card:hover {
+  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.08);
+  transform: translateY(-4px);
+  border-color: var(--el-border-color-light);
 }
 
-.env-card header,
-.env-card footer {
+.card-header {
+  padding: 20px 24px 16px;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
+  gap: 12px;
+}
+
+.card-header-left {
+  display: flex;
+  align-items: center;
   gap: 10px;
 }
 
-.env-card footer {
+.card-header-right {
+  display: flex;
   align-items: center;
-  margin-top: auto;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.is-idle {
+  background-color: var(--el-color-success);
+  box-shadow: 0 0 0 3px var(--el-color-success-light-8);
+}
+
+.status-dot.is-occupied {
+  background-color: var(--el-color-danger);
+  box-shadow: 0 0 0 3px var(--el-color-danger-light-8);
 }
 
 .card-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+  line-height: 1.2;
+}
+
+.status-tag {
+  border-radius: 4px;
+}
+
+.card-body {
+  padding: 0 24px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.card-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: 0;
-}
-
-.card-subtitle {
-  margin-top: 4px;
-  color: var(--el-text-color-secondary);
+  color: var(--el-text-color-regular);
   font-size: 13px;
+  gap: 12px;
 }
 
-.card-dashboard {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+.meta-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.card-dashboard > div {
-  min-height: 64px;
-  padding: 10px;
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
+.meta-icon {
+  color: var(--el-text-color-secondary);
+  font-size: 15px;
+}
+
+.meta-divider {
+  width: 1px;
+  height: 12px;
+  background-color: var(--el-border-color-lighter);
+}
+
+.card-metrics {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 0;
+  border-top: 1px solid var(--el-border-color-extra-light);
+  border-bottom: 1px solid var(--el-border-color-extra-light);
+}
+
+.metric-block {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.metric-divider {
+  width: 1px;
+  height: 32px;
+  background-color: var(--el-border-color-extra-light);
+  margin: 0 16px;
 }
 
 .metric-label {
-  display: block;
-  margin-bottom: 6px;
   color: var(--el-text-color-secondary);
   font-size: 12px;
 }
 
-.card-dashboard strong {
+.metric-value {
   color: var(--el-text-color-primary);
   font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric-value.is-active {
+  color: var(--el-color-primary);
+}
+
+.card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.device-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  align-items: center;
+}
+
+.device-tag {
+  border: none;
+  background-color: var(--el-color-success-light-9);
+}
+
+.device-more {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  background-color: var(--el-fill-color-light);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.card-footer {
+  margin-top: auto;
+  padding: 16px 24px;
+  background: var(--el-fill-color-blank);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.footer-queue-info {
+  display: flex;
+  align-items: center;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .pager {

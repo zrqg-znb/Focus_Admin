@@ -15,6 +15,7 @@ import type {
 import { computed, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
+import { IconifyIcon } from '@vben/icons';
 
 import {
   ElButton,
@@ -123,6 +124,7 @@ const [Grid, gridApi] = useZqTable({
     schema: useEnvironmentSearchSchema(),
     showCollapseButton: false,
     submitOnChange: true,
+    wrapperClass: 'grid-cols-5',
   },
 });
 
@@ -427,7 +429,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page auto-content-height>
+  <Page auto-content-height content-class="flex h-full min-h-0 flex-col">
     <ElTabs v-model="activeTab" class="environment-admin-tabs">
       <ElTabPane label="环境管理" name="environments">
         <Grid>
@@ -466,36 +468,51 @@ onMounted(async () => {
         <div class="device-workbench">
           <aside class="device-tree-panel">
             <div class="panel-header">
-              <span>设备类型</span>
+              <div class="header-title">
+                <IconifyIcon icon="lucide:network" class="mr-2 size-4" />
+                <span>设备类型</span>
+              </div>
               <ElButton link type="primary" @click="openTypeCreate()">
-                新建
+                <IconifyIcon icon="lucide:plus" class="mr-1" /> 新建
               </ElButton>
             </div>
-            <ElTree
-              :data="deviceTypeTree"
-              :expand-on-click-node="false"
-              default-expand-all
-              node-key="id"
-              @node-click="handleTypeNodeClick"
-            >
-              <template #default="{ data }">
-                <div class="tree-node">
-                  <span>{{ data.name }}</span>
-                  <span class="tree-actions">
-                    <ElButton link size="small" type="primary" @click.stop="openTypeCreate(data.id)">子级</ElButton>
-                    <ElButton link size="small" type="primary" @click.stop="openTypeEdit(data)">编辑</ElButton>
-                    <ElButton link size="small" type="danger" @click.stop="removeType(data)">删除</ElButton>
-                  </span>
-                </div>
-              </template>
-            </ElTree>
+            <div class="tree-container">
+              <ElTree
+                :data="deviceTypeTree"
+                :expand-on-click-node="false"
+                default-expand-all
+                node-key="id"
+                @node-click="handleTypeNodeClick"
+              >
+                <template #default="{ node, data }">
+                  <div class="tree-node" :class="{ 'is-active': selectedTypeId === data.id }">
+                    <div class="node-content">
+                      <IconifyIcon :icon="node.expanded ? 'lucide:folder-open' : 'lucide:folder'" class="node-icon" />
+                      <span class="node-label">{{ data.name }}</span>
+                    </div>
+                    <span class="tree-actions" @click.stop>
+                      <ElButton link type="primary" @click="openTypeCreate(data.id)" title="添加子级">
+                        <IconifyIcon icon="lucide:plus" class="size-4" />
+                      </ElButton>
+                      <ElButton link type="primary" @click="openTypeEdit(data)" title="编辑">
+                        <IconifyIcon icon="lucide:edit" class="size-4" />
+                      </ElButton>
+                      <ElButton link type="danger" @click="removeType(data)" title="删除">
+                        <IconifyIcon icon="lucide:trash-2" class="size-4" />
+                      </ElButton>
+                    </span>
+                  </div>
+                </template>
+              </ElTree>
+            </div>
           </aside>
 
           <section class="device-list-panel">
-            <div class="panel-header">
-              <div>
+            <div class="list-panel-header">
+              <div class="header-title">
+                <IconifyIcon icon="lucide:monitor" class="mr-2 size-4" />
                 <strong>{{ selectedTypeName }}</strong>
-                <span class="muted ml-2">测试设备</span>
+                <span class="muted ml-2 font-normal">测试设备</span>
               </div>
               <div class="device-actions">
                 <ElInput
@@ -504,10 +521,14 @@ onMounted(async () => {
                   placeholder="搜索设备名称/备注"
                   style="width: 220px"
                   @keyup.enter="loadDevices"
-                />
+                >
+                  <template #prefix>
+                    <IconifyIcon icon="lucide:search" />
+                  </template>
+                </ElInput>
                 <ElButton @click="loadDevices">查询</ElButton>
                 <ElButton type="primary" @click="openDeviceCreate">
-                  新建设备
+                  <IconifyIcon icon="lucide:plus" class="mr-1" /> 新建设备
                 </ElButton>
               </div>
             </div>
@@ -739,51 +760,130 @@ onMounted(async () => {
 
 <style scoped>
 .environment-admin-tabs {
-  min-height: calc(100vh - 120px);
-}
-
-.environment-admin-tabs :deep(.el-tabs__content),
-.environment-admin-tabs :deep(.el-tab-pane) {
-  min-height: calc(100vh - 170px);
-}
-
-.environment-admin-tabs :deep(.zq-table),
-.environment-admin-tabs :deep(.bg-card.flex.h-full) {
-  min-height: calc(100vh - 190px);
-}
-
-.device-workbench {
-  display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
-  gap: 12px;
-  min-height: calc(100vh - 180px);
-}
-
-.device-tree-panel,
-.device-list-panel {
-  min-height: calc(100vh - 180px);
-  padding: 12px;
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 6px;
-}
-
-.device-list-panel {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
-.device-grid {
+/* 现代分段控制器风格 Tabs */
+.environment-admin-tabs > :deep(.el-tabs__header) {
+  margin: 0 0 16px 0;
+}
+
+.environment-admin-tabs > :deep(.el-tabs__header .el-tabs__nav-wrap) {
+  display: inline-block;
+  background-color: var(--el-fill-color-light);
+  padding: 4px;
+  border-radius: 8px;
+}
+
+.environment-admin-tabs > :deep(.el-tabs__header .el-tabs__nav-wrap::after) {
+  display: none;
+}
+
+.environment-admin-tabs > :deep(.el-tabs__header .el-tabs__active-bar) {
+  display: none;
+}
+
+.environment-admin-tabs > :deep(.el-tabs__header .el-tabs__nav-scroll) {
+  overflow: visible;
+}
+
+.environment-admin-tabs > :deep(.el-tabs__header .el-tabs__item) {
+  height: 32px;
+  line-height: 32px;
+  padding: 0 20px !important;
+  border-radius: 6px;
+  font-weight: 500;
+  color: var(--el-text-color-regular);
+  transition: all 0.3s cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+.environment-admin-tabs > :deep(.el-tabs__header .el-tabs__item:hover) {
+  color: var(--el-text-color-primary);
+}
+
+.environment-admin-tabs > :deep(.el-tabs__header .el-tabs__item.is-active) {
+  background-color: var(--el-bg-color);
+  color: var(--el-color-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  font-weight: 600;
+}
+
+.environment-admin-tabs :deep(.el-tabs__content),
+.environment-admin-tabs :deep(.el-tab-pane) {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.environment-admin-tabs :deep(.zq-table),
+.environment-admin-tabs :deep(.bg-card.flex.h-full) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- 测试设备管理 Workbench --- */
+.device-workbench {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+.device-tree-panel {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-extra-light);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.02);
 }
 
 .panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--el-border-color-extra-light);
+  background-color: var(--el-fill-color-light);
+}
+
+.header-title {
+  display: flex;
+  align-items: center;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.tree-container {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+/* ElTree overrides for modern look */
+.tree-container :deep(.el-tree-node__content) {
+  height: 38px;
+  border-radius: 8px;
+  margin-bottom: 4px;
+  transition: background-color 0.2s;
+}
+
+.tree-container :deep(.el-tree-node__content:hover) {
+  background-color: var(--el-fill-color);
+}
+
+.tree-container :deep(.el-tree-node:focus > .el-tree-node__content) {
+  background-color: transparent;
 }
 
 .tree-node {
@@ -791,18 +891,75 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   width: 100%;
+  padding-right: 8px;
+  font-size: 14px;
+  color: var(--el-text-color-regular);
+}
+
+.tree-node.is-active .node-label {
+  color: var(--el-color-primary);
+  font-weight: 600;
+}
+
+.tree-node.is-active .node-icon {
+  color: var(--el-color-primary);
+}
+
+.node-content {
+  display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+.node-icon {
+  font-size: 16px;
+  color: var(--el-text-color-secondary);
+  transition: color 0.2s;
 }
 
 .tree-actions {
   display: none;
+  align-items: center;
+  gap: 4px;
 }
 
 .tree-node:hover .tree-actions {
-  display: inline-flex;
+  display: flex;
 }
 
-.device-actions,
+.tree-actions :deep(.el-button) {
+  padding: 4px;
+  height: auto;
+}
+
+.device-list-panel {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-extra-light);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.02);
+}
+
+.list-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--el-border-color-extra-light);
+}
+
+.device-grid {
+  flex: 1;
+  min-height: 0;
+}
+
+.device-actions {
+  display: flex;
+  gap: 12px;
+}
+
 .tag-wrap {
   display: flex;
   flex-wrap: wrap;
