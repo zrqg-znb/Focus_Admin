@@ -88,6 +88,7 @@ const scopeOptions = [
   { label: '全部', value: 'all' },
   { label: '收藏', value: 'favorite' },
 ];
+const rdpInstallerUrl = '/tools/focus-rdp/install-focus-rdp-protocol.ps1';
 
 const favoriteCount = computed(
   () => rows.value.filter((item) => item.is_favorite).length,
@@ -110,7 +111,7 @@ const [Grid, gridApi] = useZqTable<EnvironmentItem>({
       { key: 'occupy_state', dataKey: 'occupy_state', title: '占用情况', width: 150, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
       { key: 'queue_state', dataKey: 'queue_state', title: '排队', width: 130, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
       { key: 'shelf_location', dataKey: 'shelf_location', title: '货架位置', width: 130, align: 'center', headerAlign: 'center' },
-      { key: 'actions', dataKey: 'actions', title: '操作', width: 320, align: 'center', headerAlign: 'center', fixed: 'right', showOverflowTooltip: false },
+      { key: 'actions', dataKey: 'actions', title: '操作', width: 320, align: 'center', headerAlign: 'center', fixed: true, showOverflowTooltip: false },
     ],
     border: true,
     stripe: true,
@@ -233,7 +234,7 @@ async function occupy(row: EnvironmentItem) {
   const result = await occupyEnvironmentApi(row.id);
   ElMessage.success(result.message);
   Object.assign(row, result.environment);
-  window.location.href = result.environment.rdp_url;
+  openRdp(result.environment);
 }
 
 async function release(row: EnvironmentItem) {
@@ -260,8 +261,44 @@ async function cancelQueue(row: EnvironmentItem) {
   ElMessage.success('已取消排队');
 }
 
+function showRdpInstallGuide() {
+  ElMessageBox.alert(
+    [
+      '<div class="rdp-install-guide">',
+      '<p>当前 Windows 没有注册 Focus RDP 启动器，浏览器无法直接启动远程桌面。</p>',
+      '<p>请先在本机下载并运行一次安装脚本，安装后再次点击 RDP 控制台即可直接打开 mstsc。</p>',
+      `<p><a href="${rdpInstallerUrl}" download>下载 Focus RDP 启动器安装脚本</a></p>`,
+      '</div>',
+    ].join(''),
+    '需要安装 RDP 启动器',
+    {
+      confirmButtonText: '知道了',
+      dangerouslyUseHTMLString: true,
+      type: 'warning',
+    },
+  );
+}
+
 function openRdp(row: EnvironmentItem) {
-  window.location.href = row.rdp_url;
+  const launcherUrl = row.rdp_launcher_url;
+  if (!launcherUrl) {
+    ElMessage.warning('该环境未返回 Focus RDP 启动地址，请刷新页面后重试');
+    return;
+  }
+
+  // 浏览器无法可靠得知自定义协议是否启动成功；若页面短时间内仍可见，给出一次性安装指引。
+  let pageHidden = false;
+  const handleVisibilityChange = () => {
+    pageHidden = document.hidden;
+  };
+  document.addEventListener('visibilitychange', handleVisibilityChange, { once: true });
+  window.location.href = launcherUrl;
+  window.setTimeout(() => {
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
+    if (!pageHidden && !document.hidden) {
+      showRdpInstallGuide();
+    }
+  }, 1200);
 }
 
 async function openQueue(row: EnvironmentItem) {

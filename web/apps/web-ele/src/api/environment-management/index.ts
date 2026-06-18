@@ -106,6 +106,7 @@ export interface EnvironmentItem {
   my_queue_position?: null | number;
   first_queue_user_name: string;
   rdp_url: string;
+  rdp_launcher_url: string;
   sort: number;
   sys_create_datetime?: string;
   sys_update_datetime?: string;

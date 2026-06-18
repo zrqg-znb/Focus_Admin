@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from urllib.parse import quote
 from django.db import transaction
 from django.db.models import Count, F, Max, Q
 from django.shortcuts import get_object_or_404
@@ -202,6 +203,8 @@ def serialize_environment(env: TestEnvironment, user: User | None) -> dict:
         'my_queue_position': my_queue.position if my_queue else None,
         'first_queue_user_name': _display_name(first_queue.user) if first_queue else '',
         'rdp_url': f'rdp://{env.ip_address}',
+        # Windows 不默认注册 rdp:// 协议；前端主入口使用项目自定义 focus-rdp://，由一次性安装脚本转发到 mstsc.exe。
+        'rdp_launcher_url': f'focus-rdp://open?host={quote(env.ip_address, safe="")}',
         'sort': env.sort,
         'sys_create_datetime': env.sys_create_datetime,
         'sys_update_datetime': env.sys_update_datetime,

@@ -119,6 +119,7 @@ class EnvironmentOut(Schema):
     my_queue_position: Optional[int] = None
     first_queue_user_name: str = ''
     rdp_url: str = ''
+    rdp_launcher_url: str = ''
     sort: int = 0
     sys_create_datetime: Optional[datetime] = None
     sys_update_datetime: Optional[datetime] = None

@@ -12,14 +12,14 @@ v1 的核心目标：
 - 用户端提供列表和平铺视图，默认展示全部环境，支持收藏视图。
 - 环境使用流程支持占用、释放、排队、插队、查看队列和占用记录。
 - 密码明文只允许环境用户和环境管理员查看；平台默认用户只拿到脱敏字段。
-- Windows RDP 入口只生成 `rdp://IP`，不传账号和密码。
+- Windows RDP 入口使用 `focus-rdp://open?host=IP`，由 Windows 客户端一次性安装的协议处理器转发到 `mstsc.exe /v:IP`，不传账号和密码。
 
 ## 角色与权限
 
 本模块当前只设计三类角色：
 
 - 平台用户：系统已有默认角色，通常为 `Role.name = 默认`。可以进入用户端查看环境列表、队列和记录，不能查看明文密码，不能收藏、占用、排队、插队、释放或打开 RDP。
-- 环境用户：新增系统角色 `environment_user`。可以进入用户端，查看明文账号密码，收藏环境，占用、排队、插队、释放自己的占用，并打开 `rdp://IP`。
+- 环境用户：新增系统角色 `environment_user`。可以进入用户端，查看明文账号密码，收藏环境，占用、排队、插队、释放自己的占用，并通过 `focus-rdp://open?host=IP` 打开 RDP 控制台。
 - 环境管理员：新增系统角色 `env_admin`。拥有模块最高权限，可以进入用户端和管理端，查看明文账号密码，维护环境配置，并释放任意环境。
 
 初始化命令：
@@ -70,6 +70,7 @@ python manage.py init_environment_management
 - 事务内锁定等待队列时必须使用独立查询，不复用展示用的 `_waiting_queues()`。
 - 测试设备级联中的类型节点只作为路径容器，提交环境绑定时只能提交具体设备 ID。
 - 如果环境操作公告启用，用户端占用、排队、插队前会弹窗要求确认。弹窗将完全保留管理员配置的标题和富文本格式；若未配置正文内容或未启用公告，则降级为标准文本二次确认。释放环境时使用标准文本二次确认，不展示公告。
+- 裸 `rdp://IP` 在 Windows/浏览器中没有默认协议处理器，前端主入口必须使用 `focus-rdp://open?host=IP`。
 
 ## API 与前端页面
 
@@ -92,6 +93,14 @@ python manage.py init_environment_management
 - `GET /device-options`：环境表单的测试设备级联多选项，仅环境管理员可用。
 - `GET /announcement`：读取环境操作公告，平台用户、环境用户和管理员均可读取。
 - `PUT /announcement`：保存环境操作公告，仅环境管理员可用。
+
+RDP 客户端安装：
+
+- 前端提供脚本 `/tools/focus-rdp/install-focus-rdp-protocol.ps1`。
+- Windows 用户首次运行该脚本后，会在当前用户注册 `focus-rdp` URL Protocol。
+- 协议处理器会校验 `host` 只包含主机名/IP 允许字符，然后执行 `mstsc.exe /v:<host>`。
+- 协议处理器不读取、不保存、不传递环境账号密码；RDP 凭据仍由用户在 Windows 远程桌面客户端中手动输入。
+- 如果点击 RDP 控制台后浏览器提示没有注册 handler，需要重新运行安装脚本或检查 `HKCU\Software\Classes\focus-rdp` 注册项。
 
 前端页面：
 
