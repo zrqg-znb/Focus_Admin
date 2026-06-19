@@ -43,17 +43,13 @@ import {
 } from '#/api/environment-management';
 import { useZqTable } from '#/components/zq-table';
 
-const domainOptions = [
-  { label: '全部领域', value: '' },
-  { label: '座舱', value: 'cockpit' },
-  { label: '车控', value: 'vehicle' },
-];
-const categoryOptions = [
-  { label: '全部分类', value: '' },
-  { label: '开发', value: 'dev' },
-  { label: '测试', value: 'test' },
-  { label: 'CI', value: 'ci' },
-];
+import {
+  categoryOptions,
+  domainOptions,
+  queueTableColumns,
+  recordTableColumns,
+  useEnvironmentUsageColumns,
+} from './data';
 
 const cardLoading = ref(false);
 const rows = ref<EnvironmentItem[]>([]);
@@ -79,6 +75,11 @@ const queueRows = ref<QueueItem[]>([]);
 const recordDialogVisible = ref(false);
 const recordDialogTitle = ref('');
 const recordRows = ref<EnvironmentRecord[]>([]);
+const recordLoading = ref(false);
+const recordEnvironmentId = ref('');
+const recordPage = ref(1);
+const recordPageSize = ref(20);
+const recordTotal = ref(0);
 
 const viewOptions = [
   { label: '列表', value: 'table' },
@@ -98,21 +99,7 @@ const [Grid, gridApi] = useZqTable<EnvironmentItem>({
   tableTitle: '环境使用',
   class: 'environment-grid',
   gridOptions: {
-    columns: [
-      { key: 'favorite', dataKey: 'favorite', title: '收藏', width: 64, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
-      { key: 'ip_address', dataKey: 'ip_address', title: 'IP地址', width: 140, align: 'center', headerAlign: 'center' },
-      { key: 'secret', dataKey: 'secret', title: '账号密码', width: 160, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
-      { key: 'domain', dataKey: 'domain', title: '领域', width: 90, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
-      { key: 'category', dataKey: 'category', title: '分类', width: 90, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
-      { key: 'project_name', dataKey: 'project_name', title: '项目', minWidth: 120, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
-      { key: 'vehicle_model', dataKey: 'vehicle_model', title: '车型', minWidth: 120, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
-      { key: 'device_display', dataKey: 'device_display', title: '测试设备', minWidth: 240, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
-      { key: 'config_description', dataKey: 'config_description', title: '配置情况', minWidth: 220, align: 'center', headerAlign: 'center' },
-      { key: 'occupy_state', dataKey: 'occupy_state', title: '占用情况', width: 150, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
-      { key: 'queue_state', dataKey: 'queue_state', title: '排队', width: 130, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
-      { key: 'shelf_location', dataKey: 'shelf_location', title: '货架位置', width: 130, align: 'center', headerAlign: 'center' },
-      { key: 'actions', dataKey: 'actions', title: '操作', width: 320, align: 'center', headerAlign: 'center', fixed: true, showOverflowTooltip: false },
-    ],
+    columns: useEnvironmentUsageColumns(),
     border: true,
     stripe: true,
     proxyConfig: {
@@ -286,19 +273,12 @@ function openRdp(row: EnvironmentItem) {
     return;
   }
 
-  // 浏览器无法可靠得知自定义协议是否启动成功；若页面短时间内仍可见，给出一次性安装指引。
-  let pageHidden = false;
-  const handleVisibilityChange = () => {
-    pageHidden = document.hidden;
-  };
-  document.addEventListener('visibilitychange', handleVisibilityChange, { once: true });
-  window.location.href = launcherUrl;
-  window.setTimeout(() => {
-    document.removeEventListener('visibilitychange', handleVisibilityChange);
-    if (!pageHidden && !document.hidden) {
-      showRdpInstallGuide();
-    }
-  }, 1200);
+  try {
+    // 自定义协议是否真的拉起 mstsc 由浏览器和 Windows 决定；这里只捕获协议未注册等浏览器同步异常。
+    window.location.href = launcherUrl;
+  } catch {
+    showRdpInstallGuide();
+  }
 }
 
 async function openQueue(row: EnvironmentItem) {
@@ -308,13 +288,32 @@ async function openQueue(row: EnvironmentItem) {
 }
 
 async function openRecords(row: EnvironmentItem) {
+  recordEnvironmentId.value = row.id;
   recordDialogTitle.value = `${row.ip_address} 占用记录`;
-  const result = await listEnvironmentRecordsApi(row.id, {
-    page: 1,
-    pageSize: 30,
-  });
-  recordRows.value = result.items || [];
+  recordPage.value = 1;
   recordDialogVisible.value = true;
+  await loadRecords();
+}
+
+async function loadRecords() {
+  if (!recordEnvironmentId.value) return;
+  recordLoading.value = true;
+  try {
+    // 记录数据可能持续增长，弹窗内翻页始终走后端分页，避免一次性拉取大量历史操作。
+    const result = await listEnvironmentRecordsApi(recordEnvironmentId.value, {
+      page: recordPage.value,
+      pageSize: recordPageSize.value,
+    });
+    recordRows.value = result.items || [];
+    recordTotal.value = result.total || 0;
+  } finally {
+    recordLoading.value = false;
+  }
+}
+
+function handleRecordSizeChange() {
+  recordPage.value = 1;
+  loadRecords();
 }
 
 onMounted(() => {
@@ -543,25 +542,44 @@ onBeforeUnmount(() => {
 
     <ElDialog v-model="queueDialogVisible" :title="queueDialogTitle" width="560px">
       <ElTable :data="queueRows" border>
-        <ElTableColumn label="位置" prop="position" width="80" />
-        <ElTableColumn label="用户" prop="user_name" />
-        <ElTableColumn label="类型" prop="queue_type_label" width="100" />
-        <ElTableColumn label="申请时间" prop="requested_at" width="180" />
+        <ElTableColumn
+          v-for="column in queueTableColumns"
+          :key="column.key"
+          :label="column.label"
+          :min-width="column.minWidth"
+          :prop="column.prop"
+          :width="column.width"
+        />
       </ElTable>
     </ElDialog>
 
     <ElDialog v-model="recordDialogVisible" :title="recordDialogTitle" width="760px">
-      <ElTable :data="recordRows" border>
-        <ElTableColumn label="时间" prop="sys_create_datetime" width="180" />
-        <ElTableColumn label="操作人" prop="operator_name" width="120" />
-        <ElTableColumn label="动作" prop="action_label" width="100" />
-        <ElTableColumn label="说明" prop="message" min-width="220" />
-        <ElTableColumn label="时长" width="100">
-          <template #default="{ row }">
+      <ElTable v-loading="recordLoading" :data="recordRows" border>
+        <ElTableColumn
+          v-for="column in recordTableColumns"
+          :key="column.key"
+          :label="column.label"
+          :min-width="column.minWidth"
+          :prop="column.prop"
+          :width="column.width"
+        >
+          <template v-if="column.key === 'duration'" #default="{ row }">
             {{ row.duration_seconds ? formatDuration(row.duration_seconds) : '-' }}
           </template>
         </ElTableColumn>
       </ElTable>
+      <div class="record-pager">
+        <ElPagination
+          v-model:current-page="recordPage"
+          v-model:page-size="recordPageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="recordTotal"
+          background
+          layout="total, sizes, prev, pager, next"
+          @current-change="loadRecords"
+          @size-change="handleRecordSizeChange"
+        />
+      </div>
     </ElDialog>
   </Page>
 </template>
@@ -895,6 +913,12 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: flex-end;
   padding: 8px 0;
+}
+
+.record-pager {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 12px;
 }
 
 :global(.environment-announcement-dialog .environment-announcement-content) {

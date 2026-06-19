@@ -59,6 +59,7 @@ import { RichTextEditor } from '#/components/zq-form/rich-text-editor';
 import {
   categoryOptions,
   domainOptions,
+  useDeviceColumns,
   useEnvironmentColumns,
   useEnvironmentSearchSchema,
 } from './data';
@@ -166,13 +167,7 @@ const [DeviceGrid, deviceGridApi] = useZqTable<TestDeviceItem>({
   tableTitle: '测试设备',
   class: 'device-grid',
   gridOptions: {
-    columns: [
-      { key: 'name', dataKey: 'name', title: '设备名称', minWidth: 160, align: 'center', headerAlign: 'center' },
-      { key: 'device_type_path', dataKey: 'device_type_path', title: '类型路径', minWidth: 220, align: 'center', headerAlign: 'center' },
-      { key: 'is_active', dataKey: 'is_active', title: '状态', width: 90, align: 'center', headerAlign: 'center' },
-      { key: 'remark', dataKey: 'remark', title: '备注', minWidth: 180, align: 'center', headerAlign: 'center' },
-      { key: 'actions', dataKey: 'actions', title: '操作', width: 150, align: 'center', headerAlign: 'center', fixed: true, showOverflowTooltip: false },
-    ],
+    columns: useDeviceColumns(),
     border: true,
     stripe: true,
     proxyConfig: {

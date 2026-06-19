@@ -71,6 +71,8 @@ python manage.py init_environment_management
 - 测试设备级联中的类型节点只作为路径容器，提交环境绑定时只能提交具体设备 ID。
 - 如果环境操作公告启用，用户端占用、排队、插队前会弹窗要求确认。弹窗将完全保留管理员配置的标题和富文本格式；若未配置正文内容或未启用公告，则降级为标准文本二次确认。释放环境时使用标准文本二次确认，不展示公告。
 - 裸 `rdp://IP` 在 Windows/浏览器中没有默认协议处理器，前端主入口必须使用 `focus-rdp://open?host=IP`。
+- RDP 打开逻辑只捕获浏览器同步抛出的协议异常，不使用 `setTimeout + document.hidden` 推断失败；mstsc 窗口遮挡浏览器不会稳定触发页面 hidden，超时推断会误弹安装提示。
+- 占用记录必须按 `page/pageSize` 后端分页获取，前端记录弹窗翻页时重新请求接口，避免一次性加载大量历史记录。
 
 ## API 与前端页面
 
@@ -87,7 +89,7 @@ python manage.py init_environment_management
 - `POST /environments/{id}/jump-queue`：插队，仅环境用户和管理员可用。
 - `DELETE /environments/{id}/queue/me`：取消自己的排队。
 - `GET /environments/{id}/queue`：查看队列。
-- `GET /environments/{id}/records`：查看操作记录。
+- `GET /environments/{id}/records`：查看操作记录，支持 `page` 和 `pageSize` 分页参数。
 - `GET /device-types`、`POST /device-types`、`PUT /device-types/{id}`、`DELETE /device-types/{id}`：测试设备类型树管理，仅环境管理员可用。
 - `GET /devices`、`POST /devices`、`PUT /devices/{id}`、`DELETE /devices/{id}`：测试设备管理，仅环境管理员可用。
 - `GET /device-options`：环境表单的测试设备级联多选项，仅环境管理员可用。
@@ -107,7 +109,7 @@ RDP 客户端安装：
 - `/environment-management/user`：用户端。
   - **列表模式**：使用 `zq-table` 铺满屏幕，采用独立拆分的“领域”、“分类”、“项目”、“车型”列以优化阅读体验；搜索栏居中对齐。
   - **平铺模式**：使用宽卡片控制台布局。卡片设计去除厚重感，采用大留白、细边框、状态指示圆点及轻盈的悬浮上浮动效。
-  - **交互细节**：支持全部/收藏筛选、占用时长自动更新、队列和记录抽屉。引入了自定义 SVG（`my-favorite`）的收藏交互，包含发光、心跳放大及置灰预选等 Q 弹动效。
+  - **交互细节**：支持全部/收藏筛选、占用时长自动更新、队列和记录抽屉；记录抽屉使用后端分页。引入了自定义 SVG（`my-favorite`）的收藏交互，包含发光、心跳放大及置灰预选等 Q 弹动效。
 - `/environment-management/admin`：管理端，使用现代分段控制器（Segmented Control）风格的 Tab 分为“环境管理”“测试设备管理”“公告配置”。环境管理和测试设备列表均使用 `zq-table`，并深度修复了内部容器高度约束，确保页面内容始终撑满可用屏幕并支持内部滚动。
 
 ## 后续维护约定

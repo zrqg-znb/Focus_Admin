@@ -1,5 +1,8 @@
 import type { VbenFormSchema } from '#/adapter/form';
-import type { EnvironmentItem } from '#/api/environment-management';
+import type {
+  EnvironmentItem,
+  TestDeviceItem,
+} from '#/api/environment-management';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
 export const domainOptions = [
@@ -28,6 +31,16 @@ export function useEnvironmentColumns(): ZqTableGridOptions<EnvironmentItem>['co
     { key: 'status_label', dataKey: 'status_label', title: '状态', width: 90, align: 'center', headerAlign: 'center' },
     { key: 'current_user_name', dataKey: 'current_user_name', title: '占用人', width: 120, align: 'center', headerAlign: 'center' },
     { key: 'sys_update_datetime', dataKey: 'sys_update_datetime', title: '更新时间', width: 180, align: 'center', headerAlign: 'center' },
+    { key: 'actions', dataKey: 'actions', title: '操作', width: 150, align: 'center', headerAlign: 'center', fixed: true, showOverflowTooltip: false },
+  ];
+}
+
+export function useDeviceColumns(): ZqTableGridOptions<TestDeviceItem>['columns'] {
+  return [
+    { key: 'name', dataKey: 'name', title: '设备名称', width: 160, align: 'center', headerAlign: 'center' },
+    { key: 'device_type_path', dataKey: 'device_type_path', title: '类型路径', width: 220, align: 'center', headerAlign: 'center' },
+    { key: 'is_active', dataKey: 'is_active', title: '状态', width: 90, align: 'center', headerAlign: 'center' },
+    { key: 'remark', dataKey: 'remark', title: '备注', width: 180, align: 'center', headerAlign: 'center' },
     { key: 'actions', dataKey: 'actions', title: '操作', width: 150, align: 'center', headerAlign: 'center', fixed: true, showOverflowTooltip: false },
   ];
 }
