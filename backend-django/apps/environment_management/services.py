@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from urllib.parse import quote
 from django.db import transaction
@@ -24,6 +25,7 @@ from .schemas import DeviceTypeIn, EnvironmentAnnouncementIn, EnvironmentIn, Env
 
 ENV_ADMIN_ROLE = 'env_admin'
 ENVIRONMENT_USER_ROLE = 'environment_user'
+logger = logging.getLogger(__name__)
 
 
 def user_role_codes(user: User | None) -> set[str]:
@@ -113,6 +115,119 @@ def _renumber_waiting_queue(environment_id: str):
         if row.position != index:
             row.position = index
             row.save(update_fields=['position', 'sys_update_datetime'])
+
+
+def send_environment_queue_notification_by_username(
+    username: str,
+    title: str,
+    content: str,
+    payload: dict | None = None,
+) -> None:
+    """环境队列通知占位。
+
+    公司内网环境接入真实消息系统时，只需要替换这里的 logger.info 为真实发送逻辑。
+    该函数按 username 投递，且必须保持业务旁路：任何通知异常都不能影响环境占用、
+    释放、排队和取消排队的主事务。
+    """
+    try:
+        logger.info(
+            'environment queue notification placeholder username=%s title=%s content=%s payload=%s',
+            username,
+            title,
+            content,
+            payload or {},
+        )
+    except Exception:
+        logger.exception('environment queue notification placeholder failed username=%s', username)
+
+
+def _safe_send_environment_queue_notification_by_username(
+    username: str,
+    title: str,
+    content: str,
+    payload: dict | None = None,
+) -> None:
+    """隔离真实通知实现的异常，确保通知永远不会反向影响环境业务流程。"""
+    try:
+        send_environment_queue_notification_by_username(username, title, content, payload)
+    except Exception:
+        logger.exception('environment queue notification failed username=%s', username)
+
+
+def _queue_notification_snapshot(environment_id: str) -> list[dict]:
+    """记录等待队列快照，用于比较用户是否向前移动。
+
+    快照只保留通知必需字段，刻意不包含账号、密码、RDP 等敏感信息，避免未来接入真实
+    通知渠道时误把凭据带出系统边界。
+    """
+    return [
+        {
+            'user_id': str(row.user_id),
+            'username': row.user.username,
+            'display_name': _display_name(row.user),
+            'position': row.position,
+        }
+        for row in _waiting_queues(environment_id)
+    ]
+
+
+def _environment_notification_payload(env: TestEnvironment, position: int | None, event: str, available: bool) -> dict:
+    """构造通知 payload；该结构只携带环境识别和队列状态，不携带账号密码。"""
+    return {
+        'environment_id': str(env.id),
+        'ip_address': env.ip_address,
+        'project_name': env.project_name,
+        'vehicle_model': env.vehicle_model,
+        'position': position,
+        'event': event,
+        'available': available,
+    }
+
+
+def _notify_queue_changes_after_commit(
+    env: TestEnvironment,
+    before_snapshot: list[dict],
+    event: str,
+    notify_available_head: bool,
+) -> None:
+    """提交事务后通知队列变化。
+
+    发送动作通过 transaction.on_commit 延迟到数据库提交之后执行，确保通知系统不可用时
+    不会让主流程回滚。只通知两类正向变化：用户排位前进、环境空闲且轮到队首用户。
+    """
+    environment_id = str(env.id)
+
+    def _send_notifications():
+        try:
+            fresh_env = TestEnvironment.objects.get(id=environment_id)
+            after_snapshot = _queue_notification_snapshot(environment_id)
+            before_by_user_id = {item['user_id']: item for item in before_snapshot}
+            available_head_user_id = after_snapshot[0]['user_id'] if notify_available_head and fresh_env.status == 'idle' and after_snapshot else None
+
+            for item in after_snapshot:
+                old_item = before_by_user_id.get(item['user_id'])
+                is_available_head = item['user_id'] == available_head_user_id
+                if is_available_head:
+                    _safe_send_environment_queue_notification_by_username(
+                        item['username'],
+                        '环境已轮到你使用',
+                        f"环境 {fresh_env.ip_address} 已空闲，当前轮到你使用，请及时手动占用。",
+                        _environment_notification_payload(fresh_env, item['position'], event, True),
+                    )
+                    # 队首用户收到“轮到自己”即可，避免同一次变化里再收到“位置前进”造成打扰。
+                    continue
+
+                if old_item and item['position'] < old_item['position']:
+                    _safe_send_environment_queue_notification_by_username(
+                        item['username'],
+                        '环境队列位置已前进',
+                        f"环境 {fresh_env.ip_address} 的队列位置已前进到第 {item['position']} 位。",
+                        _environment_notification_payload(fresh_env, item['position'], event, False),
+                    )
+        except Exception:
+            logger.exception('environment queue notification callback failed environment_id=%s event=%s', environment_id, event)
+
+    transaction.on_commit(_send_notifications)
 
 
 def _device_type_path(device_type: EnvironmentDeviceType | None) -> str:
@@ -554,6 +669,7 @@ def occupy_environment(user: User, environment_id: str) -> dict:
         if waiting and str(waiting[0].user_id) != str(user.id):
             queue_user = User.objects.filter(id=waiting[0].user_id).first()
             raise HttpError(400, f'当前队首为 {_display_name(queue_user)}，暂不能占用')
+        before_queue_snapshot = _queue_notification_snapshot(env.id)
 
         # 只有环境空闲且无他人排在前面时才直接占用；如果本人是队首，占用成功后关闭自己的等待记录。
         env.status = 'occupied'
@@ -564,6 +680,7 @@ def occupy_environment(user: User, environment_id: str) -> dict:
         EnvironmentQueue.objects.filter(environment=env, user=user, status='waiting').update(status='done')
         _renumber_waiting_queue(env.id)
         _record(env, user, 'occupy', '占用环境', started_at=env.occupied_at)
+        _notify_queue_changes_after_commit(env, before_queue_snapshot, 'occupy', notify_available_head=False)
     return {'success': True, 'message': '占用成功，可以打开 RDP', 'environment': serialize_environment(env, user)}
 
 
@@ -577,6 +694,7 @@ def release_environment(user: User, environment_id: str) -> dict:
             raise HttpError(400, '环境当前未被占用')
         if str(env.current_user_id) != str(user.id) and not can_manage(user):
             raise HttpError(403, '只有当前占用人或环境管理员可以释放')
+        before_queue_snapshot = _queue_notification_snapshot(env.id)
         started_at = env.occupied_at
         ended_at = timezone.now()
         duration = _duration_seconds(started_at, ended_at)
@@ -591,6 +709,7 @@ def release_environment(user: User, environment_id: str) -> dict:
         if first_queue:
             message = f'{message}，队首用户 { _display_name(first_queue.user) } 可手动占用'
         _record(env, user, 'release', message, started_at=started_at, ended_at=ended_at, duration_seconds=duration)
+        _notify_queue_changes_after_commit(env, before_queue_snapshot, 'release', notify_available_head=True)
     return {'success': True, 'message': message, 'environment': serialize_environment(env, user)}
 
 
@@ -634,11 +753,13 @@ def cancel_my_queue(user: User, environment_id: str) -> dict:
         queue = EnvironmentQueue.objects.filter(environment=env, user=user, status='waiting').first()
         if not queue:
             raise HttpError(400, '你不在该环境队列中')
+        before_queue_snapshot = _queue_notification_snapshot(env.id)
         queue.status = 'cancelled'
         queue.sys_modifier = user
         queue.save(update_fields=['status', 'sys_modifier', 'sys_update_datetime'])
         _renumber_waiting_queue(env.id)
         _record(env, user, 'cancel_queue', '取消排队')
+        _notify_queue_changes_after_commit(env, before_queue_snapshot, 'cancel_queue', notify_available_head=True)
     return serialize_environment(env, user)
 
 

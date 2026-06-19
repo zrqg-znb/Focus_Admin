@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.test import TestCase
 from ninja.errors import HttpError
 
@@ -12,6 +14,7 @@ from .services import (
     create_device_type,
     delete_device,
     delete_device_type,
+    cancel_my_queue,
     enqueue_environment,
     get_announcement,
     list_environments,
@@ -173,3 +176,94 @@ class EnvironmentManagementServiceTests(TestCase):
         self.assertTrue(saved['enabled'])
         self.assertEqual(saved['title'], '操作前确认')
         self.assertEqual(get_announcement()['content_html'], '<p>请确认</p>')
+
+    def test_release_notifies_first_queue_user_available(self):
+        env_id = create_environment(self.admin, payload())['id']
+        occupy_environment(self.env_user, env_id)
+        environment_user2 = make_user('environment_user2', 'environment_user')
+        environment_user3 = make_user('environment_user3', 'environment_user')
+        enqueue_environment(environment_user2, env_id, 'normal')
+        enqueue_environment(environment_user3, env_id, 'normal')
+
+        with patch('apps.environment_management.services.send_environment_queue_notification_by_username') as mock_send:
+            with self.captureOnCommitCallbacks(execute=True):
+                release_environment(self.env_user, env_id)
+
+        self.assertEqual(mock_send.call_count, 1)
+        username, title, content, notify_payload = mock_send.call_args.args
+        self.assertEqual(username, 'environment_user2')
+        self.assertIn('轮到你', title)
+        self.assertIn('请及时手动占用', content)
+        self.assertTrue(notify_payload['available'])
+        self.assertNotIn('password', notify_payload)
+        self.assertNotIn('password_encrypted', notify_payload)
+        self.assertNotIn('account', notify_payload)
+
+    def test_cancel_queue_notifies_users_that_moved_forward(self):
+        env_id = create_environment(self.admin, payload())['id']
+        occupy_environment(self.env_user, env_id)
+        environment_user2 = make_user('environment_user2', 'environment_user')
+        environment_user3 = make_user('environment_user3', 'environment_user')
+        environment_user4 = make_user('environment_user4', 'environment_user')
+        enqueue_environment(environment_user2, env_id, 'normal')
+        enqueue_environment(environment_user3, env_id, 'normal')
+        enqueue_environment(environment_user4, env_id, 'normal')
+
+        with patch('apps.environment_management.services.send_environment_queue_notification_by_username') as mock_send:
+            with self.captureOnCommitCallbacks(execute=True):
+                cancel_my_queue(environment_user2, env_id)
+
+        self.assertEqual([call.args[0] for call in mock_send.call_args_list], ['environment_user3', 'environment_user4'])
+        self.assertEqual([call.args[3]['position'] for call in mock_send.call_args_list], [1, 2])
+        self.assertTrue(all(not call.args[3]['available'] for call in mock_send.call_args_list))
+
+    def test_occupy_from_queue_notifies_next_users_that_moved_forward(self):
+        env_id = create_environment(self.admin, payload())['id']
+        occupy_environment(self.env_user, env_id)
+        environment_user2 = make_user('environment_user2', 'environment_user')
+        environment_user3 = make_user('environment_user3', 'environment_user')
+        enqueue_environment(environment_user2, env_id, 'normal')
+        enqueue_environment(environment_user3, env_id, 'normal')
+        with self.captureOnCommitCallbacks(execute=True):
+            release_environment(self.env_user, env_id)
+
+        with patch('apps.environment_management.services.send_environment_queue_notification_by_username') as mock_send:
+            with self.captureOnCommitCallbacks(execute=True):
+                occupy_environment(environment_user2, env_id)
+
+        self.assertEqual(mock_send.call_count, 1)
+        self.assertEqual(mock_send.call_args.args[0], 'environment_user3')
+        self.assertIn('前进到第 1 位', mock_send.call_args.args[2])
+        self.assertFalse(mock_send.call_args.args[3]['available'])
+
+    def test_jump_queue_does_not_notify_users_moved_backward(self):
+        env_id = create_environment(self.admin, payload())['id']
+        occupy_environment(self.env_user, env_id)
+        environment_user2 = make_user('environment_user2', 'environment_user')
+        environment_user3 = make_user('environment_user3', 'environment_user')
+        environment_user4 = make_user('environment_user4', 'environment_user')
+        enqueue_environment(environment_user2, env_id, 'normal')
+        enqueue_environment(environment_user3, env_id, 'normal')
+
+        with patch('apps.environment_management.services.send_environment_queue_notification_by_username') as mock_send:
+            with self.captureOnCommitCallbacks(execute=True):
+                enqueue_environment(environment_user4, env_id, 'jump')
+
+        mock_send.assert_not_called()
+
+    def test_notification_error_does_not_break_release_flow(self):
+        env_id = create_environment(self.admin, payload())['id']
+        occupy_environment(self.env_user, env_id)
+        environment_user2 = make_user('environment_user2', 'environment_user')
+        enqueue_environment(environment_user2, env_id, 'normal')
+
+        with patch(
+            'apps.environment_management.services.send_environment_queue_notification_by_username',
+            side_effect=RuntimeError('company notification unavailable'),
+        ):
+            with self.captureOnCommitCallbacks(execute=True):
+                released = release_environment(self.env_user, env_id)
+
+        self.assertTrue(released['success'])
+        env = TestEnvironment.objects.get(id=env_id)
+        self.assertEqual(env.status, 'idle')
