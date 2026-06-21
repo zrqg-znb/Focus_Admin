@@ -1,10 +1,11 @@
 import type { VbenFormSchema } from '#/adapter/form';
-import type { OnActionClickFn, VxeTableGridOptions } from '#/adapter/vxe-table';
 import type { User } from '#/api/core';
+import type { ZqTableGridOptions } from '#/components/zq-table';
 
 import { $t } from '@vben/locales';
 
 import { z } from '#/adapter/form';
+import { getAllPlApi } from '#/api/core';
 
 /**
  * 获取性别选项
@@ -72,6 +73,25 @@ export function useSearchFormSchema(): VbenFormSchema[] {
       component: 'Input',
       fieldName: 'username',
       label: $t('user.account'),
+    },
+    {
+      component: 'ApiSelect',
+      fieldName: 'pl_group_ids',
+      label: 'PL组',
+      componentProps: {
+        afterFetch: (data: { id: string; name: string }[]) =>
+          data.map((item) => ({
+            label: item.name,
+            value: item.id,
+          })),
+        api: getAllPlApi,
+        clearable: true,
+        collapseTags: true,
+        collapseTagsTooltip: true,
+        filterable: true,
+        multiple: true,
+        placeholder: '请选择PL组',
+      },
     },
     {
       component: 'Select',
@@ -208,6 +228,25 @@ export function getFormSchema(): VbenFormSchema[] {
       label: $t('user.manager'),
     },
     {
+      component: 'ApiSelect',
+      fieldName: 'pl_group_ids',
+      label: 'PL组',
+      componentProps: {
+        afterFetch: (data: { id: string; name: string }[]) =>
+          data.map((item) => ({
+            label: item.name,
+            value: item.id,
+          })),
+        api: getAllPlApi,
+        clearable: true,
+        collapseTags: true,
+        collapseTagsTooltip: true,
+        filterable: true,
+        multiple: true,
+        placeholder: '请选择PL组',
+      },
+    },
+    {
       component: 'PostSelector',
       componentProps: {
         multiple: true,
@@ -253,139 +292,138 @@ export function getFormSchema(): VbenFormSchema[] {
 /**
  * 获取表格列配置
  */
-export function useColumns(
-  onActionClick?: OnActionClickFn<User>,
-): VxeTableGridOptions<User>['columns'] {
+export function useColumns(): ZqTableGridOptions<User>['columns'] {
   return [
     {
-      type: 'checkbox',
-      minWidth: 60,
+      type: 'selection',
+      width: 56,
       align: 'center',
       fixed: 'left',
     },
     {
-      field: 'avatar',
+      key: 'avatar',
+      dataKey: 'avatar',
       title: $t('user.avatar'),
-      minWidth: 80,
+      width: 80,
       align: 'center',
+      headerAlign: 'center',
+      showOverflowTooltip: false,
       slots: {
         default: 'avatar',
       },
     },
     {
-      field: 'username',
+      key: 'username',
+      dataKey: 'username',
       title: $t('user.account'),
-      minWidth: 120,
+      width: 140,
     },
     {
-      field: 'name',
+      key: 'name',
+      dataKey: 'name',
       title: $t('user.userName'),
-      minWidth: 120,
+      width: 120,
     },
     {
-      field: 'email',
+      key: 'email',
+      dataKey: 'email',
       title: $t('user.email'),
-      minWidth: 180,
+      width: 200,
     },
     {
-      field: 'mobile',
+      key: 'mobile',
+      dataKey: 'mobile',
       title: $t('user.mobile'),
-      minWidth: 130,
+      width: 140,
     },
     {
-      field: 'user_type',
+      key: 'pl_group_names',
+      dataKey: 'pl_group_names',
+      title: '所属PL组',
+      width: 220,
+      showOverflowTooltip: false,
+    },
+    {
+      key: 'user_type',
+      dataKey: 'user_type',
       title: $t('user.userType'),
-      minWidth: 100,
-      cellRender: {
-        name: 'CellTag',
-        options: getUserTypeOptions(),
-      },
+      width: 110,
+      align: 'center',
+      headerAlign: 'center',
+      showOverflowTooltip: false,
     },
     {
-      field: 'gender',
+      key: 'gender',
+      dataKey: 'gender',
       title: $t('user.gender'),
-      minWidth: 80,
-      cellRender: {
-        name: 'CellTag',
-        options: getGenderOptions(),
-      },
+      width: 90,
+      align: 'center',
+      headerAlign: 'center',
+      showOverflowTooltip: false,
     },
     {
-      field: 'birthday',
+      key: 'birthday',
+      dataKey: 'birthday',
       title: $t('user.birthday'),
-      minWidth: 120,
+      width: 120,
     },
     {
-      field: 'city',
+      key: 'city',
+      dataKey: 'city',
       title: $t('user.city'),
-      minWidth: 120,
+      width: 120,
     },
     {
-      field: 'dept_name',
+      key: 'dept_name',
+      dataKey: 'dept_name',
       title: $t('user.dept'),
-      minWidth: 140,
+      width: 150,
     },
     {
-      field: 'manager_name',
+      key: 'manager_name',
+      dataKey: 'manager_name',
       title: $t('user.manager'),
-      minWidth: 120,
+      width: 130,
     },
     {
-      cellRender: { name: 'CellTag', options: getStatusOptions() },
-      field: 'user_status',
+      key: 'user_status',
+      dataKey: 'user_status',
       title: $t('user.status'),
-      minWidth: 100,
+      width: 100,
+      align: 'center',
+      headerAlign: 'center',
+      showOverflowTooltip: false,
     },
     {
-      field: 'last_login_type',
+      key: 'last_login_type',
+      dataKey: 'last_login_type',
       title: '最后登录方式',
-      minWidth: 120,
-      cellRender: {
-        name: 'CellTag',
-        options: getLoginTypeOptions(),
-      },
+      width: 130,
+      align: 'center',
+      headerAlign: 'center',
+      showOverflowTooltip: false,
     },
     {
-      field: 'last_login',
+      key: 'last_login',
+      dataKey: 'last_login',
       title: '最后登录时间',
-      minWidth: 180,
+      width: 180,
     },
     {
-      field: 'sys_create_datetime',
+      key: 'sys_create_datetime',
+      dataKey: 'sys_create_datetime',
       title: $t('user.createTime'),
-      minWidth: 180,
+      width: 180,
     },
     {
       align: 'right',
-      cellRender: {
-        attrs: {
-          nameField: 'name',
-          nameTitle: $t('user.userName'),
-          onClick: onActionClick,
-        },
-        name: 'CellOperation',
-        options: [
-          {
-            code: 'reset-password',
-            text: $t('user.resetPassword'),
-            icon: 'ep:refresh',
-          },
-          'edit',
-          {
-            code: 'delete',
-            disabled: (row: User) => {
-              // 管理员账户不允许删除
-              return row.id === 'a0000000-0000-0000-0000-000000000001';
-            },
-          },
-        ],
-      },
-      field: 'operation',
+      key: 'actions',
+      dataKey: 'actions',
       fixed: 'right',
       headerAlign: 'center',
-      showOverflow: false,
+      showOverflowTooltip: false,
       title: $t('user.operation'),
-      minWidth: 200,
+      width: 220,
     },
-  ];
+  ] as ZqTableGridOptions<User>['columns'];
 }

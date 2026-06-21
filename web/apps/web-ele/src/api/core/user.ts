@@ -2,6 +2,13 @@ import type { UserInfo } from '@vben/types';
 
 import { requestClient } from '#/api/request';
 
+export interface UserPlGroup {
+  id: string;
+  name: string;
+  code?: string;
+  status: boolean;
+}
+
 /**
  * 用户相关类型定义
  */
@@ -23,11 +30,16 @@ export interface User {
   dept_name?: string;
   manager_id?: string; // UUID string
   manager_name?: string;
+  last_login?: string;
+  last_login_type?: string;
   user_type_display?: string;
   user_status_display?: string;
   gender_display?: string;
   role_names?: string[];
   post_names?: string[];
+  pl_groups?: UserPlGroup[];
+  pl_group_ids?: string[];
+  pl_group_names?: string[];
   sys_create_datetime?: string;
   sys_update_datetime?: string;
   is_active: number;
@@ -50,9 +62,10 @@ export interface UserCreateInput {
   manager_id?: string;
   post?: string[];
   core_roles?: string[];
+  pl_group_ids?: string[];
 }
 
-export interface UserUpdateInput extends Partial<UserCreateInput> {}
+export type UserUpdateInput = Partial<UserCreateInput>;
 
 export interface UserPasswordResetInput {
   new_password: string;
@@ -98,8 +111,11 @@ export interface UserListParams {
   user_status?: number;
   user_type?: number;
   dept_ids?: string[];
+  pl_group_ids?: string[];
   mobile?: string;
   email?: string;
+  last_login_type?: string;
+  'pl_group_ids[]'?: string[];
 }
 
 export interface PaginatedResponse<T> {
@@ -184,10 +200,7 @@ export async function resetUserPasswordApi(
   userId: string,
   _data?: UserPasswordResetInput,
 ) {
-  return requestClient.put<User>(
-    `/api/core/user/reset/password/${userId}`,
-    {},
-  );
+  return requestClient.put<User>(`/api/core/user/reset/password/${userId}`, {});
 }
 
 /**

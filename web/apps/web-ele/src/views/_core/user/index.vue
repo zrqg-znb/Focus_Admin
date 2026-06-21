@@ -1,8 +1,4 @@
 <script lang="ts" setup>
-import type {
-  OnActionClickParams,
-  VxeTableGridOptions,
-} from '#/adapter/vxe-table';
 import type { User } from '#/api/core';
 
 import { ref } from 'vue';
@@ -11,9 +7,8 @@ import { Page, useVbenDrawer } from '@vben/common-ui';
 import { Plus } from '@vben/icons';
 import { $t } from '@vben/locales';
 
-import { ElButton, ElMessage, ElMessageBox } from 'element-plus';
+import { ElButton, ElMessage, ElMessageBox, ElTag } from 'element-plus';
 
-import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import {
   batchDeleteUserApi,
   deleteUserApi,
@@ -21,11 +16,30 @@ import {
   resetUserPasswordApi,
 } from '#/api/core';
 import { UserAvatar } from '#/components/user-avatar';
+import { useZqTable } from '#/components/zq-table';
 
-import { useColumns, useSearchFormSchema } from './data';
+import {
+  getGenderOptions,
+  getLoginTypeOptions,
+  getStatusOptions,
+  getUserTypeOptions,
+  useColumns,
+  useSearchFormSchema,
+} from './data';
 import Form from './modules/form.vue';
 
 defineOptions({ name: 'SystemUser' });
+
+const ADMIN_USER_ID = 'a0000000-0000-0000-0000-000000000001';
+type TagType = 'danger' | 'info' | 'primary' | 'success' | 'warning';
+
+interface UserQueryParams {
+  form?: Record<string, any>;
+  page: {
+    currentPage: number;
+    pageSize: number;
+  };
+}
 
 const [FormDrawer, formDrawerApi] = useVbenDrawer({
   connectedComponent: Form,
@@ -52,7 +66,7 @@ function onCreate() {
  * 删除单个用户
  */
 function onDelete(row: User) {
-  if (row.id === 'a0000000-0000-0000-0000-000000000001') {
+  if (row.id === ADMIN_USER_ID) {
     ElMessage.warning($t('user.cannotDeleteAdmin'));
     return;
   }
@@ -90,9 +104,7 @@ function onBatchDelete() {
   }
 
   // 检查是否包含管理员账户
-  const hasAdmin = selectedRows.value.some(
-    (row) => row.id === 'a0000000-0000-0000-0000-000000000001',
-  );
+  const hasAdmin = selectedRows.value.some((row) => row.id === ADMIN_USER_ID);
   if (hasAdmin) {
     ElMessage.warning($t('user.cannotDeleteAdmin'));
     return;
@@ -132,7 +144,7 @@ function onBatchDelete() {
  * 重置密码
  */
 function onResetPassword(row: User) {
-  if (row.id === 'a0000000-0000-0000-0000-000000000001') {
+  if (row.id === ADMIN_USER_ID) {
     ElMessage.warning($t('user.cannotResetAdminPassword'));
     return;
   }
@@ -162,77 +174,70 @@ function onResetPassword(row: User) {
     });
 }
 
-/**
- * 表格操作按钮的回调函数
- */
-function onActionClick({ code, row }: OnActionClickParams<User>) {
-  switch (code) {
-    case 'delete': {
-      onDelete(row);
-      break;
-    }
-    case 'edit': {
-      onEdit(row);
-      break;
-    }
-    case 'reset-password': {
-      onResetPassword(row);
-      break;
-    }
-  }
+function getOption(
+  options: Array<{ label: string; type?: string; value: number | string }>,
+  value?: number | string,
+) {
+  return options.find((item) => item.value === value);
 }
 
-const [Grid, gridApi] = useVbenVxeGrid({
+function getTagType(type?: string): TagType {
+  if (
+    type === 'primary' ||
+    type === 'success' ||
+    type === 'warning' ||
+    type === 'danger'
+  ) {
+    return type;
+  }
+  return 'info';
+}
+
+function onSelectionChange(rows: User[]) {
+  selectedRows.value = rows.filter((row) => row.id !== ADMIN_USER_ID);
+}
+
+const [Grid, gridApi] = useZqTable({
   formOptions: {
     schema: useSearchFormSchema(),
     submitOnChange: true,
   },
-  gridEvents: {
-    checkboxAll: ({ records }: { records: User[] }) => {
-      // 过滤掉管理员账户
-      selectedRows.value = records.filter(
-        (row) => row.id !== 'a0000000-0000-0000-0000-000000000001',
-      );
-    },
-    checkboxChange: ({ records }: { records: User[] }) => {
-      // 过滤掉管理员账户
-      selectedRows.value = records.filter(
-        (row) => row.id !== 'a0000000-0000-0000-0000-000000000001',
-      );
-    },
-  },
   gridOptions: {
-    columns: useColumns(onActionClick),
-    height: 'auto',
-    keepSource: true,
+    border: true,
+    columns: useColumns(),
+    pagerConfig: {
+      enabled: true,
+      pageSize: 20,
+      pageSizes: [10, 20, 50, 100],
+    },
     proxyConfig: {
+      autoLoad: true,
       ajax: {
-        query: async ({ page }, formValues) => {
+        query: async ({ page, form }: UserQueryParams) => {
+          const formValues = { ...form };
+          const plGroupIds = formValues.pl_group_ids;
+          delete formValues.pl_group_ids;
           const params = {
             page: page.currentPage,
             pageSize: page.pageSize,
             ...formValues,
-          };
+            ...(Array.isArray(plGroupIds) && plGroupIds.length > 0
+              ? { 'pl_group_ids[]': plGroupIds }
+              : {}),
+          } as any;
           return await getUserListApi(params);
         },
       },
     },
-    checkboxConfig: {
-      reserve: true,
-      trigger: 'default',
-      checkMethod: ({ row }: { row: User }) => {
-        // 管理员账户不允许选择
-        return row.id !== 'a0000000-0000-0000-0000-000000000001';
-      },
-    },
+    stripe: true,
     toolbarConfig: {
       custom: true,
       export: false,
-      refresh: { code: 'query' },
+      refresh: true,
       search: true,
       zoom: true,
     },
-  } as VxeTableGridOptions<User>,
+  },
 });
 
 /**
@@ -247,8 +252,8 @@ function refreshGrid() {
   <Page auto-content-height>
     <FormDrawer @success="refreshGrid" />
 
-    <Grid>
-      <template #table-title>
+    <Grid class="h-full" @selection-change="onSelectionChange">
+      <template #toolbar-actions>
         <ElButton type="primary" @click="onCreate">
           <Plus class="size-5" />
           {{ $t('ui.actionTitle.create', [$t('user.name')]) }}
@@ -267,6 +272,84 @@ function refreshGrid() {
             :font-size="16"
             :shadow="false"
           />
+        </div>
+      </template>
+
+      <template #cell-pl_group_names="{ row }">
+        <div class="flex flex-wrap items-center gap-1">
+          <ElTag
+            v-for="group in row.pl_groups || []"
+            :key="group.id"
+            size="small"
+            :type="group.status ? 'success' : 'info'"
+          >
+            {{ group.name }}
+          </ElTag>
+          <span v-if="!row.pl_groups?.length" class="text-muted-foreground">
+            -
+          </span>
+        </div>
+      </template>
+
+      <template #cell-user_type="{ row }">
+        <ElTag
+          size="small"
+          :type="
+            getTagType(getOption(getUserTypeOptions(), row.user_type)?.type)
+          "
+        >
+          {{ getOption(getUserTypeOptions(), row.user_type)?.label || '-' }}
+        </ElTag>
+      </template>
+
+      <template #cell-gender="{ row }">
+        <ElTag size="small" type="info">
+          {{ getOption(getGenderOptions(), row.gender)?.label || '-' }}
+        </ElTag>
+      </template>
+
+      <template #cell-user_status="{ row }">
+        <ElTag
+          size="small"
+          :type="
+            getTagType(getOption(getStatusOptions(), row.user_status)?.type)
+          "
+        >
+          {{ getOption(getStatusOptions(), row.user_status)?.label || '-' }}
+        </ElTag>
+      </template>
+
+      <template #cell-last_login_type="{ row }">
+        <ElTag
+          size="small"
+          :type="
+            getTagType(
+              getOption(getLoginTypeOptions(), row.last_login_type)?.type,
+            )
+          "
+        >
+          {{
+            getOption(getLoginTypeOptions(), row.last_login_type)?.label || '-'
+          }}
+        </ElTag>
+      </template>
+
+      <template #cell-actions="{ row }">
+        <div class="flex items-center justify-end gap-2">
+          <ElButton link type="primary" @click="onResetPassword(row)">
+            {{ $t('user.resetPassword') }}
+          </ElButton>
+          <ElButton link type="primary" @click="onEdit(row)">
+            {{ $t('common.edit') }}
+          </ElButton>
+          <ElButton
+            link
+            type="danger"
+            :disabled="row.id === ADMIN_USER_ID"
+            @click="onDelete(row)"
+          >
+            {{ $t('common.delete') }}
+          </ElButton>
         </div>
       </template>
     </Grid>

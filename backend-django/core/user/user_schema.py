@@ -20,9 +20,23 @@ class UserFilters(FuFilters):
     user_status: Optional[int] = Field(None, q="user_status", alias="user_status")
     user_type: Optional[int] = Field(None, q="user_type", alias="user_type")
     dept_id: Optional[list] = Field(None, q="dept_id__in", alias="dept_ids[]")
+    pl_group_ids: Optional[list] = Field(None, q="pl_groups__id__in", alias="pl_group_ids[]")
     id: Optional[str] = Field(None, q="id", alias="id")
     mobile: Optional[str] = Field(None, q="mobile__icontains", alias="mobile")
     email: Optional[str] = Field(None, q="email__icontains", alias="email")
+    last_login_type: Optional[str] = Field(None, q="last_login_type", alias="last_login_type")
+
+
+class UserPlGroupOut(Schema):
+    """用户所属 PL 组简要信息"""
+    id: str
+    name: str
+    code: Optional[str] = None
+    status: bool
+
+    @staticmethod
+    def resolve_id(obj):
+        return str(obj.id)
 
 
 class UserSchemaIn(ModelSchema):
@@ -32,6 +46,7 @@ class UserSchemaIn(ModelSchema):
     manager_id: Optional[str] = Field(None, alias="manager_id") # 兼容前端可能传递的 manager_id
     post: List[str] = Field(default=[], description="岗位ID列表")
     core_roles: List[str] = Field(default=[], description="角色ID列表")
+    pl_group_ids: List[str] = Field(default=[], description="PL组ID列表")
     
     @field_validator('username', check_fields=False)
     @classmethod
@@ -114,6 +129,7 @@ class UserSchemaPatch(Schema):
     date_joined: Optional[date] = None
     post: Optional[List[str]] = None
     core_roles: Optional[List[str]] = None
+    pl_group_ids: Optional[List[str]] = None
     
     @field_validator('username')
     @classmethod
@@ -175,6 +191,9 @@ class UserSchemaOut(ModelSchema):
     gender_display: Optional[str] = None
     role_names: Optional[List[str]] = None
     post_names: Optional[List[str]] = None
+    pl_groups: Optional[List[UserPlGroupOut]] = None
+    pl_group_ids: Optional[List[str]] = None
+    pl_group_names: Optional[List[str]] = None
     
     class Config:
         model = User
@@ -204,6 +223,21 @@ class UserSchemaOut(ModelSchema):
     def resolve_post_names(obj):
         """解析岗位名称列表"""
         return obj.get_post_names()
+
+    @staticmethod
+    def resolve_pl_groups(obj):
+        """解析用户所属 PL 组列表"""
+        return list(obj.pl_groups.all())
+
+    @staticmethod
+    def resolve_pl_group_ids(obj):
+        """解析用户所属 PL 组 ID 列表"""
+        return [str(group.id) for group in obj.pl_groups.all()]
+
+    @staticmethod
+    def resolve_pl_group_names(obj):
+        """解析用户所属 PL 组名称列表"""
+        return [group.name for group in obj.pl_groups.all()]
 
 
 class UserSchemaDetail(UserSchemaOut):
@@ -353,4 +387,3 @@ class UserPermissionCheckOut(Schema):
 class UserSubordinatesOut(Schema):
     """用户下属列表输出"""
     subordinates: List[UserSchemaSimple]
-

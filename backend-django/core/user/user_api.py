@@ -6,6 +6,7 @@ User API - 用户管理接口
 """
 from typing import List
 from django.contrib.auth.hashers import make_password
+from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from ninja import Router, Query
@@ -17,6 +18,7 @@ from common.fu_crud import create, retrieve, delete, batch_delete
 from common.fu_pagination import MyPagination
 from common.fu_schema import response_success
 from common.fu_user_query import get_manager_list
+from core.pl.pl_model import PlGroup
 from core.user.user_model import User
 from core.user.user_schema import (
     UserSchemaOut,
@@ -41,7 +43,37 @@ from core.user.user_schema import (
 router = Router()
 
 
+def _normalize_id_list(ids: List[str] | None) -> List[str]:
+    return list(dict.fromkeys([str(item) for item in ids or [] if item]))
+
+
+def _resolve_pl_groups(pl_group_ids: List[str] | None) -> List[PlGroup]:
+    ids = _normalize_id_list(pl_group_ids)
+    if not ids:
+        return []
+
+    groups = list(PlGroup.objects.filter(id__in=ids))
+    found_ids = {str(group.id) for group in groups}
+    missing_ids = [pl_group_id for pl_group_id in ids if pl_group_id not in found_ids]
+    if missing_ids:
+        raise HttpError(404, f"PL组不存在: {', '.join(missing_ids)}")
+    return groups
+
+
+def _sync_user_pl_groups(user: User, pl_group_ids: List[str] | None):
+    if pl_group_ids is None:
+        return
+
+    requested_ids = set(_normalize_id_list(pl_group_ids))
+    lead_group_ids = {
+        str(group_id) for group_id in user.lead_pl_groups.values_list('id', flat=True)
+    }
+    final_ids = list(requested_ids | lead_group_ids)
+    user.pl_groups.set(_resolve_pl_groups(final_ids))
+
+
 @router.post("/user", response=UserSchemaOut, summary="创建用户")
+@transaction.atomic
 def create_user(request, data: UserSchemaIn):
     """
     创建新用户
@@ -70,6 +102,7 @@ def create_user(request, data: UserSchemaIn):
     # 提取多对多关系字段
     post_ids = data_dic.pop("post", [])
     role_ids = data_dic.pop("core_roles", [])
+    pl_group_ids = data_dic.pop("pl_group_ids", [])
     
     # 处理 manager/manager_id 字段
     # 优先使用 manager_id (如果存在且非空)，否则使用 manager
@@ -94,6 +127,7 @@ def create_user(request, data: UserSchemaIn):
         user.post.set(post_ids)
     if role_ids:
         user.core_roles.set(role_ids)
+    _sync_user_pl_groups(user, pl_group_ids)
     
     return user
 
@@ -108,9 +142,9 @@ def list_user(request, filters: UserFilters = Query(...)):
     - 使用 select_related 和 prefetch_related 优化查询
     - 支持多种过滤条件
     """
-    query_set = retrieve(request, User, filters)
+    query_set = retrieve(request, User, filters).distinct()
     # 优化查询：预加载关联数据
-    query_set = query_set.select_related('dept').prefetch_related('post', 'core_roles')
+    query_set = query_set.select_related('dept').prefetch_related('post', 'core_roles', 'pl_groups')
     return query_set
 
 
@@ -139,7 +173,7 @@ def search_user(request, keyword: str = Query(None)):
             Q(mobile__icontains=decoded_keyword)
         )
     
-    query_set = query_set.select_related('dept').prefetch_related('post', 'core_roles')
+    query_set = query_set.select_related('dept').prefetch_related('post', 'core_roles', 'pl_groups')
     return query_set
 
 
@@ -267,7 +301,7 @@ def get_current_user_profile(request):
     - 返回完整的用户信息，包括权限
     """
     user = get_object_or_404(
-        User.objects.select_related('dept').prefetch_related('post', 'core_roles'),
+        User.objects.select_related('dept').prefetch_related('post', 'core_roles', 'pl_groups'),
         id=request.auth.id
     )
     return user
@@ -459,6 +493,7 @@ def delete_user(request, user_id: str):
 
 
 @router.put("/user/{user_id}", response=UserSchemaOut, summary="更新用户（完全替换）")
+@transaction.atomic
 def update_user(request, user_id: str, data: UserSchemaIn):
     """
     更新用户信息（PUT - 完全替换）
@@ -489,6 +524,7 @@ def update_user(request, user_id: str, data: UserSchemaIn):
     # 更新用户信息
     role_changed = False
     user_data = data.dict()
+    pl_group_ids = user_data.pop("pl_group_ids", [])
     
     # 处理 manager/manager_id 字段
     # 优先使用 manager_id (如果存在且非空)，否则使用 manager
@@ -520,6 +556,7 @@ def update_user(request, user_id: str, data: UserSchemaIn):
                 setattr(user, attr, value)
     
     user.save()
+    _sync_user_pl_groups(user, pl_group_ids)
     
     # 如果角色发生变更，清除权限缓存
     if role_changed:
@@ -530,6 +567,7 @@ def update_user(request, user_id: str, data: UserSchemaIn):
 
 
 @router.patch("/user/{user_id}", response=UserSchemaOut, summary="部分更新用户")
+@transaction.atomic
 def patch_user(request, user_id: str, data: UserSchemaPatch):
     """
     部分更新用户信息（PATCH - 只更新提供的字段）
@@ -570,6 +608,7 @@ def patch_user(request, user_id: str, data: UserSchemaPatch):
     
     # 更新字段
     role_changed = False
+    pl_group_ids = update_data.pop("pl_group_ids", None)
     
     # 处理 manager/manager_id
     # 只要其中一个在 update_data 中，就说明需要更新
@@ -599,6 +638,7 @@ def patch_user(request, user_id: str, data: UserSchemaPatch):
             setattr(user, attr, value)
     
     user.save()
+    _sync_user_pl_groups(user, pl_group_ids)
     
     # 如果角色发生变更，清除权限缓存
     if role_changed:
@@ -617,7 +657,7 @@ def get_user(request, user_id: str):
     - 使用 prefetch_related 优化关联查询
     """
     user = get_object_or_404(
-        User.objects.select_related('dept').prefetch_related('post', 'core_roles'),
+        User.objects.select_related('dept').prefetch_related('post', 'core_roles', 'pl_groups'),
         id=user_id
     )
     return user
