@@ -1,5 +1,5 @@
 import random
-from datetime import date
+from datetime import date, datetime
 from typing import Dict, Tuple, Optional
 
 
@@ -21,6 +21,26 @@ class IntegrationDataFetcher:
         if not task_id:
             return ""
         return f"https://dataplatform.example.com/{kind}?id={task_id}&date={self.record_date.isoformat()}"
+
+    def build_dt_fuzz_payload(self, branch: str, due_date: str) -> dict:
+        return {
+            "versionName": self.config.dt_fuzz_version_name,
+            "branch": branch,
+            "pbiId": self.config.dt_fuzz_pbi_id,
+            "domian-id": self.config.dt_fuzz_domain_id,
+            "project-id": self.config.dt_fuzz_project_id,
+            "dueDate": due_date,
+        }
+
+    def fetch_dt_fuzz(self, branch: str, due_date: str) -> dict:
+        """
+        Fetch DT_FUZZ tree data.
+        The local environment cannot reach the data lake yet, so this method
+        returns deterministic mock data while preserving the request payload
+        shape that the real integration will use.
+        """
+        payload = self.build_dt_fuzz_payload(branch, due_date)
+        return self._mock_dt_fuzz_tree(payload)
 
     def fetch_metrics(self) -> Dict[str, Tuple[Optional[float], str]]:
         """
@@ -104,3 +124,62 @@ class IntegrationDataFetcher:
             return generator(), url
         except Exception:
             return None, url
+
+    def _mock_dt_fuzz_tree(self, payload: dict) -> dict:
+        seed = f"{self.config.id}-{payload.get('branch')}-{payload.get('dueDate')}"
+        random.seed(seed)
+
+        due_date = payload.get("dueDate") or ""
+        try:
+            due_day = datetime.strptime(due_date, "%Y-%m-%d %H:%M:%S").day
+        except ValueError:
+            due_day = 0
+
+        # Simulate an occasionally-late data lake so fallback behavior is visible.
+        if due_day and due_day % 11 == 0:
+            return {}
+
+        name = self.config.dt_fuzz_version_name or self.config.name
+        branch = payload.get("branch") or ""
+
+        def make_node(label: str, node_type: str, depth: int) -> dict:
+            api_total = random.randint(1800, 7600)
+            api_cover = random.randint(int(api_total * 0.25), int(api_total * 0.9))
+            sec_total = random.randint(9000, 24000)
+            sec_cover = random.randint(int(sec_total * 0.55), int(sec_total * 0.96))
+            lcov_total = random.randint(16000, 86000)
+            lcov_cover = random.randint(int(lcov_total * 0.3), int(lcov_total * 0.84))
+            case_total = random.randint(900, 2800)
+            case_pass = random.randint(int(case_total * 0.35), int(case_total * 0.96))
+            case_active = random.randint(int(case_total * 0.18), int(case_total * 0.76))
+            node = {
+                "name": label,
+                "type": node_type,
+                "highRiskApiCover": str(api_cover),
+                "highRiskApiTotal": str(api_total),
+                "highRiskApiCoverage": f"{api_cover / api_total * 100:.2f}",
+                "secLineCover": str(sec_cover),
+                "secLineTotal": str(sec_total),
+                "secLineCoverage": f"{sec_cover / sec_total * 100:.2f}",
+                "secReportUrl": f"https://dataplatform.example.com/dt-fuzz/sec?branch={branch}&node={label}",
+                "lcovLineCover": str(lcov_cover),
+                "lcovLineTotal": str(lcov_total),
+                "lcovLineCoverage": f"{lcov_cover / lcov_total * 100:.2f}",
+                "lcovReportUrl": f"https://dataplatform.example.com/dt-fuzz/lcov?branch={branch}&node={label}",
+                "defectNumber": str(random.randint(0, 28)),
+                "casePass": str(case_pass),
+                "casePassRate": f"{case_pass / case_total * 100:.2f}",
+                "caseActive": str(case_active),
+                "caseActiveRate": f"{case_active / case_total * 100:.2f}",
+                "caseTotal": str(case_total),
+                "reportUrl": f"https://dataplatform.example.com/dt-fuzz/report?branch={branch}&node={label}",
+                "children": [],
+            }
+            if depth > 0:
+                node["children"] = [
+                    make_node(f"{label} / Module {index}", "module", depth - 1)
+                    for index in range(1, random.randint(2, 4))
+                ]
+            return node
+
+        return make_node(name, "version", 2)

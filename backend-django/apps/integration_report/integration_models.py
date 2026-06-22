@@ -39,6 +39,12 @@ class IntegrationProjectConfig(RootModel):
         blank=True,
         verbose_name="Valgrind子模块列表",
     )
+    enable_dt_fuzz = models.BooleanField(default=False, verbose_name="是否启用DT_FUZZ")
+    dt_fuzz_version_name = models.CharField(max_length=128, blank=True, default="", verbose_name="DT_FUZZ版本名")
+    dt_fuzz_branches = models.JSONField(default=list, blank=True, verbose_name="DT_FUZZ分支列表")
+    dt_fuzz_pbi_id = models.CharField(max_length=128, blank=True, default="", verbose_name="DT_FUZZ PBI ID")
+    dt_fuzz_domain_id = models.CharField(max_length=128, blank=True, default="", verbose_name="DT_FUZZ Domain ID")
+    dt_fuzz_project_id = models.CharField(max_length=128, blank=True, default="", verbose_name="DT_FUZZ Project ID")
 
     class Meta:
         db_table = "ir_project_config"
@@ -86,6 +92,26 @@ class IntegrationProjectMetricValue(RootModel):
         verbose_name = "每日集成报告项目指标值"
         verbose_name_plural = verbose_name
         unique_together = ("config", "record_date", "metric")
+
+
+class IntegrationDtFuzzSnapshot(RootModel):
+    config = models.ForeignKey(
+        IntegrationProjectConfig,
+        on_delete=models.CASCADE,
+        related_name="dt_fuzz_snapshots",
+        verbose_name="所属配置",
+    )
+    record_date = models.DateField(verbose_name="记录日期")
+    source_due_date = models.CharField(max_length=32, blank=True, default="", verbose_name="数据湖DueDate")
+    branch = models.CharField(max_length=128, verbose_name="分支")
+    raw_payload = models.JSONField(default=dict, blank=True, verbose_name="原始载荷")
+    tree_payload = models.JSONField(default=dict, blank=True, verbose_name="树形载荷")
+
+    class Meta:
+        db_table = "ir_dt_fuzz_snapshot"
+        verbose_name = "每日集成报告DT_FUZZ快照"
+        verbose_name_plural = verbose_name
+        unique_together = ("config", "record_date", "branch")
 
 
 class IntegrationEmailSubscription(RootModel):

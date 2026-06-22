@@ -28,6 +28,12 @@ export interface ProjectConfigOut {
   cooddy_check_task_id: string;
   code_scan_project_key?: string;
   valgrind_sub_modules?: string[];
+  enable_dt_fuzz: boolean;
+  dt_fuzz_version_name: string;
+  dt_fuzz_branches: string[];
+  dt_fuzz_pbi_id: string;
+  dt_fuzz_domain_id: string;
+  dt_fuzz_project_id: string;
   code_metrics: MetricCell[];
   dt_metrics: MetricCell[];
 }
@@ -49,6 +55,12 @@ export interface ProjectConfigManageRow {
   dt_project_id: string;
   code_scan_project_key: string;
   valgrind_sub_modules: string[];
+  enable_dt_fuzz: boolean;
+  dt_fuzz_version_name: string;
+  dt_fuzz_branches: string[];
+  dt_fuzz_pbi_id: string;
+  dt_fuzz_domain_id: string;
+  dt_fuzz_project_id: string;
 }
 
 export interface ProjectConfigUpsertIn {
@@ -65,6 +77,12 @@ export interface ProjectConfigUpsertIn {
   dt_project_id: string;
   code_scan_project_key: string;
   valgrind_sub_modules: string[];
+  enable_dt_fuzz: boolean;
+  dt_fuzz_version_name: string;
+  dt_fuzz_branches: string[];
+  dt_fuzz_pbi_id: string;
+  dt_fuzz_domain_id: string;
+  dt_fuzz_project_id: string;
 }
 
 export interface HistoryRow {
@@ -77,8 +95,47 @@ export interface HistoryRow {
   dt_metrics: MetricCell[];
 }
 
+export interface DtFuzzNode {
+  node_key: string;
+  name: string;
+  type: string;
+  highRiskApiCover: string;
+  highRiskApiTotal: string;
+  highRiskApiCoverage: string;
+  secLineCover: string;
+  secLineTotal: string;
+  secLineCoverage: string;
+  secReportUrl: string;
+  lcovLineCover: string;
+  lcovLineTotal: string;
+  lcovLineCoverage: string;
+  lcovReportUrl: string;
+  defectNumber: string;
+  casePass: string;
+  casePassRate: string;
+  caseActive: string;
+  caseActiveRate: string;
+  caseTotal: string;
+  reportUrl: string;
+  branch: string;
+  owner: string;
+  children: DtFuzzNode[];
+}
+
+export interface DtFuzzHistoryItem {
+  record_date: string;
+  config_id: string;
+  config_name: string;
+  project_name: string;
+  branch: string;
+  owner: string;
+  source_due_date: string;
+  nodes: DtFuzzNode[];
+}
+
 export interface HistoryQueryOut {
   items: HistoryRow[];
+  dt_fuzz_items: DtFuzzHistoryItem[];
 }
 
 export async function listIntegrationProjectsApi(params?: ConfigFilterParams) {

@@ -14,6 +14,7 @@ import { useVbenVxeGrid } from '@vben/plugins/vxe-table';
 import {
   ElButton,
   ElDialog,
+  ElDivider,
   ElForm,
   ElFormItem,
   ElInput,
@@ -50,6 +51,7 @@ const allProjects = ref<
 >([]);
 const formConfigId = ref<string>('');
 const valgrindSubModulesText = ref('');
+const dtFuzzBranchesText = ref('');
 const form = ref<ProjectConfigUpsertIn>({
   project_id: '',
   name: '',
@@ -64,6 +66,12 @@ const form = ref<ProjectConfigUpsertIn>({
   dt_project_id: '',
   code_scan_project_key: '',
   valgrind_sub_modules: [],
+  enable_dt_fuzz: false,
+  dt_fuzz_version_name: '',
+  dt_fuzz_branches: [],
+  dt_fuzz_pbi_id: '',
+  dt_fuzz_domain_id: '',
+  dt_fuzz_project_id: '',
 });
 
 // --- Grid Setup ---
@@ -133,6 +141,10 @@ function normalizeValgrindSubModules(rawValue: string) {
   return normalized;
 }
 
+function normalizeDtFuzzBranches(rawValue: string) {
+  return normalizeValgrindSubModules(rawValue);
+}
+
 function payloadOf(r: ProjectConfigManageRow): ProjectConfigUpsertIn {
   return {
     project_id: r.project_id,
@@ -148,6 +160,12 @@ function payloadOf(r: ProjectConfigManageRow): ProjectConfigUpsertIn {
     dt_project_id: r.dt_project_id || '',
     code_scan_project_key: r.code_scan_project_key || '',
     valgrind_sub_modules: r.valgrind_sub_modules || [],
+    enable_dt_fuzz: r.enable_dt_fuzz || false,
+    dt_fuzz_version_name: r.dt_fuzz_version_name || '',
+    dt_fuzz_branches: r.dt_fuzz_branches || [],
+    dt_fuzz_pbi_id: r.dt_fuzz_pbi_id || '',
+    dt_fuzz_domain_id: r.dt_fuzz_domain_id || '',
+    dt_fuzz_project_id: r.dt_fuzz_project_id || '',
   };
 }
 
@@ -157,6 +175,7 @@ function buildSubmitPayload(): ProjectConfigUpsertIn {
     valgrind_sub_modules: normalizeValgrindSubModules(
       valgrindSubModulesText.value,
     ),
+    dt_fuzz_branches: normalizeDtFuzzBranches(dtFuzzBranchesText.value),
   };
 }
 
@@ -199,8 +218,15 @@ function openCreate() {
     dt_project_id: '',
     code_scan_project_key: '',
     valgrind_sub_modules: [],
+    enable_dt_fuzz: false,
+    dt_fuzz_version_name: '',
+    dt_fuzz_branches: [],
+    dt_fuzz_pbi_id: '',
+    dt_fuzz_domain_id: '',
+    dt_fuzz_project_id: '',
   };
   valgrindSubModulesText.value = '';
+  dtFuzzBranchesText.value = '';
   dialogVisible.value = true;
   ensureProjectsLoaded();
 }
@@ -210,6 +236,7 @@ function openEdit(r: ProjectConfigManageRow) {
   formConfigId.value = r.id;
   form.value = payloadOf(r);
   valgrindSubModulesText.value = (r.valgrind_sub_modules || []).join('\n');
+  dtFuzzBranchesText.value = (r.dt_fuzz_branches || []).join('\n');
   dialogVisible.value = true;
   ensureProjectsLoaded();
 }
@@ -228,9 +255,21 @@ async function submitDialog() {
     ElMessage.warning('请输入配置名称');
     return;
   }
+  const payload = buildSubmitPayload();
+  if (payload.enable_dt_fuzz) {
+    if (
+      !payload.dt_fuzz_version_name.trim() ||
+      payload.dt_fuzz_branches.length === 0 ||
+      !payload.dt_fuzz_pbi_id.trim() ||
+      !payload.dt_fuzz_domain_id.trim() ||
+      !payload.dt_fuzz_project_id.trim()
+    ) {
+      ElMessage.warning('启用 DT_FUZZ 时请完整填写 versionName、分支、pbiId、domian-id、project-id');
+      return;
+    }
+  }
   try {
     dialogSaving.value = true;
-    const payload = buildSubmitPayload();
     if (dialogMode.value === 'create') {
       await createIntegrationConfigApi(payload);
       ElMessage.success('创建成功');
@@ -442,6 +481,42 @@ async function mockSendEmails() {
         <ElFormItem label="DT Project ID">
           <ElInput v-model="form.dt_project_id" placeholder="Project ID" />
         </ElFormItem>
+
+        <ElDivider content-position="left">DT_FUZZ 数据湖配置</ElDivider>
+        <ElFormItem label="启用 DT_FUZZ">
+          <ElSwitch v-model="form.enable_dt_fuzz" />
+        </ElFormItem>
+        <template v-if="form.enable_dt_fuzz">
+          <ElFormItem label="versionName" required>
+            <ElInput
+              v-model="form.dt_fuzz_version_name"
+              placeholder="例如 HarmonySpace 510 1.0.0"
+            />
+          </ElFormItem>
+          <ElFormItem label="branch" required>
+            <ElInput
+              v-model="dtFuzzBranchesText"
+              :rows="4"
+              type="textarea"
+              placeholder="每行一个分支，例如：&#10;master&#10;release/1.0"
+            />
+          </ElFormItem>
+          <ElFormItem label="pbiId" required>
+            <ElInput v-model="form.dt_fuzz_pbi_id" placeholder="pbiId" />
+          </ElFormItem>
+          <ElFormItem label="domian-id" required>
+            <ElInput
+              v-model="form.dt_fuzz_domain_id"
+              placeholder="数据湖字段 domian-id"
+            />
+          </ElFormItem>
+          <ElFormItem label="project-id" required>
+            <ElInput
+              v-model="form.dt_fuzz_project_id"
+              placeholder="数据湖字段 project-id"
+            />
+          </ElFormItem>
+        </template>
       </ElForm>
 
       <template #footer>

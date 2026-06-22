@@ -1,7 +1,7 @@
 from collections import defaultdict
 import logging
 import threading
-from datetime import date
+from datetime import date, timedelta
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
 
@@ -12,6 +12,7 @@ from apps.code_scan.models import ScanProject, ScanResult, ScanResultOccurrence,
 from core.user.user_model import User
 
 from .integration_models import (
+    IntegrationDtFuzzSnapshot,
     IntegrationEmailDelivery,
     IntegrationEmailSubscription,
     IntegrationMetricDefinition,
@@ -19,7 +20,7 @@ from .integration_models import (
     IntegrationProjectMetricValue,
 )
 from .integration_fetcher import IntegrationDataFetcher
-from .integration_schema import MetricCell, ProjectConfigOut
+from .integration_schema import DtFuzzNode, MetricCell, ProjectConfigOut
 from .integration_email import build_daily_email_html, send_html_email
 
 
@@ -121,6 +122,135 @@ def normalize_sub_modules(raw_value) -> List[str]:
         seen.add(lowered)
         normalized.append(value)
     return normalized
+
+
+def normalize_dt_fuzz_branches(raw_value) -> List[str]:
+    return normalize_sub_modules(raw_value)
+
+
+def validate_dt_fuzz_config_payload(payload) -> None:
+    if not getattr(payload, "enable_dt_fuzz", False):
+        return
+
+    missing = []
+    if not (payload.dt_fuzz_version_name or "").strip():
+        missing.append("versionName")
+    if not normalize_dt_fuzz_branches(payload.dt_fuzz_branches):
+        missing.append("branch")
+    if not (payload.dt_fuzz_pbi_id or "").strip():
+        missing.append("pbiId")
+    if not (payload.dt_fuzz_domain_id or "").strip():
+        missing.append("domian-id")
+    if not (payload.dt_fuzz_project_id or "").strip():
+        missing.append("project-id")
+    if missing:
+        raise ValueError(f"启用 DT_FUZZ 时以下字段必填：{', '.join(missing)}")
+
+
+def _dt_fuzz_due_date(record_date: date) -> str:
+    return f"{record_date.isoformat()} 12:00:00"
+
+
+def _is_empty_dt_fuzz_payload(payload) -> bool:
+    if payload is None:
+        return True
+    if isinstance(payload, (list, tuple)):
+        return len(payload) == 0
+    if isinstance(payload, dict):
+        if not payload:
+            return True
+        if not str(payload.get("name") or "").strip() and not payload.get("children"):
+            return True
+    return False
+
+
+def _normalize_dt_fuzz_payload(payload):
+    if isinstance(payload, list):
+        return payload[0] if payload else {}
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
+def _collect_dt_fuzz_for_config(config: IntegrationProjectConfig, record_date: date):
+    if not config.enable_dt_fuzz:
+        return
+
+    branches = normalize_dt_fuzz_branches(config.dt_fuzz_branches)
+    if not branches:
+        return
+
+    fetcher = IntegrationDataFetcher(config).set_date(record_date)
+    today_due_date = _dt_fuzz_due_date(record_date)
+    fallback_due_date = _dt_fuzz_due_date(record_date - timedelta(days=1))
+
+    for branch in branches:
+        payload = fetcher.fetch_dt_fuzz(branch, today_due_date)
+        source_due_date = today_due_date
+        if _is_empty_dt_fuzz_payload(payload):
+            payload = fetcher.fetch_dt_fuzz(branch, fallback_due_date)
+            source_due_date = fallback_due_date
+        if _is_empty_dt_fuzz_payload(payload):
+            continue
+
+        normalized_payload = _normalize_dt_fuzz_payload(payload)
+        IntegrationDtFuzzSnapshot.objects.update_or_create(
+            config=config,
+            record_date=record_date,
+            branch=branch,
+            defaults={
+                "source_due_date": source_due_date,
+                "raw_payload": payload,
+                "tree_payload": normalized_payload,
+                "is_deleted": False,
+            },
+        )
+
+
+def _stringify_dt_fuzz_value(payload: dict, key: str) -> str:
+    value = payload.get(key)
+    if value is None:
+        return ""
+    return str(value)
+
+
+def build_dt_fuzz_node(payload: dict, branch: str, owner: str, prefix: str) -> DtFuzzNode:
+    children_payload = payload.get("children") if isinstance(payload, dict) else []
+    if not isinstance(children_payload, list):
+        children_payload = []
+    name = _stringify_dt_fuzz_value(payload, "name") or "-"
+    node_key = f"{prefix}:{name}"
+    children = [
+        build_dt_fuzz_node(child, branch, owner, f"{node_key}:{index}")
+        for index, child in enumerate(children_payload)
+        if isinstance(child, dict)
+    ]
+    return DtFuzzNode(
+        node_key=node_key,
+        name=name,
+        type=_stringify_dt_fuzz_value(payload, "type"),
+        highRiskApiCover=_stringify_dt_fuzz_value(payload, "highRiskApiCover"),
+        highRiskApiTotal=_stringify_dt_fuzz_value(payload, "highRiskApiTotal"),
+        highRiskApiCoverage=_stringify_dt_fuzz_value(payload, "highRiskApiCoverage"),
+        secLineCover=_stringify_dt_fuzz_value(payload, "secLineCover"),
+        secLineTotal=_stringify_dt_fuzz_value(payload, "secLineTotal"),
+        secLineCoverage=_stringify_dt_fuzz_value(payload, "secLineCoverage"),
+        secReportUrl=_stringify_dt_fuzz_value(payload, "secReportUrl"),
+        lcovLineCover=_stringify_dt_fuzz_value(payload, "lcovLineCover"),
+        lcovLineTotal=_stringify_dt_fuzz_value(payload, "lcovLineTotal"),
+        lcovLineCoverage=_stringify_dt_fuzz_value(payload, "lcovLineCoverage"),
+        lcovReportUrl=_stringify_dt_fuzz_value(payload, "lcovReportUrl"),
+        defectNumber=_stringify_dt_fuzz_value(payload, "defectNumber"),
+        casePass=_stringify_dt_fuzz_value(payload, "casePass"),
+        casePassRate=_stringify_dt_fuzz_value(payload, "casePassRate"),
+        caseActive=_stringify_dt_fuzz_value(payload, "caseActive"),
+        caseActiveRate=_stringify_dt_fuzz_value(payload, "caseActiveRate"),
+        caseTotal=_stringify_dt_fuzz_value(payload, "caseTotal"),
+        reportUrl=_stringify_dt_fuzz_value(payload, "reportUrl"),
+        branch=branch,
+        owner=owner,
+        children=children,
+    )
 
 
 def _build_code_scan_detail_url(
@@ -389,6 +519,7 @@ def collect_daily_metrics(record_date: Optional[date] = None, config_ids: Option
                     "detail_url": url,
                 },
             )
+        _collect_dt_fuzz_for_config(cfg, record_date)
 
 
 def collect_daily_metrics_async(record_date: Optional[date] = None, config_ids: Optional[List[str]] = None):
@@ -520,6 +651,12 @@ def list_configs_with_latest(user: User, keyword: Optional[str] = None) -> List[
                 cooddy_check_task_id=cfg.cooddy_check_task_id,
                 code_scan_project_key=cfg.code_scan_project_key,
                 valgrind_sub_modules=normalize_sub_modules(cfg.valgrind_sub_modules),
+                enable_dt_fuzz=cfg.enable_dt_fuzz,
+                dt_fuzz_version_name=cfg.dt_fuzz_version_name,
+                dt_fuzz_branches=normalize_dt_fuzz_branches(cfg.dt_fuzz_branches),
+                dt_fuzz_pbi_id=cfg.dt_fuzz_pbi_id,
+                dt_fuzz_domain_id=cfg.dt_fuzz_domain_id,
+                dt_fuzz_project_id=cfg.dt_fuzz_project_id,
                 code_metrics=make_cells(CODE_KEYS),
                 dt_metrics=make_cells(DT_KEYS),
             )

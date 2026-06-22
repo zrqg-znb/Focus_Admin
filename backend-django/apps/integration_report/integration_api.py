@@ -17,6 +17,7 @@ from .integration_schema import (
     SubscriptionToggleIn,
     HistoryQueryOut,
     HistoryRow,
+    DtFuzzHistoryItem,
     MetricCell,
     ConfigFilterSchema,
     MockCollectIn,
@@ -29,6 +30,7 @@ from .integration_models import (
     IntegrationProjectMetricValue,
     IntegrationEmailDelivery,
     IntegrationEmailSubscription,
+    IntegrationDtFuzzSnapshot,
 )
 from . import integration_service
 from .integration_models import IntegrationProjectConfig
@@ -110,6 +112,14 @@ def list_configs(request, filters: ConfigFilterSchema = Query(...)):
                 valgrind_sub_modules=integration_service.normalize_sub_modules(
                     cfg.valgrind_sub_modules,
                 ),
+                enable_dt_fuzz=cfg.enable_dt_fuzz,
+                dt_fuzz_version_name=cfg.dt_fuzz_version_name,
+                dt_fuzz_branches=integration_service.normalize_dt_fuzz_branches(
+                    cfg.dt_fuzz_branches,
+                ),
+                dt_fuzz_pbi_id=cfg.dt_fuzz_pbi_id,
+                dt_fuzz_domain_id=cfg.dt_fuzz_domain_id,
+                dt_fuzz_project_id=cfg.dt_fuzz_project_id,
             )
         )
     return rows
@@ -117,6 +127,10 @@ def list_configs(request, filters: ConfigFilterSchema = Query(...)):
 
 @router.post("/configs", response=str, summary="新建配置")
 def create_config(request, payload: ProjectConfigUpsertIn):
+    try:
+        integration_service.validate_dt_fuzz_config_payload(payload)
+    except ValueError as exc:
+        raise HttpError(400, str(exc))
     proj = None
     if payload.project_id:
         proj = Project.objects.filter(id=payload.project_id).first()
@@ -137,6 +151,14 @@ def create_config(request, payload: ProjectConfigUpsertIn):
         valgrind_sub_modules=integration_service.normalize_sub_modules(
             payload.valgrind_sub_modules,
         ),
+        enable_dt_fuzz=payload.enable_dt_fuzz,
+        dt_fuzz_version_name=payload.dt_fuzz_version_name,
+        dt_fuzz_branches=integration_service.normalize_dt_fuzz_branches(
+            payload.dt_fuzz_branches,
+        ),
+        dt_fuzz_pbi_id=payload.dt_fuzz_pbi_id,
+        dt_fuzz_domain_id=payload.dt_fuzz_domain_id,
+        dt_fuzz_project_id=payload.dt_fuzz_project_id,
     )
     if payload.managers:
         cfg.managers.set(payload.managers)
@@ -145,6 +167,10 @@ def create_config(request, payload: ProjectConfigUpsertIn):
 
 @router.put("/configs/{config_id}", response=bool, summary="更新配置")
 def update_config(request, config_id: str, payload: ProjectConfigUpsertIn):
+    try:
+        integration_service.validate_dt_fuzz_config_payload(payload)
+    except ValueError as exc:
+        raise HttpError(400, str(exc))
     cfg = get_object_or_404(IntegrationProjectConfig, id=config_id, is_deleted=False)
     cfg.name = payload.name
     fields_set = getattr(payload, "model_fields_set", None) or getattr(payload, "__fields_set__", None) or set()
@@ -170,6 +196,14 @@ def update_config(request, config_id: str, payload: ProjectConfigUpsertIn):
     cfg.valgrind_sub_modules = integration_service.normalize_sub_modules(
         payload.valgrind_sub_modules,
     )
+    cfg.enable_dt_fuzz = payload.enable_dt_fuzz
+    cfg.dt_fuzz_version_name = payload.dt_fuzz_version_name
+    cfg.dt_fuzz_branches = integration_service.normalize_dt_fuzz_branches(
+        payload.dt_fuzz_branches,
+    )
+    cfg.dt_fuzz_pbi_id = payload.dt_fuzz_pbi_id
+    cfg.dt_fuzz_domain_id = payload.dt_fuzz_domain_id
+    cfg.dt_fuzz_project_id = payload.dt_fuzz_project_id
     cfg.save()
     return True
 
@@ -290,7 +324,60 @@ def history(
             )
         )
 
-    return HistoryQueryOut(items=items)
+    dt_fuzz_qs = (
+        IntegrationDtFuzzSnapshot.objects.select_related("config", "config__project")
+        .prefetch_related("config__managers", "config__project__managers")
+        .filter(
+            is_deleted=False,
+            record_date__gte=start,
+            record_date__lte=end,
+            config__is_deleted=False,
+            config__enabled=True,
+            config__enable_dt_fuzz=True,
+        )
+    )
+    if normalized_config_ids:
+        dt_fuzz_qs = dt_fuzz_qs.filter(config_id__in=normalized_config_ids)
+    if keyword:
+        dt_fuzz_qs = dt_fuzz_qs.filter(
+            Q(config__name__icontains=keyword)
+            | Q(config__project__name__icontains=keyword),
+        )
+    if caretaker_keyword:
+        dt_fuzz_qs = dt_fuzz_qs.filter(
+            Q(config__managers__name__icontains=caretaker_keyword)
+            | Q(config__managers__username__icontains=caretaker_keyword)
+            | Q(config__project__managers__name__icontains=caretaker_keyword)
+            | Q(config__project__managers__username__icontains=caretaker_keyword),
+        )
+
+    dt_fuzz_items: List[DtFuzzHistoryItem] = []
+    for snapshot in dt_fuzz_qs.distinct().order_by("-record_date", "config__name", "branch"):
+        cfg = snapshot.config
+        owner = _resolve_history_caretaker_names(cfg)
+        payload = snapshot.tree_payload or {}
+        if not isinstance(payload, dict) or not payload:
+            continue
+        node = integration_service.build_dt_fuzz_node(
+            payload,
+            snapshot.branch,
+            owner,
+            f"{snapshot.record_date}:{cfg.id}:{snapshot.branch}",
+        )
+        dt_fuzz_items.append(
+            DtFuzzHistoryItem(
+                record_date=snapshot.record_date,
+                config_id=str(cfg.id),
+                config_name=cfg.name,
+                project_name=cfg.project.name if cfg.project else "",
+                branch=snapshot.branch,
+                owner=owner,
+                source_due_date=snapshot.source_due_date,
+                nodes=[node],
+            )
+        )
+
+    return HistoryQueryOut(items=items, dt_fuzz_items=dt_fuzz_items)
 
 
 @router.post("/mock/collect", response=bool, summary="Mock 采集一次（异步写入今日数据）")

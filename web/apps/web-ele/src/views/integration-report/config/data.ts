@@ -57,6 +57,37 @@ export function useColumns(
     },
     { field: 'dt_project_id', title: 'DT Project ID', minWidth: 150 },
     {
+      field: 'enable_dt_fuzz',
+      title: 'DT_FUZZ',
+      width: 100,
+      formatter: ({ row }) => (row.enable_dt_fuzz ? '启用' : '关闭'),
+    },
+    {
+      field: 'dt_fuzz_version_name',
+      title: 'DT_FUZZ versionName',
+      minWidth: 190,
+    },
+    {
+      field: 'dt_fuzz_branches',
+      title: 'DT_FUZZ 分支',
+      minWidth: 180,
+      formatter: ({ row }) =>
+        Array.isArray(row.dt_fuzz_branches) && row.dt_fuzz_branches.length > 0
+          ? row.dt_fuzz_branches.join(', ')
+          : '-',
+    },
+    { field: 'dt_fuzz_pbi_id', title: 'DT_FUZZ pbiId', minWidth: 150 },
+    {
+      field: 'dt_fuzz_domain_id',
+      title: 'DT_FUZZ domian-id',
+      minWidth: 170,
+    },
+    {
+      field: 'dt_fuzz_project_id',
+      title: 'DT_FUZZ project-id',
+      minWidth: 170,
+    },
+    {
       field: 'action',
       title: '操作',
       width: 150,

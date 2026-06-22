@@ -29,6 +29,12 @@ class ProjectConfigOut(Schema):
     cooddy_check_task_id: str = ""
     code_scan_project_key: str = ""
     valgrind_sub_modules: List[str] = []
+    enable_dt_fuzz: bool = False
+    dt_fuzz_version_name: str = ""
+    dt_fuzz_branches: List[str] = []
+    dt_fuzz_pbi_id: str = ""
+    dt_fuzz_domain_id: str = ""
+    dt_fuzz_project_id: str = ""
     code_metrics: List[MetricCell] = []
     dt_metrics: List[MetricCell] = []
 
@@ -47,6 +53,12 @@ class ProjectConfigUpsertIn(Schema):
     dt_project_id: str = ""
     code_scan_project_key: str = ""
     valgrind_sub_modules: List[str] = []
+    enable_dt_fuzz: bool = False
+    dt_fuzz_version_name: str = ""
+    dt_fuzz_branches: List[str] = []
+    dt_fuzz_pbi_id: str = ""
+    dt_fuzz_domain_id: str = ""
+    dt_fuzz_project_id: str = ""
 
 
 class ConfigFilterSchema(Schema):
@@ -70,6 +82,12 @@ class ProjectConfigManageRow(Schema):
     dt_project_id: str
     code_scan_project_key: str
     valgrind_sub_modules: List[str]
+    enable_dt_fuzz: bool = False
+    dt_fuzz_version_name: str = ""
+    dt_fuzz_branches: List[str] = []
+    dt_fuzz_pbi_id: str = ""
+    dt_fuzz_domain_id: str = ""
+    dt_fuzz_project_id: str = ""
 
 
 class SubscriptionToggleIn(Schema):
@@ -86,8 +104,47 @@ class HistoryRow(Schema):
     dt_metrics: List[MetricCell] = []
 
 
+class DtFuzzNode(Schema):
+    node_key: str
+    name: str = ""
+    type: str = ""
+    highRiskApiCover: str = ""
+    highRiskApiTotal: str = ""
+    highRiskApiCoverage: str = ""
+    secLineCover: str = ""
+    secLineTotal: str = ""
+    secLineCoverage: str = ""
+    secReportUrl: str = ""
+    lcovLineCover: str = ""
+    lcovLineTotal: str = ""
+    lcovLineCoverage: str = ""
+    lcovReportUrl: str = ""
+    defectNumber: str = ""
+    casePass: str = ""
+    casePassRate: str = ""
+    caseActive: str = ""
+    caseActiveRate: str = ""
+    caseTotal: str = ""
+    reportUrl: str = ""
+    branch: str = ""
+    owner: str = ""
+    children: List["DtFuzzNode"] = []
+
+
+class DtFuzzHistoryItem(Schema):
+    record_date: date
+    config_id: str
+    config_name: str
+    project_name: str
+    branch: str
+    owner: str = ""
+    source_due_date: str = ""
+    nodes: List[DtFuzzNode] = []
+
+
 class HistoryQueryOut(Schema):
     items: List[HistoryRow]
+    dt_fuzz_items: List[DtFuzzHistoryItem] = []
 
 
 class MockCollectIn(Schema):

@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import type { HistoryRow, MetricCell } from '#/api/integration-report';
+import type {
+  DtFuzzHistoryItem,
+  DtFuzzNode,
+  HistoryRow,
+  MetricCell,
+} from '#/api/integration-report';
 
 import { computed, onMounted, ref } from 'vue';
 
@@ -23,17 +28,20 @@ import { queryIntegrationHistoryApi } from '#/api/integration-report';
 
 defineOptions({ name: 'DailyIntegrationHistory' });
 
-type HistoryTabKey = 'code' | 'dt';
+type HistoryTabKey = 'code' | 'dt' | 'dt_fuzz';
 type HistorySortOrder = 'asc' | 'desc';
 type HistoryMetricGroup = 'code_metrics' | 'dt_metrics';
 type HistorySortState = { key: string; order: HistorySortOrder };
 type SortableValue = { category: number; value: number | string };
+type DtFuzzDisplayRow = DtFuzzNode & { depth: number };
 
 const loading = ref(false);
 const keyword = ref('');
 const caretakerKeyword = ref('');
 const range = ref<Date | null>(null);
 const rows = ref<HistoryRow[]>([]);
+const dtFuzzItems = ref<DtFuzzHistoryItem[]>([]);
+const expandedDtFuzzKeys = ref<Set<string>>(new Set());
 const activeTab = ref<HistoryTabKey>('code');
 
 function formatDate(d: Date) {
@@ -108,6 +116,31 @@ function cellClass(c?: MetricCell) {
   if (c.level === 'danger') return 'text-red-600 font-bold';
   if (c.level === 'warning') return 'text-orange-600 font-bold';
   return 'text-gray-700 dark:text-gray-200';
+}
+
+function dtFuzzRatioText(
+  rate?: string,
+  cover?: string,
+  total?: string,
+  suffix = '%',
+) {
+  const normalizedRate = rate?.trim();
+  const normalizedCover = cover?.trim();
+  const normalizedTotal = total?.trim();
+  const value = normalizedRate ? `${normalizedRate}${suffix}` : '-';
+  if (normalizedCover && normalizedTotal) {
+    return `${value}(${normalizedCover}/${normalizedTotal})`;
+  }
+  return value;
+}
+
+function dtFuzzPercentText(rate?: string) {
+  const normalizedRate = rate?.trim();
+  return normalizedRate ? `${normalizedRate}%` : '-';
+}
+
+function dtFuzzPlainText(value?: string) {
+  return value?.trim() || '-';
 }
 
 function getMetric(metrics: MetricCell[], key: string) {
@@ -296,6 +329,50 @@ const sortedDtRows = computed(() => {
   return sortRows('dt_metrics', dtSortState.value);
 });
 
+const dtFuzzRows = computed(() => {
+  return dtFuzzItems.value.flatMap((item) => item.nodes || []);
+});
+
+const hasDtFuzzRows = computed(() => dtFuzzRows.value.length > 0);
+
+const visibleDtFuzzRows = computed<DtFuzzDisplayRow[]>(() => {
+  const result: DtFuzzDisplayRow[] = [];
+
+  function walk(nodes: DtFuzzNode[], depth: number) {
+    for (const node of nodes) {
+      result.push({ ...node, depth });
+      if (
+        node.children?.length &&
+        expandedDtFuzzKeys.value.has(node.node_key)
+      ) {
+        walk(node.children, depth + 1);
+      }
+    }
+  }
+
+  walk(dtFuzzRows.value, 0);
+  return result;
+});
+
+function hasDtFuzzChildren(row: DtFuzzDisplayRow) {
+  return Array.isArray(row.children) && row.children.length > 0;
+}
+
+function isDtFuzzExpanded(row: DtFuzzDisplayRow) {
+  return expandedDtFuzzKeys.value.has(row.node_key);
+}
+
+function toggleDtFuzzRow(row: DtFuzzDisplayRow) {
+  if (!hasDtFuzzChildren(row)) return;
+  const next = new Set(expandedDtFuzzKeys.value);
+  if (next.has(row.node_key)) {
+    next.delete(row.node_key);
+  } else {
+    next.add(row.node_key);
+  }
+  expandedDtFuzzKeys.value = next;
+}
+
 async function query() {
   if (!range.value) return;
   try {
@@ -307,6 +384,8 @@ async function query() {
       caretaker_keyword: caretakerKeyword.value.trim(),
     });
     rows.value = res.items;
+    dtFuzzItems.value = res.dt_fuzz_items || [];
+    expandedDtFuzzKeys.value = new Set();
   } catch {
     ElMessage.error('查询失败');
   } finally {
@@ -848,6 +927,185 @@ onMounted(() => {
               </ElSkeleton>
             </div>
           </ElTabPane>
+
+          <ElTabPane label="DT_FUZZ 数据" name="dt_fuzz">
+            <div class="history-tab-panel">
+              <ElSkeleton
+                :loading="loading"
+                animated
+                class="history-tab-skeleton"
+              >
+                <template #template>
+                  <div class="history-table-scroll">
+                    <div
+                      class="history-skeleton-track history-skeleton-track--dt-fuzz"
+                    >
+                      <div
+                        v-for="rowIndex in 8"
+                        :key="`dt-fuzz-row-${rowIndex}`"
+                        class="history-skeleton-row"
+                      >
+                        <ElSkeletonItem
+                          class="history-skeleton-cell history-skeleton-cell--wide"
+                          variant="text"
+                        />
+                        <ElSkeletonItem
+                          v-for="index in 8"
+                          :key="`dt-fuzz-cell-${rowIndex}-${index}`"
+                          class="history-skeleton-cell"
+                          variant="text"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </template>
+                <template #default>
+                  <div v-if="hasDtFuzzRows" class="history-table-scroll">
+                    <table class="history-table w-full min-w-[1500px] text-sm">
+                      <thead>
+                        <tr class="text-left text-xs text-gray-500">
+                          <th class="py-2 pr-3">高风险模块</th>
+                          <th class="py-2 pr-3">高风险 API 覆盖率</th>
+                          <th class="py-2 pr-3">问题数</th>
+                          <th class="py-2 pr-3">用例通过率</th>
+                          <th class="py-2 pr-3">用例有效率</th>
+                          <th class="py-2 pr-3">SecTracy 行覆盖率</th>
+                          <th class="py-2 pr-3">LCOV行覆盖率</th>
+                          <th class="py-2 pr-3">分支</th>
+                          <th class="py-2 pr-3">数据看护人</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          v-for="row in visibleDtFuzzRows"
+                          :key="row.node_key"
+                          class="border-t border-gray-100 dark:border-gray-800"
+                        >
+                          <td
+                            class="py-3 pr-3 font-bold text-gray-900 dark:text-white"
+                          >
+                            <div
+                              class="dt-fuzz-module-cell"
+                              :style="{
+                                paddingLeft: `${row.depth * 22}px`,
+                              }"
+                            >
+                              <button
+                                type="button"
+                                class="dt-fuzz-expand-button"
+                                :class="{
+                                  'is-placeholder': !hasDtFuzzChildren(row),
+                                }"
+                                :disabled="!hasDtFuzzChildren(row)"
+                                @click="toggleDtFuzzRow(row)"
+                              >
+                                <IconifyIcon
+                                  v-if="hasDtFuzzChildren(row)"
+                                  :icon="
+                                    isDtFuzzExpanded(row)
+                                      ? 'lucide:chevron-down'
+                                      : 'lucide:chevron-right'
+                                  "
+                                />
+                              </button>
+                              <ElLink
+                                v-if="row.reportUrl"
+                                :href="row.reportUrl"
+                                target="_blank"
+                                :underline="false"
+                              >
+                                {{ dtFuzzPlainText(row.name) }}
+                              </ElLink>
+                              <span v-else>
+                                {{ dtFuzzPlainText(row.name) }}
+                              </span>
+                            </div>
+                          </td>
+                          <td class="py-3 pr-3">
+                            <span class="dt-fuzz-ratio">
+                              {{
+                                dtFuzzRatioText(
+                                  row.highRiskApiCoverage,
+                                  row.highRiskApiCover,
+                                  row.highRiskApiTotal,
+                                )
+                              }}
+                            </span>
+                          </td>
+                          <td class="py-3 pr-3">
+                            <span class="dt-fuzz-defect">
+                              {{ dtFuzzPlainText(row.defectNumber) }}
+                            </span>
+                          </td>
+                          <td class="py-3 pr-3">
+                            <span class="dt-fuzz-ratio">
+                              {{
+                                dtFuzzRatioText(
+                                  row.casePassRate,
+                                  row.casePass,
+                                  row.caseTotal,
+                                )
+                              }}
+                            </span>
+                          </td>
+                          <td class="py-3 pr-3">
+                            <span class="dt-fuzz-ratio">
+                              {{
+                                dtFuzzRatioText(
+                                  row.caseActiveRate,
+                                  row.caseActive,
+                                  row.caseTotal,
+                                )
+                              }}
+                            </span>
+                          </td>
+                          <td class="py-3 pr-3">
+                            <span class="dt-fuzz-coverage">
+                              <ElLink
+                                v-if="row.secReportUrl"
+                                :href="row.secReportUrl"
+                                target="_blank"
+                                :underline="false"
+                              >
+                                {{ dtFuzzPercentText(row.secLineCoverage) }}
+                              </ElLink>
+                              <span v-else>
+                                {{ dtFuzzPercentText(row.secLineCoverage) }}
+                              </span>
+                            </span>
+                          </td>
+                          <td class="py-3 pr-3">
+                            <span class="dt-fuzz-coverage">
+                              <ElLink
+                                v-if="row.lcovReportUrl"
+                                :href="row.lcovReportUrl"
+                                target="_blank"
+                                :underline="false"
+                              >
+                                {{ dtFuzzPercentText(row.lcovLineCoverage) }}
+                              </ElLink>
+                              <span v-else>
+                                {{ dtFuzzPercentText(row.lcovLineCoverage) }}
+                              </span>
+                            </span>
+                          </td>
+                          <td class="py-3 pr-3 text-xs text-gray-500">
+                            {{ row.branch || '-' }}
+                          </td>
+                          <td class="py-3 pr-3 text-xs text-gray-500">
+                            {{ row.owner || '-' }}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div v-else class="flex h-full items-center justify-center">
+                    <ElEmpty description="暂无 DT_FUZZ 数据" />
+                  </div>
+                </template>
+              </ElSkeleton>
+            </div>
+          </ElTabPane>
         </ElTabs>
       </div>
     </div>
@@ -960,6 +1218,10 @@ onMounted(() => {
   min-width: 1260px;
 }
 
+.history-skeleton-track--dt-fuzz {
+  min-width: 1500px;
+}
+
 .history-skeleton-row {
   display: flex;
   gap: 12px;
@@ -997,4 +1259,50 @@ onMounted(() => {
   color: var(--el-text-color-secondary);
   box-shadow: inset 0 -1px 0 var(--el-border-color-lighter);
 }
+
+.dt-fuzz-module-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.dt-fuzz-expand-button {
+  display: inline-flex;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  padding: 0;
+}
+
+.dt-fuzz-expand-button:hover:not(:disabled) {
+  background: var(--el-fill-color-light);
+  color: var(--el-color-primary);
+}
+
+.dt-fuzz-expand-button.is-placeholder {
+  visibility: hidden;
+}
+
+.dt-fuzz-ratio,
+.dt-fuzz-coverage {
+  font-variant-numeric: tabular-nums;
+  color: var(--el-text-color-primary);
+}
+
+.dt-fuzz-defect {
+  font-variant-numeric: tabular-nums;
+  color: var(--el-color-danger);
+  font-weight: 600;
+}
+
 </style>
