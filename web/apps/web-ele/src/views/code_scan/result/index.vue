@@ -16,7 +16,7 @@ import { useRoute, useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
-import { Filter } from '@element-plus/icons-vue';
+import { Download, Filter } from '@element-plus/icons-vue';
 import {
   ElButton,
   ElDescriptions,
@@ -39,6 +39,7 @@ import {
 
 import {
   applyShieldApi,
+  exportLatestResultsApi,
   listLatestResultsApi,
   listProjectOverviewApi,
   listResultShieldRecordsApi,
@@ -164,6 +165,8 @@ const shieldStatusVisible = ref(false);
 const tools = ref<string[]>([]);
 const toolCountMap = ref<Record<string, null | number>>({});
 const activeTool = ref('');
+const currentProjectName = ref('');
+const exportLoading = ref(false);
 const summarySortState = ref<{ order: TableSortOrder; prop: string }>({
   prop: '',
   order: null,
@@ -331,6 +334,21 @@ function appendDetailKeywordParams(params: LatestResultsQueryParams) {
   }
 }
 
+function buildExportParams() {
+  const params: Omit<
+    LatestResultsQueryParams,
+    'page' | 'pageSize' | 'tool_name'
+  > = {};
+  if (shieldStatusFilter.value) {
+    params.shield_status = shieldStatusFilter.value;
+  }
+  if (routeSubModules.value) {
+    params.sub_modules = routeSubModules.value;
+  }
+  appendDetailKeywordParams(params as LatestResultsQueryParams);
+  return params;
+}
+
 function resetDetailPage() {
   detailGridApi.pagination.currentPage = 1;
   detailGridApi.setGridOptions({
@@ -366,6 +384,7 @@ async function loadTools() {
   if (!projectId.value) return;
 
   projectMissing.value = false;
+  currentProjectName.value = '';
   tools.value = [...ALL_SCAN_TOOLS];
   toolCountMap.value = Object.fromEntries(
     ALL_SCAN_TOOLS.map((tool) => [tool, null]),
@@ -387,12 +406,15 @@ async function loadTools() {
 
   if (!project) {
     projectMissing.value = true;
+    currentProjectName.value = '';
     tools.value = [];
     toolCountMap.value = {};
     activeTool.value = '';
     resetDetailState();
     return;
   }
+
+  currentProjectName.value = project.project_name || '';
 
   if (project.tool_counts) {
     for (const tool of Object.keys(project.tool_counts)) {
@@ -517,6 +539,57 @@ function handleApplyShield() {
   shieldVisible.value = true;
 }
 
+function formatExportTimestamp(date = new Date()) {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(
+    date.getDate(),
+  )}${pad(date.getHours())}${pad(date.getMinutes())}${pad(
+    date.getSeconds(),
+  )}`;
+}
+
+function sanitizeFileName(value: string) {
+  return String(value || '')
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, '_');
+}
+
+function downloadBlob(data: any, fileName: string) {
+  const blob = data instanceof Blob ? data : new Blob([data]);
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
+async function handleExportDetail() {
+  if (!projectId.value || projectMissing.value) return;
+  exportLoading.value = true;
+  try {
+    const res = await exportLatestResultsApi(
+      projectId.value,
+      buildExportParams(),
+    );
+    const projectName = sanitizeFileName(
+      currentProjectName.value || projectId.value,
+    );
+    downloadBlob(
+      res,
+      `静态扫描明细-${projectName}-${formatExportTimestamp()}.xlsx`,
+    );
+    ElMessage.success('导出成功');
+  } catch (error) {
+    ElMessage.error('导出失败');
+    console.error(error);
+  } finally {
+    exportLoading.value = false;
+  }
+}
+
 async function submitShield() {
   try {
     if (!shieldForm.value.approver_id) {
@@ -619,6 +692,15 @@ watch(
     <template #extra>
       <div v-if="isDetail" class="flex items-center gap-3">
         <ElButton @click="backToSummary">返回</ElButton>
+        <ElButton
+          type="primary"
+          :icon="Download"
+          :loading="exportLoading"
+          :disabled="projectMissing"
+          @click="handleExportDetail"
+        >
+          导出明细
+        </ElButton>
         <ElButton
           type="warning"
           :disabled="projectMissing"

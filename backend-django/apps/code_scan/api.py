@@ -1,8 +1,15 @@
+import re
+from io import BytesIO
 from typing import List
+from urllib.parse import quote
+
 from ninja import Router, File, UploadedFile, Form
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.db.models import Count, Q
+from django.utils import timezone
 from ninja.errors import HttpError
+from openpyxl import Workbook
 from apps.code_scan.models import (
     ScanProject,
     ScanTask,
@@ -37,6 +44,19 @@ SORT_ORDER_ALIASES = {
     "desc": "desc",
     "descending": "desc",
 }
+EXPORT_SHEET_INVALID_CHARS = re.compile(r"[\[\]\:\*\?\/\\]")
+EXPORT_COLUMNS = [
+    ("tool_name", "工具"),
+    ("sub_module", "子模块"),
+    ("file_path", "文件路径"),
+    ("line_number", "行号"),
+    ("defect_type", "缺陷类型"),
+    ("severity", "严重程度"),
+    ("description", "缺陷描述"),
+    ("shield_status", "屏蔽状态"),
+    ("help_info", "修复建议"),
+    ("code_snippet", "代码片段"),
+]
 
 
 def _normalize_sub_modules(raw_value: str | List[str] | None) -> list[str]:
@@ -285,6 +305,39 @@ def _legacy_result_to_latest_payload(item: ScanResult) -> dict:
     }
 
 
+def _occurrence_to_export_payload(item: ScanResultOccurrence) -> dict:
+    detail = item.detail
+    task = item.task
+    return {
+        "tool_name": task.tool_name,
+        "sub_module": task.sub_module,
+        "file_path": detail.file_path,
+        "line_number": item.line_number,
+        "defect_type": detail.defect_type,
+        "severity": detail.severity,
+        "description": detail.description,
+        "shield_status": item.shield_status,
+        "help_info": detail.help_info,
+        "code_snippet": detail.code_snippet,
+    }
+
+
+def _legacy_result_to_export_payload(item: ScanResult) -> dict:
+    task = item.task
+    return {
+        "tool_name": task.tool_name,
+        "sub_module": task.sub_module,
+        "file_path": item.file_path,
+        "line_number": item.line_number,
+        "defect_type": item.defect_type,
+        "severity": item.severity,
+        "description": item.description,
+        "shield_status": item.shield_status,
+        "help_info": item.help_info,
+        "code_snippet": item.code_snippet,
+    }
+
+
 def _sort_latest_payloads(items: list[dict]) -> list[dict]:
     severity_rank = {"High": 0, "Medium": 1, "Low": 2}
     return sorted(
@@ -335,6 +388,110 @@ def _apply_legacy_filters(
         if value:
             qs = qs.filter(**{lookup: value})
     return qs
+
+
+def _build_latest_result_querysets(
+    task_ids: list[str],
+    normalized_shield_status: str | None,
+    keyword_filters: dict[str, str],
+    *,
+    exclude_shielded: bool = False,
+):
+    occurrence_qs = (
+        ScanResultOccurrence.objects.filter(
+            task_id__in=task_ids,
+            is_deleted=False,
+            task__is_deleted=False,
+            task__project__is_deleted=False,
+        )
+        .select_related("task", "finding", "detail")
+        .order_by("-detail__severity", "detail__file_path", "line_number")
+    )
+    occurrence_qs = _apply_occurrence_filters(
+        occurrence_qs,
+        normalized_shield_status,
+        keyword_filters,
+    )
+    if exclude_shielded:
+        occurrence_qs = occurrence_qs.exclude(shield_status="Shielded")
+
+    legacy_qs = (
+        ScanResult.objects.filter(
+            task_id__in=task_ids,
+            is_deleted=False,
+            normalized_occurrence__isnull=True,
+            task__is_deleted=False,
+            task__project__is_deleted=False,
+        )
+        .select_related("task")
+        .order_by("-severity", "file_path", "line_number")
+    )
+    legacy_qs = _apply_legacy_filters(
+        legacy_qs,
+        normalized_shield_status,
+        keyword_filters,
+    )
+    if exclude_shielded:
+        legacy_qs = legacy_qs.exclude(shield_status="Shielded")
+
+    return occurrence_qs, legacy_qs
+
+
+def _build_latest_result_payloads(
+    task_ids: list[str],
+    normalized_shield_status: str | None,
+    keyword_filters: dict[str, str],
+):
+    occurrence_qs, legacy_qs = _build_latest_result_querysets(
+        task_ids,
+        normalized_shield_status,
+        keyword_filters,
+    )
+    occurrence_count = occurrence_qs.count()
+    legacy_count = legacy_qs.count()
+    return occurrence_qs, legacy_qs, occurrence_count, legacy_count
+
+
+def _build_export_sheet_name(raw_name: str, used_names: set[str]) -> str:
+    normalized = EXPORT_SHEET_INVALID_CHARS.sub("_", str(raw_name or "").strip())
+    base_name = (normalized or "未命名工具")[:31]
+    sheet_name = base_name
+    suffix = 1
+    while sheet_name in used_names:
+        suffix_text = f"_{suffix}"
+        sheet_name = f"{base_name[:31 - len(suffix_text)]}{suffix_text}"
+        suffix += 1
+    used_names.add(sheet_name)
+    return sheet_name
+
+
+def _append_export_rows(sheet, rows: list[dict]):
+    sheet.append([label for _, label in EXPORT_COLUMNS])
+    for row in rows:
+        sheet.append([row.get(key) or "" for key, _ in EXPORT_COLUMNS])
+
+
+def _build_latest_results_workbook(
+    sheet_payloads: list[tuple[str, list[dict]]],
+) -> bytes:
+    workbook = Workbook(write_only=True)
+    used_names: set[str] = set()
+    if not sheet_payloads:
+        sheet_payloads = [("无数据", [])]
+
+    for tool_name, rows in sheet_payloads:
+        sheet = workbook.create_sheet(_build_export_sheet_name(tool_name, used_names))
+        _append_export_rows(sheet, rows)
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def _build_export_filename(project: ScanProject) -> str:
+    timestamp = timezone.now().strftime("%Y%m%d%H%M%S")
+    raw_name = f"静态扫描明细-{project.name or project.id}-{timestamp}.xlsx"
+    return quote(raw_name)
 
 
 def _get_result_context(result_id: str):
@@ -738,41 +895,13 @@ def list_latest_results(
     start = (page - 1) * pageSize
     end = start + pageSize
 
-    occurrence_qs = (
-        ScanResultOccurrence.objects.filter(
-            task_id__in=task_ids,
-            is_deleted=False,
-            task__is_deleted=False,
-            task__project__is_deleted=False,
+    occurrence_qs, legacy_qs, occurrence_count, legacy_count = (
+        _build_latest_result_payloads(
+            task_ids,
+            normalized_shield_status,
+            keyword_filters,
         )
-        .select_related("task", "finding", "detail")
-        .order_by("-detail__severity", "detail__file_path", "line_number")
     )
-    occurrence_qs = _apply_occurrence_filters(
-        occurrence_qs,
-        normalized_shield_status,
-        keyword_filters,
-    )
-
-    legacy_qs = (
-        ScanResult.objects.filter(
-            task_id__in=task_ids,
-            is_deleted=False,
-            normalized_occurrence__isnull=True,
-            task__is_deleted=False,
-            task__project__is_deleted=False,
-        )
-        .select_related("task")
-        .order_by("-severity", "file_path", "line_number")
-    )
-    legacy_qs = _apply_legacy_filters(
-        legacy_qs,
-        normalized_shield_status,
-        keyword_filters,
-    )
-
-    occurrence_count = occurrence_qs.count()
-    legacy_count = legacy_qs.count()
     if occurrence_count and not legacy_count:
         return {
             "items": [_occurrence_to_latest_payload(item) for item in occurrence_qs[start:end]],
@@ -790,6 +919,84 @@ def list_latest_results(
     payload.extend(_legacy_result_to_latest_payload(item) for item in legacy_qs)
     payload = _sort_latest_payloads(payload)
     return {"items": payload[start:end], "total": len(payload)}
+
+
+@router.get("/projects/{project_id}/latest-results/export", auth=BearerAuth(), summary="导出最新扫描结果明细")
+def export_latest_results(
+    request,
+    project_id: str,
+    shield_status: str = None,
+    sub_modules: str = None,
+    severity_keyword: str = None,
+    defect_type_keyword: str = None,
+    file_path_keyword: str = None,
+    description_keyword: str = None,
+):
+    project = get_object_or_404(
+        ScanProject.objects.filter(is_deleted=False),
+        id=project_id,
+    )
+    normalized_modules = _normalize_sub_modules(sub_modules)
+    normalized_shield_status = _normalize_shield_status(shield_status)
+    if shield_status and not normalized_shield_status:
+        normalized_shield_status = "__invalid__"
+
+    keyword_filters = {
+        "severity": _normalize_keyword(severity_keyword),
+        "defect_type": _normalize_keyword(defect_type_keyword),
+        "file_path": _normalize_keyword(file_path_keyword),
+        "description": _normalize_keyword(description_keyword),
+    }
+
+    task_rows = list(
+        ScanTask.objects.filter(
+            project_id=project_id,
+            is_deleted=False,
+            project__is_deleted=False,
+            status="success",
+        )
+        .order_by("-sys_create_datetime")
+        .values("id", "tool_name", "sub_module", "sys_create_datetime")
+    )
+    latest_rows = _select_latest_task_rows(
+        task_rows,
+        sub_modules=normalized_modules,
+    )
+
+    task_ids_by_tool: dict[str, list[str]] = {}
+    tool_labels: dict[str, str] = {}
+    for row in latest_rows:
+        tool_key = _normalize_tool_name(row.get("tool_name"))
+        if not tool_key:
+            continue
+        task_ids_by_tool.setdefault(tool_key, []).append(str(row["id"]))
+        tool_labels.setdefault(tool_key, str(row.get("tool_name") or tool_key))
+
+    sheet_payloads: list[tuple[str, list[dict]]] = []
+    for tool_key in task_ids_by_tool:
+        task_ids = task_ids_by_tool[tool_key]
+        if normalized_shield_status == "__invalid__":
+            rows: list[dict] = []
+        else:
+            occurrence_qs, legacy_qs = _build_latest_result_querysets(
+                task_ids,
+                normalized_shield_status,
+                keyword_filters,
+                exclude_shielded=True,
+            )
+            rows = [_occurrence_to_export_payload(item) for item in occurrence_qs]
+            rows.extend(_legacy_result_to_export_payload(item) for item in legacy_qs)
+            rows = _sort_latest_payloads(rows)
+        sheet_payloads.append((tool_labels.get(tool_key, tool_key), rows))
+
+    content = _build_latest_results_workbook(sheet_payloads)
+    filename = _build_export_filename(project)
+    response = HttpResponse(
+        content,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f"attachment; filename*=UTF-8''{filename}"
+    return response
 
 # --- 屏蔽申请与审批 ---
 

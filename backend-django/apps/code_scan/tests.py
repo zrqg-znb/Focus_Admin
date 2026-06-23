@@ -1,5 +1,5 @@
 from datetime import timedelta
-from io import StringIO
+from io import BytesIO, StringIO
 import tempfile
 from unittest.mock import patch
 
@@ -7,8 +7,13 @@ from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory, TestCase, override_settings
 from django.utils import timezone
+from openpyxl import load_workbook
 
-from apps.code_scan.api import list_latest_results, list_project_overview
+from apps.code_scan.api import (
+    export_latest_results,
+    list_latest_results,
+    list_project_overview,
+)
 from apps.code_scan.models import (
     ScanFinding,
     ScanProject,
@@ -363,6 +368,123 @@ class CodeScanApiTests(TestCase):
         self.assertEqual(latest_payload['total'], 1)
         self.assertEqual(latest_payload['items'][0]['id'], str(engine_occurrence.id))
         self.assertEqual(overview_payload['items'][0]['tool_counts']['valgrind'], 1)
+
+    def test_export_latest_results_creates_sheet_per_tool_and_excludes_shielded(self):
+        tscan_task = self._create_task(tool_name='tscan')
+        tsan_task = self._create_task(tool_name='tsan', sub_module='engine')
+        self._create_occurrence(
+            tscan_task,
+            index=1,
+            description='normalized target',
+        )
+        self._create_occurrence(
+            tscan_task,
+            index=2,
+            shield_status='Shielded',
+            description='normalized shielded',
+        )
+        self._create_result(
+            tsan_task,
+            index=3,
+            description='legacy target',
+        )
+        self._create_result(
+            tsan_task,
+            index=4,
+            shield_status='Shielded',
+            description='legacy shielded',
+        )
+
+        response = export_latest_results(
+            self.factory.get(
+                f'/api/code-scan/projects/{self.project.id}/latest-results/export'
+            ),
+            self.project.id,
+        )
+
+        workbook = load_workbook(BytesIO(response.content), read_only=True)
+        self.assertEqual(set(workbook.sheetnames), {'tscan', 'tsan'})
+        rows = []
+        for sheet_name in workbook.sheetnames:
+            rows.extend(
+                row
+                for row in workbook[sheet_name].iter_rows(
+                    min_row=2,
+                    values_only=True,
+                )
+            )
+
+        descriptions = {row[6] for row in rows}
+        statuses = {row[7] for row in rows}
+        self.assertEqual(descriptions, {'normalized target', 'legacy target'})
+        self.assertEqual(statuses, {'Normal'})
+
+    def test_export_latest_results_respects_filters_without_pagination(self):
+        task = self._create_task(tool_name='valgrind', sub_module='engine')
+        for index in range(25):
+            self._create_occurrence(
+                task,
+                index=index,
+                severity='High',
+                defect_type='MemoryLeak',
+                file_path=f'src/engine/module_{index}.cpp',
+                description='engine leak target',
+            )
+        self._create_occurrence(
+            task,
+            index=30,
+            severity='Low',
+            defect_type='RaceCondition',
+            file_path='src/engine/worker.cpp',
+            description='other issue',
+        )
+        self._create_occurrence(
+            self._create_task(tool_name='valgrind', sub_module='braking'),
+            index=31,
+            severity='High',
+            defect_type='MemoryLeak',
+            file_path='src/braking/module.cpp',
+            description='engine leak target',
+        )
+
+        response = export_latest_results(
+            self.factory.get(
+                f'/api/code-scan/projects/{self.project.id}/latest-results/export'
+            ),
+            self.project.id,
+            sub_modules='engine',
+            severity_keyword='High',
+            defect_type_keyword='Leak',
+            file_path_keyword='src/engine',
+            description_keyword='target',
+        )
+
+        workbook = load_workbook(BytesIO(response.content), read_only=True)
+        rows = list(
+            workbook['valgrind'].iter_rows(
+                min_row=2,
+                values_only=True,
+            )
+        )
+        self.assertEqual(len(rows), 25)
+        self.assertTrue(all(row[1] == 'engine' for row in rows))
+        self.assertTrue(all(row[4] == 'MemoryLeak' for row in rows))
+
+    def test_export_latest_results_shielded_filter_returns_empty_tool_sheet(self):
+        task = self._create_task(tool_name='tscan')
+        self._create_result(task, index=1, shield_status='Shielded')
+
+        response = export_latest_results(
+            self.factory.get(
+                f'/api/code-scan/projects/{self.project.id}/latest-results/export'
+            ),
+            self.project.id,
+            shield_status='Shielded',
+        )
+
+        workbook = load_workbook(BytesIO(response.content), read_only=True)
+        rows = list(workbook['tscan'].iter_rows(values_only=True))
+        self.assertEqual(len(rows), 1)
 
     def test_project_overview_counts_include_shielded_results(self):
         task = self._create_task(tool_name='tscan')

@@ -215,6 +215,19 @@ export const listLatestResultsApi = (
   );
 };
 
+export const exportLatestResultsApi = (
+  projectId: string,
+  params?: Omit<LatestResultsQueryParams, 'page' | 'pageSize' | 'tool_name'>,
+) => {
+  return requestClient.get(
+    `/api/code-scan/projects/${projectId}/latest-results/export`,
+    {
+      params,
+      responseType: 'blob',
+    },
+  );
+};
+
 export const applyShieldApi = (data: ShieldApplyPayload) => {
   return requestClient.post('/api/code-scan/shield/apply', data);
 };
