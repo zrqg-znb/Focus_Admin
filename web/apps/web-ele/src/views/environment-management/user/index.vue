@@ -9,6 +9,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 import { Clock, IconifyIcon, RefreshCw } from '@vben/icons';
+import { useUserStore } from '@vben/stores';
 
 import {
   ElButton,
@@ -32,7 +33,6 @@ import {
   cancelMyQueueApi,
   favoriteEnvironmentApi,
   getEnvironmentAnnouncementApi,
-  jumpQueueEnvironmentApi,
   listEnvironmentQueueApi,
   listEnvironmentRecordsApi,
   listEnvironmentsApi,
@@ -50,8 +50,10 @@ import {
   recordTableColumns,
   useEnvironmentUsageColumns,
 } from './data';
+import EnvironmentDetailDrawer from './components/EnvironmentDetailDrawer.vue';
 
 const cardLoading = ref(false);
+const userStore = useUserStore();
 const rows = ref<EnvironmentItem[]>([]);
 const total = ref(0);
 const page = ref(1);
@@ -80,6 +82,8 @@ const recordEnvironmentId = ref('');
 const recordPage = ref(1);
 const recordPageSize = ref(20);
 const recordTotal = ref(0);
+const detailDrawerVisible = ref(false);
+const detailEnvironment = ref<EnvironmentItem | null>(null);
 
 const viewOptions = [
   { label: '列表', value: 'table' },
@@ -94,6 +98,11 @@ const rdpInstallerUrl = '/tools/focus-rdp/install-focus-rdp-protocol.ps1';
 const favoriteCount = computed(
   () => rows.value.filter((item) => item.is_favorite).length,
 );
+
+const currentUserId = computed(() => {
+  const userInfo = userStore.userInfo as any;
+  return String(userInfo?.userId || userInfo?.id || userInfo?.user_id || '');
+});
 
 const [Grid, gridApi] = useZqTable<EnvironmentItem>({
   tableTitle: '环境使用',
@@ -139,6 +148,18 @@ function occupiedSeconds(row: EnvironmentItem) {
   return Math.max(
     Math.floor((tick.value - new Date(row.occupied_at).getTime()) / 1000),
     row.occupied_seconds || 0,
+  );
+}
+
+function canOpenRdp(row: EnvironmentItem) {
+  // RDP 控制台只给当前占用人展示，避免有使用权限但未占用的人绕过占用流程直接拉起远程桌面。
+  if (row.is_current_user_occupying) return true;
+  return Boolean(
+    row.can_use_environment
+      && row.status === 'occupied'
+      && row.current_user_id
+      && currentUserId.value
+      && String(row.current_user_id) === currentUserId.value,
   );
 }
 
@@ -237,15 +258,14 @@ async function queue(row: EnvironmentItem) {
   ElMessage.success('排队成功');
 }
 
-async function jumpQueue(row: EnvironmentItem) {
-  await requireOperationAnnouncement('插队');
-  Object.assign(row, await jumpQueueEnvironmentApi(row.id));
-  ElMessage.success('插队成功');
-}
-
 async function cancelQueue(row: EnvironmentItem) {
   Object.assign(row, await cancelMyQueueApi(row.id));
   ElMessage.success('已取消排队');
+}
+
+function openDetail(row: EnvironmentItem) {
+  detailEnvironment.value = row;
+  detailDrawerVisible.value = true;
 }
 
 function showRdpInstallGuide() {
@@ -374,7 +394,7 @@ onBeforeUnmount(() => {
       <div class="summary-line">
         <span>共 {{ total }} 个环境</span>
         <span>当前页收藏 {{ favoriteCount }} 个</span>
-        <span>密码策略：仅环境用户和环境管理员可见明文</span>
+        <span>密码策略：密码不在用户端展示或下发</span>
       </div>
 
       <Grid v-if="viewMode === 'table'">
@@ -383,9 +403,8 @@ onBeforeUnmount(() => {
             <IconifyIcon :class="['size-5', row.is_favorite ? 'favorite-on' : 'favorite-off']" icon="svg:my-favorite" />
           </ElButton>
         </template>
-        <template #cell-secret="{ row }">
+        <template #cell-account="{ row }">
           <div>{{ row.account || '-' }}</div>
-          <div class="muted">{{ row.password || '-' }}</div>
         </template>
         <template #cell-domain="{ row }">
           <ElTag size="small">{{ row.domain_label }}</ElTag>
@@ -402,7 +421,7 @@ onBeforeUnmount(() => {
         <template #cell-device_display="{ row }">
           <div class="tag-wrap">
             <ElTag v-for="device in row.devices" :key="device.id" size="small" type="success">
-              {{ device.display_name }}
+              {{ device.device_name }}
             </ElTag>
             <span v-if="!row.devices?.length" class="muted">-</span>
           </div>
@@ -424,14 +443,14 @@ onBeforeUnmount(() => {
           <div class="action-group">
             <ElButton v-if="row.can_use_environment && row.status === 'idle'" size="small" type="primary" @click="occupy(row)">占用</ElButton>
             <ElButton v-else-if="row.can_use_environment && row.status === 'occupied'" size="small" type="warning" @click="release(row)">释放</ElButton>
-            <ElButton v-if="row.can_use_environment" size="small" @click="openRdp(row)">RDP</ElButton>
+            <ElButton v-if="canOpenRdp(row)" size="small" type="success" @click="openRdp(row)">RDP 控制台</ElButton>
             <template v-if="row.can_use_environment && row.status !== 'idle'">
               <ElButton v-if="row.my_queue_id" size="small" @click="cancelQueue(row)">取消排队</ElButton>
               <template v-else>
                 <ElButton size="small" @click="queue(row)">排队</ElButton>
-                <ElButton size="small" type="danger" @click="jumpQueue(row)">插队</ElButton>
               </template>
             </template>
+            <ElButton link type="primary" @click="openDetail(row)">详情</ElButton>
             <ElButton link type="primary" @click="openRecords(row)">记录</ElButton>
           </div>
         </template>
@@ -489,12 +508,12 @@ onBeforeUnmount(() => {
             <div class="card-tags">
               <ElTag size="small" effect="plain" round>{{ row.domain_label }}</ElTag>
               <ElTag size="small" type="info" effect="plain" round>{{ row.category_label }}</ElTag>
-              <ElTag v-if="row.shelf_location" size="small" type="warning" effect="plain" round>货架: {{ row.shelf_location }}</ElTag>
+              <ElTag v-if="row.bomid" size="small" type="warning" effect="plain" round>BOMID: {{ row.bomid }}</ElTag>
             </div>
 
             <div class="device-strip" v-if="row.devices.length">
               <ElTag v-for="device in row.devices.slice(0, 3)" :key="device.id" size="small" type="success" effect="light" class="device-tag">
-                {{ device.display_name }}
+                {{ device.device_name }}
               </ElTag>
               <span v-if="row.devices.length > 3" class="device-more">+{{ row.devices.length - 3 }}</span>
             </div>
@@ -511,13 +530,14 @@ onBeforeUnmount(() => {
             <div class="card-actions">
               <ElButton v-if="row.can_use_environment && row.status === 'idle'" size="small" type="primary" @click="occupy(row)">占用</ElButton>
               <ElButton v-else-if="row.can_use_environment && row.status === 'occupied'" size="small" type="warning" @click="release(row)">释放</ElButton>
+              <ElButton v-if="canOpenRdp(row)" size="small" type="success" @click="openRdp(row)">RDP 控制台</ElButton>
               <template v-if="row.can_use_environment && row.status !== 'idle'">
                 <ElButton v-if="row.my_queue_id" size="small" @click="cancelQueue(row)">取消排队</ElButton>
                 <template v-else>
                   <ElButton size="small" @click="queue(row)">排队</ElButton>
-                  <ElButton size="small" type="danger" @click="jumpQueue(row)">插队</ElButton>
                 </template>
               </template>
+              <ElButton size="small" @click="openDetail(row)">详情</ElButton>
               <ElButton size="small" @click="openQueue(row)">队列</ElButton>
               <ElButton size="small" @click="openRecords(row)">记录</ElButton>
             </div>
@@ -581,6 +601,11 @@ onBeforeUnmount(() => {
         />
       </div>
     </ElDialog>
+
+    <EnvironmentDetailDrawer
+      v-model="detailDrawerVisible"
+      :environment="detailEnvironment"
+    />
   </Page>
 </template>
 

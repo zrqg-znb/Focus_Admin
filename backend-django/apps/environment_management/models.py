@@ -77,10 +77,12 @@ class TestEnvironment(RootModel):
     password_encrypted = models.TextField(blank=True, default='', verbose_name='加密密码')
     domain = models.CharField(max_length=20, choices=DOMAIN_CHOICES, default='cockpit', db_index=True, verbose_name='领域')
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='test', db_index=True, verbose_name='环境分类')
+    bomid = models.CharField(max_length=100, blank=True, default='', db_index=True, verbose_name='BOMID')
     project_name = models.CharField(max_length=100, blank=True, default='', db_index=True, verbose_name='项目名称')
     vehicle_model = models.CharField(max_length=100, blank=True, default='', db_index=True, verbose_name='车型')
     devices = models.ManyToManyField(EnvironmentTestDevice, blank=True, related_name='environments', verbose_name='测试设备')
     config_description = models.TextField(blank=True, default='', verbose_name='配置情况')
+    asset_number = models.CharField(max_length=100, blank=True, default='', db_index=True, verbose_name='环境资产编号')
     shelf_location = models.CharField(max_length=200, blank=True, default='', verbose_name='货架位置')
     remark = models.TextField(blank=True, default='', verbose_name='备注')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='idle', db_index=True, verbose_name='状态')
@@ -107,6 +109,48 @@ class TestEnvironment(RootModel):
 
     def __str__(self):
         return f'{self.ip_address} {self.project_name}'.strip()
+
+
+class EnvironmentDeviceBinding(RootModel):
+    environment = models.ForeignKey(
+        TestEnvironment,
+        on_delete=models.CASCADE,
+        related_name='device_bindings',
+        verbose_name='环境',
+    )
+    test_device = models.ForeignKey(
+        EnvironmentTestDevice,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='environment_bindings',
+        verbose_name='测试设备',
+    )
+    device_type = models.ForeignKey(
+        EnvironmentDeviceType,
+        on_delete=models.PROTECT,
+        related_name='environment_bindings',
+        verbose_name='测试设备类型',
+    )
+    device_name = models.CharField(max_length=100, blank=True, default='', verbose_name='设备名称')
+    asset_number = models.CharField(max_length=100, blank=True, default='', verbose_name='设备资产编号')
+    remark = models.TextField(blank=True, default='', verbose_name='备注')
+
+    class Meta:
+        db_table = 'environment_management_device_binding'
+        verbose_name = '环境测试设备实例'
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=['environment', 'sort']),
+            models.Index(fields=['test_device']),
+            models.Index(fields=['device_type']),
+            models.Index(fields=['device_name']),
+            models.Index(fields=['asset_number']),
+        ]
+        ordering = ['sort', 'sys_create_datetime']
+
+    def __str__(self):
+        return self.device_name or self.device_type.name
 
 
 class EnvironmentFavorite(RootModel):

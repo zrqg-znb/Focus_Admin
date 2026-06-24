@@ -6,13 +6,12 @@ from ninja.errors import HttpError
 from core.role.role_model import Role
 from core.user.user_model import User
 
-from .models import EnvironmentQueue, TestEnvironment
+from .models import EnvironmentDeviceBinding, EnvironmentQueue, TestEnvironment
 from .schemas import DeviceTypeIn, EnvironmentAnnouncementIn, EnvironmentIn, EnvironmentListQuery, TestDeviceIn
 from .services import (
     create_environment,
     create_device,
     create_device_type,
-    delete_device,
     delete_device_type,
     cancel_my_queue,
     enqueue_environment,
@@ -40,10 +39,13 @@ def payload(ip: str = '192.168.1.10', password: str = 'secret') -> EnvironmentIn
         password=password,
         domain='cockpit',
         category='test',
+        bomid='BOM-001',
         project_name='P1',
         vehicle_model='V1',
+        devices=[],
         device_ids=[],
         config_description='版本 v1',
+        asset_number='ENV-ASSET-001',
         shelf_location='A-01',
         remark='remark',
         sort=0,
@@ -58,7 +60,7 @@ class EnvironmentManagementServiceTests(TestCase):
         self.user2 = make_user('user2')
         self.user3 = make_user('user3')
 
-    def test_password_is_encrypted_and_only_environment_user_gets_plain_text(self):
+    def test_password_is_encrypted_and_never_returned_to_environment_list(self):
         env_data = create_environment(self.admin, payload(password='Pa55w0rd'))
         env = TestEnvironment.objects.get(id=env_data['id'])
 
@@ -66,11 +68,13 @@ class EnvironmentManagementServiceTests(TestCase):
         normal_page = list_environments(self.user, EnvironmentListQuery(page=1, pageSize=20))
         env_user_page = list_environments(self.env_user, EnvironmentListQuery(page=1, pageSize=20))
 
-        self.assertEqual(normal_page['items'][0]['password'], 'Pa****rd')
+        self.assertNotIn('password', normal_page['items'][0])
+        self.assertEqual(normal_page['items'][0]['account'], 'tester')
         self.assertFalse(normal_page['items'][0]['can_view_secret'])
         self.assertFalse(normal_page['items'][0]['can_use_environment'])
-        self.assertEqual(env_user_page['items'][0]['password'], 'Pa55w0rd')
-        self.assertTrue(env_user_page['items'][0]['can_view_secret'])
+        self.assertNotIn('password', env_user_page['items'][0])
+        self.assertEqual(env_user_page['items'][0]['account'], 'tester')
+        self.assertFalse(env_user_page['items'][0]['can_view_secret'])
         self.assertTrue(env_user_page['items'][0]['can_use_environment'])
 
     def test_non_admin_cannot_create_or_update_environment(self):
@@ -104,18 +108,36 @@ class EnvironmentManagementServiceTests(TestCase):
         )
 
         env_payload = payload()
-        env_payload.device_ids = [device['id']]
+        env_payload.devices = [
+            {
+                'device_id': device['id'],
+                'asset_number': 'DEV-ASSET-01',
+                'remark': 'bench',
+                'sort': 1,
+            }
+        ]
         env_data = create_environment(self.admin, env_payload)
 
-        self.assertEqual(env_data['device_ids'], [device['id']])
-        self.assertEqual(env_data['devices'][0]['display_name'], '电源设备 / 程控电源 / Power-01')
+        self.assertEqual(env_data['bomid'], 'BOM-001')
+        self.assertEqual(env_data['asset_number'], 'ENV-ASSET-001')
+        self.assertEqual(env_data['devices'][0]['device_id'], device['id'])
+        self.assertEqual(env_data['devices'][0]['device_name'], 'Power-01')
+        self.assertEqual(env_data['devices'][0]['asset_number'], 'DEV-ASSET-01')
+        self.assertEqual(env_data['device_display'], 'Power-01')
+        self.assertNotIn('电源设备 / 程控电源', env_data['device_display'])
         self.assertEqual(env_data['config_description'], '版本 v1')
         self.assertEqual(env_data['remark'], 'remark')
 
         with self.assertRaises(HttpError):
-            delete_device(self.admin, device['id'])
-        with self.assertRaises(HttpError):
             delete_device_type(self.admin, child_id)
+
+        # 旧 device_ids 入参仍会兼容生成环境设备实例，方便旧前端短期过渡。
+        legacy_payload = payload(ip='192.168.1.11')
+        legacy_payload.device_ids = [device['id']]
+        legacy_env = create_environment(self.admin, legacy_payload)
+        self.assertEqual(legacy_env['devices'][0]['device_name'], 'Power-01')
+        self.assertEqual(EnvironmentDeviceBinding.objects.filter(environment_id=legacy_env['id']).count(), 1)
+
 
     def test_occupy_queue_jump_and_release_do_not_auto_transfer(self):
         env_id = create_environment(self.admin, payload())['id']
@@ -148,16 +170,37 @@ class EnvironmentManagementServiceTests(TestCase):
         next_occupied = occupy_environment(environment_user3, env_id)
         self.assertEqual(next_occupied['environment']['current_user_name'], 'environment_user3')
 
-    def test_reject_device_type_value_when_binding_environment(self):
-        tree = create_device_type(
-            self.admin,
-            DeviceTypeIn(parent_id=None, name='空类型', sort=1, is_active=True),
-        )
+    def test_reject_invalid_device_when_binding_environment(self):
         env_payload = payload()
-        env_payload.device_ids = [f"type:{tree[0]['id']}"]
+        env_payload.devices = [{'device_id': 'not-exists', 'asset_number': '', 'remark': '', 'sort': 0}]
 
         with self.assertRaises(HttpError):
             create_environment(self.admin, env_payload)
+
+    def test_environment_keyword_search_supports_bomid_and_device_assets(self):
+        tree = create_device_type(
+            self.admin,
+            DeviceTypeIn(parent_id=None, name='外设', sort=1, is_active=True),
+        )
+        device = create_device(
+            self.admin,
+            TestDeviceIn(device_type_id=tree[0]['id'], name='采集卡', sort=0, is_active=True, remark=''),
+        )
+        env_payload = payload()
+        env_payload.devices = [
+            {
+                'device_id': device['id'],
+                'asset_number': 'DAQ-ASSET',
+                'remark': '高速采集',
+                'sort': 0,
+            }
+        ]
+        create_environment(self.admin, env_payload)
+
+        by_bomid = list_environments(self.user, EnvironmentListQuery(keyword='BOM-001', page=1, pageSize=20))
+        by_device_asset = list_environments(self.user, EnvironmentListQuery(keyword='DAQ-ASSET', page=1, pageSize=20))
+        self.assertEqual(by_bomid['total'], 1)
+        self.assertEqual(by_device_asset['total'], 1)
 
     def test_announcement_can_only_be_saved_by_admin(self):
         initial = get_announcement()

@@ -6,6 +6,7 @@ import type {
   DeviceTypeItem,
   DeviceTypePayload,
   EnvironmentAnnouncementPayload,
+  EnvironmentDevicePayload,
   EnvironmentItem,
   EnvironmentPayload,
   TestDeviceItem,
@@ -79,10 +80,12 @@ const emptyEnvironmentForm = (): EnvironmentPayload & { id?: string } => ({
   password: '',
   domain: 'cockpit',
   category: 'test',
+  bomid: '',
   project_name: '',
   vehicle_model: '',
-  device_ids: [],
+  devices: [],
   config_description: '',
+  asset_number: '',
   shelf_location: '',
   remark: '',
   sort: 0,
@@ -95,7 +98,6 @@ const environmentForm = ref<EnvironmentPayload & { id?: string }>(
 const cascaderProps = {
   checkStrictly: false,
   emitPath: false,
-  multiple: true,
   value: 'value',
   label: 'label',
   children: 'children',
@@ -191,7 +193,7 @@ const selectedTypeName = computed(() => {
 });
 
 async function loadDeviceOptions() {
-  // 类型节点只作为级联路径容器，真正保存前会过滤 type: 前缀并由后端再次校验。
+  // 环境表单只允许选择具体测试设备；级联中的类型节点仅作为路径容器。
   deviceOptions.value = await listDeviceOptionsApi();
 }
 
@@ -229,14 +231,21 @@ function openEnvironmentEdit(row: EnvironmentItem) {
   environmentForm.value = {
     id: row.id,
     ip_address: row.ip_address,
-    account: row.can_view_secret ? row.account : '',
+    account: row.account || '',
     password: '',
     domain: row.domain,
     category: row.category,
+    bomid: row.bomid || '',
     project_name: row.project_name,
     vehicle_model: row.vehicle_model,
-    device_ids: row.device_ids || [],
+    devices: (row.devices || []).map((device) => ({
+      device_id: device.device_id || '',
+      asset_number: device.asset_number || '',
+      remark: device.remark || '',
+      sort: device.sort || 0,
+    })),
     config_description: row.config_description || '',
+    asset_number: row.asset_number || '',
     shelf_location: row.shelf_location,
     remark: row.remark || '',
     sort: row.sort,
@@ -244,18 +253,33 @@ function openEnvironmentEdit(row: EnvironmentItem) {
   environmentDialogVisible.value = true;
 }
 
+function addEnvironmentDevice() {
+  environmentForm.value.devices.push({
+    device_id: '',
+    asset_number: '',
+    remark: '',
+    sort: environmentForm.value.devices.length,
+  });
+}
+
+function removeEnvironmentDevice(index: number) {
+  environmentForm.value.devices.splice(index, 1);
+}
+
+function handleEnvironmentDeviceChange(row: EnvironmentDevicePayload) {
+  if (String(row.device_id || '').startsWith('type:')) {
+    // 类型节点只是级联路径，不允许保存为环境设备实例。
+    row.device_id = '';
+  }
+}
+
 async function submitEnvironmentForm() {
   await environmentFormRef.value?.validate();
   environmentDialogSaving.value = true;
   try {
-    // 级联类型节点的 value 使用 type: 前缀，只允许真实设备 ID 提交，后端也会做同样校验。
-    const deviceIds = (environmentForm.value.device_ids || []).filter(
-      (id) => !String(id).startsWith('type:'),
-    );
     // 编辑时密码留空代表不修改；这里转成 undefined，避免把旧密码误清空。
     const payload: EnvironmentPayload = {
       ...environmentForm.value,
-      device_ids: deviceIds,
       password: environmentForm.value.password || undefined,
     };
     if (environmentDialogMode.value === 'create') {
@@ -320,7 +344,9 @@ async function submitTypeForm() {
       ElMessage.success('类型更新成功');
     }
     typeDialogVisible.value = false;
+    await loadDeviceTypes();
     await loadDeviceOptions();
+    await loadDevices();
   } finally {
     typeDialogSaving.value = false;
   }
@@ -371,7 +397,7 @@ async function submitDeviceForm() {
   await deviceFormRef.value?.validate();
   deviceDialogSaving.value = true;
   try {
-    // 设备主数据会被环境列表直接展示，保存后同时刷新设备表、级联选项和环境表格。
+    // 设备主数据会被环境实例引用，保存后同步刷新设备表、环境表单级联和环境列表。
     if (deviceDialogMode.value === 'create') {
       await createDeviceApi(deviceForm.value);
       ElMessage.success('设备创建成功');
@@ -441,7 +467,7 @@ onMounted(async () => {
                 size="small"
                 type="success"
               >
-                {{ device.display_name }}
+                {{ device.device_name }}
               </ElTag>
               <span v-if="!row.devices?.length" class="muted">-</span>
             </div>
@@ -523,7 +549,8 @@ onMounted(async () => {
                 </ElInput>
                 <ElButton @click="loadDevices">查询</ElButton>
                 <ElButton type="primary" @click="openDeviceCreate">
-                  <IconifyIcon icon="lucide:plus" class="mr-1" /> 新建设备
+                  <IconifyIcon icon="lucide:plus" class="mr-1" />
+                  新建设备
                 </ElButton>
               </div>
             </div>
@@ -537,8 +564,12 @@ onMounted(async () => {
               </template>
               <template #cell-actions="{ row }">
                 <div class="flex items-center justify-center gap-2">
-                  <ElButton link type="primary" @click="openDeviceEdit(row)">编辑</ElButton>
-                  <ElButton link type="danger" @click="removeDevice(row)">删除</ElButton>
+                  <ElButton link type="primary" @click="openDeviceEdit(row)">
+                    编辑
+                  </ElButton>
+                  <ElButton link type="danger" @click="removeDevice(row)">
+                    删除
+                  </ElButton>
                 </div>
               </template>
             </DeviceGrid>
@@ -587,7 +618,7 @@ onMounted(async () => {
     <ElDialog
       v-model="environmentDialogVisible"
       :title="environmentDialogMode === 'create' ? '新建环境' : '编辑环境'"
-      width="780px"
+      width="980px"
     >
       <ElForm ref="environmentFormRef" :model="environmentForm" label-width="108px">
         <div class="grid grid-cols-2 gap-x-4">
@@ -625,11 +656,17 @@ onMounted(async () => {
               />
             </ElSelect>
           </ElFormItem>
+          <ElFormItem label="BOMID" prop="bomid">
+            <ElInput v-model="environmentForm.bomid" placeholder="请输入 BOMID" />
+          </ElFormItem>
           <ElFormItem label="项目名称" prop="project_name">
             <ElInput v-model="environmentForm.project_name" />
           </ElFormItem>
           <ElFormItem label="车型" prop="vehicle_model">
             <ElInput v-model="environmentForm.vehicle_model" />
+          </ElFormItem>
+          <ElFormItem label="资产编号" prop="asset_number">
+            <ElInput v-model="environmentForm.asset_number" placeholder="环境整机资产编号" />
           </ElFormItem>
           <ElFormItem label="货架位置" prop="shelf_location">
             <ElInput v-model="environmentForm.shelf_location" />
@@ -639,17 +676,32 @@ onMounted(async () => {
           </ElFormItem>
         </div>
         <ElFormItem label="测试设备">
-          <ElCascader
-            v-model="environmentForm.device_ids"
-            :options="deviceOptions"
-            :props="cascaderProps"
-            class="w-full"
-            clearable
-            collapse-tags
-            collapse-tags-tooltip
-            filterable
-            placeholder="请选择测试设备"
-          />
+          <div class="environment-device-editor">
+            <div
+              v-for="(device, index) in environmentForm.devices"
+              :key="index"
+              class="environment-device-row"
+            >
+              <ElCascader
+                v-model="device.device_id"
+                :options="deviceOptions"
+                :props="cascaderProps"
+                clearable
+                filterable
+                placeholder="选择测试设备"
+                @change="handleEnvironmentDeviceChange(device)"
+              />
+              <ElInput v-model="device.asset_number" placeholder="资产编号（选填）" />
+              <ElInput v-model="device.remark" placeholder="备注（选填）" />
+              <ElButton link type="danger" @click="removeEnvironmentDevice(index)">
+                删除
+              </ElButton>
+            </div>
+            <ElButton type="primary" plain @click="addEnvironmentDevice">
+              <IconifyIcon icon="lucide:plus" class="mr-1" />
+              添加测试设备
+            </ElButton>
+          </div>
         </ElFormItem>
         <ElFormItem label="配置情况">
           <ElInput
@@ -750,6 +802,7 @@ onMounted(async () => {
         </ElButton>
       </template>
     </ElDialog>
+
   </Page>
 </template>
 
@@ -930,6 +983,7 @@ onMounted(async () => {
 .device-list-panel {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   background-color: var(--el-bg-color);
   border: 1px solid var(--el-border-color-extra-light);
   border-radius: 12px;
@@ -941,6 +995,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 16px 20px;
   border-bottom: 1px solid var(--el-border-color-extra-light);
 }
@@ -953,6 +1008,22 @@ onMounted(async () => {
 .device-actions {
   display: flex;
   gap: 12px;
+  align-items: center;
+}
+
+.environment-device-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.environment-device-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(160px, 1fr) minmax(180px, 1.2fr) 48px;
+  gap: 8px;
+  width: 100%;
+  align-items: center;
 }
 
 .tag-wrap {
@@ -981,6 +1052,12 @@ onMounted(async () => {
 @media (max-width: 960px) {
   .device-workbench {
     grid-template-columns: 1fr;
+  }
+
+  .list-panel-header,
+  .device-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 </style>

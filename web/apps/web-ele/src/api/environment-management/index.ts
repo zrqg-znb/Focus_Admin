@@ -68,36 +68,50 @@ export interface EnvironmentAnnouncementPayload {
 
 export interface EnvironmentDeviceBrief {
   id: string;
-  name: string;
+  device_id?: null | string;
   device_type_id: string;
   device_type_name: string;
   device_type_path: string;
+  device_name: string;
+  name: string;
   display_name: string;
+  asset_number: string;
+  remark: string;
+  sort: number;
+}
+
+export interface EnvironmentDevicePayload {
+  device_id: string;
+  asset_number: string;
+  remark: string;
+  sort: number;
 }
 
 export interface EnvironmentItem {
   id: string;
   ip_address: string;
   account: string;
-  password: string;
   can_view_secret: boolean;
   can_use_environment: boolean;
   domain: EnvironmentDomain;
   domain_label: string;
   category: EnvironmentCategory;
   category_label: string;
+  bomid: string;
   project_name: string;
   vehicle_model: string;
   device_ids: string[];
   devices: EnvironmentDeviceBrief[];
   device_display: string;
   config_description: string;
+  asset_number: string;
   shelf_location: string;
   remark: string;
   status: EnvironmentStatus;
   status_label: string;
   current_user_id?: null | string;
   current_user_name: string;
+  is_current_user_occupying: boolean;
   occupied_at?: null | string;
   occupied_seconds: number;
   is_favorite: boolean;
@@ -118,10 +132,12 @@ export interface EnvironmentPayload {
   password?: null | string;
   domain: EnvironmentDomain;
   category: EnvironmentCategory;
+  bomid: string;
   project_name: string;
   vehicle_model: string;
-  device_ids: string[];
+  devices: EnvironmentDevicePayload[];
   config_description: string;
+  asset_number: string;
   shelf_location: string;
   remark: string;
   sort: number;

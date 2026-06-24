@@ -26,16 +26,15 @@ export function useEnvironmentUsageColumns(): ZqTableGridOptions<EnvironmentItem
   return [
     { key: 'favorite', dataKey: 'favorite', title: '收藏', width: 64, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
     { key: 'ip_address', dataKey: 'ip_address', title: 'IP地址', width: 140, align: 'center', headerAlign: 'center' },
-    { key: 'secret', dataKey: 'secret', title: '账号密码', width: 160, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
+    { key: 'account', dataKey: 'account', title: '账号', width: 120, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
+    { key: 'bomid', dataKey: 'bomid', title: 'BOMID', width: 130, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
     { key: 'domain', dataKey: 'domain', title: '领域', width: 90, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
     { key: 'category', dataKey: 'category', title: '分类', width: 90, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
     { key: 'project_name', dataKey: 'project_name', title: '项目', width: 120, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
     { key: 'vehicle_model', dataKey: 'vehicle_model', title: '车型', width: 120, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
-    { key: 'device_display', dataKey: 'device_display', title: '测试设备', width: 240, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
-    { key: 'config_description', dataKey: 'config_description', title: '配置情况', width: 220, align: 'center', headerAlign: 'center' },
+    { key: 'device_display', dataKey: 'device_display', title: '测试设备', width: 220, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
     { key: 'occupy_state', dataKey: 'occupy_state', title: '占用情况', width: 150, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
     { key: 'queue_state', dataKey: 'queue_state', title: '排队', width: 130, align: 'center', headerAlign: 'center', showOverflowTooltip: false },
-    { key: 'shelf_location', dataKey: 'shelf_location', title: '货架位置', width: 130, align: 'center', headerAlign: 'center' },
     { key: 'actions', dataKey: 'actions', title: '操作', width: 320, align: 'center', headerAlign: 'center', fixed: true, showOverflowTooltip: false },
   ];
 }
@@ -53,4 +52,11 @@ export const recordTableColumns: ElementTableColumn[] = [
   { key: 'action_label', label: '动作', prop: 'action_label', width: 100 },
   { key: 'message', label: '说明', prop: 'message', minWidth: 220 },
   { key: 'duration', label: '时长', width: 100 },
+];
+
+export const detailDeviceColumns: ElementTableColumn[] = [
+  { key: 'device_type_path', label: '设备类型', prop: 'device_type_path', minWidth: 180 },
+  { key: 'device_name', label: '设备名称', prop: 'device_name', width: 140 },
+  { key: 'asset_number', label: '资产编号', prop: 'asset_number', width: 150 },
+  { key: 'remark', label: '备注', prop: 'remark', minWidth: 180 },
 ];

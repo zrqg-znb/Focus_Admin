@@ -66,11 +66,25 @@ class EnvironmentAnnouncementOut(Schema):
 
 class EnvironmentDeviceBrief(Schema):
     id: str
-    name: str
+    device_id: Optional[str] = None
     device_type_id: str
     device_type_name: str
     device_type_path: str
+    device_name: str
+    name: str
     display_name: str
+    asset_number: str = ''
+    remark: str = ''
+    sort: int = 0
+
+
+class EnvironmentDeviceInput(Schema):
+    device_id: Optional[str] = None
+    device_type_id: Optional[str] = None
+    device_name: str = ''
+    asset_number: str = ''
+    remark: str = ''
+    sort: int = 0
 
 
 class EnvironmentIn(Schema):
@@ -79,10 +93,13 @@ class EnvironmentIn(Schema):
     password: Optional[str] = None
     domain: str = 'cockpit'
     category: str = 'test'
+    bomid: str = ''
     project_name: str = ''
     vehicle_model: str = ''
+    devices: List[EnvironmentDeviceInput] = Field(default_factory=list)
     device_ids: List[str] = Field(default_factory=list)
     config_description: str = ''
+    asset_number: str = ''
     shelf_location: str = ''
     remark: str = ''
     sort: int = 0
@@ -92,25 +109,27 @@ class EnvironmentOut(Schema):
     id: str
     ip_address: str
     account: str = ''
-    password: str = ''
     can_view_secret: bool = False
     can_use_environment: bool = False
     domain: str
     domain_label: str
     category: str
     category_label: str
+    bomid: str = ''
     project_name: str
     vehicle_model: str
     device_ids: List[str] = Field(default_factory=list)
     devices: List[EnvironmentDeviceBrief] = Field(default_factory=list)
     device_display: str
     config_description: str = ''
+    asset_number: str = ''
     shelf_location: str
     remark: str = ''
     status: str
     status_label: str
     current_user_id: Optional[str] = None
     current_user_name: str = ''
+    is_current_user_occupying: bool = False
     occupied_at: Optional[datetime] = None
     occupied_seconds: int = 0
     is_favorite: bool = False

@@ -9,11 +9,12 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from ninja.errors import HttpError
 
-from apps.deepaudit.encryption import decrypt_value, encrypt_value
+from apps.deepaudit.encryption import encrypt_value
 from core.user.user_model import User
 
 from .models import (
     EnvironmentAnnouncement,
+    EnvironmentDeviceBinding,
     EnvironmentDeviceType,
     EnvironmentFavorite,
     EnvironmentQueue,
@@ -36,18 +37,22 @@ def user_role_codes(user: User | None) -> set[str]:
 
 
 def can_manage(user: User | None) -> bool:
-    """环境管理员拥有管理端 CRUD、释放任意占用和查看明文密码的最高权限。"""
+    """环境管理员拥有管理端 CRUD、释放任意占用等最高权限；密码仍不通过列表接口下发。"""
     return bool(user and (user.is_superuser or ENV_ADMIN_ROLE in user_role_codes(user)))
 
 
 def can_use_environment(user: User | None) -> bool:
-    """环境用户可以查看明文账号密码，并执行占用、排队、插队、释放自己的占用。"""
+    """环境用户可以执行占用、排队、释放自己的占用；密码只允许后台写入，不给用户端读取。"""
     return bool(user and (can_manage(user) or ENVIRONMENT_USER_ROLE in user_role_codes(user)))
 
 
 def can_view_secret(user: User | None) -> bool:
-    """密码明文只给环境用户和环境管理员，平台默认用户永远只收到脱敏值。"""
-    return can_use_environment(user)
+    """历史兼容函数。
+
+    旧版本用该函数控制账号密码明文；当前安全策略是账号所有人可见、密码任何列表/详情
+    接口都不下发，因此这里固定返回 False，避免前端误以为可读取密码。
+    """
+    return False
 
 
 def require_manager(user: User | None):
@@ -261,15 +266,63 @@ def serialize_device(device: EnvironmentTestDevice) -> dict:
     }
 
 
-def _environment_devices(env: TestEnvironment) -> list[EnvironmentTestDevice]:
-    return list(env.devices.select_related('device_type', 'device_type__parent').all())
+def _serialize_environment_device_binding(binding: EnvironmentDeviceBinding) -> dict:
+    """序列化环境拥有的测试外设实例；主数据来自测试设备，资产编号和备注来自环境绑定。"""
+    test_device = getattr(binding, 'test_device', None)
+    device_type = test_device.device_type if test_device else binding.device_type
+    type_path = _device_type_path(device_type)
+    device_name = (test_device.name if test_device else binding.device_name) or device_type.name
+    return {
+        'id': str(binding.id),
+        'device_id': str(test_device.id) if test_device else None,
+        'device_type_id': str(device_type.id),
+        'device_type_name': device_type.name,
+        'device_type_path': type_path,
+        'device_name': device_name,
+        'name': device_name,
+        'display_name': device_name,
+        'asset_number': binding.asset_number or '',
+        'remark': binding.remark or '',
+        'sort': binding.sort,
+    }
+
+
+def _environment_device_bindings(env: TestEnvironment) -> list[EnvironmentDeviceBinding]:
+    """读取环境设备实例；若旧数据尚未迁移出 M2M，则兼容转换为展示用实例结构。"""
+    prefetched_bindings = getattr(env, '_prefetched_device_bindings', None)
+    if prefetched_bindings is not None:
+        return list(prefetched_bindings)
+    prefetched_cache = getattr(env, '_prefetched_objects_cache', {})
+    if 'device_bindings' in prefetched_cache:
+        bindings = [row for row in prefetched_cache['device_bindings'] if not row.is_deleted]
+        if bindings:
+            return sorted(bindings, key=lambda row: (row.sort, row.sys_create_datetime))
+    bindings = list(
+        env.device_bindings.filter(is_deleted=False)
+        .select_related('test_device', 'test_device__device_type', 'test_device__device_type__parent', 'device_type', 'device_type__parent')
+        .order_by('sort', 'sys_create_datetime')
+    )
+    if bindings:
+        return bindings
+    legacy_devices = list(env.devices.select_related('device_type', 'device_type__parent').all())
+    return [
+        EnvironmentDeviceBinding(
+            id=device.id,
+            environment=env,
+            test_device=device,
+            device_type=device.device_type,
+            device_name=device.name,
+            asset_number='',
+            remark=device.remark or '',
+            sort=device.sort,
+        )
+        for device in legacy_devices
+    ]
 
 
 def serialize_environment(env: TestEnvironment, user: User | None) -> dict:
-    """把环境模型转换成前端 DTO，并在这里集中处理密码脱敏这一条安全边界。"""
-    roles_can_view_secret = can_view_secret(user)
+    """把环境模型转换成前端 DTO；密码只允许写入，不再通过列表或详情接口下发。"""
     roles_can_use = can_use_environment(user)
-    raw_password = decrypt_value(env.password_encrypted)
     favorite_ids = getattr(env, '_favorite_user_ids', None)
     # 列表页会预灌等待队列；用 None 区分“未预取”和“已预取但队列为空”，避免空队列环境额外 N+1 查询。
     prefetched_queue_rows = getattr(env, '_prefetched_waiting_queues', None)
@@ -285,31 +338,33 @@ def serialize_environment(env: TestEnvironment, user: User | None) -> dict:
 
     my_queue = next((q for q in queue_rows if user and str(q.user_id) == str(user.id)), None)
     first_queue = queue_rows[0] if queue_rows else None
-    devices = [serialize_device(device) for device in _environment_devices(env)]
+    devices = [_serialize_environment_device_binding(binding) for binding in _environment_device_bindings(env)]
 
     return {
         'id': str(env.id),
         'ip_address': env.ip_address,
-        'account': env.account if roles_can_view_secret else _mask_secret(env.account),
-        'password': raw_password if roles_can_view_secret else _mask_secret(raw_password),
-        'can_view_secret': roles_can_view_secret,
+        'account': env.account or '',
+        'can_view_secret': False,
         'can_use_environment': roles_can_use,
         'domain': env.domain,
         'domain_label': dict(TestEnvironment.DOMAIN_CHOICES).get(env.domain, env.domain),
         'category': env.category,
         'category_label': dict(TestEnvironment.CATEGORY_CHOICES).get(env.category, env.category),
+        'bomid': env.bomid or '',
         'project_name': env.project_name,
         'vehicle_model': env.vehicle_model,
-        'device_ids': [device['id'] for device in devices],
+        'device_ids': [device['device_id'] or device['id'] for device in devices],
         'devices': devices,
-        'device_display': '，'.join([device['display_name'] for device in devices]),
+        'device_display': '，'.join([device['device_name'] for device in devices]),
         'config_description': env.config_description or '',
+        'asset_number': env.asset_number or '',
         'shelf_location': env.shelf_location,
         'remark': env.remark or '',
         'status': env.status,
         'status_label': dict(TestEnvironment.STATUS_CHOICES).get(env.status, env.status),
         'current_user_id': str(env.current_user_id) if env.current_user_id else None,
         'current_user_name': _display_name(env.current_user),
+        'is_current_user_occupying': bool(user and env.current_user_id and str(env.current_user_id) == str(user.id)),
         'occupied_at': env.occupied_at,
         'occupied_seconds': _duration_seconds(env.occupied_at) if env.status == 'occupied' else 0,
         'is_favorite': is_favorite,
@@ -357,6 +412,82 @@ def _get_active_devices(device_ids: list[str]) -> list[EnvironmentTestDevice]:
     if len(devices) != len(set(normalized_ids)):
         raise HttpError(400, '存在无效或已禁用的测试设备')
     return devices
+
+
+def _get_active_device_types(device_type_ids: list[str]) -> dict[str, EnvironmentDeviceType]:
+    """校验环境设备实例使用的类型，禁止绑定不存在、禁用或已删除的类型。"""
+    normalized_ids = [str(item).strip() for item in device_type_ids if str(item).strip()]
+    if not normalized_ids:
+        return {}
+    rows = list(EnvironmentDeviceType.objects.filter(id__in=normalized_ids, is_active=True, is_deleted=False))
+    if len(rows) != len(set(normalized_ids)):
+        raise HttpError(400, '存在无效或已禁用的测试设备类型')
+    return {str(row.id): row for row in rows}
+
+
+def _build_device_binding_rows(devices_payload: list, legacy_device_ids: list[str], user: User | None) -> list[EnvironmentDeviceBinding]:
+    """把新旧设备入参统一转换为环境设备实例。
+
+    新前端提交 devices 数组，每一项先选择测试设备主数据，再补充环境内资产编号和备注；
+    若旧前端短期仍提交 device_ids，则按旧设备主数据生成实例，给部署升级留出兼容窗口。
+    """
+    binding_rows: list[EnvironmentDeviceBinding] = []
+    if devices_payload:
+        payload_rows = [item.dict() if hasattr(item, 'dict') else dict(item) for item in devices_payload]
+        device_ids = [row.get('device_id') for row in payload_rows if row.get('device_id')]
+        device_map = {str(device.id): device for device in _get_active_devices(device_ids)}
+        type_map = _get_active_device_types([row.get('device_type_id', '') for row in payload_rows if not row.get('device_id')])
+        for index, row in enumerate(payload_rows):
+            device_id = str(row.get('device_id') or '').strip()
+            if device_id:
+                test_device = device_map[device_id]
+                device_type = test_device.device_type
+                device_name = test_device.name
+            else:
+                # 兼容上一版临时前端提交的 device_type_id/device_name；新前端不再走这个分支。
+                test_device = None
+                device_type_id = str(row.get('device_type_id', '')).strip()
+                if not device_type_id:
+                    raise HttpError(400, '请选择测试设备')
+                device_type = type_map[device_type_id]
+                device_name = (row.get('device_name') or '').strip() or device_type.name
+            binding_rows.append(
+                EnvironmentDeviceBinding(
+                    test_device=test_device,
+                    device_type=device_type,
+                    device_name=device_name,
+                    asset_number=(row.get('asset_number') or '').strip(),
+                    remark=row.get('remark') or '',
+                    sort=row.get('sort', index),
+                    sys_creator=user,
+                    sys_modifier=user,
+                )
+            )
+        return binding_rows
+
+    for device in _get_active_devices(legacy_device_ids or []):
+        binding_rows.append(
+            EnvironmentDeviceBinding(
+                test_device=device,
+                device_type=device.device_type,
+                device_name=device.name,
+                asset_number='',
+                remark=device.remark or '',
+                sort=device.sort,
+                sys_creator=user,
+                sys_modifier=user,
+            )
+        )
+    return binding_rows
+
+
+def _sync_environment_device_bindings(env: TestEnvironment, binding_rows: list[EnvironmentDeviceBinding], user: User | None):
+    """全量保存环境设备实例；环境表单每次提交都是覆盖式编辑。"""
+    EnvironmentDeviceBinding.objects.filter(environment=env).delete()
+    for row in binding_rows:
+        row.environment = env
+        row.sys_modifier = user
+    EnvironmentDeviceBinding.objects.bulk_create(binding_rows)
 
 
 def _serialize_device_type_node(device_type: EnvironmentDeviceType, children_map: dict[str | None, list[EnvironmentDeviceType]]) -> dict:
@@ -442,6 +573,8 @@ def delete_device_type(user: User, type_id: str) -> bool:
         raise HttpError(400, '该类型下存在子类型，不能删除')
     if EnvironmentTestDevice.objects.filter(device_type=device_type, is_deleted=False).exists():
         raise HttpError(400, '该类型下存在测试设备，不能删除')
+    if EnvironmentDeviceBinding.objects.filter(device_type=device_type, environment__is_deleted=False).exists():
+        raise HttpError(400, '该类型已被环境使用，请先从环境配置中移除')
     device_type.soft_delete()
     return True
 
@@ -503,6 +636,8 @@ def delete_device(user: User, device_id: str) -> bool:
     device = get_object_or_404(EnvironmentTestDevice, id=device_id, is_deleted=False)
     if device.environments.filter(is_deleted=False).exists():
         raise HttpError(400, '该测试设备已绑定环境，请先解绑后再删除')
+    if EnvironmentDeviceBinding.objects.filter(test_device=device, environment__is_deleted=False).exists():
+        raise HttpError(400, '该测试设备已绑定环境，请先解绑后再删除')
     device.soft_delete()
     return True
 
@@ -546,7 +681,7 @@ def list_environments(user: User, query: EnvironmentListQuery) -> dict:
     qs = (
         TestEnvironment.objects.filter(is_deleted=False)
         .select_related('current_user')
-        .prefetch_related('devices__device_type__parent')
+        .prefetch_related('device_bindings__test_device__device_type__parent', 'device_bindings__device_type__parent')
         .annotate(waiting_count=Count('queues', filter=Q(queues__status='waiting')))
     )
     if query.domain:
@@ -560,10 +695,16 @@ def list_environments(user: User, query: EnvironmentListQuery) -> dict:
     if query.keyword:
         qs = qs.filter(
             Q(ip_address__icontains=query.keyword)
+            | Q(bomid__icontains=query.keyword)
+            | Q(asset_number__icontains=query.keyword)
             | Q(project_name__icontains=query.keyword)
             | Q(vehicle_model__icontains=query.keyword)
-            | Q(devices__name__icontains=query.keyword)
-            | Q(devices__device_type__name__icontains=query.keyword)
+            | Q(device_bindings__device_name__icontains=query.keyword)
+            | Q(device_bindings__test_device__name__icontains=query.keyword)
+            | Q(device_bindings__asset_number__icontains=query.keyword)
+            | Q(device_bindings__remark__icontains=query.keyword)
+            | Q(device_bindings__device_type__name__icontains=query.keyword)
+            | Q(device_bindings__test_device__device_type__name__icontains=query.keyword)
             | Q(config_description__icontains=query.keyword)
             | Q(shelf_location__icontains=query.keyword)
             | Q(remark__icontains=query.keyword)
@@ -604,14 +745,16 @@ def create_environment(user: User, payload: EnvironmentIn) -> dict:
     require_manager(user)
     data = payload.dict()
     password = data.pop('password', None)
+    devices_payload = data.pop('devices', [])
     device_ids = data.pop('device_ids', [])
+    binding_rows = _build_device_binding_rows(devices_payload, device_ids, user)
     env = TestEnvironment.objects.create(
         **data,
         password_encrypted=encrypt_value(password or ''),
         sys_creator=user,
         sys_modifier=user,
     )
-    env.devices.set(_get_active_devices(device_ids))
+    _sync_environment_device_bindings(env, binding_rows, user)
     _record(env, user, 'admin_update', '创建环境配置')
     return serialize_environment(env, user)
 
@@ -622,14 +765,16 @@ def update_environment(user: User, environment_id: str, payload: EnvironmentIn) 
     env = get_object_or_404(TestEnvironment, id=environment_id, is_deleted=False)
     data = payload.dict()
     password = data.pop('password', None)
+    devices_payload = data.pop('devices', [])
     device_ids = data.pop('device_ids', [])
+    binding_rows = _build_device_binding_rows(devices_payload, device_ids, user)
     for field, value in data.items():
         setattr(env, field, value)
     if password is not None:
         env.password_encrypted = encrypt_value(password)
     env.sys_modifier = user
     env.save()
-    env.devices.set(_get_active_devices(device_ids))
+    _sync_environment_device_bindings(env, binding_rows, user)
     _record(env, user, 'admin_update', '更新环境配置')
     return serialize_environment(env, user)
 
