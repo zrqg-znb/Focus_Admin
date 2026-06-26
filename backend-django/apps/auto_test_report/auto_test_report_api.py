@@ -12,6 +12,8 @@ from .auto_test_report_schemas import (
     DailyResultItemOut,
     DailyResultQuery,
     DailySummaryOut,
+    DownstreamTriggerIn,
+    DownstreamTriggerOut,
     ImportCasePayload,
     ImportResultOut,
     PlatformIn,
@@ -156,6 +158,7 @@ def get_daily_summary(request, query: DailyResultQuery = Query(...)):
 
 @router.get('/daily-results/overview', response=DailyOverviewResponse, summary='全量每日执行概览')
 def get_daily_overview(request, query: DailyOverviewQuery = Query(...)):
+    """查询每日全量概览，并返回座舱下游触发门禁摘要。"""
     return services.get_daily_overview(query)
 
 
@@ -166,11 +169,19 @@ def list_daily_results(request, query: DailyResultQuery = Query(...)):
 
 @router.patch('/daily-results/{result_id}/failure-reason', response=bool, summary='更新异常原因')
 def update_daily_result_failure_reason(request, result_id: str, payload: UpdateFailureReasonIn):
+    """更新非成功结果的异常原因和失败根因大类。"""
     return services.update_daily_result_failure_reason(
         request.auth,
         result_id,
         payload.failure_reason,
+        payload.failure_category,
     )
+
+
+@router.post('/daily-results/downstream-trigger', response=DownstreamTriggerOut, summary='触发座舱下游任务')
+def trigger_cockpit_downstream(request, payload: DownstreamTriggerIn):
+    """人工触发座舱下游任务，后端会强制校验放行条件。"""
+    return services.trigger_cockpit_downstream(request.auth, payload.execute_date)
 
 
 @router.get('/test-cases/{case_id}/history', response=DailyHistoryPage, summary='测试用例历史执行')

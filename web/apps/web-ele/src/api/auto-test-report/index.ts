@@ -3,6 +3,7 @@ import type { AutoTestReportDomain } from '#/views/auto-test-report/shared/domai
 import { requestClient } from '#/api/request';
 
 export type ResultStatus = 'failed' | 'skip' | 'success' | 'timeout';
+export type FailureCategory = 'case' | 'environment' | 'version';
 
 export interface McuPlatformItem {
   id: string;
@@ -151,6 +152,10 @@ export interface DailyOverviewRow {
   failed_count: number;
   timeout_count: number;
   skip_count: number;
+  non_version_failure_count: number;
+  version_failure_count: number;
+  uncategorized_failure_count: number;
+  missing_result_count: number;
   total_duration_seconds: number;
   last_report_at?: string;
   is_abnormal: boolean;
@@ -165,6 +170,12 @@ export interface DailyOverviewSummary {
   failed_count: number;
   timeout_count: number;
   skip_count: number;
+  non_version_failure_count: number;
+  version_failure_count: number;
+  uncategorized_failure_count: number;
+  missing_result_count: number;
+  downstream_trigger_enabled: boolean;
+  downstream_trigger_block_reasons: string[];
   total_duration_seconds: number;
   stats: SummaryStat[];
   last_report_at?: string;
@@ -184,6 +195,7 @@ export interface DailyResultItem {
   remark?: string;
   status: ResultStatus;
   failure_reason?: string;
+  failure_category?: FailureCategory;
   suggested_failure_reason?: string;
   start_time?: string;
   duration_seconds: number;
@@ -198,6 +210,7 @@ export interface TestCaseHistoryRow {
   viu_code: string;
   status: ResultStatus;
   failure_reason?: string;
+  failure_category?: FailureCategory;
   start_time?: string;
   duration_seconds: number;
   log_url?: string;
@@ -210,6 +223,24 @@ export interface TestCaseHistoryPage {
   total: number;
   page: number;
   page_size: number;
+}
+
+export interface DownstreamTriggerResult {
+  triggered: boolean;
+  dry_run: boolean;
+  message: string;
+  execute_date: string;
+  vehicle_count: number;
+  total_case_count: number;
+  success_count: number;
+  failed_count: number;
+  timeout_count: number;
+  skip_count: number;
+  non_version_failure_count: number;
+  version_failure_count: number;
+  uncategorized_failure_count: number;
+  missing_result_count: number;
+  block_reasons: string[];
 }
 
 const base = '/api/auto-test-report';
@@ -352,13 +383,21 @@ export async function listDailyResultsApi(
 export async function updateDailyResultFailureReasonApi(
   result_id: string,
   failure_reason?: string,
+  failure_category?: FailureCategory,
 ) {
   return requestClient.request<boolean>(
     `${base}/daily-results/${result_id}/failure-reason`,
     {
       method: 'PATCH',
-      data: { failure_reason },
+      data: { failure_category, failure_reason },
     },
+  );
+}
+
+export async function triggerCockpitDownstreamApi(execute_date: string) {
+  return requestClient.post<DownstreamTriggerResult>(
+    `${base}/daily-results/downstream-trigger`,
+    { execute_date },
   );
 }
 

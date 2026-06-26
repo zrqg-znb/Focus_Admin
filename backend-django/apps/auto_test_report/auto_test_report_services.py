@@ -1,6 +1,6 @@
 import io
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 import openpyxl
@@ -9,12 +9,17 @@ from django.db.models import F, OuterRef, Q, Subquery, Window
 from django.db.models.functions import RowNumber
 from django.http import HttpResponse
 from ninja.errors import HttpError
+from scheduler.module.executor import scheduler_task
 
 from .auto_test_report_model import (
     DOMAIN_COCKPIT,
     DOMAIN_VEHICLE,
     DailyExecutionBatch,
     DailyExecutionResult,
+    FAILURE_CATEGORY_CASE,
+    FAILURE_CATEGORY_CHOICES,
+    FAILURE_CATEGORY_ENVIRONMENT,
+    FAILURE_CATEGORY_VERSION,
     McuPlatform,
     TestCase,
     VehicleModel,
@@ -32,6 +37,7 @@ from .auto_test_report_schemas import (
     DailyHistoryRow,
     DailyResultItemOut,
     DailySummaryOut,
+    DownstreamTriggerOut,
     ImportErrorRow,
     ImportResultOut,
     SummaryStat,
@@ -44,7 +50,7 @@ RESULT_LABELS = {
     RESULT_TIMEOUT: '超时',
     RESULT_SKIP: '跳过',
 }
-MANUAL_REASON_RESULTS = {RESULT_FAILED, RESULT_TIMEOUT}
+MANUAL_REASON_RESULTS = {RESULT_FAILED, RESULT_TIMEOUT, RESULT_SKIP}
 VALID_RESULT_VALUES = {
     RESULT_SUCCESS,
     RESULT_FAILED,
@@ -52,6 +58,12 @@ VALID_RESULT_VALUES = {
     RESULT_SKIP,
 }
 VALID_DOMAINS = {DOMAIN_COCKPIT, DOMAIN_VEHICLE}
+NON_SUCCESS_RESULTS = {RESULT_FAILED, RESULT_TIMEOUT, RESULT_SKIP}
+VALID_FAILURE_CATEGORIES = {value for value, _ in FAILURE_CATEGORY_CHOICES}
+NON_VERSION_FAILURE_CATEGORIES = {
+    FAILURE_CATEGORY_ENVIRONMENT,
+    FAILURE_CATEGORY_CASE,
+}
 TESTCASE_LOG_SUFFIX = 'testcase.html'
 
 
@@ -126,11 +138,27 @@ def _resolve_domain_value(domain: Optional[str], *, default: str = DOMAIN_COCKPI
 
 
 def derive_car_log_url(log_url: Optional[str]) -> Optional[str]:
+    """从运行日志 URL 中派生车机日志 URL。"""
     value = (log_url or '').strip()
     if not value or not value.endswith(TESTCASE_LOG_SUFFIX):
         return None
     car_log_url = value[: -len(TESTCASE_LOG_SUFFIX)]
     return car_log_url or None
+
+
+def _normalize_failure_category(value: Optional[str]) -> Optional[str]:
+    """标准化失败根因大类，空值表示尚未分类。"""
+    normalized = (value or '').strip().lower()
+    if not normalized:
+        return None
+    if normalized not in VALID_FAILURE_CATEGORIES:
+        raise HttpError(422, '失败根因大类仅支持 version、environment、case')
+    return normalized
+
+
+def _is_non_version_failure(result: DailyExecutionResult) -> bool:
+    """判断一条非成功结果是否属于不阻塞人工触发的根因。"""
+    return result.result in NON_SUCCESS_RESULTS and result.failure_category in NON_VERSION_FAILURE_CATEGORIES
 
 
 def _normalize_viu_codes(viu_codes, *, require_non_empty: bool = False):
@@ -792,6 +820,7 @@ def recalculate_daily_batch(vehicle_id: str, execute_date, last_report_at=None):
 
 
 def get_suggested_failure_reason(vehicle_id: str, test_case_id: str, execute_date):
+    """获取上一条人工维护的异常原因，辅助测试人员快速回填。"""
     item = (
         DailyExecutionResult.objects.filter(
             vehicle_id=vehicle_id,
@@ -813,7 +842,167 @@ def get_suggested_failure_reason(vehicle_id: str, test_case_id: str, execute_dat
     return item.failure_reason if item else None
 
 
+def _get_active_case_count(vehicle: VehicleModel) -> int:
+    """统计车型下当前仍生效的用例数，用于判断是否存在缺失执行。"""
+    return TestCase.objects.filter(
+        vehicle=vehicle,
+        is_deleted=False,
+        is_active=True,
+    ).count()
+
+
+def _list_latest_active_results(vehicle: VehicleModel, execute_date):
+    """获取车型当日活跃用例的最新执行结果。"""
+    return list(
+        build_latest_daily_results_queryset(vehicle=vehicle, execute_date=execute_date)
+        .filter(test_case__is_active=True)
+        .select_related('test_case')
+    )
+
+
+def _build_result_category_counts(results: list[DailyExecutionResult]):
+    """按根因分类统计当日最新非成功结果。"""
+    version_count = 0
+    non_version_count = 0
+    uncategorized_count = 0
+    for result in results:
+        if result.result not in NON_SUCCESS_RESULTS:
+            continue
+        if result.failure_category == FAILURE_CATEGORY_VERSION:
+            version_count += 1
+        elif _is_non_version_failure(result):
+            non_version_count += 1
+        else:
+            uncategorized_count += 1
+    return {
+        'version_failure_count': version_count,
+        'non_version_failure_count': non_version_count,
+        'uncategorized_failure_count': uncategorized_count,
+    }
+
+
+def build_cockpit_downstream_gate(execute_date):
+    """构建座舱下游任务人工触发门禁，供 API、看板和定时任务复用。"""
+    vehicles = VehicleModel.objects.select_related('platform').filter(
+        is_deleted=False,
+        is_active=True,
+        platform__is_deleted=False,
+        platform__is_active=True,
+        platform__domain=DOMAIN_COCKPIT,
+    ).order_by('platform__sort', 'name')
+
+    vehicle_count = 0
+    total_case_count = 0
+    success_count = 0
+    failed_count = 0
+    timeout_count = 0
+    skip_count = 0
+    version_failure_count = 0
+    non_version_failure_count = 0
+    uncategorized_failure_count = 0
+    missing_result_count = 0
+
+    for vehicle in vehicles:
+        vehicle_count += 1
+        active_case_count = _get_active_case_count(vehicle)
+        latest_results = _list_latest_active_results(vehicle, execute_date)
+        counter = Counter(result.result for result in latest_results)
+        category_counts = _build_result_category_counts(latest_results)
+
+        total_case_count += active_case_count
+        success_count += counter.get(RESULT_SUCCESS, 0)
+        failed_count += counter.get(RESULT_FAILED, 0)
+        timeout_count += counter.get(RESULT_TIMEOUT, 0)
+        skip_count += counter.get(RESULT_SKIP, 0)
+        version_failure_count += category_counts['version_failure_count']
+        non_version_failure_count += category_counts['non_version_failure_count']
+        uncategorized_failure_count += category_counts['uncategorized_failure_count']
+        missing_result_count += max(active_case_count - len(latest_results), 0)
+
+    block_reasons = []
+    if vehicle_count == 0:
+        block_reasons.append('暂无可用座舱车型')
+    if total_case_count == 0:
+        block_reasons.append('暂无可用座舱用例')
+    if missing_result_count > 0:
+        block_reasons.append(f'还有 {missing_result_count} 条座舱用例缺少当日执行结果')
+    if uncategorized_failure_count > 0:
+        block_reasons.append(f'还有 {uncategorized_failure_count} 条非成功用例未填写根因大类')
+    if version_failure_count > 0:
+        block_reasons.append(f'存在 {version_failure_count} 条版本问题用例')
+
+    return {
+        'execute_date': execute_date,
+        'vehicle_count': vehicle_count,
+        'total_case_count': total_case_count,
+        'success_count': success_count,
+        'failed_count': failed_count,
+        'timeout_count': timeout_count,
+        'skip_count': skip_count,
+        'version_failure_count': version_failure_count,
+        'non_version_failure_count': non_version_failure_count,
+        'uncategorized_failure_count': uncategorized_failure_count,
+        'missing_result_count': missing_result_count,
+        'block_reasons': block_reasons,
+        'enabled': not block_reasons,
+    }
+
+
+def invoke_cockpit_downstream_ci(gate: dict, *, trigger_type: str) -> DownstreamTriggerOut:
+    """占位调用座舱下游 CI，生产环境可替换为真实 HTTP 请求实现。"""
+    # TODO: 生产环境在这里对接真实 CI 接口，包括鉴权、请求体、超时和失败重试策略。
+    return DownstreamTriggerOut(
+        triggered=True,
+        dry_run=True,
+        message=f'座舱下游任务已完成占位触发（{trigger_type}）',
+        execute_date=gate['execute_date'],
+        vehicle_count=gate['vehicle_count'],
+        total_case_count=gate['total_case_count'],
+        success_count=gate['success_count'],
+        failed_count=gate['failed_count'],
+        timeout_count=gate['timeout_count'],
+        skip_count=gate['skip_count'],
+        non_version_failure_count=gate['non_version_failure_count'],
+        version_failure_count=gate['version_failure_count'],
+        uncategorized_failure_count=gate['uncategorized_failure_count'],
+        missing_result_count=gate['missing_result_count'],
+        block_reasons=[],
+    )
+
+
+def trigger_cockpit_downstream(user, execute_date) -> DownstreamTriggerOut:
+    """人工触发座舱下游任务，后端强制执行完整门禁校验。"""
+    gate = build_cockpit_downstream_gate(execute_date)
+    if not gate['enabled']:
+        raise HttpError(400, '；'.join(gate['block_reasons']))
+    return invoke_cockpit_downstream_ci(gate, trigger_type='manual')
+
+
+@scheduler_task
+def run_scheduled_cockpit_downstream_check(date_offset: int = 0, **kwargs):
+    """定时检查座舱每日执行结果，只有全部成功才自动触发占位 CI。"""
+    offset = int(date_offset or 0)
+    execute_date = datetime.now().date() - timedelta(days=offset)
+    gate = build_cockpit_downstream_gate(execute_date)
+    if gate['total_case_count'] <= 0:
+        return f'{execute_date} 暂无座舱用例，跳过下游任务。'
+    if (
+        gate['missing_result_count'] > 0
+        or gate['failed_count'] > 0
+        or gate['timeout_count'] > 0
+        or gate['skip_count'] > 0
+    ):
+        return (
+            f"{execute_date} 座舱结果未全部成功，跳过下游任务："
+            f"缺失 {gate['missing_result_count']}，失败 {gate['failed_count']}，"
+            f"超时 {gate['timeout_count']}，跳过 {gate['skip_count']}。"
+        )
+    result = invoke_cockpit_downstream_ci(gate, trigger_type='scheduled')
+    return result.message
+
+
 def get_daily_summary(vehicle_id: str, execute_date, domain: Optional[str] = None) -> DailySummaryOut:
+    """获取单车型每日执行汇总。"""
     vehicle = get_vehicle(vehicle_id)
     parsed_domain = _parse_domain_filter(domain)
     if parsed_domain and vehicle.platform.domain != parsed_domain:
@@ -847,6 +1036,7 @@ def get_daily_summary(vehicle_id: str, execute_date, domain: Optional[str] = Non
 
 
 def get_daily_overview(query) -> DailyOverviewResponse:
+    """获取每日全量概览，并携带座舱下游触发门禁摘要。"""
     vehicles = VehicleModel.objects.select_related('platform').filter(
         is_deleted=False,
         is_active=True,
@@ -865,6 +1055,10 @@ def get_daily_overview(query) -> DailyOverviewResponse:
     failed_count = 0
     timeout_count = 0
     skip_count = 0
+    non_version_failure_count = 0
+    version_failure_count = 0
+    uncategorized_failure_count = 0
+    missing_result_count = 0
     total_duration_seconds = 0
     abnormal_vehicle_count = 0
     latest_report_at = None
@@ -874,6 +1068,11 @@ def get_daily_overview(query) -> DailyOverviewResponse:
         is_abnormal = _is_daily_overview_abnormal(batch)
         if query.abnormal_only and not is_abnormal:
             continue
+
+        active_case_count = _get_active_case_count(vehicle)
+        latest_results = _list_latest_active_results(vehicle, query.execute_date)
+        category_counts = _build_result_category_counts(latest_results)
+        vehicle_missing_result_count = max(active_case_count - len(latest_results), 0)
 
         row = DailyOverviewRow(
             vehicle_id=str(vehicle.id),
@@ -886,6 +1085,10 @@ def get_daily_overview(query) -> DailyOverviewResponse:
             failed_count=batch.failed_count,
             timeout_count=batch.timeout_count,
             skip_count=batch.skip_count,
+            non_version_failure_count=category_counts['non_version_failure_count'],
+            version_failure_count=category_counts['version_failure_count'],
+            uncategorized_failure_count=category_counts['uncategorized_failure_count'],
+            missing_result_count=vehicle_missing_result_count,
             total_duration_seconds=batch.total_duration_seconds,
             last_report_at=batch.last_report_at,
             is_abnormal=is_abnormal,
@@ -896,6 +1099,10 @@ def get_daily_overview(query) -> DailyOverviewResponse:
         failed_count += batch.failed_count
         timeout_count += batch.timeout_count
         skip_count += batch.skip_count
+        non_version_failure_count += category_counts['non_version_failure_count']
+        version_failure_count += category_counts['version_failure_count']
+        uncategorized_failure_count += category_counts['uncategorized_failure_count']
+        missing_result_count += vehicle_missing_result_count
         total_duration_seconds += batch.total_duration_seconds
         abnormal_vehicle_count += int(is_abnormal)
         if batch.last_report_at and (
@@ -927,6 +1134,12 @@ def get_daily_overview(query) -> DailyOverviewResponse:
         failed_count=failed_count,
         timeout_count=timeout_count,
         skip_count=skip_count,
+        non_version_failure_count=non_version_failure_count,
+        version_failure_count=version_failure_count,
+        uncategorized_failure_count=uncategorized_failure_count,
+        missing_result_count=missing_result_count,
+        downstream_trigger_enabled=False,
+        downstream_trigger_block_reasons=[],
         total_duration_seconds=total_duration_seconds,
         stats=[
             stat(RESULT_SUCCESS, success_count),
@@ -936,6 +1149,14 @@ def get_daily_overview(query) -> DailyOverviewResponse:
         ],
         last_report_at=latest_report_at,
     )
+    if parsed_domain == DOMAIN_COCKPIT:
+        if query.platform_id:
+            summary.downstream_trigger_enabled = False
+            summary.downstream_trigger_block_reasons = ['触发下游任务前请先切换为全部平台']
+        else:
+            gate = build_cockpit_downstream_gate(query.execute_date)
+            summary.downstream_trigger_enabled = gate['enabled']
+            summary.downstream_trigger_block_reasons = gate['block_reasons']
     return DailyOverviewResponse(items=rows, summary=summary)
 
 
@@ -965,6 +1186,7 @@ def list_daily_results(vehicle_id: str, execute_date, domain: Optional[str] = No
                 remark=case.remark,
                 status=result.result,
                 failure_reason=result.failure_reason,
+                failure_category=result.failure_category,
                 suggested_failure_reason=(
                     get_suggested_failure_reason(str(vehicle.id), str(case.id), execute_date)
                     if result.result in MANUAL_REASON_RESULTS and not result.failure_reason
@@ -980,19 +1202,22 @@ def list_daily_results(vehicle_id: str, execute_date, domain: Optional[str] = No
     return items
 
 
-def update_daily_result_failure_reason(user, result_id: str, failure_reason: Optional[str]):
+def update_daily_result_failure_reason(user, result_id: str, failure_reason: Optional[str], failure_category: Optional[str] = None):
+    """更新非成功结果的异常原因与根因大类。"""
     instance = DailyExecutionResult.objects.filter(id=result_id, is_deleted=False).first()
     if not instance:
         raise HttpError(404, '执行结果不存在')
     if instance.result not in MANUAL_REASON_RESULTS:
-        raise HttpError(400, '仅失败或超时结果支持填写异常原因')
+        raise HttpError(400, '仅失败、超时或跳过结果支持填写异常原因')
     instance.failure_reason = (failure_reason or '').strip() or None
+    instance.failure_category = _normalize_failure_category(failure_category)
     _apply_audit_fields(instance, user)
     instance.save()
     return True
 
 
 def get_test_case_history(case_id: str, page: int = 1, page_size: int = 10) -> DailyHistoryPage:
+    """获取测试用例历史执行记录。"""
     test_case = get_test_case(case_id)
     queryset = DailyExecutionResult.objects.filter(
         test_case=test_case,
@@ -1013,6 +1238,7 @@ def get_test_case_history(case_id: str, page: int = 1, page_size: int = 10) -> D
             viu_code=item.test_case.viu_code,
             status=item.result,
             failure_reason=item.failure_reason,
+            failure_category=item.failure_category,
             start_time=item.start_time,
             duration_seconds=item.duration_seconds,
             log_url=item.log_url,

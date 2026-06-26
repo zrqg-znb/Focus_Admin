@@ -6,6 +6,9 @@ from django.utils import timezone
 from apps.auto_test_report import auto_test_report_services as services
 from apps.auto_test_report.auto_test_report_model import (
     DailyExecutionResult,
+    FAILURE_CATEGORY_CASE,
+    FAILURE_CATEGORY_ENVIRONMENT,
+    FAILURE_CATEGORY_VERSION,
     McuPlatform,
     TestCase as AutoTestCase,
     VehicleModel,
@@ -71,6 +74,7 @@ class AutoTestReportOverviewTests(TestCase):
         result: str,
         *,
         minutes_offset: int = 0,
+        failure_category: str | None = None,
         log_url: str | None = None,
     ) -> DailyExecutionResult:
         return DailyExecutionResult.objects.create(
@@ -80,6 +84,7 @@ class AutoTestReportOverviewTests(TestCase):
             start_time=timezone.now() + timedelta(minutes=minutes_offset),
             duration_seconds=60,
             result=result,
+            failure_category=failure_category,
             log_url=log_url,
         )
 
@@ -220,6 +225,151 @@ class AutoTestReportOverviewTests(TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].log_url, 'https://example.com/artifacts/testcase.html')
         self.assertEqual(items[0].car_log_url, 'https://example.com/artifacts/')
+
+    def test_failure_category_can_be_updated_for_all_non_success_results(self):
+        vehicle = self._create_vehicle('failure-category')
+        cases = self._create_cases(vehicle, 3)
+        failed = self._report_result(vehicle, cases[0], RESULT_FAILED)
+        timeout = self._report_result(vehicle, cases[1], RESULT_TIMEOUT, minutes_offset=1)
+        skipped = self._report_result(vehicle, cases[2], RESULT_SKIP, minutes_offset=2)
+
+        services.update_daily_result_failure_reason(None, str(failed.id), '失败原因', FAILURE_CATEGORY_VERSION)
+        services.update_daily_result_failure_reason(None, str(timeout.id), '环境不稳定', FAILURE_CATEGORY_ENVIRONMENT)
+        services.update_daily_result_failure_reason(None, str(skipped.id), '用例需调整', FAILURE_CATEGORY_CASE)
+
+        failed.refresh_from_db()
+        timeout.refresh_from_db()
+        skipped.refresh_from_db()
+        self.assertEqual(failed.failure_category, FAILURE_CATEGORY_VERSION)
+        self.assertEqual(timeout.failure_category, FAILURE_CATEGORY_ENVIRONMENT)
+        self.assertEqual(skipped.failure_category, FAILURE_CATEGORY_CASE)
+
+    def test_failure_category_rejects_success_and_unknown_category(self):
+        vehicle = self._create_vehicle('failure-category-reject')
+        cases = self._create_cases(vehicle, 2)
+        success = self._report_result(vehicle, cases[0], RESULT_SUCCESS)
+        failed = self._report_result(vehicle, cases[1], RESULT_FAILED, minutes_offset=1)
+
+        with self.assertRaisesMessage(Exception, '仅失败、超时或跳过结果支持填写异常原因'):
+            services.update_daily_result_failure_reason(None, str(success.id), '', FAILURE_CATEGORY_VERSION)
+        with self.assertRaisesMessage(Exception, '失败根因大类仅支持'):
+            services.update_daily_result_failure_reason(None, str(failed.id), '', 'unknown')
+
+    def test_cockpit_overview_counts_downstream_gate_fields(self):
+        vehicle = self._create_vehicle('gate-counts')
+        cases = self._create_cases(vehicle, 5)
+        self._report_result(vehicle, cases[0], RESULT_SUCCESS)
+        self._report_result(
+            vehicle,
+            cases[1],
+            RESULT_FAILED,
+            minutes_offset=1,
+            failure_category=FAILURE_CATEGORY_VERSION,
+        )
+        self._report_result(
+            vehicle,
+            cases[2],
+            RESULT_TIMEOUT,
+            minutes_offset=2,
+            failure_category=FAILURE_CATEGORY_ENVIRONMENT,
+        )
+        self._report_result(vehicle, cases[3], RESULT_SKIP, minutes_offset=3)
+
+        overview = self._build_overview()
+        row = self._get_row(overview, vehicle)
+
+        self.assertEqual(row.version_failure_count, 1)
+        self.assertEqual(row.non_version_failure_count, 1)
+        self.assertEqual(row.uncategorized_failure_count, 1)
+        self.assertEqual(row.missing_result_count, 1)
+        self.assertFalse(overview.summary.downstream_trigger_enabled)
+        self.assertEqual(overview.summary.version_failure_count, 1)
+        self.assertEqual(overview.summary.non_version_failure_count, 1)
+        self.assertEqual(overview.summary.uncategorized_failure_count, 1)
+        self.assertEqual(overview.summary.missing_result_count, 1)
+
+    def test_manual_downstream_trigger_allows_non_version_failures_when_classified(self):
+        vehicle = self._create_vehicle('manual-pass')
+        cases = self._create_cases(vehicle, 2)
+        self._report_result(vehicle, cases[0], RESULT_SUCCESS)
+        self._report_result(
+            vehicle,
+            cases[1],
+            RESULT_FAILED,
+            minutes_offset=1,
+            failure_category=FAILURE_CATEGORY_ENVIRONMENT,
+        )
+
+        result = services.trigger_cockpit_downstream(None, self.execute_date)
+
+        self.assertTrue(result.triggered)
+        self.assertTrue(result.dry_run)
+        self.assertEqual(result.non_version_failure_count, 1)
+
+    def test_manual_downstream_trigger_rejects_version_uncategorized_and_missing(self):
+        vehicle = self._create_vehicle('manual-block')
+        cases = self._create_cases(vehicle, 4)
+        self._report_result(vehicle, cases[0], RESULT_SUCCESS)
+        self._report_result(
+            vehicle,
+            cases[1],
+            RESULT_FAILED,
+            minutes_offset=1,
+            failure_category=FAILURE_CATEGORY_VERSION,
+        )
+        self._report_result(vehicle, cases[2], RESULT_TIMEOUT, minutes_offset=2)
+
+        with self.assertRaises(Exception) as ctx:
+            services.trigger_cockpit_downstream(None, self.execute_date)
+
+        message = str(ctx.exception)
+        self.assertIn('缺少当日执行结果', message)
+        self.assertIn('未填写根因大类', message)
+        self.assertIn('版本问题', message)
+
+    def test_scheduled_downstream_check_triggers_only_when_all_cockpit_cases_success(self):
+        vehicle = self._create_vehicle('scheduled-pass')
+        cases = self._create_cases(vehicle, 2)
+        today = date.today()
+        for index, case in enumerate(cases):
+            DailyExecutionResult.objects.create(
+                vehicle=vehicle,
+                test_case=case,
+                execute_date=today,
+                start_time=timezone.now() + timedelta(minutes=index),
+                duration_seconds=60,
+                result=RESULT_SUCCESS,
+            )
+
+        result = services.run_scheduled_cockpit_downstream_check.__wrapped__(date_offset=0)
+
+        self.assertIn('座舱下游任务已完成占位触发', result)
+
+    def test_scheduled_downstream_check_skips_when_any_cockpit_case_is_not_success(self):
+        vehicle = self._create_vehicle('scheduled-skip')
+        cases = self._create_cases(vehicle, 2)
+        today = date.today()
+        DailyExecutionResult.objects.create(
+            vehicle=vehicle,
+            test_case=cases[0],
+            execute_date=today,
+            start_time=timezone.now(),
+            duration_seconds=60,
+            result=RESULT_SUCCESS,
+        )
+        DailyExecutionResult.objects.create(
+            vehicle=vehicle,
+            test_case=cases[1],
+            execute_date=today,
+            start_time=timezone.now() + timedelta(minutes=1),
+            duration_seconds=60,
+            result=RESULT_FAILED,
+            failure_category=FAILURE_CATEGORY_ENVIRONMENT,
+        )
+
+        result = services.run_scheduled_cockpit_downstream_check.__wrapped__(date_offset=0)
+
+        self.assertIn('未全部成功，跳过下游任务', result)
 
     def test_vehicle_domain_report_supports_skip_and_row_errors(self):
         vehicle_platform = McuPlatform.objects.create(

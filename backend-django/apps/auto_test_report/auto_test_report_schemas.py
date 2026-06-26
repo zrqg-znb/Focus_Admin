@@ -110,6 +110,7 @@ class DailyResultItemOut(Schema):
     remark: Optional[str] = None
     status: str
     failure_reason: Optional[str] = None
+    failure_category: Optional[str] = None
     suggested_failure_reason: Optional[str] = None
     start_time: Optional[datetime] = None
     duration_seconds: int = 0
@@ -150,6 +151,7 @@ class DailyHistoryRow(Schema):
     viu_code: str = ''
     status: str
     failure_reason: Optional[str] = None
+    failure_category: Optional[str] = None
     start_time: Optional[datetime] = None
     duration_seconds: int = 0
     log_url: Optional[str] = None
@@ -212,6 +214,10 @@ class DailyOverviewRow(Schema):
     failed_count: int
     timeout_count: int
     skip_count: int
+    non_version_failure_count: int = 0
+    version_failure_count: int = 0
+    uncategorized_failure_count: int = 0
+    missing_result_count: int = 0
     total_duration_seconds: int
     last_report_at: Optional[datetime] = None
     is_abnormal: bool
@@ -226,6 +232,12 @@ class DailyOverviewSummary(Schema):
     failed_count: int
     timeout_count: int
     skip_count: int
+    non_version_failure_count: int = 0
+    version_failure_count: int = 0
+    uncategorized_failure_count: int = 0
+    missing_result_count: int = 0
+    downstream_trigger_enabled: bool = False
+    downstream_trigger_block_reasons: List[str] = Field(default_factory=list)
     total_duration_seconds: int
     stats: List[SummaryStat]
     last_report_at: Optional[datetime] = None
@@ -238,3 +250,26 @@ class DailyOverviewResponse(Schema):
 
 class UpdateFailureReasonIn(Schema):
     failure_reason: Optional[str] = None
+    failure_category: Optional[str] = None
+
+
+class DownstreamTriggerIn(Schema):
+    execute_date: date
+
+
+class DownstreamTriggerOut(Schema):
+    triggered: bool
+    dry_run: bool = True
+    message: str
+    execute_date: date
+    vehicle_count: int = 0
+    total_case_count: int = 0
+    success_count: int = 0
+    failed_count: int = 0
+    timeout_count: int = 0
+    skip_count: int = 0
+    non_version_failure_count: int = 0
+    version_failure_count: int = 0
+    uncategorized_failure_count: int = 0
+    missing_result_count: int = 0
+    block_reasons: List[str] = Field(default_factory=list)

@@ -9,6 +9,7 @@ import type {
   DailyOverviewRow,
   DailyResultItem,
   DailySummary,
+  FailureCategory,
   VehicleOption,
 } from '#/api/auto-test-report';
 
@@ -38,6 +39,7 @@ import {
   ElSelect,
   ElSwitch,
   ElTag,
+  ElTooltip,
 } from 'element-plus';
 
 import {
@@ -45,6 +47,7 @@ import {
   getDailySummaryApi,
   listDailyResultsApi,
   listVehicleOptionsApi,
+  triggerCockpitDownstreamApi,
   updateDailyResultFailureReasonApi,
 } from '#/api/auto-test-report';
 import { useZqTable } from '#/components/zq-table';
@@ -59,6 +62,8 @@ import {
 } from '../shared/daily-results-state';
 import { useAutoTestReportDomain } from '../shared/domain';
 import {
+  FAILURE_CATEGORY_LABEL_MAP,
+  FAILURE_CATEGORY_OPTIONS,
   formatDuration,
   RESULT_LABEL_MAP,
   RESULT_TAG_MAP,
@@ -102,6 +107,7 @@ const draftStatus = ref<string[]>([]);
 const statusPopoverVisible = ref(false);
 const overviewLoading = ref(false);
 const detailLoading = ref(false);
+const downstreamTriggerLoading = ref(false);
 const overviewData = ref<DailyOverviewResponse | null>(null);
 const summary = ref<DailySummary | null>(null);
 
@@ -132,6 +138,30 @@ const statusOptions = Object.keys(RESULT_LABEL_MAP).map((key) => ({
   value: key,
   label: RESULT_LABEL_MAP[key],
 }));
+const downstreamTriggerBlockReasons = computed(() => {
+  if (domain.value !== 'cockpit') {
+    return ['仅座舱视图支持触发下游任务'];
+  }
+  if (selectedPlatformId.value) {
+    return ['触发下游任务前请先切换为全部平台'];
+  }
+  return overviewData.value?.summary.downstream_trigger_block_reasons || [];
+});
+const canTriggerDownstream = computed(
+  () =>
+    domain.value === 'cockpit' &&
+    activeView.value === 'overview' &&
+    !selectedPlatformId.value &&
+    Boolean(overviewData.value?.summary.downstream_trigger_enabled),
+);
+const downstreamTriggerTip = computed(() => {
+  if (canTriggerDownstream.value) {
+    return '当前座舱结果满足下游任务触发条件';
+  }
+  return (
+    downstreamTriggerBlockReasons.value.join('；') || '请先加载座舱全量概览'
+  );
+});
 
 let overviewLoadSeq = 0;
 let detailLoadSeq = 0;
@@ -171,7 +201,9 @@ function resetVehicleDetailFilters() {
 }
 
 function canEditFailureReason(row: DailyResultItem) {
-  return Boolean(row.result_id && ['failed', 'timeout'].includes(row.status));
+  return Boolean(
+    row.result_id && ['failed', 'skip', 'timeout'].includes(row.status),
+  );
 }
 
 function isEditingFailureReason(row: DailyResultItem) {
@@ -206,6 +238,7 @@ async function submitFailureReason(row: DailyResultItem, value?: string) {
     await updateDailyResultFailureReasonApi(
       row.result_id,
       nextValue || undefined,
+      row.failure_category,
     );
     row.failure_reason = nextValue || '';
     row.suggested_failure_reason = row.failure_reason
@@ -214,6 +247,28 @@ async function submitFailureReason(row: DailyResultItem, value?: string) {
     ElMessage.success('异常原因已保存');
   } finally {
     cancelFailureReasonEdit();
+  }
+}
+
+async function submitFailureCategory(
+  row: DailyResultItem,
+  failureCategory?: string,
+) {
+  if (!row.result_id || !canEditFailureReason(row)) {
+    return;
+  }
+  const nextCategory = (failureCategory || undefined) as
+    | FailureCategory
+    | undefined;
+  row.failure_category = nextCategory;
+  await updateDailyResultFailureReasonApi(
+    row.result_id,
+    row.failure_reason || undefined,
+    nextCategory,
+  );
+  ElMessage.success('根因大类已保存');
+  if (activeView.value === 'vehicle') {
+    await loadVehicleView();
   }
 }
 
@@ -643,6 +698,23 @@ async function jumpToVehicle(row: DailyOverviewRow) {
   await handleViewChange('vehicle');
 }
 
+async function triggerDownstream() {
+  if (!canTriggerDownstream.value) {
+    ElMessage.warning(downstreamTriggerTip.value);
+    return;
+  }
+  downstreamTriggerLoading.value = true;
+  try {
+    const result = await triggerCockpitDownstreamApi(selectedDate.value);
+    ElMessage.success(result.message || '下游任务已触发');
+    await loadOverview();
+  } catch (error) {
+    console.error(error);
+  } finally {
+    downstreamTriggerLoading.value = false;
+  }
+}
+
 watch(vehicleKeyword, () => {
   rebuildCascaderOptions();
 });
@@ -756,7 +828,23 @@ onMounted(async () => {
                   />
                 </ElFormItem>
               </ElForm>
-              <div class="ml-auto">
+              <div class="ml-auto flex items-center gap-2">
+                <ElTooltip
+                  v-if="domain === 'cockpit'"
+                  :content="downstreamTriggerTip"
+                  placement="top"
+                >
+                  <span>
+                    <ElButton
+                      :disabled="!canTriggerDownstream"
+                      :loading="downstreamTriggerLoading"
+                      type="success"
+                      @click="triggerDownstream"
+                    >
+                      触发下游任务
+                    </ElButton>
+                  </span>
+                </ElTooltip>
                 <ElButton
                   :loading="overviewLoading"
                   type="primary"
@@ -830,6 +918,15 @@ onMounted(async () => {
               <template #cell-is_abnormal="{ row }">
                 <ElTag :type="row.is_abnormal ? 'danger' : 'success'">
                   {{ row.is_abnormal ? '异常' : '正常' }}
+                </ElTag>
+              </template>
+              <template #cell-non_version_failure_count="{ row }">
+                <ElTag
+                  :type="
+                    row.non_version_failure_count > 0 ? 'warning' : 'success'
+                  "
+                >
+                  {{ row.non_version_failure_count }}
                 </ElTag>
               </template>
               <template #cell-total_duration_seconds="{ row }">
@@ -1050,6 +1147,30 @@ onMounted(async () => {
                         <span v-else class="text-gray-400">-</span>
                       </template>
                     </div>
+                  </template>
+                  <template #cell-failure_category="{ row }">
+                    <ElSelect
+                      v-if="canEditFailureReason(row)"
+                      v-model="row.failure_category"
+                      clearable
+                      placeholder="请选择"
+                      size="small"
+                      @change="submitFailureCategory(row, $event)"
+                    >
+                      <ElOption
+                        v-for="item in FAILURE_CATEGORY_OPTIONS"
+                        :key="item.value"
+                        :label="item.label"
+                        :value="item.value"
+                      />
+                    </ElSelect>
+                    <span v-else class="text-gray-400">
+                      {{
+                        row.failure_category
+                          ? FAILURE_CATEGORY_LABEL_MAP[row.failure_category]
+                          : '-'
+                      }}
+                    </span>
                   </template>
                   <template #cell-duration_seconds="{ row }">
                     {{ formatDuration(row.duration_seconds) }}

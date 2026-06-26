@@ -25,6 +25,15 @@ RESULT_CHOICES = [
     (RESULT_SKIP, '跳过'),
 ]
 
+FAILURE_CATEGORY_VERSION = 'version'
+FAILURE_CATEGORY_ENVIRONMENT = 'environment'
+FAILURE_CATEGORY_CASE = 'case'
+FAILURE_CATEGORY_CHOICES = [
+    (FAILURE_CATEGORY_VERSION, '版本问题'),
+    (FAILURE_CATEGORY_ENVIRONMENT, '环境问题'),
+    (FAILURE_CATEGORY_CASE, '用例问题'),
+]
+
 
 class McuPlatform(RootModel):
     name = models.CharField(max_length=128, unique=True, verbose_name='平台名称')
@@ -143,6 +152,14 @@ class DailyExecutionResult(RootModel):
     duration_seconds = models.IntegerField(default=0, verbose_name='执行时长(秒)')
     result = models.CharField(max_length=16, choices=RESULT_CHOICES, verbose_name='执行结果')
     failure_reason = models.TextField(null=True, blank=True, verbose_name='异常原因')
+    failure_category = models.CharField(
+        max_length=32,
+        choices=FAILURE_CATEGORY_CHOICES,
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name='失败根因大类',
+    )
     log_url = models.CharField(max_length=1024, null=True, blank=True, verbose_name='运行日志URL')
     reported_at = models.DateTimeField(auto_now=True, verbose_name='上报时间')
 

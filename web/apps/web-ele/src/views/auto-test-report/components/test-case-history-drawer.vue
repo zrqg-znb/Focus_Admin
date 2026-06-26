@@ -8,6 +8,7 @@ import { ElDrawer, ElEmpty, ElLink, ElPagination, ElTag } from 'element-plus';
 import { getTestCaseHistoryApi } from '#/api/auto-test-report';
 
 import {
+  FAILURE_CATEGORY_LABEL_MAP,
   formatDuration,
   RESULT_LABEL_MAP,
   RESULT_TAG_MAP,
@@ -81,6 +82,13 @@ watch(
           <div>执行时长：{{ formatDuration(item.duration_seconds) }}</div>
           <div>上报时间：{{ item.reported_at || '-' }}</div>
           <div>异常原因：{{ item.failure_reason || '-' }}</div>
+          <div>
+            根因大类：{{
+              item.failure_category
+                ? FAILURE_CATEGORY_LABEL_MAP[item.failure_category]
+                : '-'
+            }}
+          </div>
           <div>
             运行日志：
             <ElLink

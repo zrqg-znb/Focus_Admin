@@ -22,6 +22,16 @@ export const RESULT_TAG_MAP: Record<
   skip: 'info',
 };
 
+export const FAILURE_CATEGORY_LABEL_MAP: Record<string, string> = {
+  version: '版本问题',
+  environment: '环境问题',
+  case: '用例问题',
+};
+
+export const FAILURE_CATEGORY_OPTIONS = Object.entries(
+  FAILURE_CATEGORY_LABEL_MAP,
+).map(([value, label]) => ({ label, value }));
+
 export function formatDuration(seconds?: number) {
   const total = Math.max(Number(seconds || 0), 0);
   const hour = Math.floor(total / 3600);
@@ -92,6 +102,14 @@ export function useResultColumns(
       dataKey: 'failure_reason',
       title: '异常原因',
       width: 280,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'failure_category',
+      dataKey: 'failure_category',
+      title: '根因大类',
+      width: 150,
       align: 'center',
       headerAlign: 'center',
     },
@@ -192,6 +210,14 @@ export function useOverviewColumns(
       dataKey: 'failed_count',
       title: '失败',
       width: 90,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'non_version_failure_count',
+      dataKey: 'non_version_failure_count',
+      title: '非版本问题失败数',
+      width: 160,
       align: 'center',
       headerAlign: 'center',
     },

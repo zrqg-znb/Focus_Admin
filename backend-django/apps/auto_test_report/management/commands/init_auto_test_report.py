@@ -7,8 +7,10 @@ from common.fu_cache import MenuCacheManager, PermissionCacheManager
 from core.menu.menu_model import Menu
 from core.permission.permission_model import Permission
 from core.user.user_model import User
+from scheduler.models import SchedulerJob
 
 HTTP_METHOD_MAP = {'GET': 0, 'POST': 1, 'PUT': 2, 'DELETE': 3, 'PATCH': 4, 'ALL': 5}
+COCKPIT_DOWNSTREAM_JOB_CODE = 'auto_test_report_cockpit_downstream_check'
 
 
 @dataclass(frozen=True)
@@ -104,7 +106,10 @@ PERMISSION_SEEDS = {
     'auto_test_daily_results': [
         {'name': '每日结果查看', 'code': 'auto-test-report:daily-results:view', 'permission_type': 0},
         {'name': '每日汇总接口', 'code': 'auto-test-report:api:daily-results:summary', 'permission_type': 1, 'api_path': '/api/auto-test-report/daily-results/summary', 'http_method': 'GET'},
+        {'name': '每日概览接口', 'code': 'auto-test-report:api:daily-results:overview', 'permission_type': 1, 'api_path': '/api/auto-test-report/daily-results/overview', 'http_method': 'GET'},
         {'name': '每日结果列表接口', 'code': 'auto-test-report:api:daily-results:list', 'permission_type': 1, 'api_path': '/api/auto-test-report/daily-results/list', 'http_method': 'GET'},
+        {'name': '每日结果异常原因更新接口', 'code': 'auto-test-report:api:daily-results:failure-reason', 'permission_type': 1, 'api_path': '/api/auto-test-report/daily-results/:id/failure-reason', 'http_method': 'PATCH'},
+        {'name': '座舱下游任务触发接口', 'code': 'auto-test-report:api:daily-results:downstream-trigger', 'permission_type': 1, 'api_path': '/api/auto-test-report/daily-results/downstream-trigger', 'http_method': 'POST'},
         {'name': '测试环境上报接口', 'code': 'auto-test-report:api:report:daily-results', 'permission_type': 1, 'api_path': '/api/auto-test-report/report/daily-results', 'http_method': 'POST'},
     ],
 }
@@ -118,10 +123,13 @@ class Command(BaseCommand):
         self._cleanup_stale_data()
         menus = self._seed_menus(operator)
         count = self._seed_permissions(menus, operator)
+        scheduler_count = self._seed_scheduler_jobs(operator)
         MenuCacheManager.invalidate_menu_cache()
         PermissionCacheManager.invalidate_permission_cache()
         PermissionCacheManager.invalidate_global_permissions()
-        self.stdout.write(self.style.SUCCESS(f'自动化测试日报初始化完成：菜单 {len(menus)} 项，权限 {count} 项。'))
+        self.stdout.write(self.style.SUCCESS(
+            f'自动化测试日报初始化完成：菜单 {len(menus)} 项，权限 {count} 项，定时任务 {scheduler_count} 项。'
+        ))
 
     def _cleanup_stale_data(self):
         Permission.objects.filter(
@@ -179,3 +187,31 @@ class Command(BaseCommand):
                 )
                 total += 1
         return total
+
+    def _seed_scheduler_jobs(self, operator):
+        """初始化座舱下游任务检查，默认禁用，生产确认 CI 后再启用。"""
+        SchedulerJob.objects.update_or_create(
+            code=COCKPIT_DOWNSTREAM_JOB_CODE,
+            defaults={
+                'name': '座舱自动化下游任务放行检查',
+                'description': '每日检查座舱自动化结果，全部成功时触发下游 CI 占位任务',
+                'group': 'auto_test_report',
+                'trigger_type': 'cron',
+                'cron_expression': '0 23 * * *',
+                'interval_seconds': None,
+                'run_date': None,
+                'task_func': 'apps.auto_test_report.auto_test_report_services.run_scheduled_cockpit_downstream_check',
+                'task_args': '[]',
+                'task_kwargs': '{"date_offset": 0}',
+                'status': 0,
+                'priority': 10,
+                'max_instances': 1,
+                'max_retries': 0,
+                'timeout': 1800,
+                'coalesce': True,
+                'allow_concurrent': False,
+                'sys_creator': operator,
+                'sys_modifier': operator,
+            },
+        )
+        return 1
