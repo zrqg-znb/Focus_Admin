@@ -155,6 +155,8 @@ function clearFilter() {
           collapse-tags-tooltip
           filterable
           placeholder="请选择测试设备"
+          popper-class="environment-header-filter-cascader"
+          :teleported="false"
         />
         <ElInput
           v-else
@@ -220,5 +222,13 @@ function clearFilter() {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.environment-header-filter__panel :deep(.el-cascader) {
+  width: 100%;
+}
+
+.environment-header-filter__panel :deep(.environment-header-filter-cascader) {
+  min-width: 300px;
 }
 </style>
