@@ -109,6 +109,12 @@ const favoriteCount = computed(
 const activeFilterCount = computed(() =>
   countActiveHeaderFilters(headerFilterValues.value),
 );
+const idleCount = computed(
+  () => rows.value.filter((item) => item.status === 'idle').length,
+);
+const occupiedCount = computed(
+  () => rows.value.filter((item) => item.status === 'occupied').length,
+);
 
 const currentUserId = computed(() => {
   const userInfo = userStore.userInfo as any;
@@ -401,13 +407,26 @@ onBeforeUnmount(() => {
   <Page auto-content-height content-class="flex h-full min-h-0 flex-col">
     <div class="environment-user-page">
       <section class="environment-command-bar">
-        <div class="toolbar-summary">
-          <span>筛选条件已移至表头</span>
-          <ElButton v-if="activeFilterCount > 0" link type="primary" @click="clearAllHeaderFilters">
-            清空 {{ activeFilterCount }} 个筛选
-          </ElButton>
+        <div class="command-main">
+          <div class="command-title-block">
+            <div class="command-title">环境使用</div>
+            <div class="command-subtitle">
+              共 {{ total }} 个环境，当前页 {{ rows.length }} 个
+            </div>
+          </div>
+          <div class="command-metrics">
+            <span class="metric-pill is-idle">空闲 {{ idleCount }}</span>
+            <span class="metric-pill is-occupied">占用 {{ occupiedCount }}</span>
+            <span class="metric-pill">收藏 {{ favoriteCount }}</span>
+            <span v-if="activeFilterCount > 0" class="metric-pill is-filter">
+              筛选 {{ activeFilterCount }}
+            </span>
+          </div>
         </div>
         <div class="toolbar-actions">
+          <ElButton v-if="activeFilterCount > 0" @click="clearAllHeaderFilters">
+            清空筛选
+          </ElButton>
           <ElButton v-if="viewMode === 'card'" @click="filterDialogVisible = true">
             筛选
             <span v-if="activeFilterCount">({{ activeFilterCount }})</span>
@@ -419,12 +438,6 @@ onBeforeUnmount(() => {
           </ElButton>
         </div>
       </section>
-
-      <div class="summary-line">
-        <span>共 {{ total }} 个环境</span>
-        <span>当前页收藏 {{ favoriteCount }} 个</span>
-        <span>密码策略：密码不在用户端展示或下发</span>
-      </div>
 
       <Grid v-if="viewMode === 'table'">
         <template #environment-filter-header="{ column }">
@@ -677,22 +690,78 @@ onBeforeUnmount(() => {
 
 .environment-command-bar {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px 16px;
-  background: var(--el-bg-color);
+  gap: 16px;
+  padding: 14px 16px;
+  background:
+    linear-gradient(180deg, var(--el-fill-color-extra-light), var(--el-bg-color));
   border: 1px solid var(--el-border-color-light);
   border-radius: 8px;
   flex-shrink: 0;
 }
 
-.toolbar-summary {
+.command-main {
   display: flex;
+  min-width: 0;
+  flex: 1;
   align-items: center;
-  gap: 10px;
+  gap: 18px;
+}
+
+.command-title-block {
+  min-width: 180px;
+}
+
+.command-title {
+  color: var(--el-text-color-primary);
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.command-subtitle {
   color: var(--el-text-color-secondary);
   font-size: 13px;
+  line-height: 1.6;
+}
+
+.command-metrics {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.metric-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  color: var(--el-text-color-regular);
+  font-size: 12px;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.metric-pill.is-idle {
+  color: var(--el-color-success);
+  background: var(--el-color-success-light-9);
+  border-color: var(--el-color-success-light-7);
+}
+
+.metric-pill.is-occupied {
+  color: var(--el-color-danger);
+  background: var(--el-color-danger-light-9);
+  border-color: var(--el-color-danger-light-7);
+}
+
+.metric-pill.is-filter {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  border-color: var(--el-color-primary-light-7);
 }
 
 .toolbar-actions {
@@ -700,14 +769,6 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   gap: 8px;
   align-items: center;
-}
-
-.summary-line {
-  display: flex;
-  gap: 18px;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-  flex-shrink: 0;
 }
 
 .environment-grid {
@@ -1022,6 +1083,13 @@ onBeforeUnmount(() => {
 @media (max-width: 900px) {
   .environment-command-bar {
     flex-direction: column;
+    align-items: stretch;
+  }
+
+  .command-main {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
   }
 
   .toolbar-actions {
