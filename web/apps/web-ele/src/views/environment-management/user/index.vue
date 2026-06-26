@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import type {
+  EnvironmentFilterOptions,
   EnvironmentItem,
   EnvironmentRecord,
   QueueItem,
@@ -15,15 +16,10 @@ import {
   ElButton,
   ElDialog,
   ElEmpty,
-  ElForm,
-  ElFormItem,
-  ElInput,
   ElMessage,
   ElMessageBox,
-  ElOption,
   ElPagination,
   ElSegmented,
-  ElSelect,
   ElTag,
   ElTable,
   ElTableColumn,
@@ -32,6 +28,7 @@ import {
 import {
   cancelMyQueueApi,
   favoriteEnvironmentApi,
+  getEnvironmentFilterOptionsApi,
   getEnvironmentAnnouncementApi,
   listEnvironmentQueueApi,
   listEnvironmentRecordsApi,
@@ -44,12 +41,18 @@ import {
 import { useZqTable } from '#/components/zq-table';
 
 import {
-  categoryOptions,
-  domainOptions,
+  environmentUsageHeaderFilters,
   queueTableColumns,
   recordTableColumns,
   useEnvironmentUsageColumns,
 } from './data';
+import EnvironmentHeaderFilter from '../components/EnvironmentHeaderFilter.vue';
+import {
+  buildHeaderFilterParams,
+  countActiveHeaderFilters,
+  type HeaderFilterConfig,
+  type HeaderFilterValues,
+} from '../components/header-filter';
 import EnvironmentDetailDrawer from './components/EnvironmentDetailDrawer.vue';
 
 const cardLoading = ref(false);
@@ -59,16 +62,25 @@ const total = ref(0);
 const page = ref(1);
 const pageSize = ref(12);
 const viewMode = ref<'card' | 'table'>('table');
-const scopeMode = ref<'all' | 'favorite'>('all');
 const tick = ref(Date.now());
 let timer: null | number = null;
 
-const filters = ref({
-  category: '',
-  domain: '',
-  keyword: '',
-  project_name: '',
-  vehicle_model: '',
+const headerFilterValues = ref<HeaderFilterValues>({});
+const filterDialogVisible = ref(false);
+const filterOptions = ref<EnvironmentFilterOptions>({
+  binding_device_assets: [],
+  categories: [],
+  current_users: [],
+  device_statuses: [],
+  device_types: [],
+  device_options: [],
+  devices: [],
+  domains: [],
+  favorite_states: [],
+  projects: [],
+  queue_states: [],
+  statuses: [],
+  vehicle_models: [],
 });
 
 const queueDialogVisible = ref(false);
@@ -89,14 +101,13 @@ const viewOptions = [
   { label: '列表', value: 'table' },
   { label: '平铺', value: 'card' },
 ];
-const scopeOptions = [
-  { label: '全部', value: 'all' },
-  { label: '收藏', value: 'favorite' },
-];
 const rdpInstallerUrl = '/tools/focus-rdp/install-focus-rdp-protocol.ps1';
 
 const favoriteCount = computed(
   () => rows.value.filter((item) => item.is_favorite).length,
+);
+const activeFilterCount = computed(() =>
+  countActiveHeaderFilters(headerFilterValues.value),
 );
 
 const currentUserId = computed(() => {
@@ -116,8 +127,10 @@ const [Grid, gridApi] = useZqTable<EnvironmentItem>({
       ajax: {
         query: async ({ page: tablePage }: any) => {
           const result = await listEnvironmentsApi({
-            ...filters.value,
-            favorite_only: scopeMode.value === 'favorite',
+            ...buildHeaderFilterParams(
+              environmentUsageHeaderFilters,
+              headerFilterValues.value,
+            ),
             page: tablePage.currentPage,
             pageSize: tablePage.pageSize,
           });
@@ -167,8 +180,10 @@ async function loadCards() {
   cardLoading.value = true;
   try {
     const result = await listEnvironmentsApi({
-      ...filters.value,
-      favorite_only: scopeMode.value === 'favorite',
+      ...buildHeaderFilterParams(
+        environmentUsageHeaderFilters,
+        headerFilterValues.value,
+      ),
       page: page.value,
       pageSize: pageSize.value,
     });
@@ -189,7 +204,40 @@ async function loadData() {
 
 function resetPageAndLoad() {
   page.value = 1;
-  loadData();
+  if (viewMode.value === 'table') {
+    gridApi.handlePageChange(1, gridApi.pagination.pageSize);
+  } else {
+    loadCards();
+  }
+}
+
+function getHeaderFilterConfig(column: any) {
+  const key = String(column?.key || column?.prop || '');
+  return environmentUsageHeaderFilters.find((item) => item.columnKey === key);
+}
+
+function getHeaderFilterOptions(config?: HeaderFilterConfig) {
+  return config?.optionKey ? filterOptions.value[config.optionKey] || [] : [];
+}
+
+function applyHeaderFilter(config: HeaderFilterConfig, value: any) {
+  headerFilterValues.value = {
+    ...headerFilterValues.value,
+    [config.columnKey]: value,
+  };
+  resetPageAndLoad();
+}
+
+function clearHeaderFilter(config: HeaderFilterConfig) {
+  const nextValues = { ...headerFilterValues.value };
+  delete nextValues[config.columnKey];
+  headerFilterValues.value = nextValues;
+  resetPageAndLoad();
+}
+
+function clearAllHeaderFilters() {
+  headerFilterValues.value = {};
+  resetPageAndLoad();
 }
 
 async function requireOperationAnnouncement(actionName: string) {
@@ -336,8 +384,9 @@ function handleRecordSizeChange() {
   loadRecords();
 }
 
-onMounted(() => {
-  loadData();
+onMounted(async () => {
+  filterOptions.value = await getEnvironmentFilterOptionsApi();
+  await loadData();
   timer = window.setInterval(() => {
     tick.value = Date.now();
   }, 1000);
@@ -352,42 +401,22 @@ onBeforeUnmount(() => {
   <Page auto-content-height content-class="flex h-full min-h-0 flex-col">
     <div class="environment-user-page">
       <section class="environment-command-bar">
-        <ElForm :inline="true" :model="filters" class="toolbar-form">
-          <ElFormItem label="关键词">
-            <ElInput
-              v-model="filters.keyword"
-              clearable
-              placeholder="IP / 项目 / 设备 / 货架"
-              @keyup.enter="resetPageAndLoad"
-            />
-          </ElFormItem>
-          <ElFormItem label="领域">
-            <ElSelect v-model="filters.domain" class="filter-select" @change="resetPageAndLoad">
-              <ElOption v-for="item in domainOptions" :key="item.value" :label="item.label" :value="item.value" />
-            </ElSelect>
-          </ElFormItem>
-          <ElFormItem label="分类">
-            <ElSelect v-model="filters.category" class="filter-select" @change="resetPageAndLoad">
-              <ElOption v-for="item in categoryOptions" :key="item.value" :label="item.label" :value="item.value" />
-            </ElSelect>
-          </ElFormItem>
-          <ElFormItem label="项目">
-            <ElInput v-model="filters.project_name" clearable @keyup.enter="resetPageAndLoad" />
-          </ElFormItem>
-          <ElFormItem label="车型">
-            <ElInput v-model="filters.vehicle_model" clearable @keyup.enter="resetPageAndLoad" />
-          </ElFormItem>
-          <ElFormItem>
-            <ElButton type="primary" @click="resetPageAndLoad">查询</ElButton>
-            <ElButton @click="loadData">
-              <RefreshCw class="mr-1 size-4" />
-              刷新
-            </ElButton>
-          </ElFormItem>
-        </ElForm>
+        <div class="toolbar-summary">
+          <span>筛选条件已移至表头</span>
+          <ElButton v-if="activeFilterCount > 0" link type="primary" @click="clearAllHeaderFilters">
+            清空 {{ activeFilterCount }} 个筛选
+          </ElButton>
+        </div>
         <div class="toolbar-actions">
-          <ElSegmented v-model="scopeMode" :options="scopeOptions" @change="resetPageAndLoad" />
+          <ElButton v-if="viewMode === 'card'" @click="filterDialogVisible = true">
+            筛选
+            <span v-if="activeFilterCount">({{ activeFilterCount }})</span>
+          </ElButton>
           <ElSegmented v-model="viewMode" :options="viewOptions" @change="resetPageAndLoad" />
+          <ElButton @click="loadData">
+            <RefreshCw class="mr-1 size-4" />
+            刷新
+          </ElButton>
         </div>
       </section>
 
@@ -398,6 +427,16 @@ onBeforeUnmount(() => {
       </div>
 
       <Grid v-if="viewMode === 'table'">
+        <template #environment-filter-header="{ column }">
+          <EnvironmentHeaderFilter
+            v-if="getHeaderFilterConfig(column)"
+            :config="getHeaderFilterConfig(column)!"
+            :model-value="headerFilterValues[getHeaderFilterConfig(column)!.columnKey]"
+            :options="getHeaderFilterOptions(getHeaderFilterConfig(column))"
+            @apply="(value) => applyHeaderFilter(getHeaderFilterConfig(column)!, value)"
+            @clear="clearHeaderFilter(getHeaderFilterConfig(column)!)"
+          />
+        </template>
         <template #cell-favorite="{ row }">
           <ElButton v-if="row.can_use_environment" link class="favorite-btn" @click="toggleFavorite(row)">
             <IconifyIcon :class="['size-5', row.is_favorite ? 'favorite-on' : 'favorite-off']" icon="svg:my-favorite" />
@@ -602,6 +641,24 @@ onBeforeUnmount(() => {
       </div>
     </ElDialog>
 
+    <ElDialog v-model="filterDialogVisible" title="环境筛选" width="420px">
+      <div class="card-filter-panel">
+        <EnvironmentHeaderFilter
+          v-for="config in environmentUsageHeaderFilters"
+          :key="config.columnKey"
+          :config="config"
+          :model-value="headerFilterValues[config.columnKey]"
+          :options="getHeaderFilterOptions(config)"
+          @apply="(value) => applyHeaderFilter(config, value)"
+          @clear="clearHeaderFilter(config)"
+        />
+      </div>
+      <template #footer>
+        <ElButton @click="clearAllHeaderFilters">清空全部</ElButton>
+        <ElButton type="primary" @click="filterDialogVisible = false">完成</ElButton>
+      </template>
+    </ElDialog>
+
     <EnvironmentDetailDrawer
       v-model="detailDrawerVisible"
       :environment="detailEnvironment"
@@ -630,16 +687,12 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
-.toolbar-form {
-  flex: 1;
+.toolbar-summary {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-}
-
-.toolbar-form :deep(.el-form-item) {
-  margin-bottom: 0;
-  margin-right: 16px;
+  gap: 10px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
 }
 
 .toolbar-actions {
@@ -647,10 +700,6 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   gap: 8px;
   align-items: center;
-}
-
-.filter-select {
-  width: 120px;
 }
 
 .summary-line {
@@ -944,6 +993,20 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: flex-end;
   padding-top: 12px;
+}
+
+.card-filter-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.card-filter-panel :deep(.environment-header-filter) {
+  justify-content: space-between;
+  padding: 8px 10px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 6px;
+  background: var(--el-fill-color-blank);
 }
 
 :global(.environment-announcement-dialog .environment-announcement-content) {

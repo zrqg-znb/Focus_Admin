@@ -16,7 +16,9 @@ from .services import (
     cancel_my_queue,
     enqueue_environment,
     get_announcement,
+    list_devices,
     list_environments,
+    list_filter_options,
     occupy_environment,
     release_environment,
     save_announcement,
@@ -201,6 +203,75 @@ class EnvironmentManagementServiceTests(TestCase):
         by_device_asset = list_environments(self.user, EnvironmentListQuery(keyword='DAQ-ASSET', page=1, pageSize=20))
         self.assertEqual(by_bomid['total'], 1)
         self.assertEqual(by_device_asset['total'], 1)
+
+    def test_environment_header_filters_support_dropdown_and_text_conditions(self):
+        tree = create_device_type(
+            self.admin,
+            DeviceTypeIn(parent_id=None, name='外设', sort=1, is_active=True),
+        )
+        device = create_device(
+            self.admin,
+            TestDeviceIn(device_type_id=tree[0]['id'], name='采集卡', sort=0, is_active=True, remark=''),
+        )
+        first_payload = payload(ip='192.168.1.21')
+        first_payload.project_name = 'P-Alpha'
+        first_payload.vehicle_model = 'Model-X'
+        first_payload.devices = [{'device_id': device['id'], 'asset_number': 'DAQ-01', 'remark': '', 'sort': 0}]
+        create_environment(self.admin, first_payload)
+
+        second_payload = payload(ip='192.168.1.22')
+        second_payload.domain = 'vehicle'
+        second_payload.category = 'dev'
+        second_payload.project_name = 'P-Beta'
+        second_payload.vehicle_model = 'Model-Y'
+        second_payload.bomid = 'BOM-002'
+        create_environment(self.admin, second_payload)
+
+        # 表头下拉筛选提交逗号字符串，服务层需要按精确多选处理，而不是把逗号串当模糊文本。
+        exact_page = list_environments(
+            self.user,
+            EnvironmentListQuery(
+                domains='cockpit',
+                categories='test',
+                project_name='Alpha',
+                vehicle_model='Model-X',
+                device_ids=device['id'],
+                page=1,
+                pageSize=20,
+            ),
+        )
+        fuzzy_page = list_environments(
+            self.user,
+            EnvironmentListQuery(ip_address='1.22', bomid='BOM-002', page=1, pageSize=20),
+        )
+
+        self.assertEqual(exact_page['total'], 1)
+        self.assertEqual(exact_page['items'][0]['project_name'], 'P-Alpha')
+        self.assertEqual(fuzzy_page['total'], 1)
+        self.assertEqual(fuzzy_page['items'][0]['domain'], 'vehicle')
+
+    def test_filter_options_and_device_header_filters_do_not_return_sensitive_fields(self):
+        tree = create_device_type(
+            self.admin,
+            DeviceTypeIn(parent_id=None, name='采集设备', sort=1, is_active=True),
+        )
+        device = create_device(
+            self.admin,
+            TestDeviceIn(device_type_id=tree[0]['id'], name='DAQ-9000', sort=0, is_active=True, remark='高速采集'),
+        )
+        env_payload = payload()
+        env_payload.devices = [{'device_id': device['id'], 'asset_number': 'DAQ-ASSET-9000', 'remark': '', 'sort': 0}]
+        create_environment(self.admin, env_payload)
+
+        options = list_filter_options(self.user)
+        filtered_devices = list_devices(name='DAQ', is_active_values='true', remark='高速')
+
+        self.assertEqual(filtered_devices[0]['name'], 'DAQ-9000')
+        self.assertIn({'label': 'P1', 'value': 'P1'}, options['projects'])
+        self.assertEqual(options['device_options'][0]['label'], '采集设备')
+        self.assertEqual(options['device_options'][0]['children'][0]['value'], device['id'])
+        self.assertTrue(all('password' not in item for values in options.values() for item in values))
+        self.assertTrue(all('rdp' not in item for values in options.values() for item in values))
 
     def test_announcement_can_only_be_saved_by_admin(self):
         initial = get_announcement()

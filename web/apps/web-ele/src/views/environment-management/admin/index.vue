@@ -7,6 +7,7 @@ import type {
   DeviceTypePayload,
   EnvironmentAnnouncementPayload,
   EnvironmentDevicePayload,
+  EnvironmentFilterOptions,
   EnvironmentItem,
   EnvironmentPayload,
   TestDeviceItem,
@@ -45,6 +46,7 @@ import {
   deleteDeviceTypeApi,
   deleteEnvironmentApi,
   getEnvironmentAnnouncementApi,
+  getEnvironmentFilterOptionsApi,
   listDeviceOptionsApi,
   listDevicesApi,
   listDeviceTypesApi,
@@ -58,12 +60,20 @@ import { useZqTable } from '#/components/zq-table';
 import { RichTextEditor } from '#/components/zq-form/rich-text-editor';
 
 import {
+  adminEnvironmentHeaderFilters,
   categoryOptions,
+  deviceHeaderFilters,
   domainOptions,
   useDeviceColumns,
   useEnvironmentColumns,
-  useEnvironmentSearchSchema,
 } from './data';
+import EnvironmentHeaderFilter from '../components/EnvironmentHeaderFilter.vue';
+import {
+  buildHeaderFilterParams,
+  countActiveHeaderFilters,
+  type HeaderFilterConfig,
+  type HeaderFilterValues,
+} from '../components/header-filter';
 
 defineOptions({ name: 'EnvironmentManagementAdmin' });
 
@@ -73,6 +83,23 @@ const environmentDialogMode = ref<'create' | 'edit'>('create');
 const environmentDialogSaving = ref(false);
 const environmentFormRef = ref<FormInstance>();
 const deviceOptions = ref<DeviceOptionNode[]>([]);
+const environmentHeaderFilterValues = ref<HeaderFilterValues>({});
+const deviceHeaderFilterValues = ref<HeaderFilterValues>({});
+const filterOptions = ref<EnvironmentFilterOptions>({
+  binding_device_assets: [],
+  categories: [],
+  current_users: [],
+  device_statuses: [],
+  device_types: [],
+  device_options: [],
+  devices: [],
+  domains: [],
+  favorite_states: [],
+  projects: [],
+  queue_states: [],
+  statuses: [],
+  vehicle_models: [],
+});
 
 const emptyEnvironmentForm = (): EnvironmentPayload & { id?: string } => ({
   ip_address: '',
@@ -115,25 +142,23 @@ const [Grid, gridApi] = useZqTable({
         query: async ({ form, page }: any) =>
           listEnvironmentsApi({
             ...form,
+            ...buildHeaderFilterParams(
+              adminEnvironmentHeaderFilters,
+              environmentHeaderFilterValues.value,
+            ),
             page: page.currentPage,
             pageSize: page.pageSize,
           }),
       },
     },
     pagerConfig: { enabled: true, pageSize: 20 },
-    toolbarConfig: { custom: true, refresh: true, search: true, zoom: true },
+    toolbarConfig: { custom: true, refresh: true, search: false, zoom: true },
   },
-  formOptions: {
-    schema: useEnvironmentSearchSchema(),
-    showCollapseButton: false,
-    submitOnChange: true,
-    wrapperClass: 'grid-cols-5',
-  },
+  showSearchForm: false,
 });
 
 const deviceTypeTree = ref<DeviceTypeItem[]>([]);
 const selectedTypeId = ref('');
-const deviceKeyword = ref('');
 
 const typeDialogVisible = ref(false);
 const typeDialogMode = ref<'create' | 'edit'>('create');
@@ -178,7 +203,10 @@ const [DeviceGrid, deviceGridApi] = useZqTable<TestDeviceItem>({
         query: async () =>
           listDevicesApi({
             device_type_id: selectedTypeId.value || undefined,
-            keyword: deviceKeyword.value || undefined,
+            ...buildHeaderFilterParams(
+              deviceHeaderFilters,
+              deviceHeaderFilterValues.value,
+            ),
           }),
       },
     },
@@ -191,10 +219,21 @@ const selectedTypeName = computed(() => {
   const target = findTypeNode(deviceTypeTree.value, selectedTypeId.value);
   return target?.name || '全部类型';
 });
+const activeEnvironmentFilterCount = computed(() =>
+  countActiveHeaderFilters(environmentHeaderFilterValues.value),
+);
+const activeDeviceFilterCount = computed(() =>
+  countActiveHeaderFilters(deviceHeaderFilterValues.value),
+);
 
 async function loadDeviceOptions() {
   // 环境表单只允许选择具体测试设备；级联中的类型节点仅作为路径容器。
   deviceOptions.value = await listDeviceOptionsApi();
+}
+
+async function loadFilterOptions() {
+  // 表头筛选下拉项统一由后端聚合，避免只取当前页导致可选项缺失。
+  filterOptions.value = await getEnvironmentFilterOptionsApi();
 }
 
 function findTypeNode(nodes: DeviceTypeItem[], id: string): DeviceTypeItem | null {
@@ -213,6 +252,60 @@ async function loadDeviceTypes() {
 
 async function loadDevices() {
   await deviceGridApi.reload();
+}
+
+function getEnvironmentHeaderFilterConfig(column: any) {
+  const key = String(column?.key || column?.prop || '');
+  return adminEnvironmentHeaderFilters.find((item) => item.columnKey === key);
+}
+
+function getDeviceHeaderFilterConfig(column: any) {
+  const key = String(column?.key || column?.prop || '');
+  return deviceHeaderFilters.find((item) => item.columnKey === key);
+}
+
+function getHeaderFilterOptions(config?: HeaderFilterConfig) {
+  return config?.optionKey ? filterOptions.value[config.optionKey] || [] : [];
+}
+
+function applyEnvironmentHeaderFilter(config: HeaderFilterConfig, value: any) {
+  environmentHeaderFilterValues.value = {
+    ...environmentHeaderFilterValues.value,
+    [config.columnKey]: value,
+  };
+  gridApi.handlePageChange(1, gridApi.pagination.pageSize);
+}
+
+function clearEnvironmentHeaderFilter(config: HeaderFilterConfig) {
+  const nextValues = { ...environmentHeaderFilterValues.value };
+  delete nextValues[config.columnKey];
+  environmentHeaderFilterValues.value = nextValues;
+  gridApi.handlePageChange(1, gridApi.pagination.pageSize);
+}
+
+function clearAllEnvironmentHeaderFilters() {
+  environmentHeaderFilterValues.value = {};
+  gridApi.handlePageChange(1, gridApi.pagination.pageSize);
+}
+
+function applyDeviceHeaderFilter(config: HeaderFilterConfig, value: any) {
+  deviceHeaderFilterValues.value = {
+    ...deviceHeaderFilterValues.value,
+    [config.columnKey]: value,
+  };
+  loadDevices();
+}
+
+function clearDeviceHeaderFilter(config: HeaderFilterConfig) {
+  const nextValues = { ...deviceHeaderFilterValues.value };
+  delete nextValues[config.columnKey];
+  deviceHeaderFilterValues.value = nextValues;
+  loadDevices();
+}
+
+function clearAllDeviceHeaderFilters() {
+  deviceHeaderFilterValues.value = {};
+  loadDevices();
 }
 
 function handleTypeNodeClick(row: DeviceTypeItem) {
@@ -445,7 +538,13 @@ async function submitAnnouncement() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadDeviceTypes(), loadDeviceOptions(), loadDevices(), loadAnnouncement()]);
+  await Promise.all([
+    loadDeviceTypes(),
+    loadDeviceOptions(),
+    loadFilterOptions(),
+    loadDevices(),
+    loadAnnouncement(),
+  ]);
 });
 </script>
 
@@ -455,9 +554,25 @@ onMounted(async () => {
       <ElTabPane label="环境管理" name="environments">
         <Grid>
           <template #toolbar-tools>
+            <ElButton
+              v-if="activeEnvironmentFilterCount > 0"
+              @click="clearAllEnvironmentHeaderFilters"
+            >
+              清空筛选 {{ activeEnvironmentFilterCount }}
+            </ElButton>
             <ElButton type="primary" @click="openEnvironmentCreate">
               新建环境
             </ElButton>
+          </template>
+          <template #environment-filter-header="{ column }">
+            <EnvironmentHeaderFilter
+              v-if="getEnvironmentHeaderFilterConfig(column)"
+              :config="getEnvironmentHeaderFilterConfig(column)!"
+              :model-value="environmentHeaderFilterValues[getEnvironmentHeaderFilterConfig(column)!.columnKey]"
+              :options="getHeaderFilterOptions(getEnvironmentHeaderFilterConfig(column))"
+              @apply="(value) => applyEnvironmentHeaderFilter(getEnvironmentHeaderFilterConfig(column)!, value)"
+              @clear="clearEnvironmentHeaderFilter(getEnvironmentHeaderFilterConfig(column)!)"
+            />
           </template>
           <template #cell-device_display="{ row }">
             <div class="tag-wrap">
@@ -536,18 +651,12 @@ onMounted(async () => {
                 <span class="muted ml-2 font-normal">测试设备</span>
               </div>
               <div class="device-actions">
-                <ElInput
-                  v-model="deviceKeyword"
-                  clearable
-                  placeholder="搜索设备名称/备注"
-                  style="width: 220px"
-                  @keyup.enter="loadDevices"
+                <ElButton
+                  v-if="activeDeviceFilterCount > 0"
+                  @click="clearAllDeviceHeaderFilters"
                 >
-                  <template #prefix>
-                    <IconifyIcon icon="lucide:search" />
-                  </template>
-                </ElInput>
-                <ElButton @click="loadDevices">查询</ElButton>
+                  清空筛选 {{ activeDeviceFilterCount }}
+                </ElButton>
                 <ElButton type="primary" @click="openDeviceCreate">
                   <IconifyIcon icon="lucide:plus" class="mr-1" />
                   新建设备
@@ -555,6 +664,16 @@ onMounted(async () => {
               </div>
             </div>
             <DeviceGrid>
+              <template #environment-filter-header="{ column }">
+                <EnvironmentHeaderFilter
+                  v-if="getDeviceHeaderFilterConfig(column)"
+                  :config="getDeviceHeaderFilterConfig(column)!"
+                  :model-value="deviceHeaderFilterValues[getDeviceHeaderFilterConfig(column)!.columnKey]"
+                  :options="getHeaderFilterOptions(getDeviceHeaderFilterConfig(column))"
+                  @apply="(value) => applyDeviceHeaderFilter(getDeviceHeaderFilterConfig(column)!, value)"
+                  @clear="clearDeviceHeaderFilter(getDeviceHeaderFilterConfig(column)!)"
+                />
+              </template>
               <template #cell-is_active="{ row }">
                 <div class="flex justify-center">
                   <ElTag :type="row.is_active ? 'success' : 'info'">

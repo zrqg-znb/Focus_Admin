@@ -49,10 +49,29 @@ def delete_device_type(request, type_id: str):
 
 
 @router.get('/devices', response=list[TestDeviceOut], summary='测试设备列表')
-def list_devices(request, device_type_id: str = '', keyword: str = '', active_only: bool = False):
+def list_devices(
+    request,
+    device_type_id: str = '',
+    keyword: str = '',
+    active_only: bool = False,
+    device_type_ids: str = '',
+    name: str = '',
+    type_keyword: str = '',
+    is_active_values: str = '',
+    remark: str = '',
+):
     """返回测试设备主数据列表；环境配置会先选择这里维护的具体测试设备。"""
     services.require_manager(request.auth)
-    return services.list_devices(device_type_id or None, keyword or None, active_only=active_only)
+    return services.list_devices(
+        device_type_id or None,
+        keyword or None,
+        active_only=active_only,
+        device_type_ids=device_type_ids or None,
+        name=name or None,
+        type_keyword=type_keyword or None,
+        is_active_values=is_active_values or None,
+        remark=remark or None,
+    )
 
 
 @router.post('/devices', response=TestDeviceOut, summary='新建测试设备')
@@ -78,6 +97,12 @@ def list_device_options(request):
     """返回测试设备级联选项；类型节点作为路径容器，叶子设备用于环境实例选择。"""
     services.require_manager(request.auth)
     return services.list_device_options()
+
+
+@router.get('/filter-options', response=dict, summary='环境管理筛选选项')
+def list_filter_options(request):
+    """返回表头筛选下拉选项；选项不包含密码、RDP 地址等敏感字段。"""
+    return services.list_filter_options(request.auth)
 
 
 @router.get('/announcement', response=EnvironmentAnnouncementOut, summary='环境操作公告')

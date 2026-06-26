@@ -151,6 +151,27 @@ class EnvironmentListQuery(Schema):
     vehicle_model: Optional[str] = None
     keyword: Optional[str] = None
     favorite_only: bool = False
+    domains: Optional[str] = None
+    categories: Optional[str] = None
+    statuses: Optional[str] = None
+    favorite_state: Optional[str] = None
+    queue_state: Optional[str] = None
+    project_names: Optional[str] = None
+    vehicle_models: Optional[str] = None
+    device_ids: Optional[str] = None
+    device_names: Optional[str] = None
+    current_user_ids: Optional[str] = None
+    ip_address: Optional[str] = None
+    account: Optional[str] = None
+    bomid: Optional[str] = None
+    device_keyword: Optional[str] = None
+    current_user_name: Optional[str] = None
+    asset_number: Optional[str] = None
+    config_description: Optional[str] = None
+    remark: Optional[str] = None
+    shelf_location: Optional[str] = None
+    updated_start: Optional[datetime] = None
+    updated_end: Optional[datetime] = None
     page: int = 1
     pageSize: int = 20
 

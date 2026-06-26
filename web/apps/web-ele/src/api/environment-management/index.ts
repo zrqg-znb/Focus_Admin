@@ -52,6 +52,29 @@ export interface DeviceOptionNode {
   children: DeviceOptionNode[];
 }
 
+export interface HeaderFilterOption {
+  children?: HeaderFilterOption[];
+  disabled?: boolean;
+  label: string;
+  value: string;
+}
+
+export interface EnvironmentFilterOptions {
+  binding_device_assets: HeaderFilterOption[];
+  categories: HeaderFilterOption[];
+  current_users: HeaderFilterOption[];
+  device_statuses: HeaderFilterOption[];
+  device_types: HeaderFilterOption[];
+  device_options: HeaderFilterOption[];
+  devices: HeaderFilterOption[];
+  domains: HeaderFilterOption[];
+  favorite_states: HeaderFilterOption[];
+  projects: HeaderFilterOption[];
+  queue_states: HeaderFilterOption[];
+  statuses: HeaderFilterOption[];
+  vehicle_models: HeaderFilterOption[];
+}
+
 export interface EnvironmentAnnouncement {
   id?: null | string;
   title: string;
@@ -226,6 +249,10 @@ export async function deleteDeviceApi(id: string) {
 
 export async function listDeviceOptionsApi() {
   return requestClient.get<DeviceOptionNode[]>(`${base}/device-options`);
+}
+
+export async function getEnvironmentFilterOptionsApi() {
+  return requestClient.get<EnvironmentFilterOptions>(`${base}/filter-options`);
 }
 
 export async function getEnvironmentAnnouncementApi() {

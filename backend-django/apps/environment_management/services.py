@@ -579,14 +579,47 @@ def delete_device_type(user: User, type_id: str) -> bool:
     return True
 
 
-def list_devices(device_type_id: str | None = None, keyword: str | None = None, active_only: bool = False) -> list[dict]:
+def list_devices(
+    device_type_id: str | None = None,
+    keyword: str | None = None,
+    active_only: bool = False,
+    device_type_ids: str | None = None,
+    name: str | None = None,
+    type_keyword: str | None = None,
+    is_active_values: str | None = None,
+    remark: str | None = None,
+) -> list[dict]:
+    """查询测试设备主数据，支持设备管理表头筛选。
+
+    旧的 device_type_id/keyword/active_only 继续兼容；新增字段用于表头筛选，
+    多选值同样采用逗号字符串，统一交给 _split_query_values 处理。
+    """
     qs = EnvironmentTestDevice.objects.filter(is_deleted=False).select_related('device_type', 'device_type__parent')
     if active_only:
         qs = qs.filter(is_active=True, device_type__is_active=True)
     if device_type_id:
         qs = qs.filter(device_type_id=device_type_id)
+    selected_type_ids = _split_query_values(device_type_ids)
+    if selected_type_ids:
+        qs = qs.filter(device_type_id__in=selected_type_ids)
     if keyword:
         qs = qs.filter(Q(name__icontains=keyword) | Q(remark__icontains=keyword) | Q(device_type__name__icontains=keyword))
+    if name:
+        qs = qs.filter(name__icontains=name)
+    if type_keyword:
+        qs = qs.filter(Q(device_type__name__icontains=type_keyword) | Q(device_type__parent__name__icontains=type_keyword))
+    active_values = _split_query_values(is_active_values)
+    if active_values:
+        normalized = {item.lower() for item in active_values}
+        bool_values = []
+        if normalized & {'true', '1', 'yes'}:
+            bool_values.append(True)
+        if normalized & {'false', '0', 'no'}:
+            bool_values.append(False)
+        if bool_values:
+            qs = qs.filter(is_active__in=bool_values)
+    if remark:
+        qs = qs.filter(remark__icontains=remark)
     return [serialize_device(device) for device in qs.order_by('device_type__sort', 'sort', 'name')]
 
 
@@ -676,6 +709,84 @@ def list_device_options() -> list[dict]:
     return [build_type_node(row) for row in type_children.get(None, [])]
 
 
+def _split_query_values(value: str | None) -> list[str]:
+    """解析前端表头多选筛选值。
+
+    表头筛选统一用逗号字符串提交，避免不同 HTTP 客户端对数组 query 参数序列化
+    方式不一致。这里集中做去空格、去空值和去重，后续筛选逻辑只处理干净列表。
+    """
+    if not value:
+        return []
+    result: list[str] = []
+    seen = set()
+    for item in str(value).split(','):
+        normalized = item.strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+    return result
+
+
+def _option(label: str, value: str) -> dict:
+    """构造前端筛选下拉项，保持所有选项结构一致。"""
+    return {'label': label, 'value': value}
+
+
+def list_filter_options(user: User) -> dict:
+    """聚合环境管理表头筛选选项。
+
+    下拉选项来自未软删的业务数据，避免前端只能按当前页推导选项而导致跨页筛选不完整。
+    返回内容不包含账号、密码、RDP 地址等敏感或动作相关字段。
+    """
+    env_qs = TestEnvironment.objects.filter(is_deleted=False)
+    device_qs = EnvironmentTestDevice.objects.filter(is_deleted=False).select_related('device_type', 'device_type__parent')
+    binding_qs = EnvironmentDeviceBinding.objects.filter(environment__is_deleted=False, is_deleted=False)
+    current_users = (
+        env_qs.exclude(current_user__isnull=True)
+        .select_related('current_user')
+        .order_by('current_user__name', 'current_user__username')
+    )
+
+    def distinct_text_options(values):
+        return [_option(value, value) for value in sorted({(item or '').strip() for item in values if (item or '').strip()})]
+
+    device_options = []
+    seen_device_values = set()
+    for device in device_qs.order_by('device_type__sort', 'sort', 'name'):
+        label = serialize_device(device)['display_name']
+        if device.name not in seen_device_values:
+            seen_device_values.add(device.name)
+            device_options.append(_option(label, device.name))
+
+    device_type_options = []
+    for device_type in EnvironmentDeviceType.objects.filter(is_deleted=False).select_related('parent').order_by('sort', 'name'):
+        device_type_options.append(_option(_device_type_path(device_type), str(device_type.id)))
+
+    current_user_options = []
+    seen_current_user_ids = set()
+    for row in current_users:
+        user_id = str(row.current_user_id) if row.current_user_id else ''
+        if user_id and user_id not in seen_current_user_ids:
+            seen_current_user_ids.add(user_id)
+            current_user_options.append(_option(_display_name(row.current_user), user_id))
+
+    return {
+        'domains': [_option(label, value) for value, label in TestEnvironment.DOMAIN_CHOICES],
+        'categories': [_option(label, value) for value, label in TestEnvironment.CATEGORY_CHOICES],
+        'statuses': [_option(label, value) for value, label in TestEnvironment.STATUS_CHOICES],
+        'favorite_states': [_option('已收藏', 'favorite'), _option('未收藏', 'not_favorite')],
+        'queue_states': [_option('有排队', 'has_queue'), _option('无排队', 'no_queue'), _option('我在排队', 'my_queue')],
+        'projects': distinct_text_options(env_qs.values_list('project_name', flat=True)),
+        'vehicle_models': distinct_text_options(env_qs.values_list('vehicle_model', flat=True)),
+        'device_options': list_device_options(),
+        'devices': device_options,
+        'current_users': current_user_options,
+        'device_types': device_type_options,
+        'device_statuses': [_option('启用', 'true'), _option('禁用', 'false')],
+        'binding_device_assets': distinct_text_options(binding_qs.values_list('asset_number', flat=True)),
+    }
+
+
 def list_environments(user: User, query: EnvironmentListQuery) -> dict:
     """用户端和管理端共用列表查询；前端能力差异由角色字段和菜单权限控制。"""
     qs = (
@@ -688,10 +799,63 @@ def list_environments(user: User, query: EnvironmentListQuery) -> dict:
         qs = qs.filter(domain=query.domain)
     if query.category:
         qs = qs.filter(category=query.category)
+    domains = _split_query_values(query.domains)
+    if domains:
+        qs = qs.filter(domain__in=domains)
+    categories = _split_query_values(query.categories)
+    if categories:
+        qs = qs.filter(category__in=categories)
+    statuses = _split_query_values(query.statuses)
+    if statuses:
+        qs = qs.filter(status__in=statuses)
+    project_names = _split_query_values(query.project_names)
+    if project_names:
+        # 项目和车型在表头中来自后端聚合选项，使用精确多选，避免把逗号串误当模糊关键词。
+        qs = qs.filter(project_name__in=project_names)
+    vehicle_models = _split_query_values(query.vehicle_models)
+    if vehicle_models:
+        qs = qs.filter(vehicle_model__in=vehicle_models)
+    device_ids = _split_query_values(query.device_ids)
+    if device_ids:
+        # 测试设备表头筛选使用级联多选，最终只提交具体设备 ID；类型节点不会作为查询值进入后端。
+        qs = qs.filter(device_bindings__test_device_id__in=device_ids)
+    device_names = _split_query_values(query.device_names)
+    if device_names:
+        qs = qs.filter(Q(device_bindings__device_name__in=device_names) | Q(device_bindings__test_device__name__in=device_names))
+    current_user_ids = _split_query_values(query.current_user_ids)
+    if current_user_ids:
+        qs = qs.filter(current_user_id__in=current_user_ids)
     if query.project_name:
         qs = qs.filter(project_name__icontains=query.project_name)
     if query.vehicle_model:
         qs = qs.filter(vehicle_model__icontains=query.vehicle_model)
+    if query.ip_address:
+        qs = qs.filter(ip_address__icontains=query.ip_address)
+    if query.account:
+        qs = qs.filter(account__icontains=query.account)
+    if query.bomid:
+        qs = qs.filter(bomid__icontains=query.bomid)
+    if query.device_keyword:
+        qs = qs.filter(
+            Q(device_bindings__device_name__icontains=query.device_keyword)
+            | Q(device_bindings__test_device__name__icontains=query.device_keyword)
+            | Q(device_bindings__device_type__name__icontains=query.device_keyword)
+            | Q(device_bindings__test_device__device_type__name__icontains=query.device_keyword)
+        )
+    if query.current_user_name:
+        qs = qs.filter(Q(current_user__name__icontains=query.current_user_name) | Q(current_user__username__icontains=query.current_user_name))
+    if query.asset_number:
+        qs = qs.filter(asset_number__icontains=query.asset_number)
+    if query.config_description:
+        qs = qs.filter(config_description__icontains=query.config_description)
+    if query.remark:
+        qs = qs.filter(remark__icontains=query.remark)
+    if query.shelf_location:
+        qs = qs.filter(shelf_location__icontains=query.shelf_location)
+    if query.updated_start:
+        qs = qs.filter(sys_update_datetime__gte=query.updated_start)
+    if query.updated_end:
+        qs = qs.filter(sys_update_datetime__lte=query.updated_end)
     if query.keyword:
         qs = qs.filter(
             Q(ip_address__icontains=query.keyword)
@@ -711,6 +875,18 @@ def list_environments(user: User, query: EnvironmentListQuery) -> dict:
         )
     if query.favorite_only:
         qs = qs.filter(favorites__user=user)
+    favorite_states = _split_query_values(query.favorite_state)
+    if 'favorite' in favorite_states and 'not_favorite' not in favorite_states:
+        qs = qs.filter(favorites__user=user)
+    elif 'not_favorite' in favorite_states and 'favorite' not in favorite_states:
+        qs = qs.exclude(favorites__user=user)
+    queue_states = _split_query_values(query.queue_state)
+    if 'has_queue' in queue_states and 'no_queue' not in queue_states:
+        qs = qs.filter(waiting_count__gt=0)
+    elif 'no_queue' in queue_states and 'has_queue' not in queue_states:
+        qs = qs.filter(waiting_count=0)
+    if 'my_queue' in queue_states:
+        qs = qs.filter(queues__user=user, queues__status='waiting')
 
     favorite_env_ids = set(
         EnvironmentFavorite.objects.filter(user=user).values_list('environment_id', flat=True)

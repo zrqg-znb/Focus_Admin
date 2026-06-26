@@ -9,7 +9,7 @@
 - 管理端维护环境基础信息：IP、账号、加密密码、BOMID、环境资产编号、领域、分类、项目、车型、配置情况、货架位置、备注和环境测试设备实例。
 - 管理端测试设备管理 Tab 维护“测试设备类型树 + 具体测试设备主数据”。
 - 管理端环境表单先选择已有测试设备，再填写该环境下这台设备的资产编号和备注。
-- 用户端提供列表和平铺视图，默认展示全部环境，支持收藏视图和收藏优先排序。
+- 用户端提供列表和平铺视图，默认展示全部环境，支持收藏优先排序，并把查询入口收敛到表头筛选。
 - 用户端新增环境详情抽屉，用于展示配置情况、货架位置、环境资产编号、备注和设备实例明细。
 - 环境使用流程支持占用、释放、排队、取消排队、查看队列和分页查看占用记录。
 - 前端暂时隐藏插队按钮，后端插队接口和逻辑保留，便于后续恢复。
@@ -89,12 +89,17 @@ python manage.py init_environment_management
 - 裸 `rdp://IP` 在 Windows/浏览器中没有默认协议处理器，前端主入口必须使用 `focus-rdp://open?host=IP`。
 - RDP 打开逻辑只捕获浏览器同步抛出的协议异常，不使用 `setTimeout + document.hidden` 推断失败。
 - 占用记录必须按 `page/pageSize` 后端分页获取，前端记录弹窗翻页时重新请求接口。
+- 环境列表和测试设备列表的筛选统一走服务端查询，前端不基于当前页做本地过滤，避免跨页数据缺失。
+- 表头筛选多选值以逗号字符串提交，例如 `domains=cockpit,vehicle`；后端统一解析、去空和去重。
+- 下拉筛选选项由 `GET /filter-options` 聚合返回，返回值不包含密码、RDP 启动地址等敏感字段。
 
 ## API
 
 后端路由前缀：`/api/environment-management`
 
 - `GET /environments`：环境列表，返回账号、BOMID、环境资产编号、设备实例、队列状态、收藏状态和 RDP 启动 URL；不返回密码。
+  - 兼容旧查询：`domain`、`category`、`project_name`、`vehicle_model`、`keyword`、`favorite_only`。
+  - 表头筛选查询：`domains`、`categories`、`statuses`、`favorite_state`、`queue_state`、`device_ids`、`ip_address`、`account`、`bomid`、`project_name`、`vehicle_model`、`device_keyword`、`current_user_name`、`asset_number`、`config_description`、`remark`、`shelf_location`、`updated_start`、`updated_end`。
 - `POST /environments`、`PUT /environments/{id}`、`DELETE /environments/{id}`：管理端 CRUD，仅环境管理员可用。
 - `POST|DELETE /environments/{id}/favorite`：收藏或取消收藏。
 - `POST /environments/{id}/occupy`：占用，仅环境用户和管理员可用；成功后前端才触发 RDP。
@@ -106,7 +111,10 @@ python manage.py init_environment_management
 - `GET /environments/{id}/records`：查看操作记录，支持 `page` 和 `pageSize` 分页参数。
 - `GET /device-types`、`POST /device-types`、`PUT /device-types/{id}`、`DELETE /device-types/{id}`：测试设备类型树管理，仅环境管理员可用。
 - `GET /devices`、`POST /devices`、`PUT /devices/{id}`、`DELETE /devices/{id}`：测试设备主数据管理接口，仅环境管理员可用。
+  - `GET /devices` 兼容旧查询 `device_type_id`、`keyword`、`active_only`。
+  - 表头筛选查询：`device_type_ids`、`name`、`type_keyword`、`is_active_values`、`remark`。
 - `GET /device-options`：测试设备级联选项，类型节点作为路径容器，具体设备叶子用于环境实例选择。
+- `GET /filter-options`：环境管理筛选选项，返回领域、分类、状态、收藏状态、排队状态、项目、车型、测试设备级联树、占用人、设备类型、设备启用状态等选项。
 - `GET /announcement`：读取环境操作公告。
 - `PUT /announcement`：保存环境操作公告，仅环境管理员可用。
 
@@ -130,11 +138,17 @@ python manage.py init_environment_management
 - `/environment-management/admin`：管理端。
   - 使用 Tab 分为“环境管理”“测试设备管理”“公告配置”。
   - 环境管理使用 `zq-table`，表格列定义放在 `admin/data.ts`。
+  - 环境管理表格不再使用顶部搜索表单；IP、账号、BOMID、领域、分类、项目、车型、测试设备、配置情况、环境资产编号、备注、货架位置、状态、占用人和更新时间都通过表头筛选触发服务端分页查询。
+  - 项目、车型、占用人使用关键词模糊搜索；测试设备使用多级级联多选，最终按具体测试设备 ID 查询。
   - 环境表单支持维护 BOMID、环境资产编号和测试设备实例列表。
   - 测试设备管理 Tab 左侧维护类型树，右侧维护该类型下的具体测试设备主数据。
+  - 测试设备表格同样使用表头筛选；左侧类型树点击是快捷筛选，和表头“类型路径”等条件共同生效。
   - 公告配置支持标题、启用开关和富文本内容。
 - `/environment-management/user`：用户端。
   - 列表模式使用 `zq-table`，表格列定义放在 `user/data.ts`。
+  - 列表模式下收藏、IP、账号、BOMID、领域、分类、项目、车型、测试设备、占用情况、占用人和排队状态都在表头筛选；顶部只保留刷新、视图切换和清空筛选等工具。
+  - 项目、车型、占用人使用关键词模糊搜索；测试设备使用多级级联多选，避免大量设备平铺造成选择困难。
+  - 平铺模式没有表头，使用工具栏“筛选”按钮打开同一套筛选条件，和列表模式共享筛选状态。
   - 平铺模式使用宽卡片布局，聚焦 IP、状态、占用人、排队人数、项目车型、BOMID、设备名称和关键操作。
   - 账号列只显示账号；密码不显示且后端不下发。
   - 操作列包含占用、释放、排队、取消排队、详情、队列和记录。插队按钮隐藏。
