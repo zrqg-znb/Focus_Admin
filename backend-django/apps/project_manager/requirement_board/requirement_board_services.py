@@ -50,6 +50,9 @@ _UPSTREAM_PAGE_SIZE = 500
 _MAX_SCAN_PAGES = 200
 _DELAY_PREVIEW_LIMIT = 8
 _PREPARED_RESULT_TTL_SECONDS = 30 * 60
+_FULL_CACHE_TTL_SECONDS = 16 * 60 * 60
+_FULL_CACHE_LOCK_TTL_SECONDS = 30 * 60
+_FULL_CACHE_KEY = "pm:requirement-board:full:v1:all-configured"
 _EXPORT_SHEET_TITLE = "需求数据"
 _EXPORT_HEADERS = (
     "项目名",
@@ -484,6 +487,34 @@ def _get_prepared_result_ttl_seconds() -> int:
                 _PREPARED_RESULT_TTL_SECONDS,
             ),
             _PREPARED_RESULT_TTL_SECONDS,
+        ),
+        60,
+    )
+
+
+def _get_full_cache_ttl_seconds() -> int:
+    """获取需求看板夜间全量缓存有效期，默认覆盖一个白天工作时段。"""
+    return max(
+        _parse_positive_int(
+            _get_setting(
+                "REQUIREMENT_BOARD_FULL_CACHE_TTL_SECONDS",
+                _FULL_CACHE_TTL_SECONDS,
+            ),
+            _FULL_CACHE_TTL_SECONDS,
+        ),
+        60,
+    )
+
+
+def _get_full_cache_lock_ttl_seconds() -> int:
+    """获取全量缓存刷新锁有效期，避免并发调度任务重复打数据湖。"""
+    return max(
+        _parse_positive_int(
+            _get_setting(
+                "REQUIREMENT_BOARD_FULL_CACHE_LOCK_TTL_SECONDS",
+                _FULL_CACHE_LOCK_TTL_SECONDS,
+            ),
+            _FULL_CACHE_LOCK_TTL_SECONDS,
         ),
         60,
     )
@@ -1594,6 +1625,244 @@ def _scan_all_filtered_items(
             cache.delete(lock_key)
 
 
+def _list_full_cache_projects() -> list[Project]:
+    """返回需求看板全量缓存需要覆盖的所有已配置项目。"""
+    projects = list(
+        Project.objects.filter(is_deleted=False)
+        .order_by("name")
+        .only("id", "name", "design_id", "sub_teams")
+    )
+    return [
+        project
+        for project in projects
+        if _clean_text(project.design_id) and _normalize_text_list(project.sub_teams)
+    ]
+
+
+def _build_full_cache_payload(projects: list[Project]) -> dict[str, Any]:
+    """构造全量预热使用的标准筛选条件。"""
+    return {
+        "project_ids": [str(project.id) for project in projects],
+        "sub_teams": [],
+        "categories": list(CATEGORY_ORDER),
+        "schedule_state": [],
+        "verification_policies": [],
+        "title_keyword": "",
+        "develop_user": [],
+        "test_user": [],
+        "time_field": DEFAULT_TIME_FIELD,
+        "time_start": "",
+        "time_end": "",
+    }
+
+
+def _build_empty_full_cache_result(generated_at: str) -> dict[str, Any]:
+    """构造没有可预热项目时的空缓存结果。"""
+    return {
+        "items": [],
+        "project_ids": [],
+        "design_ids": [],
+        "team_names": [],
+        "generated_at": generated_at,
+        "scanned_pages": 0,
+        "project_count": 0,
+        "team_count": 0,
+        "item_count": 0,
+    }
+
+
+def _serialize_full_cache_refresh_result(
+    payload: dict[str, Any],
+    *,
+    skipped: bool = False,
+    reason: str = "",
+) -> dict[str, Any]:
+    """把全量缓存刷新结果压缩成适合调度日志记录的摘要。"""
+    result = {
+        "cache_key": _FULL_CACHE_KEY,
+        "project_count": int(payload.get("project_count") or 0),
+        "team_count": int(payload.get("team_count") or 0),
+        "item_count": int(payload.get("item_count") or 0),
+        "scanned_pages": int(payload.get("scanned_pages") or 0),
+        "generated_at": payload.get("generated_at"),
+    }
+    if skipped:
+        result["skipped"] = True
+    if reason:
+        result["reason"] = reason
+    return result
+
+
+def refresh_requirement_board_full_cache() -> dict[str, Any]:
+    """
+    刷新需求看板全量缓存。
+
+    该函数面向夜间调度任务，按所有未删除且完成需求数据源配置的项目
+    预取需求明细，白天查询时可直接在缓存内完成筛选、分页、汇总和导出。
+    """
+    lock_key = f"{_FULL_CACHE_KEY}:lock"
+    lock_acquired = cache.add(lock_key, "1", _get_full_cache_lock_ttl_seconds())
+    if not lock_acquired:
+        cached = cache.get(_FULL_CACHE_KEY)
+        if isinstance(cached, dict):
+            return _serialize_full_cache_refresh_result(
+                cached,
+                skipped=True,
+                reason="refresh_locked",
+            )
+        return {
+            "skipped": True,
+            "reason": "refresh_locked",
+            "cache_key": _FULL_CACHE_KEY,
+            "project_count": 0,
+            "team_count": 0,
+            "item_count": 0,
+            "scanned_pages": 0,
+            "generated_at": None,
+        }
+
+    try:
+        generated_at = timezone.localtime(_ensure_aware(timezone.now())).isoformat()
+        projects = _list_full_cache_projects()
+        if not projects:
+            payload = _build_empty_full_cache_result(generated_at)
+            cache.set(_FULL_CACHE_KEY, payload, _get_full_cache_ttl_seconds())
+            return _serialize_full_cache_refresh_result(payload)
+
+        context = _resolve_query_context_from_payload(_build_full_cache_payload(projects))
+        page_size = _resolve_scan_page_size("REQUIREMENT_BOARD_FULL_CACHE_PAGE_SIZE")
+        max_pages = _resolve_max_scan_pages("REQUIREMENT_BOARD_FULL_CACHE_MAX_PAGES")
+        items: list[dict[str, Any]] = []
+        scanned_pages = 0
+
+        _debug_log(
+            "full_cache_refresh_start",
+            project_count=len(projects),
+            team_count=len(context["sub_teams"]),
+            page_size=page_size,
+            max_pages=max_pages,
+        )
+        for page_no, page_payload, fetched_count in _iterate_remote_pages(
+            context,
+            page_size=page_size,
+            max_pages=max_pages,
+            limit_error_message="需求看板全量缓存扫描页数过多，请检查项目范围或上游分页",
+        ):
+            scanned_pages = page_no
+            items.extend(page_payload["items"])
+            _debug_log(
+                "full_cache_refresh_page",
+                page_no=page_no,
+                fetched_count=len(page_payload["items"]),
+                fetched_total=fetched_count,
+                accumulated_total=len(items),
+                page_sum=page_payload.get("page_sum"),
+                upstream_total=page_payload.get("total"),
+            )
+
+        payload = {
+            "items": items,
+            "project_ids": context["remote_cache_payload"]["project_ids"],
+            "design_ids": context["design_ids"],
+            "team_names": context["sub_teams"],
+            "generated_at": generated_at,
+            "scanned_pages": scanned_pages,
+            "project_count": len(context["remote_cache_payload"]["project_ids"]),
+            "team_count": len(context["sub_teams"]),
+            "item_count": len(items),
+        }
+        cache.set(_FULL_CACHE_KEY, payload, _get_full_cache_ttl_seconds())
+        _debug_log(
+            "full_cache_refresh_done",
+            project_count=payload["project_count"],
+            team_count=payload["team_count"],
+            item_count=payload["item_count"],
+            scanned_pages=scanned_pages,
+        )
+        return _serialize_full_cache_refresh_result(payload)
+    finally:
+        cache.delete(lock_key)
+
+
+def run_scheduled_requirement_board_cache_refresh(job_code: str | None = None) -> dict[str, Any]:
+    """系统定时任务入口：刷新需求看板全量缓存。"""
+    close_old_connections()
+    try:
+        result = refresh_requirement_board_full_cache()
+        _debug_log(
+            "scheduled_full_cache_refresh_done",
+            job_code=job_code,
+            project_count=result.get("project_count"),
+            team_count=result.get("team_count"),
+            item_count=result.get("item_count"),
+            scanned_pages=result.get("scanned_pages"),
+            skipped=result.get("skipped", False),
+        )
+        return result
+    finally:
+        connection.close()
+
+
+def _filter_full_cache_items(
+    items: list[dict[str, Any]],
+    context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """按当前查询条件从全量缓存中二次筛选需求明细。"""
+    allowed_projects = set(context["remote_cache_payload"]["project_ids"])
+    allowed_teams = set(context["sub_teams"])
+    allowed_categories = set(context["categories"])
+    allowed_status = set(context["schedule_state"])
+    allowed_policies = set(context["verification_policies"])
+    title_keyword = context["title_keyword"].lower()
+    result: list[dict[str, Any]] = []
+
+    for item in items:
+        if allowed_projects and str(item.get("project_id") or "") not in allowed_projects:
+            continue
+        if allowed_teams and str(item.get("team_name") or UNKNOWN_TEAM_NAME) not in allowed_teams:
+            continue
+        if allowed_categories and str(item.get("category") or "") not in allowed_categories:
+            continue
+        if allowed_status and str(item.get("status_code") or "") not in allowed_status:
+            continue
+        if allowed_policies and str(item.get("verification_policy") or "") not in allowed_policies:
+            continue
+        if title_keyword and title_keyword not in str(item.get("title") or "").lower():
+            continue
+        if not _item_matches_local_filters(item, context):
+            continue
+        result.append(item)
+    return result
+
+
+def _get_full_cache_items(context: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """读取全量缓存，并确认当前查询项目已被缓存快照覆盖。"""
+    cached = cache.get(_FULL_CACHE_KEY)
+    if not isinstance(cached, dict) or not isinstance(cached.get("items"), list):
+        return None
+
+    cached_project_ids = {str(item) for item in (cached.get("project_ids") or [])}
+    selected_project_ids = set(context["remote_cache_payload"]["project_ids"])
+    if not selected_project_ids.issubset(cached_project_ids):
+        _debug_log(
+            "full_cache_miss_project_scope",
+            cache_key=_FULL_CACHE_KEY,
+            selected_project_ids=sorted(selected_project_ids),
+            cached_project_count=len(cached_project_ids),
+        )
+        return None
+
+    filtered_items = _filter_full_cache_items(cached["items"], context)
+    _debug_log(
+        "full_cache_hit",
+        cache_key=_FULL_CACHE_KEY,
+        cached_total=len(cached["items"]),
+        matched_total=len(filtered_items),
+        generated_at=cached.get("generated_at"),
+    )
+    return filtered_items
+
+
 def _paginate_items(items: list[dict[str, Any]], page_no: int, page_size: int) -> dict[str, Any]:
     safe_page_no = _parse_positive_int(page_no, 1)
     safe_page_size = min(_parse_positive_int(page_size, 20), _UPSTREAM_PAGE_SIZE)
@@ -1940,6 +2209,19 @@ def get_requirement_board_page(
         _debug_log(
             "data_query_result",
             mode="prepared_cache",
+            page_no=result["page_no"],
+            page_size=result["page_size"],
+            page_sum=result["page_sum"],
+            total=result["total"],
+            item_count=len(result["items"]),
+        )
+        return result
+    full_cache_items = _get_full_cache_items(context)
+    if full_cache_items is not None:
+        result = _paginate_items(full_cache_items, page_no=page_no, page_size=page_size)
+        _debug_log(
+            "data_query_result",
+            mode="full_cache",
             page_no=result["page_no"],
             page_size=result["page_size"],
             page_sum=result["page_sum"],
@@ -2566,6 +2848,31 @@ def get_requirement_board_summary(
 ) -> dict[str, Any]:
     context = _resolve_query_context_from_payload(data.dict())
     summary_key = _cache_key("pm:requirement-board:summary:v4", context["cache_payload"])
+    prepared_items = _get_prepared_items(context, user=user)
+    if prepared_items is not None:
+        summary = _compute_summary_from_items(prepared_items)
+        _debug_log(
+            "summary_from_prepared_cache",
+            total_count=summary.get("total_count"),
+            team_count=len(summary.get("team_summary") or []),
+        )
+        return summary
+
+    full_cache_items = _get_full_cache_items(context)
+    if full_cache_items is not None:
+        cached = cache.get(summary_key)
+        if isinstance(cached, dict) and isinstance(cached.get("team_summary"), list):
+            _debug_log("summary_cache_hit_after_full_cache", cache_key=summary_key)
+            return cached
+        summary = _compute_summary_from_items(full_cache_items)
+        cache.set(summary_key, summary, _SUMMARY_CACHE_TTL_SECONDS)
+        _debug_log(
+            "summary_from_full_cache",
+            total_count=summary.get("total_count"),
+            team_count=len(summary.get("team_summary") or []),
+        )
+        return summary
+
     cached = cache.get(summary_key)
     if isinstance(cached, dict) and isinstance(cached.get("team_summary"), list):
         _debug_log("summary_cache_hit", cache_key=summary_key)
@@ -2580,11 +2887,7 @@ def get_requirement_board_summary(
             return waiting
 
     try:
-        prepared_items = _get_prepared_items(context, user=user)
-        if prepared_items is not None:
-            summary = _compute_summary_from_items(prepared_items)
-        else:
-            summary = _compute_summary(context)
+        summary = _compute_summary(context)
         cache.set(summary_key, summary, _SUMMARY_CACHE_TTL_SECONDS)
         _debug_log(
             "summary_cached",
@@ -2612,6 +2915,15 @@ def export_requirement_board_data(
             filters=context["cache_payload"],
         )
         return _export_items_to_workbook(prepared_items)
+
+    full_cache_items = _get_full_cache_items(context)
+    if full_cache_items is not None:
+        _debug_log(
+            "export_full_cache",
+            total_count=len(full_cache_items),
+            filters=context["cache_payload"],
+        )
+        return _export_items_to_workbook(full_cache_items)
 
     if context["requires_local_filter"]:
         items = _scan_all_filtered_items(

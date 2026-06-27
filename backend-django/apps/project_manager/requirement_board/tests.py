@@ -12,7 +12,9 @@ from apps.project_manager.requirement_board.requirement_board_model import (
     RequirementBoardQueryTask,
 )
 from apps.project_manager.requirement_board.requirement_board_schemas import (
+    RequirementBoardDataQuerySchema,
     RequirementBoardFilterPayloadSchema,
+    RequirementBoardSummaryQuerySchema,
 )
 
 
@@ -309,3 +311,225 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
         self.assertTrue(task.result_cache_key)
         cached = requirement_board_services.cache.get(task.result_cache_key)
         self.assertEqual(len(cached["items"]), 1)
+
+    def _build_raw_requirement(
+        self,
+        *,
+        design_id: str,
+        requirement_id: str,
+        team: str,
+        category: str = "AR",
+        status: str = "In-Progress",
+        policy: str = "10000001",
+        title: str = "Requirement",
+        develop_owner: str = "dev-a",
+        test_owner: str = "test-a",
+        planned_test_time: str = "2026-03-05 10:00:00",
+        due_date: str = "2026-03-10 18:00:00",
+        completed_time: str | None = None,
+        accepted_time: str | None = None,
+    ) -> dict:
+        return {
+            "id": requirement_id,
+            "title": title,
+            "category": category,
+            "schedule_state": status,
+            "verification_policy": policy,
+            "requirement2domain": design_id,
+            "service_name": team,
+            "planned_test_time": planned_test_time,
+            "due_date": due_date,
+            "completed_time": completed_time,
+            "accepted_time": accepted_time,
+            "workload_kloc": 1.2,
+            "workload_man_day": 3.4,
+            "develop_owner": develop_owner,
+            "test_owner": test_owner,
+        }
+
+    def _build_raw_page(self, items: list[dict]) -> dict:
+        return {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "result": items,
+                "page": {
+                    "page_no": 1,
+                    "page_size": 500,
+                    "page_sum": len(items),
+                    "total": len(items),
+                },
+            },
+        }
+
+    @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._fetch_raw_page"
+    )
+    def test_refresh_full_cache_writes_configured_projects_only(self, mocked_fetch):
+        project_a = self._create_project(
+            name="Alpha",
+            code="alpha",
+            design_id="design-a",
+            sub_teams=["Team-A"],
+        )
+        project_b = self._create_project(
+            name="Beta",
+            code="beta",
+            design_id="design-b",
+            sub_teams=["Team-B"],
+        )
+        self._create_project(name="NoDesign", code="no-design", design_id="", sub_teams=["Team-C"])
+        self._create_project(name="NoTeam", code="no-team", design_id="design-c", sub_teams=[])
+        mocked_fetch.return_value = self._build_raw_page(
+            [
+                self._build_raw_requirement(
+                    design_id="design-a",
+                    requirement_id="REQ-A",
+                    team="Team-A",
+                ),
+                self._build_raw_requirement(
+                    design_id="design-b",
+                    requirement_id="REQ-B",
+                    team="Team-B",
+                ),
+            ]
+        )
+
+        result = requirement_board_services.refresh_requirement_board_full_cache()
+
+        self.assertEqual(result["project_count"], 2)
+        self.assertEqual(result["team_count"], 2)
+        self.assertEqual(result["item_count"], 2)
+        cached = cache.get(requirement_board_services._FULL_CACHE_KEY)
+        self.assertEqual(
+            set(cached["project_ids"]),
+            {str(project_a.id), str(project_b.id)},
+        )
+        self.assertEqual(len(cached["items"]), 2)
+
+    @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._fetch_raw_page"
+    )
+    def test_page_query_uses_full_cache_and_keeps_local_filters(self, mocked_fetch):
+        project_a = self._create_project(
+            name="Alpha",
+            code="alpha",
+            design_id="design-a",
+            sub_teams=["Team-A", "Team-B"],
+        )
+        project_b = self._create_project(
+            name="Beta",
+            code="beta",
+            design_id="design-b",
+            sub_teams=["Team-C"],
+        )
+        mocked_fetch.return_value = self._build_raw_page(
+            [
+                self._build_raw_requirement(
+                    design_id="design-a",
+                    requirement_id="REQ-1",
+                    team="Team-A",
+                    status="In-Progress",
+                    title="缓存命中需求",
+                    develop_owner="dev-a",
+                    planned_test_time="2026-03-05 10:00:00",
+                ),
+                self._build_raw_requirement(
+                    design_id="design-a",
+                    requirement_id="REQ-2",
+                    team="Team-B",
+                    status="Accepted",
+                    title="团队不匹配",
+                    develop_owner="dev-a",
+                    planned_test_time="2026-03-05 10:00:00",
+                    accepted_time="2026-03-09 18:00:00",
+                ),
+                self._build_raw_requirement(
+                    design_id="design-b",
+                    requirement_id="REQ-3",
+                    team="Team-C",
+                    status="In-Progress",
+                    title="项目不匹配",
+                    develop_owner="dev-b",
+                    planned_test_time="2026-03-05 10:00:00",
+                ),
+            ]
+        )
+        requirement_board_services.refresh_requirement_board_full_cache()
+        mocked_fetch.reset_mock()
+
+        result = requirement_board_services.get_requirement_board_page(
+            RequirementBoardDataQuerySchema(
+                project_ids=[str(project_a.id)],
+                sub_teams=["Team-A"],
+                categories=["AR"],
+                schedule_state=["P"],
+                verification_policies=[],
+                title_keyword="缓存",
+                develop_user=["dev-a"],
+                test_user=[],
+                time_field="planned_test_time",
+                time_start="2026-03-01",
+                time_end="2026-03-31",
+                page_no=1,
+                page_size=20,
+            ),
+            user=self.user,
+        )
+
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["items"][0]["requirement_id"], "REQ-1")
+        mocked_fetch.assert_not_called()
+
+    @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._fetch_raw_page"
+    )
+    def test_summary_query_uses_full_cache(self, mocked_fetch):
+        project = self._create_project(
+            name="Alpha",
+            code="alpha",
+            design_id="design-a",
+            sub_teams=["Team-A"],
+        )
+        mocked_fetch.return_value = self._build_raw_page(
+            [
+                self._build_raw_requirement(
+                    design_id="design-a",
+                    requirement_id="REQ-1",
+                    team="Team-A",
+                    status="In-Progress",
+                    develop_owner="dev-a",
+                ),
+                self._build_raw_requirement(
+                    design_id="design-a",
+                    requirement_id="REQ-2",
+                    team="Team-A",
+                    status="Accepted",
+                    develop_owner="dev-b",
+                    accepted_time="2026-03-09 18:00:00",
+                ),
+            ]
+        )
+        requirement_board_services.refresh_requirement_board_full_cache()
+        mocked_fetch.reset_mock()
+
+        result = requirement_board_services.get_requirement_board_summary(
+            RequirementBoardSummaryQuerySchema(
+                project_ids=[str(project.id)],
+                sub_teams=["Team-A"],
+                categories=["AR"],
+                schedule_state=["P"],
+                verification_policies=[],
+                develop_user=[],
+                test_user=[],
+                time_field="accepted_time",
+                time_start="",
+                time_end="",
+            ),
+            user=self.user,
+        )
+
+        self.assertEqual(result["total_count"], 1)
+        self.assertEqual(result["team_summary"][0]["team_name"], "Team-A")
+        self.assertEqual(result["team_summary"][0]["p_count"], 1)
+        mocked_fetch.assert_not_called()

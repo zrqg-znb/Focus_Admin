@@ -355,11 +355,12 @@ z60094428,z60094429
 
 模块使用 Django cache（项目当前通常接 Redis）做短 TTL 缓存，不做 MySQL 明细落库。
 
-缓存分为三类：
+缓存分为四类：
 
 1. 上游单页缓存
 2. 本地过滤后的结果集缓存
 3. 总结结果缓存
+4. 夜间全量预热缓存
 
 ### 9.2 为什么不落 MySQL 明细
 
@@ -393,6 +394,47 @@ z60094428,z60094429
 3. 在本地按责任人 / 时间区间过滤
 4. 生成精确 `items/total/page_sum`
 5. 将已过滤结果短时缓存，避免重复全量扫描
+
+### 9.5 夜间全量预热缓存
+
+为避免白天用户选择大量项目时实时扫描数据湖，模块提供可调度的全量缓存刷新函数：
+
+```text
+apps.project_manager.requirement_board.requirement_board_services.run_scheduled_requirement_board_cache_refresh
+```
+
+预热范围：
+
+- `Project.is_deleted = False`
+- 项目已配置 `design_id`
+- 项目已配置至少一个责任团队 `sub_teams`
+- 包含已关闭但未删除的项目，和需求看板筛选项口径一致
+
+预热后，`data` / `summary` / `export` 会按以下顺序读取：
+
+1. 用户级 prepared cache
+2. 夜间全量预热缓存
+3. 原有实时数据湖查询链路
+
+推荐在系统定时任务页面配置：
+
+| 字段 | 示例 |
+| --- | --- |
+| `task_func` | `apps.project_manager.requirement_board.requirement_board_services.run_scheduled_requirement_board_cache_refresh` |
+| `trigger_type` | `cron` |
+| `cron_expression` | `0 3 * * *` |
+| `max_instances` | `1` |
+| `coalesce` | `true` |
+| `allow_concurrent` | `false` |
+
+可选配置项：
+
+| 配置 | 默认值 | 说明 |
+| --- | --- | --- |
+| `REQUIREMENT_BOARD_FULL_CACHE_TTL_SECONDS` | `57600` | 全量缓存有效期，默认 16 小时 |
+| `REQUIREMENT_BOARD_FULL_CACHE_PAGE_SIZE` | `500` | 预热扫描页大小，仍受上游最大页大小限制 |
+| `REQUIREMENT_BOARD_FULL_CACHE_MAX_PAGES` | `200` | 预热最多扫描页数 |
+| `REQUIREMENT_BOARD_FULL_CACHE_LOCK_TTL_SECONDS` | `1800` | 防并发刷新锁时长 |
 
 ---
 
