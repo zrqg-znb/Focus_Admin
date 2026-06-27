@@ -49,7 +49,9 @@ RESULT_LABELS = {
     RESULT_FAILED: '失败',
     RESULT_TIMEOUT: '超时',
     RESULT_SKIP: '跳过',
+    'missing': '未执行',
 }
+RESULT_MISSING = 'missing'
 MANUAL_REASON_RESULTS = {RESULT_FAILED, RESULT_TIMEOUT, RESULT_SKIP}
 VALID_RESULT_VALUES = {
     RESULT_SUCCESS,
@@ -113,10 +115,14 @@ def _apply_audit_fields(instance, user, *, is_create: bool = False):
         instance.sys_modifier = user
 
 
-def _is_daily_overview_abnormal(batch: DailyExecutionBatch) -> bool:
-    total_count = max(batch.total_count or 0, 0)
-    success_count = max(batch.success_count or 0, 0)
-    return not (total_count > 0 and success_count == total_count)
+def _is_daily_overview_abnormal(active_case_count: int, latest_results: list[DailyExecutionResult]) -> bool:
+    """按注册用例口径判断车型是否异常，漏传结果也必须暴露为异常。"""
+    missing_result_count = max(active_case_count - len(latest_results), 0)
+    if missing_result_count > 0:
+        return True
+    if active_case_count <= 0:
+        return True
+    return any(item.result != RESULT_SUCCESS for item in latest_results)
 
 
 def _parse_domain_filter(domain: Optional[str]):
@@ -860,6 +866,17 @@ def _list_latest_active_results(vehicle: VehicleModel, execute_date):
     )
 
 
+def _list_active_cases(vehicle: VehicleModel):
+    """按看板展示顺序获取车型当前生效的注册用例。"""
+    return list(
+        TestCase.objects.filter(
+            vehicle=vehicle,
+            is_deleted=False,
+            is_active=True,
+        ).order_by('-sort', 'viu_code', 'case_no')
+    )
+
+
 def _build_result_category_counts(results: list[DailyExecutionResult]):
     """按根因分类统计当日最新非成功结果。"""
     version_count = 0
@@ -1008,7 +1025,10 @@ def get_daily_summary(vehicle_id: str, execute_date, domain: Optional[str] = Non
     if parsed_domain and vehicle.platform.domain != parsed_domain:
         raise HttpError(404, '车型不存在')
     batch = recalculate_daily_batch(vehicle.id, execute_date)
-    total = max(batch.total_count, 0)
+    active_case_count = _get_active_case_count(vehicle)
+    latest_results = _list_latest_active_results(vehicle, execute_date)
+    missing_result_count = max(active_case_count - len(latest_results), 0)
+    total = max(active_case_count, 0)
 
     def stat(key, count):
         ratio = round((count / total), 4) if total else 0
@@ -1019,17 +1039,19 @@ def get_daily_summary(vehicle_id: str, execute_date, domain: Optional[str] = Non
         vehicle_name=vehicle.name,
         vehicle_code=vehicle.vehicle_code,
         execute_date=execute_date,
-        total_count=batch.total_count,
+        total_count=active_case_count,
         success_count=batch.success_count,
         failed_count=batch.failed_count,
         timeout_count=batch.timeout_count,
         skip_count=batch.skip_count,
+        missing_result_count=missing_result_count,
         total_duration_seconds=batch.total_duration_seconds,
         stats=[
             stat(RESULT_SUCCESS, batch.success_count),
             stat(RESULT_FAILED, batch.failed_count),
             stat(RESULT_TIMEOUT, batch.timeout_count),
             stat(RESULT_SKIP, batch.skip_count),
+            stat(RESULT_MISSING, missing_result_count),
         ],
         last_report_at=batch.last_report_at,
     )
@@ -1065,12 +1087,12 @@ def get_daily_overview(query) -> DailyOverviewResponse:
 
     for vehicle in vehicles:
         batch = recalculate_daily_batch(vehicle.id, query.execute_date)
-        is_abnormal = _is_daily_overview_abnormal(batch)
+        active_case_count = _get_active_case_count(vehicle)
+        latest_results = _list_latest_active_results(vehicle, query.execute_date)
+        is_abnormal = _is_daily_overview_abnormal(active_case_count, latest_results)
         if query.abnormal_only and not is_abnormal:
             continue
 
-        active_case_count = _get_active_case_count(vehicle)
-        latest_results = _list_latest_active_results(vehicle, query.execute_date)
         category_counts = _build_result_category_counts(latest_results)
         vehicle_missing_result_count = max(active_case_count - len(latest_results), 0)
 
@@ -1080,7 +1102,7 @@ def get_daily_overview(query) -> DailyOverviewResponse:
             vehicle_code=vehicle.vehicle_code,
             platform_id=str(vehicle.platform_id),
             platform_name=vehicle.platform.name,
-            total_count=batch.total_count,
+            total_count=active_case_count,
             success_count=batch.success_count,
             failed_count=batch.failed_count,
             timeout_count=batch.timeout_count,
@@ -1094,7 +1116,7 @@ def get_daily_overview(query) -> DailyOverviewResponse:
             is_abnormal=is_abnormal,
         )
         rows.append(row)
-        total_case_count += batch.total_count
+        total_case_count += active_case_count
         success_count += batch.success_count
         failed_count += batch.failed_count
         timeout_count += batch.timeout_count
@@ -1146,6 +1168,7 @@ def get_daily_overview(query) -> DailyOverviewResponse:
             stat(RESULT_FAILED, failed_count),
             stat(RESULT_TIMEOUT, timeout_count),
             stat(RESULT_SKIP, skip_count),
+            stat(RESULT_MISSING, missing_result_count),
         ],
         last_report_at=latest_report_at,
     )
@@ -1161,21 +1184,34 @@ def get_daily_overview(query) -> DailyOverviewResponse:
 
 
 def list_daily_results(vehicle_id: str, execute_date, domain: Optional[str] = None):
+    """获取车型每日明细，未上传结果的活跃用例会合成为未执行行。"""
     vehicle = get_vehicle(vehicle_id)
     parsed_domain = _parse_domain_filter(domain)
     if parsed_domain and vehicle.platform.domain != parsed_domain:
         raise HttpError(404, '车型不存在')
-    queryset = (
-        build_latest_daily_results_queryset(
-            vehicle=vehicle,
-            execute_date=execute_date,
-        )
-        .select_related('test_case')
-        .order_by('-test_case__sort', 'test_case__viu_code', 'test_case__case_no')
-    )
+    active_cases = _list_active_cases(vehicle)
+    latest_results = {
+        str(result.test_case_id): result
+        for result in _list_latest_active_results(vehicle, execute_date)
+    }
     items = []
-    for result in queryset:
-        case = result.test_case
+    for case in active_cases:
+        result = latest_results.get(str(case.id))
+        if result is None:
+            # 未执行行只用于看板暴露漏执行用例，不对应数据库执行结果。
+            items.append(
+                DailyResultItemOut(
+                    result_id=None,
+                    case_id=str(case.id),
+                    viu_code=case.viu_code,
+                    case_no=case.case_no,
+                    case_name=case.case_name,
+                    remark=case.remark,
+                    status=RESULT_MISSING,
+                    duration_seconds=0,
+                )
+            )
+            continue
         items.append(
             DailyResultItemOut(
                 result_id=str(result.id),

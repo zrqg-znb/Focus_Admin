@@ -140,7 +140,7 @@ class AutoTestReportOverviewTests(TestCase):
         self.assertEqual(row.timeout_count, 1)
         self.assertEqual(overview.summary.abnormal_vehicle_count, 1)
 
-    def test_overview_ignores_unuploaded_cases_when_calculating_abnormality(self):
+    def test_overview_marks_partially_uploaded_vehicle_as_abnormal(self):
         vehicle = self._create_vehicle('partial')
         cases = self._create_cases(vehicle, 2)
         self._report_result(vehicle, cases[0], RESULT_SUCCESS)
@@ -148,11 +148,29 @@ class AutoTestReportOverviewTests(TestCase):
         overview = self._build_overview()
         row = self._get_row(overview, vehicle)
 
-        self.assertFalse(row.is_abnormal)
+        self.assertTrue(row.is_abnormal)
         self.assertEqual(row.success_count, 1)
         self.assertEqual(row.skip_count, 0)
-        self.assertEqual(row.total_count, 1)
-        self.assertEqual(overview.summary.abnormal_vehicle_count, 0)
+        self.assertEqual(row.total_count, 2)
+        self.assertEqual(row.missing_result_count, 1)
+        self.assertEqual(overview.summary.total_case_count, 2)
+        self.assertEqual(overview.summary.missing_result_count, 1)
+        self.assertEqual(overview.summary.abnormal_vehicle_count, 1)
+
+        summary = services.get_daily_summary(vehicle.id, self.execute_date, DOMAIN_COCKPIT)
+        self.assertEqual(summary.total_count, 2)
+        self.assertEqual(summary.success_count, 1)
+        self.assertEqual(summary.missing_result_count, 1)
+        self.assertEqual(
+            {item.key: item.count for item in summary.stats},
+            {
+                'success': 1,
+                'failed': 0,
+                'timeout': 0,
+                'skip': 0,
+                'missing': 1,
+            },
+        )
 
     def test_overview_marks_no_upload_vehicle_as_abnormal(self):
         vehicle = self._create_vehicle('no-upload')
@@ -164,18 +182,29 @@ class AutoTestReportOverviewTests(TestCase):
         self.assertTrue(row.is_abnormal)
         self.assertEqual(row.success_count, 0)
         self.assertEqual(row.skip_count, 0)
-        self.assertEqual(row.total_count, 0)
+        self.assertEqual(row.total_count, 2)
+        self.assertEqual(row.missing_result_count, 2)
+        self.assertEqual(overview.summary.total_case_count, 2)
+        self.assertEqual(overview.summary.missing_result_count, 2)
         self.assertEqual(overview.summary.abnormal_vehicle_count, 1)
 
-    def test_overview_abnormal_only_includes_explicit_skip_no_upload_and_failed_vehicles(self):
+        items = services.list_daily_results(vehicle.id, self.execute_date, DOMAIN_COCKPIT)
+        self.assertEqual(len(items), 2)
+        self.assertEqual({item.status for item in items}, {'missing'})
+        self.assertTrue(all(item.result_id is None for item in items))
+        self.assertTrue(all(item.log_url is None and item.car_log_url is None for item in items))
+
+    def test_overview_abnormal_only_includes_skip_missing_partial_and_failed_vehicles(self):
         success_vehicle = self._create_vehicle('all-success')
         skip_vehicle = self._create_vehicle('skip-only')
         no_upload_vehicle = self._create_vehicle('no-upload-only')
+        partial_vehicle = self._create_vehicle('partial-only')
         failed_vehicle = self._create_vehicle('failed-only')
 
         success_cases = self._create_cases(success_vehicle, 2)
         skip_cases = self._create_cases(skip_vehicle, 2)
         self._create_cases(no_upload_vehicle, 2)
+        partial_cases = self._create_cases(partial_vehicle, 2)
         failed_cases = self._create_cases(failed_vehicle, 2)
 
         for index, case in enumerate(success_cases):
@@ -183,6 +212,7 @@ class AutoTestReportOverviewTests(TestCase):
 
         self._report_result(skip_vehicle, skip_cases[0], RESULT_SUCCESS)
         self._report_result(skip_vehicle, skip_cases[1], RESULT_SKIP, minutes_offset=1)
+        self._report_result(partial_vehicle, partial_cases[0], RESULT_SUCCESS)
         self._report_result(failed_vehicle, failed_cases[0], RESULT_SUCCESS)
         self._report_result(failed_vehicle, failed_cases[1], RESULT_FAILED, minutes_offset=1)
 
@@ -194,11 +224,12 @@ class AutoTestReportOverviewTests(TestCase):
             {
                 skip_vehicle.vehicle_code,
                 no_upload_vehicle.vehicle_code,
+                partial_vehicle.vehicle_code,
                 failed_vehicle.vehicle_code,
             },
         )
-        self.assertEqual(overview.summary.vehicle_count, 3)
-        self.assertEqual(overview.summary.abnormal_vehicle_count, 3)
+        self.assertEqual(overview.summary.vehicle_count, 4)
+        self.assertEqual(overview.summary.abnormal_vehicle_count, 4)
 
     def test_derive_car_log_url_handles_valid_and_invalid_values(self):
         self.assertEqual(
@@ -450,14 +481,25 @@ class AutoTestReportOverviewTests(TestCase):
             self.execute_date,
             DOMAIN_VEHICLE,
         )
-        self.assertEqual(len(items), 2)
+        self.assertEqual(len(items), 3)
         self.assertEqual({item.viu_code for item in items}, {'viu0', 'viu1'})
-        self.assertEqual({item.status for item in items}, {RESULT_SUCCESS, RESULT_SKIP})
         self.assertEqual(
-            {item.viu_code: item.car_log_url for item in items},
+            {(item.viu_code, item.case_no): item.status for item in items},
             {
-                'viu0': 'https://example.com/viu0/',
-                'viu1': 'https://example.com/viu1/',
+                ('viu0', 'CASE-001'): RESULT_SUCCESS,
+                ('viu1', 'CASE-001'): RESULT_SKIP,
+                ('viu0', 'CASE-002'): 'missing',
+            },
+        )
+        self.assertEqual(
+            {
+                (item.viu_code, item.case_no): item.car_log_url
+                for item in items
+                if item.car_log_url
+            },
+            {
+                ('viu0', 'CASE-001'): 'https://example.com/viu0/',
+                ('viu1', 'CASE-001'): 'https://example.com/viu1/',
             },
         )
 
@@ -466,10 +508,11 @@ class AutoTestReportOverviewTests(TestCase):
             self.execute_date,
             DOMAIN_VEHICLE,
         )
-        self.assertEqual(summary.total_count, 2)
+        self.assertEqual(summary.total_count, 3)
         self.assertEqual(summary.success_count, 1)
         self.assertEqual(summary.skip_count, 1)
         self.assertEqual(summary.failed_count, 0)
+        self.assertEqual(summary.missing_result_count, 1)
 
         overview = services.get_daily_overview(
             DailyOverviewQuery(
@@ -478,9 +521,10 @@ class AutoTestReportOverviewTests(TestCase):
             )
         )
         row = self._get_row(overview, vehicle)
-        self.assertEqual(row.total_count, 2)
+        self.assertEqual(row.total_count, 3)
         self.assertEqual(row.success_count, 1)
         self.assertEqual(row.skip_count, 1)
+        self.assertEqual(row.missing_result_count, 1)
         self.assertTrue(row.is_abnormal)
 
         self.assertEqual(case0.viu_code, 'viu0')

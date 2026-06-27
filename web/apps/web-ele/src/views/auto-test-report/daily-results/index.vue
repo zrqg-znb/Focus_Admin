@@ -81,7 +81,8 @@ const vehicleChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderVehicleChart } = useEcharts(vehicleChartRef);
 
 const activeView = ref<AutoTestReportDailyResultsView>(
-  getAutoTestReportDailyResultsState(domain.value).activeView,
+  getAutoTestReportDailyResultsState(domain.value)
+    .activeView as AutoTestReportDailyResultsView,
 );
 const viewOptions = [
   { label: '全量', value: 'overview' },
@@ -399,6 +400,7 @@ function renderChart(
     失败: '#ef4444',
     超时: '#f59e0b',
     跳过: '#94a3b8',
+    未执行: '#64748b',
   };
 
   renderFn({
@@ -603,7 +605,8 @@ async function loadCurrentView() {
     return;
   }
   await ensureVehicleOptionsLoaded();
-  if (activeView.value === 'overview') {
+  const nextActiveView = activeView.value as AutoTestReportDailyResultsView;
+  if (nextActiveView === 'overview') {
     await loadOverview();
     return;
   }

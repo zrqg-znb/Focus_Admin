@@ -140,6 +140,7 @@ class DailySummaryOut(Schema):
     failed_count: int
     timeout_count: int
     skip_count: int
+    missing_result_count: int = 0
     total_duration_seconds: int
     stats: List[SummaryStat]
     last_report_at: Optional[datetime] = None

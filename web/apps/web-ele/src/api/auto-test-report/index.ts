@@ -2,7 +2,12 @@ import type { AutoTestReportDomain } from '#/views/auto-test-report/shared/domai
 
 import { requestClient } from '#/api/request';
 
-export type ResultStatus = 'failed' | 'skip' | 'success' | 'timeout';
+export type ResultStatus =
+  | 'failed'
+  | 'missing'
+  | 'skip'
+  | 'success'
+  | 'timeout';
 export type FailureCategory = 'case' | 'environment' | 'version';
 
 export interface McuPlatformItem {
@@ -136,6 +141,7 @@ export interface DailySummary {
   failed_count: number;
   timeout_count: number;
   skip_count: number;
+  missing_result_count: number;
   total_duration_seconds: number;
   stats: SummaryStat[];
   last_report_at?: string;

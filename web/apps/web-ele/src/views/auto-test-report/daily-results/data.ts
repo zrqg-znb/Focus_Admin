@@ -10,6 +10,7 @@ export const RESULT_LABEL_MAP: Record<string, string> = {
   failed: '失败',
   timeout: '超时',
   skip: '跳过',
+  missing: '未执行',
 };
 
 export const RESULT_TAG_MAP: Record<
@@ -20,6 +21,7 @@ export const RESULT_TAG_MAP: Record<
   failed: 'danger',
   timeout: 'warning',
   skip: 'info',
+  missing: 'info',
 };
 
 export const FAILURE_CATEGORY_LABEL_MAP: Record<string, string> = {
@@ -234,6 +236,14 @@ export function useOverviewColumns(
       dataKey: 'skip_count',
       title: '跳过',
       width: 90,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'missing_result_count',
+      dataKey: 'missing_result_count',
+      title: '未执行',
+      width: 100,
       align: 'center',
       headerAlign: 'center',
     },
