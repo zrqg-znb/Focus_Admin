@@ -134,6 +134,13 @@ export function useRequirementColumns(): ZqTableGridOptions<RequirementBoardItem
       fixed: 'left' as const,
     },
     {
+      key: 'responsible_pl_group_name',
+      dataKey: 'responsible_pl_group_name',
+      title: '责任PL组',
+      width: 180,
+      fixed: 'left' as const,
+    },
+    {
       key: 'status_code',
       dataKey: 'status_code',
       title: '状态',

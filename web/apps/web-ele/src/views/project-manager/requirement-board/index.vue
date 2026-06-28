@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import type { EchartsUIType } from '@vben/plugins/echarts';
 
+import type { PlGroup } from '#/api/core/pl';
 import type {
   RequirementBoardFilterPayload,
   RequirementBoardProjectOption,
@@ -34,6 +35,7 @@ import {
   ElTag,
 } from 'element-plus';
 
+import { getAllPlApi } from '#/api/core/pl';
 import {
   deleteRequirementBoardFilterPreferenceApi,
   exportRequirementBoardApi,
@@ -77,6 +79,7 @@ function createDefaultFilters(): RequirementBoardFilterPayload {
     title_keyword: '',
     develop_user: [],
     test_user: [],
+    responsible_pl_group_ids: [],
     time_field: DEFAULT_TIME_FIELD,
     time_start: '',
     time_end: '',
@@ -88,6 +91,7 @@ const optionsLoading = ref(false);
 const summaryLoading = ref(false);
 const exportLoading = ref(false);
 const projectOptions = ref<RequirementBoardProjectOption[]>([]);
+const plGroupOptions = ref<Array<{ label: string; value: string }>>([]);
 const projectSelectorVisible = ref(false);
 const teamSelectorVisible = ref(false);
 const dataGridWrapRef = ref<HTMLDivElement>();
@@ -226,6 +230,9 @@ function cloneFilterPayload(
     title_keyword: String(source.title_keyword || '').trim(),
     develop_user: normalizeStringArray(source.develop_user),
     test_user: normalizeStringArray(source.test_user),
+    responsible_pl_group_ids: normalizeStringArray(
+      source.responsible_pl_group_ids,
+    ),
     time_field: (source.time_field ||
       DEFAULT_TIME_FIELD) as RequirementTimeField,
     time_start: source.time_start || '',
@@ -246,6 +253,9 @@ function buildFingerprint(payload: null | RequirementBoardFilterPayload) {
     title_keyword: String(payload.title_keyword || '').trim(),
     develop_user: [...(payload.develop_user || [])].sort(),
     test_user: [...(payload.test_user || [])].sort(),
+    responsible_pl_group_ids: [
+      ...(payload.responsible_pl_group_ids || []),
+    ].sort(),
     time_field: payload.time_field || '',
     time_start: payload.time_start || '',
     time_end: payload.time_end || '',
@@ -525,11 +535,23 @@ function getTeamTagType(teamName: string) {
   return getStableTagType(teamName);
 }
 
+function buildPlGroupOptions(groups: PlGroup[]) {
+  const options = (groups || [])
+    .filter((item) => item.status)
+    .map((item) => ({ label: item.name, value: item.id }));
+  options.push({ label: '未识别PL领域', value: 'unknown' });
+  return options;
+}
+
 async function loadFilterOptions() {
   optionsLoading.value = true;
   try {
-    const result = await getRequirementBoardFilterOptionsApi();
+    const [result, groups] = await Promise.all([
+      getRequirementBoardFilterOptionsApi(),
+      getAllPlApi(),
+    ]);
     projectOptions.value = sortProjectOptions(result.projects || []);
+    plGroupOptions.value = buildPlGroupOptions(groups || []);
     return result;
   } catch (error) {
     console.error(error);
@@ -1349,6 +1371,33 @@ onUnmounted(() => {
                       </div>
                     </template>
 
+                    <template #header-responsible_pl_group_name>
+                      <div class="requirement-header-filter" @click.stop>
+                        <span class="requirement-header-filter__label">
+                          责任PL组
+                        </span>
+                        <ElSelect
+                          v-model="filters.responsible_pl_group_ids"
+                          class="requirement-header-filter__select"
+                          collapse-tags
+                          collapse-tags-tooltip
+                          filterable
+                          :max-collapse-tags="1"
+                          multiple
+                          clearable
+                          size="small"
+                          placeholder="默认不过滤"
+                        >
+                          <ElOption
+                            v-for="item in plGroupOptions"
+                            :key="item.value"
+                            :label="item.label"
+                            :value="item.value"
+                          />
+                        </ElSelect>
+                      </div>
+                    </template>
+
                     <template #header-category>
                       <div class="requirement-header-filter" @click.stop>
                         <span class="requirement-header-filter__label">
@@ -1467,6 +1516,19 @@ onUnmounted(() => {
                         <span class="requirement-team-badge__text">
                           {{ row.team_name || '未识别团队' }}
                         </span>
+                      </ElTag>
+                    </template>
+
+                    <template #cell-responsible_pl_group_name="{ row }">
+                      <ElTag
+                        :type="
+                          row.responsible_pl_group_id
+                            ? getStableTagType(row.responsible_pl_group_name)
+                            : 'info'
+                        "
+                        effect="light"
+                      >
+                        {{ row.responsible_pl_group_name || '未识别PL领域' }}
                       </ElTag>
                     </template>
 

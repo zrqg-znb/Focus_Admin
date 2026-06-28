@@ -148,6 +148,8 @@ z60094428,z60094429
 
 - `develop_users: string[]`
 - `test_users: string[]`
+- `responsible_pl_group_id: string | null`
+- `responsible_pl_group_name: string`
 - `develop_user_display: string`
 - `test_user_display: string`
 
@@ -175,6 +177,23 @@ z60094428,z60094429
 
 - 责任人维度的汇总总量**不会**与全局总量守恒
 - 这是预期行为，不是统计错误
+
+### 5.3 责任 PL 组口径
+
+数据湖返回的责任团队是虚拟团队，不直接等同组织管理中的 PL 组。需求看板会根据开发责任人做责任 PL 组映射：
+
+1. 标准化 `develop_owner / develop_user` 得到 `develop_users`
+2. 只取第一个开发责任人 username
+3. 到启用状态的 `core.PlGroup.members` 中匹配
+4. 同一用户命中多个启用 PL 组时，按 `-sort, name, id` 取第一个
+5. 未命中、无开发责任人或仅命中禁用 PL 组时，归为 `未识别PL领域`
+
+该字段独立输出为：
+
+- `responsible_pl_group_id`
+- `responsible_pl_group_name`
+
+它不会改写 `team_name`，也不会影响开发责任人列展示。责任 PL 组筛选字段为 `responsible_pl_group_ids`，可传真实 PL 组 ID，特殊值 `unknown` 表示筛选 `未识别PL领域`。
 
 ---
 
@@ -309,6 +328,7 @@ z60094428,z60094429
 - 始终导出当前筛选条件命中的全量明细
 - 仍然复用项目 / 团队 / 类型 / 验证策略下推
 - 责任人 / 时间区间仍在本地过滤
+- 责任 PL 组同样在本地过滤，支持真实 PL 组和 `unknown`
 - 返回 `.xlsx` 文件流，不在 Redis 中缓存二进制文件
 
 ---
@@ -327,6 +347,8 @@ z60094428,z60094429
 - `project_name`
 - `design_id`
 - `team_name`
+- `responsible_pl_group_id`
+- `responsible_pl_group_name`
 - `planned_test_time`
 - `due_date`
 - `completed_time`
@@ -754,15 +776,15 @@ flowchart TD
 模块内部缓存键按职责拆分为三类：
 
 1. **单页缓存**
-   - 前缀：`pm:requirement-board:page:v4`
+   - 前缀：`pm:requirement-board:page:v5`
    - 包含：项目、design_ids、团队、类型、页码、页大小
 
 2. **过滤结果缓存**
-   - 前缀：`pm:requirement-board:filtered:v4`
+   - 前缀：`pm:requirement-board:filtered:v5`
    - 包含：项目、design_ids、团队、类型、责任人、时间维度、时间区间
 
 3. **总结缓存**
-   - 前缀：`pm:requirement-board:summary:v4`
+   - 前缀：`pm:requirement-board:summary:v5`
    - 包含：与过滤结果相同的完整筛选条件
 
 导出接口的设计补充：

@@ -17,6 +17,7 @@ export interface RequirementBoardFilterPayload {
   title_keyword?: string;
   develop_user?: string[];
   test_user?: string[];
+  responsible_pl_group_ids?: string[];
   /**
    * @deprecated use develop_user (username list)
    */
@@ -96,6 +97,8 @@ export interface RequirementBoardItem {
   workload_man_day: number;
   develop_users: string[];
   test_users: string[];
+  responsible_pl_group_id?: null | string;
+  responsible_pl_group_name: string;
   develop_user_display: string;
   test_user_display: string;
   develop_user: string;

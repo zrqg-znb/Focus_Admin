@@ -30,6 +30,10 @@ class RequirementBoardFilterPayloadSchema(Schema):
     title_keyword: Optional[str] = Field(None, description="需求标题关键词")
     develop_user: Optional[List[str]] = Field(None, description="开发责任人列表（username）")
     test_user: Optional[List[str]] = Field(None, description="测试责任人列表（username）")
+    responsible_pl_group_ids: Optional[List[str]] = Field(
+        None,
+        description="责任PL组列表，unknown 表示未识别PL领域",
+    )
     develop_users: Optional[List[str]] = Field(None, description="开发责任人列表")
     test_users: Optional[List[str]] = Field(None, description="测试责任人列表")
     time_field: Optional[str] = Field(None, description="时间维度字段")
@@ -110,6 +114,8 @@ class RequirementBoardItemSchema(Schema):
     workload_man_day: float = 0.0
     develop_users: List[str] = Field(default_factory=list)
     test_users: List[str] = Field(default_factory=list)
+    responsible_pl_group_id: Optional[str] = None
+    responsible_pl_group_name: str = ""
     develop_user_display: str = ""
     test_user_display: str = ""
     develop_user: str = ""

@@ -9,6 +9,7 @@
 - 夜间提前拉取所有未删除且已配置 `design_id` 和责任团队的项目需求。
 - 把标准化后的需求明细写入 Django cache，通常对应 Redis。
 - 白天 `data`、`summary`、`export` 优先复用全量缓存，并按用户筛选条件本地过滤。
+- 缓存中的明细包含责任 PL 组映射结果，支持白天按责任 PL 组筛选。
 - 不新增前端页面、不新增 API、不把需求明细落 MySQL。
 
 ## 调度入口
@@ -40,6 +41,13 @@ apps.project_manager.requirement_board.requirement_board_services.run_scheduled_
 3. 原有实时数据湖查询。
 
 如果用户选择了缓存快照中不存在的新项目，后端会自动回退实时查询，避免返回不完整数据。
+
+责任 PL 组口径：
+
+- 取需求第一个开发责任人 username。
+- 只匹配启用状态的 PL 组成员关系。
+- 同一用户命中多个 PL 组时，按 `-sort, name, id` 取第一个。
+- 未命中统一为 `未识别PL领域`，筛选值为 `unknown`。
 
 ## 配置项
 

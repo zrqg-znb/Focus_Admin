@@ -16,6 +16,7 @@ from apps.project_manager.requirement_board.requirement_board_schemas import (
     RequirementBoardFilterPayloadSchema,
     RequirementBoardSummaryQuerySchema,
 )
+from core.pl.pl_model import PlGroup
 
 
 class RequirementBoardPreferenceTests(TransactionTestCase):
@@ -297,6 +298,8 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
                 "workload_man_day": 0.0,
                 "develop_users": ["dev-a"],
                 "test_users": [],
+                "responsible_pl_group_id": None,
+                "responsible_pl_group_name": "未识别PL领域",
                 "develop_user_display": "dev-a",
                 "test_user_display": "",
                 "develop_user": "dev-a",
@@ -361,6 +364,33 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
                 },
             },
         }
+
+    def _create_focus_user(self, username: str, name: str | None = None):
+        return get_user_model().objects.create(
+            username=username,
+            name=name or username,
+            password="secret",
+        )
+
+    def _create_pl_group(
+        self,
+        *,
+        name: str,
+        code: str,
+        pl_user,
+        members: list,
+        sort: int = 0,
+        status: bool = True,
+    ) -> PlGroup:
+        group = PlGroup.objects.create(
+            name=name,
+            code=code,
+            pl_user=pl_user,
+            sort=sort,
+            status=status,
+        )
+        group.members.add(pl_user, *members)
+        return group
 
     @mock.patch(
         "apps.project_manager.requirement_board.requirement_board_services._fetch_raw_page"
@@ -532,4 +562,221 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
         self.assertEqual(result["total_count"], 1)
         self.assertEqual(result["team_summary"][0]["team_name"], "Team-A")
         self.assertEqual(result["team_summary"][0]["p_count"], 1)
+        mocked_fetch.assert_not_called()
+
+    @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._fetch_raw_page"
+    )
+    def test_responsible_pl_group_maps_first_develop_owner_only(self, mocked_fetch):
+        project = self._create_project(
+            name="Alpha",
+            code="alpha",
+            design_id="design-a",
+            sub_teams=["Team-A"],
+        )
+        dev_first = self._create_focus_user("dev-first")
+        dev_second = self._create_focus_user("dev-second")
+        first_low = self._create_pl_group(
+            name="低优先PL",
+            code="pl-low",
+            pl_user=dev_first,
+            members=[dev_first],
+            sort=1,
+        )
+        first_high = self._create_pl_group(
+            name="高优先PL",
+            code="pl-high",
+            pl_user=dev_first,
+            members=[dev_first],
+            sort=9,
+        )
+        self._create_pl_group(
+            name="第二责任人PL",
+            code="pl-second",
+            pl_user=dev_second,
+            members=[dev_second],
+            sort=99,
+        )
+        self._create_pl_group(
+            name="禁用PL",
+            code="pl-disabled",
+            pl_user=dev_first,
+            members=[dev_first],
+            sort=100,
+            status=False,
+        )
+        mocked_fetch.return_value = self._build_raw_page(
+            [
+                self._build_raw_requirement(
+                    design_id="design-a",
+                    requirement_id="REQ-PL",
+                    team="Team-A",
+                    develop_owner="dev-first,dev-second",
+                ),
+            ]
+        )
+
+        result = requirement_board_services.get_requirement_board_page(
+            RequirementBoardDataQuerySchema(
+                project_ids=[str(project.id)],
+                sub_teams=["Team-A"],
+                categories=["AR"],
+                schedule_state=[],
+                verification_policies=[],
+                develop_user=[],
+                test_user=[],
+                responsible_pl_group_ids=[],
+                time_field="accepted_time",
+                time_start="",
+                time_end="",
+                page_no=1,
+                page_size=20,
+            ),
+            user=self.user,
+        )
+
+        row = result["items"][0]
+        self.assertEqual(row["responsible_pl_group_id"], str(first_high.id))
+        self.assertEqual(row["responsible_pl_group_name"], "高优先PL")
+        self.assertNotEqual(row["responsible_pl_group_id"], str(first_low.id))
+
+    @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._fetch_raw_page"
+    )
+    def test_responsible_pl_group_filter_supports_real_and_unknown(self, mocked_fetch):
+        project = self._create_project(
+            name="Alpha",
+            code="alpha",
+            design_id="design-a",
+            sub_teams=["Team-A"],
+        )
+        dev_known = self._create_focus_user("dev-known")
+        group = self._create_pl_group(
+            name="已识别PL",
+            code="pl-known",
+            pl_user=dev_known,
+            members=[dev_known],
+            sort=1,
+        )
+        mocked_fetch.return_value = self._build_raw_page(
+            [
+                self._build_raw_requirement(
+                    design_id="design-a",
+                    requirement_id="REQ-KNOWN",
+                    team="Team-A",
+                    develop_owner="dev-known",
+                ),
+                self._build_raw_requirement(
+                    design_id="design-a",
+                    requirement_id="REQ-UNKNOWN",
+                    team="Team-A",
+                    develop_owner="dev-missing",
+                ),
+            ]
+        )
+
+        known_result = requirement_board_services.get_requirement_board_page(
+            RequirementBoardDataQuerySchema(
+                project_ids=[str(project.id)],
+                sub_teams=["Team-A"],
+                categories=["AR"],
+                schedule_state=[],
+                verification_policies=[],
+                develop_user=[],
+                test_user=[],
+                responsible_pl_group_ids=[str(group.id)],
+                time_field="accepted_time",
+                time_start="",
+                time_end="",
+                page_no=1,
+                page_size=20,
+            ),
+            user=self.user,
+        )
+        self.assertEqual(known_result["total"], 1)
+        self.assertEqual(known_result["items"][0]["requirement_id"], "REQ-KNOWN")
+
+        unknown_result = requirement_board_services.get_requirement_board_page(
+            RequirementBoardDataQuerySchema(
+                project_ids=[str(project.id)],
+                sub_teams=["Team-A"],
+                categories=["AR"],
+                schedule_state=[],
+                verification_policies=[],
+                develop_user=[],
+                test_user=[],
+                responsible_pl_group_ids=["unknown"],
+                time_field="accepted_time",
+                time_start="",
+                time_end="",
+                page_no=1,
+                page_size=20,
+            ),
+            user=self.user,
+        )
+        self.assertEqual(unknown_result["total"], 1)
+        self.assertEqual(unknown_result["items"][0]["requirement_id"], "REQ-UNKNOWN")
+        self.assertEqual(
+            unknown_result["items"][0]["responsible_pl_group_name"],
+            "未识别PL领域",
+        )
+
+    @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._fetch_raw_page"
+    )
+    def test_full_cache_can_filter_responsible_pl_group(self, mocked_fetch):
+        project = self._create_project(
+            name="Alpha",
+            code="alpha",
+            design_id="design-a",
+            sub_teams=["Team-A"],
+        )
+        dev_known = self._create_focus_user("dev-known")
+        group = self._create_pl_group(
+            name="缓存PL",
+            code="pl-cache",
+            pl_user=dev_known,
+            members=[dev_known],
+            sort=1,
+        )
+        mocked_fetch.return_value = self._build_raw_page(
+            [
+                self._build_raw_requirement(
+                    design_id="design-a",
+                    requirement_id="REQ-CACHE-KNOWN",
+                    team="Team-A",
+                    develop_owner="dev-known",
+                ),
+                self._build_raw_requirement(
+                    design_id="design-a",
+                    requirement_id="REQ-CACHE-UNKNOWN",
+                    team="Team-A",
+                    develop_owner="dev-missing",
+                ),
+            ]
+        )
+        requirement_board_services.refresh_requirement_board_full_cache()
+        mocked_fetch.reset_mock()
+
+        result = requirement_board_services.get_requirement_board_page(
+            RequirementBoardDataQuerySchema(
+                project_ids=[str(project.id)],
+                sub_teams=["Team-A"],
+                categories=["AR"],
+                schedule_state=[],
+                verification_policies=[],
+                develop_user=[],
+                test_user=[],
+                responsible_pl_group_ids=[str(group.id)],
+                time_field="accepted_time",
+                time_start="",
+                time_end="",
+                page_no=1,
+                page_size=20,
+            ),
+            user=self.user,
+        )
+
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["items"][0]["requirement_id"], "REQ-CACHE-KNOWN")
         mocked_fetch.assert_not_called()

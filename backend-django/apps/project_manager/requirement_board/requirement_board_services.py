@@ -8,7 +8,7 @@ import random
 import re
 import threading
 import time
-from typing import Any
+from typing import Any, Iterable
 
 import openpyxl
 import requests
@@ -20,6 +20,7 @@ from django.utils import timezone
 from ninja.errors import HttpError
 
 from apps.project_manager.project.project_model import Project
+from core.pl.pl_model import PlGroup
 
 from .requirement_board_model import (
     CATEGORY_ORDER,
@@ -52,11 +53,14 @@ _DELAY_PREVIEW_LIMIT = 8
 _PREPARED_RESULT_TTL_SECONDS = 30 * 60
 _FULL_CACHE_TTL_SECONDS = 16 * 60 * 60
 _FULL_CACHE_LOCK_TTL_SECONDS = 30 * 60
-_FULL_CACHE_KEY = "pm:requirement-board:full:v1:all-configured"
+_FULL_CACHE_KEY = "pm:requirement-board:full:v2:all-configured"
+_RESPONSIBLE_PL_UNKNOWN_ID = "unknown"
+_RESPONSIBLE_PL_UNKNOWN_NAME = "未识别PL领域"
 _EXPORT_SHEET_TITLE = "需求数据"
 _EXPORT_HEADERS = (
     "项目名",
     "团队",
+    "责任PL组",
     "需求类型",
     "验证策略",
     "需求 ID",
@@ -540,7 +544,7 @@ def _get_prepared_result_cache_key(
     *,
     user: Any = None,
 ) -> str:
-    return f"pm:requirement-board:prepared:v1:{_get_user_cache_scope(user)}:{fingerprint}"
+    return f"pm:requirement-board:prepared:v2:{_get_user_cache_scope(user)}:{fingerprint}"
 
 
 def _serialize_query_task(task: RequirementBoardQueryTask | None) -> dict[str, Any] | None:
@@ -972,6 +976,31 @@ def _project_payload(project: Project | None, design_id: str) -> tuple[str, str]
     return str(project.id), project.name
 
 
+def _load_responsible_pl_group_by_username(
+    usernames: Iterable[str],
+) -> dict[str, tuple[str | None, str]]:
+    """按 username 批量加载启用 PL 组映射，单用户多组时取排序第一。"""
+    unique_usernames = _normalize_text_list(list(usernames))
+    if not unique_usernames:
+        return {}
+
+    rows = (
+        PlGroup.objects.filter(status=True, members__username__in=unique_usernames)
+        .values("id", "name", "sort", "members__username")
+        .order_by("-sort", "name", "id")
+    )
+    mapping: dict[str, tuple[str | None, str]] = {}
+    for row in rows:
+        username = _clean_text(row.get("members__username"))
+        if not username or username in mapping:
+            continue
+        mapping[username] = (
+            str(row.get("id")) if row.get("id") is not None else None,
+            _clean_text(row.get("name")) or _RESPONSIBLE_PL_UNKNOWN_NAME,
+        )
+    return mapping
+
+
 def _standardize_requirement_items(
     items: list[dict[str, Any]],
     design_project_map: dict[str, Project],
@@ -979,8 +1008,16 @@ def _standardize_requirement_items(
     standardized: list[dict[str, Any]] = []
     fallback_project = next(iter(design_project_map.values()), None)
     now = timezone.now()
+    raw_develop_users = [
+        _normalize_owner_list(item.get("develop_owner") or item.get("develop_user"))
+        for item in items
+    ]
+    # 责任 PL 组只按第一个开发责任人归属，避免一个需求被多个 PL 组重复计入。
+    responsible_pl_by_username = _load_responsible_pl_group_by_username(
+        users[0] for users in raw_develop_users if users
+    )
 
-    for item in items:
+    for item, develop_users in zip(items, raw_develop_users):
         design_id = _clean_text(
             item.get("requirement2domain")
             or item.get("domainid")
@@ -1013,12 +1050,18 @@ def _standardize_requirement_items(
         due_date = _format_datetime_text(item.get("due_date"))
         completed_time = _format_datetime_text(item.get("completed_time"))
         accepted_time = _format_datetime_text(item.get("accepted_time"))
-        develop_users = _normalize_owner_list(
-            item.get("develop_owner") or item.get("develop_user"),
-        )
         test_users = _normalize_owner_list(
             item.get("test_owner") or item.get("test_user"),
         )
+        responsible_pl_group_id = None
+        responsible_pl_group_name = _RESPONSIBLE_PL_UNKNOWN_NAME
+        if develop_users:
+            responsible_pl_group_id, responsible_pl_group_name = (
+                responsible_pl_by_username.get(
+                    develop_users[0],
+                    (None, _RESPONSIBLE_PL_UNKNOWN_NAME),
+                )
+            )
         has_workload_kloc = item.get("workload_kloc") not in (None, "")
         has_workload_man_day = item.get("workload_man_day") not in (None, "")
         develop_user_display = ", ".join(develop_users)
@@ -1064,6 +1107,8 @@ def _standardize_requirement_items(
                 ),
                 "develop_users": develop_users,
                 "test_users": test_users,
+                "responsible_pl_group_id": responsible_pl_group_id,
+                "responsible_pl_group_name": responsible_pl_group_name,
                 "has_develop_users": bool(develop_users),
                 "has_test_users": bool(test_users),
                 "has_workload_kloc": has_workload_kloc,
@@ -1153,6 +1198,7 @@ def _normalize_filter_payload_for_storage(
         payload.get("title_keyword"),
         develop_users,
         test_users,
+        payload.get("responsible_pl_group_ids"),
         payload.get("time_field"),
         payload.get("time_start"),
         payload.get("time_end"),
@@ -1168,6 +1214,7 @@ def _normalize_filter_payload_for_storage(
         "title_keyword": context["title_keyword"],
         "develop_user": context["develop_users"],
         "test_user": context["test_users"],
+        "responsible_pl_group_ids": context["responsible_pl_group_ids"],
         "time_field": context["time_field"] or DEFAULT_TIME_FIELD,
         "time_start": context["time_start"] or "",
         "time_end": context["time_end"] or "",
@@ -1244,6 +1291,16 @@ def _sanitize_saved_filter_payload(
         time_start = ""
         time_end = ""
 
+    active_pl_group_ids = {
+        str(item)
+        for item in PlGroup.objects.filter(status=True).values_list("id", flat=True)
+    }
+    responsible_pl_group_ids = [
+        item
+        for item in _normalize_text_list(payload.get("responsible_pl_group_ids"))
+        if item == _RESPONSIBLE_PL_UNKNOWN_ID or item in active_pl_group_ids
+    ]
+
     return {
         "project_ids": project_ids,
         "sub_teams": [
@@ -1261,6 +1318,7 @@ def _sanitize_saved_filter_payload(
         "test_user": _normalize_owner_list(
             (payload.get("test_user") or []) + (payload.get("test_users") or [])
         ),
+        "responsible_pl_group_ids": responsible_pl_group_ids,
         "time_field": time_field,
         "time_start": time_start,
         "time_end": time_end,
@@ -1276,6 +1334,7 @@ def _resolve_query_context(
     title_keyword: str | None = None,
     develop_users: list[str] | None = None,
     test_users: list[str] | None = None,
+    responsible_pl_group_ids: list[str] | None = None,
     time_field: str | None = None,
     time_start: str | None = None,
     time_end: str | None = None,
@@ -1343,6 +1402,9 @@ def _resolve_query_context(
     normalized_title_keyword = _clean_text(title_keyword)
     normalized_develop_users = _normalize_owner_list(develop_users)
     normalized_test_users = _normalize_owner_list(test_users)
+    normalized_responsible_pl_group_ids = _normalize_text_list(
+        responsible_pl_group_ids,
+    )
     normalized_time = _normalize_time_filters(
         time_field,
         time_start,
@@ -1353,6 +1415,7 @@ def _resolve_query_context(
     requires_local_filter = bool(
         normalized_develop_users
         or normalized_test_users
+        or normalized_responsible_pl_group_ids
         or normalized_time["time_start_dt"]
         or normalized_time["time_end_dt"]
     )
@@ -1370,6 +1433,7 @@ def _resolve_query_context(
         **remote_cache_payload,
         "develop_users": normalized_develop_users,
         "test_users": normalized_test_users,
+        "responsible_pl_group_ids": normalized_responsible_pl_group_ids,
         "time_field": normalized_time["time_field"] or "",
         "time_start": normalized_time["time_start"] or "",
         "time_end": normalized_time["time_end"] or "",
@@ -1386,6 +1450,7 @@ def _resolve_query_context(
         "title_keyword": normalized_title_keyword,
         "develop_users": normalized_develop_users,
         "test_users": normalized_test_users,
+        "responsible_pl_group_ids": normalized_responsible_pl_group_ids,
         **normalized_time,
         "requires_local_filter": requires_local_filter,
         "remote_cache_payload": remote_cache_payload,
@@ -1405,6 +1470,7 @@ def _resolve_query_context_from_payload(payload: dict[str, Any]) -> dict[str, An
         payload.get("title_keyword"),
         develop_users,
         test_users,
+        payload.get("responsible_pl_group_ids"),
         payload.get("time_field"),
         payload.get("time_start"),
         payload.get("time_end"),
@@ -1469,7 +1535,7 @@ def _load_remote_page(context: dict[str, Any], page_no: int, page_size: int) -> 
         "page_no": page_no,
         "page_size": normalized_page_size,
     }
-    cache_key = _cache_key("pm:requirement-board:page:v4", payload)
+    cache_key = _cache_key("pm:requirement-board:page:v5", payload)
     cached = cache.get(cache_key)
     if isinstance(cached, dict) and isinstance(cached.get("items"), list):
         _debug_log(
@@ -1531,6 +1597,15 @@ def _item_matches_local_filters(item: dict[str, Any], context: dict[str, Any]) -
     if test_users and not set(test_users).intersection(item.get("test_users") or []):
         return False
 
+    responsible_pl_group_ids = set(context.get("responsible_pl_group_ids") or [])
+    if responsible_pl_group_ids:
+        responsible_pl_group_id = _clean_text(item.get("responsible_pl_group_id"))
+        if responsible_pl_group_id:
+            if responsible_pl_group_id not in responsible_pl_group_ids:
+                return False
+        elif _RESPONSIBLE_PL_UNKNOWN_ID not in responsible_pl_group_ids:
+            return False
+
     time_field = context.get("time_field")
     if time_field and (context.get("time_start_dt") or context.get("time_end_dt")):
         value_dt = _parse_datetime(item.get(time_field))
@@ -1551,7 +1626,7 @@ def _scan_all_filtered_items(
     max_pages_setting_name: str = "REQUIREMENT_BOARD_SUMMARY_MAX_PAGES",
     limit_error_message: str = "需求扫描页数过多，请缩小筛选范围",
 ) -> list[dict[str, Any]]:
-    cache_key = _cache_key("pm:requirement-board:filtered:v4", context["cache_payload"])
+    cache_key = _cache_key("pm:requirement-board:filtered:v5", context["cache_payload"])
     cached = cache.get(cache_key)
     if isinstance(cached, dict) and isinstance(cached.get("items"), list):
         _debug_log(
@@ -1650,6 +1725,7 @@ def _build_full_cache_payload(projects: list[Project]) -> dict[str, Any]:
         "title_keyword": "",
         "develop_user": [],
         "test_user": [],
+        "responsible_pl_group_ids": [],
         "time_field": DEFAULT_TIME_FIELD,
         "time_start": "",
         "time_end": "",
@@ -2799,6 +2875,7 @@ def _build_export_row(item: dict[str, Any]) -> list[Any]:
     return [
         _clean_text(item.get("project_name")),
         _clean_text(item.get("team_name")) or UNKNOWN_TEAM_NAME,
+        _clean_text(item.get("responsible_pl_group_name")) or _RESPONSIBLE_PL_UNKNOWN_NAME,
         _clean_text(item.get("category")),
         _clean_text(item.get("verification_policy_label")),
         _clean_text(item.get("requirement_id")),
@@ -2847,7 +2924,7 @@ def get_requirement_board_summary(
     user: Any = None,
 ) -> dict[str, Any]:
     context = _resolve_query_context_from_payload(data.dict())
-    summary_key = _cache_key("pm:requirement-board:summary:v4", context["cache_payload"])
+    summary_key = _cache_key("pm:requirement-board:summary:v5", context["cache_payload"])
     prepared_items = _get_prepared_items(context, user=user)
     if prepared_items is not None:
         summary = _compute_summary_from_items(prepared_items)
