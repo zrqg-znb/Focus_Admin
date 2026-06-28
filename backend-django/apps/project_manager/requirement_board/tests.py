@@ -243,6 +243,110 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
         "apps.project_manager.requirement_board.requirement_board_services._get_setting"
     )
     @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._start_requirement_board_query_task_thread"
+    )
+    def test_prepare_query_returns_ready_when_full_cache_covers_projects(
+        self,
+        mocked_start,
+        mocked_get_setting,
+    ):
+        projects = [
+            self._create_project(name=f"Project-{index}", code=f"cached-{index}")
+            for index in range(1, 4)
+        ]
+
+        def _fake_get_setting(name, default=None):
+            if name == "REQUIREMENT_BOARD_ASYNC_PROJECT_THRESHOLD":
+                return 2
+            return getattr(requirement_board_services.settings, name, default)
+
+        mocked_get_setting.side_effect = _fake_get_setting
+        cache.set(
+            requirement_board_services._FULL_CACHE_KEY,
+            {
+                "items": [],
+                "project_ids": [str(project.id) for project in projects],
+                "generated_at": "2026-03-01T00:00:00+08:00",
+            },
+            300,
+        )
+
+        result = requirement_board_services.prepare_requirement_board_query(
+            self.user,
+            RequirementBoardFilterPayloadSchema(
+                project_ids=[str(project.id) for project in projects],
+                sub_teams=["Team-A"],
+                categories=["AR"],
+                schedule_state=[],
+                verification_policies=[],
+                develop_user=[],
+                test_user=[],
+                responsible_pl_group_ids=["unknown"],
+                time_field="accepted_time",
+                time_start="",
+                time_end="",
+            ),
+        )
+
+        self.assertEqual(result["mode"], "ready")
+        self.assertIsNone(result["task"])
+        self.assertEqual(RequirementBoardQueryTask.objects.count(), 0)
+        mocked_start.assert_not_called()
+
+    @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._get_setting"
+    )
+    @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._start_requirement_board_query_task_thread"
+    )
+    def test_prepare_query_falls_back_async_when_full_cache_misses_project_scope(
+        self,
+        mocked_start,
+        mocked_get_setting,
+    ):
+        cached_project = self._create_project(name="Cached", code="cached")
+        missing_project = self._create_project(name="Missing", code="missing")
+
+        def _fake_get_setting(name, default=None):
+            if name == "REQUIREMENT_BOARD_ASYNC_PROJECT_THRESHOLD":
+                return 1
+            return getattr(requirement_board_services.settings, name, default)
+
+        mocked_get_setting.side_effect = _fake_get_setting
+        cache.set(
+            requirement_board_services._FULL_CACHE_KEY,
+            {
+                "items": [],
+                "project_ids": [str(cached_project.id)],
+                "generated_at": "2026-03-01T00:00:00+08:00",
+            },
+            300,
+        )
+
+        result = requirement_board_services.prepare_requirement_board_query(
+            self.user,
+            RequirementBoardFilterPayloadSchema(
+                project_ids=[str(cached_project.id), str(missing_project.id)],
+                sub_teams=["Team-A"],
+                categories=["AR"],
+                schedule_state=[],
+                verification_policies=[],
+                develop_user=[],
+                test_user=[],
+                time_field="accepted_time",
+                time_start="",
+                time_end="",
+            ),
+        )
+
+        self.assertEqual(result["mode"], "async")
+        self.assertEqual(RequirementBoardQueryTask.objects.count(), 1)
+        mocked_start.assert_called_once()
+
+    @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._get_setting"
+    )
+    @mock.patch(
         "apps.project_manager.requirement_board.requirement_board_services._collect_prepared_items_for_task"
     )
     def test_query_task_runner_caches_prepared_items(self, mocked_collect, mocked_get_setting):

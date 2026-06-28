@@ -1939,6 +1939,35 @@ def _get_full_cache_items(context: dict[str, Any]) -> list[dict[str, Any]] | Non
     return filtered_items
 
 
+def _has_usable_full_cache(context: dict[str, Any]) -> bool:
+    """轻量判断全量缓存是否覆盖当前项目范围，供查询准备阶段快速放行。"""
+    cached = cache.get(_FULL_CACHE_KEY)
+    if not isinstance(cached, dict) or not isinstance(cached.get("items"), list):
+        _debug_log("full_cache_unavailable", cache_key=_FULL_CACHE_KEY)
+        return False
+
+    cached_project_ids = {str(item) for item in (cached.get("project_ids") or [])}
+    selected_project_ids = set(context["remote_cache_payload"]["project_ids"])
+    if selected_project_ids.issubset(cached_project_ids):
+        _debug_log(
+            "full_cache_ready",
+            cache_key=_FULL_CACHE_KEY,
+            selected_project_count=len(selected_project_ids),
+            cached_project_count=len(cached_project_ids),
+            item_count=len(cached.get("items") or []),
+            generated_at=cached.get("generated_at"),
+        )
+        return True
+
+    _debug_log(
+        "full_cache_miss_project_scope",
+        cache_key=_FULL_CACHE_KEY,
+        selected_project_ids=sorted(selected_project_ids),
+        cached_project_count=len(cached_project_ids),
+    )
+    return False
+
+
 def _paginate_items(items: list[dict[str, Any]], page_no: int, page_size: int) -> dict[str, Any]:
     safe_page_no = _parse_positive_int(page_no, 1)
     safe_page_size = min(_parse_positive_int(page_size, 20), _UPSTREAM_PAGE_SIZE)
@@ -2223,11 +2252,31 @@ def prepare_requirement_board_query(
     prepared_cache_key = _get_prepared_result_cache_key(fingerprint, user=user)
     cached = cache.get(prepared_cache_key)
     if isinstance(cached, dict) and isinstance(cached.get("items"), list):
+        _debug_log(
+            "prepared_cache_hit",
+            cache_key=prepared_cache_key,
+            fingerprint=fingerprint,
+        )
+        return {"mode": "ready", "task": None}
+
+    if _has_usable_full_cache(context):
         return {"mode": "ready", "task": None}
 
     if not _should_prepare_query_async(context):
+        _debug_log(
+            "query_prepare_ready_without_async",
+            fingerprint=fingerprint,
+            project_count=len(context["remote_cache_payload"]["project_ids"]),
+            requires_local_filter=context["requires_local_filter"],
+        )
         return {"mode": "ready", "task": None}
 
+    _debug_log(
+        "async_prepare_required",
+        fingerprint=fingerprint,
+        project_count=len(context["remote_cache_payload"]["project_ids"]),
+        requires_local_filter=context["requires_local_filter"],
+    )
     active_task = _get_active_query_task(user, fingerprint)
     if active_task is not None:
         return {

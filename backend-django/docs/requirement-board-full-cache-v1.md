@@ -40,7 +40,15 @@ apps.project_manager.requirement_board.requirement_board_services.run_scheduled_
 2. 全量预热缓存。
 3. 原有实时数据湖查询。
 
+`/query-prepare` 会先做轻量 full cache 覆盖判断。只要缓存存在且当前项目集合是缓存项目集合子集，就直接返回 `ready`，避免白天查询被后台准备任务拦住。
+
 如果用户选择了缓存快照中不存在的新项目，后端会自动回退实时查询，避免返回不完整数据。
+
+排障提示：
+
+- 当前 full cache key 为 `pm:requirement-board:full:v2:all-configured`。
+- 发布责任 PL 组字段后，旧 `v1` 缓存不会命中新查询，需要重新预热。
+- 若 `/query-prepare` 仍返回 `async`，优先检查 full cache 是否存在、是否过期、是否覆盖当前项目。
 
 责任 PL 组口径：
 
