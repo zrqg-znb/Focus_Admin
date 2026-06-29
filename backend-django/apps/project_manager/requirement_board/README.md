@@ -435,16 +435,23 @@ apps.project_manager.requirement_board.requirement_board_services.run_scheduled_
 预热后，`data` / `summary` / `export` 会按以下顺序读取：
 
 1. 用户级 prepared cache
-2. 夜间全量预热缓存
-3. 原有实时数据湖查询链路
+2. 夜间全量预热缓存的筛选结果缓存
+3. 夜间全量预热缓存的项目分片
+4. 原有实时数据湖查询链路
 
-`query-prepare` 也会先做轻量判断：如果全量缓存存在且覆盖当前所选项目，会直接返回 `ready`，让前端立刻进入 `data` 查询，不再创建后台准备任务。
+`query-prepare` 只读取全量缓存 meta key 做轻量判断：如果全量缓存存在且覆盖当前所选项目，会直接返回 `ready`，让前端立刻进入 `data` 查询，不再创建后台准备任务，也不会反序列化需求明细大对象。
+
+全量缓存现在拆为三层：
+
+- meta key：`pm:requirement-board:full:v3:meta`，只存项目覆盖范围、生成时间、需求总数等元信息。
+- project shard key：`pm:requirement-board:full:v3:project:{project_id}`，按项目保存需求明细。
+- filtered key：`pm:requirement-board:full-filtered:v1:{fingerprint}`，保存某个筛选条件过滤后的结果，供分页、汇总和导出复用。
 
 排障要点：
 
-- 生产部署责任 PL 组版本后，全量缓存键已升级为 `pm:requirement-board:full:v2:all-configured`，必须重新执行一次全量预热。
+- 生产部署该查询提速版本后，全量缓存键已升级为 `pm:requirement-board:full:v3:meta`，必须重新执行一次全量预热。
 - 如果预热后仍慢，先确认 `/query-prepare` 是否返回 `ready`；若仍返回 `async`，通常说明 full cache 不存在、版本不匹配、过期，或当前项目不在缓存快照的 `project_ids` 中。
-- 打开 `REQUIREMENT_BOARD_DEBUG_LOG` 后，可关注 `full_cache_ready`、`full_cache_miss_project_scope`、`async_prepare_required` 日志。
+- 打开 `REQUIREMENT_BOARD_DEBUG_LOG` 后，可关注 `full_cache_meta_hit`、`full_cache_meta_scope_miss`、`full_filter_cache_hit`、`full_filter_cache_build`、`fallback_realtime_query` 日志。
 
 推荐在系统定时任务页面配置：
 
@@ -465,6 +472,8 @@ apps.project_manager.requirement_board.requirement_board_services.run_scheduled_
 | `REQUIREMENT_BOARD_FULL_CACHE_PAGE_SIZE` | `500` | 预热扫描页大小，仍受上游最大页大小限制 |
 | `REQUIREMENT_BOARD_FULL_CACHE_MAX_PAGES` | `200` | 预热最多扫描页数 |
 | `REQUIREMENT_BOARD_FULL_CACHE_LOCK_TTL_SECONDS` | `1800` | 防并发刷新锁时长 |
+| `REQUIREMENT_BOARD_FULL_FILTER_CACHE_TTL_SECONDS` | `1800` | 全量快照筛选结果缓存有效期 |
+| `REQUIREMENT_BOARD_FULL_FILTER_CACHE_LOCK_TTL_SECONDS` | `60` | 防并发构建同一筛选结果锁时长 |
 
 ---
 

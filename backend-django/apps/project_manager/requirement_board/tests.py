@@ -264,8 +264,8 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
         cache.set(
             requirement_board_services._FULL_CACHE_KEY,
             {
-                "items": [],
                 "project_ids": [str(project.id) for project in projects],
+                "item_count": 0,
                 "generated_at": "2026-03-01T00:00:00+08:00",
             },
             300,
@@ -316,8 +316,8 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
         cache.set(
             requirement_board_services._FULL_CACHE_KEY,
             {
-                "items": [],
                 "project_ids": [str(cached_project.id)],
+                "item_count": 0,
                 "generated_at": "2026-03-01T00:00:00+08:00",
             },
             300,
@@ -539,7 +539,15 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
             set(cached["project_ids"]),
             {str(project_a.id), str(project_b.id)},
         )
-        self.assertEqual(len(cached["items"]), 2)
+        self.assertEqual(cached["item_count"], 2)
+        project_a_cache = cache.get(
+            requirement_board_services._full_cache_project_key(str(project_a.id))
+        )
+        project_b_cache = cache.get(
+            requirement_board_services._full_cache_project_key(str(project_b.id))
+        )
+        self.assertEqual(len(project_a_cache["items"]), 1)
+        self.assertEqual(len(project_b_cache["items"]), 1)
 
     @mock.patch(
         "apps.project_manager.requirement_board.requirement_board_services._fetch_raw_page"
@@ -613,6 +621,87 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
 
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["items"][0]["requirement_id"], "REQ-1")
+        mocked_fetch.assert_not_called()
+
+    @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._fetch_raw_page"
+    )
+    def test_full_cache_filtered_result_is_reused_by_page_and_summary(self, mocked_fetch):
+        project = self._create_project(
+            name="Alpha",
+            code="alpha",
+            design_id="design-a",
+            sub_teams=["Team-A"],
+        )
+        mocked_fetch.return_value = self._build_raw_page(
+            [
+                self._build_raw_requirement(
+                    design_id="design-a",
+                    requirement_id="REQ-1",
+                    team="Team-A",
+                    status="In-Progress",
+                    develop_owner="dev-a",
+                ),
+                self._build_raw_requirement(
+                    design_id="design-a",
+                    requirement_id="REQ-2",
+                    team="Team-A",
+                    status="Accepted",
+                    develop_owner="dev-b",
+                    accepted_time="2026-03-09 18:00:00",
+                ),
+            ]
+        )
+        requirement_board_services.refresh_requirement_board_full_cache()
+        mocked_fetch.reset_mock()
+        query = RequirementBoardDataQuerySchema(
+            project_ids=[str(project.id)],
+            sub_teams=["Team-A"],
+            categories=["AR"],
+            schedule_state=["P"],
+            verification_policies=[],
+            develop_user=[],
+            test_user=[],
+            time_field="accepted_time",
+            time_start="",
+            time_end="",
+            page_no=1,
+            page_size=1,
+        )
+
+        first_result = requirement_board_services.get_requirement_board_page(
+            query,
+            user=self.user,
+        )
+
+        self.assertEqual(first_result["total"], 1)
+        with mock.patch(
+            "apps.project_manager.requirement_board.requirement_board_services._load_full_cache_candidate_items",
+            wraps=requirement_board_services._load_full_cache_candidate_items,
+        ) as mocked_load_candidates:
+            second_result = requirement_board_services.get_requirement_board_page(
+                query,
+                user=self.user,
+            )
+            summary = requirement_board_services.get_requirement_board_summary(
+                RequirementBoardSummaryQuerySchema(
+                    project_ids=[str(project.id)],
+                    sub_teams=["Team-A"],
+                    categories=["AR"],
+                    schedule_state=["P"],
+                    verification_policies=[],
+                    develop_user=[],
+                    test_user=[],
+                    time_field="accepted_time",
+                    time_start="",
+                    time_end="",
+                ),
+                user=self.user,
+            )
+
+        self.assertEqual(second_result["total"], 1)
+        self.assertEqual(summary["total_count"], 1)
+        mocked_load_candidates.assert_not_called()
         mocked_fetch.assert_not_called()
 
     @mock.patch(

@@ -37,18 +37,26 @@ apps.project_manager.requirement_board.requirement_board_services.run_scheduled_
 查询读取顺序：
 
 1. 用户级 prepared cache。
-2. 全量预热缓存。
-3. 原有实时数据湖查询。
+2. 全量预热缓存筛选结果。
+3. 全量预热缓存项目分片。
+4. 原有实时数据湖查询。
 
-`/query-prepare` 会先做轻量 full cache 覆盖判断。只要缓存存在且当前项目集合是缓存项目集合子集，就直接返回 `ready`，避免白天查询被后台准备任务拦住。
+`/query-prepare` 会先做轻量 full cache 覆盖判断。只要 meta key 存在且当前项目集合是缓存项目集合子集，就直接返回 `ready`，避免白天查询被后台准备任务拦住。该阶段不会读取需求明细，也不会扫描缓存。
+
+全量缓存拆为三层：
+
+- `pm:requirement-board:full:v3:meta`：只保存项目覆盖范围、生成时间、需求总数等元信息。
+- `pm:requirement-board:full:v3:project:{project_id}`：按项目保存需求明细分片。
+- `pm:requirement-board:full-filtered:v1:{fingerprint}`：保存某个筛选条件过滤后的结果，分页、汇总和导出复用同一份结果。
 
 如果用户选择了缓存快照中不存在的新项目，后端会自动回退实时查询，避免返回不完整数据。
 
 排障提示：
 
-- 当前 full cache key 为 `pm:requirement-board:full:v2:all-configured`。
-- 发布责任 PL 组字段后，旧 `v1` 缓存不会命中新查询，需要重新预热。
-- 若 `/query-prepare` 仍返回 `async`，优先检查 full cache 是否存在、是否过期、是否覆盖当前项目。
+- 当前 full cache meta key 为 `pm:requirement-board:full:v3:meta`。
+- 发布该查询提速版本后，旧 `v2` 缓存不会命中新查询，需要重新预热。
+- 若 `/query-prepare` 仍返回 `async`，优先检查 full cache meta 是否存在、是否过期、是否覆盖当前项目。
+- 若 `/query-prepare` 已返回 `ready` 但筛选仍慢，打开 `REQUIREMENT_BOARD_DEBUG_LOG` 后关注 `full_filter_cache_hit`、`full_filter_cache_build`、`fallback_realtime_query`。
 
 责任 PL 组口径：
 
@@ -65,6 +73,8 @@ apps.project_manager.requirement_board.requirement_board_services.run_scheduled_
 | `REQUIREMENT_BOARD_FULL_CACHE_PAGE_SIZE` | `500` | 预热扫描页大小 |
 | `REQUIREMENT_BOARD_FULL_CACHE_MAX_PAGES` | `200` | 预热最多扫描页数 |
 | `REQUIREMENT_BOARD_FULL_CACHE_LOCK_TTL_SECONDS` | `1800` | 防并发刷新锁时长 |
+| `REQUIREMENT_BOARD_FULL_FILTER_CACHE_TTL_SECONDS` | `1800` | 全量快照筛选结果缓存有效期 |
+| `REQUIREMENT_BOARD_FULL_FILTER_CACHE_LOCK_TTL_SECONDS` | `60` | 防并发构建同一筛选结果锁时长 |
 
 ## 验收标准
 
