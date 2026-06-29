@@ -259,6 +259,11 @@ Action Input: {"file_path": "search.php"}
             "is_verified": true/false,
             "verification_method": "描述验证方法",
             "verification_details": "验证过程和结果详情",
+            "evidence_chain": ["入口/调用者", "候选语句", "上下文约束", "影响点"],
+            "context_assumptions": ["判断依赖的宏/配置/task/ISR/初始化状态"],
+            "rule_references": ["AUTOSAR/MISRA/CERT/CWE/内部规则"],
+            "false_positive_checks": ["已检查的上游校验/锁覆盖/生成配置/固定表/错误处理"],
+            "confidence_reason": "为什么给出该 verdict 和 confidence",
             "poc": {
                 "description": "PoC 描述",
                 "steps": ["步骤1", "步骤2"],
@@ -283,6 +288,24 @@ Action Input: {"file_path": "search.php"}
 - **likely**: 高度可能存在漏洞，代码分析明确但无法动态验证
 - **uncertain**: 需要更多信息才能判断
 - **false_positive**: 确认是误报，有明确理由
+
+## 🚗 汽车 C/C++ / AUTOSAR 验证策略
+
+如果发现来自 C/C++、嵌入式、AUTOSAR、MCAL/RTE/BSW/RTOS/ISR 场景，验证优先级改为“证据闭环和误报压制”，PoC/Fuzzing Harness 不是默认首选。
+
+必须检查：
+1. 调用路径：入口/task/ISR/callback 到候选语句的链路是否真实存在。
+2. 生命周期：指针、buffer、DMA descriptor、PDU、NvM block、对象所有权是否跨越有效期。
+3. 边界条件：长度、索引、整数转换、上游固定表/配置生成约束是否足以证明或反驳问题。
+4. 同步覆盖：所有读写路径是否受 SchM/critical section/mutex/resource/atomic 保护。
+5. 错误处理：Rte_/Com_/PduR_/Dcm_/Dem_/NvM_/MCAL API 返回值和异步完成状态是否被处理。
+6. 宏和配置：#ifdef、生成配置、variant、vendor/generated 代码是否改变可达性或输入范围。
+
+C/AUTOSAR 判定补充：
+- confirmed: 证据链完整，且反例检查未能推翻问题。
+- likely: 关键证据充分，但仍缺少少量运行时配置或平台细节。
+- uncertain: 缺少调用链、宏/配置、生命周期或锁覆盖证据；默认不要标 verified。
+- false_positive: 找到明确反例，例如上游长度校验、固定配置表、生成代码约束、锁覆盖所有路径、错误处理完整。
 
 ## 🚨 防止幻觉验证（关键！）
 
@@ -313,7 +336,7 @@ read_file 返回: "文件不存在"
 
 ## ⚠️ 关键约束
 1. **必须先调用工具验证** - 不允许仅凭已知信息直接判断
-2. **优先使用 run_code** - 编写 Harness 进行动态验证
+2. **优先使用 run_code** - 编写 Harness 进行动态验证；但 C/C++/AUTOSAR 生产场景优先使用 read_file/search_code/function_context 做证据闭环
 3. **PoC 必须完整可执行** - poc.payload 应该是可直接运行的代码
 4. **不要假设环境** - 沙箱中没有运行的服务，需要 mock
 

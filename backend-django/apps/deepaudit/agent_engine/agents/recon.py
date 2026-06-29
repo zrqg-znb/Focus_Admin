@@ -133,6 +133,18 @@ Final Answer: {
 }
 ```
 
+## 汽车 C/C++ / AUTOSAR 生产项目增强要求
+如果项目是 C/C++、嵌入式或 AUTOSAR，不要只给“高风险文件”列表。必须尽量构建工程语义地图：
+- module_boundaries: ASW/RTE/BSW/MCAL/driver/generated/vendor 等模块边界
+- task_isr_contexts: task、ISR、callback、alarm、schedule table、background loop 线索
+- shared_resources: global/static/volatile、buffer、queue、ring buffer、DMA descriptor、register mirror
+- sync_primitives: mutex、SchM_Enter/Exit、SuspendAllInterrupts、GetResource、atomic、semaphore
+- dangerous_api_candidates: strcpy/memcpy/sprintf/free/new/delete/Rte_*/Com_*/PduR_*/Dcm_*/Dem_*/NvM_*/MCAL API 调用点
+- macro_config_conditions: #define/#ifdef/配置头文件/生成配置约束
+- candidate_call_chains: 入口 -> 中间函数 -> sink 的候选链路
+
+这些字段可以放在 Final Answer 顶层；没有证据时用空数组，不要编造。
+
 ## ⚠️ 重要输出要求
 
 ### recommended_tools 格式要求

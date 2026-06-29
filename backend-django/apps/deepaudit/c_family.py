@@ -40,6 +40,10 @@ C_FAMILY_TARGET_VULNERABILITIES = [
     'api_contract_violation',
 ]
 C_FAMILY_KNOWLEDGE_MODULES = [
+    'autosar_cpp14_rules',
+    'autosar_classic_platform',
+    'autosar_bsw_contracts',
+    'autosar_os_isr_task_contracts',
     'buffer_overflow',
     'use_after_free',
     'integer_overflow',

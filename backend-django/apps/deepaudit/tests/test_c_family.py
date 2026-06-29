@@ -11,9 +11,35 @@ from apps.deepaudit.c_family import (
     collect_candidate_units,
     score_candidate_chunk,
 )
+from apps.deepaudit.rag.splitter import CodeSplitter
 
 
 class CFamilyCandidateTuningTestCase(SimpleTestCase):
+    def test_code_splitter_adds_autosar_semantic_metadata(self) -> None:
+        splitter = CodeSplitter(use_tree_sitter=False)
+        chunks = splitter.split_file(
+            (
+                '#include "Com.h"\n'
+                '#define FEATURE_DIAG 1\n'
+                'static volatile uint8 gSignalBuffer[8];\n'
+                'void Dcm_RxCallback(void) {\n'
+                '    SchM_Enter_Com_EXCLUSIVE_AREA_0();\n'
+                '    Com_SendSignal(1u, gSignalBuffer);\n'
+                '    SchM_Exit_Com_EXCLUSIVE_AREA_0();\n'
+                '}\n'
+            ),
+            'bsw/com/DcmAdapter.c',
+            language='c',
+        )
+
+        self.assertTrue(chunks)
+        metadata = chunks[0].metadata
+        self.assertIn('bsw', metadata.get('module_layers', []))
+        self.assertTrue(any('Com_SendSignal' in item for item in metadata.get('autosar_api_calls', [])))
+        self.assertTrue(metadata.get('macro_config_conditions'))
+        self.assertTrue(metadata.get('sync_primitives'))
+        self.assertTrue(metadata.get('shared_resources'))
+
     def test_collect_candidate_units_deprioritizes_repeated_portable_layers(self) -> None:
         files = [
             {

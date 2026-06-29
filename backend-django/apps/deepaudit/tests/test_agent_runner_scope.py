@@ -196,6 +196,52 @@ class AgentRunnerScopeTestCase(SimpleTestCase):
         self.assertEqual(normalized["poc"]["verdict"], "false_positive")
         self.assertEqual(normalized["poc"]["validation"]["is_vulnerable"], False)
 
+    def test_normalize_finding_payload_downgrades_autosar_without_evidence_chain(self) -> None:
+        normalized = _normalize_finding_payload(
+            {
+                "title": "AUTOSAR unsafe copy without evidence",
+                "vulnerability_type": "buffer_overflow",
+                "severity": "high",
+                "file_path": "src/module/main.c",
+                "line_start": 3,
+                "verdict": "confirmed",
+                "confidence": 0.93,
+                "rule_references": ["AUTOSAR C++14", "MISRA C"],
+                "code_snippet": "strcpy(dst, src);",
+            }
+        )
+
+        assert normalized is not None
+        self.assertFalse(normalized["is_verified"])
+        self.assertLessEqual(normalized["ai_confidence"], 0.65)
+        self.assertEqual(normalized["poc"]["verdict"], "uncertain")
+        self.assertEqual(normalized["poc"]["evidence_chain"], [])
+        self.assertEqual(normalized["poc"]["rule_references"], ["AUTOSAR C++14", "MISRA C"])
+
+    def test_normalize_finding_payload_preserves_autosar_with_evidence_chain(self) -> None:
+        normalized = _normalize_finding_payload(
+            {
+                "title": "Confirmed AUTOSAR API contract violation",
+                "vulnerability_type": "api_contract_violation",
+                "severity": "high",
+                "file_path": "src/module/main.c",
+                "line_start": 8,
+                "verdict": "confirmed",
+                "confidence": 0.88,
+                "rule_references": ["autosar_bsw_contracts"],
+                "evidence_chain": ["TaskA", "Com_SendSignal", "return value ignored", "stale signal state"],
+                "context_assumptions": ["COM initialized", "Task context"],
+                "false_positive_checks": ["No generated wrapper handles return value"],
+                "confidence_reason": "调用链、返回值缺失和反例检查完整。",
+            }
+        )
+
+        assert normalized is not None
+        self.assertTrue(normalized["is_verified"])
+        self.assertEqual(normalized["ai_confidence"], 0.88)
+        self.assertEqual(normalized["poc"]["verdict"], "confirmed")
+        self.assertEqual(normalized["poc"]["evidence_chain"][1], "Com_SendSignal")
+
     def test_run_orchestrator_agent_async_normalizes_input_in_worker_thread(self) -> None:
         result = SimpleNamespace(
             success=True,

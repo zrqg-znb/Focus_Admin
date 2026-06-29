@@ -258,6 +258,28 @@ Action Input: {"target_path": ".", "rules": "auto"}
 3. **没有工具调用的分析无效** - 不允许仅凭推测直接报告漏洞
 4. **先 Action 后 Final Answer** - 必须先执行工具，获取 Observation，再输出最终结论
 
+## 🚗 汽车 C/C++ / AUTOSAR 生产审计模式
+
+当项目语言包含 C/C++、嵌入式、AUTOSAR、MCAL、RTE、BSW、driver、RTOS、ISR 或 scenario_profile.legacy_c_family=true 时，以上“外部工具优先”降级为候选来源之一，不能作为默认主驾驶。
+
+此模式必须按四阶段推进：
+1. inventory/recon: 使用 search_code、rag_query、list_files、read_file、function_context 建立工程语义地图，识别模块边界、task/ISR、共享资源、锁/临界区、危险 API、RTE/BSW/MCAL 调用、宏/配置条件。
+2. candidate: 召回候选点，优先搜索 strcpy/memcpy/sprintf/free/new/delete、Rte_/Com_/PduR_/Dcm_/Dem_/NvM_/SchM_/Det_/Mcu_/Can_ 等 API、volatile/global/static、ISR/task、critical section。
+3. analysis: 对候选点做上下文根因分析，必须读取相关文件和调用者/被调者，确认来源、sink、长度/生命周期/锁/错误路径。
+4. verification: 先做证据闭环和误报压制；只有具备入口、调用链、上下文约束、反例检查时才标记 confirmed/likely。
+
+生产模式禁止事项：
+- 不要把 semgrep/cppcheck/clang-tidy 的单条命中直接作为漏洞报告。
+- 不要在没有调用链、宏/配置、生命周期或锁覆盖证据时输出 confirmed。
+- 不要把生成代码、vendor 代码或配置约束代码按普通业务输入推断。
+
+Finding 必须包含以下证据字段；缺失关键字段时 verdict 应为 uncertain，confidence 不应高于 0.65：
+- evidence_chain: ["入口/调用者", "候选语句", "边界或生命周期证据", "影响点"]
+- context_assumptions: 当前判断依赖的宏、配置、初始化状态、task/ISR 上下文
+- rule_references: AUTOSAR/MISRA/CERT/CWE 或内部规则引用
+- false_positive_checks: 已检查的反例，例如上游长度校验、固定表、生成配置、锁覆盖、返回值处理
+- confidence_reason: 为什么是 confirmed/likely/uncertain/false_positive
+
 错误示例（禁止）：
 ```
 Thought: 根据项目信息，可能存在安全问题
@@ -486,6 +508,12 @@ class AnalysisAgent(BaseAgent):
             task_context = str(task_context or "").strip()
         scenario_profile = dict(config.get("scenario_profile") or {})
         inventory_mode = is_inventory_profile(scenario_profile)
+        language_profile = dict(config.get("language_profile") or project_info.get("language_profile") or {})
+        production_c_family_mode = bool(
+            scenario_profile.get("legacy_c_family")
+            or language_profile.get("is_c_family_dominant")
+            or any(str(lang).lower() in {"c", "cpp"} for lang in (project_info.get("languages") or []))
+        )
         if inventory_mode:
             self.config.system_prompt = INVENTORY_ANALYSIS_SYSTEM_PROMPT
         scenario_prompt_block = build_scenario_prompt_block(scenario_profile, self.name.lower())
@@ -624,9 +652,13 @@ Final Answer 必须是 JSON，并包含 inventory_report 对象。固定骨架�
 {task_context or task or '进行全面的安全漏洞分析，发现代码中的安全问题。'}
 
 ## ⚠️ 分析策略要求
-1. **首先**：使用 read_file 读取上面列出的高风险文件
+{'''当前处于汽车 C/C++ / AUTOSAR 生产审计模式。请按 inventory/recon -> candidate -> analysis -> verification 的证据闭环推进。
+1. 首先使用 search_code / rag_query / list_files 定位工程语义地图：模块边界、task/ISR、共享资源、锁/临界区、危险 API、RTE/BSW/MCAL 调用和宏/配置条件。
+2. 然后使用 read_file / function_context 读取候选点上下文、调用者/被调者和反例证据。
+3. semgrep/cppcheck/clang-tidy/gitleaks 只能作为候选来源；不要默认全项目扫描，不要把工具命中直接报告为 confirmed。
+4. 输出 finding 时必须带 evidence_chain、context_assumptions、rule_references、false_positive_checks、confidence_reason；证据不足时 verdict=uncertain。''' if production_c_family_mode else '''1. **首先**：使用 read_file 读取上面列出的高风险文件
 2. **然后**：分析这些文件中的安全问题
-3. **最后**：如果需要，使用 smart_scan 或其他工具扩展分析
+3. **最后**：如果需要，使用 smart_scan 或其他工具扩展分析'''}
 
 **禁止**：不要跳过高风险区域直接做全局扫描
 
@@ -636,7 +668,7 @@ Final Answer 必须是 JSON，并包含 inventory_report 对象。固定骨架�
 ## 可用工具
 {self.get_tools_description()}
 
-请开始你的安全分析。首先读取高风险区域的文件，然后**立即**分析其中的安全问题（输出 Action）。"""
+请开始你的安全分析。{('先召回工程语义和候选点，再读取上下文形成证据链（输出 Action）。' if production_c_family_mode else '首先读取高风险区域的文件，然后**立即**分析其中的安全问题（输出 Action）。')}"""
         
         # 🔥 记录工作开始
         self.record_work("开始代码梳理" if inventory_mode else "开始安全漏洞分析")
@@ -726,7 +758,7 @@ Final Answer: {inventory_schema}"""
                         retry_prompt = f"""收到空响应。请根据以下格式输出你的思考和行动：
 
 Thought: [你对当前安全分析情况的思考]
-Action: [工具名称，如 read_file, search_code, pattern_match, semgrep_scan]
+Action: [工具名称，如 read_file, search_code, rag_query, function_context, pattern_match{', semgrep_scan' if not production_c_family_mode else ''}]
 Action Input: {{"参数名": "参数值"}}
 
 可用工具: {', '.join(self.tools.keys())}
@@ -887,7 +919,7 @@ Final Answer: {{"findings": [...], "summary": "..."}}"""
 
 Final Answer:"""
                 else:
-                    summary_prompt = """分析阶段已结束。请立即输出 Final Answer，总结你发现的所有安全问题。
+                    summary_prompt = f"""分析阶段已结束。请立即输出 Final Answer，总结你发现的所有安全问题。
 
 即使没有发现严重漏洞，也请总结你的分析过程和观察到的潜在风险点。
 
@@ -903,7 +935,13 @@ Final Answer:"""
             "file_path": "文件路径",
             "line_start": 行号,
             "code_snippet": "相关代码片段",
-            "suggestion": "修复建议"
+            "suggestion": "修复建议"{''',
+            "verdict": "confirmed|likely|uncertain|false_positive",
+            "evidence_chain": ["入口/调用者", "候选语句", "边界/生命周期/锁证据", "影响点"],
+            "context_assumptions": ["宏/配置/task/ISR/初始化状态等判断前提"],
+            "rule_references": ["AUTOSAR/MISRA/CERT/CWE/内部规则"],
+            "false_positive_checks": ["已检查的反例证据"],
+            "confidence_reason": "置信度理由"''' if production_c_family_mode else ''}
         }
     ],
     "summary": "分析总结"

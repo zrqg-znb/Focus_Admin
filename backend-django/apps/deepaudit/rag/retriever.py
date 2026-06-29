@@ -6,6 +6,7 @@
 import re
 import asyncio
 import logging
+import json
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 
@@ -38,7 +39,7 @@ class RetrievalResult:
     metadata: Dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "chunk_id": self.chunk_id,
             "content": self.content,
             "file_path": self.file_path,
@@ -52,6 +53,20 @@ class RetrievalResult:
             "signature": self.signature,
             "security_indicators": self.security_indicators,
         }
+        for key in (
+            "module_layers",
+            "autosar_api_calls",
+            "macro_config_conditions",
+            "task_isr_contexts",
+            "shared_resources",
+            "sync_primitives",
+            "call_graph_callees",
+            "symbol_definitions",
+            "include_dependencies",
+        ):
+            if self.metadata.get(key):
+                result[key] = self.metadata.get(key)
+        return result
     
     def to_context_string(self, include_metadata: bool = True) -> str:
         """转换为上下文字符串（用于 LLM 输入）"""
@@ -65,11 +80,42 @@ class RetrievalResult:
                 header += f"\n{self.chunk_type.title()}: {self.name}"
             if self.parent_name:
                 header += f" in {self.parent_name}"
+            semantic_parts = []
+            for key, label in (
+                ("module_layers", "Module layers"),
+                ("autosar_api_calls", "AUTOSAR APIs"),
+                ("task_isr_contexts", "Task/ISR"),
+                ("shared_resources", "Shared resources"),
+                ("sync_primitives", "Sync primitives"),
+                ("macro_config_conditions", "Macro/config"),
+            ):
+                values = self.metadata.get(key)
+                if values:
+                    value_text = ", ".join(str(item) for item in values[:8]) if isinstance(values, list) else str(values)
+                    semantic_parts.append(f"{label}: {value_text}")
+            if semantic_parts:
+                header += "\n" + "\n".join(semantic_parts)
             parts.append(header)
         
         parts.append(f"```{self.language}\n{self.content}\n```")
         
         return "\n".join(parts)
+
+
+def _decode_metadata_value(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text or text[0] not in "[{":
+        return value
+    try:
+        return json.loads(text)
+    except Exception:
+        return value
+
+
+def _decode_metadata(meta: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: _decode_metadata_value(value) for key, value in (meta or {}).items()}
 
 
 class CodeRetriever:
@@ -288,6 +334,7 @@ class CodeRetriever:
             raw_results["metadatas"],
             raw_results["distances"],
         )):
+            meta = _decode_metadata(meta or {})
             # 将距离转换为相似度分数 (余弦距离)
             score = 1 - dist
             
@@ -298,7 +345,6 @@ class CodeRetriever:
             security_indicators = meta.get("security_indicators", [])
             if isinstance(security_indicators, str):
                 try:
-                    import json
                     security_indicators = json.loads(security_indicators)
                 except:
                     security_indicators = []
@@ -357,6 +403,7 @@ class CodeRetriever:
             raw_results["metadatas"],
             raw_results["distances"],
         ):
+            meta = _decode_metadata(meta or {})
             result = RetrievalResult(
                 chunk_id=id_,
                 content=doc,
@@ -585,4 +632,3 @@ class CodeRetriever:
             total_tokens += estimated_tokens
         
         return "\n\n".join(parts)
-

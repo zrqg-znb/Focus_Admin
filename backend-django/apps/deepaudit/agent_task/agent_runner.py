@@ -94,6 +94,30 @@ VULNERABILITY_TYPE_ALIASES = {
     "hardcoded_secrets": "hardcoded_secret",
     "hardcoded_credentials": "hardcoded_secret",
 }
+PRODUCTION_EVIDENCE_KEYS = (
+    "evidence_chain",
+    "context_assumptions",
+    "rule_references",
+    "false_positive_checks",
+    "confidence_reason",
+)
+AUTOMOTIVE_C_HINTS = {
+    "autosar",
+    "autosar_c",
+    "autosar_cpp14",
+    "misra",
+    "cert",
+    "mcal",
+    "rte",
+    "bsw",
+    "isr",
+    "task",
+    "interrupt",
+    "embedded",
+    "c_family",
+    "cpp",
+    "c",
+}
 
 
 def _agent_finding_model():
@@ -598,6 +622,60 @@ def _normalize_finding_payload(item: Dict[str, Any]) -> Dict[str, Any] | None:
     except (TypeError, ValueError):
         confidence = 0.8
 
+    def _list_or_empty(value: Any) -> list[Any]:
+        if isinstance(value, list):
+            return [entry for entry in value if str(entry or "").strip()]
+        if isinstance(value, tuple):
+            return [entry for entry in value if str(entry or "").strip()]
+        text = str(value or "").strip()
+        return [text] if text else []
+
+    evidence_payload: Dict[str, Any] = {}
+    for evidence_key in PRODUCTION_EVIDENCE_KEYS:
+        if evidence_key == "confidence_reason":
+            evidence_payload[evidence_key] = _first_text(
+                item.get(evidence_key),
+                validation_payload.get(evidence_key),
+                poc_payload.get(evidence_key),
+            )
+        else:
+            evidence_payload[evidence_key] = _list_or_empty(
+                item.get(evidence_key)
+                or validation_payload.get(evidence_key)
+                or poc_payload.get(evidence_key)
+            )
+
+    raw_tags = []
+    for value in (
+        item.get("tags"),
+        item.get("rule_references"),
+        item.get("context_assumptions"),
+        poc_payload.get("rule_references"),
+        poc_payload.get("context_assumptions"),
+    ):
+        raw_tags.extend(_list_or_empty(value))
+    raw_tags.extend(
+        [
+            vulnerability_type,
+            str(item.get("language") or ""),
+            str(item.get("standard") or ""),
+        ]
+    )
+    automotive_c_evidence_required = any(
+        hint in str(tag or "").strip().lower()
+        for tag in raw_tags
+        for hint in AUTOMOTIVE_C_HINTS
+    )
+    has_production_evidence = bool(
+        evidence_payload["evidence_chain"]
+        and evidence_payload["false_positive_checks"]
+        and evidence_payload["confidence_reason"]
+    )
+    if automotive_c_evidence_required and not has_production_evidence:
+        if verdict in {"confirmed", "likely"}:
+            verdict = "uncertain"
+        confidence = min(confidence, 0.65)
+
     code_snippet = _first_text(
         item.get("code_snippet"),
         context,
@@ -620,6 +698,8 @@ def _normalize_finding_payload(item: Dict[str, Any]) -> Dict[str, Any] | None:
         is_verified = True
     if not is_verified and validation_is_vulnerable is True:
         is_verified = True
+    if automotive_c_evidence_required and not has_production_evidence:
+        is_verified = False
 
     verification_method = _first_text(
         item.get("verification_method"),
@@ -667,6 +747,7 @@ def _normalize_finding_payload(item: Dict[str, Any]) -> Dict[str, Any] | None:
             "recommendation": recommendation,
             "verification_method": verification_method,
             "verification_details": verification_details,
+            **evidence_payload,
         },
     }
 

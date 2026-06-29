@@ -339,6 +339,26 @@ class RAGQueryTool(_KeywordFallbackMixin, AgentTool):
                     output_parts.append(f"名称: {result.name}")
                 if result.security_indicators:
                     output_parts.append(f"安全指标: {', '.join(result.security_indicators)}")
+                semantic_lines = []
+                for key, label in (
+                    ("module_layers", "模块层级"),
+                    ("autosar_api_calls", "AUTOSAR/BSW/MCAL API"),
+                    ("task_isr_contexts", "Task/ISR 上下文"),
+                    ("shared_resources", "共享资源"),
+                    ("sync_primitives", "同步/临界区"),
+                    ("macro_config_conditions", "宏/配置条件"),
+                    ("call_graph_callees", "被调函数"),
+                    ("symbol_definitions", "符号定义"),
+                    ("include_dependencies", "Include 依赖"),
+                ):
+                    values = result.metadata.get(key)
+                    if isinstance(values, list) and values:
+                        semantic_lines.append(f"{label}: {', '.join(str(item) for item in values[:8])}")
+                    elif values:
+                        semantic_lines.append(f"{label}: {values}")
+                if semantic_lines:
+                    output_parts.append("工程语义线索:")
+                    output_parts.extend(f"- {line}" for line in semantic_lines)
                 output_parts.append(f"代码:\n```{result.language}\n{result.content}\n```")
             
             return ToolResult(

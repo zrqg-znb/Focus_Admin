@@ -435,6 +435,45 @@ class CodeSplitter:
             (r"\bprintf\s*\(\s*[^\"']", "format_string"),
         ],
     }
+    C_FAMILY_SEMANTIC_PATTERNS = {
+        "autosar_api_calls": [
+            r"\bRte_\w+\s*\(",
+            r"\bCom_\w+\s*\(",
+            r"\bPduR_\w+\s*\(",
+            r"\bDcm_\w+\s*\(",
+            r"\bDem_\w+\s*\(",
+            r"\bNvM_\w+\s*\(",
+            r"\bSchM_\w+\s*\(",
+            r"\bDet_\w+\s*\(",
+            r"\b(?:Mcu|Can|Adc|Dio|Port|Spi|Icu|Pwm|Wdg)_\w+\s*\(",
+        ],
+        "macro_config_conditions": [
+            r"^\s*#\s*(?:define|if|ifdef|ifndef|elif|endif)\b.*$",
+        ],
+        "task_isr_contexts": [
+            r"\bISR\b",
+            r"\b(?:IRQ|Irq|Interrupt|Handler)\w*\b",
+            r"\b(?:Task|Runnable|Callback)\w*\b",
+            r"\b(?:xTaskCreate|TaskHandle_t|Alarm|ScheduleTable)\b",
+        ],
+        "shared_resources": [
+            r"\b(?:static|volatile)\b",
+            r"\b(?:global|shared|buffer|queue|ring|fifo|dma|descriptor|pdu)\w*\b",
+        ],
+        "sync_primitives": [
+            r"\b(?:mutex|lock|unlock|semaphore|atomic)\w*\b",
+            r"\b(?:SchM_Enter|SchM_Exit|SuspendAllInterrupts|ResumeAllInterrupts|GetResource|ReleaseResource)\w*\b",
+            r"\b(?:taskENTER_CRITICAL|taskEXIT_CRITICAL)\w*\b",
+        ],
+    }
+    C_FAMILY_MODULE_LAYER_PATTERNS = (
+        (re.compile(r"(^|/)(rte|asw|swc|application)(/|$)", re.IGNORECASE), "asw_rte"),
+        (re.compile(r"(^|/)(bsw|services|service|ecum|com|pdur|dcm|dem|nvm|det)(/|$)", re.IGNORECASE), "bsw"),
+        (re.compile(r"(^|/)(mcal|drivers?|hal|can|dio|adc|mcu|spi|port|pwm|icu|wdg)(/|$)", re.IGNORECASE), "mcal_driver"),
+        (re.compile(r"(^|/)(os|rtos|kernel|scheduler|tasks?)(/|$)", re.IGNORECASE), "os_rtos"),
+        (re.compile(r"(^|/)(generated|gen|cfg|config|configurations?)(/|$)", re.IGNORECASE), "generated_config"),
+        (re.compile(r"(^|/)(vendor|thirdparty|third_party|external)(/|$)", re.IGNORECASE), "vendor_external"),
+    )
     
     def __init__(
         self,
@@ -819,6 +858,11 @@ class CodeSplitter:
         """使用语义分析增强代码块"""
         # 提取导入
         imports = self._extract_imports(full_content, language)
+        file_level_c_metadata = (
+            self._extract_c_family_file_semantics(full_content)
+            if language in {"c", "cpp"}
+            else {}
+        )
         
         for chunk in chunks:
             # 添加相关导入
@@ -829,6 +873,10 @@ class CodeSplitter:
             
             # 提取定义
             chunk.definitions = self._extract_definitions(chunk.content, language)
+
+            if language in {"c", "cpp"}:
+                chunk.metadata.update(file_level_c_metadata)
+                chunk.metadata.update(self._extract_c_family_semantic_index(chunk))
     
     def _extract_imports(self, content: str, language: str) -> List[str]:
         """提取导入语句"""
@@ -928,3 +976,55 @@ class CodeSplitter:
             definitions.extend(matches)
         
         return list(set(definitions))[:20]
+
+    def _extract_c_family_file_semantics(self, content: str) -> Dict[str, Any]:
+        """Extract file-scope C/C++ metadata that may sit outside function chunks."""
+        metadata: Dict[str, Any] = {}
+        macros = re.findall(r"^\s*#\s*(?:define|if|ifdef|ifndef|elif|endif)\b.*$", content, re.MULTILINE)
+        if macros:
+            metadata["macro_config_conditions"] = [macro.strip()[:120] for macro in macros[:20]]
+        includes = re.findall(r'^\s*#\s*include\s*[<"]([^">]+)[">]', content, re.MULTILINE)
+        if includes:
+            metadata["include_dependencies"] = list(dict.fromkeys(includes))[:20]
+        shared = re.findall(
+            r"^\s*(?:static\s+)?(?:volatile\s+)?[\w\s\*]+?\s+(\w*(?:buffer|queue|ring|fifo|dma|descriptor|pdu|signal)\w*)\b",
+            content,
+            re.MULTILINE | re.IGNORECASE,
+        )
+        if shared:
+            metadata["shared_resources"] = list(dict.fromkeys(shared))[:20]
+        return metadata
+
+    def _extract_c_family_semantic_index(self, chunk: CodeChunk) -> Dict[str, Any]:
+        """Extract production-audit hints for embedded C/C++ and AUTOSAR projects."""
+        metadata: Dict[str, Any] = {}
+        normalized_path = chunk.file_path.replace("\\", "/")
+        module_layers: list[str] = []
+        for pattern, layer in self.C_FAMILY_MODULE_LAYER_PATTERNS:
+            if pattern.search(normalized_path):
+                module_layers.append(layer)
+        if module_layers:
+            metadata["module_layers"] = module_layers
+
+        for key, patterns in self.C_FAMILY_SEMANTIC_PATTERNS.items():
+            hits: list[str] = []
+            for pattern in patterns:
+                matches = re.findall(pattern, chunk.content, re.MULTILINE | re.IGNORECASE)
+                for match in matches:
+                    if isinstance(match, tuple):
+                        value = next((part for part in match if part), "")
+                    else:
+                        value = match
+                    value = str(value or "").strip()
+                    if value and value not in hits:
+                        hits.append(value[:120])
+            if hits:
+                metadata[key] = hits[:20]
+
+        if chunk.calls:
+            metadata["call_graph_callees"] = chunk.calls[:30]
+        if chunk.definitions:
+            metadata["symbol_definitions"] = chunk.definitions[:20]
+        if chunk.imports:
+            metadata["include_dependencies"] = chunk.imports[:20]
+        return metadata
