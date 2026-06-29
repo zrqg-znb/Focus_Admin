@@ -6,9 +6,10 @@ from ninja.errors import HttpError
 from core.role.role_model import Role
 from core.user.user_model import User
 
-from .models import EnvironmentDeviceBinding, EnvironmentQueue, TestEnvironment
+from .models import EnvironmentDeviceBinding, EnvironmentFavorite, EnvironmentQueue, EnvironmentRecord, TestEnvironment
 from .schemas import DeviceTypeIn, EnvironmentAnnouncementIn, EnvironmentIn, EnvironmentListQuery, TestDeviceIn
 from .services import (
+    auto_release_all_occupied_environments,
     create_environment,
     create_device,
     create_device_type,
@@ -250,6 +251,43 @@ class EnvironmentManagementServiceTests(TestCase):
         self.assertEqual(fuzzy_page['total'], 1)
         self.assertEqual(fuzzy_page['items'][0]['domain'], 'vehicle')
 
+    def test_favorites_are_globally_pinned_before_pagination(self):
+        favorite_id = ''
+        for index in range(25):
+            env_payload = payload(ip=f'10.10.0.{index + 1}')
+            env_payload.sort = 25 - index
+            env_data = create_environment(self.admin, env_payload)
+            if index == 24:
+                favorite_id = env_data['id']
+        EnvironmentFavorite.objects.create(environment_id=favorite_id, user=self.env_user)
+
+        page = list_environments(self.env_user, EnvironmentListQuery(page=1, pageSize=20))
+
+        self.assertEqual(page['total'], 25)
+        self.assertEqual(page['items'][0]['id'], favorite_id)
+        self.assertTrue(page['items'][0]['is_favorite'])
+
+    def test_favorite_pin_only_applies_inside_filtered_result_set(self):
+        favorite_payload = payload(ip='10.20.0.1')
+        favorite_payload.domain = 'vehicle'
+        favorite_payload.sort = 0
+        favorite_id = create_environment(self.admin, favorite_payload)['id']
+        EnvironmentFavorite.objects.create(environment_id=favorite_id, user=self.env_user)
+
+        cockpit_payload = payload(ip='10.20.0.2')
+        cockpit_payload.domain = 'cockpit'
+        cockpit_payload.sort = 1
+        cockpit_id = create_environment(self.admin, cockpit_payload)['id']
+
+        page = list_environments(
+            self.env_user,
+            EnvironmentListQuery(domains='cockpit', page=1, pageSize=20),
+        )
+
+        self.assertEqual(page['total'], 1)
+        self.assertEqual(page['items'][0]['id'], cockpit_id)
+        self.assertFalse(page['items'][0]['is_favorite'])
+
     def test_filter_options_and_device_header_filters_do_not_return_sensitive_fields(self):
         tree = create_device_type(
             self.admin,
@@ -381,3 +419,40 @@ class EnvironmentManagementServiceTests(TestCase):
         self.assertTrue(released['success'])
         env = TestEnvironment.objects.get(id=env_id)
         self.assertEqual(env.status, 'idle')
+
+    def test_auto_release_all_occupied_environments_records_and_keeps_queue(self):
+        first_id = create_environment(self.admin, payload(ip='172.16.0.1'))['id']
+        second_id = create_environment(self.admin, payload(ip='172.16.0.2'))['id']
+        idle_id = create_environment(self.admin, payload(ip='172.16.0.3'))['id']
+        occupy_environment(self.env_user, first_id)
+        occupy_environment(self.env_user, second_id)
+        waiting_user = make_user('waiting_user', 'environment_user')
+        enqueue_environment(waiting_user, first_id, 'normal')
+
+        with patch('apps.environment_management.services.send_environment_queue_notification_by_username') as mock_send:
+            with self.captureOnCommitCallbacks(execute=True):
+                result = auto_release_all_occupied_environments()
+
+        self.assertEqual(result['released_count'], 2)
+        self.assertEqual(set(result['environment_ids']), {first_id, second_id})
+        self.assertEqual(TestEnvironment.objects.get(id=first_id).status, 'idle')
+        self.assertEqual(TestEnvironment.objects.get(id=second_id).status, 'idle')
+        self.assertEqual(TestEnvironment.objects.get(id=idle_id).status, 'idle')
+        self.assertTrue(EnvironmentQueue.objects.filter(environment_id=first_id, user=waiting_user, status='waiting').exists())
+
+        records = EnvironmentRecord.objects.filter(action='auto_release').order_by('environment_id')
+        self.assertEqual(records.count(), 2)
+        self.assertTrue(all(record.operator_id is None for record in records))
+        self.assertTrue(all(record.started_at and record.ended_at for record in records))
+        self.assertTrue(all(record.duration_seconds >= 0 for record in records))
+        self.assertTrue(all('系统自动释放环境' in record.message for record in records))
+        mock_send.assert_called_once()
+        self.assertEqual(mock_send.call_args.args[0], 'waiting_user')
+
+    def test_auto_release_all_occupied_environments_is_noop_when_none_occupied(self):
+        create_environment(self.admin, payload(ip='172.16.1.1'))
+
+        result = auto_release_all_occupied_environments()
+
+        self.assertEqual(result, {'released_count': 0, 'environment_ids': []})
+        self.assertFalse(EnvironmentRecord.objects.filter(action='auto_release').exists())

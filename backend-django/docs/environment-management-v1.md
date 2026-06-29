@@ -78,6 +78,7 @@ python manage.py init_environment_management
 - 环境设备实例必须选择已有测试设备；设备资产编号和备注均非必填。
 - 用户端测试设备列只显示设备实例的 `device_name`，不显示类型路径、资产编号和备注；完整信息进入详情抽屉。
 - 用户端列表展示账号和 BOMID，不展示密码、配置情况和货架位置；配置情况和货架位置进入详情抽屉。
+- 用户端收藏置顶必须在数据库分页前全局生效，排序规则为：当前用户已收藏优先、空闲优先、环境排序值倒序、IP 正序。
 - RDP 只能在占用接口成功后由前端触发；列表和平铺卡片不再常驻 RDP 控制台按钮。
 - 队列重排必须使用不带 `select_related('user')` 的独立查询，避免 Django 抛出 `deferred and traversed using select_related` 错误。
 - 事务内锁定等待队列时必须使用独立查询，不复用展示用的 `_waiting_queues()`。
@@ -92,6 +93,7 @@ python manage.py init_environment_management
 - 环境列表和测试设备列表的筛选统一走服务端查询，前端不基于当前页做本地过滤，避免跨页数据缺失。
 - 表头筛选多选值以逗号字符串提交，例如 `domains=cockpit,vehicle`；后端统一解析、去空和去重。
 - 下拉筛选选项由 `GET /filter-options` 聚合返回，返回值不包含密码、RDP 启动地址等敏感字段。
+- 自动释放由服务函数 `auto_release_all_occupied_environments()` 提供给定时任务管理模块直接 import 调用，不暴露 HTTP API。该函数只释放占用中的环境，保留等待队列，记录 `auto_release/自动释放` 操作，操作人为空表示系统操作，并通知队首用户可手动占用。
 
 ## API
 
@@ -117,6 +119,17 @@ python manage.py init_environment_management
 - `GET /filter-options`：环境管理筛选选项，返回领域、分类、状态、收藏状态、排队状态、项目、车型、测试设备级联树、占用人、设备类型、设备启用状态等选项。
 - `GET /announcement`：读取环境操作公告。
 - `PUT /announcement`：保存环境操作公告，仅环境管理员可用。
+
+内部定时任务接口：
+
+```python
+from apps.environment_management.services import auto_release_all_occupied_environments
+
+result = auto_release_all_occupied_environments()
+# result: {"released_count": 2, "environment_ids": ["..."]}
+```
+
+该函数用于每日凌晨自动释放仍处于占用状态的环境，不取消排队、不自动转交，通知失败不会回滚释放结果。
 
 `EnvironmentIn.devices` 示例：
 

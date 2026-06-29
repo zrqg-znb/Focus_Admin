@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from urllib.parse import quote
 from django.db import transaction
-from django.db.models import Count, F, Max, Q
+from django.db.models import Count, Exists, F, Max, OuterRef, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from ninja.errors import HttpError
@@ -789,11 +789,18 @@ def list_filter_options(user: User) -> dict:
 
 def list_environments(user: User, query: EnvironmentListQuery) -> dict:
     """用户端和管理端共用列表查询；前端能力差异由角色字段和菜单权限控制。"""
+    favorite_subquery = EnvironmentFavorite.objects.filter(
+        environment_id=OuterRef('pk'),
+        user=user,
+    )
     qs = (
         TestEnvironment.objects.filter(is_deleted=False)
         .select_related('current_user')
         .prefetch_related('device_bindings__test_device__device_type__parent', 'device_bindings__device_type__parent')
-        .annotate(waiting_count=Count('queues', filter=Q(queues__status='waiting')))
+        .annotate(
+            waiting_count=Count('queues', filter=Q(queues__status='waiting')),
+            is_favorite_sort=Exists(favorite_subquery),
+        )
     )
     if query.domain:
         qs = qs.filter(domain=query.domain)
@@ -893,7 +900,9 @@ def list_environments(user: User, query: EnvironmentListQuery) -> dict:
     )
     total = qs.distinct().count()
     start = max(query.page - 1, 0) * query.pageSize
-    rows = list(qs.distinct().order_by('-sort', 'ip_address')[start : start + query.pageSize])
+    # 收藏置顶必须发生在数据库分页之前，否则生产数据量大时只会在当前页内置顶。
+    # status 目前只有 idle/occupied，按字符串升序即可实现空闲优先，再回到模块原有排序。
+    rows = list(qs.distinct().order_by('-is_favorite_sort', 'status', '-sort', 'ip_address')[start : start + query.pageSize])
     waiting_map = {
         env.id: []
         for env in rows
@@ -906,13 +915,11 @@ def list_environments(user: User, query: EnvironmentListQuery) -> dict:
         for queue in queues:
             waiting_map.setdefault(queue.environment_id, []).append(queue)
 
-    # 收藏优先是用户端核心扫描体验；分页内再稳定排序，避免打散服务端分页的性能边界。
     serialized = []
     for env in rows:
         env._favorite_user_ids = [str(user.id)] if env.id in favorite_env_ids else []
         env._prefetched_waiting_queues = waiting_map.get(env.id, [])
         serialized.append(serialize_environment(env, user))
-    serialized.sort(key=lambda item: (not item['is_favorite'], item['status'] != 'idle', item['ip_address']))
     return {'items': serialized, 'total': total, 'page': query.page, 'limit': query.pageSize}
 
 
@@ -1032,6 +1039,53 @@ def release_environment(user: User, environment_id: str) -> dict:
         _record(env, user, 'release', message, started_at=started_at, ended_at=ended_at, duration_seconds=duration)
         _notify_queue_changes_after_commit(env, before_queue_snapshot, 'release', notify_available_head=True)
     return {'success': True, 'message': message, 'environment': serialize_environment(env, user)}
+
+
+def auto_release_all_occupied_environments() -> dict:
+    """自动释放全部占用环境，供定时任务管理模块按天调用。
+
+    该函数不绑定任何 HTTP 权限，也不依赖操作人；记录中的 operator 固定为空，
+    message 使用“系统自动释放”标识来源。自动释放只处理当前 occupied 环境，
+    保留等待队列并复用现有队首通知逻辑，避免凌晨任务把用户排队意图清空。
+    """
+    released_environment_ids: list[str] = []
+    with transaction.atomic():
+        environments = list(
+            TestEnvironment.objects.select_for_update()
+            .select_related('current_user')
+            .filter(is_deleted=False, status='occupied', current_user__isnull=False)
+            .order_by('ip_address')
+        )
+        for env in environments:
+            before_queue_snapshot = _queue_notification_snapshot(env.id)
+            started_at = env.occupied_at
+            ended_at = timezone.now()
+            duration = _duration_seconds(started_at, ended_at)
+            released_user = _display_name(env.current_user) or '未知用户'
+
+            env.status = 'idle'
+            env.current_user = None
+            env.occupied_at = None
+            env.sys_modifier = None
+            env.save(update_fields=['status', 'current_user', 'occupied_at', 'sys_modifier', 'sys_update_datetime'])
+
+            first_queue = _waiting_queues(env.id).first()
+            message = f'系统自动释放环境，原占用人 {released_user}'
+            if first_queue:
+                message = f'{message}，队首用户 { _display_name(first_queue.user) } 可手动占用'
+            _record(
+                env,
+                None,
+                'auto_release',
+                message,
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_seconds=duration,
+            )
+            _notify_queue_changes_after_commit(env, before_queue_snapshot, 'auto_release', notify_available_head=True)
+            released_environment_ids.append(str(env.id))
+
+    return {'released_count': len(released_environment_ids), 'environment_ids': released_environment_ids}
 
 
 def enqueue_environment(user: User, environment_id: str, queue_type: str) -> dict:

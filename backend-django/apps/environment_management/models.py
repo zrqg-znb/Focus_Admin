@@ -201,6 +201,7 @@ class EnvironmentRecord(RootModel):
         ('queue', '排队'),
         ('cancel_queue', '取消排队'),
         ('jump_queue', '插队'),
+        ('auto_release', '自动释放'),
         ('admin_update', '管理员更新'),
     )
 
