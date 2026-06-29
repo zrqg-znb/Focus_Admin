@@ -3,6 +3,7 @@ import type { EchartsUIType } from '@vben/plugins/echarts';
 
 import type { PlGroup } from '#/api/core/pl';
 import type {
+  RequirementDelayStatus,
   RequirementBoardFilterPayload,
   RequirementBoardProjectOption,
   RequirementBoardQueryTask,
@@ -17,17 +18,16 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import { Page } from '@vben/common-ui';
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
+import { Filter } from '@element-plus/icons-vue';
 
 import {
   ElButton,
   ElCard,
-  ElDatePicker,
   ElEmpty,
-  ElInput,
+  ElIcon,
   ElMessage,
-  ElOption,
   ElProgress,
-  ElSelect,
+  ElPopover,
   ElTable,
   ElTableColumn,
   ElTabPane,
@@ -48,6 +48,11 @@ import {
 } from '#/api/project-manager/requirement_board';
 import { useZqTable } from '#/components/zq-table';
 
+import EnvironmentHeaderFilter from '../../environment-management/components/EnvironmentHeaderFilter.vue';
+import type {
+  HeaderFilterConfig,
+  HeaderFilterOption,
+} from '../../environment-management/components/header-filter';
 import PlUserSelector from './components/pl-user-selector.vue';
 import ProjectSelectorDialog from './components/project-selector-dialog.vue';
 import TeamSelectorDialog from './components/team-selector-dialog.vue';
@@ -56,18 +61,139 @@ import {
   createEmptyRequirementSummary,
   DEFAULT_CATEGORIES,
   DEFAULT_TIME_FIELD,
+  DELAY_STATUS_OPTIONS,
   formatDateTime,
   formatMetric,
   formatPercent,
   SCHEDULE_STATE_OPTIONS,
   STATUS_META,
   STATUS_META_MAP,
-  TIME_FIELD_OPTIONS,
   useRequirementColumns,
   VERIFICATION_POLICY_OPTIONS,
 } from './data';
 
 defineOptions({ name: 'RequirementBoard' });
+
+type ElementTagType = 'danger' | 'info' | 'primary' | 'success' | 'warning';
+type RequirementHeaderFilterConfig = HeaderFilterConfig & {
+  clearValue?: any;
+  endPayloadKey?: keyof RequirementBoardFilterPayload;
+  options?: HeaderFilterOption[];
+  payloadKey?: keyof RequirementBoardFilterPayload;
+};
+
+const requirementHeaderFilters: RequirementHeaderFilterConfig[] = [
+  {
+    columnKey: 'responsible_pl_group_name',
+    field: 'responsible_pl_group_ids',
+    label: '责任PL组',
+    payloadKey: 'responsible_pl_group_ids',
+    type: 'checkbox',
+  },
+  {
+    columnKey: 'status_code',
+    field: 'schedule_state',
+    label: '状态',
+    options: SCHEDULE_STATE_OPTIONS,
+    payloadKey: 'schedule_state',
+    type: 'checkbox',
+  },
+  {
+    columnKey: 'category',
+    clearValue: [...DEFAULT_CATEGORIES],
+    field: 'categories',
+    label: '需求类型',
+    options: CATEGORY_OPTIONS,
+    payloadKey: 'categories',
+    type: 'checkbox',
+  },
+  {
+    columnKey: 'verification_policy_label',
+    field: 'verification_policies',
+    label: '验证策略',
+    options: VERIFICATION_POLICY_OPTIONS,
+    payloadKey: 'verification_policies',
+    type: 'checkbox',
+  },
+  {
+    columnKey: 'requirement_id',
+    field: 'requirement_id_keyword',
+    label: '需求 ID',
+    payloadKey: 'requirement_id_keyword',
+    placeholder: '请输入需求 ID',
+    type: 'input',
+  },
+  {
+    columnKey: 'title',
+    field: 'title_keyword',
+    label: '需求标题',
+    payloadKey: 'title_keyword',
+    placeholder: '请输入需求标题',
+    type: 'input',
+  },
+  {
+    columnKey: 'planned_test_time',
+    datePickerType: 'daterange',
+    dateValueFormat: 'YYYY-MM-DD',
+    endField: 'planned_test_time_end',
+    endPayloadKey: 'planned_test_time_end',
+    field: 'planned_test_time_start',
+    label: '计划转测时间',
+    payloadKey: 'planned_test_time_start',
+    type: 'date-range',
+  },
+  {
+    columnKey: 'due_date',
+    datePickerType: 'daterange',
+    dateValueFormat: 'YYYY-MM-DD',
+    endField: 'due_date_end',
+    endPayloadKey: 'due_date_end',
+    field: 'due_date_start',
+    label: '计划完成时间',
+    payloadKey: 'due_date_start',
+    type: 'date-range',
+  },
+  {
+    columnKey: 'completed_time',
+    datePickerType: 'daterange',
+    dateValueFormat: 'YYYY-MM-DD',
+    endField: 'completed_time_end',
+    endPayloadKey: 'completed_time_end',
+    field: 'completed_time_start',
+    label: '开发完成时间',
+    payloadKey: 'completed_time_start',
+    type: 'date-range',
+  },
+  {
+    columnKey: 'accepted_time',
+    datePickerType: 'daterange',
+    dateValueFormat: 'YYYY-MM-DD',
+    endField: 'accepted_time_end',
+    endPayloadKey: 'accepted_time_end',
+    field: 'accepted_time_start',
+    label: '测试完成时间',
+    payloadKey: 'accepted_time_start',
+    type: 'date-range',
+  },
+  {
+    columnKey: 'is_dev_delayed',
+    clearValue: 'all',
+    field: 'dev_delay_status',
+    label: '开发延期',
+    options: DELAY_STATUS_OPTIONS,
+    payloadKey: 'dev_delay_status',
+    type: 'radio',
+  },
+  {
+    columnKey: 'is_test_delayed',
+    clearValue: 'all',
+    field: 'test_delay_status',
+    label: '测试延期',
+    options: DELAY_STATUS_OPTIONS,
+    payloadKey: 'test_delay_status',
+    type: 'radio',
+  },
+];
 
 function createDefaultFilters(): RequirementBoardFilterPayload {
   return {
@@ -76,6 +202,7 @@ function createDefaultFilters(): RequirementBoardFilterPayload {
     categories: [...DEFAULT_CATEGORIES],
     schedule_state: [],
     verification_policies: [],
+    requirement_id_keyword: '',
     title_keyword: '',
     develop_user: [],
     test_user: [],
@@ -83,6 +210,16 @@ function createDefaultFilters(): RequirementBoardFilterPayload {
     time_field: DEFAULT_TIME_FIELD,
     time_start: '',
     time_end: '',
+    planned_test_time_start: '',
+    planned_test_time_end: '',
+    due_date_start: '',
+    due_date_end: '',
+    completed_time_start: '',
+    completed_time_end: '',
+    accepted_time_start: '',
+    accepted_time_end: '',
+    dev_delay_status: 'all',
+    test_delay_status: 'all',
   };
 }
 
@@ -97,7 +234,6 @@ const teamSelectorVisible = ref(false);
 const dataGridWrapRef = ref<HTMLDivElement>();
 const dataGridHeight = ref<null | number>(null);
 const filters = ref<RequirementBoardFilterPayload>(createDefaultFilters());
-const dateRange = ref<[Date, Date] | null>(null);
 const appliedFilters = ref<null | RequirementBoardFilterPayload>(null);
 const summary = ref<RequirementBoardSummary>(createEmptyRequirementSummary());
 const summaryFingerprint = ref('');
@@ -178,6 +314,10 @@ function normalizeScheduleStates(values?: RequirementScheduleState[]) {
   ) as RequirementScheduleState[];
 }
 
+function normalizeDelayStatus(value?: string): RequirementDelayStatus {
+  return value === 'delayed' || value === 'normal' ? value : 'all';
+}
+
 function sortProjectOptions(options: RequirementBoardProjectOption[]) {
   return [...options].sort((left, right) => {
     if (left.config_complete !== right.config_complete) {
@@ -190,32 +330,37 @@ function sortProjectOptions(options: RequirementBoardProjectOption[]) {
   });
 }
 
-function formatDateBoundary(date: Date) {
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+type DateRangeValue = [string, string] | [];
+type DateRangePayloadKey =
+  | 'accepted_time_end'
+  | 'accepted_time_start'
+  | 'completed_time_end'
+  | 'completed_time_start'
+  | 'due_date_end'
+  | 'due_date_start'
+  | 'planned_test_time_end'
+  | 'planned_test_time_start';
+
+function buildDateRangeValue(
+  start?: null | string,
+  end?: null | string,
+): DateRangeValue {
+  return start && end ? [start, end] : [];
 }
 
-function parseDateBoundary(value?: null | string) {
-  const text = String(value || '').trim();
-  if (!text) {
-    return null;
-  }
-  const parsed = new Date(text.length === 10 ? `${text}T00:00:00` : text);
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-  return parsed;
-}
-
-watch(dateRange, (value) => {
+function applyDateRangeValue(
+  startKey: DateRangePayloadKey,
+  endKey: DateRangePayloadKey,
+  value: DateRangeValue | null,
+) {
   if (value && value.length === 2) {
-    filters.value.time_start = formatDateBoundary(value[0]);
-    filters.value.time_end = formatDateBoundary(value[1]);
+    filters.value[startKey] = value[0];
+    filters.value[endKey] = value[1];
   } else {
-    filters.value.time_start = '';
-    filters.value.time_end = '';
+    filters.value[startKey] = '';
+    filters.value[endKey] = '';
   }
-});
+}
 
 function cloneFilterPayload(
   source: RequirementBoardFilterPayload,
@@ -227,6 +372,7 @@ function cloneFilterPayload(
     categories: categories.length > 0 ? categories : [...DEFAULT_CATEGORIES],
     schedule_state: normalizeScheduleStates(source.schedule_state),
     verification_policies: normalizeStringArray(source.verification_policies),
+    requirement_id_keyword: String(source.requirement_id_keyword || '').trim(),
     title_keyword: String(source.title_keyword || '').trim(),
     develop_user: normalizeStringArray(source.develop_user),
     test_user: normalizeStringArray(source.test_user),
@@ -237,6 +383,16 @@ function cloneFilterPayload(
       DEFAULT_TIME_FIELD) as RequirementTimeField,
     time_start: source.time_start || '',
     time_end: source.time_end || '',
+    planned_test_time_start: source.planned_test_time_start || '',
+    planned_test_time_end: source.planned_test_time_end || '',
+    due_date_start: source.due_date_start || '',
+    due_date_end: source.due_date_end || '',
+    completed_time_start: source.completed_time_start || '',
+    completed_time_end: source.completed_time_end || '',
+    accepted_time_start: source.accepted_time_start || '',
+    accepted_time_end: source.accepted_time_end || '',
+    dev_delay_status: normalizeDelayStatus(source.dev_delay_status),
+    test_delay_status: normalizeDelayStatus(source.test_delay_status),
   };
 }
 
@@ -250,6 +406,7 @@ function buildFingerprint(payload: null | RequirementBoardFilterPayload) {
     categories: [...(payload.categories || [])].sort(),
     schedule_state: [...(payload.schedule_state || [])].sort(),
     verification_policies: [...(payload.verification_policies || [])].sort(),
+    requirement_id_keyword: String(payload.requirement_id_keyword || '').trim(),
     title_keyword: String(payload.title_keyword || '').trim(),
     develop_user: [...(payload.develop_user || [])].sort(),
     test_user: [...(payload.test_user || [])].sort(),
@@ -259,19 +416,29 @@ function buildFingerprint(payload: null | RequirementBoardFilterPayload) {
     time_field: payload.time_field || '',
     time_start: payload.time_start || '',
     time_end: payload.time_end || '',
+    planned_test_time_start: payload.planned_test_time_start || '',
+    planned_test_time_end: payload.planned_test_time_end || '',
+    due_date_start: payload.due_date_start || '',
+    due_date_end: payload.due_date_end || '',
+    completed_time_start: payload.completed_time_start || '',
+    completed_time_end: payload.completed_time_end || '',
+    accepted_time_start: payload.accepted_time_start || '',
+    accepted_time_end: payload.accepted_time_end || '',
+    dev_delay_status: normalizeDelayStatus(payload.dev_delay_status),
+    test_delay_status: normalizeDelayStatus(payload.test_delay_status),
   });
 }
 
 const configuredProjectOptions = computed(() =>
   projectOptions.value.filter((item) => item.config_complete),
 );
-const selectedProjects = computed(() => {
+const selectedProjects = computed<RequirementBoardProjectOption[]>(() => {
   const projectMap = new Map(
     projectOptions.value.map((item) => [item.id, item]),
   );
   return normalizeStringArray(filters.value.project_ids)
     .map((item) => projectMap.get(item))
-    .filter(Boolean);
+    .filter((item): item is RequirementBoardProjectOption => Boolean(item));
 });
 
 const teamOptions = computed(() => {
@@ -290,25 +457,108 @@ const teamOptions = computed(() => {
   return result;
 });
 
-const projectSelectorButtonLabel = computed(() =>
-  filters.value.project_ids.length > 0
-    ? `已选项目（${filters.value.project_ids.length}）`
-    : '选择项目',
-);
-const projectSelectorButtonType = computed(() =>
-  filters.value.project_ids.length > 0 ? 'success' : 'primary',
-);
-const teamSelectorButtonLabel = computed(() =>
-  filters.value.sub_teams?.length
-    ? `已选团队（${filters.value.sub_teams.length}）`
-    : '选择团队',
-);
-const teamSelectorButtonType = computed(() =>
-  filters.value.sub_teams?.length ? 'success' : 'primary',
-);
 const isTeamSelectorDisabled = computed(
   () => selectedProjects.value.length === 0,
 );
+
+function getRequirementHeaderFilterConfig(column: any) {
+  const key = String(column?.key || column?.prop || column?.dataKey || '');
+  return requirementHeaderFilters.find((item) => item.columnKey === key);
+}
+
+function getRequirementHeaderFilterOptions(config?: RequirementHeaderFilterConfig) {
+  if (!config) {
+    return [];
+  }
+  if (config.columnKey === 'responsible_pl_group_name') {
+    return plGroupOptions.value;
+  }
+  return config.options || [];
+}
+
+function getRequirementHeaderFilterValue(config: RequirementHeaderFilterConfig) {
+  if (config.type === 'date-range') {
+    return buildDateRangeValue(
+      filters.value[config.payloadKey!] as string,
+      filters.value[config.endPayloadKey!] as string,
+    );
+  }
+  const value = filters.value[config.payloadKey!];
+  if (config.columnKey === 'category') {
+    const selected = normalizeStringArray(value as string[]);
+    return selected.length === DEFAULT_CATEGORIES.length ? [] : selected;
+  }
+  if (
+    config.columnKey === 'is_dev_delayed' ||
+    config.columnKey === 'is_test_delayed'
+  ) {
+    return value === 'all' ? undefined : value;
+  }
+  return value;
+}
+
+function setFilterValue(key: keyof RequirementBoardFilterPayload, value: any) {
+  (filters.value as Record<string, any>)[key] = value;
+}
+
+function applyRequirementHeaderFilter(
+  config: RequirementHeaderFilterConfig,
+  value: any,
+) {
+  if (config.type === 'date-range') {
+    applyDateRangeValue(
+      config.payloadKey! as DateRangePayloadKey,
+      config.endPayloadKey! as DateRangePayloadKey,
+      value,
+    );
+    void handleSearch();
+    return;
+  }
+  setFilterValue(
+    config.payloadKey!,
+    Array.isArray(value) ? normalizeStringArray(value) : value,
+  );
+  void handleSearch();
+}
+
+function clearRequirementHeaderFilter(config: RequirementHeaderFilterConfig) {
+  if (config.type === 'date-range') {
+    applyDateRangeValue(
+      config.payloadKey! as DateRangePayloadKey,
+      config.endPayloadKey! as DateRangePayloadKey,
+      [],
+    );
+    void handleSearch();
+    return;
+  }
+  const clearValue =
+    config.clearValue !== undefined
+      ? config.clearValue
+      : config.type === 'checkbox'
+        ? []
+        : '';
+  setFilterValue(
+    config.payloadKey!,
+    Array.isArray(clearValue) ? [...clearValue] : clearValue,
+  );
+  void handleSearch();
+}
+
+function isCustomHeaderFilterActive(columnKey: string) {
+  if (columnKey === 'project_name') {
+    return filters.value.project_ids.length > 0;
+  }
+  if (columnKey === 'team_name') {
+    return Boolean(filters.value.sub_teams?.length);
+  }
+  if (columnKey === 'develop_user_display') {
+    return Boolean(filters.value.develop_user?.length);
+  }
+  if (columnKey === 'test_user_display') {
+    return Boolean(filters.value.test_user?.length);
+  }
+  return false;
+}
 
 const hasAppliedFilters = computed(() => Boolean(appliedFilters.value));
 const summaryTeamCount = computed(() => summary.value.team_summary.length);
@@ -472,10 +722,7 @@ const acceptanceMonthSnapshot = computed(() =>
   resolveMonthlySnapshot(summary.value.acceptance_delivery_trend || []),
 );
 
-function getStatusValue(
-  row: RequirementBoardSummary['team_summary'][number],
-  code: string,
-) {
+function getStatusValue(row: Record<string, any>, code: string) {
   switch (code) {
     case 'A': {
       return row.a_count;
@@ -515,20 +762,26 @@ function getStatusAccent(statusCode: string) {
   return STATUS_META_MAP[statusCode]?.accent || '#0f172a';
 }
 
-function getStableTagType(text: string) {
+function getStableTagType(text: string): ElementTagType {
   const normalized = String(text || '').trim();
   if (!normalized) {
     return 'info';
   }
-  const palette = ['primary', 'success', 'warning', 'danger', 'info'];
+  const palette: ElementTagType[] = [
+    'primary',
+    'success',
+    'warning',
+    'danger',
+    'info',
+  ];
   let hash = 0;
   for (const char of normalized) {
     hash = (hash * 31 + (char.codePointAt(0) || 0)) >>> 0;
   }
-  return palette[hash % palette.length];
+  return palette[hash % palette.length] || 'info';
 }
 
-function getTeamTagType(teamName: string) {
+function getTeamTagType(teamName: string): ElementTagType {
   if (!String(teamName || '').trim() || teamName === '未识别团队') {
     return 'info';
   }
@@ -658,14 +911,6 @@ function handleProjectSelectorConfirm(projectIds: string[]) {
 function applyFiltersToForm(payload: RequirementBoardFilterPayload) {
   const nextFilters = cloneFilterPayload(payload);
   filters.value = nextFilters;
-
-  const start = parseDateBoundary(nextFilters.time_start);
-  const end = parseDateBoundary(nextFilters.time_end);
-  if (start && end) {
-    dateRange.value = [start, end];
-    return;
-  }
-  dateRange.value = null;
 }
 
 function clearSelectedProjects() {
@@ -831,7 +1076,6 @@ async function handleReset() {
   queryPreparing.value = false;
   queryPrepareTask.value = null;
   filters.value = createDefaultFilters();
-  dateRange.value = null;
   projectSelectorVisible.value = false;
   teamSelectorVisible.value = false;
   appliedFilters.value = null;
@@ -1102,6 +1346,9 @@ function renderOwnerRankChart(
       formatter(params: Array<{ dataIndex: number; value: number }>) {
         const index = params?.[0]?.dataIndex ?? 0;
         const row = displayRows[index];
+        if (!row) {
+          return '';
+        }
         return [
           row.username,
           `任务数：${row.task_count}`,
@@ -1190,15 +1437,6 @@ onUnmounted(() => {
                     </div>
                   </div>
                   <div class="requirement-data-card__actions">
-                    <ElButton
-                      type="primary"
-                      plain
-                      :disabled="!canExport"
-                      :loading="exportLoading"
-                      @click="handleExport"
-                    >
-                      导出当前查询结果
-                    </ElButton>
                     <ElTag
                       class="requirement-data-card__status"
                       :effect="
@@ -1231,78 +1469,28 @@ onUnmounted(() => {
                   :style="dataGridWrapStyle"
                 >
                   <Grid class="requirement-data-grid h-full min-h-0">
-                    <template #table-title>
-                      <div class="requirement-table-title">
-                        <div class="requirement-table-title__filters">
-                          <div class="requirement-table-title__field">
-                            <span class="requirement-table-title__label">
-                              标题关键词
-                            </span>
-                            <ElInput
-                              v-model="filters.title_keyword"
-                              clearable
-                              size="small"
-                              class="requirement-table-title__input"
-                              placeholder="搜索需求标题"
-                              @keyup.enter="handleSearch"
-                            />
-                          </div>
-                          <div class="requirement-table-title__field">
-                            <span class="requirement-table-title__label">
-                              时间维度
-                            </span>
-                            <ElSelect
-                              v-model="filters.time_field"
-                              clearable
-                              size="small"
-                              class="requirement-table-title__select"
-                              placeholder="默认测试完成时间"
-                            >
-                              <ElOption
-                                v-for="item in TIME_FIELD_OPTIONS"
-                                :key="item.value"
-                                :label="item.label"
-                                :value="item.value"
-                              />
-                            </ElSelect>
-                          </div>
-                          <div class="requirement-table-title__field">
-                            <span class="requirement-table-title__label">
-                              时间区间
-                            </span>
-                            <ElDatePicker
-                              v-model="dateRange"
-                              type="daterange"
-                              size="small"
-                              class="requirement-table-title__date"
-                              range-separator="-"
-                              start-placeholder="开始日期"
-                              end-placeholder="结束日期"
-                            />
-                          </div>
-                          <div class="requirement-table-title__actions">
-                            <ElButton
-                              type="primary"
-                              size="small"
-                              :loading="queryPreparing"
-                              @click="handleSearch"
-                            >
-                              {{ queryPreparing ? '准备中' : '查询' }}
-                            </ElButton>
-                            <ElButton
-                              size="small"
-                              :disabled="queryPreparing"
-                              @click="handleReset"
-                            >
-                              重置
-                            </ElButton>
-                          </div>
-                        </div>
+                    <template #toolbar-actions>
+                      <div class="requirement-toolbar-actions">
+                        <ElButton
+                          type="primary"
+                          size="small"
+                          :loading="queryPreparing"
+                          @click="handleSearch"
+                        >
+                          {{ queryPreparing ? '准备中' : '查询' }}
+                        </ElButton>
+                        <ElButton
+                          size="small"
+                          :disabled="queryPreparing"
+                          @click="handleReset"
+                        >
+                          重置
+                        </ElButton>
                         <ElTag
                           v-if="queryPreparing"
                           type="warning"
                           effect="dark"
-                          class="requirement-table-title__pending-tag"
+                          class="requirement-toolbar-actions__tag"
                         >
                           {{ queryPrepareStatusText }}
                         </ElTag>
@@ -1310,201 +1498,301 @@ onUnmounted(() => {
                           v-else-if="hasPendingFilterChanges"
                           type="warning"
                           effect="light"
-                          class="requirement-table-title__pending-tag"
+                          class="requirement-toolbar-actions__tag"
                         >
                           有未应用筛选
                         </ElTag>
                       </div>
                     </template>
 
-                    <template #header-project_name>
-                      <div class="requirement-header-filter" @click.stop>
-                        <span class="requirement-header-filter__label">
+                    <template #toolbar-tools>
+                      <div class="requirement-toolbar-tools">
+                        <ElButton
+                          type="primary"
+                          plain
+                          size="small"
+                          :disabled="!canExport"
+                          :loading="exportLoading"
+                          @click="handleExport"
+                        >
+                          导出
+                        </ElButton>
+                      </div>
+                    </template>
+
+                    <template #requirement-filter-header="{ column }">
+                      <EnvironmentHeaderFilter
+                        v-if="getRequirementHeaderFilterConfig(column)"
+                        :config="getRequirementHeaderFilterConfig(column)!"
+                        :model-value="
+                          getRequirementHeaderFilterValue(
+                            getRequirementHeaderFilterConfig(column)!,
+                          )
+                        "
+                        :options="
+                          getRequirementHeaderFilterOptions(
+                            getRequirementHeaderFilterConfig(column),
+                          )
+                        "
+                        @apply="
+                          (value) =>
+                            applyRequirementHeaderFilter(
+                              getRequirementHeaderFilterConfig(column)!,
+                              value,
+                            )
+                        "
+                        @clear="
+                          clearRequirementHeaderFilter(
+                            getRequirementHeaderFilterConfig(column)!,
+                          )
+                        "
+                      />
+
+                      <span
+                        v-else-if="column.key === 'project_name'"
+                        class="environment-header-filter"
+                      >
+                        <span class="environment-header-filter__label">
                           项目名
                         </span>
-                        <div class="requirement-header-filter__actions">
-                          <ElButton
-                            :loading="optionsLoading"
-                            :type="projectSelectorButtonType"
-                            plain
-                            size="small"
-                            @click.stop="projectSelectorVisible = true"
-                          >
-                            {{ projectSelectorButtonLabel }}
-                          </ElButton>
-                          <ElButton
-                            link
-                            size="small"
-                            :disabled="filters.project_ids.length === 0"
-                            @click.stop="clearSelectedProjects"
-                          >
-                            清空
-                          </ElButton>
-                        </div>
-                      </div>
-                    </template>
+                        <ElPopover
+                          placement="bottom"
+                          popper-class="environment-header-filter-popper"
+                          trigger="click"
+                          width="260"
+                        >
+                          <template #reference>
+                            <ElButton
+                              circle
+                              link
+                              size="small"
+                              :class="{
+                                'is-active':
+                                  isCustomHeaderFilterActive('project_name'),
+                              }"
+                              class="environment-header-filter__button"
+                              @click.stop
+                            >
+                              <ElIcon><Filter /></ElIcon>
+                            </ElButton>
+                          </template>
+                          <div class="requirement-header-popover">
+                            <div class="requirement-header-popover__title">
+                              项目名
+                            </div>
+                            <ElButton
+                              :loading="optionsLoading"
+                              type="primary"
+                              plain
+                              size="small"
+                              @click.stop="projectSelectorVisible = true"
+                            >
+                              {{
+                                filters.project_ids.length > 0
+                                  ? `已选项目（${filters.project_ids.length}）`
+                                  : '选择项目'
+                              }}
+                            </ElButton>
+                            <div class="requirement-header-popover__footer">
+                              <ElButton
+                                size="small"
+                                :disabled="filters.project_ids.length === 0"
+                                @click.stop="clearSelectedProjects"
+                              >
+                                清空
+                              </ElButton>
+                              <ElButton
+                                size="small"
+                                type="primary"
+                                @click.stop="handleSearch"
+                              >
+                                应用
+                              </ElButton>
+                            </div>
+                          </div>
+                        </ElPopover>
+                      </span>
 
-                    <template #header-team_name>
-                      <div class="requirement-header-filter" @click.stop>
-                        <span class="requirement-header-filter__label">
+                      <span
+                        v-else-if="column.key === 'team_name'"
+                        class="environment-header-filter"
+                      >
+                        <span class="environment-header-filter__label">
                           团队
                         </span>
-                        <div class="requirement-header-filter__actions">
-                          <ElButton
-                            :disabled="isTeamSelectorDisabled"
-                            :type="teamSelectorButtonType"
-                            plain
-                            size="small"
-                            @click.stop="teamSelectorVisible = true"
-                          >
-                            {{ teamSelectorButtonLabel }}
-                          </ElButton>
-                          <ElButton
-                            link
-                            size="small"
-                            :disabled="!filters.sub_teams?.length"
-                            @click.stop="clearSelectedTeams"
-                          >
-                            清空
-                          </ElButton>
-                        </div>
-                      </div>
-                    </template>
-
-                    <template #header-responsible_pl_group_name>
-                      <div class="requirement-header-filter" @click.stop>
-                        <span class="requirement-header-filter__label">
-                          责任PL组
-                        </span>
-                        <ElSelect
-                          v-model="filters.responsible_pl_group_ids"
-                          class="requirement-header-filter__select"
-                          collapse-tags
-                          collapse-tags-tooltip
-                          filterable
-                          :max-collapse-tags="1"
-                          multiple
-                          clearable
-                          size="small"
-                          placeholder="默认不过滤"
+                        <ElPopover
+                          placement="bottom"
+                          popper-class="environment-header-filter-popper"
+                          trigger="click"
+                          width="260"
                         >
-                          <ElOption
-                            v-for="item in plGroupOptions"
-                            :key="item.value"
-                            :label="item.label"
-                            :value="item.value"
-                          />
-                        </ElSelect>
-                      </div>
-                    </template>
+                          <template #reference>
+                            <ElButton
+                              circle
+                              link
+                              size="small"
+                              :class="{
+                                'is-active':
+                                  isCustomHeaderFilterActive('team_name'),
+                              }"
+                              class="environment-header-filter__button"
+                              @click.stop
+                            >
+                              <ElIcon><Filter /></ElIcon>
+                            </ElButton>
+                          </template>
+                          <div class="requirement-header-popover">
+                            <div class="requirement-header-popover__title">
+                              团队
+                            </div>
+                            <ElButton
+                              :disabled="isTeamSelectorDisabled"
+                              type="primary"
+                              plain
+                              size="small"
+                              @click.stop="teamSelectorVisible = true"
+                            >
+                              {{
+                                filters.sub_teams?.length
+                                  ? `已选团队（${filters.sub_teams.length}）`
+                                  : '选择团队'
+                              }}
+                            </ElButton>
+                            <div class="requirement-header-popover__footer">
+                              <ElButton
+                                size="small"
+                                :disabled="!filters.sub_teams?.length"
+                                @click.stop="clearSelectedTeams"
+                              >
+                                清空
+                              </ElButton>
+                              <ElButton
+                                size="small"
+                                type="primary"
+                                @click.stop="handleSearch"
+                              >
+                                应用
+                              </ElButton>
+                            </div>
+                          </div>
+                        </ElPopover>
+                      </span>
 
-                    <template #header-category>
-                      <div class="requirement-header-filter" @click.stop>
-                        <span class="requirement-header-filter__label">
-                          需求类型
-                        </span>
-                        <ElSelect
-                          v-model="filters.categories"
-                          class="requirement-header-filter__select"
-                          collapse-tags
-                          collapse-tags-tooltip
-                          filterable
-                          :max-collapse-tags="1"
-                          multiple
-                          clearable
-                          size="small"
-                          placeholder="默认全选"
-                        >
-                          <ElOption
-                            v-for="item in CATEGORY_OPTIONS"
-                            :key="item.value"
-                            :label="item.label"
-                            :value="item.value"
-                          />
-                        </ElSelect>
-                      </div>
-                    </template>
-
-                    <template #header-status_code>
-                      <div class="requirement-header-filter" @click.stop>
-                        <span class="requirement-header-filter__label">
-                          排期状态
-                        </span>
-                        <ElSelect
-                          v-model="filters.schedule_state"
-                          class="requirement-header-filter__select"
-                          collapse-tags
-                          collapse-tags-tooltip
-                          filterable
-                          :max-collapse-tags="1"
-                          multiple
-                          clearable
-                          size="small"
-                          placeholder="默认不过滤"
-                        >
-                          <ElOption
-                            v-for="item in SCHEDULE_STATE_OPTIONS"
-                            :key="item.value"
-                            :label="item.label"
-                            :value="item.value"
-                          />
-                        </ElSelect>
-                      </div>
-                    </template>
-
-                    <template #header-verification_policy_label>
-                      <div class="requirement-header-filter" @click.stop>
-                        <span class="requirement-header-filter__label">
-                          验证策略
-                        </span>
-                        <ElSelect
-                          v-model="filters.verification_policies"
-                          class="requirement-header-filter__select"
-                          collapse-tags
-                          collapse-tags-tooltip
-                          filterable
-                          :max-collapse-tags="1"
-                          multiple
-                          clearable
-                          size="small"
-                          placeholder="默认不过滤"
-                        >
-                          <ElOption
-                            v-for="item in VERIFICATION_POLICY_OPTIONS"
-                            :key="item.value"
-                            :label="item.label"
-                            :value="item.value"
-                          />
-                        </ElSelect>
-                      </div>
-                    </template>
-
-                    <template #header-develop_user_display>
-                      <div class="requirement-header-filter" @click.stop>
-                        <span class="requirement-header-filter__label">
+                      <span
+                        v-else-if="column.key === 'develop_user_display'"
+                        class="environment-header-filter"
+                      >
+                        <span class="environment-header-filter__label">
                           开发责任人
                         </span>
-                        <PlUserSelector
-                          v-model="filters.develop_user"
-                          class="requirement-header-filter__select"
-                          title="选择开发责任人"
-                          placeholder="选择开发责任人"
-                        />
-                      </div>
-                    </template>
+                        <ElPopover
+                          placement="bottom"
+                          popper-class="environment-header-filter-popper"
+                          trigger="click"
+                          width="300"
+                        >
+                          <template #reference>
+                            <ElButton
+                              circle
+                              link
+                              size="small"
+                              :class="{
+                                'is-active': isCustomHeaderFilterActive(
+                                  'develop_user_display',
+                                ),
+                              }"
+                              class="environment-header-filter__button"
+                              @click.stop
+                            >
+                              <ElIcon><Filter /></ElIcon>
+                            </ElButton>
+                          </template>
+                          <div class="requirement-header-popover">
+                            <div class="requirement-header-popover__title">
+                              开发责任人
+                            </div>
+                            <PlUserSelector
+                              v-model="filters.develop_user"
+                              title="选择开发责任人"
+                              placeholder="选择开发责任人"
+                            />
+                            <div class="requirement-header-popover__footer">
+                              <ElButton
+                                size="small"
+                                :disabled="!filters.develop_user?.length"
+                                @click.stop="filters.develop_user = []"
+                              >
+                                清空
+                              </ElButton>
+                              <ElButton
+                                size="small"
+                                type="primary"
+                                @click.stop="handleSearch"
+                              >
+                                应用
+                              </ElButton>
+                            </div>
+                          </div>
+                        </ElPopover>
+                      </span>
 
-                    <template #header-test_user_display>
-                      <div class="requirement-header-filter" @click.stop>
-                        <span class="requirement-header-filter__label">
+                      <span
+                        v-else-if="column.key === 'test_user_display'"
+                        class="environment-header-filter"
+                      >
+                        <span class="environment-header-filter__label">
                           测试责任人
                         </span>
-                        <PlUserSelector
-                          v-model="filters.test_user"
-                          class="requirement-header-filter__select"
-                          title="选择测试责任人"
-                          placeholder="选择测试责任人"
-                        />
-                      </div>
+                        <ElPopover
+                          placement="bottom"
+                          popper-class="environment-header-filter-popper"
+                          trigger="click"
+                          width="300"
+                        >
+                          <template #reference>
+                            <ElButton
+                              circle
+                              link
+                              size="small"
+                              :class="{
+                                'is-active': isCustomHeaderFilterActive(
+                                  'test_user_display',
+                                ),
+                              }"
+                              class="environment-header-filter__button"
+                              @click.stop
+                            >
+                              <ElIcon><Filter /></ElIcon>
+                            </ElButton>
+                          </template>
+                          <div class="requirement-header-popover">
+                            <div class="requirement-header-popover__title">
+                              测试责任人
+                            </div>
+                            <PlUserSelector
+                              v-model="filters.test_user"
+                              title="选择测试责任人"
+                              placeholder="选择测试责任人"
+                            />
+                            <div class="requirement-header-popover__footer">
+                              <ElButton
+                                size="small"
+                                :disabled="!filters.test_user?.length"
+                                @click.stop="filters.test_user = []"
+                              >
+                                清空
+                              </ElButton>
+                              <ElButton
+                                size="small"
+                                type="primary"
+                                @click.stop="handleSearch"
+                              >
+                                应用
+                              </ElButton>
+                            </div>
+                          </div>
+                        </ElPopover>
+                      </span>
                     </template>
 
                     <template #cell-team_name="{ row }">
@@ -2851,83 +3139,62 @@ onUnmounted(() => {
   min-height: 420px;
 }
 
-.requirement-table-title {
+.requirement-toolbar-actions {
   display: flex;
-  flex: 1;
   min-width: 0;
   flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 10px 16px;
-  padding: 6px 0 10px;
-}
-
-.requirement-table-title__filters {
-  display: flex;
-  flex: 1 1 720px;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 12px;
-}
-
-.requirement-table-title__field {
-  display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
-.requirement-table-title__label,
-.requirement-header-filter__label {
-  color: #475569;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.3;
+.requirement-toolbar-tools {
+  display: flex;
+  align-items: center;
+}
+
+.requirement-toolbar-actions__tag {
+  flex-shrink: 0;
+}
+
+.environment-header-filter {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.environment-header-filter__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.requirement-table-title__select {
-  width: 180px;
+.environment-header-filter__button {
+  color: var(--el-text-color-secondary);
 }
 
-.requirement-table-title__input {
-  width: 220px;
+.environment-header-filter__button.is-active {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
 }
 
-.requirement-table-title__date {
-  width: 280px;
-}
-
-.requirement-table-title__actions {
+.requirement-header-popover {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.requirement-table-title__pending-tag {
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-
-.requirement-header-filter {
-  display: flex;
-  min-width: 0;
   flex-direction: column;
-  gap: 6px;
+  gap: 12px;
 }
 
-.requirement-header-filter__actions {
+.requirement-header-popover__title {
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.requirement-header-popover__footer {
   display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-
-.requirement-header-filter__select {
-  width: 100%;
-  min-width: 0;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .requirement-data-grid
@@ -3581,18 +3848,6 @@ onUnmounted(() => {
     min-height: 360px;
   }
 
-  .requirement-table-title__filters {
-    flex-basis: 100%;
-  }
-
-  .requirement-table-title__date {
-    width: 240px;
-  }
-
-  .requirement-table-title__input {
-    width: 220px;
-  }
-
   .requirement-data-grid :deep(.p-4) {
     position: sticky;
     bottom: 0;
@@ -3620,14 +3875,7 @@ onUnmounted(() => {
     align-items: flex-start;
   }
 
-  .requirement-table-title__field,
-  .requirement-table-title__actions {
-    width: 100%;
-  }
-
-  .requirement-table-title__select,
-  .requirement-table-title__input,
-  .requirement-table-title__date {
+  .requirement-toolbar-actions {
     width: 100%;
   }
 

@@ -241,11 +241,16 @@ z60094428,z60094429
 - 开发责任人（`develop_users[]`）
 - 测试责任人（`test_users[]`）
 - 时间维度 + 时间区间（`time_field + time_start + time_end`）
+- 需求 ID 关键词（`requirement_id_keyword`）
+- 四个表头时间区间（`planned_test_time_*`、`due_date_*`、`completed_time_*`、`accepted_time_*`）
+- 开发/测试延期状态（`dev_delay_status`、`test_delay_status`，`all | normal | delayed`）
+- 责任 PL 组（`responsible_pl_group_ids[]`，`unknown` 表示未识别 PL 领域）
 
 这样设计的原因是：
 
 - 数据湖已确认不支持 username 筛选
 - 数据湖已确认不支持通用时间区间筛选
+- 需求 ID、延期状态和独立列时间区间来自标准化明细，只能在本地判断
 - 本地过滤可以保证功能完整性，同时避免对上游契约作错误假设
 
 ---

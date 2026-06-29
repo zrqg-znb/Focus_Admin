@@ -50,6 +50,12 @@ export const SCHEDULE_STATE_OPTIONS = [
   { label: 'A · Accepted', value: 'A' },
 ];
 
+export const DELAY_STATUS_OPTIONS = [
+  { label: '全部', value: 'all' },
+  { label: '正常', value: 'normal' },
+  { label: '延期', value: 'delayed' },
+];
+
 export const STATUS_META: RequirementStatusMeta[] = [
   {
     status_code: 'I',
@@ -117,6 +123,8 @@ export const STATUS_META_MAP = Object.fromEntries(
   STATUS_META.map((item) => [item.status_code, item]),
 );
 
+const filterHeaderSlot = { header: 'requirement-filter-header' };
+
 export function useRequirementColumns(): ZqTableGridOptions<RequirementBoardItem>['columns'] {
   const columns = [
     {
@@ -124,88 +132,102 @@ export function useRequirementColumns(): ZqTableGridOptions<RequirementBoardItem
       dataKey: 'project_name',
       title: '项目名',
       width: 220,
-      fixed: 'left' as const,
+      fixed: true as const,
+      slots: filterHeaderSlot,
     },
     {
       key: 'team_name',
       dataKey: 'team_name',
       title: '团队',
       width: 190,
-      fixed: 'left' as const,
+      fixed: true as const,
+      slots: filterHeaderSlot,
     },
     {
       key: 'responsible_pl_group_name',
       dataKey: 'responsible_pl_group_name',
       title: '责任PL组',
       width: 180,
-      fixed: 'left' as const,
+      fixed: true as const,
+      slots: filterHeaderSlot,
     },
     {
       key: 'status_code',
       dataKey: 'status_code',
       title: '状态',
       width: 200,
-      fixed: 'left' as const,
+      fixed: true as const,
+      slots: filterHeaderSlot,
     },
     {
       key: 'category',
       dataKey: 'category',
       title: '需求类型',
       width: 160,
+      slots: filterHeaderSlot,
     },
     {
       key: 'verification_policy_label',
       dataKey: 'verification_policy_label',
       title: '验证策略',
       width: 200,
+      slots: filterHeaderSlot,
     },
     {
       key: 'requirement_id',
       dataKey: 'requirement_id',
       title: '需求 ID',
-      width: 176,
+      width: 210,
+      slots: filterHeaderSlot,
     },
     {
       key: 'title',
       dataKey: 'title',
-      title: '标题',
-      width: 280,
+      title: '需求标题',
+      width: 320,
+      slots: filterHeaderSlot,
     },
     {
       key: 'planned_test_time',
       dataKey: 'planned_test_time',
       title: '计划转测时间',
-      width: 180,
+      width: 250,
+      slots: filterHeaderSlot,
     },
     {
       key: 'due_date',
       dataKey: 'due_date',
       title: '计划完成时间',
-      width: 180,
+      width: 250,
+      slots: filterHeaderSlot,
     },
     {
       key: 'completed_time',
       dataKey: 'completed_time',
       title: '开发完成时间',
-      width: 180,
+      width: 250,
+      slots: filterHeaderSlot,
     },
     {
       key: 'accepted_time',
       dataKey: 'accepted_time',
       title: '测试完成时间',
-      width: 180,
+      width: 250,
+      slots: filterHeaderSlot,
     },
     {
       key: 'is_dev_delayed',
       dataKey: 'is_dev_delayed',
       title: '开发延期',
-      width: 110,
+      width: 150,
+      slots: filterHeaderSlot,
     },
     {
       key: 'is_test_delayed',
       dataKey: 'is_test_delayed',
       title: '测试延期',
-      width: 110,
+      width: 150,
+      slots: filterHeaderSlot,
     },
     {
       key: 'workload_man_day',
@@ -223,13 +245,15 @@ export function useRequirementColumns(): ZqTableGridOptions<RequirementBoardItem
       key: 'develop_user_display',
       dataKey: 'develop_user_display',
       title: '开发责任人',
-      width: 240,
+      width: 260,
+      slots: filterHeaderSlot,
     },
     {
       key: 'test_user_display',
       dataKey: 'test_user_display',
       title: '测试责任人',
-      width: 240,
+      width: 260,
+      slots: filterHeaderSlot,
     },
   ];
 

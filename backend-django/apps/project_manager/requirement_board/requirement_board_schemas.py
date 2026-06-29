@@ -27,6 +27,7 @@ class RequirementBoardFilterPayloadSchema(Schema):
         None,
         description="验证策略列表",
     )
+    requirement_id_keyword: Optional[str] = Field(None, description="需求 ID 关键词")
     title_keyword: Optional[str] = Field(None, description="需求标题关键词")
     develop_user: Optional[List[str]] = Field(None, description="开发责任人列表（username）")
     test_user: Optional[List[str]] = Field(None, description="测试责任人列表（username）")
@@ -39,14 +40,22 @@ class RequirementBoardFilterPayloadSchema(Schema):
     time_field: Optional[str] = Field(None, description="时间维度字段")
     time_start: Optional[str] = Field(None, description="时间区间开始")
     time_end: Optional[str] = Field(None, description="时间区间结束")
+    planned_test_time_start: Optional[str] = Field(None, description="计划转测时间开始")
+    planned_test_time_end: Optional[str] = Field(None, description="计划转测时间结束")
+    due_date_start: Optional[str] = Field(None, description="计划完成时间开始")
+    due_date_end: Optional[str] = Field(None, description="计划完成时间结束")
+    completed_time_start: Optional[str] = Field(None, description="开发完成时间开始")
+    completed_time_end: Optional[str] = Field(None, description="开发完成时间结束")
     accepted_time_start: Optional[str] = Field(
         None,
-        description="验收时间开始（兼容旧参数）",
+        description="测试完成时间开始",
     )
     accepted_time_end: Optional[str] = Field(
         None,
-        description="验收时间结束（兼容旧参数）",
+        description="测试完成时间结束",
     )
+    dev_delay_status: Optional[str] = Field(None, description="开发延期筛选 all/normal/delayed")
+    test_delay_status: Optional[str] = Field(None, description="测试延期筛选 all/normal/delayed")
 
 
 class RequirementBoardFilterOptionsSchema(Schema):

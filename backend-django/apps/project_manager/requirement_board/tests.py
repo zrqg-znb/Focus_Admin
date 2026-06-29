@@ -103,12 +103,23 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
                 categories=[],
                 schedule_state=["P"],
                 verification_policies=["10000001"],
+                requirement_id_keyword=" REQ- ",
                 title_keyword=" 首帧 ",
                 develop_user=[" dev-a ", "dev-a"],
                 test_user=["tester"],
                 time_field="",
                 time_start="",
                 time_end="",
+                planned_test_time_start="2026-03-01",
+                planned_test_time_end="2026-03-31",
+                due_date_start="",
+                due_date_end="",
+                completed_time_start="",
+                completed_time_end="",
+                accepted_time_start="",
+                accepted_time_end="",
+                dev_delay_status="invalid",
+                test_delay_status="delayed",
             ),
         )
 
@@ -118,8 +129,13 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
         self.assertEqual(preference.payload["project_ids"], [str(project.id)])
         self.assertEqual(preference.payload["categories"], list(CATEGORY_ORDER))
         self.assertEqual(preference.payload["title_keyword"], "首帧")
+        self.assertEqual(preference.payload["requirement_id_keyword"], "REQ-")
         self.assertEqual(preference.payload["develop_user"], ["dev-a"])
         self.assertEqual(preference.payload["time_field"], DEFAULT_TIME_FIELD)
+        self.assertEqual(preference.payload["planned_test_time_start"], "2026-03-01")
+        self.assertEqual(preference.payload["planned_test_time_end"], "2026-03-31")
+        self.assertEqual(preference.payload["dev_delay_status"], "all")
+        self.assertEqual(preference.payload["test_delay_status"], "delayed")
 
         requirement_board_services.save_filter_preference(
             self.user,
@@ -621,6 +637,88 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
 
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["items"][0]["requirement_id"], "REQ-1")
+        mocked_fetch.assert_not_called()
+
+    @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._fetch_raw_page"
+    )
+    def test_full_cache_filters_requirement_id_time_ranges_and_delay(self, mocked_fetch):
+        project = self._create_project(
+            name="Alpha",
+            code="alpha",
+            design_id="design-a",
+            sub_teams=["Team-A"],
+        )
+        mocked_fetch.return_value = self._build_raw_page(
+            [
+                self._build_raw_requirement(
+                    design_id="design-a",
+                    requirement_id="REQ-KEEP",
+                    team="Team-A",
+                    title="目标需求",
+                    planned_test_time="2026-03-05 10:00:00",
+                    due_date="2026-03-10 18:00:00",
+                    completed_time="2026-03-08 18:00:00",
+                    accepted_time="2026-03-12 18:00:00",
+                ),
+                self._build_raw_requirement(
+                    design_id="design-a",
+                    requirement_id="REQ-DROP-ID",
+                    team="Team-A",
+                    title="目标需求",
+                    planned_test_time="2026-03-05 10:00:00",
+                    due_date="2026-03-10 18:00:00",
+                    completed_time="2026-03-08 18:00:00",
+                    accepted_time="2026-03-12 18:00:00",
+                ),
+                self._build_raw_requirement(
+                    design_id="design-a",
+                    requirement_id="REQ-KEEP-LATE",
+                    team="Team-A",
+                    title="目标需求",
+                    planned_test_time="2026-04-05 10:00:00",
+                    due_date="2026-04-10 18:00:00",
+                    completed_time="2026-04-08 18:00:00",
+                    accepted_time="2026-04-12 18:00:00",
+                ),
+            ]
+        )
+        requirement_board_services.refresh_requirement_board_full_cache()
+        mocked_fetch.reset_mock()
+
+        result = requirement_board_services.get_requirement_board_page(
+            RequirementBoardDataQuerySchema(
+                project_ids=[str(project.id)],
+                sub_teams=["Team-A"],
+                categories=["AR"],
+                schedule_state=[],
+                verification_policies=[],
+                requirement_id_keyword="KEEP",
+                title_keyword="目标",
+                develop_user=[],
+                test_user=[],
+                responsible_pl_group_ids=[],
+                time_field="accepted_time",
+                time_start="",
+                time_end="",
+                planned_test_time_start="2026-03-01",
+                planned_test_time_end="2026-03-31",
+                due_date_start="2026-03-01",
+                due_date_end="2026-03-31",
+                completed_time_start="2026-03-07",
+                completed_time_end="2026-03-09",
+                accepted_time_start="2026-03-11",
+                accepted_time_end="2026-03-13",
+                dev_delay_status="delayed",
+                test_delay_status="delayed",
+                page_no=1,
+                page_size=20,
+            ),
+            user=self.user,
+        )
+
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["items"][0]["requirement_id"], "REQ-KEEP")
         mocked_fetch.assert_not_called()
 
     @mock.patch(

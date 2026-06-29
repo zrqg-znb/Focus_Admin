@@ -29,6 +29,7 @@ from .requirement_board_model import (
     RequirementBoardQueryTask,
     STATUS_LABELS,
     STATUS_ORDER,
+    TIME_FIELD_LABELS,
     TIME_FIELD_OPTIONS,
     UNKNOWN_TEAM_NAME,
     VERIFICATION_POLICY_LABELS,
@@ -140,6 +141,13 @@ _QUERY_TASK_ACTIVE_STATUSES = {
     RequirementBoardQueryTask.STATUS_PENDING,
     RequirementBoardQueryTask.STATUS_RUNNING,
 }
+_DELAY_STATUS_VALUES = {"all", "normal", "delayed"}
+_INDEPENDENT_TIME_FIELDS = (
+    "planned_test_time",
+    "due_date",
+    "completed_time",
+    "accepted_time",
+)
 
 
 def _get_setting(name: str, default: Any = None):
@@ -1187,6 +1195,51 @@ def _normalize_time_filters(
     }
 
 
+def _normalize_delay_status(value: Any) -> str:
+    """规范延期筛选值，非法值按全部处理以兼容历史默认筛选。"""
+    text = _clean_text(value).lower()
+    return text if text in _DELAY_STATUS_VALUES else "all"
+
+
+def _normalize_independent_time_ranges(
+    payload: dict[str, Any],
+    *,
+    strict: bool = True,
+) -> dict[str, dict[str, Any]]:
+    """解析四个表头时间区间筛选，任一字段配置后都作为本地过滤条件。"""
+    result: dict[str, dict[str, Any]] = {}
+    for field in _INDEPENDENT_TIME_FIELDS:
+        start = _clean_text(payload.get(f"{field}_start"))
+        end = _clean_text(payload.get(f"{field}_end"))
+        try:
+            start_dt = _parse_range_boundary(start, is_end=False) if start else None
+            end_dt = _parse_range_boundary(end, is_end=True) if end else None
+        except HttpError:
+            if strict:
+                raise
+            start = ""
+            end = ""
+            start_dt = None
+            end_dt = None
+        if start_dt and end_dt and start_dt > end_dt:
+            if strict:
+                raise HttpError(
+                    422,
+                    f"{TIME_FIELD_LABELS.get(field, field)}区间开始不能晚于结束",
+                )
+            start = ""
+            end = ""
+            start_dt = None
+            end_dt = None
+        result[field] = {
+            "start": start,
+            "end": end,
+            "start_dt": start_dt,
+            "end_dt": end_dt,
+        }
+    return result
+
+
 def _create_default_filter_payload() -> dict[str, Any]:
     return {
         "project_ids": [],
@@ -1194,12 +1247,24 @@ def _create_default_filter_payload() -> dict[str, Any]:
         "categories": list(CATEGORY_ORDER),
         "schedule_state": [],
         "verification_policies": [],
+        "requirement_id_keyword": "",
         "title_keyword": "",
         "develop_user": [],
         "test_user": [],
+        "responsible_pl_group_ids": [],
         "time_field": DEFAULT_TIME_FIELD,
         "time_start": "",
         "time_end": "",
+        "planned_test_time_start": "",
+        "planned_test_time_end": "",
+        "due_date_start": "",
+        "due_date_end": "",
+        "completed_time_start": "",
+        "completed_time_end": "",
+        "accepted_time_start": "",
+        "accepted_time_end": "",
+        "dev_delay_status": "all",
+        "test_delay_status": "all",
     }
 
 
@@ -1236,6 +1301,7 @@ def _normalize_filter_payload_for_storage(
         payload.get("time_end"),
         payload.get("accepted_time_start"),
         payload.get("accepted_time_end"),
+        payload=payload,
     )
     return {
         "project_ids": context["remote_cache_payload"]["project_ids"],
@@ -1243,6 +1309,7 @@ def _normalize_filter_payload_for_storage(
         "categories": context["categories"],
         "schedule_state": context["schedule_state"],
         "verification_policies": context["verification_policies"],
+        "requirement_id_keyword": context["requirement_id_keyword"],
         "title_keyword": context["title_keyword"],
         "develop_user": context["develop_users"],
         "test_user": context["test_users"],
@@ -1250,6 +1317,28 @@ def _normalize_filter_payload_for_storage(
         "time_field": context["time_field"] or DEFAULT_TIME_FIELD,
         "time_start": context["time_start"] or "",
         "time_end": context["time_end"] or "",
+        "planned_test_time_start": context["independent_time_ranges"][
+            "planned_test_time"
+        ]["start"],
+        "planned_test_time_end": context["independent_time_ranges"][
+            "planned_test_time"
+        ]["end"],
+        "due_date_start": context["independent_time_ranges"]["due_date"]["start"],
+        "due_date_end": context["independent_time_ranges"]["due_date"]["end"],
+        "completed_time_start": context["independent_time_ranges"][
+            "completed_time"
+        ]["start"],
+        "completed_time_end": context["independent_time_ranges"]["completed_time"][
+            "end"
+        ],
+        "accepted_time_start": context["independent_time_ranges"]["accepted_time"][
+            "start"
+        ],
+        "accepted_time_end": context["independent_time_ranges"]["accepted_time"][
+            "end"
+        ],
+        "dev_delay_status": context["dev_delay_status"],
+        "test_delay_status": context["test_delay_status"],
     }
 
 
@@ -1323,6 +1412,7 @@ def _sanitize_saved_filter_payload(
         time_start = ""
         time_end = ""
 
+    independent_time_ranges = _normalize_independent_time_ranges(payload, strict=False)
     active_pl_group_ids = {
         str(item)
         for item in PlGroup.objects.filter(status=True).values_list("id", flat=True)
@@ -1343,6 +1433,7 @@ def _sanitize_saved_filter_payload(
         "categories": categories,
         "schedule_state": schedule_state,
         "verification_policies": verification_policies,
+        "requirement_id_keyword": _clean_text(payload.get("requirement_id_keyword")),
         "title_keyword": _clean_text(payload.get("title_keyword")),
         "develop_user": _normalize_owner_list(
             (payload.get("develop_user") or []) + (payload.get("develop_users") or [])
@@ -1354,6 +1445,20 @@ def _sanitize_saved_filter_payload(
         "time_field": time_field,
         "time_start": time_start,
         "time_end": time_end,
+        "planned_test_time_start": independent_time_ranges["planned_test_time"][
+            "start"
+        ],
+        "planned_test_time_end": independent_time_ranges["planned_test_time"]["end"],
+        "due_date_start": independent_time_ranges["due_date"]["start"],
+        "due_date_end": independent_time_ranges["due_date"]["end"],
+        "completed_time_start": independent_time_ranges["completed_time"][
+            "start"
+        ],
+        "completed_time_end": independent_time_ranges["completed_time"]["end"],
+        "accepted_time_start": independent_time_ranges["accepted_time"]["start"],
+        "accepted_time_end": independent_time_ranges["accepted_time"]["end"],
+        "dev_delay_status": _normalize_delay_status(payload.get("dev_delay_status")),
+        "test_delay_status": _normalize_delay_status(payload.get("test_delay_status")),
     }
 
 
@@ -1372,6 +1477,7 @@ def _resolve_query_context(
     time_end: str | None = None,
     accepted_time_start: str | None = None,
     accepted_time_end: str | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ordered_project_ids = _normalize_text_list(project_ids)
     if not ordered_project_ids:
@@ -1432,6 +1538,10 @@ def _resolve_query_context(
         verification_policies,
     )
     normalized_title_keyword = _clean_text(title_keyword)
+    payload = payload or {}
+    normalized_requirement_id_keyword = _clean_text(
+        payload.get("requirement_id_keyword"),
+    )
     normalized_develop_users = _normalize_owner_list(develop_users)
     normalized_test_users = _normalize_owner_list(test_users)
     normalized_responsible_pl_group_ids = _normalize_text_list(
@@ -1444,12 +1554,23 @@ def _resolve_query_context(
         accepted_time_start,
         accepted_time_end,
     )
+    independent_time_ranges = _normalize_independent_time_ranges(payload)
+    has_independent_time_filter = any(
+        item["start_dt"] or item["end_dt"]
+        for item in independent_time_ranges.values()
+    )
+    dev_delay_status = _normalize_delay_status(payload.get("dev_delay_status"))
+    test_delay_status = _normalize_delay_status(payload.get("test_delay_status"))
     requires_local_filter = bool(
-        normalized_develop_users
+        normalized_requirement_id_keyword
+        or normalized_develop_users
         or normalized_test_users
         or normalized_responsible_pl_group_ids
         or normalized_time["time_start_dt"]
         or normalized_time["time_end_dt"]
+        or has_independent_time_filter
+        or dev_delay_status != "all"
+        or test_delay_status != "all"
     )
 
     remote_cache_payload = {
@@ -1463,12 +1584,27 @@ def _resolve_query_context(
     }
     cache_payload = {
         **remote_cache_payload,
+        "requirement_id_keyword": normalized_requirement_id_keyword,
         "develop_users": normalized_develop_users,
         "test_users": normalized_test_users,
         "responsible_pl_group_ids": normalized_responsible_pl_group_ids,
         "time_field": normalized_time["time_field"] or "",
         "time_start": normalized_time["time_start"] or "",
         "time_end": normalized_time["time_end"] or "",
+        "planned_test_time_start": independent_time_ranges["planned_test_time"][
+            "start"
+        ],
+        "planned_test_time_end": independent_time_ranges["planned_test_time"]["end"],
+        "due_date_start": independent_time_ranges["due_date"]["start"],
+        "due_date_end": independent_time_ranges["due_date"]["end"],
+        "completed_time_start": independent_time_ranges["completed_time"][
+            "start"
+        ],
+        "completed_time_end": independent_time_ranges["completed_time"]["end"],
+        "accepted_time_start": independent_time_ranges["accepted_time"]["start"],
+        "accepted_time_end": independent_time_ranges["accepted_time"]["end"],
+        "dev_delay_status": dev_delay_status,
+        "test_delay_status": test_delay_status,
     }
 
     return {
@@ -1480,9 +1616,13 @@ def _resolve_query_context(
         "schedule_state": selected_schedule_state,
         "verification_policies": selected_verification_policies,
         "title_keyword": normalized_title_keyword,
+        "requirement_id_keyword": normalized_requirement_id_keyword,
         "develop_users": normalized_develop_users,
         "test_users": normalized_test_users,
         "responsible_pl_group_ids": normalized_responsible_pl_group_ids,
+        "independent_time_ranges": independent_time_ranges,
+        "dev_delay_status": dev_delay_status,
+        "test_delay_status": test_delay_status,
         **normalized_time,
         "requires_local_filter": requires_local_filter,
         "remote_cache_payload": remote_cache_payload,
@@ -1508,6 +1648,7 @@ def _resolve_query_context_from_payload(payload: dict[str, Any]) -> dict[str, An
         payload.get("time_end"),
         payload.get("accepted_time_start"),
         payload.get("accepted_time_end"),
+        payload=payload,
     )
 
 
@@ -1621,6 +1762,12 @@ def _load_remote_page(context: dict[str, Any], page_no: int, page_size: int) -> 
 
 
 def _item_matches_local_filters(item: dict[str, Any], context: dict[str, Any]) -> bool:
+    requirement_id_keyword = _clean_text(context.get("requirement_id_keyword")).lower()
+    if requirement_id_keyword and requirement_id_keyword not in _clean_text(
+        item.get("requirement_id"),
+    ).lower():
+        return False
+
     develop_users = context["develop_users"]
     if develop_users and not set(develop_users).intersection(item.get("develop_users") or []):
         return False
@@ -1646,6 +1793,33 @@ def _item_matches_local_filters(item: dict[str, Any], context: dict[str, Any]) -
         if context.get("time_start_dt") and value_dt < context["time_start_dt"]:
             return False
         if context.get("time_end_dt") and value_dt > context["time_end_dt"]:
+            return False
+
+    for field, field_filter in (context.get("independent_time_ranges") or {}).items():
+        if not field_filter.get("start_dt") and not field_filter.get("end_dt"):
+            continue
+        value_dt = _parse_datetime(item.get(field))
+        if value_dt is None:
+            return False
+        if field_filter.get("start_dt") and value_dt < field_filter["start_dt"]:
+            return False
+        if field_filter.get("end_dt") and value_dt > field_filter["end_dt"]:
+            return False
+
+    dev_delay_status = context.get("dev_delay_status") or "all"
+    if dev_delay_status != "all":
+        is_delayed = _to_bool(item.get("is_dev_delayed"), False)
+        if dev_delay_status == "delayed" and not is_delayed:
+            return False
+        if dev_delay_status == "normal" and is_delayed:
+            return False
+
+    test_delay_status = context.get("test_delay_status") or "all"
+    if test_delay_status != "all":
+        is_delayed = _to_bool(item.get("is_test_delayed"), False)
+        if test_delay_status == "delayed" and not is_delayed:
+            return False
+        if test_delay_status == "normal" and is_delayed:
             return False
 
     return True
@@ -1754,6 +1928,7 @@ def _build_full_cache_payload(projects: list[Project]) -> dict[str, Any]:
         "categories": list(CATEGORY_ORDER),
         "schedule_state": [],
         "verification_policies": [],
+        "requirement_id_keyword": "",
         "title_keyword": "",
         "develop_user": [],
         "test_user": [],
@@ -1761,6 +1936,16 @@ def _build_full_cache_payload(projects: list[Project]) -> dict[str, Any]:
         "time_field": DEFAULT_TIME_FIELD,
         "time_start": "",
         "time_end": "",
+        "planned_test_time_start": "",
+        "planned_test_time_end": "",
+        "due_date_start": "",
+        "due_date_end": "",
+        "completed_time_start": "",
+        "completed_time_end": "",
+        "accepted_time_start": "",
+        "accepted_time_end": "",
+        "dev_delay_status": "all",
+        "test_delay_status": "all",
     }
 
 

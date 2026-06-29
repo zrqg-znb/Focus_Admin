@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { PlGroup } from '#/api/core/pl';
 
-import { computed, ref, watch } from 'vue';
+import { computed, ref } from 'vue';
 
 import { CaretRight, Search } from '@element-plus/icons-vue';
 import {

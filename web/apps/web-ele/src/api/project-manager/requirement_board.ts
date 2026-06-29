@@ -7,6 +7,7 @@ export type RequirementTimeField =
   | 'planned_test_time';
 
 export type RequirementScheduleState = 'A' | 'C' | 'D' | 'I' | 'P';
+export type RequirementDelayStatus = 'all' | 'delayed' | 'normal';
 
 export interface RequirementBoardFilterPayload {
   project_ids: string[];
@@ -14,6 +15,7 @@ export interface RequirementBoardFilterPayload {
   categories?: string[];
   schedule_state?: RequirementScheduleState[];
   verification_policies?: string[];
+  requirement_id_keyword?: string;
   title_keyword?: string;
   develop_user?: string[];
   test_user?: string[];
@@ -29,8 +31,16 @@ export interface RequirementBoardFilterPayload {
   time_field?: RequirementTimeField;
   time_start?: string;
   time_end?: string;
+  planned_test_time_start?: string;
+  planned_test_time_end?: string;
+  due_date_start?: string;
+  due_date_end?: string;
+  completed_time_start?: string;
+  completed_time_end?: string;
   accepted_time_start?: string;
   accepted_time_end?: string;
+  dev_delay_status?: RequirementDelayStatus;
+  test_delay_status?: RequirementDelayStatus;
 }
 
 export interface RequirementBoardQuery extends RequirementBoardFilterPayload {
