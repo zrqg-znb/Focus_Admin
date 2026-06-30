@@ -296,6 +296,7 @@ export function createEmptyRequirementSummary(): RequirementBoardSummary {
     type_summary: [],
     project_summary: [],
     team_summary: [],
+    pl_group_summary: [],
     user_summary: { develop_users: [], test_users: [] },
     dispatch_rate: {
       p_total: 0,

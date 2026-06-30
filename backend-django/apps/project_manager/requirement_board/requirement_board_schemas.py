@@ -186,6 +186,21 @@ class RequirementTeamSummarySchema(Schema):
     acceptance_done: RequirementCompletionSummarySchema
 
 
+class RequirementPlGroupSummarySchema(Schema):
+    pl_group_id: Optional[str] = None
+    pl_group_name: str
+    total_count: int = 0
+    total_workload_man_day: float = 0.0
+    total_workload_kloc: float = 0.0
+    i_count: int = 0
+    d_count: int = 0
+    p_count: int = 0
+    c_count: int = 0
+    a_count: int = 0
+    dev_done: RequirementCompletionSummarySchema
+    acceptance_done: RequirementCompletionSummarySchema
+
+
 class RequirementUserSummaryItemSchema(Schema):
     username: str
     task_count: int = 0
@@ -242,6 +257,7 @@ class RequirementBoardSummarySchema(Schema):
     type_summary: List[RequirementTypeSummarySchema] = Field(default_factory=list)
     project_summary: List[RequirementProjectSummarySchema] = Field(default_factory=list)
     team_summary: List[RequirementTeamSummarySchema] = Field(default_factory=list)
+    pl_group_summary: List[RequirementPlGroupSummarySchema] = Field(default_factory=list)
     user_summary: RequirementUserSummarySchema = Field(
         default_factory=lambda: RequirementUserSummarySchema()
     )

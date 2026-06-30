@@ -27,6 +27,7 @@ import {
   ElIcon,
   ElMessage,
   ElProgress,
+  ElSegmented,
   ElTable,
   ElTableColumn,
   ElTabPane,
@@ -74,6 +75,7 @@ import {
 defineOptions({ name: 'RequirementBoard' });
 
 type ElementTagType = 'danger' | 'info' | 'primary' | 'success' | 'warning';
+type SummaryDimension = 'pl_group' | 'team';
 type RequirementHeaderFilterConfig = BaseRequirementHeaderFilterConfig & {
   clearValue?: any;
   endPayloadKey?: keyof RequirementBoardFilterPayload;
@@ -182,6 +184,14 @@ const requirementHeaderFilters: RequirementHeaderFilterConfig[] = [
   },
 ];
 
+const SUMMARY_DIMENSION_OPTIONS: Array<{
+  label: string;
+  value: SummaryDimension;
+}> = [
+  { label: 'PL组', value: 'pl_group' },
+  { label: '责任团队', value: 'team' },
+];
+
 function createDefaultFilters(): RequirementBoardFilterPayload {
   return {
     project_ids: [],
@@ -228,6 +238,10 @@ const summary = ref<RequirementBoardSummary>(createEmptyRequirementSummary());
 const summaryFingerprint = ref('');
 const queryPrepareTask = ref<null | RequirementBoardQueryTask>(null);
 const queryPreparing = ref(false);
+const statusSummaryDimension = ref<SummaryDimension>('pl_group');
+const completionSummaryDimension = ref<SummaryDimension>('pl_group');
+const developmentDelayDimension = ref<SummaryDimension>('pl_group');
+const acceptanceDelayDimension = ref<SummaryDimension>('pl_group');
 let queryPrepareTimer: null | number = null;
 
 const teamStatusChartRef = ref<EchartsUIType>();
@@ -550,11 +564,79 @@ function isCustomHeaderFilterActive(columnKey: string) {
 }
 
 const hasAppliedFilters = computed(() => Boolean(appliedFilters.value));
-const summaryTeamCount = computed(() => summary.value.team_summary.length);
 const summaryProjectCount = computed(
   () => summary.value.project_summary.length,
 );
 const summaryTypeCount = computed(() => summary.value.type_summary.length);
+
+function getSummaryDimensionLabel(dimension: SummaryDimension) {
+  return dimension === 'pl_group' ? 'PL组' : '责任团队';
+}
+
+function getSummaryDimensionRows(
+  dimension: SummaryDimension,
+): Array<Record<string, any>> {
+  if (dimension === 'pl_group') {
+    return (summary.value.pl_group_summary || []).map((item) => ({
+      ...item,
+      dimension_id: item.pl_group_id || '',
+      dimension_name: item.pl_group_name || '未识别PL领域',
+      dimension_type: 'pl_group' as const,
+    }));
+  }
+  return (summary.value.team_summary || []).map((item) => ({
+    ...item,
+    dimension_id: item.team_name || '',
+    dimension_name: item.team_name || '未识别团队',
+    dimension_type: 'team' as const,
+  }));
+}
+
+function getDelayPreviewDimensionName(
+  row: Record<string, any>,
+  dimension: SummaryDimension,
+) {
+  if (dimension === 'pl_group') {
+    return row.responsible_pl_group_name || '未识别PL领域';
+  }
+  return row.team_name || '未识别团队';
+}
+
+function getDelayPreviewDimensionTagType(
+  row: Record<string, any>,
+  dimension: SummaryDimension,
+): ElementTagType {
+  if (dimension === 'pl_group') {
+    return row.responsible_pl_group_id
+      ? getStableTagType(row.responsible_pl_group_name)
+      : 'info';
+  }
+  return getTeamTagType(row.team_name);
+}
+
+function getSummaryDimensionTagType(row: Record<string, any>): ElementTagType {
+  if (row.dimension_type === 'pl_group') {
+    return row.dimension_id ? getStableTagType(row.dimension_name) : 'info';
+  }
+  return getTeamTagType(row.dimension_name);
+}
+
+const statusDimensionRows = computed<Array<Record<string, any>>>(() =>
+  getSummaryDimensionRows(statusSummaryDimension.value),
+);
+const completionDimensionRows = computed<Array<Record<string, any>>>(() =>
+  getSummaryDimensionRows(completionSummaryDimension.value),
+);
+const statusDimensionCount = computed(() => statusDimensionRows.value.length);
+const completionDimensionCount = computed(
+  () => completionDimensionRows.value.length,
+);
+const statusDimensionLabel = computed(() =>
+  getSummaryDimensionLabel(statusSummaryDimension.value),
+);
+const completionDimensionLabel = computed(() =>
+  getSummaryDimensionLabel(completionSummaryDimension.value),
+);
 const dispatchRate = computed(() => {
   return (
     summary.value.dispatch_rate || {
@@ -578,7 +660,7 @@ const planRefreshRate = computed(() => {
 });
 
 const teamChartHeight = computed(() => {
-  const count = summary.value.team_summary.length;
+  const count = statusDimensionRows.value.length;
   if (count <= 0) {
     return 320;
   }
@@ -589,7 +671,7 @@ const teamChartHeight = computed(() => {
 });
 
 const teamChartZoomEnd = computed(() => {
-  const count = summary.value.team_summary.length;
+  const count = statusDimensionRows.value.length;
   const visible = 12;
   if (count <= visible || count === 0) {
     return 100;
@@ -1141,10 +1223,10 @@ function renderEmptyChart(
 }
 
 watch(
-  () => summary.value.team_summary,
+  statusDimensionRows,
   (rows) => {
     if (rows.length === 0) {
-      renderEmptyChart(renderTeamStatusChart, '暂无团队状态分布');
+      renderEmptyChart(renderTeamStatusChart, `暂无${statusDimensionLabel.value}状态分布`);
       return;
     }
 
@@ -1199,7 +1281,7 @@ watch(
       },
       yAxis: {
         type: 'category',
-        data: rows.map((item) => item.team_name || '未识别团队'),
+        data: rows.map((item) => item.dimension_name),
         axisLabel: {
           color: '#475569',
           fontSize: 12,
@@ -2183,20 +2265,27 @@ onUnmounted(() => {
                     <div class="summary-section-card__header">
                       <div>
                         <div class="summary-section-card__title">
-                          团队状态堆叠图
+                          维度状态堆叠图
                         </div>
                         <div class="summary-section-card__desc">
-                          以团队为维度查看 I/D/P/C/A
+                          以{{ statusDimensionLabel }}为维度查看 I/D/P/C/A
                           状态分布，快速识别推进中、待验收和已完成的需求规模。
                         </div>
                       </div>
-                      <ElTag
-                        class="summary-section-card__tag"
-                        type="primary"
-                        effect="plain"
-                      >
-                        {{ summaryTeamCount }} 个团队
-                      </ElTag>
+                      <div class="summary-section-card__actions">
+                        <ElSegmented
+                          v-model="statusSummaryDimension"
+                          :options="SUMMARY_DIMENSION_OPTIONS"
+                          size="small"
+                        />
+                        <ElTag
+                          class="summary-section-card__tag"
+                          type="primary"
+                          effect="plain"
+                        >
+                          {{ statusDimensionCount }} 个{{ statusDimensionLabel }}
+                        </ElTag>
+                      </div>
                     </div>
                   </template>
                   <div
@@ -2387,16 +2476,23 @@ onUnmounted(() => {
                           且已超过计划转测时间。
                         </div>
                       </div>
-                      <ElTag
-                        class="summary-section-card__tag"
-                        type="danger"
-                        effect="light"
-                      >
-                        {{ summary.delay_summary.development.count }} /
-                        {{
-                          formatPercent(summary.delay_summary.development.rate)
-                        }}
-                      </ElTag>
+                      <div class="summary-section-card__actions">
+                        <ElSegmented
+                          v-model="developmentDelayDimension"
+                          :options="SUMMARY_DIMENSION_OPTIONS"
+                          size="small"
+                        />
+                        <ElTag
+                          class="summary-section-card__tag"
+                          type="danger"
+                          effect="light"
+                        >
+                          {{ summary.delay_summary.development.count }} /
+                          {{
+                            formatPercent(summary.delay_summary.development.rate)
+                          }}
+                        </ElTag>
+                      </div>
                     </div>
                   </template>
                   <div class="delay-overview-strip delay-overview-strip--dev">
@@ -2422,17 +2518,30 @@ onUnmounted(() => {
                     size="small"
                     class="summary-simple-table"
                   >
-                    <ElTableColumn label="项目 / 团队" min-width="180">
+                    <ElTableColumn
+                      :label="`项目 / ${getSummaryDimensionLabel(developmentDelayDimension)}`"
+                      min-width="180"
+                    >
                       <template #default="{ row }">
                         <div class="delay-preview-main">
                           {{ row.project_name }}
                         </div>
                         <ElTag
-                          :type="getTeamTagType(row.team_name)"
+                          :type="
+                            getDelayPreviewDimensionTagType(
+                              row,
+                              developmentDelayDimension,
+                            )
+                          "
                           effect="light"
                           class="requirement-team-badge mt-1"
                         >
-                          {{ row.team_name || '未识别团队' }}
+                          {{
+                            getDelayPreviewDimensionName(
+                              row,
+                              developmentDelayDimension,
+                            )
+                          }}
                         </ElTag>
                       </template>
                     </ElTableColumn>
@@ -2479,16 +2588,23 @@ onUnmounted(() => {
                           且已超过计划完成时间。
                         </div>
                       </div>
-                      <ElTag
-                        class="summary-section-card__tag"
-                        type="danger"
-                        effect="light"
-                      >
-                        {{ summary.delay_summary.acceptance.count }} /
-                        {{
-                          formatPercent(summary.delay_summary.acceptance.rate)
-                        }}
-                      </ElTag>
+                      <div class="summary-section-card__actions">
+                        <ElSegmented
+                          v-model="acceptanceDelayDimension"
+                          :options="SUMMARY_DIMENSION_OPTIONS"
+                          size="small"
+                        />
+                        <ElTag
+                          class="summary-section-card__tag"
+                          type="danger"
+                          effect="light"
+                        >
+                          {{ summary.delay_summary.acceptance.count }} /
+                          {{
+                            formatPercent(summary.delay_summary.acceptance.rate)
+                          }}
+                        </ElTag>
+                      </div>
                     </div>
                   </template>
                   <div
@@ -2516,17 +2632,30 @@ onUnmounted(() => {
                     size="small"
                     class="summary-simple-table"
                   >
-                    <ElTableColumn label="项目 / 团队" min-width="180">
+                    <ElTableColumn
+                      :label="`项目 / ${getSummaryDimensionLabel(acceptanceDelayDimension)}`"
+                      min-width="180"
+                    >
                       <template #default="{ row }">
                         <div class="delay-preview-main">
                           {{ row.project_name }}
                         </div>
                         <ElTag
-                          :type="getTeamTagType(row.team_name)"
+                          :type="
+                            getDelayPreviewDimensionTagType(
+                              row,
+                              acceptanceDelayDimension,
+                            )
+                          "
                           effect="light"
                           class="requirement-team-badge mt-1"
                         >
-                          {{ row.team_name || '未识别团队' }}
+                          {{
+                            getDelayPreviewDimensionName(
+                              row,
+                              acceptanceDelayDimension,
+                            )
+                          }}
                         </ElTag>
                       </template>
                     </ElTableColumn>
@@ -2567,39 +2696,50 @@ onUnmounted(() => {
                   <div class="summary-section-card__header">
                     <div>
                       <div class="summary-section-card__title">
-                        团队完成统计
+                        维度完成统计
                       </div>
                       <div class="summary-section-card__desc">
-                        同时给出总量、I/D/P/C/A
+                        以{{ completionDimensionLabel }}为维度给出总量、I/D/P/C/A
                         状态分布，以及开发完成（C+A）和验收完成（A）的数量、人天、KLOC
                         完成情况。
                       </div>
                     </div>
-                    <ElTag
-                      class="summary-section-card__tag"
-                      type="success"
-                      effect="light"
-                    >
-                      {{ summaryTeamCount }} 行团队汇总
-                    </ElTag>
+                    <div class="summary-section-card__actions">
+                      <ElSegmented
+                        v-model="completionSummaryDimension"
+                        :options="SUMMARY_DIMENSION_OPTIONS"
+                        size="small"
+                      />
+                      <ElTag
+                        class="summary-section-card__tag"
+                        type="success"
+                        effect="light"
+                      >
+                        {{ completionDimensionCount }} 行{{ completionDimensionLabel }}汇总
+                      </ElTag>
+                    </div>
                   </div>
                 </template>
                 <ElTable
-                  :data="summary.team_summary"
+                  :data="completionDimensionRows"
                   size="small"
                   class="summary-team-table"
                 >
-                  <ElTableColumn label="团队" min-width="180" fixed="left">
+                  <ElTableColumn
+                    :label="completionDimensionLabel"
+                    min-width="180"
+                    fixed="left"
+                  >
                     <template #default="{ row }">
                       <ElTag
-                        :type="getTeamTagType(row.team_name)"
+                        :type="getSummaryDimensionTagType(row)"
                         effect="light"
                         class="requirement-team-badge"
                       >
                         <span
                           class="requirement-team-badge__text requirement-team-badge__text--wide"
                         >
-                          {{ row.team_name || '未识别团队' }}
+                          {{ row.dimension_name }}
                         </span>
                       </ElTag>
                     </template>
@@ -3393,6 +3533,15 @@ onUnmounted(() => {
 .summary-section-card__tag {
   flex-shrink: 0;
   margin-top: 2px;
+}
+
+.summary-section-card__actions {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .summary-team-table :deep(.el-table__cell),

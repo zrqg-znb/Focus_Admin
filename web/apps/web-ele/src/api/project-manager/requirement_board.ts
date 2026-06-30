@@ -170,6 +170,21 @@ export interface RequirementTeamSummary {
   acceptance_done: RequirementCompletionSummary;
 }
 
+export interface RequirementPlGroupSummary {
+  pl_group_id?: null | string;
+  pl_group_name: string;
+  total_count: number;
+  total_workload_man_day: number;
+  total_workload_kloc: number;
+  i_count: number;
+  d_count: number;
+  p_count: number;
+  c_count: number;
+  a_count: number;
+  dev_done: RequirementCompletionSummary;
+  acceptance_done: RequirementCompletionSummary;
+}
+
 export interface RequirementUserSummaryItem {
   username: string;
   task_count: number;
@@ -222,6 +237,7 @@ export interface RequirementBoardSummary {
   type_summary: RequirementTypeSummary[];
   project_summary: RequirementProjectSummary[];
   team_summary: RequirementTeamSummary[];
+  pl_group_summary: RequirementPlGroupSummary[];
   user_summary: RequirementUserSummary;
   dispatch_rate: RequirementDispatchRate;
   plan_refresh_rate: RequirementPlanRefreshRate;

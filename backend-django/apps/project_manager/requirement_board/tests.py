@@ -853,6 +853,80 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
         self.assertEqual(result["total_count"], 1)
         self.assertEqual(result["team_summary"][0]["team_name"], "Team-A")
         self.assertEqual(result["team_summary"][0]["p_count"], 1)
+        self.assertEqual(result["pl_group_summary"][0]["pl_group_name"], "未识别PL领域")
+        self.assertEqual(result["pl_group_summary"][0]["p_count"], 1)
+        mocked_fetch.assert_not_called()
+
+    @mock.patch(
+        "apps.project_manager.requirement_board.requirement_board_services._fetch_raw_page"
+    )
+    def test_summary_full_cache_returns_team_and_pl_group_dimensions(self, mocked_fetch):
+        project = self._create_project(
+            name="Alpha",
+            code="alpha",
+            design_id="design-a",
+            sub_teams=["Team-A", "Team-B"],
+        )
+        dev_known = self._create_focus_user("dev-known")
+        group = self._create_pl_group(
+            name="平台PL",
+            code="pl-platform",
+            pl_user=dev_known,
+            members=[dev_known],
+            sort=1,
+        )
+        mocked_fetch.return_value = self._build_raw_page(
+            [
+                self._build_raw_requirement(
+                    design_id="design-a",
+                    requirement_id="REQ-KNOWN",
+                    team="Team-A",
+                    status="Completed",
+                    develop_owner="dev-known",
+                    completed_time="2026-03-08 18:00:00",
+                ),
+                self._build_raw_requirement(
+                    design_id="design-a",
+                    requirement_id="REQ-UNKNOWN",
+                    team="Team-B",
+                    status="Accepted",
+                    develop_owner="dev-missing",
+                    accepted_time="2026-03-09 18:00:00",
+                ),
+            ]
+        )
+        requirement_board_services.refresh_requirement_board_full_cache()
+        mocked_fetch.reset_mock()
+
+        result = requirement_board_services.get_requirement_board_summary(
+            RequirementBoardSummaryQuerySchema(
+                project_ids=[str(project.id)],
+                sub_teams=["Team-A", "Team-B"],
+                categories=["AR"],
+                schedule_state=[],
+                verification_policies=[],
+                develop_user=[],
+                test_user=[],
+                responsible_pl_group_ids=[],
+                time_field="accepted_time",
+                time_start="",
+                time_end="",
+            ),
+            user=self.user,
+        )
+
+        self.assertEqual(result["total_count"], 2)
+        self.assertEqual(
+            {item["team_name"]: item["total_count"] for item in result["team_summary"]},
+            {"Team-A": 1, "Team-B": 1},
+        )
+        pl_rows = {
+            item["pl_group_name"]: item for item in result["pl_group_summary"]
+        }
+        self.assertEqual(pl_rows["平台PL"]["pl_group_id"], str(group.id))
+        self.assertEqual(pl_rows["平台PL"]["c_count"], 1)
+        self.assertIsNone(pl_rows["未识别PL领域"]["pl_group_id"])
+        self.assertEqual(pl_rows["未识别PL领域"]["a_count"], 1)
         mocked_fetch.assert_not_called()
 
     @mock.patch(

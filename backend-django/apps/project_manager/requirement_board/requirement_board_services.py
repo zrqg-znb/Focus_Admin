@@ -2788,6 +2788,7 @@ def _create_summary_accumulator() -> dict[str, Any]:
         "type_summary": {},
         "project_summary": {},
         "team_summary": {},
+        "pl_group_summary": {},
         "user_summary": {"develop_users": {}, "test_users": {}},
         "dispatch_rate": {
             "p_total": 0,
@@ -2827,6 +2828,42 @@ def _update_user_summary(
         row["workload_kloc"] += workload_kloc
 
 
+def _create_dimension_summary_row(**identity: Any) -> dict[str, Any]:
+    """创建团队/PL组维度通用汇总行，保证两个维度统计口径一致。"""
+    return {
+        **identity,
+        "total_count": 0,
+        "total_workload_man_day": 0.0,
+        "total_workload_kloc": 0.0,
+        "i_count": 0,
+        "d_count": 0,
+        "p_count": 0,
+        "c_count": 0,
+        "a_count": 0,
+        "dev_done": _create_empty_completion_payload(),
+        "acceptance_done": _create_empty_completion_payload(),
+    }
+
+
+def _update_dimension_summary_row(
+    row: dict[str, Any],
+    item: dict[str, Any],
+    status_code: str,
+    workload_man_day: float,
+    workload_kloc: float,
+) -> None:
+    """累加团队/PL组维度指标，避免两个维度完成率逻辑分叉。"""
+    row["total_count"] += 1
+    row["total_workload_man_day"] += workload_man_day
+    row["total_workload_kloc"] += workload_kloc
+    row[_STATUS_FIELD_MAP[status_code]] += 1
+
+    if status_code in {"C", "A"}:
+        _update_completion_payload(row["dev_done"], item)
+    if status_code == "A":
+        _update_completion_payload(row["acceptance_done"], item)
+
+
 def _month_bucket(value: Any) -> str | None:
     parsed = _parse_datetime(value)
     if parsed is None:
@@ -2858,6 +2895,11 @@ def _aggregate_item(summary: dict[str, Any], item: dict[str, Any]) -> None:
     project_id = item.get("project_id") or ""
     project_name = item.get("project_name") or "未匹配项目"
     team_name = item.get("team_name") or UNKNOWN_TEAM_NAME
+    pl_group_id = _clean_text(item.get("responsible_pl_group_id")) or None
+    pl_group_name = (
+        _clean_text(item.get("responsible_pl_group_name"))
+        or _RESPONSIBLE_PL_UNKNOWN_NAME
+    )
     workload_man_day = _to_float(item.get("workload_man_day"))
     workload_kloc = _to_float(item.get("workload_kloc"))
     develop_users = item.get("develop_users") or []
@@ -2902,29 +2944,30 @@ def _aggregate_item(summary: dict[str, Any], item: dict[str, Any]) -> None:
 
     team_row = summary["team_summary"].setdefault(
         team_name,
-        {
-            "team_name": team_name,
-            "total_count": 0,
-            "total_workload_man_day": 0.0,
-            "total_workload_kloc": 0.0,
-            "i_count": 0,
-            "d_count": 0,
-            "p_count": 0,
-            "c_count": 0,
-            "a_count": 0,
-            "dev_done": _create_empty_completion_payload(),
-            "acceptance_done": _create_empty_completion_payload(),
-        },
+        _create_dimension_summary_row(team_name=team_name),
     )
-    team_row["total_count"] += 1
-    team_row["total_workload_man_day"] += workload_man_day
-    team_row["total_workload_kloc"] += workload_kloc
-    team_row[_STATUS_FIELD_MAP[status_code]] += 1
+    _update_dimension_summary_row(
+        team_row,
+        item,
+        status_code,
+        workload_man_day,
+        workload_kloc,
+    )
 
-    if status_code in {"C", "A"}:
-        _update_completion_payload(team_row["dev_done"], item)
-    if status_code == "A":
-        _update_completion_payload(team_row["acceptance_done"], item)
+    pl_group_row = summary["pl_group_summary"].setdefault(
+        pl_group_id or _RESPONSIBLE_PL_UNKNOWN_ID,
+        _create_dimension_summary_row(
+            pl_group_id=pl_group_id,
+            pl_group_name=pl_group_name,
+        ),
+    )
+    _update_dimension_summary_row(
+        pl_group_row,
+        item,
+        status_code,
+        workload_man_day,
+        workload_kloc,
+    )
 
     _update_user_summary(
         summary["user_summary"]["develop_users"],
@@ -3054,6 +3097,69 @@ def _finalize_trend_summary(trend_summary: dict[str, dict[str, Any]]) -> list[di
     ]
 
 
+def _finalize_dimension_summary(
+    rows: Iterable[dict[str, Any]],
+    *,
+    sort_name_field: str,
+) -> list[dict[str, Any]]:
+    """输出团队/PL组维度汇总，字段透传但指标计算保持一致。"""
+    result = []
+    for row in rows:
+        payload = {
+            key: value
+            for key, value in row.items()
+            if key
+            not in {
+                "total_count",
+                "total_workload_man_day",
+                "total_workload_kloc",
+                "i_count",
+                "d_count",
+                "p_count",
+                "c_count",
+                "a_count",
+                "dev_done",
+                "acceptance_done",
+            }
+        }
+        payload.update(
+            {
+                "total_count": int(row["total_count"]),
+                "total_workload_man_day": _round_metric(
+                    row["total_workload_man_day"]
+                ),
+                "total_workload_kloc": _round_metric(row["total_workload_kloc"]),
+                "i_count": int(row["i_count"]),
+                "d_count": int(row["d_count"]),
+                "p_count": int(row["p_count"]),
+                "c_count": int(row["c_count"]),
+                "a_count": int(row["a_count"]),
+                "dev_done": _finalize_completion_payload(
+                    row["dev_done"],
+                    int(row["total_count"]),
+                    float(row["total_workload_man_day"]),
+                    float(row["total_workload_kloc"]),
+                ),
+                "acceptance_done": _finalize_completion_payload(
+                    row["acceptance_done"],
+                    int(row["total_count"]),
+                    float(row["total_workload_man_day"]),
+                    float(row["total_workload_kloc"]),
+                ),
+            }
+        )
+        result.append(payload)
+
+    result.sort(
+        key=lambda item: (
+            -int(item["total_count"]),
+            -float(item["total_workload_man_day"]),
+            item.get(sort_name_field) or "",
+        ),
+    )
+    return result
+
+
 def _finalize_summary_payload(summary: dict[str, Any]) -> dict[str, Any]:
     total_count = int(summary["total_count"])
     total_workload_man_day = float(summary["total_workload_man_day"])
@@ -3111,39 +3217,13 @@ def _finalize_summary_payload(summary: dict[str, Any]) -> dict[str, Any]:
         ),
     )
 
-    team_summary = []
-    for row in summary["team_summary"].values():
-        team_summary.append(
-            {
-                "team_name": row["team_name"],
-                "total_count": int(row["total_count"]),
-                "total_workload_man_day": _round_metric(row["total_workload_man_day"]),
-                "total_workload_kloc": _round_metric(row["total_workload_kloc"]),
-                "i_count": int(row["i_count"]),
-                "d_count": int(row["d_count"]),
-                "p_count": int(row["p_count"]),
-                "c_count": int(row["c_count"]),
-                "a_count": int(row["a_count"]),
-                "dev_done": _finalize_completion_payload(
-                    row["dev_done"],
-                    int(row["total_count"]),
-                    float(row["total_workload_man_day"]),
-                    float(row["total_workload_kloc"]),
-                ),
-                "acceptance_done": _finalize_completion_payload(
-                    row["acceptance_done"],
-                    int(row["total_count"]),
-                    float(row["total_workload_man_day"]),
-                    float(row["total_workload_kloc"]),
-                ),
-            }
-        )
-    team_summary.sort(
-        key=lambda item: (
-            -int(item["total_count"]),
-            -float(item["total_workload_man_day"]),
-            item["team_name"],
-        ),
+    team_summary = _finalize_dimension_summary(
+        summary["team_summary"].values(),
+        sort_name_field="team_name",
+    )
+    pl_group_summary = _finalize_dimension_summary(
+        summary["pl_group_summary"].values(),
+        sort_name_field="pl_group_name",
     )
 
     delay_summary = {
@@ -3190,6 +3270,7 @@ def _finalize_summary_payload(summary: dict[str, Any]) -> dict[str, Any]:
         "type_summary": type_summary,
         "project_summary": project_summary,
         "team_summary": team_summary,
+        "pl_group_summary": pl_group_summary,
         "user_summary": {
             "develop_users": _finalize_user_summary(
                 summary["user_summary"]["develop_users"],
@@ -3253,6 +3334,7 @@ def _compute_summary(context: dict[str, Any]) -> dict[str, Any]:
             mode="local_filter",
             total_count=result.get("total_count"),
             team_count=len(result.get("team_summary") or []),
+            pl_group_count=len(result.get("pl_group_summary") or []),
         )
         return result
 
@@ -3288,6 +3370,7 @@ def _compute_summary(context: dict[str, Any]) -> dict[str, Any]:
         mode="remote_scan",
         total_count=result.get("total_count"),
         team_count=len(result.get("team_summary") or []),
+        pl_group_count=len(result.get("pl_group_summary") or []),
         scanned_pages=scanned_pages,
     )
     return result
@@ -3346,7 +3429,7 @@ def get_requirement_board_summary(
     user: Any = None,
 ) -> dict[str, Any]:
     context = _resolve_query_context_from_payload(data.dict())
-    summary_key = _cache_key("pm:requirement-board:summary:v5", context["cache_payload"])
+    summary_key = _cache_key("pm:requirement-board:summary:v6", context["cache_payload"])
     prepared_items = _get_prepared_items(context, user=user)
     if prepared_items is not None:
         summary = _compute_summary_from_items(prepared_items)
@@ -3354,11 +3437,16 @@ def get_requirement_board_summary(
             "summary_from_prepared_cache",
             total_count=summary.get("total_count"),
             team_count=len(summary.get("team_summary") or []),
+            pl_group_count=len(summary.get("pl_group_summary") or []),
         )
         return summary
 
     cached = cache.get(summary_key)
-    if isinstance(cached, dict) and isinstance(cached.get("team_summary"), list):
+    if (
+        isinstance(cached, dict)
+        and isinstance(cached.get("team_summary"), list)
+        and isinstance(cached.get("pl_group_summary"), list)
+    ):
         _debug_log("summary_cache_hit", cache_key=summary_key)
         return cached
 
@@ -3370,6 +3458,7 @@ def get_requirement_board_summary(
             "summary_from_full_cache",
             total_count=summary.get("total_count"),
             team_count=len(summary.get("team_summary") or []),
+            pl_group_count=len(summary.get("pl_group_summary") or []),
         )
         return summary
 
@@ -3382,8 +3471,12 @@ def get_requirement_board_summary(
     lock_key = f"{summary_key}:lock"
     lock_acquired = cache.add(lock_key, "1", _LOCK_TTL_SECONDS)
     if not lock_acquired:
-        waiting = _wait_for_cached_payload(summary_key, minimum_items_key="team_summary")
-        if isinstance(waiting, dict) and isinstance(waiting.get("team_summary"), list):
+        waiting = _wait_for_cached_payload(summary_key, minimum_items_key="pl_group_summary")
+        if (
+            isinstance(waiting, dict)
+            and isinstance(waiting.get("team_summary"), list)
+            and isinstance(waiting.get("pl_group_summary"), list)
+        ):
             _debug_log("summary_wait_hit", cache_key=summary_key)
             return waiting
 
@@ -3395,6 +3488,7 @@ def get_requirement_board_summary(
             cache_key=summary_key,
             total_count=summary.get("total_count"),
             team_count=len(summary.get("team_summary") or []),
+            pl_group_count=len(summary.get("pl_group_summary") or []),
         )
         return summary
     finally:
