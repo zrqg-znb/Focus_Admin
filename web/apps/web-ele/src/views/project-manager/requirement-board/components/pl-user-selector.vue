@@ -25,6 +25,7 @@ interface Props {
   placeholder?: string;
   disabled?: boolean;
   buttonSize?: 'default' | 'large' | 'small';
+  triggerMode?: 'button' | 'manual';
 }
 
 defineOptions({ name: 'PlUserSelector' });
@@ -35,6 +36,7 @@ const props = withDefaults(defineProps<Props>(), {
   placeholder: '选择用户',
   disabled: false,
   buttonSize: 'small',
+  triggerMode: 'button',
 });
 
 const emit = defineEmits<{
@@ -286,35 +288,39 @@ function handleUserSelect(userId: string, user: any) {
   
   setTempSelected(next);
 }
+
+defineExpose({ openDialog });
 </script>
 
 <template>
   <div class="pl-user-selector">
-    <ElButton
-      :type="buttonType"
-      plain
-      :size="buttonSize"
-      :disabled="disabled"
-      class="pl-user-selector__trigger"
-      :class="{ 'is-open': isDialogOpen }"
-      @click.stop="openDialog"
-    >
-      <span class="pl-user-selector__trigger-text">{{ buttonLabel }}</span>
-      <ElIcon class="pl-user-selector__trigger-icon">
-        <CaretRight />
-      </ElIcon>
-    </ElButton>
-    <ElButton
-      v-if="confirmedCount > 0"
-      link
-      type="danger"
-      :size="buttonSize"
-      :disabled="disabled"
-      class="pl-user-selector__clear"
-      @click.stop="clearConfirmedSelection"
-    >
-      清空
-    </ElButton>
+    <template v-if="triggerMode === 'button'">
+      <ElButton
+        :type="buttonType"
+        plain
+        :size="buttonSize"
+        :disabled="disabled"
+        class="pl-user-selector__trigger"
+        :class="{ 'is-open': isDialogOpen }"
+        @click.stop="openDialog"
+      >
+        <span class="pl-user-selector__trigger-text">{{ buttonLabel }}</span>
+        <ElIcon class="pl-user-selector__trigger-icon">
+          <CaretRight />
+        </ElIcon>
+      </ElButton>
+      <ElButton
+        v-if="confirmedCount > 0"
+        link
+        type="danger"
+        :size="buttonSize"
+        :disabled="disabled"
+        class="pl-user-selector__clear"
+        @click.stop="clearConfirmedSelection"
+      >
+        清空
+      </ElButton>
+    </template>
 
     <ElDialog
       v-model="dialogVisible"

@@ -27,7 +27,6 @@ import {
   ElIcon,
   ElMessage,
   ElProgress,
-  ElPopover,
   ElTable,
   ElTableColumn,
   ElTabPane,
@@ -219,6 +218,8 @@ const projectOptions = ref<RequirementBoardProjectOption[]>([]);
 const plGroupOptions = ref<Array<{ label: string; value: string }>>([]);
 const projectSelectorVisible = ref(false);
 const teamSelectorVisible = ref(false);
+const developUserSelectorRef = ref<InstanceType<typeof PlUserSelector>>();
+const testUserSelectorRef = ref<InstanceType<typeof PlUserSelector>>();
 const dataGridWrapRef = ref<HTMLDivElement>();
 const dataGridHeight = ref<null | number>(null);
 const filters = ref<RequirementBoardFilterPayload>(createDefaultFilters());
@@ -894,6 +895,7 @@ async function fetchSummary(force = false) {
 
 function handleProjectSelectorConfirm(projectIds: string[]) {
   filters.value.project_ids = normalizeStringArray(projectIds);
+  void handleSearch();
 }
 
 function applyFiltersToForm(payload: RequirementBoardFilterPayload) {
@@ -901,16 +903,9 @@ function applyFiltersToForm(payload: RequirementBoardFilterPayload) {
   filters.value = nextFilters;
 }
 
-function clearSelectedProjects() {
-  filters.value.project_ids = [];
-}
-
 function handleTeamSelectorConfirm(teamValues: string[]) {
   filters.value.sub_teams = normalizeStringArray(teamValues);
-}
-
-function clearSelectedTeams() {
-  filters.value.sub_teams = [];
+  void handleSearch();
 }
 
 function buildExportFilename() {
@@ -1543,62 +1538,20 @@ onUnmounted(() => {
                         <span class="requirement-header-filter-trigger__label">
                           项目名
                         </span>
-                        <ElPopover
-                          placement="bottom"
-                          popper-class="requirement-header-filter-popper"
-                          trigger="click"
-                          width="260"
+                        <ElButton
+                          circle
+                          link
+                          size="small"
+                          :loading="optionsLoading"
+                          :class="{
+                            'is-active':
+                              isCustomHeaderFilterActive('project_name'),
+                          }"
+                          class="requirement-header-filter-trigger__button"
+                          @click.stop="projectSelectorVisible = true"
                         >
-                          <template #reference>
-                            <ElButton
-                              circle
-                              link
-                              size="small"
-                              :class="{
-                                'is-active':
-                                  isCustomHeaderFilterActive('project_name'),
-                              }"
-                              class="requirement-header-filter-trigger__button"
-                              @click.stop
-                            >
-                              <ElIcon><Filter /></ElIcon>
-                            </ElButton>
-                          </template>
-                          <div class="requirement-header-popover">
-                            <div class="requirement-header-popover__title">
-                              项目名
-                            </div>
-                            <ElButton
-                              :loading="optionsLoading"
-                              type="primary"
-                              plain
-                              size="small"
-                              @click.stop="projectSelectorVisible = true"
-                            >
-                              {{
-                                filters.project_ids.length > 0
-                                  ? `已选项目（${filters.project_ids.length}）`
-                                  : '选择项目'
-                              }}
-                            </ElButton>
-                            <div class="requirement-header-popover__footer">
-                              <ElButton
-                                size="small"
-                                :disabled="filters.project_ids.length === 0"
-                                @click.stop="clearSelectedProjects"
-                              >
-                                清空
-                              </ElButton>
-                              <ElButton
-                                size="small"
-                                type="primary"
-                                @click.stop="handleSearch"
-                              >
-                                应用
-                              </ElButton>
-                            </div>
-                          </div>
-                        </ElPopover>
+                          <ElIcon><Filter /></ElIcon>
+                        </ElButton>
                       </span>
 
                       <span
@@ -1608,62 +1561,20 @@ onUnmounted(() => {
                         <span class="requirement-header-filter-trigger__label">
                           团队
                         </span>
-                        <ElPopover
-                          placement="bottom"
-                          popper-class="requirement-header-filter-popper"
-                          trigger="click"
-                          width="260"
+                        <ElButton
+                          circle
+                          link
+                          size="small"
+                          :disabled="isTeamSelectorDisabled"
+                          :class="{
+                            'is-active':
+                              isCustomHeaderFilterActive('team_name'),
+                          }"
+                          class="requirement-header-filter-trigger__button"
+                          @click.stop="teamSelectorVisible = true"
                         >
-                          <template #reference>
-                            <ElButton
-                              circle
-                              link
-                              size="small"
-                              :class="{
-                                'is-active':
-                                  isCustomHeaderFilterActive('team_name'),
-                              }"
-                              class="requirement-header-filter-trigger__button"
-                              @click.stop
-                            >
-                              <ElIcon><Filter /></ElIcon>
-                            </ElButton>
-                          </template>
-                          <div class="requirement-header-popover">
-                            <div class="requirement-header-popover__title">
-                              团队
-                            </div>
-                            <ElButton
-                              :disabled="isTeamSelectorDisabled"
-                              type="primary"
-                              plain
-                              size="small"
-                              @click.stop="teamSelectorVisible = true"
-                            >
-                              {{
-                                filters.sub_teams?.length
-                                  ? `已选团队（${filters.sub_teams.length}）`
-                                  : '选择团队'
-                              }}
-                            </ElButton>
-                            <div class="requirement-header-popover__footer">
-                              <ElButton
-                                size="small"
-                                :disabled="!filters.sub_teams?.length"
-                                @click.stop="clearSelectedTeams"
-                              >
-                                清空
-                              </ElButton>
-                              <ElButton
-                                size="small"
-                                type="primary"
-                                @click.stop="handleSearch"
-                              >
-                                应用
-                              </ElButton>
-                            </div>
-                          </div>
-                        </ElPopover>
+                          <ElIcon><Filter /></ElIcon>
+                        </ElButton>
                       </span>
 
                       <span
@@ -1673,55 +1584,20 @@ onUnmounted(() => {
                         <span class="requirement-header-filter-trigger__label">
                           开发责任人
                         </span>
-                        <ElPopover
-                          placement="bottom"
-                          popper-class="requirement-header-filter-popper"
-                          trigger="click"
-                          width="300"
+                        <ElButton
+                          circle
+                          link
+                          size="small"
+                          :class="{
+                            'is-active': isCustomHeaderFilterActive(
+                              'develop_user_display',
+                            ),
+                          }"
+                          class="requirement-header-filter-trigger__button"
+                          @click.stop="developUserSelectorRef?.openDialog()"
                         >
-                          <template #reference>
-                            <ElButton
-                              circle
-                              link
-                              size="small"
-                              :class="{
-                                'is-active': isCustomHeaderFilterActive(
-                                  'develop_user_display',
-                                ),
-                              }"
-                              class="requirement-header-filter-trigger__button"
-                              @click.stop
-                            >
-                              <ElIcon><Filter /></ElIcon>
-                            </ElButton>
-                          </template>
-                          <div class="requirement-header-popover">
-                            <div class="requirement-header-popover__title">
-                              开发责任人
-                            </div>
-                            <PlUserSelector
-                              v-model="filters.develop_user"
-                              title="选择开发责任人"
-                              placeholder="选择开发责任人"
-                            />
-                            <div class="requirement-header-popover__footer">
-                              <ElButton
-                                size="small"
-                                :disabled="!filters.develop_user?.length"
-                                @click.stop="filters.develop_user = []"
-                              >
-                                清空
-                              </ElButton>
-                              <ElButton
-                                size="small"
-                                type="primary"
-                                @click.stop="handleSearch"
-                              >
-                                应用
-                              </ElButton>
-                            </div>
-                          </div>
-                        </ElPopover>
+                          <ElIcon><Filter /></ElIcon>
+                        </ElButton>
                       </span>
 
                       <span
@@ -1731,55 +1607,20 @@ onUnmounted(() => {
                         <span class="requirement-header-filter-trigger__label">
                           测试责任人
                         </span>
-                        <ElPopover
-                          placement="bottom"
-                          popper-class="requirement-header-filter-popper"
-                          trigger="click"
-                          width="300"
+                        <ElButton
+                          circle
+                          link
+                          size="small"
+                          :class="{
+                            'is-active': isCustomHeaderFilterActive(
+                              'test_user_display',
+                            ),
+                          }"
+                          class="requirement-header-filter-trigger__button"
+                          @click.stop="testUserSelectorRef?.openDialog()"
                         >
-                          <template #reference>
-                            <ElButton
-                              circle
-                              link
-                              size="small"
-                              :class="{
-                                'is-active': isCustomHeaderFilterActive(
-                                  'test_user_display',
-                                ),
-                              }"
-                              class="requirement-header-filter-trigger__button"
-                              @click.stop
-                            >
-                              <ElIcon><Filter /></ElIcon>
-                            </ElButton>
-                          </template>
-                          <div class="requirement-header-popover">
-                            <div class="requirement-header-popover__title">
-                              测试责任人
-                            </div>
-                            <PlUserSelector
-                              v-model="filters.test_user"
-                              title="选择测试责任人"
-                              placeholder="选择测试责任人"
-                            />
-                            <div class="requirement-header-popover__footer">
-                              <ElButton
-                                size="small"
-                                :disabled="!filters.test_user?.length"
-                                @click.stop="filters.test_user = []"
-                              >
-                                清空
-                              </ElButton>
-                              <ElButton
-                                size="small"
-                                type="primary"
-                                @click.stop="handleSearch"
-                              >
-                                应用
-                              </ElButton>
-                            </div>
-                          </div>
-                        </ElPopover>
+                          <ElIcon><Filter /></ElIcon>
+                        </ElButton>
                       </span>
                     </template>
 
@@ -3033,6 +2874,24 @@ onUnmounted(() => {
         :selected-team-values="filters.sub_teams || []"
         @confirm="handleTeamSelectorConfirm"
       />
+
+      <PlUserSelector
+        ref="developUserSelectorRef"
+        v-model="filters.develop_user"
+        title="选择开发责任人"
+        placeholder="选择开发责任人"
+        trigger-mode="manual"
+        @change="handleSearch"
+      />
+
+      <PlUserSelector
+        ref="testUserSelectorRef"
+        v-model="filters.test_user"
+        title="选择测试责任人"
+        placeholder="选择测试责任人"
+        trigger-mode="manual"
+        @change="handleSearch"
+      />
     </div>
   </Page>
 </template>
@@ -3165,24 +3024,6 @@ onUnmounted(() => {
 .requirement-header-filter-trigger__button.is-active {
   color: var(--el-color-primary);
   background: var(--el-color-primary-light-9);
-}
-
-.requirement-header-popover {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.requirement-header-popover__title {
-  color: var(--el-text-color-primary);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.requirement-header-popover__footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
 }
 
 .requirement-data-grid
