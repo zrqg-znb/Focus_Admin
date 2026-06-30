@@ -42,26 +42,9 @@ const emit = defineEmits<{
 const visible = ref(false);
 const draft = ref<any>(undefined);
 const cascaderOptions = computed(() => props.options as any[]);
-const isCompactDateRange = computed(
-  () =>
-    props.config.type === 'date-range' &&
-    props.config.datePickerType === 'daterange',
-);
-const popoverWidth = computed(() => {
-  if (props.config.type === 'cascader') return 320;
-  if (isCompactDateRange.value) return 280;
-  if (props.config.type === 'date-range') return 320;
-  return 260;
-});
 
 function cloneValue(value: any) {
   return Array.isArray(value) ? [...value] : value;
-}
-
-function setDraftRange(index: 0 | 1, value: string) {
-  const nextValue = Array.isArray(draft.value) ? [...draft.value] : ['', ''];
-  nextValue[index] = value;
-  draft.value = nextValue[0] || nextValue[1] ? nextValue : [];
 }
 
 watch(
@@ -101,7 +84,7 @@ function clearFilter() {
       placement="bottom"
       popper-class="environment-header-filter-popper"
       trigger="click"
-      :width="popoverWidth"
+      :width="config.type === 'date-range' || config.type === 'cascader' ? 320 : 260"
     >
       <template #reference>
         <ElButton
@@ -144,27 +127,6 @@ function clearFilter() {
             {{ item.label }}
           </ElRadio>
         </ElRadioGroup>
-        <div
-          v-else-if="isCompactDateRange"
-          class="environment-header-filter__date-stack"
-        >
-          <ElDatePicker
-            class="w-full"
-            placeholder="开始日期"
-            type="date"
-            :model-value="Array.isArray(draft) ? draft[0] : ''"
-            :value-format="config.dateValueFormat || 'YYYY-MM-DD'"
-            @update:model-value="(value) => setDraftRange(0, value)"
-          />
-          <ElDatePicker
-            class="w-full"
-            placeholder="结束日期"
-            type="date"
-            :model-value="Array.isArray(draft) ? draft[1] : ''"
-            :value-format="config.dateValueFormat || 'YYYY-MM-DD'"
-            @update:model-value="(value) => setDraftRange(1, value)"
-          />
-        </div>
         <ElDatePicker
           v-else-if="config.type === 'date-range'"
           v-model="draft"
@@ -172,8 +134,8 @@ function clearFilter() {
           end-placeholder="结束时间"
           range-separator="至"
           start-placeholder="开始时间"
-          :type="config.datePickerType || 'datetimerange'"
-          :value-format="config.dateValueFormat || 'YYYY-MM-DDTHH:mm:ssZ'"
+          type="datetimerange"
+          value-format="YYYY-MM-DDTHH:mm:ssZ"
         />
         <ElCascader
           v-else-if="config.type === 'cascader'"
@@ -254,29 +216,6 @@ function clearFilter() {
   flex-direction: column;
   gap: 6px;
   overflow-y: auto;
-}
-
-.environment-header-filter__options :deep(.el-checkbox),
-.environment-header-filter__options :deep(.el-radio) {
-  display: flex;
-  width: 100%;
-  height: auto;
-  min-height: 24px;
-  align-items: center;
-  margin-right: 0;
-  white-space: normal;
-}
-
-.environment-header-filter__options :deep(.el-checkbox__label),
-.environment-header-filter__options :deep(.el-radio__label) {
-  min-width: 0;
-  line-height: 1.4;
-  word-break: break-word;
-}
-
-.environment-header-filter__date-stack {
-  display: grid;
-  gap: 8px;
 }
 
 .environment-header-filter__footer {

@@ -9,8 +9,6 @@ export type HeaderFilterType = 'cascader' | 'checkbox' | 'date-range' | 'input' 
 
 export interface HeaderFilterConfig {
   columnKey: string;
-  datePickerType?: 'daterange' | 'datetimerange';
-  dateValueFormat?: string;
   endField?: string;
   field: string;
   label: string;

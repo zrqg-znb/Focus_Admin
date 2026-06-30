@@ -48,12 +48,12 @@ import {
 } from '#/api/project-manager/requirement_board';
 import { useZqTable } from '#/components/zq-table';
 
-import EnvironmentHeaderFilter from '../../environment-management/components/EnvironmentHeaderFilter.vue';
 import type {
-  HeaderFilterConfig,
-  HeaderFilterOption,
-} from '../../environment-management/components/header-filter';
+  RequirementHeaderFilterConfig as BaseRequirementHeaderFilterConfig,
+  RequirementHeaderFilterOption,
+} from './components/requirement-header-filter';
 import PlUserSelector from './components/pl-user-selector.vue';
+import RequirementHeaderFilter from './components/requirement-header-filter.vue';
 import ProjectSelectorDialog from './components/project-selector-dialog.vue';
 import TeamSelectorDialog from './components/team-selector-dialog.vue';
 import {
@@ -75,10 +75,10 @@ import {
 defineOptions({ name: 'RequirementBoard' });
 
 type ElementTagType = 'danger' | 'info' | 'primary' | 'success' | 'warning';
-type RequirementHeaderFilterConfig = HeaderFilterConfig & {
+type RequirementHeaderFilterConfig = BaseRequirementHeaderFilterConfig & {
   clearValue?: any;
   endPayloadKey?: keyof RequirementBoardFilterPayload;
-  options?: HeaderFilterOption[];
+  options?: RequirementHeaderFilterOption[];
   payloadKey?: keyof RequirementBoardFilterPayload;
 };
 
@@ -133,9 +133,6 @@ const requirementHeaderFilters: RequirementHeaderFilterConfig[] = [
   },
   {
     columnKey: 'planned_test_time',
-    datePickerType: 'daterange',
-    dateValueFormat: 'YYYY-MM-DD',
-    endField: 'planned_test_time_end',
     endPayloadKey: 'planned_test_time_end',
     field: 'planned_test_time_start',
     label: '计划转测时间',
@@ -144,9 +141,6 @@ const requirementHeaderFilters: RequirementHeaderFilterConfig[] = [
   },
   {
     columnKey: 'due_date',
-    datePickerType: 'daterange',
-    dateValueFormat: 'YYYY-MM-DD',
-    endField: 'due_date_end',
     endPayloadKey: 'due_date_end',
     field: 'due_date_start',
     label: '计划完成时间',
@@ -155,9 +149,6 @@ const requirementHeaderFilters: RequirementHeaderFilterConfig[] = [
   },
   {
     columnKey: 'completed_time',
-    datePickerType: 'daterange',
-    dateValueFormat: 'YYYY-MM-DD',
-    endField: 'completed_time_end',
     endPayloadKey: 'completed_time_end',
     field: 'completed_time_start',
     label: '开发完成时间',
@@ -166,9 +157,6 @@ const requirementHeaderFilters: RequirementHeaderFilterConfig[] = [
   },
   {
     columnKey: 'accepted_time',
-    datePickerType: 'daterange',
-    dateValueFormat: 'YYYY-MM-DD',
-    endField: 'accepted_time_end',
     endPayloadKey: 'accepted_time_end',
     field: 'accepted_time_start',
     label: '测试完成时间',
@@ -1521,7 +1509,7 @@ onUnmounted(() => {
                     </template>
 
                     <template #requirement-filter-header="{ column }">
-                      <EnvironmentHeaderFilter
+                      <RequirementHeaderFilter
                         v-if="getRequirementHeaderFilterConfig(column)"
                         :config="getRequirementHeaderFilterConfig(column)!"
                         :model-value="
@@ -1550,14 +1538,14 @@ onUnmounted(() => {
 
                       <span
                         v-else-if="column.key === 'project_name'"
-                        class="environment-header-filter"
+                        class="requirement-header-filter-trigger"
                       >
-                        <span class="environment-header-filter__label">
+                        <span class="requirement-header-filter-trigger__label">
                           项目名
                         </span>
                         <ElPopover
                           placement="bottom"
-                          popper-class="environment-header-filter-popper"
+                          popper-class="requirement-header-filter-popper"
                           trigger="click"
                           width="260"
                         >
@@ -1570,7 +1558,7 @@ onUnmounted(() => {
                                 'is-active':
                                   isCustomHeaderFilterActive('project_name'),
                               }"
-                              class="environment-header-filter__button"
+                              class="requirement-header-filter-trigger__button"
                               @click.stop
                             >
                               <ElIcon><Filter /></ElIcon>
@@ -1615,14 +1603,14 @@ onUnmounted(() => {
 
                       <span
                         v-else-if="column.key === 'team_name'"
-                        class="environment-header-filter"
+                        class="requirement-header-filter-trigger"
                       >
-                        <span class="environment-header-filter__label">
+                        <span class="requirement-header-filter-trigger__label">
                           团队
                         </span>
                         <ElPopover
                           placement="bottom"
-                          popper-class="environment-header-filter-popper"
+                          popper-class="requirement-header-filter-popper"
                           trigger="click"
                           width="260"
                         >
@@ -1635,7 +1623,7 @@ onUnmounted(() => {
                                 'is-active':
                                   isCustomHeaderFilterActive('team_name'),
                               }"
-                              class="environment-header-filter__button"
+                              class="requirement-header-filter-trigger__button"
                               @click.stop
                             >
                               <ElIcon><Filter /></ElIcon>
@@ -1680,14 +1668,14 @@ onUnmounted(() => {
 
                       <span
                         v-else-if="column.key === 'develop_user_display'"
-                        class="environment-header-filter"
+                        class="requirement-header-filter-trigger"
                       >
-                        <span class="environment-header-filter__label">
+                        <span class="requirement-header-filter-trigger__label">
                           开发责任人
                         </span>
                         <ElPopover
                           placement="bottom"
-                          popper-class="environment-header-filter-popper"
+                          popper-class="requirement-header-filter-popper"
                           trigger="click"
                           width="300"
                         >
@@ -1701,7 +1689,7 @@ onUnmounted(() => {
                                   'develop_user_display',
                                 ),
                               }"
-                              class="environment-header-filter__button"
+                              class="requirement-header-filter-trigger__button"
                               @click.stop
                             >
                               <ElIcon><Filter /></ElIcon>
@@ -1738,14 +1726,14 @@ onUnmounted(() => {
 
                       <span
                         v-else-if="column.key === 'test_user_display'"
-                        class="environment-header-filter"
+                        class="requirement-header-filter-trigger"
                       >
-                        <span class="environment-header-filter__label">
+                        <span class="requirement-header-filter-trigger__label">
                           测试责任人
                         </span>
                         <ElPopover
                           placement="bottom"
-                          popper-class="environment-header-filter-popper"
+                          popper-class="requirement-header-filter-popper"
                           trigger="click"
                           width="300"
                         >
@@ -1759,7 +1747,7 @@ onUnmounted(() => {
                                   'test_user_display',
                                 ),
                               }"
-                              class="environment-header-filter__button"
+                              class="requirement-header-filter-trigger__button"
                               @click.stop
                             >
                               <ElIcon><Filter /></ElIcon>
@@ -3156,7 +3144,7 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.environment-header-filter {
+.requirement-header-filter-trigger {
   display: inline-flex;
   min-width: 0;
   align-items: center;
@@ -3164,17 +3152,17 @@ onUnmounted(() => {
   gap: 4px;
 }
 
-.environment-header-filter__label {
+.requirement-header-filter-trigger__label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.environment-header-filter__button {
+.requirement-header-filter-trigger__button {
   color: var(--el-text-color-secondary);
 }
 
-.environment-header-filter__button.is-active {
+.requirement-header-filter-trigger__button.is-active {
   color: var(--el-color-primary);
   background: var(--el-color-primary-light-9);
 }
