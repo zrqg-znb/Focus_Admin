@@ -6,11 +6,7 @@ import { ref, watch } from 'vue';
 import { ElButton, ElCard, ElMessage } from 'element-plus';
 
 import { useVbenForm } from '#/adapter/form';
-import {
-  createNode,
-  updateNode,
-  updateNodePositions,
-} from '#/api/delivery-matrix';
+import { createNode, updateNode } from '#/api/delivery-matrix';
 
 import { useNodeFormSchema } from '../../data';
 import PositionEdit from './PositionEdit.vue';
@@ -97,13 +93,12 @@ async function onSubmit() {
   try {
     const description = normalizeDescription(data.description);
     if (props.isEdit && props.node) {
-      // Update Node
+      // 编辑时一次性保存节点与岗位，避免产生重复的配置变更通知。
       await updateNode(props.node.id, {
         ...data,
         description,
+        positions: positions.value,
       });
-      // Update Positions - 始终调用，无论是否为根节点
-      await updateNodePositions(props.node.id, positions.value);
     } else {
       // Create
       const payload = {

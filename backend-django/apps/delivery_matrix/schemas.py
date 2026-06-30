@@ -43,6 +43,7 @@ class OrgNodeUpdate(Schema):
     parent_id: Optional[str] = None
     linked_project_id: Optional[str] = None
     sort_order: Optional[int] = None
+    positions: Optional[List[PositionStaffCreate]] = None
 
 class OrgNodeOut(ModelSchema):
     id: str  # 明确指定为 str 类型

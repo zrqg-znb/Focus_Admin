@@ -39,6 +39,7 @@ export interface OrgNodeUpdate {
   parent_id?: string;
   linked_project_id?: string;
   sort_order?: number;
+  positions?: { name: string; sort?: number; user_ids: string[] }[];
 }
 
 // --- Nodes ---
@@ -58,6 +59,12 @@ export function createNode(data: OrgNodeCreate) {
 
 export function updateNode(id: string, data: OrgNodeUpdate) {
   return requestClient.put<OrgNode>(`/api/delivery-matrix/nodes/${id}`, data);
+}
+
+export function exportDeliveryMatrixMarkdown() {
+  return requestClient.get<Blob>('/api/delivery-matrix/export/markdown', {
+    responseType: 'blob',
+  });
 }
 
 export function deleteNode(id: string) {
