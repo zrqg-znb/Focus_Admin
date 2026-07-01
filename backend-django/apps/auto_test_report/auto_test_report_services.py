@@ -4,10 +4,12 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import openpyxl
+from django.conf import settings
 from django.db import transaction
 from django.db.models import F, OuterRef, Q, Subquery, Window
 from django.db.models.functions import RowNumber
 from django.http import HttpResponse
+from django.utils import timezone
 from ninja.errors import HttpError
 from scheduler.module.executor import scheduler_task
 
@@ -16,6 +18,10 @@ from .auto_test_report_model import (
     DOMAIN_VEHICLE,
     DailyExecutionBatch,
     DailyExecutionResult,
+    DownstreamCommit,
+    DownstreamCommitUsage,
+    DOWNSTREAM_TRIGGER_MANUAL,
+    DOWNSTREAM_TRIGGER_SCHEDULED,
     FAILURE_CATEGORY_CASE,
     FAILURE_CATEGORY_CHOICES,
     FAILURE_CATEGORY_ENVIRONMENT,
@@ -37,6 +43,8 @@ from .auto_test_report_schemas import (
     DailyHistoryRow,
     DailyResultItemOut,
     DailySummaryOut,
+    DownstreamCommitOut,
+    DownstreamCommitUsageOut,
     DownstreamTriggerOut,
     ImportErrorRow,
     ImportResultOut,
@@ -898,6 +906,191 @@ def _build_result_category_counts(results: list[DailyExecutionResult]):
     }
 
 
+def _normalize_commit_id(value: Optional[str]) -> str:
+    """标准化 CI 上报的 commit-id，当前只做去空白和必填校验。"""
+    commit_id = (value or '').strip()
+    if not commit_id:
+        raise HttpError(422, 'commit-id 不能为空')
+    return commit_id
+
+
+def _serialize_downstream_commit(item: DownstreamCommit) -> DownstreamCommitOut:
+    """序列化 commit-id 记录，供列表、选择器和上传接口复用。"""
+    return DownstreamCommitOut(
+        id=str(item.id),
+        commit_id=item.commit_id,
+        first_uploaded_at=item.first_uploaded_at,
+        last_uploaded_at=item.last_uploaded_at,
+        upload_count=item.upload_count,
+        last_used_at=item.last_used_at,
+        use_count=item.use_count,
+    )
+
+
+def _get_user_display_name(user) -> str:
+    """获取触发人展示名，兼容后台用户模型的不同字段。"""
+    if not user:
+        return ''
+    return getattr(user, 'name', None) or getattr(user, 'username', None) or str(user)
+
+
+def _serialize_downstream_commit_usage(item: DownstreamCommitUsage) -> DownstreamCommitUsageOut:
+    """序列化 commit-id 使用记录。"""
+    return DownstreamCommitUsageOut(
+        id=str(item.id),
+        commit_id=item.commit.commit_id,
+        execute_date=item.execute_date,
+        trigger_type=item.trigger_type,
+        trigger_user_name=_get_user_display_name(item.trigger_user),
+        success=item.success,
+        dry_run=item.dry_run,
+        message=item.message,
+        used_at=item.used_at,
+    )
+
+
+def report_downstream_commit(payload) -> DownstreamCommitOut:
+    """接收 CI 上报的 commit-id，重复上传只更新计数和最近上传信息。"""
+    commit_id = _normalize_commit_id(payload.commit_id)
+    now = timezone.now()
+    defaults = {
+        'first_uploaded_at': now,
+        'last_uploaded_at': now,
+        'upload_count': 1,
+    }
+    with transaction.atomic():
+        item, created = DownstreamCommit.objects.select_for_update().get_or_create(
+            commit_id=commit_id,
+            defaults=defaults,
+        )
+        if not created:
+            item.last_uploaded_at = now
+            item.upload_count = max(item.upload_count or 0, 0) + 1
+            item.save(
+                update_fields=[
+                    'last_uploaded_at',
+                    'upload_count',
+                    'sys_update_datetime',
+                ],
+            )
+    return _serialize_downstream_commit(item)
+
+
+def _parse_commit_uploaded_bound(value: str, *, end_of_day: bool = False):
+    """解析 commit-id 上传时间筛选边界，支持前端传日期或日期时间字符串。"""
+    raw_value = (value or '').strip()
+    if not raw_value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw_value.replace('Z', '+00:00'))
+    except ValueError:
+        raise HttpError(422, '上传时间筛选格式不正确')
+    if len(raw_value) <= 10 and end_of_day:
+        parsed = parsed.replace(hour=23, minute=59, second=59, microsecond=999999)
+    if settings.USE_TZ and parsed.tzinfo is None:
+        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+    if not settings.USE_TZ and parsed.tzinfo is not None:
+        parsed = timezone.make_naive(parsed, timezone.get_current_timezone())
+    return parsed
+
+
+def list_downstream_commits(
+    *,
+    keyword: str = '',
+    uploaded_start: str = '',
+    uploaded_end: str = '',
+    page: int = 1,
+    page_size: int = 20,
+):
+    """分页查询 commit-id 历史，支持按 commit-id 和上传时间搜索。"""
+    safe_page = max(int(page or 1), 1)
+    safe_size = min(max(int(page_size or 20), 1), 100)
+    queryset = DownstreamCommit.objects.filter(is_deleted=False)
+    keyword_value = (keyword or '').strip()
+    if keyword_value:
+        queryset = queryset.filter(commit_id__icontains=keyword_value)
+    start_time = _parse_commit_uploaded_bound(uploaded_start)
+    end_time = _parse_commit_uploaded_bound(uploaded_end, end_of_day=True)
+    if start_time:
+        queryset = queryset.filter(last_uploaded_at__gte=start_time)
+    if end_time:
+        queryset = queryset.filter(last_uploaded_at__lte=end_time)
+    total = queryset.count()
+    start = (safe_page - 1) * safe_size
+    items = [
+        _serialize_downstream_commit(item)
+        for item in queryset.order_by('-last_uploaded_at', '-sys_create_datetime')[start:start + safe_size]
+    ]
+    return {'items': items, 'total': total, 'page': safe_page, 'page_size': safe_size}
+
+
+def list_downstream_commit_usages(commit_record_id: str, *, page: int = 1, page_size: int = 10):
+    """分页查询某个 commit-id 的下游触发使用记录。"""
+    commit = DownstreamCommit.objects.filter(id=commit_record_id, is_deleted=False).first()
+    if not commit:
+        raise HttpError(404, 'commit-id 记录不存在')
+    safe_page = max(int(page or 1), 1)
+    safe_size = min(max(int(page_size or 10), 1), 100)
+    queryset = DownstreamCommitUsage.objects.select_related('commit', 'trigger_user').filter(
+        commit=commit,
+        is_deleted=False,
+    )
+    total = queryset.count()
+    start = (safe_page - 1) * safe_size
+    items = [
+        _serialize_downstream_commit_usage(item)
+        for item in queryset.order_by('-used_at', '-sys_create_datetime')[start:start + safe_size]
+    ]
+    return {'items': items, 'total': total, 'page': safe_page, 'page_size': safe_size}
+
+
+def _get_downstream_commit_by_commit_id(commit_id: str) -> DownstreamCommit:
+    """按 commit-id 获取可用记录，人工触发必须选择已上报的 commit-id。"""
+    normalized = _normalize_commit_id(commit_id)
+    item = DownstreamCommit.objects.filter(commit_id=normalized, is_deleted=False).first()
+    if not item:
+        raise HttpError(404, 'commit-id 记录不存在')
+    return item
+
+
+def _get_latest_unused_downstream_commit() -> Optional[DownstreamCommit]:
+    """定时任务使用最新且未使用过的 commit-id，避免重复触发同一提交。"""
+    return (
+        DownstreamCommit.objects.filter(is_deleted=False, use_count=0)
+        .order_by('-last_uploaded_at', '-sys_create_datetime')
+        .first()
+    )
+
+
+def _record_downstream_commit_usage(
+    commit: DownstreamCommit,
+    *,
+    user,
+    execute_date,
+    trigger_type: str,
+    success: bool,
+    dry_run: bool,
+    message: str,
+) -> DownstreamCommitUsage:
+    """记录每次下游触发尝试，并同步 commit-id 的最近使用信息。"""
+    now = timezone.now()
+    with transaction.atomic():
+        usage = DownstreamCommitUsage.objects.create(
+            commit=commit,
+            execute_date=execute_date,
+            trigger_type=trigger_type,
+            trigger_user=user if user and getattr(user, 'is_authenticated', True) else None,
+            success=success,
+            dry_run=dry_run,
+            message=(message or '').strip() or None,
+            used_at=now,
+        )
+        commit.last_used_at = now
+        commit.use_count = max(commit.use_count or 0, 0) + 1
+        commit.save(update_fields=['last_used_at', 'use_count', 'sys_update_datetime'])
+    return usage
+
+
 def build_cockpit_downstream_gate(execute_date):
     """构建座舱下游任务人工触发门禁，供 API、看板和定时任务复用。"""
     vehicles = VehicleModel.objects.select_related('platform').filter(
@@ -965,14 +1158,21 @@ def build_cockpit_downstream_gate(execute_date):
     }
 
 
-def invoke_cockpit_downstream_ci(gate: dict, *, trigger_type: str) -> DownstreamTriggerOut:
+def invoke_cockpit_downstream_ci(
+    gate: dict,
+    *,
+    trigger_type: str,
+    commit: DownstreamCommit,
+) -> DownstreamTriggerOut:
     """占位调用座舱下游 CI，生产环境可替换为真实 HTTP 请求实现。"""
-    # TODO: 生产环境在这里对接真实 CI 接口，包括鉴权、请求体、超时和失败重试策略。
+    # TODO: 生产环境在这里对接真实 CI 接口，请求体必须携带 commit.commit_id。
     return DownstreamTriggerOut(
         triggered=True,
         dry_run=True,
-        message=f'座舱下游任务已完成占位触发（{trigger_type}）',
+        message=f'座舱下游任务已完成占位触发（{trigger_type}，commit-id: {commit.commit_id}）',
         execute_date=gate['execute_date'],
+        commit_id=commit.commit_id,
+        commit_record_id=str(commit.id),
         vehicle_count=gate['vehicle_count'],
         total_case_count=gate['total_case_count'],
         success_count=gate['success_count'],
@@ -987,12 +1187,50 @@ def invoke_cockpit_downstream_ci(gate: dict, *, trigger_type: str) -> Downstream
     )
 
 
-def trigger_cockpit_downstream(user, execute_date) -> DownstreamTriggerOut:
+def trigger_cockpit_downstream(user, execute_date, commit_id: str) -> DownstreamTriggerOut:
     """人工触发座舱下游任务，后端强制执行完整门禁校验。"""
+    commit = _get_downstream_commit_by_commit_id(commit_id)
     gate = build_cockpit_downstream_gate(execute_date)
     if not gate['enabled']:
-        raise HttpError(400, '；'.join(gate['block_reasons']))
-    return invoke_cockpit_downstream_ci(gate, trigger_type='manual')
+        message = '；'.join(gate['block_reasons'])
+        _record_downstream_commit_usage(
+            commit,
+            user=user,
+            execute_date=execute_date,
+            trigger_type=DOWNSTREAM_TRIGGER_MANUAL,
+            success=False,
+            dry_run=True,
+            message=message,
+        )
+        raise HttpError(400, message)
+    try:
+        result = invoke_cockpit_downstream_ci(
+            gate,
+            trigger_type=DOWNSTREAM_TRIGGER_MANUAL,
+            commit=commit,
+        )
+    except Exception as exc:
+        _record_downstream_commit_usage(
+            commit,
+            user=user,
+            execute_date=execute_date,
+            trigger_type=DOWNSTREAM_TRIGGER_MANUAL,
+            success=False,
+            dry_run=True,
+            message=str(exc),
+        )
+        raise
+    usage = _record_downstream_commit_usage(
+        commit,
+        user=user,
+        execute_date=execute_date,
+        trigger_type=DOWNSTREAM_TRIGGER_MANUAL,
+        success=result.triggered,
+        dry_run=result.dry_run,
+        message=result.message,
+    )
+    result.usage_id = str(usage.id)
+    return result
 
 
 @scheduler_task
@@ -1014,7 +1252,36 @@ def run_scheduled_cockpit_downstream_check(date_offset: int = 0, **kwargs):
             f"缺失 {gate['missing_result_count']}，失败 {gate['failed_count']}，"
             f"超时 {gate['timeout_count']}，跳过 {gate['skip_count']}。"
         )
-    result = invoke_cockpit_downstream_ci(gate, trigger_type='scheduled')
+    commit = _get_latest_unused_downstream_commit()
+    if not commit:
+        return f'{execute_date} 暂无未使用的 commit-id，跳过下游任务。'
+    try:
+        result = invoke_cockpit_downstream_ci(
+            gate,
+            trigger_type=DOWNSTREAM_TRIGGER_SCHEDULED,
+            commit=commit,
+        )
+    except Exception as exc:
+        _record_downstream_commit_usage(
+            commit,
+            user=None,
+            execute_date=execute_date,
+            trigger_type=DOWNSTREAM_TRIGGER_SCHEDULED,
+            success=False,
+            dry_run=True,
+            message=str(exc),
+        )
+        raise
+    usage = _record_downstream_commit_usage(
+        commit,
+        user=None,
+        execute_date=execute_date,
+        trigger_type=DOWNSTREAM_TRIGGER_SCHEDULED,
+        success=result.triggered,
+        dry_run=result.dry_run,
+        message=result.message,
+    )
+    result.usage_id = str(usage.id)
     return result.message
 
 

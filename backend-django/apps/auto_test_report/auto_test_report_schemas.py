@@ -256,6 +256,7 @@ class UpdateFailureReasonIn(Schema):
 
 class DownstreamTriggerIn(Schema):
     execute_date: date
+    commit_id: str
 
 
 class DownstreamTriggerOut(Schema):
@@ -263,6 +264,9 @@ class DownstreamTriggerOut(Schema):
     dry_run: bool = True
     message: str
     execute_date: date
+    commit_id: Optional[str] = None
+    commit_record_id: Optional[str] = None
+    usage_id: Optional[str] = None
     vehicle_count: int = 0
     total_case_count: int = 0
     success_count: int = 0
@@ -274,3 +278,43 @@ class DownstreamTriggerOut(Schema):
     uncategorized_failure_count: int = 0
     missing_result_count: int = 0
     block_reasons: List[str] = Field(default_factory=list)
+
+
+class DownstreamCommitIn(Schema):
+    commit_id: str
+
+
+class DownstreamCommitOut(Schema):
+    id: str
+    commit_id: str
+    first_uploaded_at: datetime
+    last_uploaded_at: datetime
+    upload_count: int
+    last_used_at: Optional[datetime] = None
+    use_count: int
+
+
+class DownstreamCommitPage(Schema):
+    items: List[DownstreamCommitOut]
+    total: int
+    page: int
+    page_size: int
+
+
+class DownstreamCommitUsageOut(Schema):
+    id: str
+    commit_id: str
+    execute_date: date
+    trigger_type: str
+    trigger_user_name: str = ''
+    success: bool
+    dry_run: bool
+    message: Optional[str] = None
+    used_at: datetime
+
+
+class DownstreamCommitUsagePage(Schema):
+    items: List[DownstreamCommitUsageOut]
+    total: int
+    page: int
+    page_size: int

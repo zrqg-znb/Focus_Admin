@@ -34,6 +34,13 @@ FAILURE_CATEGORY_CHOICES = [
     (FAILURE_CATEGORY_CASE, '用例问题'),
 ]
 
+DOWNSTREAM_TRIGGER_MANUAL = 'manual'
+DOWNSTREAM_TRIGGER_SCHEDULED = 'scheduled'
+DOWNSTREAM_TRIGGER_CHOICES = [
+    (DOWNSTREAM_TRIGGER_MANUAL, '人工触发'),
+    (DOWNSTREAM_TRIGGER_SCHEDULED, '定时触发'),
+]
+
 
 class McuPlatform(RootModel):
     name = models.CharField(max_length=128, unique=True, verbose_name='平台名称')
@@ -187,4 +194,59 @@ class DailyExecutionResult(RootModel):
                 ],
                 name='idx_atr_res_latest_lookup',
             ),
+        ]
+
+
+class DownstreamCommit(RootModel):
+    commit_id = models.CharField(max_length=128, unique=True, verbose_name='Commit ID')
+    first_uploaded_at = models.DateTimeField(verbose_name='首次上传时间')
+    last_uploaded_at = models.DateTimeField(verbose_name='最近上传时间')
+    upload_count = models.IntegerField(default=1, verbose_name='上传次数')
+    last_used_at = models.DateTimeField(null=True, blank=True, verbose_name='最近使用时间')
+    use_count = models.IntegerField(default=0, verbose_name='使用次数')
+
+    class Meta:
+        db_table = 'atr_downstream_commit'
+        verbose_name = '下游Commit'
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=['last_uploaded_at'], name='idx_atr_commit_uploaded'),
+            models.Index(fields=['use_count', 'last_uploaded_at'], name='idx_atr_commit_unused'),
+        ]
+
+
+class DownstreamCommitUsage(RootModel):
+    commit = models.ForeignKey(
+        DownstreamCommit,
+        on_delete=models.CASCADE,
+        related_name='usages',
+        verbose_name='Commit记录',
+    )
+    execute_date = models.DateField(verbose_name='执行日期')
+    trigger_type = models.CharField(
+        max_length=16,
+        choices=DOWNSTREAM_TRIGGER_CHOICES,
+        verbose_name='触发方式',
+    )
+    trigger_user = models.ForeignKey(
+        to='core.User',
+        on_delete=models.SET_NULL,
+        db_constraint=False,
+        null=True,
+        blank=True,
+        related_name='auto_test_report_downstream_commit_usages',
+        verbose_name='触发人',
+    )
+    success = models.BooleanField(default=False, verbose_name='是否成功')
+    dry_run = models.BooleanField(default=True, verbose_name='是否占位调用')
+    message = models.TextField(null=True, blank=True, verbose_name='触发消息')
+    used_at = models.DateTimeField(verbose_name='使用时间')
+
+    class Meta:
+        db_table = 'atr_downstream_commit_usage'
+        verbose_name = '下游Commit使用记录'
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=['commit', 'used_at'], name='idx_atr_commit_usage_commit'),
+            models.Index(fields=['execute_date', 'trigger_type'], name='idx_atr_commit_usage_date'),
         ]

@@ -1,6 +1,11 @@
 import type { AutoTestReportDomain } from '../shared/domain';
 
-import type { DailyOverviewRow, DailyResultItem } from '#/api/auto-test-report';
+import type {
+  DailyOverviewRow,
+  DailyResultItem,
+  DownstreamCommitItem,
+  DownstreamCommitUsageItem,
+} from '#/api/auto-test-report';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
 import { getAutoTestReportDomainMeta } from '../shared/domain';
@@ -279,6 +284,121 @@ export function useOverviewColumns(
       align: 'center',
       headerAlign: 'center',
       showOverflowTooltip: false,
+    },
+  ];
+}
+
+export function useCommitColumns(): ZqTableGridOptions<DownstreamCommitItem>['columns'] {
+  return [
+    {
+      key: 'commit_id',
+      dataKey: 'commit_id',
+      title: 'Commit ID',
+      width: 240,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'upload_count',
+      dataKey: 'upload_count',
+      title: '上传次数',
+      width: 100,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'use_count',
+      dataKey: 'use_count',
+      title: '使用次数',
+      width: 100,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'first_uploaded_at',
+      dataKey: 'first_uploaded_at',
+      title: '首次上传',
+      width: 180,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'last_uploaded_at',
+      dataKey: 'last_uploaded_at',
+      title: '最近上传',
+      width: 180,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'last_used_at',
+      dataKey: 'last_used_at',
+      title: '最近使用',
+      width: 180,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'actions',
+      dataKey: 'actions',
+      title: '操作',
+      width: 120,
+      align: 'center',
+      headerAlign: 'center',
+      showOverflowTooltip: false,
+    },
+  ];
+}
+
+export function useCommitUsageColumns(): ZqTableGridOptions<DownstreamCommitUsageItem>['columns'] {
+  return [
+    {
+      key: 'execute_date',
+      dataKey: 'execute_date',
+      title: '执行日期',
+      width: 120,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'trigger_type',
+      dataKey: 'trigger_type',
+      title: '触发方式',
+      width: 110,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'trigger_user_name',
+      dataKey: 'trigger_user_name',
+      title: '触发人',
+      width: 120,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'success',
+      dataKey: 'success',
+      title: '结果',
+      width: 100,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'message',
+      dataKey: 'message',
+      title: '消息',
+      width: 320,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
+      key: 'used_at',
+      dataKey: 'used_at',
+      title: '使用时间',
+      width: 180,
+      align: 'center',
+      headerAlign: 'center',
     },
   ];
 }

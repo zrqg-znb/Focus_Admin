@@ -9,6 +9,7 @@ import type {
   DailyOverviewRow,
   DailyResultItem,
   DailySummary,
+  DownstreamCommitItem,
   FailureCategory,
   VehicleOption,
 } from '#/api/auto-test-report';
@@ -26,6 +27,8 @@ import {
   ElCheckbox,
   ElCheckboxGroup,
   ElDatePicker,
+  ElDialog,
+  ElDrawer,
   ElEmpty,
   ElForm,
   ElFormItem,
@@ -34,6 +37,7 @@ import {
   ElLink,
   ElMessage,
   ElOption,
+  ElPagination,
   ElPopover,
   ElSegmented,
   ElSelect,
@@ -46,6 +50,8 @@ import {
   getDailyOverviewApi,
   getDailySummaryApi,
   listDailyResultsApi,
+  listDownstreamCommitsApi,
+  listDownstreamCommitUsagesApi,
   listVehicleOptionsApi,
   triggerCockpitDownstreamApi,
   updateDailyResultFailureReasonApi,
@@ -67,6 +73,8 @@ import {
   formatDuration,
   RESULT_LABEL_MAP,
   RESULT_TAG_MAP,
+  useCommitColumns,
+  useCommitUsageColumns,
   useOverviewColumns,
   useResultColumns,
 } from './data';
@@ -109,8 +117,23 @@ const statusPopoverVisible = ref(false);
 const overviewLoading = ref(false);
 const detailLoading = ref(false);
 const downstreamTriggerLoading = ref(false);
+const commitHistoryVisible = ref(false);
+const commitHistoryLoading = ref(false);
+const commitUsageVisible = ref(false);
+const commitUsageLoading = ref(false);
+const commitSelectVisible = ref(false);
+const commitSelectLoading = ref(false);
 const overviewData = ref<DailyOverviewResponse | null>(null);
 const summary = ref<DailySummary | null>(null);
+const commitKeyword = ref('');
+const commitSelectKeyword = ref('');
+const commitSelectPage = ref(1);
+const commitSelectPageSize = ref(5);
+const commitSelectTotal = ref(0);
+const commitSelectUploadedRange = ref<[] | [string, string]>([]);
+const commitSelectOptions = ref<DownstreamCommitItem[]>([]);
+const selectedCommitId = ref('');
+const selectedUsageCommit = ref<DownstreamCommitItem | null>(null);
 
 const historyVisible = ref(false);
 const historyTitle = ref('');
@@ -123,6 +146,32 @@ const detailSortState = ref<null | {
 }>(null);
 
 const selectedVehicleId = computed(() => selectedVehiclePaths.value[1] || '');
+const sortedCommitSelectOptions = computed(() => {
+  return [...commitSelectOptions.value].sort((left, right) => {
+    const leftUnused = left.use_count <= 0 ? 1 : 0;
+    const rightUnused = right.use_count <= 0 ? 1 : 0;
+    if (leftUnused !== rightUnused) {
+      return rightUnused - leftUnused;
+    }
+    return getCommitUploadedTimestamp(right) - getCommitUploadedTimestamp(left);
+  });
+});
+const recommendedCommitId = computed(
+  () => sortedCommitSelectOptions.value[0]?.commit_id || '',
+);
+const latestUploadedCommitId = computed(() => {
+  const latest = [...commitSelectOptions.value].sort(
+    (left, right) =>
+      getCommitUploadedTimestamp(right) - getCommitUploadedTimestamp(left),
+  )[0];
+  return latest?.commit_id || '';
+});
+const selectedCommitItem = computed(
+  () =>
+    commitSelectOptions.value.find(
+      (item) => item.commit_id === selectedCommitId.value,
+    ) || null,
+);
 const platformOptions = computed(() => {
   const map = new Map<string, { label: string; value: string }>();
   for (const item of vehicleOptions.value) {
@@ -210,8 +259,8 @@ function canEditFailureReason(row: DailyResultItem) {
 function isEditingFailureReason(row: DailyResultItem) {
   return Boolean(
     row.result_id &&
-      editingReasonCell.value?.resultId &&
-      editingReasonCell.value.resultId === row.result_id,
+    editingReasonCell.value?.resultId &&
+    editingReasonCell.value.resultId === row.result_id,
   );
 }
 
@@ -259,8 +308,7 @@ async function submitFailureCategory(
     return;
   }
   const nextCategory = (failureCategory || undefined) as
-    | FailureCategory
-    | undefined;
+    FailureCategory | undefined;
   row.failure_category = nextCategory;
   await updateDailyResultFailureReasonApi(
     row.result_id,
@@ -362,6 +410,69 @@ const [DetailGrid, detailGridApi] = useZqTable({
       },
     },
     pagerConfig: { enabled: true, pageSize: 20 },
+    toolbarConfig: { custom: true, refresh: true, search: false, zoom: true },
+  },
+  showSearchForm: false,
+});
+
+const [CommitGrid, commitGridApi] = useZqTable({
+  tableTitle: 'Commit ID 历史',
+  gridOptions: {
+    columns: useCommitColumns(),
+    border: true,
+    stripe: true,
+    proxyConfig: {
+      autoLoad: false,
+      ajax: {
+        query: async ({
+          page,
+        }: {
+          page: { currentPage: number; pageSize: number };
+        }) => {
+          const result = await listDownstreamCommitsApi({
+            keyword: commitKeyword.value || undefined,
+            page: page.currentPage,
+            pageSize: page.pageSize,
+          });
+          return { items: result.items, total: result.total };
+        },
+      },
+    },
+    pagerConfig: { enabled: true, pageSize: 20 },
+    toolbarConfig: { custom: true, refresh: true, search: false, zoom: true },
+  },
+  showSearchForm: false,
+});
+
+const [CommitUsageGrid, commitUsageGridApi] = useZqTable({
+  tableTitle: 'Commit ID 使用记录',
+  gridOptions: {
+    columns: useCommitUsageColumns(),
+    border: true,
+    stripe: true,
+    proxyConfig: {
+      autoLoad: false,
+      ajax: {
+        query: async ({
+          page,
+        }: {
+          page: { currentPage: number; pageSize: number };
+        }) => {
+          if (!selectedUsageCommit.value) {
+            return { items: [], total: 0 };
+          }
+          const result = await listDownstreamCommitUsagesApi(
+            selectedUsageCommit.value.id,
+            {
+              page: page.currentPage,
+              pageSize: page.pageSize,
+            },
+          );
+          return { items: result.items, total: result.total };
+        },
+      },
+    },
+    pagerConfig: { enabled: true, pageSize: 10 },
     toolbarConfig: { custom: true, refresh: true, search: false, zoom: true },
   },
   showSearchForm: false,
@@ -691,6 +802,25 @@ function handleDetailSortChange(data: {
   }
 }
 
+function getCommitUploadedTimestamp(item: DownstreamCommitItem) {
+  const timestamp = new Date(
+    item.last_uploaded_at || item.first_uploaded_at || 0,
+  ).getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function isRecommendedCommit(item: DownstreamCommitItem) {
+  return item.commit_id === recommendedCommitId.value;
+}
+
+function selectCommit(item: DownstreamCommitItem) {
+  selectedCommitId.value = item.commit_id;
+}
+
+function formatCommitUseState(item: DownstreamCommitItem) {
+  return item.use_count > 0 ? `已使用 ${item.use_count} 次` : '未使用';
+}
+
 async function jumpToVehicle(row: DailyOverviewRow) {
   selectedVehiclePaths.value = [row.platform_id, row.vehicle_id];
   resetVehicleDetailFilters();
@@ -701,20 +831,104 @@ async function jumpToVehicle(row: DailyOverviewRow) {
   await handleViewChange('vehicle');
 }
 
-async function triggerDownstream() {
+async function loadCommitSelectOptions() {
+  commitSelectLoading.value = true;
+  try {
+    const [uploadedStart, uploadedEnd] = commitSelectUploadedRange.value;
+    const result = await listDownstreamCommitsApi({
+      keyword: commitSelectKeyword.value || undefined,
+      page: commitSelectPage.value,
+      pageSize: commitSelectPageSize.value,
+      uploaded_end: uploadedEnd || undefined,
+      uploaded_start: uploadedStart || undefined,
+    });
+    commitSelectOptions.value = result.items || [];
+    commitSelectTotal.value = result.total || 0;
+    selectedCommitId.value = recommendedCommitId.value;
+  } finally {
+    commitSelectLoading.value = false;
+  }
+}
+
+async function openCommitSelectDialog() {
   if (!canTriggerDownstream.value) {
     ElMessage.warning(downstreamTriggerTip.value);
     return;
   }
+  commitSelectVisible.value = true;
+  commitSelectPage.value = 1;
+  await loadCommitSelectOptions();
+}
+
+async function searchCommitSelectOptions() {
+  commitSelectPage.value = 1;
+  await loadCommitSelectOptions();
+}
+
+async function resetCommitSelectFilters() {
+  commitSelectKeyword.value = '';
+  commitSelectUploadedRange.value = [];
+  commitSelectPage.value = 1;
+  await loadCommitSelectOptions();
+}
+
+async function triggerDownstream() {
+  if (!selectedCommitId.value) {
+    ElMessage.warning('请选择 commit-id');
+    return;
+  }
   downstreamTriggerLoading.value = true;
   try {
-    const result = await triggerCockpitDownstreamApi(selectedDate.value);
+    const result = await triggerCockpitDownstreamApi(
+      selectedDate.value,
+      selectedCommitId.value,
+    );
     ElMessage.success(result.message || '下游任务已触发');
+    commitSelectVisible.value = false;
     await loadOverview();
+    if (commitHistoryVisible.value) {
+      await commitGridApi.reload();
+    }
   } catch (error) {
     console.error(error);
   } finally {
     downstreamTriggerLoading.value = false;
+  }
+}
+
+async function openCommitHistory() {
+  commitHistoryVisible.value = true;
+  await nextTick();
+  await loadCommitHistory();
+}
+
+async function loadCommitHistory() {
+  commitHistoryLoading.value = true;
+  try {
+    await commitGridApi.reload();
+  } finally {
+    commitHistoryLoading.value = false;
+  }
+}
+
+async function searchCommitHistory() {
+  await loadCommitHistory();
+}
+
+async function resetCommitHistorySearch() {
+  commitKeyword.value = '';
+  await loadCommitHistory();
+}
+
+async function openCommitUsage(row: DownstreamCommitItem) {
+  selectedUsageCommit.value = row;
+  commitUsageVisible.value = true;
+  await nextTick();
+  commitUsageLoading.value = true;
+  try {
+    await commitUsageGridApi.reload();
+  } finally {
+    commitUsageLoading.value = false;
   }
 }
 
@@ -840,14 +1054,20 @@ onMounted(async () => {
                   <span>
                     <ElButton
                       :disabled="!canTriggerDownstream"
-                      :loading="downstreamTriggerLoading"
+                      :loading="commitSelectLoading"
                       type="success"
-                      @click="triggerDownstream"
+                      @click="openCommitSelectDialog"
                     >
                       触发下游任务
                     </ElButton>
                   </span>
                 </ElTooltip>
+                <ElButton
+                  v-if="domain === 'cockpit'"
+                  @click="openCommitHistory"
+                >
+                  Commit ID 历史
+                </ElButton>
                 <ElButton
                   :loading="overviewLoading"
                   type="primary"
@@ -1253,6 +1473,194 @@ onMounted(async () => {
         </div>
       </template>
     </div>
+
+    <ElDialog
+      v-model="commitSelectVisible"
+      title="选择 Commit ID"
+      width="720px"
+    >
+      <div v-loading="commitSelectLoading" class="space-y-4">
+        <div class="grid gap-3 md:grid-cols-[1fr_260px_auto]">
+          <ElInput
+            v-model="commitSelectKeyword"
+            clearable
+            placeholder="按 Commit ID 搜索"
+            @keyup.enter="searchCommitSelectOptions"
+          />
+          <ElDatePicker
+            v-model="commitSelectUploadedRange"
+            class="!w-full"
+            end-placeholder="结束上传日期"
+            range-separator="至"
+            start-placeholder="开始上传日期"
+            type="daterange"
+            value-format="YYYY-MM-DD"
+          />
+          <div class="flex gap-2">
+            <ElButton type="primary" @click="searchCommitSelectOptions">
+              查询
+            </ElButton>
+            <ElButton @click="resetCommitSelectFilters">重置</ElButton>
+          </div>
+        </div>
+        <div
+          v-if="sortedCommitSelectOptions.length > 0"
+          class="max-h-[420px] space-y-3 overflow-y-auto pr-1"
+        >
+          <button
+            v-for="item in sortedCommitSelectOptions"
+            :key="item.id"
+            class="hover:border-primary hover:bg-primary/5 w-full rounded border px-4 py-3 text-left transition"
+            :class="
+              selectedCommitId === item.commit_id
+                ? 'border-primary bg-primary/5 shadow-sm'
+                : 'border-gray-200 bg-white'
+            "
+            type="button"
+            @click="selectCommit(item)"
+          >
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="break-all font-mono text-sm text-gray-900">
+                    {{ item.commit_id }}
+                  </span>
+                  <ElTag
+                    v-if="isRecommendedCommit(item)"
+                    effect="dark"
+                    size="small"
+                    type="success"
+                  >
+                    推荐
+                  </ElTag>
+                  <ElTag
+                    :type="item.use_count > 0 ? 'info' : 'success'"
+                    size="small"
+                  >
+                    {{ formatCommitUseState(item) }}
+                  </ElTag>
+                  <ElTag
+                    v-if="item.commit_id === latestUploadedCommitId"
+                    size="small"
+                    type="primary"
+                  >
+                    最近上传
+                  </ElTag>
+                </div>
+                <div
+                  class="mt-2 grid gap-2 text-xs text-gray-500 sm:grid-cols-2"
+                >
+                  <span>最近上传：{{ item.last_uploaded_at || '-' }}</span>
+                  <span>首次上传：{{ item.first_uploaded_at || '-' }}</span>
+                  <span>上传次数：{{ item.upload_count }}</span>
+                  <span>最近使用：{{ item.last_used_at || '-' }}</span>
+                </div>
+              </div>
+              <span
+                class="mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border"
+                :class="
+                  selectedCommitId === item.commit_id
+                    ? 'border-primary bg-primary'
+                    : 'border-gray-300'
+                "
+              >
+                <span
+                  v-if="selectedCommitId === item.commit_id"
+                  class="h-1.5 w-1.5 rounded-full bg-white"
+                ></span>
+              </span>
+            </div>
+          </button>
+        </div>
+        <div
+          v-if="selectedCommitItem"
+          class="rounded border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-700"
+        >
+          将使用
+          <span class="font-mono">{{ selectedCommitItem.commit_id }}</span>
+          触发 {{ selectedDate }} 的座舱下游任务
+        </div>
+        <ElEmpty
+          v-if="!commitSelectLoading && sortedCommitSelectOptions.length === 0"
+          description="暂无可用 Commit ID"
+        />
+        <div
+          v-if="commitSelectTotal > 0"
+          class="flex justify-end border-t border-gray-100 pt-3"
+        >
+          <ElPagination
+            v-model:current-page="commitSelectPage"
+            v-model:page-size="commitSelectPageSize"
+            :page-sizes="[5, 10, 20]"
+            :total="commitSelectTotal"
+            background
+            layout="total, sizes, prev, pager, next"
+            @current-change="loadCommitSelectOptions"
+            @size-change="searchCommitSelectOptions"
+          />
+        </div>
+      </div>
+      <template #footer>
+        <ElButton @click="commitSelectVisible = false">取消</ElButton>
+        <ElButton
+          :disabled="!selectedCommitId"
+          :loading="downstreamTriggerLoading"
+          type="primary"
+          @click="triggerDownstream"
+        >
+          确认触发
+        </ElButton>
+      </template>
+    </ElDialog>
+
+    <ElDrawer v-model="commitHistoryVisible" title="Commit ID 历史" size="80%">
+      <div class="flex h-full min-h-0 flex-col gap-3">
+        <div class="flex shrink-0 items-center gap-2">
+          <ElInput
+            v-model="commitKeyword"
+            class="!w-[320px]"
+            clearable
+            placeholder="搜索 Commit ID"
+            @keyup.enter="searchCommitHistory"
+          />
+          <ElButton type="primary" @click="searchCommitHistory">查询</ElButton>
+          <ElButton @click="resetCommitHistorySearch">重置</ElButton>
+        </div>
+        <CommitGrid v-loading="commitHistoryLoading" class="h-full min-h-0">
+          <template #cell-commit_id="{ row }">
+            <span class="font-mono text-xs">{{ row.commit_id }}</span>
+          </template>
+          <template #cell-last_used_at="{ row }">
+            {{ row.last_used_at || '-' }}
+          </template>
+          <template #cell-actions="{ row }">
+            <ElButton link type="primary" @click="openCommitUsage(row)">
+              使用记录
+            </ElButton>
+          </template>
+        </CommitGrid>
+      </div>
+    </ElDrawer>
+
+    <ElDrawer
+      v-model="commitUsageVisible"
+      :title="`使用记录${selectedUsageCommit ? ` - ${selectedUsageCommit.commit_id}` : ''}`"
+      size="70%"
+    >
+      <CommitUsageGrid v-loading="commitUsageLoading" class="h-full min-h-0">
+        <template #cell-trigger_type="{ row }">
+          {{ row.trigger_type === 'scheduled' ? '定时触发' : '人工触发' }}
+        </template>
+        <template #cell-success="{ row }">
+          <ElTag :type="row.success ? 'success' : 'danger'">
+            {{ row.success ? '成功' : '失败' }}
+          </ElTag>
+        </template>
+        <template #cell-message="{ row }">
+          <span class="block truncate text-left">{{ row.message || '-' }}</span>
+        </template>
+      </CommitUsageGrid>
+    </ElDrawer>
 
     <TestCaseHistoryDrawer
       v-model:visible="historyVisible"

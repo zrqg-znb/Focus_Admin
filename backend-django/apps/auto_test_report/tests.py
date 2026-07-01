@@ -6,6 +6,7 @@ from django.utils import timezone
 from apps.auto_test_report import auto_test_report_services as services
 from apps.auto_test_report.auto_test_report_model import (
     DailyExecutionResult,
+    DownstreamCommitUsage,
     FAILURE_CATEGORY_CASE,
     FAILURE_CATEGORY_ENVIRONMENT,
     FAILURE_CATEGORY_VERSION,
@@ -21,6 +22,7 @@ from apps.auto_test_report.auto_test_report_model import (
 )
 from apps.auto_test_report.auto_test_report_schemas import (
     DailyOverviewQuery,
+    DownstreamCommitIn,
     ImportCasePayload,
     ImportCaseRow,
     ReportDailyResultsIn,
@@ -319,9 +321,35 @@ class AutoTestReportOverviewTests(TestCase):
         self.assertEqual(overview.summary.uncategorized_failure_count, 1)
         self.assertEqual(overview.summary.missing_result_count, 1)
 
+    def test_downstream_commit_upload_deduplicates_and_list_supports_keyword(self):
+        first = services.report_downstream_commit(
+            DownstreamCommitIn(commit_id='abc123'),
+        )
+        second = services.report_downstream_commit(
+            DownstreamCommitIn(commit_id='abc123'),
+        )
+
+        self.assertEqual(first.id, second.id)
+        self.assertEqual(second.upload_count, 2)
+
+        page = services.list_downstream_commits(keyword='abc', page=1, page_size=20)
+        self.assertEqual(page['total'], 1)
+        self.assertEqual(page['items'][0].commit_id, 'abc123')
+
+    def test_manual_downstream_trigger_rejects_unknown_commit(self):
+        vehicle = self._create_vehicle('manual-unknown-commit')
+        cases = self._create_cases(vehicle, 1)
+        self._report_result(vehicle, cases[0], RESULT_SUCCESS)
+
+        with self.assertRaisesMessage(Exception, 'commit-id 记录不存在'):
+            services.trigger_cockpit_downstream(None, self.execute_date, 'not-exists')
+
+        self.assertEqual(DownstreamCommitUsage.objects.count(), 0)
+
     def test_manual_downstream_trigger_allows_non_version_failures_when_classified(self):
         vehicle = self._create_vehicle('manual-pass')
         cases = self._create_cases(vehicle, 2)
+        commit = services.report_downstream_commit(DownstreamCommitIn(commit_id='commit-manual-pass'))
         self._report_result(vehicle, cases[0], RESULT_SUCCESS)
         self._report_result(
             vehicle,
@@ -331,15 +359,19 @@ class AutoTestReportOverviewTests(TestCase):
             failure_category=FAILURE_CATEGORY_ENVIRONMENT,
         )
 
-        result = services.trigger_cockpit_downstream(None, self.execute_date)
+        result = services.trigger_cockpit_downstream(None, self.execute_date, commit.commit_id)
 
         self.assertTrue(result.triggered)
         self.assertTrue(result.dry_run)
+        self.assertEqual(result.commit_id, commit.commit_id)
+        self.assertIsNotNone(result.usage_id)
         self.assertEqual(result.non_version_failure_count, 1)
+        self.assertEqual(DownstreamCommitUsage.objects.count(), 1)
 
     def test_manual_downstream_trigger_rejects_version_uncategorized_and_missing(self):
         vehicle = self._create_vehicle('manual-block')
         cases = self._create_cases(vehicle, 4)
+        commit = services.report_downstream_commit(DownstreamCommitIn(commit_id='commit-manual-block'))
         self._report_result(vehicle, cases[0], RESULT_SUCCESS)
         self._report_result(
             vehicle,
@@ -351,17 +383,21 @@ class AutoTestReportOverviewTests(TestCase):
         self._report_result(vehicle, cases[2], RESULT_TIMEOUT, minutes_offset=2)
 
         with self.assertRaises(Exception) as ctx:
-            services.trigger_cockpit_downstream(None, self.execute_date)
+            services.trigger_cockpit_downstream(None, self.execute_date, commit.commit_id)
 
         message = str(ctx.exception)
         self.assertIn('缺少当日执行结果', message)
         self.assertIn('未填写根因大类', message)
         self.assertIn('版本问题', message)
+        usage = DownstreamCommitUsage.objects.get()
+        self.assertFalse(usage.success)
+        self.assertIn('版本问题', usage.message)
 
     def test_scheduled_downstream_check_triggers_only_when_all_cockpit_cases_success(self):
         vehicle = self._create_vehicle('scheduled-pass')
         cases = self._create_cases(vehicle, 2)
         today = date.today()
+        commit = services.report_downstream_commit(DownstreamCommitIn(commit_id='commit-scheduled-pass'))
         for index, case in enumerate(cases):
             DailyExecutionResult.objects.create(
                 vehicle=vehicle,
@@ -375,6 +411,10 @@ class AutoTestReportOverviewTests(TestCase):
         result = services.run_scheduled_cockpit_downstream_check.__wrapped__(date_offset=0)
 
         self.assertIn('座舱下游任务已完成占位触发', result)
+        self.assertIn(commit.commit_id, result)
+        usage = DownstreamCommitUsage.objects.get()
+        self.assertEqual(usage.trigger_type, 'scheduled')
+        self.assertTrue(usage.success)
 
     def test_scheduled_downstream_check_skips_when_any_cockpit_case_is_not_success(self):
         vehicle = self._create_vehicle('scheduled-skip')
@@ -401,6 +441,38 @@ class AutoTestReportOverviewTests(TestCase):
         result = services.run_scheduled_cockpit_downstream_check.__wrapped__(date_offset=0)
 
         self.assertIn('未全部成功，跳过下游任务', result)
+        self.assertEqual(DownstreamCommitUsage.objects.count(), 0)
+
+    def test_scheduled_downstream_check_skips_without_unused_commit(self):
+        vehicle = self._create_vehicle('scheduled-no-commit')
+        cases = self._create_cases(vehicle, 1)
+        today = date.today()
+        DailyExecutionResult.objects.create(
+            vehicle=vehicle,
+            test_case=cases[0],
+            execute_date=today,
+            start_time=timezone.now(),
+            duration_seconds=60,
+            result=RESULT_SUCCESS,
+        )
+
+        result = services.run_scheduled_cockpit_downstream_check.__wrapped__(date_offset=0)
+
+        self.assertIn('暂无未使用的 commit-id', result)
+
+    def test_downstream_commit_usage_list_returns_trigger_history(self):
+        vehicle = self._create_vehicle('manual-history')
+        cases = self._create_cases(vehicle, 1)
+        commit = services.report_downstream_commit(DownstreamCommitIn(commit_id='commit-history'))
+        self._report_result(vehicle, cases[0], RESULT_SUCCESS)
+
+        services.trigger_cockpit_downstream(None, self.execute_date, commit.commit_id)
+
+        page = services.list_downstream_commit_usages(commit.id, page=1, page_size=10)
+        self.assertEqual(page['total'], 1)
+        self.assertEqual(page['items'][0].commit_id, commit.commit_id)
+        self.assertEqual(page['items'][0].trigger_type, 'manual')
+        self.assertTrue(page['items'][0].success)
 
     def test_vehicle_domain_report_supports_skip_and_row_errors(self):
         vehicle_platform = McuPlatform.objects.create(

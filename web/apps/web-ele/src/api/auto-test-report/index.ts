@@ -3,11 +3,7 @@ import type { AutoTestReportDomain } from '#/views/auto-test-report/shared/domai
 import { requestClient } from '#/api/request';
 
 export type ResultStatus =
-  | 'failed'
-  | 'missing'
-  | 'skip'
-  | 'success'
-  | 'timeout';
+  'failed' | 'missing' | 'skip' | 'success' | 'timeout';
 export type FailureCategory = 'case' | 'environment' | 'version';
 
 export interface McuPlatformItem {
@@ -236,6 +232,9 @@ export interface DownstreamTriggerResult {
   dry_run: boolean;
   message: string;
   execute_date: string;
+  commit_id?: string;
+  commit_record_id?: string;
+  usage_id?: string;
   vehicle_count: number;
   total_case_count: number;
   success_count: number;
@@ -247,6 +246,42 @@ export interface DownstreamTriggerResult {
   uncategorized_failure_count: number;
   missing_result_count: number;
   block_reasons: string[];
+}
+
+export interface DownstreamCommitItem {
+  id: string;
+  commit_id: string;
+  first_uploaded_at: string;
+  last_uploaded_at: string;
+  upload_count: number;
+  last_used_at?: string;
+  use_count: number;
+}
+
+export interface DownstreamCommitPage {
+  items: DownstreamCommitItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface DownstreamCommitUsageItem {
+  id: string;
+  commit_id: string;
+  execute_date: string;
+  trigger_type: 'manual' | 'scheduled';
+  trigger_user_name: string;
+  success: boolean;
+  dry_run: boolean;
+  message?: string;
+  used_at: string;
+}
+
+export interface DownstreamCommitUsagePage {
+  items: DownstreamCommitUsageItem[];
+  total: number;
+  page: number;
+  page_size: number;
 }
 
 const base = '/api/auto-test-report';
@@ -400,10 +435,38 @@ export async function updateDailyResultFailureReasonApi(
   );
 }
 
-export async function triggerCockpitDownstreamApi(execute_date: string) {
+export async function triggerCockpitDownstreamApi(
+  execute_date: string,
+  commit_id: string,
+) {
   return requestClient.post<DownstreamTriggerResult>(
     `${base}/daily-results/downstream-trigger`,
-    { execute_date },
+    { commit_id, execute_date },
+  );
+}
+
+export async function listDownstreamCommitsApi(params?: {
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
+  uploaded_end?: string;
+  uploaded_start?: string;
+}) {
+  return requestClient.get<DownstreamCommitPage>(`${base}/downstream-commits`, {
+    params,
+  });
+}
+
+export async function listDownstreamCommitUsagesApi(
+  commitRecordId: string,
+  params?: {
+    page?: number;
+    pageSize?: number;
+  },
+) {
+  return requestClient.get<DownstreamCommitUsagePage>(
+    `${base}/downstream-commits/${commitRecordId}/usages`,
+    { params },
   );
 }
 

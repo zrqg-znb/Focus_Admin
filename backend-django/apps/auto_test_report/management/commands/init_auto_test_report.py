@@ -110,7 +110,10 @@ PERMISSION_SEEDS = {
         {'name': '每日结果列表接口', 'code': 'auto-test-report:api:daily-results:list', 'permission_type': 1, 'api_path': '/api/auto-test-report/daily-results/list', 'http_method': 'GET'},
         {'name': '每日结果异常原因更新接口', 'code': 'auto-test-report:api:daily-results:failure-reason', 'permission_type': 1, 'api_path': '/api/auto-test-report/daily-results/:id/failure-reason', 'http_method': 'PATCH'},
         {'name': '座舱下游任务触发接口', 'code': 'auto-test-report:api:daily-results:downstream-trigger', 'permission_type': 1, 'api_path': '/api/auto-test-report/daily-results/downstream-trigger', 'http_method': 'POST'},
+        {'name': 'Commit ID历史接口', 'code': 'auto-test-report:api:downstream-commits:list', 'permission_type': 1, 'api_path': '/api/auto-test-report/downstream-commits', 'http_method': 'GET'},
+        {'name': 'Commit ID使用记录接口', 'code': 'auto-test-report:api:downstream-commits:usages', 'permission_type': 1, 'api_path': '/api/auto-test-report/downstream-commits/:id/usages', 'http_method': 'GET'},
         {'name': '测试环境上报接口', 'code': 'auto-test-report:api:report:daily-results', 'permission_type': 1, 'api_path': '/api/auto-test-report/report/daily-results', 'http_method': 'POST'},
+        {'name': 'CI上报Commit ID接口', 'code': 'auto-test-report:api:report:commit-ids', 'permission_type': 1, 'api_path': '/api/auto-test-report/report/commit-ids', 'http_method': 'POST'},
     ],
 }
 

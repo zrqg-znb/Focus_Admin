@@ -6,6 +6,10 @@ from ninja.files import UploadedFile
 from common.fu_auth import BearerAuth as GlobalAuth
 
 from .auto_test_report_schemas import (
+    DownstreamCommitIn,
+    DownstreamCommitOut,
+    DownstreamCommitPage,
+    DownstreamCommitUsagePage,
     DailyHistoryPage,
     DailyOverviewQuery,
     DailyOverviewResponse,
@@ -180,8 +184,42 @@ def update_daily_result_failure_reason(request, result_id: str, payload: UpdateF
 
 @router.post('/daily-results/downstream-trigger', response=DownstreamTriggerOut, summary='触发座舱下游任务')
 def trigger_cockpit_downstream(request, payload: DownstreamTriggerIn):
-    """人工触发座舱下游任务，后端会强制校验放行条件。"""
-    return services.trigger_cockpit_downstream(request.auth, payload.execute_date)
+    """人工触发座舱下游任务，后端会强制校验放行条件和 commit-id。"""
+    return services.trigger_cockpit_downstream(request.auth, payload.execute_date, payload.commit_id)
+
+
+@router.get('/downstream-commits', response=DownstreamCommitPage, summary='Commit ID历史列表')
+def list_downstream_commits(
+    request,
+    keyword: str = Query(''),
+    uploaded_start: str = Query(''),
+    uploaded_end: str = Query(''),
+    page: int = Query(1),
+    pageSize: int = Query(20),
+):
+    """分页查询 CI 上报的 commit-id 历史。"""
+    return services.list_downstream_commits(
+        keyword=keyword,
+        uploaded_start=uploaded_start,
+        uploaded_end=uploaded_end,
+        page=page,
+        page_size=pageSize,
+    )
+
+
+@router.get(
+    '/downstream-commits/{commit_record_id}/usages',
+    response=DownstreamCommitUsagePage,
+    summary='Commit ID使用记录',
+)
+def list_downstream_commit_usages(
+    request,
+    commit_record_id: str,
+    page: int = Query(1),
+    pageSize: int = Query(10),
+):
+    """分页查询某个 commit-id 的下游触发使用记录。"""
+    return services.list_downstream_commit_usages(commit_record_id, page=page, page_size=pageSize)
 
 
 @router.get('/test-cases/{case_id}/history', response=DailyHistoryPage, summary='测试用例历史执行')
@@ -192,3 +230,9 @@ def get_test_case_history(request, case_id: str, page: int = 1, pageSize: int = 
 @report_router.post('/daily-results', response=ReportDailyResultsOut, summary='测试环境上报每日执行结果')
 def report_daily_results(request, payload: ReportDailyResultsIn):
     return services.report_daily_results(payload)
+
+
+@report_router.post('/commit-ids', response=DownstreamCommitOut, summary='CI上报Commit ID')
+def report_downstream_commit(request, payload: DownstreamCommitIn):
+    """接收 CI 构建侧上报的 commit-id，重复上传会自动去重计数。"""
+    return services.report_downstream_commit(payload)
