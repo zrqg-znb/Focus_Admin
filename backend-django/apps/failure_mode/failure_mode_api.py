@@ -65,6 +65,12 @@ def get_dict_options(request):
     return failure_mode_services.get_failure_mode_dict_options()
 
 
+@router.get('/master-data/export', summary='导出故障模式主数据 Excel')
+def export_master_data(request):
+    """导出故障模式模块全部主数据，按主数据类型生成多个 Excel sheet。"""
+    return failure_mode_services.export_failure_mode_master_data()
+
+
 @router.get('/statistics/subsystems/options', response=list[str], summary='获取故障管理统计子系统选项')
 def get_statistics_subsystem_options(request):
     return failure_mode_services.get_failure_mode_statistics_subsystem_options()

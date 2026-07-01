@@ -36,6 +36,7 @@ import {
   deleteInterceptionStrategyApi,
   deleteObservationMethodApi,
   deleteTestCaseApi,
+  exportFailureModeMasterDataApi,
   getFailureModeDictOptionsApi,
   getFailureModeSubsystemConfigOptionsApi,
   listFailureModesApi,
@@ -104,6 +105,7 @@ const masterDrawerRef = ref<any>();
 const relationInsightDrawerRef = ref<InstanceType<
   typeof RelationInsightDrawer
 > | null>(null);
+const exportMasterDataLoading = ref(false);
 
 const failureModeFilters = reactive({
   author_keyword: '',
@@ -541,6 +543,44 @@ function formatObservationInsightLabel(row: ObservationMethodItem) {
   );
 }
 
+function buildMasterDataExportFilename() {
+  const current = new Date();
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `故障模式主数据-${current.getFullYear()}${pad(
+    current.getMonth() + 1,
+  )}${pad(current.getDate())}-${pad(current.getHours())}${pad(
+    current.getMinutes(),
+  )}${pad(current.getSeconds())}.xlsx`;
+}
+
+function triggerBlobDownload(blob: Blob, filename: string) {
+  const url = window.URL.createObjectURL(new Blob([blob]));
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', filename);
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
+async function handleExportMasterData() {
+  if (exportMasterDataLoading.value) {
+    return;
+  }
+  exportMasterDataLoading.value = true;
+  try {
+    const blob = await exportFailureModeMasterDataApi();
+    triggerBlobDownload(blob as Blob, buildMasterDataExportFilename());
+    ElMessage.success('导出成功');
+  } catch (error) {
+    console.error(error);
+    ElMessage.error('导出失败');
+  } finally {
+    exportMasterDataLoading.value = false;
+  }
+}
+
 watch(
   () => [...failureModeFilters.subsystem],
   () => {
@@ -598,12 +638,22 @@ onMounted(async () => {
           <ElTabPane label="故障模式" name="failureMode">
             <FailureModeGrid class="h-full">
               <template #toolbar-actions>
-                <ElButton
-                  type="primary"
-                  @click="failureModeDrawerRef?.openCreate()"
-                >
-                  新增故障模式
-                </ElButton>
+                <div class="flex items-center gap-2">
+                  <ElButton
+                    type="primary"
+                    @click="failureModeDrawerRef?.openCreate()"
+                  >
+                    新增故障模式
+                  </ElButton>
+                  <ElButton
+                    :loading="exportMasterDataLoading"
+                    plain
+                    type="success"
+                    @click="handleExportMasterData"
+                  >
+                    导出全部数据
+                  </ElButton>
+                </div>
               </template>
 
               <template #header-brief>

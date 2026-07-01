@@ -5,10 +5,14 @@ import json
 import re
 from types import SimpleNamespace
 from typing import Any, Iterable, Type
+from urllib.parse import quote
 
+import openpyxl
+from django.http import HttpResponse
 from django.db import transaction
 from django.db.models import Prefetch, Q
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from ninja.errors import HttpError
 
 from core.dict_item.dict_item_model import DictItem
@@ -737,6 +741,285 @@ def _serialize_subsystem_config(config: FailureModeSubsystemConfig) -> dict[str,
         'sys_create_datetime': _format_datetime(config.sys_create_datetime),
         'sys_update_datetime': _format_datetime(config.sys_update_datetime),
     }
+
+
+MASTER_DATA_EXPORT_SHEETS: list[dict[str, Any]] = [
+    {
+        'title': '故障模式',
+        'headers': [
+            '简述',
+            '子系统',
+            '模块',
+            '芯片',
+            '故障类别',
+            '故障现象',
+            '故障影响',
+            '故障根因',
+            '功能安全等级',
+            '发生频度',
+            '可探测度',
+            '严重程度',
+            '作者',
+            '关联问题单',
+            '状态',
+            '关联产品',
+            '是否需要产线拦截',
+            '必配处理措施类别',
+            '是否需要华佗诊断',
+            '必配维测手段类型',
+            '关联产线拦截策略',
+            '关联故障处理措施',
+            '关联维测手段',
+            '关联华佗诊断方案',
+            '来源类型',
+            '来源任务',
+            '创建时间',
+            '更新时间',
+        ],
+    },
+    {
+        'title': '产线拦截策略',
+        'headers': ['产线拦截项', '工位', '版本检测方案', '设计责任人', '创建时间', '更新时间'],
+    },
+    {
+        'title': '故障处理措施',
+        'headers': ['措施类别', '处理措施', '处理措施详情', '措施影响', '关联测试用例', '设计责任人', '创建时间', '更新时间'],
+    },
+    {
+        'title': '维测手段',
+        'headers': ['维测类型', '日志ID', '日志关键词', '日志获取路径', '设计责任人', '创建时间', '更新时间'],
+    },
+    {
+        'title': '华佗诊断方案',
+        'headers': ['诊断方案描述', '设计责任人', '创建时间', '更新时间'],
+    },
+    {
+        'title': '测试用例',
+        'headers': ['测试用例简述', '测试用例详情', 'CIDA链接', '设计责任人', '创建时间', '更新时间'],
+    },
+]
+
+
+def _export_join(values: Iterable[Any]) -> str:
+    """把导出中的多值字段统一压成中文分隔文本。"""
+    normalized = _normalize_text_list(list(values))
+    return '、'.join(normalized)
+
+
+def _export_user_names(users: Iterable[User]) -> str:
+    """导出责任人时优先显示姓名，缺失时回退用户名。"""
+    return _export_join((user.name or user.username for user in users))
+
+
+def _export_html_text(value: Any) -> str:
+    """将富文本字段转成 Excel 友好的纯文本，避免把 HTML 标签带入单元格。"""
+    text = str(value or '')
+    text = re.sub(r'<\s*br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</p\s*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = re.sub(r'[ \t\r\f\v]+', ' ', text)
+    text = re.sub(r'\n\s+', '\n', text)
+    return text.strip()
+
+
+def _export_bool_text(value: bool) -> str:
+    """将布尔配置转成人可读中文，方便业务方直接筛选。"""
+    return '是' if value else '否'
+
+
+def _export_relation_labels(relations: Iterable[Any], attr_path: str, fallback: str = '') -> str:
+    """按已预取的关系顺序导出关联主数据名称。"""
+    labels: list[str] = []
+    for relation in relations:
+        target: Any = relation
+        for attr in attr_path.split('.'):
+            target = getattr(target, attr, None)
+            if target is None:
+                break
+        labels.append(str(target or fallback or '').strip())
+    return _export_join(labels)
+
+
+def _export_observation_relation_labels(relations: Iterable[FailureModeObservationMethodRel]) -> str:
+    """维测手段没有单一名称字段，按页面展示口径拼出可读标签。"""
+    labels: list[str] = []
+    for relation in relations:
+        method = relation.observation_method
+        labels.append(
+            method.log_keyword
+            or method.log_id
+            or method.monitor_type
+            or method.log_path
+            or '未命名维测项',
+        )
+    return _export_join(labels)
+
+
+def _export_scope_binding_labels(failure_mode: FailureMode) -> str:
+    """导出产品绑定时从产品基线表读取当前生效绑定，避免依赖历史 JSON 快照。"""
+    return _export_join(
+        f"{item['product_name']}({item['subsystem']})"
+        for item in _build_failure_mode_scope_binding_items(failure_mode)
+    )
+
+
+def _build_failure_mode_export_row(item: FailureMode) -> list[Any]:
+    """构造故障模式 sheet 行，字段顺序与 MASTER_DATA_EXPORT_SHEETS 保持一致。"""
+    interception_relations = sorted(
+        item.interception_relations.all(),
+        key=lambda rel: (rel.order_index, rel.sys_create_datetime),
+    )
+    handling_relations = sorted(
+        item.handling_measure_relations.all(),
+        key=lambda rel: (rel.order_index, rel.sys_create_datetime),
+    )
+    observation_relations = sorted(
+        item.observation_method_relations.all(),
+        key=lambda rel: (rel.order_index, rel.sys_create_datetime),
+    )
+    huatuo_relations = sorted(
+        item.huatuo_diagnosis_relations.all(),
+        key=lambda rel: (rel.order_index, rel.sys_create_datetime),
+    )
+    return [
+        item.brief,
+        item.subsystem or '',
+        item.module_name or '',
+        _export_join(item.chips),
+        _export_join(item.fault_categories),
+        _export_join(item.symptoms),
+        _export_html_text(item.effect_html),
+        _export_html_text(item.root_cause_html),
+        item.functional_safety_level or '',
+        item.occurrence_frequency or '',
+        item.detectability or '',
+        item.severity or '',
+        _export_user_names(item.authors.all()),
+        _export_join(item.related_dts_nos),
+        item.status or '',
+        _export_scope_binding_labels(item),
+        _export_bool_text(bool(item.interception_required)),
+        _export_join(
+            _serialize_dict_driven_values(
+                item.required_handling_measure_categories,
+                'measure_category',
+            ),
+        ),
+        _export_bool_text(bool(item.huatuo_required)),
+        _export_join(
+            _serialize_dict_driven_values(
+                item.required_observation_method_types,
+                'monitor_type',
+            ),
+        ),
+        _export_relation_labels(interception_relations, 'interception_strategy.interception_item'),
+        _export_relation_labels(handling_relations, 'handling_measure.measure'),
+        _export_observation_relation_labels(observation_relations),
+        _export_relation_labels(huatuo_relations, 'huatuo_diagnosis.description'),
+        item.source_type or '',
+        getattr(getattr(item, 'source_task', None), 'task_no', '') or '',
+        _format_datetime(item.sys_create_datetime) or '',
+        _format_datetime(item.sys_update_datetime) or '',
+    ]
+
+
+def _build_interception_export_row(item: InterceptionStrategy) -> list[Any]:
+    """构造产线拦截策略 sheet 行。"""
+    return [
+        item.interception_item,
+        item.station or '',
+        _export_html_text(item.version_detection_html),
+        _export_user_names(item.owners.all()),
+        _format_datetime(item.sys_create_datetime) or '',
+        _format_datetime(item.sys_update_datetime) or '',
+    ]
+
+
+def _build_handling_export_row(item: HandlingMeasure) -> list[Any]:
+    """构造故障处理措施 sheet 行。"""
+    relations = sorted(
+        item.test_case_relations.all(),
+        key=lambda rel: (rel.order_index, rel.sys_create_datetime),
+    )
+    return [
+        item.measure_category or '',
+        item.measure,
+        _export_html_text(item.measure_detail_html),
+        item.measure_effect or '',
+        _export_relation_labels(relations, 'test_case.brief'),
+        _export_user_names(item.owners.all()),
+        _format_datetime(item.sys_create_datetime) or '',
+        _format_datetime(item.sys_update_datetime) or '',
+    ]
+
+
+def _build_observation_export_row(item: ObservationMethod) -> list[Any]:
+    """构造维测手段 sheet 行。"""
+    return [
+        item.monitor_type or '',
+        item.log_id or '',
+        item.log_keyword or '',
+        item.log_path or '',
+        _export_user_names(item.owners.all()),
+        _format_datetime(item.sys_create_datetime) or '',
+        _format_datetime(item.sys_update_datetime) or '',
+    ]
+
+
+def _build_huatuo_export_row(item: HuatuoDiagnosis) -> list[Any]:
+    """构造华佗诊断方案 sheet 行。"""
+    return [
+        item.description or '',
+        _export_user_names(item.owners.all()),
+        _format_datetime(item.sys_create_datetime) or '',
+        _format_datetime(item.sys_update_datetime) or '',
+    ]
+
+
+def _build_test_case_export_row(item: TestCase) -> list[Any]:
+    """构造测试用例 sheet 行。"""
+    return [
+        item.brief,
+        _export_html_text(item.detail_html),
+        item.cida_link or '',
+        _export_user_names(item.owners.all()),
+        _format_datetime(item.sys_create_datetime) or '',
+        _format_datetime(item.sys_update_datetime) or '',
+    ]
+
+
+def _build_master_data_export_response(workbook: openpyxl.Workbook) -> HttpResponse:
+    """将工作簿包装成浏览器下载响应。"""
+    timestamp = timezone.now().strftime('%Y%m%d-%H%M%S')
+    filename = quote(f'故障模式主数据-{timestamp}.xlsx')
+    response = HttpResponse(
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    response['Content-Disposition'] = f"attachment; filename*=UTF-8''{filename}"
+    workbook.save(response)
+    return response
+
+
+def export_failure_mode_master_data() -> HttpResponse:
+    """导出故障模式模块全部主数据，按业务类型拆分为多个 sheet。"""
+    workbook = openpyxl.Workbook(write_only=True)
+    export_jobs = [
+        (_failure_mode_queryset().order_by('-sort', '-sys_create_datetime'), _build_failure_mode_export_row),
+        (_interception_strategy_queryset().order_by('-sort', '-sys_create_datetime'), _build_interception_export_row),
+        (_handling_measure_queryset().order_by('-sort', '-sys_create_datetime'), _build_handling_export_row),
+        (_observation_method_queryset().order_by('-sort', '-sys_create_datetime'), _build_observation_export_row),
+        (_huatuo_diagnosis_queryset().order_by('-sort', '-sys_create_datetime'), _build_huatuo_export_row),
+        (_test_case_queryset().order_by('-sort', '-sys_create_datetime'), _build_test_case_export_row),
+    ]
+
+    # 这里不复用分页搜索接口，确保“导出全部数据”不受当前页签筛选或分页状态影响。
+    for sheet_config, (queryset, row_builder) in zip(MASTER_DATA_EXPORT_SHEETS, export_jobs):
+        worksheet = workbook.create_sheet(title=sheet_config['title'])
+        worksheet.append(sheet_config['headers'])
+        for item in queryset:
+            worksheet.append(row_builder(item))
+
+    return _build_master_data_export_response(workbook)
 
 
 def _failure_mode_queryset():

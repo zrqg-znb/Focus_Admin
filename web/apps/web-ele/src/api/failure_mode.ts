@@ -707,8 +707,7 @@ export interface FailureModeProductStatisticsSubsystemRow {
   status_light: 'green' | 'red' | 'yellow' | string;
 }
 
-export interface FailureModeProductStatisticsSubsystemQuery
-  extends FailureModeStatisticsSubsystemQuery {
+export interface FailureModeProductStatisticsSubsystemQuery extends FailureModeStatisticsSubsystemQuery {
   product_ids?: string[];
 }
 
@@ -716,6 +715,12 @@ const base = '/api/failure-mode';
 
 export async function getFailureModeDictOptionsApi() {
   return requestClient.get<FailureModeDictOptions>(`${base}/dict-options`);
+}
+
+export async function exportFailureModeMasterDataApi() {
+  return requestClient.get<Blob>(`${base}/master-data/export`, {
+    responseType: 'blob',
+  });
 }
 
 export async function getFailureModeSubsystemConfigOptionsApi() {
@@ -820,9 +825,10 @@ export async function listFailureModeProductStatisticsSubsystemsApi(
 
 export async function listFailureModesApi(data?: FailureModeQuery) {
   return requestClient
-    .post<
-      PaginatedResponse<FailureModeItem>
-    >(`${base}/failure-modes/search`, data ?? {})
+    .post<PaginatedResponse<FailureModeItem>>(
+      `${base}/failure-modes/search`,
+      data ?? {},
+    )
     .then((page) => ({
       ...page,
       items: (page.items || []).map((item) => normalizeFailureModeItem(item)),

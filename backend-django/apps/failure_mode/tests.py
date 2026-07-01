@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from io import BytesIO
 from types import SimpleNamespace
 
+import openpyxl
 from django.test import SimpleTestCase, TestCase
 from ninja.errors import HttpError
 
@@ -13,9 +15,12 @@ from apps.project_manager.project.project_model import Project
 from .failure_mode_model import (
     FailureMode,
     FailureModeHandlingMeasureRel,
+    FailureModeHuatuoDiagnosisRel,
+    FailureModeInterceptionStrategyRel,
     FailureModeObservationMethodRel,
     FailureModeProduct,
     FailureModeRoleAssignment,
+    HandlingMeasureTestCaseRel,
     HandlingMeasure,
     HuatuoDiagnosis,
     InterceptionStrategy,
@@ -25,11 +30,13 @@ from .failure_mode_model import (
     ProductFailureModeHuatuoLanding,
     ProductFailureModeInterceptionLanding,
     ProductFailureModeObservationLanding,
+    TestCase as FailureModeTestCase,
 )
 from .failure_mode_services import (
     _build_statistics_payload_from_sources,
     _normalize_scope_bindings_for_storage,
     _serialize_failure_mode,
+    export_failure_mode_master_data,
     get_failure_mode_dict_options,
 )
 from .failure_mode_workflow_services import (
@@ -88,6 +95,126 @@ class ScopeBindingNormalizationTests(SimpleTestCase):
             )
 
         self.assertEqual(context.exception.status_code, 422)
+
+
+class FailureModeMasterDataExportTests(TestCase):
+    def test_export_master_data_workbook_contains_all_sheets_and_core_rows(self):
+        owner = User.objects.create(username='fm-export-owner', name='导出责任人')
+        author = User.objects.create(username='fm-export-author', name='导出作者')
+        project = Project.objects.create(
+            name='导出产品A',
+            domain='Domain',
+            type='平台项目',
+            code='FM-EXPORT-A',
+        )
+        product = FailureModeProduct.objects.create(project=project)
+        interception = InterceptionStrategy.objects.create(
+            interception_item='上电拦截',
+            station='EOL',
+            version_detection_html='<p>检测<br/>版本</p>',
+        )
+        interception.owners.add(owner)
+        test_case = FailureModeTestCase.objects.create(
+            brief='上电测试',
+            detail_html='<p>执行<br/>上电</p>',
+            cida_link='https://cida.example/test',
+        )
+        test_case.owners.add(owner)
+        deleted_test_case = FailureModeTestCase.objects.create(brief='已删除用例')
+        deleted_test_case.delete()
+        measure = HandlingMeasure.objects.create(
+            measure_category='检测',
+            measure='重启控制器',
+            measure_detail_html='<p>重启<br/>并检查</p>',
+            measure_effect='恢复通信',
+        )
+        measure.owners.add(owner)
+        HandlingMeasureTestCaseRel.objects.create(
+            handling_measure=measure,
+            test_case=test_case,
+        )
+        observation = ObservationMethod.objects.create(
+            monitor_type='日志',
+            log_id='LOG-1',
+            log_keyword='power on',
+            log_path='/var/log/power',
+        )
+        observation.owners.add(owner)
+        huatuo = HuatuoDiagnosis.objects.create(description='检查供电链路')
+        huatuo.owners.add(owner)
+        failure_mode = FailureMode.objects.create(
+            brief='上电失败',
+            subsystem='动力',
+            module_name='电源模块',
+            chips=['MCU'],
+            fault_categories=['电气故障'],
+            symptoms=['无法启动'],
+            effect_html='<p>车辆<br/>无法上电</p>',
+            root_cause_html='<p>供电异常</p>',
+            functional_safety_level='ASIL-B',
+            occurrence_frequency='高',
+            detectability='中',
+            severity='严重',
+            related_dts_nos=['DTS-1'],
+            status='已确认',
+            interception_required=True,
+            huatuo_required=True,
+            required_handling_measure_categories=['检测'],
+            required_observation_method_types=['日志'],
+        )
+        failure_mode.authors.add(author)
+        FailureModeInterceptionStrategyRel.objects.create(
+            failure_mode=failure_mode,
+            interception_strategy=interception,
+        )
+        FailureModeHandlingMeasureRel.objects.create(
+            failure_mode=failure_mode,
+            handling_measure=measure,
+        )
+        FailureModeObservationMethodRel.objects.create(
+            failure_mode=failure_mode,
+            observation_method=observation,
+        )
+        FailureModeHuatuoDiagnosisRel.objects.create(
+            failure_mode=failure_mode,
+            huatuo_diagnosis=huatuo,
+        )
+        ProductFailureMode.objects.create(
+            product=product,
+            subsystem='动力',
+            failure_mode=failure_mode,
+        )
+
+        response = export_failure_mode_master_data()
+        workbook = openpyxl.load_workbook(BytesIO(response.content), read_only=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            response['Content-Type'],
+        )
+        self.assertIn('.xlsx', response['Content-Disposition'])
+        self.assertEqual(
+            workbook.sheetnames,
+            ['故障模式', '产线拦截策略', '故障处理措施', '维测手段', '华佗诊断方案', '测试用例'],
+        )
+        failure_rows = list(workbook['故障模式'].iter_rows(values_only=True))
+        self.assertEqual(failure_rows[0][0], '简述')
+        self.assertEqual(failure_rows[1][0], '上电失败')
+        self.assertIn('车辆', failure_rows[1][6])
+        self.assertNotIn('<p>', failure_rows[1][6])
+        self.assertEqual(failure_rows[1][12], '导出作者')
+        self.assertEqual(failure_rows[1][15], '导出产品A(动力)')
+        self.assertEqual(failure_rows[1][20], '上电拦截')
+        self.assertEqual(failure_rows[1][21], '重启控制器')
+        self.assertEqual(failure_rows[1][22], 'power on')
+        self.assertEqual(failure_rows[1][23], '检查供电链路')
+        measure_rows = list(workbook['故障处理措施'].iter_rows(values_only=True))
+        self.assertEqual(measure_rows[1][4], '上电测试')
+        self.assertEqual(measure_rows[1][5], '导出责任人')
+        test_case_rows = list(workbook['测试用例'].iter_rows(values_only=True))
+        self.assertEqual(len(test_case_rows), 2)
+        self.assertEqual(test_case_rows[1][0], '上电测试')
 
 
 class TaskLandingPayloadNormalizationTests(SimpleTestCase):
