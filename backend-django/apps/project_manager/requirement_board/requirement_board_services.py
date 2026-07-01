@@ -2803,6 +2803,10 @@ def _create_summary_accumulator() -> dict[str, Any]:
             "development": {"count": 0, "preview_items": []},
             "acceptance": {"count": 0, "preview_items": []},
         },
+        "delivery_delay_rankings": {
+            "pl_group": {},
+            "project": {},
+        },
         "development_delivery_trend": {},
         "acceptance_delivery_trend": {},
     }
@@ -2862,6 +2866,43 @@ def _update_dimension_summary_row(
         _update_completion_payload(row["dev_done"], item)
     if status_code == "A":
         _update_completion_payload(row["acceptance_done"], item)
+
+
+def _create_delay_ranking_row(
+    *,
+    dimension_id: str | None,
+    dimension_name: str,
+) -> dict[str, Any]:
+    """创建交付延期排行行，total 口径覆盖该维度下全部需求。"""
+    return {
+        "dimension_id": dimension_id,
+        "dimension_name": dimension_name,
+        "total_count": 0,
+        "development_delayed_count": 0,
+        "development_workload_man_day": 0.0,
+        "development_workload_kloc": 0.0,
+        "acceptance_delayed_count": 0,
+        "acceptance_workload_man_day": 0.0,
+        "acceptance_workload_kloc": 0.0,
+    }
+
+
+def _update_delay_ranking_row(
+    row: dict[str, Any],
+    item: dict[str, Any],
+    workload_man_day: float,
+    workload_kloc: float,
+) -> None:
+    """按现有延期判定字段累加开发/测试交付延期排行指标。"""
+    row["total_count"] += 1
+    if item.get("is_dev_delayed"):
+        row["development_delayed_count"] += 1
+        row["development_workload_man_day"] += workload_man_day
+        row["development_workload_kloc"] += workload_kloc
+    if item.get("is_test_delayed"):
+        row["acceptance_delayed_count"] += 1
+        row["acceptance_workload_man_day"] += workload_man_day
+        row["acceptance_workload_kloc"] += workload_kloc
 
 
 def _month_bucket(value: Any) -> str | None:
@@ -2942,6 +2983,20 @@ def _aggregate_item(summary: dict[str, Any], item: dict[str, Any]) -> None:
     project_row["total_workload_man_day"] += workload_man_day
     project_row["total_workload_kloc"] += workload_kloc
 
+    project_delay_row = summary["delivery_delay_rankings"]["project"].setdefault(
+        project_key,
+        _create_delay_ranking_row(
+            dimension_id=project_id,
+            dimension_name=project_name,
+        ),
+    )
+    _update_delay_ranking_row(
+        project_delay_row,
+        item,
+        workload_man_day,
+        workload_kloc,
+    )
+
     team_row = summary["team_summary"].setdefault(
         team_name,
         _create_dimension_summary_row(team_name=team_name),
@@ -2965,6 +3020,20 @@ def _aggregate_item(summary: dict[str, Any], item: dict[str, Any]) -> None:
         pl_group_row,
         item,
         status_code,
+        workload_man_day,
+        workload_kloc,
+    )
+
+    pl_delay_row = summary["delivery_delay_rankings"]["pl_group"].setdefault(
+        pl_group_id or _RESPONSIBLE_PL_UNKNOWN_ID,
+        _create_delay_ranking_row(
+            dimension_id=pl_group_id,
+            dimension_name=pl_group_name,
+        ),
+    )
+    _update_delay_ranking_row(
+        pl_delay_row,
+        item,
         workload_man_day,
         workload_kloc,
     )
@@ -3160,6 +3229,73 @@ def _finalize_dimension_summary(
     return result
 
 
+def _finalize_delay_ranking_rows(
+    rows: Iterable[dict[str, Any]],
+    *,
+    delayed_count_field: str,
+    workload_man_day_field: str,
+    workload_kloc_field: str,
+) -> list[dict[str, Any]]:
+    """输出交付延期排行，排序优先暴露延期需求最多的维度。"""
+    result = []
+    for row in rows:
+        total_count = int(row.get("total_count") or 0)
+        delayed_count = int(row.get(delayed_count_field) or 0)
+        result.append(
+            {
+                "dimension_id": row.get("dimension_id"),
+                "dimension_name": row.get("dimension_name") or "",
+                "total_count": total_count,
+                "delayed_count": delayed_count,
+                "delay_rate": round(
+                    (delayed_count / total_count) if total_count else 0.0,
+                    4,
+                ),
+                "delayed_workload_man_day": _round_metric(
+                    row.get(workload_man_day_field) or 0.0
+                ),
+                "delayed_workload_kloc": _round_metric(
+                    row.get(workload_kloc_field) or 0.0
+                ),
+            }
+        )
+
+    result.sort(
+        key=lambda item: (
+            -int(item["delayed_count"]),
+            -float(item["delay_rate"]),
+            item.get("dimension_name") or "",
+        ),
+    )
+    return result
+
+
+def _finalize_delay_ranking_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    """同时生成 PL 组和项目两个维度的开发/测试延期排行。"""
+
+    def _build_bucket(rows: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "development": _finalize_delay_ranking_rows(
+                rows.values(),
+                delayed_count_field="development_delayed_count",
+                workload_man_day_field="development_workload_man_day",
+                workload_kloc_field="development_workload_kloc",
+            ),
+            "acceptance": _finalize_delay_ranking_rows(
+                rows.values(),
+                delayed_count_field="acceptance_delayed_count",
+                workload_man_day_field="acceptance_workload_man_day",
+                workload_kloc_field="acceptance_workload_kloc",
+            ),
+        }
+
+    rankings = summary["delivery_delay_rankings"]
+    return {
+        "pl_group": _build_bucket(rankings["pl_group"]),
+        "project": _build_bucket(rankings["project"]),
+    }
+
+
 def _finalize_summary_payload(summary: dict[str, Any]) -> dict[str, Any]:
     total_count = int(summary["total_count"])
     total_workload_man_day = float(summary["total_workload_man_day"])
@@ -3305,6 +3441,7 @@ def _finalize_summary_payload(summary: dict[str, Any]) -> dict[str, Any]:
             ),
         },
         "delay_summary": delay_summary,
+        "delivery_delay_rankings": _finalize_delay_ranking_summary(summary),
         "development_delivery_trend": _finalize_trend_summary(
             summary["development_delivery_trend"],
         ),
@@ -3429,7 +3566,7 @@ def get_requirement_board_summary(
     user: Any = None,
 ) -> dict[str, Any]:
     context = _resolve_query_context_from_payload(data.dict())
-    summary_key = _cache_key("pm:requirement-board:summary:v6", context["cache_payload"])
+    summary_key = _cache_key("pm:requirement-board:summary:v7", context["cache_payload"])
     prepared_items = _get_prepared_items(context, user=user)
     if prepared_items is not None:
         summary = _compute_summary_from_items(prepared_items)
@@ -3446,6 +3583,7 @@ def get_requirement_board_summary(
         isinstance(cached, dict)
         and isinstance(cached.get("team_summary"), list)
         and isinstance(cached.get("pl_group_summary"), list)
+        and isinstance(cached.get("delivery_delay_rankings"), dict)
     ):
         _debug_log("summary_cache_hit", cache_key=summary_key)
         return cached
@@ -3471,11 +3609,15 @@ def get_requirement_board_summary(
     lock_key = f"{summary_key}:lock"
     lock_acquired = cache.add(lock_key, "1", _LOCK_TTL_SECONDS)
     if not lock_acquired:
-        waiting = _wait_for_cached_payload(summary_key, minimum_items_key="pl_group_summary")
+        waiting = _wait_for_cached_payload(
+            summary_key,
+            minimum_items_key="delivery_delay_rankings",
+        )
         if (
             isinstance(waiting, dict)
             and isinstance(waiting.get("team_summary"), list)
             and isinstance(waiting.get("pl_group_summary"), list)
+            and isinstance(waiting.get("delivery_delay_rankings"), dict)
         ):
             _debug_log("summary_wait_hit", cache_key=summary_key)
             return waiting

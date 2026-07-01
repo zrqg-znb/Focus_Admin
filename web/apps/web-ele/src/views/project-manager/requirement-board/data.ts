@@ -315,6 +315,10 @@ export function createEmptyRequirementSummary(): RequirementBoardSummary {
       development: { count: 0, rate: 0, preview_items: [] },
       acceptance: { count: 0, rate: 0, preview_items: [] },
     },
+    delivery_delay_rankings: {
+      pl_group: { development: [], acceptance: [] },
+      project: { development: [], acceptance: [] },
+    },
     development_delivery_trend: [],
     acceptance_delivery_trend: [],
   };

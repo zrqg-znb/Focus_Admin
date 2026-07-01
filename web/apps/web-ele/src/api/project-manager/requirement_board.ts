@@ -223,6 +223,26 @@ export interface RequirementDelaySummary {
   acceptance: RequirementDelayBucketSummary;
 }
 
+export interface RequirementDeliveryDelayRankingItem {
+  dimension_id?: null | string;
+  dimension_name: string;
+  total_count: number;
+  delayed_count: number;
+  delay_rate: number;
+  delayed_workload_man_day: number;
+  delayed_workload_kloc: number;
+}
+
+export interface RequirementDeliveryDelayRankingBucket {
+  development: RequirementDeliveryDelayRankingItem[];
+  acceptance: RequirementDeliveryDelayRankingItem[];
+}
+
+export interface RequirementDeliveryDelayRankingSummary {
+  pl_group: RequirementDeliveryDelayRankingBucket;
+  project: RequirementDeliveryDelayRankingBucket;
+}
+
 export interface RequirementDeliveryTrendItem {
   month: string;
   planned_count: number;
@@ -242,6 +262,7 @@ export interface RequirementBoardSummary {
   dispatch_rate: RequirementDispatchRate;
   plan_refresh_rate: RequirementPlanRefreshRate;
   delay_summary: RequirementDelaySummary;
+  delivery_delay_rankings: RequirementDeliveryDelayRankingSummary;
   development_delivery_trend: RequirementDeliveryTrendItem[];
   acceptance_delivery_trend: RequirementDeliveryTrendItem[];
 }

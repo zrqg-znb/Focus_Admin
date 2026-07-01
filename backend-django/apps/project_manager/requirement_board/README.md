@@ -319,6 +319,8 @@ z60094428,z60094429
 - 团队统计
 - 责任人排行
 - 开发延期/测试延期摘要与预览
+- PL 组/项目维度开发交付延期排行
+- PL 组/项目维度测试交付延期排行
 - 开发交付趋势
 - 测试交付趋势
 
@@ -806,7 +808,7 @@ flowchart TD
    - 包含：项目、design_ids、团队、类型、责任人、时间维度、时间区间
 
 3. **总结缓存**
-   - 前缀：`pm:requirement-board:summary:v5`
+   - 前缀：`pm:requirement-board:summary:v7`
    - 包含：与过滤结果相同的完整筛选条件
 
 导出接口的设计补充：
@@ -960,6 +962,19 @@ TypeError: can't compare offset-naive and offset-aware datetimes
 - `preview_items`
 
 其中 `preview_items` 仅保留有限条数，用于前端快速预览风险需求，完整明细仍应回到数据看板查看。
+
+### 10.5 交付延期排行口径
+
+`delivery_delay_rankings` 同时提供 PL 组和项目两个维度：
+
+- `pl_group.development`
+- `pl_group.acceptance`
+- `project.development`
+- `project.acceptance`
+
+开发延期沿用 `is_dev_delayed`，测试延期沿用 `is_test_delayed`。PL 组维度按 `responsible_pl_group_id/name` 聚合，未识别需求统一归入“未识别PL领域”；项目维度按 `project_id/project_name` 聚合。
+
+排行排序规则为 `delayed_count desc`、`delay_rate desc`、名称升序。前端默认展示 Top 10，tooltip 展示总需求数、延期数、延期率和延期工作量。
 
 ---
 

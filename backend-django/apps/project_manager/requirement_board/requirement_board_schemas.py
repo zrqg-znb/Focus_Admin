@@ -243,6 +243,34 @@ class RequirementDelaySummarySchema(Schema):
     )
 
 
+class RequirementDeliveryDelayRankingItemSchema(Schema):
+    dimension_id: Optional[str] = None
+    dimension_name: str
+    total_count: int = 0
+    delayed_count: int = 0
+    delay_rate: float = 0.0
+    delayed_workload_man_day: float = 0.0
+    delayed_workload_kloc: float = 0.0
+
+
+class RequirementDeliveryDelayRankingBucketSchema(Schema):
+    development: List[RequirementDeliveryDelayRankingItemSchema] = Field(
+        default_factory=list
+    )
+    acceptance: List[RequirementDeliveryDelayRankingItemSchema] = Field(
+        default_factory=list
+    )
+
+
+class RequirementDeliveryDelayRankingSummarySchema(Schema):
+    pl_group: RequirementDeliveryDelayRankingBucketSchema = Field(
+        default_factory=lambda: RequirementDeliveryDelayRankingBucketSchema()
+    )
+    project: RequirementDeliveryDelayRankingBucketSchema = Field(
+        default_factory=lambda: RequirementDeliveryDelayRankingBucketSchema()
+    )
+
+
 class RequirementDeliveryTrendItemSchema(Schema):
     month: str
     planned_count: int = 0
@@ -269,6 +297,9 @@ class RequirementBoardSummarySchema(Schema):
     )
     delay_summary: RequirementDelaySummarySchema = Field(
         default_factory=lambda: RequirementDelaySummarySchema()
+    )
+    delivery_delay_rankings: RequirementDeliveryDelayRankingSummarySchema = Field(
+        default_factory=lambda: RequirementDeliveryDelayRankingSummarySchema()
     )
     development_delivery_trend: List[RequirementDeliveryTrendItemSchema] = Field(
         default_factory=list

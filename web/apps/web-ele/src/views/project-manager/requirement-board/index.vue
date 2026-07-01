@@ -8,6 +8,7 @@ import type {
   RequirementBoardProjectOption,
   RequirementBoardQueryTask,
   RequirementBoardSummary,
+  RequirementDeliveryDelayRankingItem,
   RequirementDeliveryTrendItem,
   RequirementScheduleState,
   RequirementTimeField,
@@ -253,6 +254,22 @@ const { renderEcharts: renderDevelopmentTrendChart } = useEcharts(
 const acceptanceTrendChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderAcceptanceTrendChart } = useEcharts(
   acceptanceTrendChartRef,
+);
+const plGroupDevelopmentDelayRankChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderPlGroupDevelopmentDelayRankChart } = useEcharts(
+  plGroupDevelopmentDelayRankChartRef,
+);
+const plGroupAcceptanceDelayRankChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderPlGroupAcceptanceDelayRankChart } = useEcharts(
+  plGroupAcceptanceDelayRankChartRef,
+);
+const projectDevelopmentDelayRankChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderProjectDevelopmentDelayRankChart } = useEcharts(
+  projectDevelopmentDelayRankChartRef,
+);
+const projectAcceptanceDelayRankChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderProjectAcceptanceDelayRankChart } = useEcharts(
+  projectAcceptanceDelayRankChartRef,
 );
 const developOwnerChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderDevelopOwnerChart } =
@@ -1392,6 +1409,112 @@ watch(
   { deep: true, immediate: true },
 );
 
+function renderDelayRankChart(
+  render: (options: Record<string, any>) => void,
+  rows: RequirementDeliveryDelayRankingItem[],
+  title: string,
+  color: string,
+) {
+  const displayRows = [...rows].slice(0, 10).reverse();
+  if (displayRows.length === 0) {
+    renderEmptyChart(render, `${title}暂无数据`);
+    return;
+  }
+
+  render({
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter(params: Array<{ dataIndex: number; value: number }>) {
+        const index = params?.[0]?.dataIndex ?? 0;
+        const row = displayRows[index];
+        if (!row) {
+          return '';
+        }
+        return [
+          row.dimension_name,
+          `延期需求：${row.delayed_count}`,
+          `总需求：${row.total_count}`,
+          `延期占比：${formatPercent(row.delay_rate)}`,
+          `延期工作量：${formatMetric(row.delayed_workload_man_day)} 人天`,
+          `延期代码量：${formatMetric(row.delayed_workload_kloc)} KLOC`,
+        ].join('<br/>');
+      },
+    },
+    grid: { left: '4%', right: '8%', top: 16, bottom: 18, containLabel: true },
+    xAxis: { type: 'value', minInterval: 1 },
+    yAxis: {
+      type: 'category',
+      data: displayRows.map((item) => item.dimension_name),
+      axisLabel: {
+        width: 130,
+        overflow: 'truncate',
+      },
+    },
+    series: [
+      {
+        name: title,
+        type: 'bar',
+        barWidth: 18,
+        itemStyle: { color, borderRadius: [0, 8, 8, 0] },
+        data: displayRows.map((item) => item.delayed_count),
+      },
+    ],
+  });
+}
+
+watch(
+  () => summary.value.delivery_delay_rankings.pl_group.development,
+  (rows) => {
+    renderDelayRankChart(
+      renderPlGroupDevelopmentDelayRankChart,
+      rows,
+      'PL组开发延期排行',
+      '#dc2626',
+    );
+  },
+  { deep: true, immediate: true },
+);
+
+watch(
+  () => summary.value.delivery_delay_rankings.pl_group.acceptance,
+  (rows) => {
+    renderDelayRankChart(
+      renderPlGroupAcceptanceDelayRankChart,
+      rows,
+      'PL组测试延期排行',
+      '#ea580c',
+    );
+  },
+  { deep: true, immediate: true },
+);
+
+watch(
+  () => summary.value.delivery_delay_rankings.project.development,
+  (rows) => {
+    renderDelayRankChart(
+      renderProjectDevelopmentDelayRankChart,
+      rows,
+      '项目开发延期排行',
+      '#b91c1c',
+    );
+  },
+  { deep: true, immediate: true },
+);
+
+watch(
+  () => summary.value.delivery_delay_rankings.project.acceptance,
+  (rows) => {
+    renderDelayRankChart(
+      renderProjectAcceptanceDelayRankChart,
+      rows,
+      '项目测试延期排行',
+      '#c2410c',
+    );
+  },
+  { deep: true, immediate: true },
+);
+
 function renderOwnerRankChart(
   render: (options: Record<string, any>) => void,
   rows: RequirementUserSummaryItem[],
@@ -2407,6 +2530,110 @@ onUnmounted(() => {
                   </template>
                   <div class="h-[320px] w-full">
                     <EchartsUI ref="acceptanceTrendChartRef" />
+                  </div>
+                </ElCard>
+              </div>
+
+              <div class="grid gap-4 xl:grid-cols-2">
+                <ElCard shadow="never" class="summary-section-card">
+                  <template #header>
+                    <div class="summary-section-card__header">
+                      <div>
+                        <div class="summary-section-card__title">
+                          PL组开发交付延期排行
+                        </div>
+                        <div class="summary-section-card__desc">
+                          按责任 PL 组统计开发交付延期需求数，辅助定位开发交付风险集中领域。
+                        </div>
+                      </div>
+                      <ElTag
+                        class="summary-section-card__tag"
+                        type="danger"
+                        effect="plain"
+                      >
+                        Top 10
+                      </ElTag>
+                    </div>
+                  </template>
+                  <div class="h-[320px] w-full">
+                    <EchartsUI ref="plGroupDevelopmentDelayRankChartRef" />
+                  </div>
+                </ElCard>
+
+                <ElCard shadow="never" class="summary-section-card">
+                  <template #header>
+                    <div class="summary-section-card__header">
+                      <div>
+                        <div class="summary-section-card__title">
+                          PL组测试交付延期排行
+                        </div>
+                        <div class="summary-section-card__desc">
+                          按责任 PL 组统计测试交付延期需求数，观察验收收敛压力所在。
+                        </div>
+                      </div>
+                      <ElTag
+                        class="summary-section-card__tag"
+                        type="danger"
+                        effect="plain"
+                      >
+                        Top 10
+                      </ElTag>
+                    </div>
+                  </template>
+                  <div class="h-[320px] w-full">
+                    <EchartsUI ref="plGroupAcceptanceDelayRankChartRef" />
+                  </div>
+                </ElCard>
+              </div>
+
+              <div class="grid gap-4 xl:grid-cols-2">
+                <ElCard shadow="never" class="summary-section-card">
+                  <template #header>
+                    <div class="summary-section-card__header">
+                      <div>
+                        <div class="summary-section-card__title">
+                          项目开发交付延期排行
+                        </div>
+                        <div class="summary-section-card__desc">
+                          按项目统计开发交付延期需求数，快速识别需要重点跟进的项目。
+                        </div>
+                      </div>
+                      <ElTag
+                        class="summary-section-card__tag"
+                        type="warning"
+                        effect="plain"
+                      >
+                        Top 10
+                      </ElTag>
+                    </div>
+                  </template>
+                  <div class="h-[320px] w-full">
+                    <EchartsUI ref="projectDevelopmentDelayRankChartRef" />
+                  </div>
+                </ElCard>
+
+                <ElCard shadow="never" class="summary-section-card">
+                  <template #header>
+                    <div class="summary-section-card__header">
+                      <div>
+                        <div class="summary-section-card__title">
+                          项目测试交付延期排行
+                        </div>
+                        <div class="summary-section-card__desc">
+                          按项目统计测试交付延期需求数，辅助判断项目验收闭环风险。
+                        </div>
+                      </div>
+                      <ElTag
+                        class="summary-section-card__tag"
+                        type="warning"
+                        effect="plain"
+                      >
+                        Top 10
+                      </ElTag>
+                    </div>
+                  </template>
+                  <div class="h-[320px] w-full">
+                    <EchartsUI ref="projectAcceptanceDelayRankChartRef" />
                   </div>
                 </ElCard>
               </div>

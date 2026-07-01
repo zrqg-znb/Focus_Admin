@@ -883,6 +883,7 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
                     team="Team-A",
                     status="Completed",
                     develop_owner="dev-known",
+                    due_date="2026-12-10 18:00:00",
                     completed_time="2026-03-08 18:00:00",
                 ),
                 self._build_raw_requirement(
@@ -891,7 +892,7 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
                     team="Team-B",
                     status="Accepted",
                     develop_owner="dev-missing",
-                    accepted_time="2026-03-09 18:00:00",
+                    accepted_time="2026-03-12 18:00:00",
                 ),
             ]
         )
@@ -927,7 +928,128 @@ class RequirementBoardPreferenceTests(TransactionTestCase):
         self.assertEqual(pl_rows["平台PL"]["c_count"], 1)
         self.assertIsNone(pl_rows["未识别PL领域"]["pl_group_id"])
         self.assertEqual(pl_rows["未识别PL领域"]["a_count"], 1)
+        delay_rankings = result["delivery_delay_rankings"]
+        self.assertEqual(
+            delay_rankings["project"]["development"][0]["dimension_name"],
+            "Alpha",
+        )
+        self.assertEqual(
+            delay_rankings["project"]["development"][0]["delayed_count"],
+            1,
+        )
+        self.assertEqual(
+            delay_rankings["project"]["acceptance"][0]["delayed_count"],
+            1,
+        )
+        self.assertEqual(
+            delay_rankings["pl_group"]["development"][0]["dimension_name"],
+            "平台PL",
+        )
+        self.assertEqual(
+            delay_rankings["pl_group"]["acceptance"][0]["dimension_name"],
+            "未识别PL领域",
+        )
         mocked_fetch.assert_not_called()
+
+    def test_delivery_delay_rankings_sort_by_count_rate_and_name(self):
+        def _item(
+            *,
+            requirement_id: str,
+            project_id: str,
+            project_name: str,
+            pl_group_id: str | None,
+            pl_group_name: str,
+            is_dev_delayed: bool,
+            is_test_delayed: bool = False,
+        ):
+            return {
+                "requirement_id": requirement_id,
+                "project_id": project_id,
+                "project_name": project_name,
+                "team_name": "Team-A",
+                "title": requirement_id,
+                "category": "AR",
+                "verification_policy": "10000001",
+                "verification_policy_label": "测试验证",
+                "status_code": "P",
+                "status_label": "开发中",
+                "planned_test_time": "2026-03-05 10:00:00",
+                "due_date": "2026-03-10 18:00:00",
+                "completed_time": None,
+                "accepted_time": None,
+                "is_dev_delayed": is_dev_delayed,
+                "is_test_delayed": is_test_delayed,
+                "workload_kloc": 1.0,
+                "workload_man_day": 2.0,
+                "develop_users": ["dev-a"],
+                "test_users": ["test-a"],
+                "responsible_pl_group_id": pl_group_id,
+                "responsible_pl_group_name": pl_group_name,
+                "develop_user_display": "dev-a",
+                "test_user_display": "test-a",
+                "develop_user": "dev-a",
+                "test_user": "test-a",
+            }
+
+        summary = requirement_board_services._compute_summary_from_items(
+            [
+                _item(
+                    requirement_id="REQ-1",
+                    project_id="project-a",
+                    project_name="Project-A",
+                    pl_group_id="pl-a",
+                    pl_group_name="PL-A",
+                    is_dev_delayed=True,
+                ),
+                _item(
+                    requirement_id="REQ-2",
+                    project_id="project-a",
+                    project_name="Project-A",
+                    pl_group_id="pl-a",
+                    pl_group_name="PL-A",
+                    is_dev_delayed=True,
+                ),
+                _item(
+                    requirement_id="REQ-3",
+                    project_id="project-b",
+                    project_name="Project-B",
+                    pl_group_id="pl-b",
+                    pl_group_name="PL-B",
+                    is_dev_delayed=True,
+                    is_test_delayed=True,
+                ),
+                _item(
+                    requirement_id="REQ-4",
+                    project_id="project-b",
+                    project_name="Project-B",
+                    pl_group_id=None,
+                    pl_group_name="未识别PL领域",
+                    is_dev_delayed=False,
+                    is_test_delayed=True,
+                ),
+            ]
+        )
+
+        pl_development = summary["delivery_delay_rankings"]["pl_group"][
+            "development"
+        ]
+        self.assertEqual(pl_development[0]["dimension_name"], "PL-A")
+        self.assertEqual(pl_development[0]["delayed_count"], 2)
+        self.assertEqual(pl_development[0]["total_count"], 2)
+        self.assertEqual(pl_development[0]["delay_rate"], 1.0)
+        project_acceptance = summary["delivery_delay_rankings"]["project"][
+            "acceptance"
+        ]
+        self.assertEqual(project_acceptance[0]["dimension_name"], "Project-B")
+        self.assertEqual(project_acceptance[0]["delayed_count"], 2)
+        self.assertEqual(project_acceptance[0]["delay_rate"], 1.0)
+        unknown_acceptance = next(
+            item
+            for item in summary["delivery_delay_rankings"]["pl_group"]["acceptance"]
+            if item["dimension_name"] == "未识别PL领域"
+        )
+        self.assertEqual(unknown_acceptance["dimension_name"], "未识别PL领域")
+        self.assertEqual(unknown_acceptance["dimension_id"], None)
 
     @mock.patch(
         "apps.project_manager.requirement_board.requirement_board_services._fetch_raw_page"
