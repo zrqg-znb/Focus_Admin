@@ -125,22 +125,6 @@ function handlePopoverShow() {
   }
 }
 
-// 获取性别显示文本
-function getGenderText(gender?: number) {
-  if (gender === 1) return '男';
-  if (gender === 0) return '女';
-  return '未知';
-}
-
-// 获取状态标签类型
-function getStatusType(isActive?: number) {
-  return isActive === 1 ? 'success' : 'danger';
-}
-
-// 获取状态显示文本
-function getStatusText(isActive?: number) {
-  return isActive === 1 ? '启用' : '禁用';
-}
 </script>
 
 <template>

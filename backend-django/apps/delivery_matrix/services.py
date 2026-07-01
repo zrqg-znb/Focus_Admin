@@ -67,86 +67,170 @@ def _replace_node_positions(
 
 def _plain_text(value):
     """将富文本描述转换为适合 Markdown 表格展示的纯文本。"""
-    text = html.unescape(strip_tags(str(value or '')))
+    source = re.sub(r'<\s*br\s*/?>', ' ', str(value or ''), flags=re.IGNORECASE)
+    text = html.unescape(strip_tags(source))
     return re.sub(r'\s+', ' ', text).strip()
 
 
-def _markdown_cell(value):
-    """转义 Markdown 表格单元格，避免竖线和换行破坏表格结构。"""
+def _label_text(value):
+    """格式化节点、岗位和人员名称，这类字段不是富文本，不剥离尖括号内容。"""
+    text = html.unescape(str(value or ''))
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def _html_cell(value):
+    """转义 HTML 表格单元格内容，避免导出数据破坏表格结构。"""
     text = _plain_text(value)
     if not text:
         return '-'
-    return text.replace('\\', '\\\\').replace('|', '\\|')
+    return html.escape(text, quote=True)
 
 
-def _format_node_path(path: list[str]):
-    """格式化节点层级路径。"""
-    return ' / '.join(path) if path else '-'
+def _html_label(value):
+    """转义名称类表格内容，保留原始名称中的特殊字符。"""
+    text = _label_text(value)
+    if not text:
+        return '-'
+    return html.escape(text, quote=True)
 
 
-def _format_position_staff(positions):
-    """格式化岗位与人员，保持单元格信息密度。"""
+def _markdown_heading(value):
+    """格式化 Markdown 章节标题，去掉富文本并保持可搜索的纯文本。"""
+    return _label_text(value) or '未命名领域'
+
+
+def _get_node_positions(node):
+    """获取节点岗位数据，优先使用树查询中预取的岗位列表。"""
+    positions = getattr(node, 'position_list', None)
+    if positions is not None:
+        return list(positions)
+    return list(
+        node.positions.filter(is_deleted=False)
+        .prefetch_related('users')
+        .order_by('-sort')
+    )
+
+
+def _format_position_name(position):
+    """格式化岗位名称，岗位在导出表格中需要加粗。"""
+    if not position:
+        return '-'
+    return f"<strong>{_html_label(position.name)}</strong>"
+
+
+def _format_position_users(position):
+    """格式化岗位人员，人员姓名在导出表格中需要加粗。"""
+    if not position:
+        return '-'
+    users = list(position.users.all())
+    if not users:
+        return '-'
+    names = []
+    for user in users:
+        display_name = _html_label(user.name or user.username)
+        names.append(f"<strong>{display_name}</strong>")
+    return '、'.join(names)
+
+
+def _build_position_rows(positions):
+    """将岗位列表转换为表格行，空岗位也保留一行占位。"""
     position_list = list(positions or [])
     if not position_list:
-        return '-'
+        return [{'position': None}]
+    return [{'position': position} for position in position_list]
 
-    fragments = []
-    for position in position_list:
-        users = list(position.users.all())
-        user_names = '、'.join(
-            _plain_text(user.name or user.username) for user in users
+
+def _collect_descendant_groups(node, path: list[str]):
+    """收集三级及更深节点，四级后续层级会拼接进三级节点名称中。"""
+    groups = [
+        {
+            'third_name': ' / '.join(
+                _label_text(part) for part in path if _label_text(part)
+            ) or '-',
+            'description': node.description,
+            'rows': _build_position_rows(_get_node_positions(node)),
+        }
+    ]
+    for child in getattr(node, 'child_list', []):
+        groups.extend(_collect_descendant_groups(child, [*path, child.name]))
+    return groups
+
+
+def _build_second_groups(second_node):
+    """构建二级节点下的表格分组，二级自身岗位作为三级为空的一组。"""
+    groups = []
+    direct_positions = _get_node_positions(second_node)
+    if direct_positions:
+        groups.append(
+            {
+                'third_name': '-',
+                'description': second_node.description,
+                'rows': _build_position_rows(direct_positions),
+            }
         )
-        fragments.append(f"{_plain_text(position.name)}：{user_names or '-'}")
-    return '；'.join(fragments) or '-'
 
+    for child in getattr(second_node, 'child_list', []):
+        groups.extend(_collect_descendant_groups(child, [child.name]))
 
-def _walk_matrix_rows(nodes, path: list[str] | None = None, level: int = 1):
-    """按树顺序展开沟通矩阵节点，生成 Markdown 表格行数据。"""
-    rows = []
-    current_path = path or []
-    for node in nodes:
-        node_path = [*current_path, _plain_text(node.name)]
-        positions = getattr(node, 'position_list', None)
-        if positions is None:
-            positions = (
-                node.positions.filter(is_deleted=False)
-                .prefetch_related('users')
-                .order_by('-sort')
-            )
-        linked_project = getattr(node, 'linked_project', None)
-        rows.append(
-            [
-                _format_node_path(node_path),
-                str(level),
-                node.name,
-                node.code,
-                linked_project.name if linked_project else None,
-                _format_position_staff(positions),
-                node.description,
-            ]
+    if not groups:
+        groups.append(
+            {
+                'third_name': '-',
+                'description': second_node.description,
+                'rows': _build_position_rows([]),
+            }
         )
-        rows.extend(
-            _walk_matrix_rows(getattr(node, 'child_list', []), node_path, level + 1)
-        )
-    return rows
+    return groups
 
 
-def _collect_matrix_stats(nodes):
-    """统计导出文件中的节点、岗位和去重人员数量。"""
-    node_count = 0
-    position_count = 0
-    user_ids = set()
-    stack = list(nodes or [])
-    while stack:
-        node = stack.pop()
-        node_count += 1
-        positions = getattr(node, 'position_list', [])
-        position_count += len(positions)
-        for position in positions:
-            for user in position.users.all():
-                user_ids.add(str(user.id))
-        stack.extend(getattr(node, 'child_list', []))
-    return node_count, position_count, len(user_ids)
+def _rowspan_attr(count: int):
+    """按行数生成 HTML rowspan 属性，单行时不输出冗余属性。"""
+    return f' rowspan="{count}"' if count > 1 else ''
+
+
+def _build_domain_table(domain_node):
+    """构建单个一级领域下的 HTML 表格。"""
+    second_nodes = list(getattr(domain_node, 'child_list', []))
+    lines = [
+        '<table>',
+        '<thead>',
+        '<tr><th>二级节点</th><th>三级节点</th><th>岗位</th><th>人员</th><th>描述</th></tr>',
+        '</thead>',
+        '<tbody>',
+    ]
+
+    if not second_nodes:
+        lines.append('<tr><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>')
+    for second_node in second_nodes:
+        groups = _build_second_groups(second_node)
+        second_rowspan = sum(len(group['rows']) for group in groups)
+        first_second_row = True
+
+        for group in groups:
+            group_rowspan = len(group['rows'])
+            first_group_row = True
+            for row in group['rows']:
+                cells = []
+                if first_second_row:
+                    cells.append(
+                        f'<td{_rowspan_attr(second_rowspan)}>{_html_label(second_node.name)}</td>'
+                    )
+                    first_second_row = False
+                if first_group_row:
+                    cells.append(
+                        f'<td{_rowspan_attr(group_rowspan)}>{_html_label(group["third_name"])}</td>'
+                    )
+                cells.append(f'<td>{_format_position_name(row["position"])}</td>')
+                cells.append(f'<td>{_format_position_users(row["position"])}</td>')
+                if first_group_row:
+                    cells.append(
+                        f'<td{_rowspan_attr(group_rowspan)}>{_html_cell(group["description"])}</td>'
+                    )
+                    first_group_row = False
+                lines.append('<tr>' + ''.join(cells) + '</tr>')
+
+    lines.extend(['</tbody>', '</table>'])
+    return '\n'.join(lines)
 
 
 def _format_current_time(fmt: str):
@@ -160,30 +244,21 @@ def _format_current_time(fmt: str):
 def build_delivery_matrix_markdown():
     """构建沟通矩阵 Markdown 导出内容。"""
     roots = get_tree_data()
-    exported_at = _format_current_time('%Y-%m-%d %H:%M:%S')
-    node_count, position_count, user_count = _collect_matrix_stats(roots)
-    rows = _walk_matrix_rows(roots)
+    lines = ['# 沟通矩阵', '']
+    if not roots:
+        lines.append('暂无沟通矩阵数据。')
+        lines.append('')
+        return '\n'.join(lines)
 
-    lines = [
-        '# 沟通矩阵',
-        '',
-        f'- 导出时间：{exported_at}',
-        f'- 节点数量：{node_count}',
-        f'- 岗位数量：{position_count}',
-        f'- 人员数量：{user_count}',
-        '',
-        '| 层级路径 | 层级 | 节点名称 | 节点编码 | 关联项目 | 岗位人员 | 描述 |',
-        '| --- | --- | --- | --- | --- | --- | --- |',
-    ]
-
-    if rows:
-        for row in rows:
-            lines.append(
-                '| ' + ' | '.join(_markdown_cell(cell) for cell in row) + ' |'
-            )
-    else:
-        lines.append('| - | - | - | - | - | - | - |')
-
+    for domain in roots:
+        lines.extend(
+            [
+                f'## {_markdown_heading(domain.name)}',
+                '',
+                _build_domain_table(domain),
+                '',
+            ]
+        )
     lines.append('')
     return '\n'.join(lines)
 

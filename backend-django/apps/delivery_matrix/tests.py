@@ -31,19 +31,37 @@ class DeliveryMatrixMarkdownTests(TestCase):
             child_list=kwargs.get('children', []),
         )
 
-    def test_build_markdown_escapes_table_cells_and_flattens_tree(self):
-        """Markdown 导出应稳定展示层级、岗位人员和转义后的表格内容。"""
-        user = self._user('u1', '张三|PL')
+    def test_build_markdown_renders_domain_sections_and_html_tables(self):
+        """Markdown 导出应按领域分段，并用 HTML 表格合并二级和三级节点。"""
+        user = self._user('u1', '张三<PL>')
+        reviewer = self._user('u2', '李四')
         root = self._node(
-            '领域|A',
-            code='D|A',
-            description='<p>根节点<br>说明 | 特殊</p>',
-            linked_project=SimpleNamespace(name='项目|一'),
-            positions=[self._position('PL', [user])],
+            '座舱领域',
+            code='D-001',
+            description='<p>根节点说明</p>',
+            linked_project=SimpleNamespace(name='项目一'),
             children=[
                 self._node(
-                    '组件B',
-                    description='<script>alert(1)</script><b>组件说明</b>',
+                    '二级系统',
+                    code='S-001',
+                    description='<p>二级说明</p>',
+                    positions=[self._position('系统PL', [reviewer])],
+                    children=[
+                        self._node(
+                            '三级组件',
+                            description='<p>组件<br>说明 & 备注</p>',
+                            positions=[
+                                self._position('开发Owner', [user]),
+                                self._position('测试Owner', []),
+                            ],
+                            children=[
+                                self._node(
+                                    '四级模块',
+                                    description='<b>模块说明</b>',
+                                )
+                            ],
+                        )
+                    ],
                 )
             ],
         )
@@ -52,14 +70,31 @@ class DeliveryMatrixMarkdownTests(TestCase):
             markdown = services.build_delivery_matrix_markdown()
 
         self.assertIn('# 沟通矩阵', markdown)
-        self.assertIn('- 节点数量：2', markdown)
-        self.assertIn('- 岗位数量：1', markdown)
-        self.assertIn('- 人员数量：1', markdown)
-        self.assertIn('领域\\|A / 组件B', markdown)
-        self.assertIn('张三\\|PL', markdown)
-        self.assertIn('项目\\|一', markdown)
-        self.assertIn('根节点说明 \\| 特殊', markdown)
-        self.assertNotIn('<script>', markdown)
+        self.assertIn('## 座舱领域', markdown)
+        self.assertIn('<table>', markdown)
+        self.assertIn(
+            '<tr><th>二级节点</th><th>三级节点</th><th>岗位</th><th>人员</th><th>描述</th></tr>',
+            markdown,
+        )
+        self.assertIn('<td rowspan="4">二级系统</td>', markdown)
+        self.assertIn('<td rowspan="2">三级组件</td>', markdown)
+        self.assertIn('<td>三级组件 / 四级模块</td>', markdown)
+        self.assertIn('<strong>开发Owner</strong>', markdown)
+        self.assertIn('<strong>张三&lt;PL&gt;</strong>', markdown)
+        self.assertIn('<strong>测试Owner</strong>', markdown)
+        self.assertIn('<strong>李四</strong>', markdown)
+        self.assertIn('组件 说明 &amp; 备注', markdown)
+        self.assertIn('<td>模块说明</td>', markdown)
+        self.assertNotIn('导出时间', markdown)
+        self.assertNotIn('节点数量', markdown)
+        self.assertNotIn('岗位数量', markdown)
+        self.assertNotIn('人员数量', markdown)
+        self.assertNotIn('层级路径', markdown)
+        self.assertNotIn('节点编码', markdown)
+        self.assertNotIn('关联项目', markdown)
+        self.assertNotIn('D-001', markdown)
+        self.assertNotIn('S-001', markdown)
+        self.assertNotIn('项目一', markdown)
 
     def test_export_markdown_response_headers(self):
         """Markdown 导出接口响应应携带下载文件名和正确内容类型。"""
