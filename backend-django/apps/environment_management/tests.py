@@ -173,6 +173,26 @@ class EnvironmentManagementServiceTests(TestCase):
         next_occupied = occupy_environment(environment_user3, env_id)
         self.assertEqual(next_occupied['environment']['current_user_name'], 'environment_user3')
 
+    def test_idle_environment_with_waiting_queue_allows_later_user_to_queue(self):
+        env_id = create_environment(self.admin, payload())['id']
+        occupy_environment(self.env_user, env_id)
+        queue_head = make_user('queue_head', 'environment_user')
+        later_user = make_user('later_user', 'environment_user')
+        enqueue_environment(queue_head, env_id, 'normal')
+        release_environment(self.env_user, env_id)
+
+        with self.assertRaises(HttpError) as error:
+            occupy_environment(later_user, env_id)
+        self.assertIn('当前队首为 queue_head', str(error.exception))
+
+        queued = enqueue_environment(later_user, env_id, 'normal')
+        self.assertEqual(queued['my_queue_position'], 2)
+        occupied = occupy_environment(queue_head, env_id)
+        self.assertEqual(occupied['environment']['current_user_name'], 'queue_head')
+        self.assertTrue(
+            EnvironmentQueue.objects.filter(environment_id=env_id, user=queue_head, status='done').exists()
+        )
+
     def test_reject_invalid_device_when_binding_environment(self):
         env_payload = payload()
         env_payload.devices = [{'device_id': 'not-exists', 'asset_number': '', 'remark': '', 'sort': 0}]

@@ -182,6 +182,34 @@ function canOpenRdp(row: EnvironmentItem) {
   );
 }
 
+function canOccupy(row: EnvironmentItem) {
+  // 空闲但存在等待队列时，只有队首用户可以占用；其他用户应继续排队，不能被“空闲”状态误导成可占用。
+  return Boolean(
+    row.can_use_environment
+      && row.status === 'idle'
+      && (Number(row.queue_count || 0) === 0 || Number(row.my_queue_position || 0) === 1),
+  );
+}
+
+function canRelease(row: EnvironmentItem) {
+  // 维持既有交互：占用中环境展示释放入口，最终权限仍以后端“占用人或管理员”校验为准。
+  return Boolean(row.can_use_environment && row.status === 'occupied');
+}
+
+function canQueue(row: EnvironmentItem) {
+  // A 释放后环境会变成 idle，但等待队列仍保留。此时非队首用户不能占用，必须仍能看到排队入口。
+  return Boolean(
+    row.can_use_environment
+      && !row.my_queue_id
+      && !row.is_current_user_occupying
+      && (row.status === 'occupied' || (row.status === 'idle' && Number(row.queue_count || 0) > 0)),
+  );
+}
+
+function canCancelQueue(row: EnvironmentItem) {
+  return Boolean(row.can_use_environment && row.my_queue_id);
+}
+
 async function loadCards() {
   cardLoading.value = true;
   try {
@@ -493,15 +521,11 @@ onBeforeUnmount(() => {
         </template>
         <template #cell-actions="{ row }">
           <div class="action-group">
-            <ElButton v-if="row.can_use_environment && row.status === 'idle'" size="small" type="primary" @click="occupy(row)">占用</ElButton>
-            <ElButton v-else-if="row.can_use_environment && row.status === 'occupied'" size="small" type="warning" @click="release(row)">释放</ElButton>
+            <ElButton v-if="canOccupy(row)" size="small" type="primary" @click="occupy(row)">占用</ElButton>
+            <ElButton v-else-if="canRelease(row)" size="small" type="warning" @click="release(row)">释放</ElButton>
             <ElButton v-if="canOpenRdp(row)" size="small" type="success" @click="openRdp(row)">RDP 控制台</ElButton>
-            <template v-if="row.can_use_environment && row.status !== 'idle'">
-              <ElButton v-if="row.my_queue_id" size="small" @click="cancelQueue(row)">取消排队</ElButton>
-              <template v-else>
-                <ElButton size="small" @click="queue(row)">排队</ElButton>
-              </template>
-            </template>
+            <ElButton v-if="canCancelQueue(row)" size="small" @click="cancelQueue(row)">取消排队</ElButton>
+            <ElButton v-else-if="canQueue(row)" size="small" @click="queue(row)">排队</ElButton>
             <ElButton link type="primary" @click="openDetail(row)">详情</ElButton>
             <ElButton link type="primary" @click="openRecords(row)">记录</ElButton>
           </div>
@@ -580,15 +604,11 @@ onBeforeUnmount(() => {
               {{ row.first_queue_user_name ? `队首：${row.first_queue_user_name}` : '暂无等待队列' }}
             </span>
             <div class="card-actions">
-              <ElButton v-if="row.can_use_environment && row.status === 'idle'" size="small" type="primary" @click="occupy(row)">占用</ElButton>
-              <ElButton v-else-if="row.can_use_environment && row.status === 'occupied'" size="small" type="warning" @click="release(row)">释放</ElButton>
+              <ElButton v-if="canOccupy(row)" size="small" type="primary" @click="occupy(row)">占用</ElButton>
+              <ElButton v-else-if="canRelease(row)" size="small" type="warning" @click="release(row)">释放</ElButton>
               <ElButton v-if="canOpenRdp(row)" size="small" type="success" @click="openRdp(row)">RDP 控制台</ElButton>
-              <template v-if="row.can_use_environment && row.status !== 'idle'">
-                <ElButton v-if="row.my_queue_id" size="small" @click="cancelQueue(row)">取消排队</ElButton>
-                <template v-else>
-                  <ElButton size="small" @click="queue(row)">排队</ElButton>
-                </template>
-              </template>
+              <ElButton v-if="canCancelQueue(row)" size="small" @click="cancelQueue(row)">取消排队</ElButton>
+              <ElButton v-else-if="canQueue(row)" size="small" @click="queue(row)">排队</ElButton>
               <ElButton size="small" @click="openDetail(row)">详情</ElButton>
               <ElButton size="small" @click="openQueue(row)">队列</ElButton>
               <ElButton size="small" @click="openRecords(row)">记录</ElButton>
