@@ -271,6 +271,47 @@ class EnvironmentManagementServiceTests(TestCase):
         self.assertEqual(fuzzy_page['total'], 1)
         self.assertEqual(fuzzy_page['items'][0]['domain'], 'vehicle')
 
+    def test_environment_device_filter_uses_intersection_for_multiple_devices(self):
+        tree = create_device_type(
+            self.admin,
+            DeviceTypeIn(parent_id=None, name='外设', sort=1, is_active=True),
+        )
+        device_a = create_device(
+            self.admin,
+            TestDeviceIn(device_type_id=tree[0]['id'], name='采集卡', sort=0, is_active=True, remark=''),
+        )
+        device_b = create_device(
+            self.admin,
+            TestDeviceIn(device_type_id=tree[0]['id'], name='程控电源', sort=1, is_active=True, remark=''),
+        )
+        device_c = create_device(
+            self.admin,
+            TestDeviceIn(device_type_id=tree[0]['id'], name='示波器', sort=2, is_active=True, remark=''),
+        )
+
+        both_payload = payload(ip='192.168.2.10')
+        both_payload.devices = [
+            {'device_id': device_a['id'], 'asset_number': '', 'remark': '', 'sort': 0},
+            {'device_id': device_b['id'], 'asset_number': '', 'remark': '', 'sort': 1},
+        ]
+        both_env = create_environment(self.admin, both_payload)
+
+        only_a_payload = payload(ip='192.168.2.11')
+        only_a_payload.devices = [{'device_id': device_a['id'], 'asset_number': '', 'remark': '', 'sort': 0}]
+        create_environment(self.admin, only_a_payload)
+
+        only_c_payload = payload(ip='192.168.2.12')
+        only_c_payload.devices = [{'device_id': device_c['id'], 'asset_number': '', 'remark': '', 'sort': 0}]
+        create_environment(self.admin, only_c_payload)
+
+        page = list_environments(
+            self.user,
+            EnvironmentListQuery(device_ids=f"{device_a['id']},{device_b['id']}", page=1, pageSize=20),
+        )
+
+        self.assertEqual(page['total'], 1)
+        self.assertEqual(page['items'][0]['id'], both_env['id'])
+
     def test_favorites_are_globally_pinned_before_pagination(self):
         favorite_id = ''
         for index in range(25):

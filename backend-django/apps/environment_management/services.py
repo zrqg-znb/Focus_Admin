@@ -824,8 +824,10 @@ def list_environments(user: User, query: EnvironmentListQuery) -> dict:
         qs = qs.filter(vehicle_model__in=vehicle_models)
     device_ids = _split_query_values(query.device_ids)
     if device_ids:
-        # 测试设备表头筛选使用级联多选，最终只提交具体设备 ID；类型节点不会作为查询值进入后端。
-        qs = qs.filter(device_bindings__test_device_id__in=device_ids)
+        # 测试设备多选是“同时具备”语义：每追加一次反向关联 filter，
+        # Django 会生成独立 JOIN，从而要求同一个环境存在每一个被选中的设备绑定。
+        for device_id in device_ids:
+            qs = qs.filter(device_bindings__test_device_id=device_id)
     device_names = _split_query_values(query.device_names)
     if device_names:
         qs = qs.filter(Q(device_bindings__device_name__in=device_names) | Q(device_bindings__test_device__name__in=device_names))
