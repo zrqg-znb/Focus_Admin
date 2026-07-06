@@ -4,6 +4,7 @@ import type {
   PlatformConfig,
   ViuHardwarePlatform,
 } from '#/api/project-manager/hardware';
+import type { ProjectVehicleLinkItem } from '#/api/project-manager/project';
 
 import { computed, ref, watch } from 'vue';
 
@@ -45,6 +46,7 @@ import {
 import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
 
 import { getProjectFormSchema } from '../data';
+import ProjectVehicleLinks from './ProjectVehicleLinks.vue';
 
 const emit = defineEmits<{
   success: [];
@@ -114,6 +116,8 @@ type ModuleRow = {
 };
 const moduleRows = ref<ModuleRow[]>([]);
 const originalModuleIds = ref<string[]>([]);
+const powerInfoLinks = ref<ProjectVehicleLinkItem[]>([]);
+const hardwareSoftwareInterfaceDocs = ref<ProjectVehicleLinkItem[]>([]);
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
@@ -179,6 +183,10 @@ const [Drawer, drawerApi] = useVbenDrawer({
         dtsConfig.value.di_teams = Array.isArray(data.di_teams)
           ? data.di_teams
           : [];
+        powerInfoLinks.value = normalizeVehicleLinks(data.power_info_link);
+        hardwareSoftwareInterfaceDocs.value = normalizeVehicleLinks(
+          data.hardware_software_interface_doc,
+        );
         normalizePhaseConfigs(data.phase_configs || []);
         milestoneForm.value = {
           qg1_date: '',
@@ -249,6 +257,8 @@ const [Drawer, drawerApi] = useVbenDrawer({
         module: '',
       };
       dtsConfig.value = { ws_id: '', version_c: '', di_teams: [] };
+      powerInfoLinks.value = [];
+      hardwareSoftwareInterfaceDocs.value = [];
       moduleRows.value = [];
       originalModuleIds.value = [];
       milestoneForm.value = {
@@ -282,6 +292,8 @@ const hardwareScenario = computed(() => {
   if (projectDomain.value.includes('车控')) return 'vehicle';
   return '';
 });
+
+const showVehicleLinks = computed(() => hardwareScenario.value === 'vehicle');
 
 const cockpitStageName = '座舱配套版本';
 
@@ -596,6 +608,65 @@ function normalizeStringList(values: string[]) {
   return result;
 }
 
+function normalizeVehicleLinks(value: unknown): ProjectVehicleLinkItem[] {
+  if (!value) return [];
+  if (typeof value === 'string') {
+    const url = value.trim();
+    return url ? [{ chip_name: '', url }] : [];
+  }
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (typeof item === 'string') {
+        return { chip_name: '', url: item.trim() };
+      }
+      if (item && typeof item === 'object') {
+        const row = item as Partial<ProjectVehicleLinkItem>;
+        return {
+          chip_name: String(row.chip_name || '').trim(),
+          url: String(row.url || '').trim(),
+        };
+      }
+      return { chip_name: '', url: '' };
+    })
+    .filter((item) => item.chip_name || item.url);
+}
+
+function getVehicleLinksPayload(
+  rows: ProjectVehicleLinkItem[],
+  fieldLabel: string,
+) {
+  const normalized = rows.map((row) => ({
+    chip_name: String(row.chip_name || '').trim(),
+    url: String(row.url || '').trim(),
+  }));
+  const hasPartialRow = normalized.some(
+    (row) => (row.chip_name || row.url) && !(row.chip_name && row.url),
+  );
+  if (hasPartialRow) {
+    ElMessage.warning(`${fieldLabel}的芯片名称和链接需同时填写`);
+    return null;
+  }
+  return normalized.filter((row) => row.chip_name && row.url);
+}
+
+function appendVehicleLinksPayload(payload: Record<string, any>) {
+  if (!showVehicleLinks.value) return true;
+  const powerPayload = getVehicleLinksPayload(
+    powerInfoLinks.value,
+    '用电信息表链接',
+  );
+  if (powerPayload === null) return false;
+  const interfacePayload = getVehicleLinksPayload(
+    hardwareSoftwareInterfaceDocs.value,
+    '软硬件接口文档',
+  );
+  if (interfacePayload === null) return false;
+  payload.power_info_link = powerPayload;
+  payload.hardware_software_interface_doc = interfacePayload;
+  return true;
+}
+
 function isIterationConfigValid(showMessage = false) {
   if (!enableIteration.value) {
     return true;
@@ -781,6 +852,10 @@ async function onSubmit() {
         version_c: enableDts.value ? dtsConfig.value.version_c : undefined,
         di_teams: enableDts.value ? dtsConfig.value.di_teams : undefined,
       };
+      if (!appendVehicleLinksPayload(payload)) {
+        activeTab.value = 'basic';
+        return;
+      }
 
       if (formData.value?.id) {
         const projectId = formData.value.id;
@@ -861,7 +936,19 @@ async function onSubmit() {
     >
       <ElTabs v-model="activeTab" class="px-4">
         <ElTabPane label="基础信息" name="basic">
-          <Form class="mt-2" />
+          <div class="mt-2 space-y-4">
+            <Form />
+            <div v-if="showVehicleLinks" class="space-y-4">
+              <ProjectVehicleLinks
+                v-model="powerInfoLinks"
+                title="用电信息表链接"
+              />
+              <ProjectVehicleLinks
+                v-model="hardwareSoftwareInterfaceDocs"
+                title="软硬件接口文档"
+              />
+            </div>
+          </div>
         </ElTabPane>
         <ElTabPane label="里程碑配置" name="milestone">
           <div class="mt-4">

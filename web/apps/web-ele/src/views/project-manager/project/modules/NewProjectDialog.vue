@@ -4,6 +4,7 @@ import type {
   PlatformConfig,
   ViuHardwarePlatform,
 } from '#/api/project-manager/hardware';
+import type { ProjectVehicleLinkItem } from '#/api/project-manager/project';
 
 import { computed, ref, watch } from 'vue';
 
@@ -31,6 +32,7 @@ import { createProjectApi } from '#/api/project-manager/project';
 import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
 
 import { getProjectFormSchema } from '../data';
+import ProjectVehicleLinks from './ProjectVehicleLinks.vue';
 
 interface Props {
   modelValue?: boolean;
@@ -120,6 +122,8 @@ const idvpPlatforms = ref<PlatformConfig[]>([]);
 const cdcPlatforms = ref<PlatformConfig[]>([]);
 const smartScreenVersions = ref<PlatformConfig[]>([]);
 const idvpPlatformId = ref('');
+const powerInfoLinks = ref<ProjectVehicleLinkItem[]>([]);
+const hardwareSoftwareInterfaceDocs = ref<ProjectVehicleLinkItem[]>([]);
 type PhaseConfigFormItem = {
   cdc_platform_id: string;
   smart_screen_version_ids: string[];
@@ -151,6 +155,8 @@ const hardwareScenario = computed(() => {
   if (projectDomain.value.includes('车控')) return 'vehicle';
   return '';
 });
+
+const showVehicleLinks = computed(() => hardwareScenario.value === 'vehicle');
 
 const cockpitStageName = '座舱配套版本';
 
@@ -400,6 +406,41 @@ function normalizeStringList(values: string[]) {
   return result;
 }
 
+function getVehicleLinksPayload(
+  rows: ProjectVehicleLinkItem[],
+  fieldLabel: string,
+) {
+  const normalized = rows.map((row) => ({
+    chip_name: String(row.chip_name || '').trim(),
+    url: String(row.url || '').trim(),
+  }));
+  const hasPartialRow = normalized.some(
+    (row) => (row.chip_name || row.url) && !(row.chip_name && row.url),
+  );
+  if (hasPartialRow) {
+    ElMessage.warning(`${fieldLabel}的芯片名称和链接需同时填写`);
+    return null;
+  }
+  return normalized.filter((row) => row.chip_name && row.url);
+}
+
+function appendVehicleLinksPayload(payload: Record<string, any>) {
+  if (!showVehicleLinks.value) return true;
+  const powerPayload = getVehicleLinksPayload(
+    powerInfoLinks.value,
+    '用电信息表链接',
+  );
+  if (powerPayload === null) return false;
+  const interfacePayload = getVehicleLinksPayload(
+    hardwareSoftwareInterfaceDocs.value,
+    '软硬件接口文档',
+  );
+  if (interfacePayload === null) return false;
+  payload.power_info_link = powerPayload;
+  payload.hardware_software_interface_doc = interfacePayload;
+  return true;
+}
+
 function isIterationConfigValid(showMessage = false) {
   if (!enableIteration.value) {
     return true;
@@ -570,6 +611,8 @@ function resetAll() {
   newDiTeam.value = '';
   moduleRows.value = [];
   phaseConfigs.value = [];
+  powerInfoLinks.value = [];
+  hardwareSoftwareInterfaceDocs.value = [];
 }
 
 async function handleSave() {
@@ -638,6 +681,10 @@ async function handleSave() {
       version_c: enableDts.value ? dtsConfig.value.version_c : undefined,
       di_teams: enableDts.value ? dtsConfig.value.di_teams : undefined,
     };
+    if (!appendVehicleLinksPayload(payload)) {
+      currentStep.value = 0;
+      return;
+    }
     const project = await createProjectApi(payload);
     const projectId = project.id;
 
@@ -782,6 +829,16 @@ function handleClose() {
         <div class="align-self-center w-[700px] translate-y-[-20%]">
           <div class="border-border bg-card rounded-lg border p-8 shadow-sm">
             <BasicForm class="mx-4" />
+            <div v-if="showVehicleLinks" class="mx-4 mt-4 space-y-4">
+              <ProjectVehicleLinks
+                v-model="powerInfoLinks"
+                title="用电信息表链接"
+              />
+              <ProjectVehicleLinks
+                v-model="hardwareSoftwareInterfaceDocs"
+                title="软硬件接口文档"
+              />
+            </div>
           </div>
         </div>
       </div>

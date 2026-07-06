@@ -9,8 +9,8 @@ export interface ProjectOut {
   managers_info: { id: string; name: string }[];
   is_closed: boolean;
   repo_url?: string;
-  power_info_link?: null | string;
-  hardware_software_interface_doc?: null | string;
+  power_info_link?: ProjectVehicleLinkItem[] | string;
+  hardware_software_interface_doc?: ProjectVehicleLinkItem[] | string;
   remark?: string;
   enable_milestone: boolean;
   enable_iteration: boolean;
@@ -32,6 +32,11 @@ export interface ProjectOut {
   di_teams?: string[];
   sys_create_datetime?: string;
   is_favorited: boolean;
+}
+
+export interface ProjectVehicleLinkItem {
+  chip_name: string;
+  url: string;
 }
 
 export interface VehicleHardwareItem {
@@ -64,8 +69,8 @@ export interface ProjectCreatePayload {
   manager_ids: string[];
   is_closed?: boolean;
   repo_url?: string;
-  power_info_link?: null | string;
-  hardware_software_interface_doc?: null | string;
+  power_info_link?: ProjectVehicleLinkItem[];
+  hardware_software_interface_doc?: ProjectVehicleLinkItem[];
   remark?: string;
   enable_milestone?: boolean;
   enable_iteration?: boolean;
@@ -92,8 +97,8 @@ export interface ProjectUpdatePayload {
   manager_ids?: string[];
   is_closed?: boolean;
   repo_url?: string;
-  power_info_link?: null | string;
-  hardware_software_interface_doc?: null | string;
+  power_info_link?: ProjectVehicleLinkItem[];
+  hardware_software_interface_doc?: ProjectVehicleLinkItem[];
   remark?: string;
   enable_milestone?: boolean;
   enable_iteration?: boolean;

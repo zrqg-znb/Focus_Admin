@@ -45,6 +45,37 @@ def _normalize_id_list(raw_values) -> list[str]:
     return normalized
 
 
+def _normalize_vehicle_link_items(raw_values, field_label: str) -> list[dict]:
+    if raw_values is None:
+        return []
+    if isinstance(raw_values, str):
+        if raw_values.strip():
+            raise HttpError(422, f"{field_label}的芯片名称和链接需同时填写")
+        return []
+    if not isinstance(raw_values, list):
+        raise HttpError(422, f"{field_label}格式不正确")
+
+    normalized: list[dict] = []
+    for item in raw_values:
+        if item is None:
+            continue
+        if isinstance(item, str):
+            chip_name = ""
+            url = item.strip()
+        elif isinstance(item, dict):
+            chip_name = str(item.get("chip_name") or "").strip()
+            url = str(item.get("url") or "").strip()
+        else:
+            raise HttpError(422, f"{field_label}格式不正确")
+
+        if not chip_name and not url:
+            continue
+        if not chip_name or not url:
+            raise HttpError(422, f"{field_label}的芯片名称和链接需同时填写")
+        normalized.append({"chip_name": chip_name, "url": url})
+    return normalized
+
+
 def _normalize_requirement_source_config(
     design_id: str | None,
     sub_teams,
@@ -327,6 +358,14 @@ def create_project(request, data: ProjectCreateSchema):
         data_dict["iteration_quality_module"] = normalized_quality_module
         data_dict["design_id"] = normalized_design_id
         data_dict["sub_teams"] = normalized_sub_teams
+        data_dict["power_info_link"] = _normalize_vehicle_link_items(
+            data_dict.get("power_info_link"),
+            "用电信息表链接",
+        )
+        data_dict["hardware_software_interface_doc"] = _normalize_vehicle_link_items(
+            data_dict.get("hardware_software_interface_doc"),
+            "软硬件接口文档",
+        )
 
         project = fu_crud.create(request, data_dict, Project)
 
@@ -390,6 +429,16 @@ def update_project(request, id: str, data: ProjectUpdateSchema):
     )
     if "version_c" in data_dict:
         data_dict["version_c"] = _normalize_optional_text(data_dict.get("version_c"))
+    if "power_info_link" in data_dict:
+        data_dict["power_info_link"] = _normalize_vehicle_link_items(
+            data_dict.get("power_info_link"),
+            "用电信息表链接",
+        )
+    if "hardware_software_interface_doc" in data_dict:
+        data_dict["hardware_software_interface_doc"] = _normalize_vehicle_link_items(
+            data_dict.get("hardware_software_interface_doc"),
+            "软硬件接口文档",
+        )
     normalized_quality_switch, normalized_quality_oem_name, normalized_quality_module = (
         _normalize_iteration_quality_config(
             enable_iteration=enable_iteration,

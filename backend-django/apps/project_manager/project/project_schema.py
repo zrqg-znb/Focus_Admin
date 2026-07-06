@@ -13,6 +13,11 @@ class VehicleHardwareItem(Schema):
     bomid: str = Field("", description="BOMID")
 
 
+class ProjectVehicleLinkItem(Schema):
+    chip_name: str = Field("", description="芯片名称")
+    url: str = Field("", description="链接")
+
+
 class ProjectPhaseConfigIn(Schema):
     stage_name: str = Field(..., description="阶段名称")
     stage_start: Optional[date] = Field(None, description="阶段开始日期")
@@ -36,8 +41,11 @@ class ProjectCreateSchema(Schema):
     manager_ids: List[str] = Field(..., description="项目经理ID列表")
     is_closed: bool = Field(False, description="是否结项")
     repo_url: Optional[str] = Field(None, description="制品仓号/地址")
-    power_info_link: Optional[str] = Field(None, description="用电信息表链接")
-    hardware_software_interface_doc: Optional[str] = Field(
+    power_info_link: Optional[List[ProjectVehicleLinkItem]] = Field(
+        None,
+        description="用电信息表链接",
+    )
+    hardware_software_interface_doc: Optional[List[ProjectVehicleLinkItem]] = Field(
         None,
         description="软硬件接口文档",
     )
@@ -78,8 +86,8 @@ class ProjectUpdateSchema(Schema):
     manager_ids: Optional[List[str]] = None
     is_closed: Optional[bool] = None
     repo_url: Optional[str] = None
-    power_info_link: Optional[str] = None
-    hardware_software_interface_doc: Optional[str] = None
+    power_info_link: Optional[List[ProjectVehicleLinkItem]] = None
+    hardware_software_interface_doc: Optional[List[ProjectVehicleLinkItem]] = None
     remark: Optional[str] = None
     enable_milestone: Optional[bool] = None
     enable_iteration: Optional[bool] = None

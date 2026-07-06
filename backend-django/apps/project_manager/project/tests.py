@@ -1,6 +1,8 @@
 from types import SimpleNamespace
+import importlib
 
 from django.test import RequestFactory, TestCase
+from ninja.errors import HttpError
 
 from core.user.user_model import User
 
@@ -23,7 +25,7 @@ class ProjectVehicleOptionalFieldsTests(TestCase):
         )
         self.request = SimpleNamespace(auth=self.user)
 
-    def test_create_vehicle_project_persists_optional_fields(self):
+    def test_create_vehicle_project_persists_optional_link_rows(self):
         payload = ProjectCreateSchema(
             name="Vehicle Project",
             domain="车控域",
@@ -34,8 +36,16 @@ class ProjectVehicleOptionalFieldsTests(TestCase):
             enable_iteration=False,
             enable_quality=False,
             enable_dts=False,
-            power_info_link="https://example.com/power",
-            hardware_software_interface_doc="https://example.com/interface",
+            power_info_link=[
+                {"chip_name": "VIU-1", "url": "https://example.com/power-1"},
+                {"chip_name": "VIU-2", "url": "https://example.com/power-2"},
+            ],
+            hardware_software_interface_doc=[
+                {
+                    "chip_name": "VIU-1",
+                    "url": "https://example.com/interface-1",
+                },
+            ],
         )
 
         project = project_service.create_project(self.request, payload)
@@ -43,10 +53,16 @@ class ProjectVehicleOptionalFieldsTests(TestCase):
         detail_request.auth = self.user
         detail = project_service.get_project(detail_request, project.id)
 
-        self.assertEqual(detail.power_info_link, "https://example.com/power")
+        self.assertEqual(
+            detail.power_info_link,
+            [
+                {"chip_name": "VIU-1", "url": "https://example.com/power-1"},
+                {"chip_name": "VIU-2", "url": "https://example.com/power-2"},
+            ],
+        )
         self.assertEqual(
             detail.hardware_software_interface_doc,
-            "https://example.com/interface",
+            [{"chip_name": "VIU-1", "url": "https://example.com/interface-1"}],
         )
         self.assertEqual(
             list(detail.managers.values_list("id", flat=True)),
@@ -75,9 +91,56 @@ class ProjectVehicleOptionalFieldsTests(TestCase):
             ProjectUpdateSchema(name="General Project Updated"),
         )
 
-        self.assertIsNone(updated.power_info_link)
-        self.assertIsNone(updated.hardware_software_interface_doc)
+        self.assertEqual(updated.power_info_link, [])
+        self.assertEqual(updated.hardware_software_interface_doc, [])
         self.assertEqual(updated.name, "General Project Updated")
+
+    def test_empty_vehicle_link_rows_are_dropped(self):
+        project = project_service.create_project(
+            self.request,
+            ProjectCreateSchema(
+                name="Vehicle Project Empty Links",
+                domain="车控域",
+                type="量产",
+                code="vehicle-project-empty-links",
+                manager_ids=[str(self.user.id)],
+                enable_milestone=False,
+                enable_iteration=False,
+                enable_quality=False,
+                enable_dts=False,
+                power_info_link=[
+                    {"chip_name": "", "url": ""},
+                    {"chip_name": "VIU-1", "url": " https://example.com/power "},
+                ],
+                hardware_software_interface_doc=[],
+            ),
+        )
+
+        self.assertEqual(
+            project.power_info_link,
+            [{"chip_name": "VIU-1", "url": "https://example.com/power"}],
+        )
+        self.assertEqual(project.hardware_software_interface_doc, [])
+
+    def test_partial_vehicle_link_row_raises_validation_error(self):
+        project = Project.objects.create(
+            name="Vehicle Project Partial Link",
+            domain="车控项目",
+            type="量产",
+            code="vehicle-project-partial-link",
+            sys_creator=self.user,
+        )
+
+        with self.assertRaises(HttpError):
+            project_service.update_project(
+                self.request,
+                project.id,
+                ProjectUpdateSchema(
+                    power_info_link=[
+                        {"chip_name": "VIU-1", "url": ""},
+                    ],
+                ),
+            )
 
     def test_non_vehicle_update_preserves_existing_optional_fields_when_omitted(self):
         project = Project.objects.create(
@@ -85,8 +148,15 @@ class ProjectVehicleOptionalFieldsTests(TestCase):
             domain="车控项目",
             type="量产",
             code="vehicle-project-preserve",
-            power_info_link="https://example.com/existing-power",
-            hardware_software_interface_doc="https://example.com/existing-interface",
+            power_info_link=[
+                {"chip_name": "VIU-1", "url": "https://example.com/existing-power"}
+            ],
+            hardware_software_interface_doc=[
+                {
+                    "chip_name": "VIU-1",
+                    "url": "https://example.com/existing-interface",
+                }
+            ],
             sys_creator=self.user,
         )
         project.managers.add(self.user)
@@ -100,11 +170,16 @@ class ProjectVehicleOptionalFieldsTests(TestCase):
         self.assertEqual(updated.domain, "通用项目")
         self.assertEqual(
             updated.power_info_link,
-            "https://example.com/existing-power",
+            [{"chip_name": "VIU-1", "url": "https://example.com/existing-power"}],
         )
         self.assertEqual(
             updated.hardware_software_interface_doc,
-            "https://example.com/existing-interface",
+            [
+                {
+                    "chip_name": "VIU-1",
+                    "url": "https://example.com/existing-interface",
+                }
+            ],
         )
 
     def test_project_schema_exposes_optional_fields(self):
@@ -114,3 +189,20 @@ class ProjectVehicleOptionalFieldsTests(TestCase):
 
         self.assertIn("power_info_link", schema_fields)
         self.assertIn("hardware_software_interface_doc", schema_fields)
+
+    def test_migration_normalizes_legacy_string_values(self):
+        migration = importlib.import_module(
+            "apps.project_manager.migrations.0050_project_vehicle_links_json"
+        )
+
+        self.assertEqual(
+            migration.normalize_vehicle_link_value(" https://example.com/power "),
+            [{"chip_name": "", "url": "https://example.com/power"}],
+        )
+        self.assertEqual(migration.normalize_vehicle_link_value(""), [])
+        self.assertEqual(
+            migration.normalize_vehicle_link_value(
+                [{"chip_name": " VIU ", "url": " https://example.com/doc "}],
+            ),
+            [{"chip_name": "VIU", "url": "https://example.com/doc"}],
+        )

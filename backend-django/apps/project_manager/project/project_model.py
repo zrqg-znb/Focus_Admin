@@ -18,16 +18,14 @@ class Project(RootModel):
     managers = models.ManyToManyField('core.User', related_name='managed_projects', verbose_name="项目经理")
     is_closed = models.BooleanField(default=False, verbose_name="是否结项")
     repo_url = models.CharField(max_length=512, blank=True, null=True, verbose_name="制品仓号/地址")
-    power_info_link = models.CharField(
-        max_length=512,
+    power_info_link = models.JSONField(
+        default=list,
         blank=True,
-        null=True,
         verbose_name="用电信息表链接",
     )
-    hardware_software_interface_doc = models.CharField(
-        max_length=512,
+    hardware_software_interface_doc = models.JSONField(
+        default=list,
         blank=True,
-        null=True,
         verbose_name="软硬件接口文档",
     )
     remark = models.TextField(blank=True, null=True, verbose_name="备注")

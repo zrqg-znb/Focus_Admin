@@ -212,24 +212,6 @@ export function getProjectFormSchema(): VbenFormSchema[] {
     },
     {
       component: 'Input',
-      fieldName: 'power_info_link',
-      label: '用电信息表链接',
-      dependencies: {
-        show: (values: any) => String(values.domain || '').includes('车控'),
-        triggerFields: ['domain'],
-      },
-    },
-    {
-      component: 'Input',
-      fieldName: 'hardware_software_interface_doc',
-      label: '软硬件接口文档',
-      dependencies: {
-        show: (values: any) => String(values.domain || '').includes('车控'),
-        triggerFields: ['domain'],
-      },
-    },
-    {
-      component: 'Input',
       fieldName: 'remark',
       label: '备注',
       componentProps: {
