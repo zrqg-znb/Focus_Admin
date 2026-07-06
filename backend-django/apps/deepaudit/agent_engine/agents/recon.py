@@ -145,6 +145,24 @@ Final Answer: {
 
 这些字段可以放在 Final Answer 顶层；没有证据时用空数组，不要编造。
 
+## Android / 车机 / 座舱 Java/Kotlin 增强要求
+如果项目包含 AndroidManifest.xml、.java/.kt、AOSP、车机、座舱、HMI 或显示链路代码，不要只给普通 Java 高风险文件。必须尽量构建 Android 工程语义图：
+- android_components: Activity、Service、BroadcastReceiver、ContentProvider、exported、permission、intent-filter、provider authority
+- ipc_boundaries: Binder/AIDL/Messenger/PendingIntent、calling uid/package、权限校验和 clearCallingIdentity 线索
+- intent_entrypoints: getIntent/onNewIntent/onReceive/onStartCommand、extra/Bundle/Parcelable 输入链
+- webview_jsbridge: WebView 配置、addJavascriptInterface、URL loading、file/content scheme、mixed content
+- jni_native_boundaries: System.loadLibrary、native/external 方法、Java 到 native 参数边界
+- storage_log_privacy: SharedPreferences、外部存储、Logcat、Clipboard、车辆隐私/账号/token/位置/诊断数据
+- hmi_display_chains: SurfaceView/TextureView/GLSurfaceView/Canvas/DisplayManager、车速/档位/告警/ADAS/HUD/cluster 状态链路
+- crypto_network_config: TrustManager、HostnameVerifier、Network Security Config、明文通信、弱加密
+- platform_privilege_boundaries: priv-app/system app、signature/privileged permission、sharedUserId、SELinux/service_contexts/file_contexts
+- vehicle_diagnostics_boundaries: UDS/DoIP/CAN/LIN/OBD/DTC/DID、诊断会话、安全访问、车辆状态约束
+- ota_update_chains: UpdateEngine、PackageInstaller、RecoverySystem、payload/signature/hash、回滚/降级、USB/本地包导入
+- vehicle_hal_chains: CarService、CarPropertyManager、VehiclePropertyIds、VHAL/native bridge、属性读写和订阅
+- java_dynamic_parser_boundaries: Class.forName/DexClassLoader/Method.invoke/ProcessBuilder、ObjectInputStream/XMLDecoder/XML parser/YAML/JSON polymorphic typing
+
+这些字段可以放在 Final Answer 顶层；没有证据时用空数组，不要编造。
+
 ## ⚠️ 重要输出要求
 
 ### recommended_tools 格式要求

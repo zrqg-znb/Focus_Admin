@@ -280,6 +280,23 @@ Finding 必须包含以下证据字段；缺失关键字段时 verdict 应为 un
 - false_positive_checks: 已检查的反例，例如上游长度校验、固定表、生成配置、锁覆盖、返回值处理
 - confidence_reason: 为什么是 confirmed/likely/uncertain/false_positive
 
+## Android / 车机 / 座舱 Java/Kotlin 生产审计模式
+
+当项目包含 AndroidManifest.xml、Java/Kotlin Android 组件、AOSP、车机、座舱、HMI、IVI、WebView、Binder、JNI 或显示链路时，不要按普通 Java Web 项目审计。
+
+此模式必须按证据链推进：
+1. inventory/recon: 使用 search_code、rag_query、list_files、read_file 建立组件图、权限图、IPC/SystemService 边界、Intent/PendingIntent 输入链、WebView/JNI/HMI 显示链路、privapp/SELinux、诊断/OTA/VHAL 配置和 Java 动态/解析边界。
+2. candidate: 召回 exported 组件、intent-filter、Binder/AIDL/SystemService/PendingIntent、WebView JSBridge、外部存储/日志/隐私、native 方法、TrustManager/HostnameVerifier、priv-app/SELinux、UDS/DoIP/CAN/OTA/VHAL、Surface/Display/HMI 状态更新点，以及 Java 反射/ClassLoader/解析器/反序列化危险边界。
+3. analysis: 读取 AndroidManifest.xml、入口类、调用者/被调者和配置文件，确认权限、身份校验、参数来源、生命周期、线程、显示状态、车辆状态、平台签名/privapp/SELinux、OTA/诊断/VHAL 配置约束。
+4. verification: 先做 Manifest/权限/调用链/反例检查；semgrep p/java 只能作为候选来源之一。
+
+Android/车机 finding 必须包含：
+- evidence_chain: ["Manifest/组件入口", "Java/Kotlin 入口方法", "权限/身份/参数证据", "敏感 sink 或显示影响点"]
+- context_assumptions: targetSdk/minSdk、系统签名权限、车型/feature flag、debug/release、系统/三方进程边界
+- rule_references: Android 安全、组件暴露、Binder/IPC/SystemService、Intent/PendingIntent、WebView、JNI、privapp/SELinux、车机 HMI/隐私、诊断/OTA/VHAL、Java 反射/解析器规则
+- false_positive_checks: exported=false、signature/privileged permission、固定 allowlist、系统 uid/SELinux 限制、debug-only、不可达车型配置、车辆状态/诊断会话/OTA 签名校验、Java allowlist/ObjectInputFilter/XML 安全特性等
+- confidence_reason: 为什么是 confirmed/likely/uncertain/false_positive
+
 错误示例（禁止）：
 ```
 Thought: 根据项目信息，可能存在安全问题
@@ -514,6 +531,14 @@ class AnalysisAgent(BaseAgent):
             or language_profile.get("is_c_family_dominant")
             or any(str(lang).lower() in {"c", "cpp"} for lang in (project_info.get("languages") or []))
         )
+        production_android_mode = bool(
+            any(str(lang).lower() in {"java", "kotlin"} for lang in (project_info.get("languages") or []))
+            or any("AndroidManifest.xml" in str(path) for path in (project_info.get("structure", {}).get("files") or []))
+            or any(
+                token in str(scenario_profile.get("scenario_key") or "").lower()
+                for token in ("android", "aosp", "hmi", "ivi", "cockpit")
+            )
+        )
         if inventory_mode:
             self.config.system_prompt = INVENTORY_ANALYSIS_SYSTEM_PROMPT
         scenario_prompt_block = build_scenario_prompt_block(scenario_profile, self.name.lower())
@@ -656,7 +681,11 @@ Final Answer 必须是 JSON，并包含 inventory_report 对象。固定骨架�
 1. 首先使用 search_code / rag_query / list_files 定位工程语义地图：模块边界、task/ISR、共享资源、锁/临界区、危险 API、RTE/BSW/MCAL 调用和宏/配置条件。
 2. 然后使用 read_file / function_context 读取候选点上下文、调用者/被调者和反例证据。
 3. semgrep/cppcheck/clang-tidy/gitleaks 只能作为候选来源；不要默认全项目扫描，不要把工具命中直接报告为 confirmed。
-4. 输出 finding 时必须带 evidence_chain、context_assumptions、rule_references、false_positive_checks、confidence_reason；证据不足时 verdict=uncertain。''' if production_c_family_mode else '''1. **首先**：使用 read_file 读取上面列出的高风险文件
+4. 输出 finding 时必须带 evidence_chain、context_assumptions、rule_references、false_positive_checks、confidence_reason；证据不足时 verdict=uncertain。''' if production_c_family_mode else '''当前处于 Android / 车机 / 座舱 Java/Kotlin 生产审计模式。
+1. 首先使用 search_code / rag_query / list_files 定位 AndroidManifest、组件图、权限图、IPC/SystemService 边界、Intent/PendingIntent 输入链、WebView/JNI/HMI 显示链路、privapp/SELinux、诊断/OTA/VHAL 配置、Java 反射/解析器边界。
+2. 然后使用 read_file / function_context 读取 Manifest、入口类、调用者/被调者、平台/车辆配置和反例证据。
+3. semgrep p/java 只能作为候选来源；不要默认全项目扫描，不要把工具命中直接报告为 confirmed。
+4. 输出 finding 时必须带 evidence_chain、context_assumptions、rule_references、false_positive_checks、confidence_reason；证据不足时 verdict=uncertain。''' if production_android_mode else '''1. **首先**：使用 read_file 读取上面列出的高风险文件
 2. **然后**：分析这些文件中的安全问题
 3. **最后**：如果需要，使用 smart_scan 或其他工具扩展分析'''}
 
@@ -668,7 +697,7 @@ Final Answer 必须是 JSON，并包含 inventory_report 对象。固定骨架�
 ## 可用工具
 {self.get_tools_description()}
 
-请开始你的安全分析。{('先召回工程语义和候选点，再读取上下文形成证据链（输出 Action）。' if production_c_family_mode else '首先读取高风险区域的文件，然后**立即**分析其中的安全问题（输出 Action）。')}"""
+请开始你的安全分析。{('先召回工程语义和候选点，再读取上下文形成证据链（输出 Action）。' if (production_c_family_mode or production_android_mode) else '首先读取高风险区域的文件，然后**立即**分析其中的安全问题（输出 Action）。')}"""
         
         # 🔥 记录工作开始
         self.record_work("开始代码梳理" if inventory_mode else "开始安全漏洞分析")
@@ -758,7 +787,7 @@ Final Answer: {inventory_schema}"""
                         retry_prompt = f"""收到空响应。请根据以下格式输出你的思考和行动：
 
 Thought: [你对当前安全分析情况的思考]
-Action: [工具名称，如 read_file, search_code, rag_query, function_context, pattern_match{', semgrep_scan' if not production_c_family_mode else ''}]
+Action: [工具名称，如 read_file, search_code, rag_query, function_context, pattern_match{', semgrep_scan' if not (production_c_family_mode or production_android_mode) else ''}]
 Action Input: {{"参数名": "参数值"}}
 
 可用工具: {', '.join(self.tools.keys())}
@@ -937,11 +966,11 @@ Final Answer:"""
             "code_snippet": "相关代码片段",
             "suggestion": "修复建议"{''',
             "verdict": "confirmed|likely|uncertain|false_positive",
-            "evidence_chain": ["入口/调用者", "候选语句", "边界/生命周期/锁证据", "影响点"],
-            "context_assumptions": ["宏/配置/task/ISR/初始化状态等判断前提"],
-            "rule_references": ["AUTOSAR/MISRA/CERT/CWE/内部规则"],
+            "evidence_chain": ["入口/调用者或 Manifest/组件入口", "候选语句", "边界/权限/生命周期/锁证据", "影响点"],
+            "context_assumptions": ["宏/配置/task/ISR/初始化状态/targetSdk/车型配置/debug-release 等判断前提"],
+            "rule_references": ["AUTOSAR/MISRA/CERT/CWE/Android/车机HMI/隐私规则"],
             "false_positive_checks": ["已检查的反例证据"],
-            "confidence_reason": "置信度理由"''' if production_c_family_mode else ''}
+            "confidence_reason": "置信度理由"''' if (production_c_family_mode or production_android_mode) else ''}
         }
     ],
     "summary": "分析总结"

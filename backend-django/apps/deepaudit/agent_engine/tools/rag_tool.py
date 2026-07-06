@@ -350,6 +350,32 @@ class RAGQueryTool(_KeywordFallbackMixin, AgentTool):
                     ("call_graph_callees", "被调函数"),
                     ("symbol_definitions", "符号定义"),
                     ("include_dependencies", "Include 依赖"),
+                    ("android_components", "Android 组件"),
+                    ("android_entrypoints", "Android 入口方法"),
+                    ("android_ipc_calls", "Binder/IPC 线索"),
+                    ("android_permission_identity_checks", "权限/身份校验"),
+                    ("android_intent_usage", "Intent/组件调用"),
+                    ("android_pending_intent_usage", "PendingIntent/DeepLink"),
+                    ("android_webview_usage", "WebView/JSBridge"),
+                    ("android_jni_usage", "JNI/Native 边界"),
+                    ("android_storage_privacy_usage", "存储/日志/隐私"),
+                    ("android_hmi_display_usage", "HMI/显示链路"),
+                    ("android_crypto_network_usage", "加密/网络配置"),
+                    ("android_privapp_platform_usage", "特权应用/平台权限"),
+                    ("android_vehicle_diagnostics_usage", "车载诊断/总线"),
+                    ("android_ota_update_usage", "OTA/升级链路"),
+                    ("android_vehicle_hal_usage", "Vehicle HAL/CarService"),
+                    ("java_runtime_reflection_usage", "Java 反射/运行时"),
+                    ("java_parser_serialization_usage", "Java 解析/反序列化"),
+                    ("android_manifest_components", "Manifest 组件"),
+                    ("android_manifest_exported", "Manifest exported"),
+                    ("android_manifest_permissions", "Manifest 权限"),
+                    ("android_intent_filters", "Manifest intent-filter"),
+                    ("android_provider_authorities", "Provider authority"),
+                    ("android_network_security_config", "Network Security Config"),
+                    ("android_privapp_permissions", "Privapp 权限配置"),
+                    ("android_selinux_policy", "SELinux 策略"),
+                    ("android_vehicle_config", "车机/诊断配置"),
                 ):
                     values = result.metadata.get(key)
                     if isinstance(values, list) and values:
@@ -404,6 +430,8 @@ class RAGQueryTool(_KeywordFallbackMixin, AgentTool):
         keywords = _extract_query_keywords(query)
         if language and str(language).strip().lower() in {"c", "cpp"}:
             keywords.extend(["strcpy", "memcpy"])
+        if language and str(language).strip().lower() in {"java", "kotlin"}:
+            keywords.extend(["Intent", "WebView", "Binder", "AndroidManifest"])
         return await self._execute_keyword_fallback(
             base_message="RAG 不可用，已切换为关键词搜索。",
             reason=reason,

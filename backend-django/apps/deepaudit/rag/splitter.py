@@ -145,6 +145,7 @@ class TreeSitterParser:
         ".ts": "typescript",
         ".tsx": "tsx",
         ".java": "java",
+        ".kt": "kotlin",
         ".go": "go",
         ".rs": "rust",
         ".cpp": "cpp",
@@ -156,6 +157,10 @@ class TreeSitterParser:
         ".rb": "ruby",
         ".kt": "kotlin",
         ".swift": "swift",
+        ".xml": "xml",
+        ".te": "text",
+        ".cil": "text",
+        ".rc": "text",
     }
     
     # 各语言的函数/类节点类型
@@ -387,6 +392,45 @@ class CodeSplitter:
             (r"ObjectInputStream", "deserialization"),
             (r"XMLDecoder", "xml_decoder"),
             (r"password\s*=", "password_assign"),
+            (r"addJavascriptInterface\s*\(", "android_jsbridge"),
+            (r"setJavaScriptEnabled\s*\(\s*true", "android_webview_js_enabled"),
+            (r"setAllowFileAccess\s*\(\s*true", "android_webview_file_access"),
+            (r"Binder\.getCallingUid\s*\(", "android_binder_calling_uid"),
+            (r"clearCallingIdentity\s*\(", "android_clear_calling_identity"),
+            (r"System\.loadLibrary\s*\(", "android_jni_load_library"),
+            (r"\bnative\s+[\w<>\[\]]+\s+\w+\s*\(", "android_native_method"),
+            (r"\bLog\.(?:v|d|i|w|e)\s*\(", "android_log"),
+            (r"getExternalStorageDirectory\s*\(", "android_external_storage"),
+            (r"SharedPreferences", "android_shared_preferences"),
+            (r"HostnameVerifier", "android_hostname_verifier"),
+            (r"TrustManager", "android_trust_manager"),
+            (r"Class\.forName\s*\(", "java_reflection"),
+            (r"\.getMethod\s*\(|\.invoke\s*\(", "java_reflection_invoke"),
+            (r"DexClassLoader|PathClassLoader|URLClassLoader", "java_classloader"),
+            (r"DocumentBuilderFactory|SAXParserFactory|XMLInputFactory", "java_xml_parser"),
+            (r"ObjectInputStream|XMLDecoder", "java_deserialization"),
+            (r"UpdateEngine|PackageInstaller|RecoverySystem", "android_ota_update"),
+            (r"CarPropertyManager|VehiclePropertyIds|VehicleHal|VHAL", "android_vehicle_hal"),
+        ],
+        "kotlin": [
+            (r"Runtime\.getRuntime\(\)\.exec", "runtime_exec"),
+            (r"ProcessBuilder", "process_builder"),
+            (r"addJavascriptInterface\s*\(", "android_jsbridge"),
+            (r"setJavaScriptEnabled\s*\(\s*true", "android_webview_js_enabled"),
+            (r"Binder\.getCallingUid\s*\(", "android_binder_calling_uid"),
+            (r"System\.loadLibrary\s*\(", "android_jni_load_library"),
+            (r"\bexternal\s+fun\s+\w+\s*\(", "android_native_method"),
+            (r"\bLog\.(?:v|d|i|w|e)\s*\(", "android_log"),
+            (r"SharedPreferences", "android_shared_preferences"),
+            (r"HostnameVerifier", "android_hostname_verifier"),
+            (r"TrustManager", "android_trust_manager"),
+            (r"Class\.forName\s*\(", "java_reflection"),
+            (r"\.getMethod\s*\(|\.invoke\s*\(", "java_reflection_invoke"),
+            (r"DexClassLoader|PathClassLoader|URLClassLoader", "java_classloader"),
+            (r"DocumentBuilderFactory|SAXParserFactory|XMLInputFactory", "java_xml_parser"),
+            (r"ObjectInputStream|XMLDecoder", "java_deserialization"),
+            (r"UpdateEngine|PackageInstaller|RecoverySystem", "android_ota_update"),
+            (r"CarPropertyManager|VehiclePropertyIds|VehicleHal|VHAL", "android_vehicle_hal"),
         ],
         "go": [
             (r"exec\.Command\s*\(", "exec_command"),
@@ -474,6 +518,114 @@ class CodeSplitter:
         (re.compile(r"(^|/)(generated|gen|cfg|config|configurations?)(/|$)", re.IGNORECASE), "generated_config"),
         (re.compile(r"(^|/)(vendor|thirdparty|third_party|external)(/|$)", re.IGNORECASE), "vendor_external"),
     )
+    ANDROID_SEMANTIC_PATTERNS = {
+        "android_components": [
+            r"\bclass\s+(\w+)\s+extends\s+(?:[\w.]+\.)?(Activity|Service|BroadcastReceiver|ContentProvider)\b",
+            r"\bclass\s+(\w+)\s*:\s*(?:[\w.]+\.)?(Activity|Service|BroadcastReceiver|ContentProvider)\b",
+        ],
+        "android_entrypoints": [
+            r"\b(onCreate|onStartCommand|onReceive|query|insert|update|delete|openFile|onBind|onNewIntent)\s*\(",
+        ],
+        "android_ipc_calls": [
+            r"\b(Binder\.getCallingUid|Binder\.getCallingPid|clearCallingIdentity|restoreCallingIdentity|checkCallingPermission|enforceCallingPermission)\s*\(",
+            r"\b(PendingIntent|Messenger|ResultReceiver|IBinder|IInterface)\b",
+        ],
+        "android_permission_identity_checks": [
+            r"\b(checkCallingPermission|checkCallingOrSelfPermission|enforceCallingPermission|enforceCallingOrSelfPermission|checkSignatures|AppOpsManager|checkPackage)\s*\(",
+            r"\b(Binder\.getCallingUid|UserHandle|getCallingUserId|getCallingPackage)\s*\(",
+        ],
+        "android_intent_usage": [
+            r"\b(Intent|IntentFilter)\b",
+            r"\b(getIntent|getParcelableExtra|getStringExtra|getExtras|putExtra|sendBroadcast|startActivity|startService|bindService)\s*\(",
+        ],
+        "android_pending_intent_usage": [
+            r"\bPendingIntent\.(?:getActivity|getService|getBroadcast|flags|FLAG_MUTABLE|FLAG_IMMUTABLE)\b",
+            r"\b(FLAG_MUTABLE|FLAG_IMMUTABLE|FLAG_UPDATE_CURRENT|FLAG_ONE_SHOT|FLAG_CANCEL_CURRENT)\b",
+        ],
+        "android_webview_usage": [
+            r"\b(WebView|WebSettings|WebViewClient|WebChromeClient)\b",
+            r"\b(addJavascriptInterface|evaluateJavascript|loadUrl|loadData|loadDataWithBaseURL|setJavaScriptEnabled|setAllowFileAccess|setAllowUniversalAccessFromFileURLs|setMixedContentMode)\s*\(",
+        ],
+        "android_jni_usage": [
+            r"\bSystem\.loadLibrary\s*\(",
+            r"\bnative\s+[\w<>\[\]]+\s+\w+\s*\(",
+            r"\bexternal\s+fun\s+\w+\s*\(",
+        ],
+        "android_storage_privacy_usage": [
+            r"\b(SharedPreferences|MODE_WORLD_READABLE|MODE_WORLD_WRITEABLE|getExternalStorageDirectory|openFileOutput|getFilesDir|getCacheDir|ClipboardManager)\b",
+            r"\bLog\.(?:v|d|i|w|e|wtf)\s*\(",
+        ],
+        "android_hmi_display_usage": [
+            r"\b(SurfaceView|TextureView|GLSurfaceView|SurfaceHolder|Canvas|WindowManager|DisplayManager|RecyclerView|Animator|ValueAnimator)\b",
+            r"\b(vehicle|speed|gear|cluster|cockpit|hmi|hud|adas|warning|display|surface)\w*\b",
+        ],
+        "android_crypto_network_usage": [
+            r"\b(TrustManager|HostnameVerifier|SSLContext|HttpsURLConnection|OkHttpClient|onReceivedSslError|NetworkSecurityPolicy)\b",
+            r"\b(MD5|SHA1|DES|AES/ECB|cleartextTrafficPermitted|usesCleartextTraffic)\b",
+        ],
+        "android_privapp_platform_usage": [
+            r"\b(sharedUserId|SYSTEM_UID|Process\.SYSTEM_UID|signatureOrSystem|signature|privileged|privapp|SELinux|sepolicy)\b",
+            r"\b(PackageManager\.checkSignatures|checkUidPermission|UserHandle\.getAppId|Process\.myUid)\s*\(",
+        ],
+        "android_vehicle_diagnostics_usage": [
+            r"\b(UDS|DoIP|CAN|LIN|OBD|DTC|DID|RoutineControl|SecurityAccess|SessionControl|Diagnostic|Diagnostics)\w*\b",
+            r"\b(sendCan|sendFrame|clearDtc|readDtc|writeDataByIdentifier|ecuReset|routineControl)\s*\(",
+        ],
+        "android_ota_update_usage": [
+            r"\b(UpdateEngine|applyPayload|PackageInstaller|RecoverySystem|payload\.bin|rollback|downgrade|A/B|ABUpdate|ota)\b",
+            r"\b(verifyPackage|verifySignature|verifyHash|installPackage|commitSession|setRollback)\s*\(",
+        ],
+        "android_vehicle_hal_usage": [
+            r"\b(CarPropertyManager|VehiclePropertyIds|VehicleHal|VHAL|CarService|VehicleProperty|setProperty|getProperty|subscribePropertyEvents)\b",
+        ],
+        "java_runtime_reflection_usage": [
+            r"\b(Class\.forName|ClassLoader|DexClassLoader|PathClassLoader|URLClassLoader|ServiceLoader|Method\.invoke|setAccessible|Runtime\.getRuntime\(\)\.exec|ProcessBuilder)\b",
+        ],
+        "java_parser_serialization_usage": [
+            r"\b(ObjectInputStream|readObject|XMLDecoder|DocumentBuilderFactory|SAXParserFactory|XMLInputFactory|SAXReader|XStream|SnakeYAML|Yaml\.load|enableDefaultTyping|activateDefaultTyping|autoType)\b",
+        ],
+    }
+    ANDROID_MANIFEST_PATTERNS = {
+        "android_manifest_components": [
+            r"<\s*(activity|service|receiver|provider)\b[^>]*",
+        ],
+        "android_manifest_exported": [
+            r'android:exported\s*=\s*"([^"]+)"',
+        ],
+        "android_manifest_permissions": [
+            r'android:permission\s*=\s*"([^"]+)"',
+            r"<\s*uses-permission\b[^>]*android:name\s*=\s*\"([^\"]+)\"",
+        ],
+        "android_intent_filters": [
+            r"<\s*intent-filter\b",
+            r"<\s*action\b[^>]*android:name\s*=\s*\"([^\"]+)\"",
+            r"<\s*category\b[^>]*android:name\s*=\s*\"([^\"]+)\"",
+            r"<\s*data\b[^>]*",
+        ],
+        "android_provider_authorities": [
+            r'android:authorities\s*=\s*"([^"]+)"',
+        ],
+    }
+    ANDROID_CONFIG_PATTERNS = {
+        "android_network_security_config": [
+            r"<\s*network-security-config\b",
+            r"<\s*(?:domain-config|base-config|debug-overrides|trust-anchors|certificates)\b[^>]*",
+            r'cleartextTrafficPermitted\s*=\s*"([^"]+)"',
+        ],
+        "android_privapp_permissions": [
+            r"<\s*privapp-permissions\b[^>]*package\s*=\s*\"([^\"]+)\"",
+            r"<\s*permission\b[^>]*name\s*=\s*\"([^\"]+)\"",
+        ],
+        "android_selinux_policy": [
+            r"^\s*(allow|neverallow|type|typeattribute|permissive)\s+[^;]+;",
+            r"\b(u:object_r:[\w_]+:s0|u:r:[\w_]+:s0)\b",
+        ],
+        "android_vehicle_config": [
+            r"\b(VehicleProperty|VehiclePropertyIds|CarService|VHAL|vehicle_hal|car_service)\b",
+            r"\b(vehicle|car)_[a-z0-9_]+\b",
+            r"\b(UDS|DoIP|CAN|LIN|DTC|DID|diagnostic|ota|update_engine)\b",
+        ],
+    }
     
     def __init__(
         self,
@@ -663,6 +815,11 @@ class CodeSplitter:
                 (r"^(\s*)(?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?class\s+(\w+)", ChunkType.CLASS),
                 (r"^(\s*)(?:public|private|protected)?\s*interface\s+(\w+)", ChunkType.INTERFACE),
                 (r"^(\s*)(?:public|private|protected)?\s*(?:static\s+)?[\w<>\[\],\s]+\s+(\w+)\s*\([^)]*\)\s*(?:throws\s+[\w,\s]+)?\s*\{", ChunkType.METHOD),
+            ],
+            "kotlin": [
+                (r"^(\s*)(?:data\s+|sealed\s+|open\s+)?class\s+(\w+)", ChunkType.CLASS),
+                (r"^(\s*)interface\s+(\w+)", ChunkType.INTERFACE),
+                (r"^(\s*)(?:override\s+|private\s+|public\s+|protected\s+|internal\s+|suspend\s+)*fun\s+(\w+)\s*\(", ChunkType.METHOD),
             ],
             "go": [
                 (r"^type\s+(\w+)\s+struct\s*\{", ChunkType.STRUCT),
@@ -863,6 +1020,12 @@ class CodeSplitter:
             if language in {"c", "cpp"}
             else {}
         )
+        android_path = chunks[0].file_path if chunks else ""
+        file_level_android_metadata: Dict[str, Any] = {}
+        if self._is_android_manifest_path(android_path):
+            file_level_android_metadata.update(self._extract_android_manifest_semantics(full_content))
+        if self._is_android_config_path(android_path):
+            file_level_android_metadata.update(self._extract_android_config_semantics(full_content))
         
         for chunk in chunks:
             # 添加相关导入
@@ -877,6 +1040,9 @@ class CodeSplitter:
             if language in {"c", "cpp"}:
                 chunk.metadata.update(file_level_c_metadata)
                 chunk.metadata.update(self._extract_c_family_semantic_index(chunk))
+            if language in {"java", "kotlin"} or self._is_android_manifest_path(chunk.file_path) or self._is_android_config_path(chunk.file_path):
+                chunk.metadata.update(file_level_android_metadata)
+                chunk.metadata.update(self._extract_android_semantic_index(chunk))
     
     def _extract_imports(self, content: str, language: str) -> List[str]:
         """提取导入语句"""
@@ -896,6 +1062,9 @@ class CodeSplitter:
             ],
             "java": [
                 r"^import\s+([\w.]+);",
+            ],
+            "kotlin": [
+                r"^import\s+([\w.]+)",
             ],
             "go": [
                 r"['\"]([^'\"]+)['\"]",
@@ -932,6 +1101,7 @@ class CodeSplitter:
             "python": {"if", "for", "while", "with", "def", "class", "return", "except", "print", "assert", "lambda"},
             "javascript": {"if", "for", "while", "switch", "function", "return", "catch", "console", "async", "await"},
             "java": {"if", "for", "while", "switch", "return", "catch", "throw", "new"},
+            "kotlin": {"if", "for", "while", "when", "return", "catch", "throw", "fun", "class"},
             "go": {"if", "for", "switch", "return", "func", "go", "defer"},
             "c": {"if", "for", "while", "switch", "return", "sizeof"},
             "cpp": {"if", "for", "while", "switch", "return", "sizeof", "new", "delete"},
@@ -957,6 +1127,11 @@ class CodeSplitter:
                 r"(?:const|let|var)\s+(\w+)",
                 r"class\s+(\w+)",
             ],
+            "kotlin": [
+                r"fun\s+(\w+)\s*\(",
+                r"class\s+(\w+)",
+                r"(?:val|var)\s+(\w+)",
+            ],
             "c": [
                 r"(?:typedef\s+)?struct\s+(\w+)",
                 r"enum\s+(\w+)",
@@ -976,6 +1151,90 @@ class CodeSplitter:
             definitions.extend(matches)
         
         return list(set(definitions))[:20]
+
+    def _is_android_manifest_path(self, file_path: str) -> bool:
+        return file_path.replace("\\", "/").endswith("AndroidManifest.xml")
+
+    def _is_android_config_path(self, file_path: str) -> bool:
+        normalized = file_path.replace("\\", "/").lower()
+        if self._is_android_manifest_path(file_path):
+            return True
+        config_tokens = (
+            "network_security_config",
+            "privapp-permissions",
+            "privapp_permissions",
+            "sepolicy",
+            "/selinux/",
+            "service_contexts",
+            "file_contexts",
+            "property_contexts",
+            "vehicle",
+            "vhal",
+            "car_service",
+            "diagnostic",
+            "ota",
+            "update_engine",
+        )
+        return normalized.endswith((".xml", ".te", ".cil", ".rc")) and any(token in normalized for token in config_tokens)
+
+    def _extract_android_manifest_semantics(self, content: str) -> Dict[str, Any]:
+        metadata: Dict[str, Any] = {}
+        for key, patterns in self.ANDROID_MANIFEST_PATTERNS.items():
+            hits: list[str] = []
+            for pattern in patterns:
+                for match in re.findall(pattern, content, re.IGNORECASE | re.MULTILINE):
+                    value = " ".join(str(part) for part in match if part) if isinstance(match, tuple) else str(match)
+                    value = value.strip()
+                    if value and value not in hits:
+                        hits.append(value[:160])
+            if hits:
+                metadata[key] = hits[:30]
+        return metadata
+
+    def _extract_android_config_semantics(self, content: str) -> Dict[str, Any]:
+        metadata: Dict[str, Any] = {}
+        for key, patterns in self.ANDROID_CONFIG_PATTERNS.items():
+            hits: list[str] = []
+            for pattern in patterns:
+                for match in re.findall(pattern, content, re.IGNORECASE | re.MULTILINE):
+                    value = " ".join(str(part) for part in match if part) if isinstance(match, tuple) else str(match)
+                    value = value.strip()
+                    if value and value not in hits:
+                        hits.append(value[:160])
+            if hits:
+                metadata[key] = hits[:30]
+        return metadata
+
+    def _extract_android_semantic_index(self, chunk: CodeChunk) -> Dict[str, Any]:
+        metadata: Dict[str, Any] = {}
+        for key, patterns in self.ANDROID_SEMANTIC_PATTERNS.items():
+            hits: list[str] = []
+            for pattern in patterns:
+                for match in re.findall(pattern, chunk.content, re.IGNORECASE | re.MULTILINE):
+                    value = " ".join(str(part) for part in match if part) if isinstance(match, tuple) else str(match)
+                    value = value.strip()
+                    if value and value not in hits:
+                        hits.append(value[:160])
+            if hits:
+                metadata[key] = hits[:30]
+
+        normalized_path = chunk.file_path.replace("\\", "/").lower()
+        module_layers: list[str] = []
+        if "/java/" in normalized_path or "/kotlin/" in normalized_path or normalized_path.endswith((".java", ".kt")):
+            module_layers.append("android_java_kotlin")
+        if any(part in normalized_path for part in ("/hmi/", "/ivi/", "/cockpit/", "/cluster/", "/display/")):
+            module_layers.append("android_hmi_display")
+        if "androidmanifest.xml" in normalized_path:
+            module_layers.append("android_manifest")
+        if self._is_android_config_path(chunk.file_path):
+            module_layers.append("android_config")
+        if any(part in normalized_path for part in ("/sepolicy/", "/selinux/", "privapp-permissions", "service_contexts", "file_contexts")):
+            module_layers.append("android_platform_security")
+        if any(part in normalized_path for part in ("/vehicle/", "/vhal/", "/car/", "/diagnostic", "/ota/", "update_engine")):
+            module_layers.append("android_vehicle_system")
+        if module_layers:
+            metadata["module_layers"] = module_layers
+        return metadata
 
     def _extract_c_family_file_semantics(self, content: str) -> Dict[str, Any]:
         """Extract file-scope C/C++ metadata that may sit outside function chunks."""

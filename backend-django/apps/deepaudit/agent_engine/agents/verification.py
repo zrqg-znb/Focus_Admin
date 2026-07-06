@@ -307,6 +307,27 @@ C/AUTOSAR 判定补充：
 - uncertain: 缺少调用链、宏/配置、生命周期或锁覆盖证据；默认不要标 verified。
 - false_positive: 找到明确反例，例如上游长度校验、固定配置表、生成代码约束、锁覆盖所有路径、错误处理完整。
 
+## Android / 车机 / 座舱 Java/Kotlin 验证策略
+
+如果发现来自 Android、AOSP、车机、座舱、HMI、IVI、WebView、Binder、JNI 或 AndroidManifest.xml 场景，验证优先级为“Manifest/组件/权限/调用链证据闭环”，动态 PoC 不是默认首选。
+
+必须检查：
+1. 组件入口：Activity/Service/Receiver/Provider 是否 exported，是否有 intent-filter，是否声明 permission。
+2. 调用身份：Binder/AIDL/PendingIntent/IPC 是否校验 calling uid/package/signature permission。
+3. 参数来源：Intent extra、Bundle、Parcelable、URI、Provider query、WebView URL、JSBridge 参数是否可控。
+4. 敏感 sink：车控/诊断/隐私/文件/日志/WebView/JNI/native/HMI 显示更新是否受影响。
+5. 配置和构建：targetSdk/minSdk、debug/release、system app、privileged permission、车型 feature flag、厂商白名单是否改变可达性。
+6. 显示链路：HMI/仪表/HUD/告警/倒车/ADAS 状态更新是否有主线程、生命周期、优先级、遮挡和异常降级证据。
+7. 平台边界：privapp-permissions、signature/privileged permission、SELinux domain、system uid/sharedUserId 是否真的允许或阻断调用。
+8. 车辆/升级边界：UDS/DoIP/CAN/OTA/VHAL 是否有诊断会话、安全访问、车辆状态、签名/完整性、防回滚和车型配置证据。
+9. Java 动态/解析边界：ClassLoader/反射/ProcessBuilder/ObjectInputStream/XML parser 是否有 allowlist、签名/hash、ObjectInputFilter、DTD/外部实体禁用证据。
+
+Android/车机判定补充：
+- confirmed: Manifest/入口/调用链/sink/反例检查完整。
+- likely: 关键证据充分，但仍缺少少量平台签名、车型配置或运行态细节。
+- uncertain: 缺少 Manifest、权限、调用链、构建变体或可达性证据；默认不要标 verified。
+- false_positive: exported=false、signature/system-only 权限、固定 allowlist、SELinux/privapp allowlist 阻断、debug-only、不可达车型配置、车辆状态/诊断会话/OTA 签名校验完整、Java allowlist/ObjectInputFilter/XML 安全特性完整或完整权限校验能明确反驳。
+
 ## 🚨 防止幻觉验证（关键！）
 
 **Analysis Agent 可能报告不存在的文件！** 你必须验证：
@@ -336,7 +357,7 @@ read_file 返回: "文件不存在"
 
 ## ⚠️ 关键约束
 1. **必须先调用工具验证** - 不允许仅凭已知信息直接判断
-2. **优先使用 run_code** - 编写 Harness 进行动态验证；但 C/C++/AUTOSAR 生产场景优先使用 read_file/search_code/function_context 做证据闭环
+2. **优先使用 run_code** - 编写 Harness 进行动态验证；但 C/C++/AUTOSAR 和 Android/车机生产场景优先使用 read_file/search_code/function_context 做证据闭环
 3. **PoC 必须完整可执行** - poc.payload 应该是可直接运行的代码
 4. **不要假设环境** - 沙箱中没有运行的服务，需要 mock
 

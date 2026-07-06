@@ -115,9 +115,75 @@ AUTOMOTIVE_C_HINTS = {
     "interrupt",
     "embedded",
     "c_family",
-    "cpp",
-    "c",
 }
+ANDROID_AUTOMOTIVE_HINTS = {
+    "android",
+    "aosp",
+    "androidmanifest",
+    "android_manifest",
+    "manifest",
+    "activity",
+    "service",
+    "broadcastreceiver",
+    "receiver",
+    "contentprovider",
+    "provider",
+    "intent",
+    "binder",
+    "aidl",
+    "ipc",
+    "pendingintent",
+    "pending_intent",
+    "deeplink",
+    "webview",
+    "jsbridge",
+    "javascriptinterface",
+    "privapp",
+    "selinux",
+    "system_service",
+    "clearcallingidentity",
+    "jni",
+    "ndk",
+    "hmi",
+    "ivi",
+    "cockpit",
+    "vehicle",
+    "vehicle_display",
+    "display",
+    "surface",
+    "cluster",
+    "hud",
+    "logcat",
+    "sharedpreferences",
+    "network_security_config",
+    "vehicle_hal",
+    "vhal",
+    "car_service",
+    "uds",
+    "doip",
+    "can",
+    "ota",
+    "reflection",
+    "classloader",
+    "java_deserialization",
+}
+ANDROID_AUTOMOTIVE_KNOWLEDGE_MODULES = [
+    "android_component_security",
+    "android_ipc_binder_security",
+    "android_binder_system_service_security",
+    "android_intent_pendingintent_security",
+    "android_webview_jsbridge_security",
+    "android_storage_log_privacy",
+    "android_jni_native_boundary",
+    "android_hmi_display_state",
+    "android_crypto_network_security",
+    "android_privapp_platform_security",
+    "android_vehicle_diagnostics_security",
+    "android_ota_update_security",
+    "android_vehicle_hal_car_service_security",
+    "java_runtime_reflection_security",
+    "java_parser_serialization_security",
+]
 
 
 def _agent_finding_model():
@@ -243,6 +309,31 @@ def _collect_project_info(project_root: str, input_data: Dict[str, Any]) -> Dict
     }
 
 
+def _project_likely_android_automotive(project_info: Dict[str, Any]) -> bool:
+    languages = {str(item or "").strip().lower() for item in (project_info.get("languages") or [])}
+    structure = dict(project_info.get("structure") or {})
+    file_paths = [str(item or "").replace("\\", "/") for item in (structure.get("files") or [])]
+    path_blob = "\n".join(file_paths).lower()
+    if "androidmanifest.xml" in path_blob:
+        return True
+    if languages.intersection({"java", "kotlin"}) and any(
+        token in path_blob
+        for token in (
+            "/android/",
+            "/aosp/",
+            "/hmi/",
+            "/ivi/",
+            "/cockpit/",
+            "/cluster/",
+            "/display/",
+            "/vehicle/",
+            "/car/",
+        )
+    ):
+        return True
+    return False
+
+
 def _normalize_agent_input(task_id: str, input_data: Dict[str, Any], workspace: str) -> Dict[str, Any]:
     project_info = _collect_project_info(workspace, input_data)
     target_files = _effective_target_files_from_input(input_data)
@@ -283,6 +374,16 @@ def _normalize_agent_input(task_id: str, input_data: Dict[str, Any], workspace: 
         )
     else:
         scenario_profile = normalize_json_payload(scenario_profile)
+
+    if _project_likely_android_automotive(project_info):
+        existing_modules = list(scenario_profile.get("knowledge_modules") or [])
+        seen_modules = {str(item or "").strip() for item in existing_modules}
+        for module_name in ANDROID_AUTOMOTIVE_KNOWLEDGE_MODULES:
+            if module_name not in seen_modules:
+                existing_modules.append(module_name)
+                seen_modules.add(module_name)
+        scenario_profile["knowledge_modules"] = existing_modules
+        scenario_profile["android_automotive"] = True
 
     scenario_key = str(scenario_profile.get("scenario_key") or "").strip().lower()
     target_vulnerabilities = list(
@@ -659,6 +760,7 @@ def _normalize_finding_payload(item: Dict[str, Any]) -> Dict[str, Any] | None:
             vulnerability_type,
             str(item.get("language") or ""),
             str(item.get("standard") or ""),
+            str(item.get("file_path") or item.get("file") or ""),
         ]
     )
     automotive_c_evidence_required = any(
@@ -671,7 +773,12 @@ def _normalize_finding_payload(item: Dict[str, Any]) -> Dict[str, Any] | None:
         and evidence_payload["false_positive_checks"]
         and evidence_payload["confidence_reason"]
     )
-    if automotive_c_evidence_required and not has_production_evidence:
+    android_evidence_required = any(
+        hint in str(tag or "").strip().lower().replace("-", "_")
+        for tag in raw_tags
+        for hint in ANDROID_AUTOMOTIVE_HINTS
+    )
+    if (automotive_c_evidence_required or android_evidence_required) and not has_production_evidence:
         if verdict in {"confirmed", "likely"}:
             verdict = "uncertain"
         confidence = min(confidence, 0.65)
@@ -698,7 +805,7 @@ def _normalize_finding_payload(item: Dict[str, Any]) -> Dict[str, Any] | None:
         is_verified = True
     if not is_verified and validation_is_vulnerable is True:
         is_verified = True
-    if automotive_c_evidence_required and not has_production_evidence:
+    if (automotive_c_evidence_required or android_evidence_required) and not has_production_evidence:
         is_verified = False
 
     verification_method = _first_text(
