@@ -111,6 +111,7 @@ class IterationRequirementItemSchema(Schema):
     requirement_type: Literal["ar", "dr", "sr"]
     idpca_status: Literal["A", "C", "D", "I", "P"]
     owner_team: str = ""
+    develop_owner: str = ""
     need_breakdown: bool = False
     is_decomposed: bool = True
     workload_man_filled: bool = False

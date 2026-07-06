@@ -1,4 +1,9 @@
+from urllib.parse import quote
+
+import openpyxl
 from django.db import transaction
+from django.http import Http404, HttpResponse
+from django.utils import timezone
 
 from common import fu_crud
 from apps.project_manager.code_quality.code_quality_model import CodeModule
@@ -15,6 +20,43 @@ from .iteration_schema import (
 )
 from .iteration_sync import get_cached_iteration_requirements, sync_project_iterations
 
+
+_ENTRY_METRIC_HEADERS = (
+    "迭代名称",
+    "编码",
+    "开始时间",
+    "结束时间",
+    "当前迭代",
+    "健康状态",
+    "DR分解率",
+    "SR分解率",
+)
+_EXIT_METRIC_HEADERS = (
+    "迭代名称",
+    "编码",
+    "DR置A率",
+    "AR置A率",
+    "DR置C率",
+    "AR置C率",
+    "测试自动化率",
+    "用例执行率",
+    "缺陷修复率",
+    "代码评审率",
+    "代码覆盖率",
+)
+_REQUIREMENT_EXPORT_HEADERS = (
+    "需求ID",
+    "需求标题",
+    "需求类型",
+    "IDPCA状态",
+    "责任团队",
+    "开发责任人",
+    "需分解",
+    "已分解",
+    "人力工作量已填",
+    "代码量已填",
+)
+
 @transaction.atomic
 def create_iteration(request, data: IterationCreateSchema):
     data_dict = data.dict()
@@ -29,6 +71,7 @@ def create_iteration(request, data: IterationCreateSchema):
     return fu_crud.create(request, data_dict, Iteration)
 
 def _calculate_rates(metric: IterationMetric) -> dict:
+    """计算迭代详情页展示和导出复用的比例指标。"""
     if not metric:
         return {}
     
@@ -75,6 +118,7 @@ def _calculate_rates(metric: IterationMetric) -> dict:
 
 
 def _to_float(value) -> float | None:
+    """把外部接口可能返回的数字或百分比文本转成浮点数。"""
     if value is None:
         return None
 
@@ -96,6 +140,7 @@ def _to_float(value) -> float | None:
 
 
 def _normalize_ratio(value) -> float:
+    """把 0-1 或 0-100 口径统一归一成 0-1 比例。"""
     parsed = _to_float(value)
     if parsed is None:
         return 0.0
@@ -109,6 +154,7 @@ def _normalize_ratio(value) -> float:
 
 
 def _extract_summary_ratio(summary_metrics: dict, metric_key: str) -> float:
+    """从代码质量摘要中抽取指定指标比例。"""
     metric_payload = summary_metrics.get(metric_key)
     if isinstance(metric_payload, dict):
         parsed_value = _to_float(metric_payload.get("num"))
@@ -120,6 +166,7 @@ def _extract_summary_ratio(summary_metrics: dict, metric_key: str) -> float:
 
 
 def _get_iteration_quality_metrics(project: Project) -> dict:
+    """读取项目配置的代码质量出口指标。"""
     if not project.enable_iteration_quality_metrics:
         return {}
 
@@ -298,6 +345,7 @@ def get_project_iterations(project_id: str):
 
 
 def _paginate_items(items: list[dict], page: int, page_size: int) -> dict:
+    """对缓存明细做内存分页，保持前端 zq-table 分页协议。"""
     page = max(int(page or 1), 1)
     page_size = max(int(page_size or 20), 1)
     total = len(items)
@@ -312,6 +360,7 @@ def _paginate_items(items: list[dict], page: int, page_size: int) -> dict:
 
 
 def _normalize_requirement_type(value: str | None) -> str | None:
+    """规范化需求类型筛选值。"""
     normalized = str(value or "").strip().lower()
     if normalized in {"sr", "dr", "ar"}:
         return normalized
@@ -319,14 +368,37 @@ def _normalize_requirement_type(value: str | None) -> str | None:
 
 
 def _normalize_idpca_status(value: str | None) -> str | None:
+    """规范化 IDPCA 状态筛选值。"""
     normalized = str(value or "").strip().upper()
     if normalized in {"I", "D", "P", "C", "A"}:
         return normalized
     return None
 
 
+def _normalize_owner_display(value) -> str:
+    """把开发责任人字段统一成逗号分隔的展示文本。"""
+    if isinstance(value, list):
+        return ", ".join(str(item).strip() for item in value if str(item).strip())
+    if isinstance(value, tuple):
+        return ", ".join(str(item).strip() for item in value if str(item).strip())
+    return str(value or "").strip()
+
+
+def _resolve_develop_owner(item: dict) -> str:
+    """按字段优先级解析需求开发责任人，并兼容历史 owner 字段。"""
+    for field_name in ("develop_owner", "develop_user", "develop_users", "owner"):
+        owner = _normalize_owner_display(item.get(field_name))
+        if owner:
+            return owner
+    return ""
+
+
 def _normalize_requirement_item(item: dict) -> dict:
-    requirement_type = _normalize_requirement_type(str(item.get("requirement_type") or "")) or "sr"
+    """规范化迭代需求明细，保证列表接口和导出字段口径一致。"""
+    requirement_type = (
+        _normalize_requirement_type(str(item.get("requirement_type") or ""))
+        or "sr"
+    )
     idpca_status = _normalize_idpca_status(str(item.get("idpca_status") or "")) or "I"
     return {
         "requirement_id": str(item.get("requirement_id") or ""),
@@ -334,6 +406,7 @@ def _normalize_requirement_item(item: dict) -> dict:
         "requirement_type": requirement_type,
         "idpca_status": idpca_status,
         "owner_team": str(item.get("owner_team") or ""),
+        "develop_owner": _resolve_develop_owner(item),
         "need_breakdown": bool(item.get("need_breakdown")),
         "is_decomposed": bool(item.get("is_decomposed", True)),
         "workload_man_filled": bool(item.get("workload_man_filled")),
@@ -348,6 +421,7 @@ def list_iteration_requirements(
     idpca_status: str | None = None,
     requirement_type: str | None = None,
 ):
+    """查询迭代需求 IDPCA 明细，支持类型和状态筛选。"""
     iteration = (
         Iteration.objects.select_related("project")
         .filter(id=iteration_id, is_deleted=False)
@@ -378,6 +452,7 @@ def list_unresolved_requirements(
     page_size: int = 20,
     requirement_type: str | None = None,
 ):
+    """查询需要分解但尚未完成分解的迭代需求。"""
     iteration = (
         Iteration.objects.select_related("project")
         .filter(id=iteration_id, is_deleted=False)
@@ -402,6 +477,7 @@ def list_unresolved_requirements(
 
 
 def record_daily_metric(iteration_id: str, data: IterationMetricSchema):
+    """记录指定迭代某一天的指标快照。"""
     metric, _ = IterationMetric.objects.update_or_create(
         iteration_id=iteration_id,
         record_date=data.record_date,
@@ -410,6 +486,7 @@ def record_daily_metric(iteration_id: str, data: IterationMetricSchema):
     return metric
 
 def update_manual_metric(iteration_id: str, data: IterationManualUpdateSchema):
+    """更新详情页允许手工维护的最新迭代指标。"""
     # Find the latest metric for this iteration, or create one for today if not exists
     # But usually we are updating the existing one shown in dashboard
     
@@ -435,3 +512,166 @@ def update_manual_metric(iteration_id: str, data: IterationManualUpdateSchema):
         
     metric.save()
     return True
+
+
+def _format_bool(value: bool) -> str:
+    """把布尔值转成导出文件里的中文展示。"""
+    return "是" if value else "否"
+
+
+def _format_rate(value: float | int | None) -> str:
+    """把 0-1 比例转成导出文件里的百分比文本。"""
+    if value is None:
+        return "-"
+    return f"{float(value) * 100:.1f}%"
+
+
+def _append_sheet(
+    workbook: openpyxl.Workbook,
+    title: str,
+    headers: tuple[str, ...],
+    rows,
+):
+    """创建导出 sheet 并按行写入数据。"""
+    worksheet = workbook.create_sheet(title=title)
+    worksheet.append(list(headers))
+    for row in rows:
+        worksheet.append(list(row))
+
+
+def _build_requirement_export_row(item: dict) -> list:
+    """生成需求明细导出行，责任人统一使用开发责任人。"""
+    return [
+        item["requirement_id"],
+        item["title"],
+        item["requirement_type"].upper(),
+        item["idpca_status"],
+        item["owner_team"],
+        item["develop_owner"],
+        _format_bool(item["need_breakdown"]),
+        _format_bool(item["is_decomposed"]),
+        _format_bool(item["workload_man_filled"]),
+        _format_bool(item["workload_loc_filled"]),
+    ]
+
+
+def _build_export_response(workbook: openpyxl.Workbook, filename: str) -> HttpResponse:
+    """把 openpyxl 工作簿包装成浏览器可下载响应。"""
+    response = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    quoted_filename = quote(filename)
+    response["Content-Disposition"] = (
+        f"attachment; filename*=UTF-8''{quoted_filename}"
+    )
+    workbook.save(response)
+    return response
+
+
+def export_iteration_detail(iteration_id: str) -> HttpResponse:
+    """导出单个迭代的基础信息、指标、需求 IDPCA 和未分解需求。"""
+    iteration = (
+        Iteration.objects.select_related("project")
+        .filter(id=iteration_id, is_deleted=False)
+        .first()
+    )
+    if not iteration:
+        raise Http404("迭代不存在或已删除")
+
+    latest_metric = (
+        IterationMetric.objects.filter(iteration=iteration)
+        .order_by("-record_date")
+        .first()
+    )
+    rates = _calculate_rates(latest_metric) if latest_metric else {}
+
+    requirement_items = [
+        _normalize_requirement_item(item)
+        for item in get_cached_iteration_requirements(iteration)
+    ]
+    unresolved_items = [
+        item
+        for item in requirement_items
+        if item["need_breakdown"] and not item["is_decomposed"]
+    ]
+
+    workbook = openpyxl.Workbook(write_only=True)
+    _append_sheet(
+        workbook,
+        "迭代基础信息",
+        (
+            "项目名称",
+            "迭代名称",
+            "编码",
+            "开始时间",
+            "结束时间",
+            "当前迭代",
+            "健康状态",
+            "最新指标日期",
+        ),
+        [
+            [
+                iteration.project.name,
+                iteration.name,
+                iteration.code,
+                iteration.start_date.isoformat() if iteration.start_date else "",
+                iteration.end_date.isoformat() if iteration.end_date else "",
+                _format_bool(iteration.is_current),
+                "健康" if iteration.is_healthy else "风险",
+                latest_metric.record_date.isoformat() if latest_metric else "",
+            ]
+        ],
+    )
+    _append_sheet(
+        workbook,
+        "入口指标",
+        _ENTRY_METRIC_HEADERS,
+        [
+            [
+                iteration.name,
+                iteration.code,
+                iteration.start_date.isoformat() if iteration.start_date else "",
+                iteration.end_date.isoformat() if iteration.end_date else "",
+                _format_bool(iteration.is_current),
+                "健康" if iteration.is_healthy else "风险",
+                _format_rate(rates.get("dr_breakdown_rate", 0.0)),
+                _format_rate(rates.get("sr_breakdown_rate", 0.0)),
+            ]
+        ],
+    )
+    _append_sheet(
+        workbook,
+        "出口指标",
+        _EXIT_METRIC_HEADERS,
+        [
+            [
+                iteration.name,
+                iteration.code,
+                _format_rate(rates.get("dr_set_a_rate", 0.0)),
+                _format_rate(rates.get("ar_set_a_rate", 0.0)),
+                _format_rate(rates.get("dr_set_c_rate", 0.0)),
+                _format_rate(rates.get("ar_set_c_rate", 0.0)),
+                _format_rate(rates.get("test_automation_rate", 0.0)),
+                _format_rate(rates.get("test_case_execution_rate", 0.0)),
+                _format_rate(rates.get("bug_fix_rate", 0.0)),
+                _format_rate(rates.get("code_review_rate", 0.0)),
+                _format_rate(rates.get("code_coverage_rate", 0.0)),
+            ]
+        ],
+    )
+    _append_sheet(
+        workbook,
+        "需求IDPCA状态",
+        _REQUIREMENT_EXPORT_HEADERS,
+        (_build_requirement_export_row(item) for item in requirement_items),
+    )
+    _append_sheet(
+        workbook,
+        "未分解需求",
+        _REQUIREMENT_EXPORT_HEADERS,
+        (_build_requirement_export_row(item) for item in unresolved_items),
+    )
+
+    timestamp = timezone.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"{iteration.project.name}-{iteration.name}-迭代详情-{timestamp}.xlsx"
+    return _build_export_response(workbook, filename)

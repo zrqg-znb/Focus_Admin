@@ -88,3 +88,14 @@ def list_unresolved_requirements(
         page_size=page_size,
         requirement_type=requirement_type,
     )
+
+
+@router.get(
+    "/iteration/{iteration_id}/export-detail",
+    summary="导出迭代详情数据",
+)
+def export_iteration_detail(request, iteration_id: str):
+    """
+    导出当前迭代的基础信息、指标和需求明细数据。
+    """
+    return iteration_service.export_iteration_detail(iteration_id)

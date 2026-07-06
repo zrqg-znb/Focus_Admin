@@ -20,9 +20,9 @@ import {
   ElTabs,
   ElTag,
 } from 'element-plus';
-import * as XLSX from 'xlsx';
 
 import {
+  exportIterationDetailApi,
   listIterationRequirementsApi,
   listProjectIterationsApi,
   listUnresolvedRequirementsApi,
@@ -148,12 +148,31 @@ function getMetricCellClasses(
   return classes;
 }
 
-function formatBool(value: boolean | undefined) {
-  return value ? '是' : '否';
-}
-
 function formatRequirementType(value: string | undefined) {
   return String(value || '').toUpperCase();
+}
+
+function formatExportDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function sanitizeFilenamePart(value: unknown) {
+  return String(value || '')
+    .trim()
+    .replaceAll(/[\\/:*?"<>|]/g, '_');
+}
+
+function triggerBlobDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(
+    blob instanceof Blob ? blob : new Blob([blob]),
+  );
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function getStatusTagType(value: string | undefined) {
@@ -662,6 +681,12 @@ function useIdpcaColumns(): ZqTableGridOptions<IterationRequirementItem>['column
       width: 140,
     },
     {
+      key: 'develop_owner',
+      dataKey: 'develop_owner',
+      title: '开发责任人',
+      width: 140,
+    },
+    {
       key: 'need_breakdown',
       dataKey: 'need_breakdown',
       title: '需分解',
@@ -721,6 +746,12 @@ function useUnresolvedColumns(): ZqTableGridOptions<IterationRequirementItem>['c
       key: 'owner_team',
       dataKey: 'owner_team',
       title: '责任团队',
+      width: 140,
+    },
+    {
+      key: 'develop_owner',
+      dataKey: 'develop_owner',
+      title: '开发责任人',
       width: 140,
     },
     {
@@ -928,176 +959,31 @@ watch(
   { deep: true },
 );
 
-async function fetchAllRequirementItems(
-  fetchPage: (
-    page: number,
-    pageSize: number,
-  ) => Promise<{ items: IterationRequirementItem[]; total: number }>,
-) {
-  const allItems: IterationRequirementItem[] = [];
-  const pageSize = 200;
-  let page = 1;
-  let total = 0;
-
-  while (true) {
-    const result = await fetchPage(page, pageSize);
-    const currentItems = result.items || [];
-    total = Number(result.total || 0);
-    allItems.push(...currentItems);
-    if (allItems.length >= total || currentItems.length === 0) {
-      break;
-    }
-    page += 1;
-  }
-
-  return allItems;
-}
-
 async function handleExportAll() {
   if (exportLoading.value) return;
+  if (!effectiveIterationId.value) {
+    ElMessage.warning('暂无可导出的迭代');
+    return;
+  }
+
   exportLoading.value = true;
   try {
-    const xlsx = (XLSX as any)?.utils ? (XLSX as any) : (XLSX as any)?.default;
-    if (!xlsx?.utils) {
-      throw new TypeError('xlsx utils unavailable');
-    }
-    const writeFile = xlsx.writeFileXLSX || xlsx.writeFile;
-    if (typeof writeFile !== 'function') {
-      throw new TypeError('xlsx writeFile unavailable');
-    }
-
-    const workbook = xlsx.utils.book_new();
-
-    const entryRows = metricFilteredRows.value.map((row) => ({
-      迭代名称: row.name,
-      编码: row.code,
-      开始时间: row.start_date,
-      结束时间: row.end_date,
-      当前迭代: row.is_current ? '是' : '否',
-      健康状态: row.is_healthy ? '健康' : '风险',
-      DR分解率: formatRate(row.dr_breakdown_rate),
-      SR分解率: formatRate(row.sr_breakdown_rate),
-    }));
-
-    const exitRows = metricFilteredRows.value.map((row) => ({
-      迭代名称: row.name,
-      编码: row.code,
-      DR置A率: formatRate(row.dr_set_a_rate),
-      AR置A率: formatRate(row.ar_set_a_rate),
-      DR置C率: formatRate(row.dr_set_c_rate),
-      AR置C率: formatRate(row.ar_set_c_rate),
-      测试自动化率: formatRate(row.test_automation_rate),
-      用例执行率: formatRate(row.test_case_execution_rate),
-      缺陷修复率: formatRate(row.bug_fix_rate),
-      代码评审率: formatRate(row.code_review_rate),
-      代码覆盖率: formatRate(row.code_coverage_rate),
-    }));
-
-    const metricSheetData: any[][] = [
-      ['迭代入口指标'],
-      [
-        '迭代名称',
-        '编码',
-        '开始时间',
-        '结束时间',
-        '当前迭代',
-        '健康状态',
-        'DR分解率',
-        'SR分解率',
-      ],
-      ...entryRows.map((row) => [
-        row.迭代名称,
-        row.编码,
-        row.开始时间,
-        row.结束时间,
-        row.当前迭代,
-        row.健康状态,
-        row.DR分解率,
-        row.SR分解率,
-      ]),
-      [],
-      ['迭代出口指标'],
-      [
-        '迭代名称',
-        '编码',
-        'DR置A率',
-        'AR置A率',
-        'DR置C率',
-        'AR置C率',
-        '测试自动化率',
-        '用例执行率',
-        '缺陷修复率',
-        '代码评审率',
-        '代码覆盖率',
-      ],
-      ...exitRows.map((row) => [
-        row.迭代名称,
-        row.编码,
-        row.DR置A率,
-        row.AR置A率,
-        row.DR置C率,
-        row.AR置C率,
-        row.测试自动化率,
-        row.用例执行率,
-        row.缺陷修复率,
-        row.代码评审率,
-        row.代码覆盖率,
-      ]),
-    ];
-    const metricsSheet = xlsx.utils.aoa_to_sheet(metricSheetData);
-    xlsx.utils.book_append_sheet(workbook, metricsSheet, '迭代指标');
-
-    let idpcaItems: IterationRequirementItem[] = [];
-    let unresolvedItems: IterationRequirementItem[] = [];
-    if (effectiveIterationId.value) {
-      idpcaItems = await fetchAllRequirementItems((page, pageSize) =>
-        listIterationRequirementsApi(effectiveIterationId.value, {
-          idpca_status: idpcaStatusFilter.value || undefined,
-          requirement_type: idpcaTypeFilter.value || undefined,
-          page,
-          page_size: pageSize,
-        }),
-      );
-      unresolvedItems = await fetchAllRequirementItems((page, pageSize) =>
-        listUnresolvedRequirementsApi(effectiveIterationId.value, {
-          requirement_type: unresolvedTypeFilter.value || undefined,
-          page,
-          page_size: pageSize,
-        }),
-      );
-    }
-
-    const idpcaRows = idpcaItems.map((item) => ({
-      需求ID: item.requirement_id,
-      需求标题: item.title,
-      需求类型: formatRequirementType(item.requirement_type),
-      IDPCA状态: item.idpca_status,
-      责任团队: item.owner_team || '-',
-      需分解: formatBool(item.need_breakdown),
-      已分解: formatBool(item.is_decomposed),
-    }));
-    const idpcaSheet = xlsx.utils.json_to_sheet(idpcaRows);
-    xlsx.utils.book_append_sheet(workbook, idpcaSheet, '需求IDPCA状态');
-
-    const unresolvedRows = unresolvedItems.map((item) => ({
-      需求ID: item.requirement_id,
-      需求标题: item.title,
-      需求类型: formatRequirementType(item.requirement_type),
-      IDPCA状态: item.idpca_status,
-      责任团队: item.owner_team || '-',
-      需分解: formatBool(item.need_breakdown),
-      已分解: formatBool(item.is_decomposed),
-    }));
-    const unresolvedSheet = xlsx.utils.json_to_sheet(unresolvedRows);
-    xlsx.utils.book_append_sheet(workbook, unresolvedSheet, '未分解需求');
-
-    const dateText = new Date().toISOString().slice(0, 10);
-    const filename = `${projectInfo.value?.name || '项目'}-迭代详情-${dateText}.xlsx`;
-    writeFile(workbook, filename);
+    const currentIteration = iterationRows.value.find(
+      (item) => item.id === effectiveIterationId.value,
+    );
+    const blob = await exportIterationDetailApi(effectiveIterationId.value);
+    const projectName = sanitizeFilenamePart(projectInfo.value?.name || '项目');
+    const iterationName = sanitizeFilenamePart(
+      currentIteration?.name || '迭代',
+    );
+    triggerBlobDownload(
+      blob,
+      `${projectName}-${iterationName}-迭代详情-${formatExportDate()}.xlsx`,
+    );
     ElMessage.success('导出成功');
   } catch (error) {
     console.error('[iteration detail export failed]', error);
-    ElMessage.error('导出失败，请检查数据或依赖');
+    ElMessage.error('导出失败，请稍后重试');
   } finally {
     exportLoading.value = false;
   }
@@ -1118,7 +1004,11 @@ onMounted(async () => {
         </div>
         <div class="flex items-center gap-2">
           <ElButton @click="handleReloadList">刷新列表</ElButton>
-          <ElButton :loading="exportLoading" @click="handleExportAll">
+          <ElButton
+            :disabled="!effectiveIterationId"
+            :loading="exportLoading"
+            @click="handleExportAll"
+          >
             导出详情
           </ElButton>
           <ElButton type="primary" :loading="loading" @click="handleRefresh">
@@ -1507,39 +1397,39 @@ onMounted(async () => {
 
 <style scoped>
 .metric-threshold-note {
-  color: var(--el-text-color-secondary);
   font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 
 .metric-alert-value {
-  color: var(--el-color-danger);
   font-weight: 600;
+  color: var(--el-color-danger);
 }
 
 .metric-group-chip {
-  border: 1px solid var(--el-border-color);
-  border-radius: 999px;
   padding: 2px 8px;
   font-size: 12px;
   line-height: 1;
+  border: 1px solid var(--el-border-color);
+  border-radius: 999px;
 }
 
 .metric-group-chip--kpi {
   color: #1f6feb;
-  border-color: rgb(31 111 235 / 45%);
   background: rgb(31 111 235 / 8%);
+  border-color: rgb(31 111 235 / 45%);
 }
 
 .metric-group-chip--measure {
   color: #0f766e;
-  border-color: rgb(15 118 110 / 45%);
   background: rgb(15 118 110 / 8%);
+  border-color: rgb(15 118 110 / 45%);
 }
 
 .metric-group-chip--reference {
   color: #6b7280;
-  border-color: rgb(107 114 128 / 45%);
   background: rgb(107 114 128 / 8%);
+  border-color: rgb(107 114 128 / 45%);
 }
 
 :deep(th.metric-group-kpi) {
@@ -1547,8 +1437,8 @@ onMounted(async () => {
 }
 
 :deep(.metric-group-kpi) .cell {
-  color: #1f6feb !important;
   font-weight: 600;
+  color: #1f6feb !important;
 }
 
 :deep(th.metric-head-kpi) {
@@ -1556,8 +1446,8 @@ onMounted(async () => {
 }
 
 :deep(.metric-head-kpi) .cell {
-  color: #1f6feb !important;
   font-weight: 700;
+  color: #1f6feb !important;
 }
 
 :deep(th.metric-group-measure) {
@@ -1565,8 +1455,8 @@ onMounted(async () => {
 }
 
 :deep(.metric-group-measure) .cell {
-  color: #0f766e !important;
   font-weight: 600;
+  color: #0f766e !important;
 }
 
 :deep(th.metric-head-measure) {
@@ -1574,8 +1464,8 @@ onMounted(async () => {
 }
 
 :deep(.metric-head-measure) .cell {
-  color: #0f766e !important;
   font-weight: 700;
+  color: #0f766e !important;
 }
 
 :deep(th.metric-group-process) {
@@ -1583,8 +1473,8 @@ onMounted(async () => {
 }
 
 :deep(.metric-group-process) .cell {
-  color: #64748b !important;
   font-weight: 600;
+  color: #64748b !important;
 }
 
 :deep(th.metric-head-process) {
@@ -1592,8 +1482,8 @@ onMounted(async () => {
 }
 
 :deep(.metric-head-process) .cell {
-  color: #64748b !important;
   font-weight: 700;
+  color: #64748b !important;
 }
 
 :deep(th.metric-group-reference) {
@@ -1601,8 +1491,8 @@ onMounted(async () => {
 }
 
 :deep(.metric-group-reference) .cell {
-  color: #6b7280 !important;
   font-weight: 600;
+  color: #6b7280 !important;
 }
 
 :deep(th.metric-head-reference) {
@@ -1610,8 +1500,8 @@ onMounted(async () => {
 }
 
 :deep(.metric-head-reference) .cell {
-  color: #6b7280 !important;
   font-weight: 700;
+  color: #6b7280 !important;
 }
 
 :deep(td.metric-cell-kpi) {

@@ -92,6 +92,15 @@ export async function listProjectIterationsApi(projectId: string) {
   );
 }
 
+export async function exportIterationDetailApi(iterationId: string) {
+  return requestClient.get<Blob>(
+    `${base}/iteration/${iterationId}/export-detail`,
+    {
+      responseType: 'blob',
+    },
+  );
+}
+
 export async function refreshProjectIterationApi(projectId: string) {
   return requestClient.post<boolean>(`${base}/project/${projectId}/refresh`);
 }
@@ -120,6 +129,7 @@ export interface IterationRequirementItem {
   requirement_type: IterationRequirementType;
   idpca_status: IdpcaStatusType;
   owner_team: string;
+  develop_owner: string;
   need_breakdown: boolean;
   is_decomposed: boolean;
   workload_man_filled: boolean;
