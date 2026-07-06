@@ -18,11 +18,17 @@ from apps.integration_report.integration_api import create_config, history, upda
 from apps.integration_report.integration_email import CODE_COLUMNS
 from apps.integration_report.integration_models import (
     IntegrationDtFuzzSnapshot,
+    IntegrationEmailSubscription,
     IntegrationMetricDefinition,
     IntegrationProjectConfig,
     IntegrationProjectMetricValue,
 )
 from apps.integration_report.integration_schema import ProjectConfigUpsertIn
+from apps.integration_report.integration_schema import (
+    SubscriptionManagementProjectQueryIn,
+    SubscriptionSubscriberQueryIn,
+)
+from apps.project_manager.project.project_model import Project
 from core.user.user_model import User
 
 
@@ -558,3 +564,200 @@ class IntegrationReportTests(TestCase):
         self.assertEqual(tsan_value.value_number, 1.0)
         self.assertIn("sub_modules=engine", valgrind_value.detail_url)
         self.assertIn("sub_modules=engine", tsan_value.detail_url)
+
+    def test_subscription_management_project_list_counts_subscribers_and_missing_email(self):
+        manager = User.objects.create(
+            username="subscription-manager",
+            password="secret",
+            name="Subscription Manager",
+            email="manager@example.com",
+            is_active=True,
+        )
+        missing_email_user = User.objects.create(
+            username="missing-email-user",
+            password="secret",
+            name="Missing Email User",
+            is_active=True,
+        )
+        project = Project.objects.create(
+            name="Managed Project",
+            domain="vehicle",
+            type="platform",
+            code="managed-project",
+        )
+        project.managers.set([manager])
+        config = IntegrationProjectConfig.objects.create(
+            project=project,
+            name="Managed Config",
+            enabled=True,
+        )
+        config.managers.set([manager])
+        IntegrationEmailSubscription.objects.create(
+            config=config,
+            user=manager,
+            enabled=True,
+        )
+        IntegrationEmailSubscription.objects.create(
+            config=config,
+            user=missing_email_user,
+            enabled=True,
+        )
+
+        rows, count, page, page_size = integration_service.query_subscription_management_projects(
+            SubscriptionManagementProjectQueryIn(
+                keyword="Managed",
+                has_missing_email=True,
+                page=1,
+                page_size=20,
+            )
+        )
+
+        self.assertEqual(count, 1)
+        self.assertEqual(page, 1)
+        self.assertEqual(page_size, 20)
+        self.assertEqual(rows[0]["id"], str(config.id))
+        self.assertEqual(rows[0]["subscriber_count"], 2)
+        self.assertEqual(rows[0]["missing_email_count"], 1)
+        self.assertEqual(rows[0]["managers"], "Subscription Manager")
+        self.assertEqual(rows[0]["project_managers"], "Subscription Manager")
+
+    def test_subscription_management_batch_add_does_not_duplicate_subscriptions(self):
+        config = IntegrationProjectConfig.objects.create(
+            name="Batch Add Config",
+            enabled=True,
+        )
+        user = User.objects.create(
+            username="batch-add-user",
+            password="secret",
+            name="Batch Add User",
+            email="batch-add@example.com",
+            is_active=True,
+        )
+
+        first_count = integration_service.add_subscription_users(config.id, [user.id])
+        second_count = integration_service.add_subscription_users(config.id, [user.id])
+
+        self.assertEqual(first_count, 1)
+        self.assertEqual(second_count, 0)
+        self.assertEqual(
+            IntegrationEmailSubscription.objects.filter(config=config, user=user).count(),
+            1,
+        )
+
+    def test_subscription_management_batch_add_users_to_multiple_configs(self):
+        first_config = IntegrationProjectConfig.objects.create(
+            name="Batch Config One",
+            enabled=True,
+        )
+        second_config = IntegrationProjectConfig.objects.create(
+            name="Batch Config Two",
+            enabled=True,
+        )
+        user = User.objects.create(
+            username="batch-project-user",
+            password="secret",
+            name="Batch Project User",
+            email="batch-project@example.com",
+            is_active=True,
+        )
+
+        changed_count = integration_service.batch_add_subscription_users(
+            [first_config.id, second_config.id],
+            [user.id],
+        )
+        duplicate_count = integration_service.batch_add_subscription_users(
+            [first_config.id, second_config.id],
+            [user.id],
+        )
+
+        self.assertEqual(changed_count, 2)
+        self.assertEqual(duplicate_count, 0)
+        self.assertTrue(
+            IntegrationEmailSubscription.objects.filter(
+                config=first_config,
+                user=user,
+                enabled=True,
+                is_deleted=False,
+            ).exists()
+        )
+        self.assertTrue(
+            IntegrationEmailSubscription.objects.filter(
+                config=second_config,
+                user=user,
+                enabled=True,
+                is_deleted=False,
+            ).exists()
+        )
+
+    def test_subscription_management_replace_enables_requested_and_removes_others(self):
+        config = IntegrationProjectConfig.objects.create(
+            name="Replace Config",
+            enabled=True,
+        )
+        kept_user = User.objects.create(
+            username="kept-user",
+            password="secret",
+            name="Kept User",
+            email="kept@example.com",
+            is_active=True,
+        )
+        removed_user = User.objects.create(
+            username="removed-user",
+            password="secret",
+            name="Removed User",
+            email="removed@example.com",
+            is_active=True,
+        )
+        restored_user = User.objects.create(
+            username="restored-user",
+            password="secret",
+            name="Restored User",
+            email="restored@example.com",
+            is_active=True,
+        )
+        IntegrationEmailSubscription.objects.create(
+            config=config,
+            user=kept_user,
+            enabled=True,
+        )
+        IntegrationEmailSubscription.objects.create(
+            config=config,
+            user=removed_user,
+            enabled=True,
+        )
+        IntegrationEmailSubscription.objects.create(
+            config=config,
+            user=restored_user,
+            enabled=False,
+            is_deleted=True,
+        )
+
+        integration_service.replace_subscription_users(
+            config.id,
+            [kept_user.id, restored_user.id],
+        )
+
+        kept = IntegrationEmailSubscription.objects.get(config=config, user=kept_user)
+        removed = IntegrationEmailSubscription.objects.get(config=config, user=removed_user)
+        restored = IntegrationEmailSubscription.objects.get(config=config, user=restored_user)
+        self.assertTrue(kept.enabled)
+        self.assertFalse(kept.is_deleted)
+        self.assertFalse(removed.enabled)
+        self.assertTrue(removed.is_deleted)
+        self.assertTrue(restored.enabled)
+        self.assertFalse(restored.is_deleted)
+
+    def test_subscription_management_missing_config_or_user_raises_error(self):
+        config = IntegrationProjectConfig.objects.create(
+            name="Missing Validation Config",
+            enabled=True,
+        )
+
+        with self.assertRaises(ValueError):
+            integration_service.query_subscription_subscribers(
+                "not-exists",
+                SubscriptionSubscriberQueryIn(page=1, page_size=20),
+            )
+
+        with self.assertRaises(ValueError):
+            integration_service.add_subscription_users(config.id, ["not-exists"])

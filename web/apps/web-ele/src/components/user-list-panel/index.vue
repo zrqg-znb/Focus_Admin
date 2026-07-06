@@ -25,6 +25,8 @@ import {
   ElSkeletonItem,
   ElTag,
   ElTooltip,
+  ElCollapse,
+  ElCollapseItem,
 } from 'element-plus';
 
 import { getPlUsersApi } from '#/api/core/pl';
@@ -82,7 +84,16 @@ const totalUsers = ref(0);
 const hasLoadedMore = ref(false);
 const viewMode = ref<'grid' | 'list'>('grid'); // 视图模式：grid-方块，list-列表
 
-// 是否还有更多数据
+const isTagsExpanded = ref(false);
+
+const displayedSelectedTags = computed(() => {
+  if (!props.showSelectedTags || tempSelectedUsersList.value.length === 0) {
+    return [];
+  }
+  return isTagsExpanded.value
+    ? tempSelectedUsersList.value
+    : tempSelectedUsersList.value.slice(0, 5);
+});
 const hasMoreData = computed(() => {
   const totalLoaded = currentPage.value * pageSize.value;
   return totalLoaded < totalUsers.value;
@@ -262,45 +273,9 @@ defineExpose({
   >
     <!-- 头部：标题/已选用户 + 搜索框 -->
     <template #header>
-      <div class="flex flex-shrink-0 flex-row items-start gap-3">
-        <!-- 标题或已选用户 -->
-        <div class="flex min-h-[32px] min-w-0 flex-1 items-center">
-          <!-- 不可选时显示标题 -->
-          <div
-            v-if="!selectable && title"
-            class="text-base font-medium text-[var(--el-text-color-primary)]"
-          >
-            {{ title }}
-          </div>
-          <!-- 可选时显示已选用户标签 -->
-          <template v-else-if="selectable">
-            <div>
-              <slot name="title"> </slot>
-            </div>
-
-            <div
-              v-if="showSelectedTags && tempSelectedUsersList.length > 0"
-              class="ml-2.5 flex w-full flex-wrap gap-2"
-            >
-              <ElTag
-                v-for="item of tempSelectedUsersList"
-                :key="item.id"
-                closable
-                type="info"
-                @close="handleRemoveUser(item.id)"
-              >
-                {{ item.display }}
-              </ElTag>
-            </div>
-            <span
-              v-else-if="showSelectedTags && tempSelectedUsersList.length === 0"
-              class="text-sm text-[var(--el-text-color-placeholder)]"
-            ></span>
-          </template>
-        </div>
-
-        <!-- 搜索框和视图切换 -->
-        <div v-if="filterable" class="flex flex-shrink-0 items-center gap-2">
+      <div class="flex flex-shrink-0 flex-col gap-3">
+        <!-- 搜索框和视图切换放在独立行，保证搜索框可见 -->
+        <div v-if="filterable" class="flex flex-shrink-0 items-center justify-end gap-2 w-full">
           <ElInput
             :model-value="searchText"
             :placeholder="$t('common.ui.placeholder.search') || 'Search'"
@@ -343,6 +318,52 @@ defineExpose({
               />
             </ElButton>
           </ElTooltip>
+        </div>
+
+        <!-- 标题或已选用户放在下一行 -->
+        <div class="flex min-h-[32px] min-w-0 flex-1 items-center w-full overflow-hidden">
+          <!-- 不可选时显示标题 -->
+          <div
+            v-if="!selectable && title"
+            class="text-base font-medium text-[var(--el-text-color-primary)]"
+          >
+            {{ title }}
+          </div>
+          <!-- 可选时显示已选用户标签 -->
+          <template v-else-if="selectable">
+            <div>
+              <slot name="title"> </slot>
+            </div>
+
+            <div
+              v-if="showSelectedTags && tempSelectedUsersList.length > 0"
+              class="ml-2.5 flex flex-wrap gap-2 items-center flex-1 max-h-[120px] overflow-y-auto pr-1 custom-scrollbar"
+            >
+              <ElTag
+                v-for="item of displayedSelectedTags"
+                :key="item.id"
+                closable
+                type="info"
+                @close="handleRemoveUser(item.id)"
+              >
+                {{ item.display }}
+              </ElTag>
+              
+              <ElButton 
+                v-if="tempSelectedUsersList.length > 5" 
+                type="primary" 
+                link 
+                size="small" 
+                @click="isTagsExpanded = !isTagsExpanded"
+              >
+                {{ isTagsExpanded ? '收起' : `展开 (+${tempSelectedUsersList.length - 5})` }}
+              </ElButton>
+            </div>
+            <span
+              v-else-if="showSelectedTags && tempSelectedUsersList.length === 0"
+              class="text-sm text-[var(--el-text-color-placeholder)]"
+            ></span>
+          </template>
         </div>
       </div>
     </template>
@@ -446,5 +467,15 @@ defineExpose({
 }
 .border-none {
   border: none;
+}
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--el-border-color-darker);
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
 }
 </style>

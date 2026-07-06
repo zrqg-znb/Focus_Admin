@@ -264,3 +264,107 @@ export async function listEmailDeliveriesApi(
     { params },
   );
 }
+
+export interface SubscriptionManagementProjectRow {
+  id: string;
+  name: string;
+  project_id: string;
+  project_name: string;
+  managers: string;
+  project_managers: string;
+  enabled: boolean;
+  subscriber_count: number;
+  missing_email_count: number;
+  sys_update_datetime?: null | string;
+}
+
+export interface SubscriptionManagementProjectQueryParams {
+  keyword?: string;
+  enabled?: boolean;
+  has_subscribers?: boolean;
+  has_missing_email?: boolean;
+  page?: number;
+  pageSize?: number;
+  page_size?: number;
+}
+
+export interface SubscriptionSubscriberRow {
+  id: string;
+  user_id: string;
+  username: string;
+  name?: null | string;
+  email?: null | string;
+  enabled: boolean;
+  sys_update_datetime?: null | string;
+}
+
+export interface SubscriptionSubscriberQueryParams {
+  keyword?: string;
+  enabled?: boolean;
+  page?: number;
+  pageSize?: number;
+  page_size?: number;
+}
+
+export interface SubscriptionBatchResult {
+  changed_count: number;
+}
+
+export async function listSubscriptionManagementProjectsApi(
+  params?: SubscriptionManagementProjectQueryParams,
+) {
+  return requestClient.get<PaginatedResponse<SubscriptionManagementProjectRow>>(
+    '/api/integration-report/subscription-management/projects',
+    { params },
+  );
+}
+
+export async function listSubscriptionManagementSubscribersApi(
+  configId: string,
+  params?: SubscriptionSubscriberQueryParams,
+) {
+  return requestClient.get<PaginatedResponse<SubscriptionSubscriberRow>>(
+    `/api/integration-report/subscription-management/projects/${configId}/subscribers`,
+    { params },
+  );
+}
+
+export async function replaceSubscriptionManagementSubscribersApi(
+  configId: string,
+  userIds: string[],
+) {
+  return requestClient.put<SubscriptionBatchResult>(
+    `/api/integration-report/subscription-management/projects/${configId}/subscribers`,
+    { user_ids: userIds },
+  );
+}
+
+export async function addSubscriptionManagementSubscribersApi(
+  configId: string,
+  userIds: string[],
+) {
+  return requestClient.post<SubscriptionBatchResult>(
+    `/api/integration-report/subscription-management/projects/${configId}/subscribers/batch-add`,
+    { user_ids: userIds },
+  );
+}
+
+export async function batchAddSubscriptionManagementSubscribersApi(
+  configIds: string[],
+  userIds: string[],
+) {
+  return requestClient.post<SubscriptionBatchResult>(
+    '/api/integration-report/subscription-management/projects/subscribers/batch-add',
+    { config_ids: configIds, user_ids: userIds },
+  );
+}
+
+export async function removeSubscriptionManagementSubscribersApi(
+  configId: string,
+  userIds: string[],
+) {
+  return requestClient.post<SubscriptionBatchResult>(
+    `/api/integration-report/subscription-management/projects/${configId}/subscribers/batch-remove`,
+    { user_ids: userIds },
+  );
+}

@@ -23,7 +23,16 @@ from .integration_schema import (
     MockCollectIn,
     EmailDeliveryRow,
     EmailDeliveryQueryIn,
-    EmailDeliveryQueryOut
+    EmailDeliveryQueryOut,
+    SubscriptionBatchResultOut,
+    SubscriptionBatchProjectUsersIn,
+    SubscriptionManagementProjectQueryIn,
+    SubscriptionManagementProjectQueryOut,
+    SubscriptionManagementProjectRow,
+    SubscriptionSubscriberQueryIn,
+    SubscriptionSubscriberQueryOut,
+    SubscriptionSubscriberRow,
+    SubscriptionUserIdsIn,
 )
 from .integration_models import (
     IntegrationMetricDefinition,
@@ -393,6 +402,9 @@ def mock_send(request, record_date: Optional[date] = None):
 
 @router.get("/email-deliveries", response=EmailDeliveryQueryOut, summary="邮件投递日志查询")
 def list_email_deliveries(request, filters: EmailDeliveryQueryIn = Query(...)):
+    """
+    查询每日集成报告邮件投递日志。
+    """
     qs = IntegrationEmailDelivery.objects.select_related("user").filter(is_deleted=False)
     
     if filters.status:
@@ -438,3 +450,128 @@ def list_email_deliveries(request, filters: EmailDeliveryQueryIn = Query(...)):
         page=page,
         page_size=page_size
     )
+
+
+@router.get(
+    "/subscription-management/projects",
+    response=SubscriptionManagementProjectQueryOut,
+    summary="邮件订阅管理项目列表",
+)
+def list_subscription_management_projects(
+    request,
+    filters: SubscriptionManagementProjectQueryIn = Query(...),
+):
+    """
+    分页查询邮件订阅管理的项目配置列表。
+    """
+    rows, count, page, page_size = integration_service.query_subscription_management_projects(filters)
+    return SubscriptionManagementProjectQueryOut(
+        items=[SubscriptionManagementProjectRow(**row) for row in rows],
+        count=count,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get(
+    "/subscription-management/projects/{config_id}/subscribers",
+    response=SubscriptionSubscriberQueryOut,
+    summary="邮件订阅管理订阅人列表",
+)
+def list_subscription_management_subscribers(
+    request,
+    config_id: str,
+    filters: SubscriptionSubscriberQueryIn = Query(...),
+):
+    """
+    分页查询单个项目配置的订阅人。
+    """
+    try:
+        rows, count, page, page_size = integration_service.query_subscription_subscribers(config_id, filters)
+    except ValueError as exc:
+        raise HttpError(404, str(exc))
+    return SubscriptionSubscriberQueryOut(
+        items=[SubscriptionSubscriberRow(**row) for row in rows],
+        count=count,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.put(
+    "/subscription-management/projects/{config_id}/subscribers",
+    response=SubscriptionBatchResultOut,
+    summary="全量保存项目邮件订阅人",
+)
+def replace_subscription_management_subscribers(
+    request,
+    config_id: str,
+    payload: SubscriptionUserIdsIn,
+):
+    """
+    全量保存单个项目配置的订阅人集合。
+    """
+    try:
+        changed_count = integration_service.replace_subscription_users(config_id, payload.user_ids)
+    except ValueError as exc:
+        raise HttpError(400, str(exc))
+    return SubscriptionBatchResultOut(changed_count=changed_count)
+
+
+@router.post(
+    "/subscription-management/projects/{config_id}/subscribers/batch-add",
+    response=SubscriptionBatchResultOut,
+    summary="批量追加项目邮件订阅人",
+)
+def add_subscription_management_subscribers(
+    request,
+    config_id: str,
+    payload: SubscriptionUserIdsIn,
+):
+    """
+    批量追加单个项目配置的订阅人。
+    """
+    try:
+        changed_count = integration_service.add_subscription_users(config_id, payload.user_ids)
+    except ValueError as exc:
+        raise HttpError(400, str(exc))
+    return SubscriptionBatchResultOut(changed_count=changed_count)
+
+
+@router.post(
+    "/subscription-management/projects/subscribers/batch-add",
+    response=SubscriptionBatchResultOut,
+    summary="批量给项目配置追加邮件订阅人",
+)
+def batch_add_subscription_management_subscribers(
+    request,
+    payload: SubscriptionBatchProjectUsersIn,
+):
+    """
+    批量给多个项目配置追加订阅人。
+    """
+    try:
+        changed_count = integration_service.batch_add_subscription_users(payload.config_ids, payload.user_ids)
+    except ValueError as exc:
+        raise HttpError(400, str(exc))
+    return SubscriptionBatchResultOut(changed_count=changed_count)
+
+
+@router.post(
+    "/subscription-management/projects/{config_id}/subscribers/batch-remove",
+    response=SubscriptionBatchResultOut,
+    summary="批量移除项目邮件订阅人",
+)
+def remove_subscription_management_subscribers(
+    request,
+    config_id: str,
+    payload: SubscriptionUserIdsIn,
+):
+    """
+    批量移除单个项目配置的订阅人。
+    """
+    try:
+        changed_count = integration_service.remove_subscription_users(config_id, payload.user_ids)
+    except ValueError as exc:
+        raise HttpError(400, str(exc))
+    return SubscriptionBatchResultOut(changed_count=changed_count)

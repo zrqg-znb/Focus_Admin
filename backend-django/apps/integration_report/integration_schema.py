@@ -179,3 +179,69 @@ class EmailDeliveryQueryOut(Schema):
     count: int
     page: int
     page_size: int
+
+
+class SubscriptionManagementProjectQueryIn(Schema):
+    keyword: Optional[str] = None
+    enabled: Optional[bool] = None
+    has_subscribers: Optional[bool] = None
+    has_missing_email: Optional[bool] = None
+    page: Optional[int] = 1
+    page_size: Optional[int] = 20
+
+
+class SubscriptionManagementProjectRow(Schema):
+    id: str
+    name: str
+    project_id: str
+    project_name: str
+    managers: str
+    project_managers: str
+    enabled: bool
+    subscriber_count: int
+    missing_email_count: int
+    sys_update_datetime: Optional[datetime] = None
+
+
+class SubscriptionManagementProjectQueryOut(Schema):
+    items: List[SubscriptionManagementProjectRow]
+    count: int
+    page: int
+    page_size: int
+
+
+class SubscriptionSubscriberQueryIn(Schema):
+    keyword: Optional[str] = None
+    enabled: Optional[bool] = None
+    page: Optional[int] = 1
+    page_size: Optional[int] = 20
+
+
+class SubscriptionSubscriberRow(Schema):
+    id: str
+    user_id: str
+    username: str
+    name: Optional[str] = None
+    email: Optional[str] = None
+    enabled: bool
+    sys_update_datetime: Optional[datetime] = None
+
+
+class SubscriptionSubscriberQueryOut(Schema):
+    items: List[SubscriptionSubscriberRow]
+    count: int
+    page: int
+    page_size: int
+
+
+class SubscriptionUserIdsIn(Schema):
+    user_ids: List[str]
+
+
+class SubscriptionBatchProjectUsersIn(Schema):
+    config_ids: List[str]
+    user_ids: List[str]
+
+
+class SubscriptionBatchResultOut(Schema):
+    changed_count: int

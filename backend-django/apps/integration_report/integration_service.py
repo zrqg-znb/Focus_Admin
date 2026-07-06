@@ -762,3 +762,232 @@ def send_daily_emails(record_date: Optional[date] = None) -> int:
             delivery.error_message = str(e)
             delivery.save(update_fields=["status", "error_message"])
     return sent
+
+
+def _normalize_page(page: Optional[int], page_size: Optional[int]) -> tuple[int, int]:
+    """规范分页参数，避免管理页传入异常分页值导致切片错误。"""
+    normalized_page = max(int(page or 1), 1)
+    normalized_page_size = min(max(int(page_size or 20), 1), 5000)
+    return normalized_page, normalized_page_size
+
+
+def _join_subscription_user_names(users) -> str:
+    """拼接订阅管理列表中展示的负责人名称。"""
+    return ",".join([user.name or user.username for user in users])
+
+
+def _get_subscription_config(config_id: str) -> IntegrationProjectConfig:
+    """获取可管理的集成报告配置，不存在时抛出业务异常。"""
+    config = IntegrationProjectConfig.objects.filter(
+        id=config_id,
+        is_deleted=False,
+    ).first()
+    if not config:
+        raise ValueError("配置不存在")
+    return config
+
+
+def _validate_subscription_user_ids(user_ids: List[str]) -> List[str]:
+    """校验订阅用户 ID，并保持前端选择顺序去重。"""
+    normalized_ids = list(dict.fromkeys([str(user_id).strip() for user_id in user_ids if str(user_id).strip()]))
+    if not normalized_ids:
+        return []
+
+    found_ids = set(
+        User.objects.filter(
+            id__in=normalized_ids,
+            is_deleted=False,
+        ).values_list("id", flat=True)
+    )
+    missing_ids = [user_id for user_id in normalized_ids if user_id not in found_ids]
+    if missing_ids:
+        raise ValueError(f"用户不存在或已删除: {', '.join(missing_ids)}")
+    return normalized_ids
+
+
+def _validate_subscription_config_ids(config_ids: List[str]) -> List[str]:
+    """校验订阅配置 ID，并保持前端批量选择顺序去重。"""
+    normalized_ids = list(dict.fromkeys([str(config_id).strip() for config_id in config_ids if str(config_id).strip()]))
+    if not normalized_ids:
+        return []
+
+    found_ids = set(
+        IntegrationProjectConfig.objects.filter(
+            id__in=normalized_ids,
+            is_deleted=False,
+        ).values_list("id", flat=True)
+    )
+    missing_ids = [config_id for config_id in normalized_ids if config_id not in found_ids]
+    if missing_ids:
+        raise ValueError(f"配置不存在或已删除: {', '.join(missing_ids)}")
+    return normalized_ids
+
+
+def query_subscription_management_projects(filters):
+    """分页查询邮件订阅管理项目配置列表。"""
+    page, page_size = _normalize_page(filters.page, filters.page_size)
+    qs = (
+        IntegrationProjectConfig.objects.select_related("project")
+        .prefetch_related("managers", "project__managers")
+        .filter(is_deleted=False)
+        .annotate(
+            subscriber_count=Count(
+                "subscriptions",
+                filter=Q(subscriptions__is_deleted=False, subscriptions__enabled=True),
+                distinct=True,
+            ),
+            missing_email_count=Count(
+                "subscriptions",
+                filter=(
+                    Q(subscriptions__is_deleted=False)
+                    & Q(subscriptions__enabled=True)
+                    & (Q(subscriptions__user__email__isnull=True) | Q(subscriptions__user__email=""))
+                ),
+                distinct=True,
+            ),
+        )
+    )
+    if filters.keyword:
+        qs = qs.filter(
+            Q(name__icontains=filters.keyword)
+            | Q(project__name__icontains=filters.keyword),
+        )
+    if filters.enabled is not None:
+        qs = qs.filter(enabled=filters.enabled)
+    if filters.has_subscribers is not None:
+        # 订阅人数筛选依赖聚合结果，必须在 annotate 之后执行。
+        qs = qs.filter(subscriber_count__gt=0) if filters.has_subscribers else qs.filter(subscriber_count=0)
+    if filters.has_missing_email is not None:
+        qs = qs.filter(missing_email_count__gt=0) if filters.has_missing_email else qs.filter(missing_email_count=0)
+
+    count = qs.count()
+    rows = []
+    for config in qs.order_by("-sys_update_datetime")[(page - 1) * page_size : page * page_size]:
+        project = config.project
+        rows.append(
+            {
+                "id": str(config.id),
+                "name": config.name,
+                "project_id": str(project.id) if project else "",
+                "project_name": project.name if project else "",
+                "managers": _join_subscription_user_names(config.managers.all()),
+                "project_managers": _join_subscription_user_names(project.managers.all()) if project else "",
+                "enabled": config.enabled,
+                "subscriber_count": int(config.subscriber_count or 0),
+                "missing_email_count": int(config.missing_email_count or 0),
+                "sys_update_datetime": config.sys_update_datetime,
+            }
+        )
+    return rows, count, page, page_size
+
+
+def query_subscription_subscribers(config_id: str, filters):
+    """分页查询单个项目配置的订阅人。"""
+    _get_subscription_config(config_id)
+    page, page_size = _normalize_page(filters.page, filters.page_size)
+    qs = (
+        IntegrationEmailSubscription.objects.select_related("user")
+        .filter(config_id=config_id, is_deleted=False)
+        .order_by("-enabled", "user__name", "user__username")
+    )
+    if filters.keyword:
+        qs = qs.filter(
+            Q(user__name__icontains=filters.keyword)
+            | Q(user__username__icontains=filters.keyword)
+            | Q(user__email__icontains=filters.keyword),
+        )
+    if filters.enabled is not None:
+        qs = qs.filter(enabled=filters.enabled)
+
+    count = qs.count()
+    rows = []
+    for subscription in qs[(page - 1) * page_size : page * page_size]:
+        user = subscription.user
+        rows.append(
+            {
+                "id": str(subscription.id),
+                "user_id": str(subscription.user_id),
+                "username": user.username if user else "",
+                "name": user.name if user else "",
+                "email": user.email if user else "",
+                "enabled": subscription.enabled,
+                "sys_update_datetime": subscription.sys_update_datetime,
+            }
+        )
+    return rows, count, page, page_size
+
+
+@transaction.atomic
+def replace_subscription_users(config_id: str, user_ids: List[str]) -> int:
+    """全量保存单个项目配置的订阅人集合。"""
+    config = _get_subscription_config(config_id)
+    normalized_ids = _validate_subscription_user_ids(user_ids)
+    requested_ids = set(normalized_ids)
+    changed_count = 0
+
+    for user_id in normalized_ids:
+        existing = IntegrationEmailSubscription.objects.filter(
+            user_id=user_id,
+            config=config,
+        ).first()
+        _, created = IntegrationEmailSubscription.objects.update_or_create(
+            user_id=user_id,
+            config=config,
+            defaults={"enabled": True, "is_deleted": False},
+        )
+        if created or (existing and (existing.is_deleted or not existing.enabled)):
+            changed_count += 1
+
+    stale_qs = IntegrationEmailSubscription.objects.filter(
+        config=config,
+        is_deleted=False,
+    ).exclude(user_id__in=requested_ids)
+    # 全量保存只收敛当前配置，未保留的订阅软删除后不会进入邮件发送。
+    changed_count += stale_qs.update(is_deleted=True, enabled=False)
+    return changed_count
+
+
+@transaction.atomic
+def add_subscription_users(config_id: str, user_ids: List[str]) -> int:
+    """批量追加项目配置订阅人，已存在关系会被重新启用。"""
+    config = _get_subscription_config(config_id)
+    normalized_ids = _validate_subscription_user_ids(user_ids)
+    changed_count = 0
+    for user_id in normalized_ids:
+        existing = IntegrationEmailSubscription.objects.filter(
+            user_id=user_id,
+            config=config,
+        ).first()
+        _, created = IntegrationEmailSubscription.objects.update_or_create(
+            user_id=user_id,
+            config=config,
+            defaults={"enabled": True, "is_deleted": False},
+        )
+        if created or (existing and (existing.is_deleted or not existing.enabled)):
+            changed_count += 1
+    return changed_count
+
+
+@transaction.atomic
+def batch_add_subscription_users(config_ids: List[str], user_ids: List[str]) -> int:
+    """批量给多个项目配置追加订阅人。"""
+    normalized_config_ids = _validate_subscription_config_ids(config_ids)
+    normalized_user_ids = _validate_subscription_user_ids(user_ids)
+    changed_count = 0
+    for config_id in normalized_config_ids:
+        changed_count += add_subscription_users(config_id, normalized_user_ids)
+    return changed_count
+
+
+@transaction.atomic
+def remove_subscription_users(config_id: str, user_ids: List[str]) -> int:
+    """批量移除项目配置订阅人，采用软删除保证历史关系可追溯。"""
+    _get_subscription_config(config_id)
+    normalized_ids = _validate_subscription_user_ids(user_ids)
+    if not normalized_ids:
+        return 0
+    return IntegrationEmailSubscription.objects.filter(
+        config_id=config_id,
+        user_id__in=normalized_ids,
+        is_deleted=False,
+    ).update(is_deleted=True, enabled=False)
