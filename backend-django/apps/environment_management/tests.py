@@ -142,7 +142,7 @@ class EnvironmentManagementServiceTests(TestCase):
         self.assertEqual(EnvironmentDeviceBinding.objects.filter(environment_id=legacy_env['id']).count(), 1)
 
 
-    def test_occupy_queue_jump_and_release_do_not_auto_transfer(self):
+    def test_release_auto_transfers_to_queue_head(self):
         env_id = create_environment(self.admin, payload())['id']
 
         with self.assertRaises(HttpError):
@@ -163,23 +163,31 @@ class EnvironmentManagementServiceTests(TestCase):
         self.assertEqual([row.user.username for row in queues], ['environment_user3', 'environment_user2'])
 
         released = release_environment(self.env_user, env_id)
-        self.assertIn('队首用户 environment_user3', released['message'])
+        self.assertIn('已自动转交给队首用户 environment_user3', released['message'])
         env = TestEnvironment.objects.get(id=env_id)
-        self.assertEqual(env.status, 'idle')
-        self.assertIsNone(env.current_user_id)
+        self.assertEqual(env.status, 'occupied')
+        self.assertEqual(env.current_user.username, 'environment_user3')
+        self.assertTrue(
+            EnvironmentQueue.objects.filter(environment_id=env_id, user=environment_user3, status='done').exists()
+        )
+        self.assertEqual(
+            EnvironmentQueue.objects.get(environment_id=env_id, user=environment_user2, status='waiting').position,
+            1,
+        )
+        records = EnvironmentRecord.objects.filter(environment_id=env_id).order_by('action')
+        self.assertTrue(records.filter(action='release', operator=self.env_user, message__contains='自动转交').exists())
+        self.assertTrue(records.filter(action='occupy', operator=environment_user3, message__contains='自动占用').exists())
 
         with self.assertRaises(HttpError):
             occupy_environment(environment_user2, env_id)
-        next_occupied = occupy_environment(environment_user3, env_id)
-        self.assertEqual(next_occupied['environment']['current_user_name'], 'environment_user3')
+        already_occupied = occupy_environment(environment_user3, env_id)
+        self.assertEqual(already_occupied['environment']['current_user_name'], 'environment_user3')
 
     def test_idle_environment_with_waiting_queue_allows_later_user_to_queue(self):
         env_id = create_environment(self.admin, payload())['id']
-        occupy_environment(self.env_user, env_id)
         queue_head = make_user('queue_head', 'environment_user')
         later_user = make_user('later_user', 'environment_user')
-        enqueue_environment(queue_head, env_id, 'normal')
-        release_environment(self.env_user, env_id)
+        EnvironmentQueue.objects.create(environment_id=env_id, user=queue_head, queue_type='normal', status='waiting', position=1)
 
         with self.assertRaises(HttpError) as error:
             occupy_environment(later_user, env_id)
@@ -390,7 +398,7 @@ class EnvironmentManagementServiceTests(TestCase):
         self.assertEqual(saved['title'], '操作前确认')
         self.assertEqual(get_announcement()['content_html'], '<p>请确认</p>')
 
-    def test_release_notifies_first_queue_user_available(self):
+    def test_release_auto_transfer_notifies_assigned_and_moved_users(self):
         env_id = create_environment(self.admin, payload())['id']
         occupy_environment(self.env_user, env_id)
         environment_user2 = make_user('environment_user2', 'environment_user')
@@ -402,15 +410,19 @@ class EnvironmentManagementServiceTests(TestCase):
             with self.captureOnCommitCallbacks(execute=True):
                 release_environment(self.env_user, env_id)
 
-        self.assertEqual(mock_send.call_count, 1)
-        username, title, content, notify_payload = mock_send.call_args.args
-        self.assertEqual(username, 'environment_user2')
-        self.assertIn('轮到你', title)
-        self.assertIn('请及时手动占用', content)
-        self.assertTrue(notify_payload['available'])
-        self.assertNotIn('password', notify_payload)
-        self.assertNotIn('password_encrypted', notify_payload)
-        self.assertNotIn('account', notify_payload)
+        self.assertEqual([call.args[0] for call in mock_send.call_args_list], ['environment_user2', 'environment_user3'])
+        assigned_call = mock_send.call_args_list[0].args
+        moved_call = mock_send.call_args_list[1].args
+        self.assertIn('自动分配', assigned_call[1])
+        self.assertIn('自动占用', assigned_call[2])
+        self.assertTrue(assigned_call[3]['available'])
+        self.assertIn('前进到第 1 位', moved_call[2])
+        self.assertFalse(moved_call[3]['available'])
+        for call in mock_send.call_args_list:
+            notify_payload = call.args[3]
+            self.assertNotIn('password', notify_payload)
+            self.assertNotIn('password_encrypted', notify_payload)
+            self.assertNotIn('account', notify_payload)
 
     def test_cancel_queue_notifies_users_that_moved_forward(self):
         env_id = create_environment(self.admin, payload())['id']
@@ -430,24 +442,21 @@ class EnvironmentManagementServiceTests(TestCase):
         self.assertEqual([call.args[3]['position'] for call in mock_send.call_args_list], [1, 2])
         self.assertTrue(all(not call.args[3]['available'] for call in mock_send.call_args_list))
 
-    def test_occupy_from_queue_notifies_next_users_that_moved_forward(self):
+    def test_release_auto_transfer_notifies_next_users_that_moved_forward(self):
         env_id = create_environment(self.admin, payload())['id']
         occupy_environment(self.env_user, env_id)
         environment_user2 = make_user('environment_user2', 'environment_user')
         environment_user3 = make_user('environment_user3', 'environment_user')
         enqueue_environment(environment_user2, env_id, 'normal')
         enqueue_environment(environment_user3, env_id, 'normal')
-        with self.captureOnCommitCallbacks(execute=True):
-            release_environment(self.env_user, env_id)
-
         with patch('apps.environment_management.services.send_environment_queue_notification_by_username') as mock_send:
             with self.captureOnCommitCallbacks(execute=True):
-                occupy_environment(environment_user2, env_id)
+                release_environment(self.env_user, env_id)
 
-        self.assertEqual(mock_send.call_count, 1)
-        self.assertEqual(mock_send.call_args.args[0], 'environment_user3')
-        self.assertIn('前进到第 1 位', mock_send.call_args.args[2])
-        self.assertFalse(mock_send.call_args.args[3]['available'])
+        self.assertEqual(mock_send.call_count, 2)
+        self.assertEqual(mock_send.call_args_list[1].args[0], 'environment_user3')
+        self.assertIn('前进到第 1 位', mock_send.call_args_list[1].args[2])
+        self.assertFalse(mock_send.call_args_list[1].args[3]['available'])
 
     def test_jump_queue_does_not_notify_users_moved_backward(self):
         env_id = create_environment(self.admin, payload())['id']
@@ -479,9 +488,10 @@ class EnvironmentManagementServiceTests(TestCase):
 
         self.assertTrue(released['success'])
         env = TestEnvironment.objects.get(id=env_id)
-        self.assertEqual(env.status, 'idle')
+        self.assertEqual(env.status, 'occupied')
+        self.assertEqual(env.current_user.username, 'environment_user2')
 
-    def test_auto_release_all_occupied_environments_records_and_keeps_queue(self):
+    def test_auto_release_all_occupied_environments_records_and_clears_queue(self):
         first_id = create_environment(self.admin, payload(ip='172.16.0.1'))['id']
         second_id = create_environment(self.admin, payload(ip='172.16.0.2'))['id']
         idle_id = create_environment(self.admin, payload(ip='172.16.0.3'))['id']
@@ -496,10 +506,11 @@ class EnvironmentManagementServiceTests(TestCase):
 
         self.assertEqual(result['released_count'], 2)
         self.assertEqual(set(result['environment_ids']), {first_id, second_id})
+        self.assertEqual(result['cancelled_queue_count'], 1)
         self.assertEqual(TestEnvironment.objects.get(id=first_id).status, 'idle')
         self.assertEqual(TestEnvironment.objects.get(id=second_id).status, 'idle')
         self.assertEqual(TestEnvironment.objects.get(id=idle_id).status, 'idle')
-        self.assertTrue(EnvironmentQueue.objects.filter(environment_id=first_id, user=waiting_user, status='waiting').exists())
+        self.assertTrue(EnvironmentQueue.objects.filter(environment_id=first_id, user=waiting_user, status='cancelled').exists())
 
         records = EnvironmentRecord.objects.filter(action='auto_release').order_by('environment_id')
         self.assertEqual(records.count(), 2)
@@ -507,13 +518,13 @@ class EnvironmentManagementServiceTests(TestCase):
         self.assertTrue(all(record.started_at and record.ended_at for record in records))
         self.assertTrue(all(record.duration_seconds >= 0 for record in records))
         self.assertTrue(all('系统自动释放环境' in record.message for record in records))
-        mock_send.assert_called_once()
-        self.assertEqual(mock_send.call_args.args[0], 'waiting_user')
+        self.assertTrue(any('已清理等待队列 1 人' in record.message for record in records))
+        mock_send.assert_not_called()
 
     def test_auto_release_all_occupied_environments_is_noop_when_none_occupied(self):
         create_environment(self.admin, payload(ip='172.16.1.1'))
 
         result = auto_release_all_occupied_environments()
 
-        self.assertEqual(result, {'released_count': 0, 'environment_ids': []})
+        self.assertEqual(result, {'released_count': 0, 'environment_ids': [], 'cancelled_queue_count': 0})
         self.assertFalse(EnvironmentRecord.objects.filter(action='auto_release').exists())

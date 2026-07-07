@@ -235,6 +235,31 @@ def _notify_queue_changes_after_commit(
     transaction.on_commit(_send_notifications)
 
 
+def _notify_auto_occupied_after_commit(env: TestEnvironment, assigned_user: User, event: str) -> None:
+    """提交事务后通知队首用户已被自动分配环境。
+
+    手动释放后的自动转交已经在事务内把环境状态改成 occupied，因此不能复用“环境空闲且轮到
+    队首”的通知文案。这里单独通知被转交用户：环境已经归他占用，但仍不包含账号、密码或 RDP
+    凭据，真实消息系统接入时也必须保持这个边界。
+    """
+    environment_id = str(env.id)
+    username = assigned_user.username
+
+    def _send_notification():
+        try:
+            fresh_env = TestEnvironment.objects.get(id=environment_id)
+            _safe_send_environment_queue_notification_by_username(
+                username,
+                '环境已自动分配给你',
+                f"环境 {fresh_env.ip_address} 已由队首自动占用，请及时确认使用。",
+                _environment_notification_payload(fresh_env, None, event, True),
+            )
+        except Exception:
+            logger.exception('environment auto occupied notification failed environment_id=%s username=%s', environment_id, username)
+
+    transaction.on_commit(_send_notification)
+
+
 def _device_type_path(device_type: EnvironmentDeviceType | None) -> str:
     """把设备类型向上追溯为路径，用于列表 Tag 展示和级联选项文案。"""
     if not device_type:
@@ -1015,7 +1040,12 @@ def occupy_environment(user: User, environment_id: str) -> dict:
 
 
 def release_environment(user: User, environment_id: str) -> dict:
-    """释放环境；释放后只提示队首，不自动转交，避免无人确认时长期占用。"""
+    """释放环境；如果存在等待队列，立即自动转交给队首用户。
+
+    手动释放代表当前使用人已经明确交还环境，此时继续让队首手动刷新再占用会造成资源空档。
+    因此本函数在同一事务中完成“释放旧占用 + 队首自动占用 + 剩余队列重排”，保证前端刷新
+    后看到的是稳定的新占用状态。
+    """
     if not can_use_environment(user):
         raise HttpError(403, '只有环境用户或环境管理员可以释放环境')
     with transaction.atomic():
@@ -1029,28 +1059,47 @@ def release_environment(user: User, environment_id: str) -> dict:
         ended_at = timezone.now()
         duration = _duration_seconds(started_at, ended_at)
         released_user = _display_name(env.current_user)
-        env.status = 'idle'
-        env.current_user = None
-        env.occupied_at = None
-        env.sys_modifier = user
-        env.save(update_fields=['status', 'current_user', 'occupied_at', 'sys_modifier', 'sys_update_datetime'])
-        first_queue = _waiting_queues(env.id).first()
-        message = f'{released_user} 释放环境'
-        if first_queue:
-            message = f'{message}，队首用户 { _display_name(first_queue.user) } 可手动占用'
-        _record(env, user, 'release', message, started_at=started_at, ended_at=ended_at, duration_seconds=duration)
-        _notify_queue_changes_after_commit(env, before_queue_snapshot, 'release', notify_available_head=True)
+        waiting = list(_waiting_queues_for_update(env.id).select_for_update())
+        first_queue = waiting[0] if waiting else None
+        assigned_user = User.objects.filter(id=first_queue.user_id).first() if first_queue else None
+
+        if assigned_user:
+            # 有等待队列时直接转交队首：队首的 waiting 记录完成，剩余队列重新编号。
+            # sys_modifier 记录触发释放动作的人，实际占用人通过 current_user 与 occupy 记录表达。
+            env.status = 'occupied'
+            env.current_user = assigned_user
+            env.occupied_at = ended_at
+            env.sys_modifier = user
+            env.save(update_fields=['status', 'current_user', 'occupied_at', 'sys_modifier', 'sys_update_datetime'])
+            first_queue.status = 'done'
+            first_queue.sys_modifier = user
+            first_queue.save(update_fields=['status', 'sys_modifier', 'sys_update_datetime'])
+            _renumber_waiting_queue(env.id)
+            message = f'{released_user} 释放环境，已自动转交给队首用户 { _display_name(assigned_user) }'
+            _record(env, user, 'release', message, started_at=started_at, ended_at=ended_at, duration_seconds=duration)
+            _record(env, assigned_user, 'occupy', '释放后自动占用环境', started_at=ended_at)
+            _notify_auto_occupied_after_commit(env, assigned_user, 'release_auto_transfer')
+            _notify_queue_changes_after_commit(env, before_queue_snapshot, 'release_auto_transfer', notify_available_head=False)
+        else:
+            env.status = 'idle'
+            env.current_user = None
+            env.occupied_at = None
+            env.sys_modifier = user
+            env.save(update_fields=['status', 'current_user', 'occupied_at', 'sys_modifier', 'sys_update_datetime'])
+            message = f'{released_user} 释放环境'
+            _record(env, user, 'release', message, started_at=started_at, ended_at=ended_at, duration_seconds=duration)
     return {'success': True, 'message': message, 'environment': serialize_environment(env, user)}
 
 
 def auto_release_all_occupied_environments() -> dict:
-    """自动释放全部占用环境，供定时任务管理模块按天调用。
+    """自动释放全部占用环境，并清理历史等待队列。
 
-    该函数不绑定任何 HTTP 权限，也不依赖操作人；记录中的 operator 固定为空，
-    message 使用“系统自动释放”标识来源。自动释放只处理当前 occupied 环境，
-    保留等待队列并复用现有队首通知逻辑，避免凌晨任务把用户排队意图清空。
+    该函数供每日凌晨定时任务调用，目标是把第二天的环境使用状态归零。和手动释放不同，
+    定时释放发生在无人确认的时间点，因此只释放占用、取消旧 waiting 队列，不做自动转交，
+    也不发送队列位置变化通知，避免凌晨给用户推送无意义消息。
     """
     released_environment_ids: list[str] = []
+    cancelled_queue_count = 0
     with transaction.atomic():
         environments = list(
             TestEnvironment.objects.select_for_update()
@@ -1059,7 +1108,6 @@ def auto_release_all_occupied_environments() -> dict:
             .order_by('ip_address')
         )
         for env in environments:
-            before_queue_snapshot = _queue_notification_snapshot(env.id)
             started_at = env.occupied_at
             ended_at = timezone.now()
             duration = _duration_seconds(started_at, ended_at)
@@ -1071,10 +1119,14 @@ def auto_release_all_occupied_environments() -> dict:
             env.sys_modifier = None
             env.save(update_fields=['status', 'current_user', 'occupied_at', 'sys_modifier', 'sys_update_datetime'])
 
-            first_queue = _waiting_queues(env.id).first()
-            message = f'系统自动释放环境，原占用人 {released_user}'
-            if first_queue:
-                message = f'{message}，队首用户 { _display_name(first_queue.user) } 可手动占用'
+            # 定时任务清理的是隔夜排队意图，采用 cancelled 保留审计痕迹，不物理删除队列数据。
+            queue_cancelled = EnvironmentQueue.objects.filter(environment=env, status='waiting').update(
+                status='cancelled',
+                sys_modifier=None,
+                sys_update_datetime=ended_at,
+            )
+            cancelled_queue_count += queue_cancelled
+            message = f'系统自动释放环境，原占用人 {released_user}，已清理等待队列 {queue_cancelled} 人'
             _record(
                 env,
                 None,
@@ -1084,10 +1136,13 @@ def auto_release_all_occupied_environments() -> dict:
                 ended_at=ended_at,
                 duration_seconds=duration,
             )
-            _notify_queue_changes_after_commit(env, before_queue_snapshot, 'auto_release', notify_available_head=True)
             released_environment_ids.append(str(env.id))
 
-    return {'released_count': len(released_environment_ids), 'environment_ids': released_environment_ids}
+    return {
+        'released_count': len(released_environment_ids),
+        'environment_ids': released_environment_ids,
+        'cancelled_queue_count': cancelled_queue_count,
+    }
 
 
 def enqueue_environment(user: User, environment_id: str, queue_type: str) -> dict:

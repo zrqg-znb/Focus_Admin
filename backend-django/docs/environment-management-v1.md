@@ -71,9 +71,9 @@ python manage.py init_environment_management
 - 插队进入已有插队用户之后、普通排队用户之前，但不会抢占当前占用人。当前前端隐藏插队按钮，后端能力保留。
 - 同一用户不能在同一环境重复排队。
 - 当前占用人不能再排队。
-- 释放环境后只将环境置为空闲，并提示队首用户可以手动占用；系统不会自动转交给队首。
-- 如果队列存在，只有队首用户可以在空闲时占用。
-- 空闲但仍存在等待队列时，队首用户显示“占用/取消排队”，未排队用户显示“排队”，非队首已排队用户显示“取消排队”。
+- 手动释放环境时，如果没有等待队列，环境置为空闲；如果存在等待队列，系统在同一事务内自动转交给队首用户占用。
+- 自动转交会把队首等待记录标记为 `done`，重新编号剩余等待队列，并分别写入原占用人的 `release` 记录和队首用户的 `occupy` 记录。
+- 空闲但仍存在等待队列属于历史数据或异常恢复状态：只有队首用户可以占用，未排队用户仍可以继续排队，非队首已排队用户只能取消排队。
 - 平台默认用户只能查看列表、详情、队列和记录，所有使用动作会被后端拒绝。
 - 测试设备类型删除前必须确认没有子类型、旧测试设备主数据和环境设备实例引用。
 - 环境设备实例必须选择已有测试设备；设备资产编号和备注均非必填。
@@ -84,7 +84,7 @@ python manage.py init_environment_management
 - 队列重排必须使用不带 `select_related('user')` 的独立查询，避免 Django 抛出 `deferred and traversed using select_related` 错误。
 - 事务内锁定等待队列时必须使用独立查询，不复用展示用的 `_waiting_queues()`。
 - 如果环境操作公告启用，用户端占用和排队前会弹窗要求确认。释放环境只使用标准文本二次确认。
-- 队列通知当前只覆盖两类正向变化：等待用户位置前进、环境空闲且用户成为队首可手动占用。插队导致其他用户后移时不发送通知。
+- 队列通知当前覆盖三类正向变化：等待用户位置前进、历史空闲队列中用户成为队首可手动占用、手动释放后队首被自动分配占用。插队导致其他用户后移时不发送通知。
 - 队列通知使用 `send_environment_queue_notification_by_username(username, title, content, payload)` 作为占位接口，本地仅写日志；公司内网接入真实消息系统时替换该函数内部实现即可。
 - 队列通知是业务旁路：通过事务提交后回调触发，且发送异常只记录日志，不回滚占用、释放、取消排队等主流程。
 - 队列通知 payload 只包含环境 ID、IP、项目、车型、队列位置、事件和是否可占用，不允许携带账号、密码、RDP 凭据或加密密码字段。
@@ -95,7 +95,7 @@ python manage.py init_environment_management
 - 环境测试设备多选筛选使用交集语义：用户选择多个测试设备时，只返回同时绑定全部所选设备的环境。
 - 表头筛选多选值以逗号字符串提交，例如 `domains=cockpit,vehicle`；后端统一解析、去空和去重。
 - 下拉筛选选项由 `GET /filter-options` 聚合返回，返回值不包含密码、RDP 启动地址等敏感字段。
-- 自动释放由服务函数 `auto_release_all_occupied_environments()` 提供给定时任务管理模块直接 import 调用，不暴露 HTTP API。该函数只释放占用中的环境，保留等待队列，记录 `auto_release/自动释放` 操作，操作人为空表示系统操作，并通知队首用户可手动占用。
+- 自动释放由服务函数 `auto_release_all_occupied_environments()` 提供给定时任务管理模块直接 import 调用，不暴露 HTTP API。该函数只释放占用中的环境，并将对应环境的旧等待队列全部标记为 `cancelled`，记录 `auto_release/自动释放` 操作，操作人为空表示系统操作；自动释放不做自动转交、不发送队列通知。
 
 ## API
 
@@ -128,10 +128,10 @@ python manage.py init_environment_management
 from apps.environment_management.services import auto_release_all_occupied_environments
 
 result = auto_release_all_occupied_environments()
-# result: {"released_count": 2, "environment_ids": ["..."]}
+# result: {"released_count": 2, "environment_ids": ["..."], "cancelled_queue_count": 3}
 ```
 
-该函数用于每日凌晨自动释放仍处于占用状态的环境，不取消排队、不自动转交，通知失败不会回滚释放结果。
+该函数用于每日凌晨自动释放仍处于占用状态的环境，并清理隔夜残留的 waiting 队列。清理队列采用状态改为 `cancelled`，不物理删除记录，便于后续审计；自动释放不自动转交给队首，也不触发队列前进通知。
 
 `EnvironmentIn.devices` 示例：
 
