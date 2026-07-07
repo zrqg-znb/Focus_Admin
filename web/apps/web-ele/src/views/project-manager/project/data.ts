@@ -107,6 +107,22 @@ export function useZqColumns(): ZqTableGridOptions<ProjectOut>['columns'] {
     },
     { key: 'repo_url', dataKey: 'repo_url', title: '制品仓号', width: 220 },
     {
+      key: 'power_info_link',
+      dataKey: 'power_info_link',
+      title: '用电信息表',
+      width: 140,
+      align: 'center',
+      showOverflowTooltip: false,
+    },
+    {
+      key: 'hardware_software_interface_doc',
+      dataKey: 'hardware_software_interface_doc',
+      title: '软硬件接口文档',
+      width: 160,
+      align: 'center',
+      showOverflowTooltip: false,
+    },
+    {
       key: 'enable_milestone',
       dataKey: 'enable_milestone',
       title: '统计里程碑',
