@@ -108,6 +108,30 @@ def _normalize_browser_path(value: str | None) -> str:
     return '/'.join(parts)
 
 
+def _raise_missing_browser_directory(
+    root: Path,
+    *,
+    path: str,
+    project_id: str | None = None,
+    repository_spec: dict[str, str] | None = None,
+) -> None:
+    normalized_path = _normalize_browser_path(path)
+    target_dir = root / normalized_path if normalized_path else root
+    repository_spec = repository_spec or {}
+    logger.warning(
+        'DeepAudit project file browser target directory missing: project_id=%s repository_type=%s branch=%s manifest=%s group=%s path=%s target_dir=%s root=%s',
+        project_id or '-',
+        repository_spec.get('repository_type') or '-',
+        repository_spec.get('branch_name') or '-',
+        repository_spec.get('manifest_xml') or '-',
+        repository_spec.get('group') or '-',
+        normalized_path or '/',
+        target_dir,
+        root,
+    )
+    raise HttpError(404, '目标目录不存在')
+
+
 def _build_browser_file_item(root: Path, entry: Path) -> dict:
     relative_path = str(entry.relative_to(root)).replace('\\', '/')
     return {
@@ -125,11 +149,18 @@ def _browse_directory_items(
     offset: int = 0,
     limit: int = 100,
     exclude_patterns: list[str] | None = None,
+    project_id: str | None = None,
+    repository_spec: dict[str, str] | None = None,
 ) -> tuple[list[dict], int]:
     normalized_path = _normalize_browser_path(path)
     target_dir = root / normalized_path if normalized_path else root
     if not target_dir.exists() or not target_dir.is_dir():
-        raise HttpError(404, '目标目录不存在')
+        _raise_missing_browser_directory(
+            root,
+            path=normalized_path,
+            project_id=project_id,
+            repository_spec=repository_spec,
+        )
 
     items: list[dict] = []
     for entry in target_dir.iterdir():
@@ -152,11 +183,18 @@ def _search_repository_items(
     offset: int = 0,
     limit: int = 100,
     exclude_patterns: list[str] | None = None,
+    project_id: str | None = None,
+    repository_spec: dict[str, str] | None = None,
 ) -> tuple[list[dict], int]:
     normalized_path = _normalize_browser_path(path)
     search_root = root / normalized_path if normalized_path else root
     if not search_root.exists() or not search_root.is_dir():
-        raise HttpError(404, '目标目录不存在')
+        _raise_missing_browser_directory(
+            root,
+            path=normalized_path,
+            project_id=project_id,
+            repository_spec=repository_spec,
+        )
 
     keyword_text = str(keyword or '').strip().lower()
     if not keyword_text:
@@ -166,6 +204,8 @@ def _search_repository_items(
             offset=offset,
             limit=limit,
             exclude_patterns=exclude_patterns,
+            project_id=project_id,
+            repository_spec=repository_spec,
         )
 
     matches: list[dict] = []
@@ -700,6 +740,8 @@ def browse_files(
                 offset=normalized_offset,
                 limit=normalized_limit,
                 exclude_patterns=exclude_patterns,
+                project_id=str(project.id),
+                repository_spec=repository_spec,
             )
         else:
             items, total = _browse_directory_items(
@@ -708,6 +750,8 @@ def browse_files(
                 offset=normalized_offset,
                 limit=normalized_limit,
                 exclude_patterns=exclude_patterns,
+                project_id=str(project.id),
+                repository_spec=repository_spec,
             )
 
         return {

@@ -131,6 +131,13 @@ const buildFallbackRepositorySpec = ({
   group: group || '',
 });
 
+const normalizeDialogPath = (path: string) =>
+  path
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter((segment) => segment && segment !== '.' && segment !== '..')
+    .join('/');
+
 export default function FileSelectionDialog({
   open,
   onOpenChange,
@@ -158,7 +165,10 @@ export default function FileSelectionDialog({
   const [sessionSignature, setSessionSignature] = useState('');
   const requestIdRef = useRef(0);
   const lastRepositorySessionKeyRef = useRef('');
+  const latestPathRef = useRef('');
+  const latestKeywordRef = useRef('');
   const debouncedSearch = useDebounce(searchInput.trim(), 300);
+  const effectiveKeyword = searchInput.trim() ? debouncedSearch : '';
   const repositorySessionKey = useMemo(
     () =>
       [
@@ -186,12 +196,29 @@ export default function FileSelectionDialog({
       setSessionSpec(undefined);
       setSessionSignature('');
       lastRepositorySessionKeyRef.current = '';
+      latestPathRef.current = '';
+      latestKeywordRef.current = '';
     }
   }, [open]);
 
+  const resetVisibleRequestState = (nextPath: string) => {
+    latestPathRef.current = nextPath;
+    latestKeywordRef.current = '';
+    setItems([]);
+    setHasMore(false);
+    setTotal(0);
+  };
+
+  const navigateToPath = (nextPath: string) => {
+    const normalizedPath = normalizeDialogPath(nextPath);
+    resetVisibleRequestState(normalizedPath);
+    setSearchInput('');
+    setCurrentPath(normalizedPath);
+  };
+
   const loadEntries = async ({
     append = false,
-    keyword = debouncedSearch,
+    keyword = effectiveKeyword,
     nextOffset = 0,
     nextPath = currentPath,
     refresh = false,
@@ -204,7 +231,11 @@ export default function FileSelectionDialog({
   }) => {
     if (!open || !projectId) return;
 
+    const normalizedPath = normalizeDialogPath(nextPath);
+    const normalizedKeyword = String(keyword || '').trim();
     const requestId = ++requestIdRef.current;
+    latestPathRef.current = normalizedPath;
+    latestKeywordRef.current = normalizedKeyword;
     if (append) {
       setLoadingMore(true);
     } else if (refresh) {
@@ -219,8 +250,8 @@ export default function FileSelectionDialog({
         branch_name: branch,
         manifest_xml: manifestXml,
         group,
-        path: nextPath,
-        keyword,
+        path: normalizedPath,
+        keyword: normalizedKeyword,
         offset: nextOffset,
         limit: PAGE_SIZE,
         refresh,
@@ -246,6 +277,12 @@ export default function FileSelectionDialog({
       setSessionSignature(data.repository_signature || '');
     } catch (error) {
       if (requestId !== requestIdRef.current) {
+        return;
+      }
+      if (
+        latestPathRef.current !== normalizedPath ||
+        latestKeywordRef.current !== normalizedKeyword
+      ) {
         return;
       }
       const errorMessage =
@@ -274,7 +311,7 @@ export default function FileSelectionDialog({
     }
     loadEntries({
       append: false,
-      keyword: debouncedSearch,
+      keyword: effectiveKeyword,
       nextOffset: 0,
       nextPath: currentPath,
       refresh: shouldAutoRefresh,
@@ -288,7 +325,7 @@ export default function FileSelectionDialog({
     group,
     repositorySessionKey,
     currentPath,
-    debouncedSearch,
+    effectiveKeyword,
     excludePatterns,
   ]);
 
@@ -330,8 +367,8 @@ export default function FileSelectionDialog({
     [selectedEntries, visibleItems],
   );
   let browsingHint = '浏览根目录';
-  if (debouncedSearch) {
-    browsingHint = `搜索 "${debouncedSearch}" 的结果`;
+  if (effectiveKeyword) {
+    browsingHint = `搜索 "${effectiveKeyword}" 的结果`;
   } else if (currentPath) {
     browsingHint = `浏览目录: ${currentPath}`;
   }
@@ -376,7 +413,7 @@ export default function FileSelectionDialog({
     if (!hasMore || loadingMore) return;
     loadEntries({
       append: true,
-      keyword: debouncedSearch,
+      keyword: effectiveKeyword,
       nextOffset: items.length,
       nextPath: currentPath,
     });
@@ -385,7 +422,7 @@ export default function FileSelectionDialog({
   const handleRefresh = () => {
     loadEntries({
       append: false,
-      keyword: debouncedSearch,
+      keyword: effectiveKeyword,
       nextOffset: 0,
       nextPath: currentPath,
       refresh: true,
@@ -492,8 +529,7 @@ export default function FileSelectionDialog({
                   <Button
                     className="h-8 px-2 text-xs"
                     onClick={() => {
-                      setSearchInput('');
-                      setCurrentPath(item.path);
+                      navigateToPath(item.path);
                     }}
                     size="sm"
                     variant="ghost"
@@ -590,7 +626,7 @@ export default function FileSelectionDialog({
             <Button
               className="cyber-btn-outline h-9 px-3 text-xs"
               disabled={!currentPath}
-              onClick={() => setCurrentPath(getParentPath(currentPath))}
+              onClick={() => navigateToPath(getParentPath(currentPath))}
               size="sm"
               variant="outline"
             >
@@ -611,8 +647,7 @@ export default function FileSelectionDialog({
               <Button
                 className="cyber-btn-outline text-muted-foreground h-9 px-3 text-xs"
                 onClick={() => {
-                  setSearchInput('');
-                  setCurrentPath('');
+                  navigateToPath('');
                 }}
                 size="sm"
                 variant="outline"
@@ -635,7 +670,7 @@ export default function FileSelectionDialog({
                   )}
                   <button
                     className={`font-mono text-xs ${item.path === currentPath ? 'text-foreground font-bold' : 'text-muted-foreground hover:text-foreground'}`}
-                    onClick={() => setCurrentPath(item.path)}
+                    onClick={() => navigateToPath(item.path)}
                     type="button"
                   >
                     {item.label}

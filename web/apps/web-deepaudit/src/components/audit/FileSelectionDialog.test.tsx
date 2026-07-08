@@ -5,6 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import FileSelectionDialog from './FileSelectionDialog';
 import { api } from '@/shared/config/database';
 
+const toast = vi.hoisted(() => ({
+  error: vi.fn(),
+  warning: vi.fn(),
+}));
+const debounceState = vi.hoisted(() => ({
+  value: undefined as unknown,
+}));
+
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('@/shared/config/database', () => ({
@@ -14,7 +22,8 @@ vi.mock('@/shared/config/database', () => ({
 }));
 
 vi.mock('@/shared/hooks', () => ({
-  useDebounce: (value: unknown) => value,
+  useDebounce: (value: unknown) =>
+    debounceState.value === undefined ? value : debounceState.value,
 }));
 
 vi.mock('@/components/ui/dialog', () => ({
@@ -23,6 +32,10 @@ vi.mock('@/components/ui/dialog', () => ({
   DialogFooter: ({ children }: { children?: any }) => <div>{children}</div>,
   DialogHeader: ({ children }: { children?: any }) => <div>{children}</div>,
   DialogTitle: ({ children }: { children?: any }) => <div>{children}</div>,
+}));
+
+vi.mock('sonner', () => ({
+  toast,
 }));
 
 const browseProjectFiles = vi.mocked(api.browseProjectFiles);
@@ -99,6 +112,9 @@ describe('FileSelectionDialog', () => {
     } as any;
 
     browseProjectFiles.mockReset();
+    debounceState.value = undefined;
+    toast.error.mockReset();
+    toast.warning.mockReset();
     browseProjectFiles.mockResolvedValueOnce(initialResponse);
     browseProjectFiles.mockResolvedValueOnce(loadMoreResponse);
     browseProjectFiles.mockResolvedValue(initialResponse);
@@ -180,6 +196,248 @@ describe('FileSelectionDialog', () => {
         manifest_xml: 'default.xml',
         group: 'platform',
       }),
+    );
+  });
+
+  it('navigates nested directories with exact path values', async () => {
+    browseProjectFiles.mockReset();
+    browseProjectFiles
+      .mockResolvedValueOnce({
+        has_more: false,
+        items: [{ kind: 'directory', path: 'a', size: 0 }],
+        keyword: '',
+        last_synced_at: 1710000000,
+        limit: 200,
+        offset: 0,
+        path: '',
+        repository_signature: 'repo-signature-a',
+        repository_spec: {
+          branch_name: 'release/main',
+          group: 'platform',
+          manifest_xml: 'default.xml',
+          repository_type: 'multi',
+          repository_url: 'https://example.com/manifest.git',
+        },
+        total: 1,
+      } as any)
+      .mockResolvedValueOnce({
+        has_more: false,
+        items: [{ kind: 'directory', path: 'a/b', size: 0 }],
+        keyword: '',
+        last_synced_at: 1710000000,
+        limit: 200,
+        offset: 0,
+        path: 'a',
+        repository_signature: 'repo-signature-a',
+        repository_spec: {
+          branch_name: 'release/main',
+          group: 'platform',
+          manifest_xml: 'default.xml',
+          repository_type: 'multi',
+          repository_url: 'https://example.com/manifest.git',
+        },
+        total: 1,
+      } as any)
+      .mockResolvedValueOnce({
+        has_more: false,
+        items: [{ kind: 'directory', path: 'a/b/c', size: 0 }],
+        keyword: '',
+        last_synced_at: 1710000000,
+        limit: 200,
+        offset: 0,
+        path: 'a/b',
+        repository_signature: 'repo-signature-a',
+        repository_spec: {
+          branch_name: 'release/main',
+          group: 'platform',
+          manifest_xml: 'default.xml',
+          repository_type: 'multi',
+          repository_url: 'https://example.com/manifest.git',
+        },
+        total: 1,
+      } as any);
+
+    act(() => {
+      root.render(<FileSelectionDialog {...baseProps} />);
+    });
+    await flushEffects();
+
+    let enterButtons = Array.from(container.querySelectorAll('button')).filter((button) =>
+      button.textContent?.includes('进入'),
+    );
+    expect(enterButtons).toHaveLength(1);
+
+    act(() => {
+      enterButtons[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    act(() => {
+      const nextButtons = Array.from(container.querySelectorAll('button')).filter((button) =>
+        button.textContent?.includes('进入'),
+      );
+      nextButtons[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    expect(browseProjectFiles).toHaveBeenNthCalledWith(
+      1,
+      'project-1',
+      expect.objectContaining({ path: '', keyword: '' }),
+    );
+    expect(browseProjectFiles).toHaveBeenNthCalledWith(
+      2,
+      'project-1',
+      expect.objectContaining({ path: 'a', keyword: '' }),
+    );
+    expect(browseProjectFiles).toHaveBeenNthCalledWith(
+      3,
+      'project-1',
+      expect.objectContaining({ path: 'a/b', keyword: '' }),
+    );
+  });
+
+  it('clears stale search keyword when entering a directory', async () => {
+    debounceState.value = 'diag';
+    browseProjectFiles.mockReset();
+    browseProjectFiles
+      .mockResolvedValueOnce({
+        has_more: false,
+        items: [{ kind: 'directory', path: 'a/b', size: 0 }],
+        keyword: 'diag',
+        last_synced_at: 1710000000,
+        limit: 200,
+        offset: 0,
+        path: '',
+        repository_signature: 'repo-signature-a',
+        repository_spec: {
+          branch_name: 'release/main',
+          group: 'platform',
+          manifest_xml: 'default.xml',
+          repository_type: 'multi',
+          repository_url: 'https://example.com/manifest.git',
+        },
+        total: 1,
+      } as any)
+      .mockResolvedValueOnce({
+        has_more: false,
+        items: [{ kind: 'file', path: 'a/b/file.txt', size: 4 }],
+        keyword: '',
+        last_synced_at: 1710000000,
+        limit: 200,
+        offset: 0,
+        path: 'a/b',
+        repository_signature: 'repo-signature-a',
+        repository_spec: {
+          branch_name: 'release/main',
+          group: 'platform',
+          manifest_xml: 'default.xml',
+          repository_type: 'multi',
+          repository_url: 'https://example.com/manifest.git',
+        },
+        total: 1,
+      } as any);
+
+    act(() => {
+      root.render(<FileSelectionDialog {...baseProps} />);
+    });
+    await flushEffects();
+
+    const enterButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('进入'),
+    );
+    act(() => {
+      enterButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    expect(browseProjectFiles).toHaveBeenLastCalledWith(
+      'project-1',
+      expect.objectContaining({ path: 'a/b', keyword: '' }),
+    );
+  });
+
+  it('ignores stale request failures after switching directories quickly', async () => {
+    let rejectFirst: ((reason?: unknown) => void) | undefined;
+    let resolveSecond: ((value: unknown) => void) | undefined;
+    const firstPromise = new Promise((_, reject) => {
+      rejectFirst = reject;
+    });
+    const secondPromise = new Promise((resolve) => {
+      resolveSecond = resolve;
+    });
+
+    browseProjectFiles.mockReset();
+    browseProjectFiles
+      .mockResolvedValueOnce({
+        has_more: false,
+        items: [{ kind: 'directory', path: 'a', size: 0 }],
+        keyword: '',
+        last_synced_at: 1710000000,
+        limit: 200,
+        offset: 0,
+        path: '',
+        repository_signature: 'repo-signature-a',
+        repository_spec: {
+          branch_name: 'release/main',
+          group: 'platform',
+          manifest_xml: 'default.xml',
+          repository_type: 'multi',
+          repository_url: 'https://example.com/manifest.git',
+        },
+        total: 1,
+      } as any)
+      .mockImplementationOnce(() => firstPromise as Promise<any>)
+      .mockImplementationOnce(() => secondPromise as Promise<any>);
+
+    act(() => {
+      root.render(<FileSelectionDialog {...baseProps} />);
+    });
+    await flushEffects();
+
+    const rootButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('进入'),
+    );
+    act(() => {
+      rootButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    act(() => {
+      const backButton = Array.from(container.querySelectorAll('button')).find((button) =>
+        button.textContent?.includes('返回上级'),
+      );
+      backButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    await act(async () => {
+      rejectFirst?.(new Error('目标目录不存在'));
+      resolveSecond?.({
+        has_more: false,
+        items: [{ kind: 'directory', path: 'a', size: 0 }],
+        keyword: '',
+        last_synced_at: 1710000000,
+        limit: 200,
+        offset: 0,
+        path: '',
+        repository_signature: 'repo-signature-a',
+        repository_spec: {
+          branch_name: 'release/main',
+          group: 'platform',
+          manifest_xml: 'default.xml',
+          repository_type: 'multi',
+          repository_url: 'https://example.com/manifest.git',
+        },
+        total: 1,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(browseProjectFiles).toHaveBeenLastCalledWith(
+      'project-1',
+      expect.objectContaining({ path: '', keyword: '' }),
     );
   });
 });

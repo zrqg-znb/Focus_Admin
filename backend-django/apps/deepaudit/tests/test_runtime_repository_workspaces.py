@@ -540,6 +540,152 @@ class ProjectRepositoryFileListingTestCase(RuntimeRepositoryWorkspaceTestCase):
         self.assertTrue(mock_cache.call_args.kwargs['force_refresh'])
         self.assertTrue(mock_cache.call_args.kwargs['force_multi_sync'])
 
+    def test_browse_files_supports_nested_directory_navigation(self) -> None:
+        user = SimpleNamespace(id='user-1')
+        project_instance = SimpleNamespace(
+            id='project-1',
+            owner_id='owner-1',
+            source_type='repository',
+            repository_url='https://example.com/repo.git',
+            repository_type='multi',
+            default_branch='main',
+            manifest_xml='default.xml',
+            group='platform',
+        )
+        access = SimpleNamespace(project=project_instance)
+        cache_repo = self.temp_root / 'cache-nested-repo'
+        (cache_repo / 'a' / 'b' / 'c').mkdir(parents=True, exist_ok=True)
+        (cache_repo / 'a' / 'root.txt').write_text('root\n', encoding='utf-8')
+        (cache_repo / 'a' / 'b' / 'mid.txt').write_text('mid\n', encoding='utf-8')
+        (cache_repo / 'a' / 'b' / 'c' / 'leaf.txt').write_text('leaf\n', encoding='utf-8')
+
+        with (
+            patch('apps.deepaudit.project.project_services.require_project_role', return_value=access),
+            patch('apps.deepaudit.project.project_services.repository_cache_enabled', return_value=True),
+            patch('apps.deepaudit.project.project_services.load_user_config_payload', return_value={'other_config': {}}),
+            patch('apps.deepaudit.project.project_services.load_ssh_private_key', return_value=None),
+            patch('apps.deepaudit.project.project_services.ensure_repository_cache', return_value=cache_repo),
+            patch(
+                'apps.deepaudit.project.project_services.get_repository_cache_info',
+                return_value={
+                    'cache_root': cache_repo.parent,
+                    'cache_repo': cache_repo,
+                    'state_path': cache_repo.parent / 'state.json',
+                    'cache_exists': True,
+                    'last_synced_at': 1234567890,
+                    'repository_spec': build_repository_spec(
+                        'https://example.com/repo.git',
+                        'main',
+                        repository_type='multi',
+                        manifest_xml='default.xml',
+                        group='platform',
+                    ),
+                },
+            ),
+        ):
+            root_payload = project_services.browse_files(user, 'project-1', path='a')
+            nested_payload = project_services.browse_files(user, 'project-1', path='a/b')
+            leaf_payload = project_services.browse_files(user, 'project-1', path='a/b/c')
+
+        self.assertEqual([item['path'] for item in root_payload['items']], ['a/b', 'a/root.txt'])
+        self.assertEqual([item['path'] for item in nested_payload['items']], ['a/b/c', 'a/b/mid.txt'])
+        self.assertEqual([item['path'] for item in leaf_payload['items']], ['a/b/c/leaf.txt'])
+
+    def test_browse_files_normalizes_directory_path_variants(self) -> None:
+        user = SimpleNamespace(id='user-1')
+        project_instance = SimpleNamespace(
+            id='project-1',
+            owner_id='owner-1',
+            source_type='repository',
+            repository_url='https://example.com/repo.git',
+            repository_type='multi',
+            default_branch='main',
+            manifest_xml='default.xml',
+            group='platform',
+        )
+        access = SimpleNamespace(project=project_instance)
+        cache_repo = self.temp_root / 'cache-path-normalization-repo'
+        (cache_repo / 'a' / 'b').mkdir(parents=True, exist_ok=True)
+        (cache_repo / 'a' / 'b' / 'file.txt').write_text('ok\n', encoding='utf-8')
+
+        with (
+            patch('apps.deepaudit.project.project_services.require_project_role', return_value=access),
+            patch('apps.deepaudit.project.project_services.repository_cache_enabled', return_value=True),
+            patch('apps.deepaudit.project.project_services.load_user_config_payload', return_value={'other_config': {}}),
+            patch('apps.deepaudit.project.project_services.load_ssh_private_key', return_value=None),
+            patch('apps.deepaudit.project.project_services.ensure_repository_cache', return_value=cache_repo),
+            patch(
+                'apps.deepaudit.project.project_services.get_repository_cache_info',
+                return_value={
+                    'cache_root': cache_repo.parent,
+                    'cache_repo': cache_repo,
+                    'state_path': cache_repo.parent / 'state.json',
+                    'cache_exists': True,
+                    'last_synced_at': 1234567890,
+                    'repository_spec': build_repository_spec(
+                        'https://example.com/repo.git',
+                        'main',
+                        repository_type='multi',
+                        manifest_xml='default.xml',
+                        group='platform',
+                    ),
+                },
+            ),
+        ):
+            normalized_payload = project_services.browse_files(user, 'project-1', path='a/b')
+            slash_payload = project_services.browse_files(user, 'project-1', path='/a/b/')
+            dotted_payload = project_services.browse_files(user, 'project-1', path='a//./b')
+
+        expected_paths = [item['path'] for item in normalized_payload['items']]
+        self.assertEqual(expected_paths, [item['path'] for item in slash_payload['items']])
+        self.assertEqual(expected_paths, [item['path'] for item in dotted_payload['items']])
+
+    def test_browse_files_raises_404_only_for_missing_directory(self) -> None:
+        user = SimpleNamespace(id='user-1')
+        project_instance = SimpleNamespace(
+            id='project-1',
+            owner_id='owner-1',
+            source_type='repository',
+            repository_url='https://example.com/repo.git',
+            repository_type='multi',
+            default_branch='main',
+            manifest_xml='default.xml',
+            group='platform',
+        )
+        access = SimpleNamespace(project=project_instance)
+        cache_repo = self.temp_root / 'cache-missing-dir-repo'
+        (cache_repo / 'a').mkdir(parents=True, exist_ok=True)
+
+        with (
+            patch('apps.deepaudit.project.project_services.require_project_role', return_value=access),
+            patch('apps.deepaudit.project.project_services.repository_cache_enabled', return_value=True),
+            patch('apps.deepaudit.project.project_services.load_user_config_payload', return_value={'other_config': {}}),
+            patch('apps.deepaudit.project.project_services.load_ssh_private_key', return_value=None),
+            patch('apps.deepaudit.project.project_services.ensure_repository_cache', return_value=cache_repo),
+            patch(
+                'apps.deepaudit.project.project_services.get_repository_cache_info',
+                return_value={
+                    'cache_root': cache_repo.parent,
+                    'cache_repo': cache_repo,
+                    'state_path': cache_repo.parent / 'state.json',
+                    'cache_exists': True,
+                    'last_synced_at': 1234567890,
+                    'repository_spec': build_repository_spec(
+                        'https://example.com/repo.git',
+                        'main',
+                        repository_type='multi',
+                        manifest_xml='default.xml',
+                        group='platform',
+                    ),
+                },
+            ),
+        ):
+            with self.assertRaises(HttpError) as raised:
+                project_services.browse_files(user, 'project-1', path='a/missing')
+
+        self.assertEqual(raised.exception.status_code, 404)
+        self.assertIn('目标目录不存在', str(raised.exception))
+
 
 class RuntimeSelectedFilesValidationTestCase(RuntimeRepositoryWorkspaceTestCase):
     def test_validate_selected_file_paths_splits_existing_and_missing(self) -> None:
