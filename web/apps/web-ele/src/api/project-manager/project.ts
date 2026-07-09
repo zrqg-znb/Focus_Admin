@@ -27,6 +27,7 @@ export interface ProjectOut {
   idvp_platform_id?: string;
   idvp_platform_name?: string;
   phase_configs?: ProjectPhaseConfig[];
+  release_plans?: ProjectReleasePlan[];
   ws_id?: string;
   version_c?: null | string;
   di_teams?: string[];
@@ -61,6 +62,22 @@ export interface ProjectPhaseConfig {
   smart_screen_version_names?: string[];
 }
 
+export interface ProjectReleasePlan {
+  branch_name: string;
+  cdc_platform_id?: null | string;
+  cdc_platform_name?: null | string;
+  id?: string;
+  idvp_platform_id?: null | string;
+  idvp_platform_name?: null | string;
+  order?: number;
+  platform_name?: string;
+  release_date: string;
+  release_vehicles: string[];
+  scenario?: 'cockpit' | 'vehicle';
+  version_type: string;
+  version_type_label?: string;
+}
+
 export interface ProjectCreatePayload {
   name: string;
   domain: string;
@@ -84,6 +101,7 @@ export interface ProjectCreatePayload {
   sub_teams?: string[];
   idvp_platform_id?: string;
   phase_configs?: ProjectPhaseConfig[];
+  release_plans?: ProjectReleasePlan[];
   ws_id?: string;
   version_c?: null | string;
   di_teams?: string[];
@@ -112,6 +130,7 @@ export interface ProjectUpdatePayload {
   sub_teams?: string[];
   idvp_platform_id?: string;
   phase_configs?: ProjectPhaseConfig[];
+  release_plans?: ProjectReleasePlan[];
   ws_id?: string;
   version_c?: null | string;
   di_teams?: string[];

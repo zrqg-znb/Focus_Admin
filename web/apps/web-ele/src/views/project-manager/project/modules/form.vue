@@ -4,7 +4,10 @@ import type {
   PlatformConfig,
   ViuHardwarePlatform,
 } from '#/api/project-manager/hardware';
-import type { ProjectVehicleLinkItem } from '#/api/project-manager/project';
+import type {
+  ProjectReleasePlan,
+  ProjectVehicleLinkItem,
+} from '#/api/project-manager/project';
 
 import { computed, ref, watch } from 'vue';
 
@@ -47,6 +50,7 @@ import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
 
 import { getProjectFormSchema } from '../data';
 import ProjectVehicleLinks from './ProjectVehicleLinks.vue';
+import ReleasePlanEditor from './ReleasePlanEditor.vue';
 
 const emit = defineEmits<{
   success: [];
@@ -118,6 +122,8 @@ const moduleRows = ref<ModuleRow[]>([]);
 const originalModuleIds = ref<string[]>([]);
 const powerInfoLinks = ref<ProjectVehicleLinkItem[]>([]);
 const hardwareSoftwareInterfaceDocs = ref<ProjectVehicleLinkItem[]>([]);
+const releasePlans = ref<ProjectReleasePlan[]>([]);
+const releasePlanEditorRef = ref<InstanceType<typeof ReleasePlanEditor>>();
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
@@ -187,6 +193,9 @@ const [Drawer, drawerApi] = useVbenDrawer({
         hardwareSoftwareInterfaceDocs.value = normalizeVehicleLinks(
           data.hardware_software_interface_doc,
         );
+        releasePlans.value = Array.isArray(data.release_plans)
+          ? data.release_plans
+          : [];
         normalizePhaseConfigs(data.phase_configs || []);
         milestoneForm.value = {
           qg1_date: '',
@@ -259,6 +268,7 @@ const [Drawer, drawerApi] = useVbenDrawer({
       dtsConfig.value = { ws_id: '', version_c: '', di_teams: [] };
       powerInfoLinks.value = [];
       hardwareSoftwareInterfaceDocs.value = [];
+      releasePlans.value = [];
       moduleRows.value = [];
       originalModuleIds.value = [];
       milestoneForm.value = {
@@ -794,6 +804,10 @@ async function onSubmit() {
       activeTab.value = 'iteration';
       return;
     }
+    if (!releasePlanEditorRef.value?.validate(true)) {
+      activeTab.value = 'release';
+      return;
+    }
     drawerApi.lock();
     try {
       // 前端校验重复模块
@@ -836,6 +850,7 @@ async function onSubmit() {
         phase_configs: enableHardwareConfig.value
           ? getPhasePayload()
           : undefined,
+        release_plans: releasePlans.value,
         design_id: normalizedDesignId,
         sub_teams: normalizedSubTeams,
         iteration_quality_oem_name:
@@ -1482,6 +1497,17 @@ async function onSubmit() {
                 </div>
               </ElFormItem>
             </ElForm>
+          </div>
+        </ElTabPane>
+        <ElTabPane label="发布计划配置" name="release">
+          <div class="mt-4">
+            <ReleasePlanEditor
+              ref="releasePlanEditorRef"
+              v-model="releasePlans"
+              :scenario="hardwareScenario"
+              :idvp-platforms="idvpPlatforms"
+              :cdc-platforms="cdcPlatforms"
+            />
           </div>
         </ElTabPane>
       </ElTabs>

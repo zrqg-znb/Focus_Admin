@@ -4,7 +4,10 @@ import type {
   PlatformConfig,
   ViuHardwarePlatform,
 } from '#/api/project-manager/hardware';
-import type { ProjectVehicleLinkItem } from '#/api/project-manager/project';
+import type {
+  ProjectReleasePlan,
+  ProjectVehicleLinkItem,
+} from '#/api/project-manager/project';
 
 import { computed, ref, watch } from 'vue';
 
@@ -33,6 +36,7 @@ import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
 
 import { getProjectFormSchema } from '../data';
 import ProjectVehicleLinks from './ProjectVehicleLinks.vue';
+import ReleasePlanEditor from './ReleasePlanEditor.vue';
 
 interface Props {
   modelValue?: boolean;
@@ -124,6 +128,8 @@ const smartScreenVersions = ref<PlatformConfig[]>([]);
 const idvpPlatformId = ref('');
 const powerInfoLinks = ref<ProjectVehicleLinkItem[]>([]);
 const hardwareSoftwareInterfaceDocs = ref<ProjectVehicleLinkItem[]>([]);
+const releasePlans = ref<ProjectReleasePlan[]>([]);
+const releasePlanEditorRef = ref<InstanceType<typeof ReleasePlanEditor>>();
 type PhaseConfigFormItem = {
   cdc_platform_id: string;
   smart_screen_version_ids: string[];
@@ -146,9 +152,10 @@ const steps = [
   { title: '代码质量配置', index: 4 },
   { title: '问题单配置', index: 5 },
   { title: '典配配置', index: 6 },
+  { title: '发布计划', index: 7 },
 ];
 
-const hardwareStepIndex = steps.length - 1;
+const hardwareStepIndex = steps.length - 2;
 
 const hardwareScenario = computed(() => {
   if (projectDomain.value.includes('座舱')) return 'cockpit';
@@ -613,6 +620,7 @@ function resetAll() {
   phaseConfigs.value = [];
   powerInfoLinks.value = [];
   hardwareSoftwareInterfaceDocs.value = [];
+  releasePlans.value = [];
 }
 
 async function handleSave() {
@@ -628,6 +636,10 @@ async function handleSave() {
     projectDomain.value = baseData.domain || '';
     if (!isHardwareConfigValid(true)) {
       currentStep.value = hardwareStepIndex;
+      return;
+    }
+    if (!releasePlanEditorRef.value?.validate(true)) {
+      currentStep.value = steps.length - 1;
       return;
     }
     if (!isIterationConfigValid(true)) {
@@ -665,6 +677,7 @@ async function handleSave() {
           ? idvpPlatformId.value || undefined
           : undefined,
       phase_configs: enableHardwareConfig.value ? getPhasePayload() : undefined,
+      release_plans: releasePlans.value,
       design_id: normalizedDesignId,
       sub_teams: normalizedSubTeams,
       iteration_quality_oem_name:
@@ -1381,6 +1394,23 @@ function handleClose() {
                 </ElFormItem>
               </div>
             </ElForm>
+          </div>
+        </div>
+      </div>
+      <!-- 步骤7：发布计划 -->
+      <div
+        v-show="currentStep === 6"
+        class="flex h-full items-start justify-center overflow-y-auto p-6"
+      >
+        <div class="w-full max-w-[1180px]">
+          <div class="border-border bg-card rounded-lg border p-6 shadow-sm">
+            <ReleasePlanEditor
+              ref="releasePlanEditorRef"
+              v-model="releasePlans"
+              :scenario="hardwareScenario"
+              :idvp-platforms="idvpPlatforms"
+              :cdc-platforms="cdcPlatforms"
+            />
           </div>
         </div>
       </div>
