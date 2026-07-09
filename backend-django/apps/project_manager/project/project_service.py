@@ -19,6 +19,7 @@ from .project_model import (
     PHASE_SCENARIO_VEHICLE,
     Project,
     ProjectPhaseConfig,
+    ProjectReleasePlan,
 )
 from .project_schema import ProjectCreateSchema, ProjectUpdateSchema
 
@@ -43,6 +44,11 @@ def _normalize_id_list(raw_values) -> list[str]:
         seen.add(text)
         normalized.append(text)
     return normalized
+
+
+def _normalize_release_vehicle_list(raw_values) -> list[str]:
+    """归一化发布车型列表，去掉空值并保持用户录入顺序。"""
+    return _normalize_id_list(raw_values)
 
 
 def _normalize_vehicle_link_items(raw_values, field_label: str) -> list[dict]:
@@ -332,12 +338,89 @@ def _sync_phase_configs(
             row.smart_screen_versions.set(smart_versions)
 
 
+def _build_release_plan_rows(
+    project: Project,
+    release_plans: list[dict],
+) -> list[ProjectReleasePlan]:
+    """校验并构造项目发布计划明细。"""
+    scenario = _resolve_phase_scenario(project.domain)
+    idvp_platforms = {
+        str(item.id): item for item in IdvpPlatform.objects.filter(is_deleted=False)
+    }
+    cdc_platforms = {
+        str(item.id): item for item in CdcPlatform.objects.filter(is_deleted=False)
+    }
+    rows: list[ProjectReleasePlan] = []
+
+    for index, item in enumerate(release_plans):
+        branch_name = str(item.get("branch_name") or "").strip()
+        if not branch_name:
+            raise HttpError(422, "发布计划分支名不能为空")
+
+        release_date = item.get("release_date")
+        if not release_date:
+            raise HttpError(422, f"分支 {branch_name} 的发布日期不能为空")
+
+        version_type = str(item.get("version_type") or "").strip()
+        if not version_type:
+            raise HttpError(422, f"分支 {branch_name} 的版本类型不能为空")
+
+        release_vehicles = _normalize_release_vehicle_list(
+            item.get("release_vehicles"),
+        )
+        if not release_vehicles:
+            raise HttpError(422, f"分支 {branch_name} 至少需要配置一个发布车型")
+
+        idvp_platform = None
+        cdc_platform = None
+        if scenario == PHASE_SCENARIO_VEHICLE:
+            idvp_platform_id = str(item.get("idvp_platform_id") or "").strip()
+            if not idvp_platform_id:
+                raise HttpError(422, f"分支 {branch_name} 需要选择IDVP平台")
+            idvp_platform = idvp_platforms.get(idvp_platform_id)
+            if not idvp_platform:
+                raise HttpError(422, f"分支 {branch_name} 的IDVP平台不存在")
+        else:
+            cdc_platform_id = str(item.get("cdc_platform_id") or "").strip()
+            if not cdc_platform_id:
+                raise HttpError(422, f"分支 {branch_name} 需要选择CDC平台")
+            cdc_platform = cdc_platforms.get(cdc_platform_id)
+            if not cdc_platform:
+                raise HttpError(422, f"分支 {branch_name} 的CDC平台不存在")
+
+        rows.append(
+            ProjectReleasePlan(
+                project=project,
+                branch_name=branch_name,
+                release_date=release_date,
+                version_type=version_type,
+                scenario=scenario,
+                idvp_platform=idvp_platform,
+                cdc_platform=cdc_platform,
+                release_vehicles=release_vehicles,
+                order=int(item.get("order") or index),
+            )
+        )
+    return rows
+
+
+def _sync_release_plans(project: Project, release_plans: list[dict] | None):
+    """全量同步项目发布计划；未传入时保留已有配置。"""
+    if release_plans is None:
+        return
+
+    rows = _build_release_plan_rows(project, release_plans)
+    project.release_plans.all().delete()
+    ProjectReleasePlan.objects.bulk_create(rows)
+
+
 @transaction.atomic
 def create_project(request, data: ProjectCreateSchema):
     try:
         data_dict = data.dict()
         manager_ids = data_dict.pop("manager_ids", [])
         phase_configs = data_dict.pop("phase_configs", None)
+        release_plans = data_dict.pop("release_plans", None)
         normalized_quality_switch, normalized_quality_oem_name, normalized_quality_module = (
             _normalize_iteration_quality_config(
                 enable_iteration=bool(data_dict.get("enable_iteration", True)),
@@ -377,6 +460,7 @@ def create_project(request, data: ProjectCreateSchema):
             phase_configs,
             require_when_enabled=True,
         )
+        _sync_release_plans(project, release_plans)
 
         if project.enable_milestone:
             Milestone.objects.create(project=project)
@@ -405,9 +489,11 @@ def update_project(request, id: str, data: ProjectUpdateSchema):
     old_di_teams = project.di_teams
 
     phase_configs_sentinel = object()
+    release_plans_sentinel = object()
     data_dict = data.dict(exclude_unset=True)
     manager_ids = data_dict.pop("manager_ids", None)
     phase_configs = data_dict.pop("phase_configs", phase_configs_sentinel)
+    release_plans = data_dict.pop("release_plans", release_plans_sentinel)
     enable_iteration = bool(data_dict.get("enable_iteration", project.enable_iteration))
     enable_iteration_quality_metrics = bool(
         data_dict.get(
@@ -465,6 +551,10 @@ def update_project(request, id: str, data: ProjectUpdateSchema):
             project.enable_hardware_config and not old_enable_hardware_config
         ),
     )
+    _sync_release_plans(
+        project,
+        None if release_plans is release_plans_sentinel else release_plans,
+    )
 
     if project.enable_milestone and not old_enable_milestone:
         if not hasattr(project, "milestone"):
@@ -501,6 +591,8 @@ def get_project(request, id: str):
             "managers",
             "phase_configs__cdc_platform",
             "phase_configs__smart_screen_versions",
+            "release_plans__idvp_platform",
+            "release_plans__cdc_platform",
         ),
         id=id,
     )

@@ -33,6 +33,16 @@ class ProjectPhaseConfigIn(Schema):
     )
 
 
+class ProjectReleasePlanIn(Schema):
+    branch_name: str = Field(..., description="分支名")
+    release_date: date = Field(..., description="发布日期")
+    version_type: str = Field(..., description="版本类型")
+    idvp_platform_id: Optional[str] = Field(None, description="IDVP平台ID")
+    cdc_platform_id: Optional[str] = Field(None, description="CDC平台ID")
+    release_vehicles: List[str] = Field(default_factory=list, description="发布车型")
+    order: int = Field(0, description="排序")
+
+
 class ProjectCreateSchema(Schema):
     name: str = Field(..., description="项目名")
     domain: str = Field(..., description="项目领域")
@@ -76,6 +86,9 @@ class ProjectCreateSchema(Schema):
     phase_configs: Optional[List[ProjectPhaseConfigIn]] = Field(
         None, description="项目阶段典配配置"
     )
+    release_plans: Optional[List[ProjectReleasePlanIn]] = Field(
+        None, description="项目发布计划配置"
+    )
 
 
 class ProjectUpdateSchema(Schema):
@@ -104,6 +117,7 @@ class ProjectUpdateSchema(Schema):
     enable_hardware_config: Optional[bool] = None
     idvp_platform_id: Optional[str] = None
     phase_configs: Optional[List[ProjectPhaseConfigIn]] = None
+    release_plans: Optional[List[ProjectReleasePlanIn]] = None
 
 
 class ProjectFilterSchema(Schema):
@@ -156,6 +170,22 @@ class ProjectPhaseConfigOut(Schema):
     )
 
 
+class ProjectReleasePlanOut(Schema):
+    id: str
+    branch_name: str
+    release_date: date
+    version_type: str
+    version_type_label: str = ""
+    scenario: str
+    idvp_platform_id: Optional[str] = None
+    idvp_platform_name: Optional[str] = None
+    cdc_platform_id: Optional[str] = None
+    cdc_platform_name: Optional[str] = None
+    platform_name: str = ""
+    release_vehicles: List[str] = Field(default_factory=list)
+    order: int = 0
+
+
 class ProjectOut(ModelSchema):
     managers_info: List[dict] = Field([], description="项目经理详情")
     is_favorited: bool = Field(False, description="当前用户是否收藏")
@@ -164,6 +194,9 @@ class ProjectOut(ModelSchema):
     idvp_platform_id: Optional[str] = None
     idvp_platform_name: Optional[str] = None
     phase_configs: List[ProjectPhaseConfigOut] = Field([], description="阶段典配配置")
+    release_plans: List[ProjectReleasePlanOut] = Field(
+        [], description="项目发布计划配置"
+    )
 
     class Meta:
         model = Project
@@ -231,6 +264,47 @@ class ProjectOut(ModelSchema):
                     ),
                     "smart_screen_version_ids": smart_screen_version_ids,
                     "smart_screen_version_names": smart_screen_version_names,
+                }
+            )
+        return payload
+
+    @staticmethod
+    def resolve_release_plans(obj):
+        release_items = list(obj.release_plans.all())
+        release_items.sort(
+            key=lambda item: (item.branch_name, item.release_date, item.order, item.id)
+        )
+        payload = []
+        for item in release_items:
+            platform_name = ""
+            if item.scenario == "vehicle":
+                platform_name = item.idvp_platform.name if item.idvp_platform else ""
+            elif item.scenario == "cockpit":
+                platform_name = item.cdc_platform.name if item.cdc_platform else ""
+
+            payload.append(
+                {
+                    "id": str(item.id),
+                    "branch_name": item.branch_name,
+                    "release_date": item.release_date,
+                    "version_type": item.version_type,
+                    "version_type_label": item.version_type,
+                    "scenario": item.scenario,
+                    "idvp_platform_id": (
+                        str(item.idvp_platform_id) if item.idvp_platform_id else None
+                    ),
+                    "idvp_platform_name": (
+                        item.idvp_platform.name if item.idvp_platform else None
+                    ),
+                    "cdc_platform_id": (
+                        str(item.cdc_platform_id) if item.cdc_platform_id else None
+                    ),
+                    "cdc_platform_name": (
+                        item.cdc_platform.name if item.cdc_platform else None
+                    ),
+                    "platform_name": platform_name,
+                    "release_vehicles": item.release_vehicles or [],
+                    "order": item.order,
                 }
             )
         return payload

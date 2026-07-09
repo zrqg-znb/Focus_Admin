@@ -13,31 +13,38 @@ router = Router(tags=["Project"], auth=GlobalAuth())
 
 @router.post("/", response=ProjectOut, summary="创建项目")
 def create_project(request, data: ProjectCreateSchema):
+    """创建项目并同步项目关联配置。"""
     return project_service.create_project(request, data)
 
 @router.put("/{id}", response=ProjectOut, summary="更新项目")
 def update_project(request, id: str, data: ProjectUpdateSchema):
+    """更新项目基础信息、阶段典配和发布计划配置。"""
     return project_service.update_project(request, id, data)
 
 @router.delete("/{id}", response=ProjectOut, summary="删除项目")
 def delete_project(request, id: str):
+    """软删除指定项目。"""
     return project_service.delete_project(request, id)
 
 @router.get("/{id}", response=ProjectOut, summary="获取项目详情")
 def get_project(request, id: str):
+    """获取项目详情及其关联配置。"""
     return project_service.get_project(request, id)
 
 @router.post("/{id}/favorite", response=bool, summary="收藏项目")
 def favorite_project(request, id: str):
+    """将项目加入当前用户收藏。"""
     return project_service.favorite_project(request, id)
 
 @router.delete("/{id}/favorite", response=bool, summary="取消收藏项目")
 def unfavorite_project(request, id: str):
+    """取消当前用户对项目的收藏。"""
     return project_service.unfavorite_project(request, id)
 
 @router.get("/", response=List[ProjectOut], summary="获取项目列表")
 @paginate(MyPagination)
 def list_projects(request, filters: ProjectFilterSchema = Query(...)):
+    """分页获取项目列表，支持项目配置与典配条件筛选。"""
     query = Q(is_deleted=False)
     
     if filters.keyword:
@@ -89,6 +96,8 @@ def list_projects(request, filters: ProjectFilterSchema = Query(...)):
             "managers",
             "phase_configs__cdc_platform",
             "phase_configs__smart_screen_versions",
+            "release_plans__idvp_platform",
+            "release_plans__cdc_platform",
         )
         .order_by("-sort", "-sys_create_datetime")
     )

@@ -9,7 +9,6 @@ PHASE_SCENARIO_CHOICES = [
     (PHASE_SCENARIO_COCKPIT, "座舱"),
 ]
 
-
 class Project(RootModel):
     name = models.CharField(max_length=255, verbose_name="项目名")
     domain = models.CharField(max_length=255, verbose_name="项目领域")
@@ -135,4 +134,57 @@ class ProjectPhaseConfig(RootModel):
                 fields=["project", "stage_name"],
                 name="uniq_pm_project_stage_name",
             )
+        ]
+
+
+class ProjectReleasePlan(RootModel):
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="release_plans",
+        verbose_name="所属项目",
+    )
+    branch_name = models.CharField(max_length=255, db_index=True, verbose_name="分支名")
+    release_date = models.DateField(db_index=True, verbose_name="发布日期")
+    version_type = models.CharField(
+        max_length=64,
+        db_index=True,
+        verbose_name="版本类型",
+    )
+    scenario = models.CharField(
+        max_length=20,
+        choices=PHASE_SCENARIO_CHOICES,
+        db_index=True,
+        verbose_name="发布场景",
+    )
+    idvp_platform = models.ForeignKey(
+        "project_manager.IdvpPlatform",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="release_plans",
+        verbose_name="IDVP平台",
+    )
+    cdc_platform = models.ForeignKey(
+        "project_manager.CdcPlatform",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="release_plans",
+        verbose_name="CDC平台",
+    )
+    release_vehicles = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name="发布车型",
+    )
+    order = models.IntegerField(default=0, verbose_name="排序")
+
+    class Meta:
+        db_table = "pm_project_release_plan"
+        verbose_name = "项目发布计划"
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=["project", "branch_name"], name="pm_rel_project_branch_idx"),
+            models.Index(fields=["release_date", "version_type"], name="pm_rel_date_version_idx"),
         ]

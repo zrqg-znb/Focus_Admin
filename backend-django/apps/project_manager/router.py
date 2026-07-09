@@ -12,6 +12,7 @@ from .requirement_workspace.requirement_workspace_api import (
 )
 from .sync_log_api import router as sync_log_router
 from .dts_statistics.dts_statistics_api import router as dts_statistics_router
+from .release_plan.release_plan_api import router as release_plan_router
 
 router = Router()
 
@@ -25,4 +26,5 @@ router.add_router("/report", report_router)
 router.add_router("/requirement-board", requirement_board_router)
 router.add_router("/requirement-workspace", requirement_workspace_router)
 router.add_router("/dts-statistics", dts_statistics_router)
+router.add_router("/release-plans", release_plan_router)
 router.add_router("/", sync_log_router)
