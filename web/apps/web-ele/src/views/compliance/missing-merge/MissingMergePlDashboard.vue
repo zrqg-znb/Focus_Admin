@@ -1,19 +1,27 @@
 <script lang="ts" setup>
 import type { EchartsUIType } from '@vben/plugins/echarts';
+import type { OrganizationItem, RepositoryItem } from '#/api/compliance/base';
+import type { MissingMergePlGroupOption } from '#/api/compliance/missing-merge';
 
 import type {
   MissingMergePlDashboard,
   MissingMergeRecordListParams,
 } from '#/api/compliance/missing-merge';
 
-import { nextTick, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
 import dayjs from 'dayjs';
 import {
   ElButton,
+  ElCascader,
+  ElDatePicker,
   ElEmpty,
+  ElForm,
+  ElFormItem,
+  ElOption,
+  ElSelect,
   ElTable,
   ElTableColumn,
   ElTag,
@@ -23,7 +31,19 @@ import { getMissingMergePlDashboardApi } from '#/api/compliance/missing-merge';
 
 const props = defineProps<{
   active: boolean;
+  mergedRange: string[];
+  organizations: OrganizationItem[];
+  plGroupIds: string[];
+  plGroups: MissingMergePlGroupOption[];
   params: MissingMergeRecordListParams;
+  repositoryOptions: RepositoryItem[];
+  scopeValues: string[];
+}>();
+
+const emit = defineEmits<{
+  'update:mergedRange': [value: string[]];
+  'update:plGroupIds': [value: string[]];
+  'update:scopeValues': [value: string[]];
 }>();
 
 const loading = ref(false);
@@ -33,8 +53,65 @@ const statusChartRef = ref<EchartsUIType>();
 const { renderEcharts: renderTrendChart } = useEcharts(trendChartRef);
 const { renderEcharts: renderStatusChart } = useEcharts(statusChartRef);
 
+const ORG_SCOPE_PREFIX = 'org:';
+const REPO_SCOPE_PREFIX = 'repo:';
+const scopeCascaderProps = {
+  checkStrictly: true,
+  children: 'children',
+  emitPath: false,
+  label: 'label',
+  multiple: true,
+  value: 'value',
+};
+
+const scopeCascaderOptions = computed(() =>
+  buildScopeCascaderOptions(props.organizations, props.repositoryOptions),
+);
+
 function formatTime(value?: null | string) {
   return value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '-';
+}
+
+function buildScopeCascaderOptions(
+  organizations: OrganizationItem[],
+  repositories: RepositoryItem[],
+) {
+  // 看板沿用列表相同的组织/代码库树，保证两个视图的范围定义一致。
+  const repositoriesByOrg = new Map<string, RepositoryItem[]>();
+  repositories.forEach((repository) => {
+    const rows = repositoriesByOrg.get(repository.organization_id) || [];
+    rows.push(repository);
+    repositoriesByOrg.set(repository.organization_id, rows);
+  });
+  const buildNode = (item: OrganizationItem) => ({
+    children: [
+      ...(item.children || []).map(buildNode),
+      ...((repositoriesByOrg.get(item.id) || [])
+        .slice()
+        .sort((left, right) =>
+          left.project_name.localeCompare(right.project_name, 'zh-CN'),
+        )
+        .map((repository) => ({
+          label: `${repository.project_name}（${repository.project_id}）`,
+          value: `${REPO_SCOPE_PREFIX}${repository.id}`,
+        })) as Array<{ label: string; value: string }>),
+    ],
+    label: `${item.name}（${item.group_id}）`,
+    value: `${ORG_SCOPE_PREFIX}${item.id}`,
+  });
+  return organizations.map(buildNode);
+}
+
+function handleScopeChange(value: string[]) {
+  emit('update:scopeValues', value || []);
+}
+
+function handlePlGroupChange(value: string[]) {
+  emit('update:plGroupIds', value || []);
+}
+
+function handleMergedRangeChange(value?: string[] | null) {
+  emit('update:mergedRange', value || []);
 }
 
 function renderCharts() {
@@ -127,6 +204,56 @@ watch(
       <ElButton @click="loadDashboard">刷新看板</ElButton>
     </div>
 
+    <ElForm class="dashboard-toolbar" inline label-position="top">
+      <ElFormItem class="dashboard-toolbar__scope" label="组织/代码库">
+        <ElCascader
+          :model-value="scopeValues"
+          clearable
+          collapse-tags
+          collapse-tags-tooltip
+          filterable
+          :max-collapse-tags="1"
+          :options="scopeCascaderOptions"
+          placeholder="选择组织或代码库（支持多选）"
+          :props="scopeCascaderProps"
+          @change="handleScopeChange"
+          @clear="handleScopeChange([])"
+        />
+      </ElFormItem>
+      <ElFormItem class="dashboard-toolbar__pl" label="PL组">
+        <ElSelect
+          :model-value="plGroupIds"
+          clearable
+          collapse-tags
+          collapse-tags-tooltip
+          filterable
+          multiple
+          placeholder="全部PL组"
+          @change="handlePlGroupChange"
+          @clear="handlePlGroupChange([])"
+        >
+          <ElOption
+            v-for="item in plGroups"
+            :key="item.id"
+            :label="item.name"
+            :value="item.id"
+          />
+        </ElSelect>
+      </ElFormItem>
+      <ElFormItem class="dashboard-toolbar__range" label="合入时间">
+        <ElDatePicker
+          :model-value="mergedRange"
+          clearable
+          end-placeholder="合入结束"
+          range-separator="至"
+          start-placeholder="合入开始"
+          type="datetimerange"
+          value-format="YYYY-MM-DDTHH:mm:ssZ"
+          @change="handleMergedRangeChange"
+        />
+      </ElFormItem>
+    </ElForm>
+
     <template v-if="dashboard">
       <div class="chart-grid">
         <div class="chart-panel chart-panel-wide">
@@ -198,6 +325,44 @@ watch(
   color: var(--el-text-color-secondary);
 }
 
+.dashboard-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  padding: 12px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 6px;
+  background: var(--el-bg-color);
+}
+
+.dashboard-toolbar :deep(.el-form-item) {
+  margin: 0;
+}
+
+.dashboard-toolbar :deep(.el-form-item__label) {
+  padding-bottom: 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.dashboard-toolbar :deep(.el-cascader),
+.dashboard-toolbar :deep(.el-date-editor),
+.dashboard-toolbar :deep(.el-select) {
+  width: 100%;
+}
+
+.dashboard-toolbar__scope {
+  width: 420px;
+}
+
+.dashboard-toolbar__pl {
+  width: 280px;
+}
+
+.dashboard-toolbar__range {
+  width: 420px;
+}
+
 .chart-grid {
   min-height: 320px;
 }
@@ -228,6 +393,12 @@ watch(
   .chart-grid,
   .dashboard-header {
     flex-direction: column;
+  }
+
+  .dashboard-toolbar__pl,
+  .dashboard-toolbar__range,
+  .dashboard-toolbar__scope {
+    width: 100%;
   }
 }
 </style>

@@ -15,7 +15,6 @@ import type { FormInstance, FormRules } from 'element-plus';
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
-import { Search } from '@vben/icons';
 
 import dayjs from 'dayjs';
 import {
@@ -57,6 +56,7 @@ import {
   STATUS_OPTIONS,
   useMissingMergeColumns,
 } from './data';
+import ComplianceHeaderFilter from '../components/ComplianceHeaderFilter.vue';
 import MissingMergeScanDialog from '../components/MissingMergeScanDialog.vue';
 import MissingMergePlDashboard from './MissingMergePlDashboard.vue';
 
@@ -84,6 +84,9 @@ const releaseBranch = ref('');
 const mergedRange = ref<string[]>([]);
 const detectedRange = ref<string[]>([]);
 const activeView = ref<'dashboard' | 'list'>('list');
+const dashboardScopeValues = ref<string[]>([]);
+const dashboardPlGroupIds = ref<string[]>([]);
+const dashboardMergedRange = ref<string[]>([]);
 
 const organizationTree = ref<OrganizationItem[]>([]);
 const repositoryOptions = ref<RepositoryItem[]>([]);
@@ -153,7 +156,7 @@ const scopeCascaderOptions = computed(() =>
   buildScopeCascaderOptions(organizationTree.value, repositoryOptions.value),
 );
 
-const dashboardParams = computed(() => buildRecordQueryParams());
+const dashboardParams = computed(() => buildDashboardQueryParams());
 
 const [Grid, gridApi] = useZqTable<MissingMergeRecordItem>({
   showSearchForm: false,
@@ -282,7 +285,7 @@ function buildPlGroupFilterOptions(
 }
 
 function buildRecordQueryParams(): MissingMergeRecordListParams {
-  // 列表和看板共用同一套筛选参数，避免视图切换后统计口径变化。
+  // 列表筛选现在只由表头驱动，不再透传到 PL 组看板。
   const scope = parseScopeSelection();
   return {
     author_username: authorUsername.value || undefined,
@@ -298,6 +301,59 @@ function buildRecordQueryParams(): MissingMergeRecordListParams {
     status: (selectedStatus.value as MissingMergeStatus) || undefined,
     trunk_branch: trunkBranch.value || undefined,
   };
+}
+
+function buildDashboardQueryParams(): MissingMergeRecordListParams {
+  // 看板保留独立的简化筛选，避免列表表头状态在切换视图后形成隐式过滤。
+  const scope = parseScopeSelection(dashboardScopeValues.value);
+  return {
+    merged_after: dashboardMergedRange.value[0] || undefined,
+    merged_before: dashboardMergedRange.value[1] || undefined,
+    organization_ids: scope.organization_ids,
+    pl_group_ids: dashboardPlGroupIds.value,
+    repository_ids: scope.repository_ids,
+  };
+}
+
+function hasFilterValue(value: unknown) {
+  // 表头图标通过该判断决定高亮态，统一处理字符串、数组和时间范围。
+  if (Array.isArray(value)) return value.length > 0;
+  if (value === null || value === undefined) return false;
+  return `${value}`.trim().length > 0;
+}
+
+function applyHeaderTextFilter(close?: () => void) {
+  reloadRecords(true);
+  close?.();
+}
+
+function clearHeaderTextFilter(
+  setter: () => void,
+  close?: () => void,
+) {
+  // 文本类筛选清空后立即查询，并关闭当前下拉面板。
+  setter();
+  reloadRecords(true);
+  close?.();
+}
+
+function applyHeaderFilter(close?: () => void) {
+  // 非文本筛选统一立即查询；多选面板默认保持打开时不主动关闭。
+  reloadRecords(true);
+  close?.();
+}
+
+function clearHeaderFilter(setter: () => void, close?: () => void) {
+  setter();
+  reloadRecords(true);
+  close?.();
+}
+
+function currentScopeSelectionValues() {
+  // 手动同步默认沿用当前视图的范围，列表和看板各取各的筛选状态。
+  return activeView.value === 'dashboard'
+    ? dashboardScopeValues.value
+    : selectedScopeValues.value;
 }
 
 async function loadOptions() {
@@ -369,7 +425,7 @@ async function submitStatus() {
 
 async function openScanDialog() {
   await loadOptions();
-  const scope = parseScopeSelection();
+  const scope = parseScopeSelection(currentScopeSelectionValues());
   scanInitialOrganizationId.value =
     scope.repository_ids.length === 0 && scope.organization_ids.length === 1
       ? scope.organization_ids[0]!
@@ -426,6 +482,14 @@ onMounted(async () => {
             <ElRadioButton label="list">风险列表</ElRadioButton>
             <ElRadioButton label="dashboard">PL组看板</ElRadioButton>
           </ElRadioGroup>
+          <ElButton @click="loadLatestTasks(true)">刷新任务</ElButton>
+          <ElButton
+            type="primary"
+            :loading="optionsLoading"
+            @click="openScanDialog"
+          >
+            手动同步
+          </ElButton>
           <div class="summary-task" v-if="latestTask">
             <ElTag
               :type="
@@ -453,139 +517,207 @@ onMounted(async () => {
       </div>
 
       <!-- 列表和看板共用这一组筛选条件，避免切换视图后统计口径割裂。 -->
-      <ElForm
-        class="missing-merge-toolbar"
-        inline
-        label-position="left"
-        label-width="72px"
-      >
-        <ElFormItem class="toolbar-filter toolbar-filter-keyword" label="关键词">
-          <ElInput
-            v-model="keyword"
-            clearable
-            placeholder="标题 / Change Key / 代码库"
-            :prefix-icon="Search"
-            @clear="reloadRecords(true)"
-            @keyup.enter="reloadRecords(true)"
-          />
-        </ElFormItem>
-        <ElFormItem class="toolbar-filter" label="状态">
-          <ElSelect
-            v-model="selectedStatus"
-            clearable
-            placeholder="全部状态"
-            @change="reloadRecords(true)"
-            @clear="reloadRecords(true)"
-          >
-            <ElOption
-              v-for="item in STATUS_OPTIONS"
-              :key="item.value"
-              :label="item.label"
-              :value="item.value"
-            />
-          </ElSelect>
-        </ElFormItem>
-        <ElFormItem class="toolbar-filter toolbar-filter-scope" label="组织/代码库">
-          <ElCascader
-            v-model="selectedScopeValues"
-            clearable
-            collapse-tags
-            collapse-tags-tooltip
-            filterable
-            :max-collapse-tags="1"
-            :options="scopeCascaderOptions"
-            placeholder="选择组织或代码库（支持多选）"
-            :props="scopeCascaderProps"
-            @change="reloadRecords(true)"
-            @clear="reloadRecords(true)"
-          />
-        </ElFormItem>
-        <ElFormItem class="toolbar-filter" label="创建人">
-          <ElInput
-            v-model="authorUsername"
-            clearable
-            placeholder="姓名 / 工号"
-            @clear="reloadRecords(true)"
-            @keyup.enter="reloadRecords(true)"
-          />
-        </ElFormItem>
-        <ElFormItem class="toolbar-filter" label="PL组">
-          <ElSelect
-            v-model="selectedPlGroupIds"
-            clearable
-            collapse-tags
-            collapse-tags-tooltip
-            multiple
-            placeholder="全部PL组"
-            @change="reloadRecords(true)"
-            @clear="reloadRecords(true)"
-          >
-            <ElOption
-              v-for="item in plGroupOptions"
-              :key="item.id"
-              :label="item.name"
-              :value="item.id"
-            />
-          </ElSelect>
-        </ElFormItem>
-        <ElFormItem class="toolbar-filter" label="主干分支">
-          <ElInput
-            v-model="trunkBranch"
-            clearable
-            placeholder="分支名"
-            @clear="reloadRecords(true)"
-            @keyup.enter="reloadRecords(true)"
-          />
-        </ElFormItem>
-        <ElFormItem class="toolbar-filter" label="发布分支">
-          <ElInput
-            v-model="releaseBranch"
-            clearable
-            placeholder="分支名"
-            @clear="reloadRecords(true)"
-            @keyup.enter="reloadRecords(true)"
-          />
-        </ElFormItem>
-        <ElFormItem class="toolbar-filter toolbar-filter-range" label="合入时间">
-          <ElDatePicker
-            v-model="mergedRange"
-            clearable
-            end-placeholder="合入结束"
-            range-separator="至"
-            start-placeholder="合入开始"
-            type="datetimerange"
-            value-format="YYYY-MM-DDTHH:mm:ssZ"
-            @change="reloadRecords(true)"
-          />
-        </ElFormItem>
-        <ElFormItem class="toolbar-filter toolbar-filter-range" label="识别时间">
-          <ElDatePicker
-            v-model="detectedRange"
-            clearable
-            end-placeholder="识别结束"
-            range-separator="至"
-            start-placeholder="识别开始"
-            type="datetimerange"
-            value-format="YYYY-MM-DDTHH:mm:ssZ"
-            @change="reloadRecords(true)"
-          />
-        </ElFormItem>
-        <ElFormItem class="toolbar-actions-item">
-          <div class="toolbar-actions-content">
-            <ElButton @click="reloadRecords(true)">查询</ElButton>
-            <ElButton @click="loadLatestTasks(true)">刷新任务</ElButton>
-            <ElButton
-              type="primary"
-              :loading="optionsLoading"
-              @click="openScanDialog"
-            >
-              手动同步
-            </ElButton>
-          </div>
-        </ElFormItem>
-      </ElForm>
-
       <Grid v-if="activeView === 'list'" class="min-h-0 flex-1">
+        <template #header-title>
+          <ComplianceHeaderFilter
+            label="漏合CR"
+            :active="hasFilterValue(keyword)"
+            :panel-width="320"
+            @apply="applyHeaderTextFilter()"
+            @clear="clearHeaderTextFilter(() => (keyword = ''))"
+          >
+            <ElInput
+              v-model="keyword"
+              clearable
+              placeholder="标题 / Change Key / 代码库"
+              @keyup.enter="applyHeaderTextFilter()"
+            />
+          </ComplianceHeaderFilter>
+        </template>
+
+        <template #header-status_label>
+          <ComplianceHeaderFilter
+            label="状态"
+            :active="hasFilterValue(selectedStatus)"
+            :panel-width="240"
+            @apply="applyHeaderFilter()"
+            @clear="clearHeaderFilter(() => (selectedStatus = ''))"
+          >
+            <ElSelect v-model="selectedStatus" clearable placeholder="全部状态">
+              <ElOption
+                v-for="item in STATUS_OPTIONS"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </ElSelect>
+          </ComplianceHeaderFilter>
+        </template>
+
+        <template #header-repository_name>
+          <ComplianceHeaderFilter
+            label="代码库"
+            :active="hasFilterValue(selectedScopeValues)"
+            :panel-width="360"
+            @apply="applyHeaderFilter()"
+            @clear="clearHeaderFilter(() => (selectedScopeValues = []))"
+          >
+            <ElCascader
+              v-model="selectedScopeValues"
+              clearable
+              collapse-tags
+              collapse-tags-tooltip
+              filterable
+              :max-collapse-tags="1"
+              :options="scopeCascaderOptions"
+              placeholder="选择组织或代码库（支持多选）"
+              :props="scopeCascaderProps"
+            />
+          </ComplianceHeaderFilter>
+        </template>
+
+        <template #header-organization_name>
+          <ComplianceHeaderFilter
+            label="组织"
+            :active="hasFilterValue(selectedScopeValues)"
+            :panel-width="360"
+            @apply="applyHeaderFilter()"
+            @clear="clearHeaderFilter(() => (selectedScopeValues = []))"
+          >
+            <ElCascader
+              v-model="selectedScopeValues"
+              clearable
+              collapse-tags
+              collapse-tags-tooltip
+              filterable
+              :max-collapse-tags="1"
+              :options="scopeCascaderOptions"
+              placeholder="选择组织或代码库（支持多选）"
+              :props="scopeCascaderProps"
+            />
+          </ComplianceHeaderFilter>
+        </template>
+
+        <template #header-trunk_branch>
+          <ComplianceHeaderFilter
+            label="主干分支"
+            :active="hasFilterValue(trunkBranch)"
+            :panel-width="260"
+            @apply="applyHeaderTextFilter()"
+            @clear="clearHeaderTextFilter(() => (trunkBranch = ''))"
+          >
+            <ElInput
+              v-model="trunkBranch"
+              clearable
+              placeholder="分支名"
+              @keyup.enter="applyHeaderTextFilter()"
+            />
+          </ComplianceHeaderFilter>
+        </template>
+
+        <template #header-release_branch>
+          <ComplianceHeaderFilter
+            label="发布分支"
+            :active="hasFilterValue(releaseBranch)"
+            :panel-width="260"
+            @apply="applyHeaderTextFilter()"
+            @clear="clearHeaderTextFilter(() => (releaseBranch = ''))"
+          >
+            <ElInput
+              v-model="releaseBranch"
+              clearable
+              placeholder="分支名"
+              @keyup.enter="applyHeaderTextFilter()"
+            />
+          </ComplianceHeaderFilter>
+        </template>
+
+        <template #header-author_username>
+          <ComplianceHeaderFilter
+            label="创建人"
+            :active="hasFilterValue(authorUsername)"
+            :panel-width="260"
+            @apply="applyHeaderTextFilter()"
+            @clear="clearHeaderTextFilter(() => (authorUsername = ''))"
+          >
+            <ElInput
+              v-model="authorUsername"
+              clearable
+              placeholder="姓名 / 工号"
+              @keyup.enter="applyHeaderTextFilter()"
+            />
+          </ComplianceHeaderFilter>
+        </template>
+
+        <template #header-author_pl_group_name>
+          <ComplianceHeaderFilter
+            label="PL组"
+            :active="hasFilterValue(selectedPlGroupIds)"
+            :panel-width="300"
+            @apply="applyHeaderFilter()"
+            @clear="clearHeaderFilter(() => (selectedPlGroupIds = []))"
+          >
+            <ElSelect
+              v-model="selectedPlGroupIds"
+              clearable
+              collapse-tags
+              collapse-tags-tooltip
+              filterable
+              multiple
+              placeholder="全部PL组"
+            >
+              <ElOption
+                v-for="item in plGroupOptions"
+                :key="item.id"
+                :label="item.name"
+                :value="item.id"
+              />
+            </ElSelect>
+          </ComplianceHeaderFilter>
+        </template>
+
+        <template #header-merged_at>
+          <ComplianceHeaderFilter
+            label="主干合入时间"
+            :active="hasFilterValue(mergedRange)"
+            :panel-width="340"
+            @apply="applyHeaderFilter()"
+            @clear="clearHeaderFilter(() => (mergedRange = []))"
+          >
+            <ElDatePicker
+              v-model="mergedRange"
+              clearable
+              end-placeholder="合入结束"
+              range-separator="至"
+              start-placeholder="合入开始"
+              type="datetimerange"
+              value-format="YYYY-MM-DDTHH:mm:ssZ"
+              @change="applyHeaderFilter()"
+            />
+          </ComplianceHeaderFilter>
+        </template>
+
+        <template #header-detected_at>
+          <ComplianceHeaderFilter
+            label="识别时间"
+            :active="hasFilterValue(detectedRange)"
+            :panel-width="340"
+            @apply="applyHeaderFilter()"
+            @clear="clearHeaderFilter(() => (detectedRange = []))"
+          >
+            <ElDatePicker
+              v-model="detectedRange"
+              clearable
+              end-placeholder="识别结束"
+              range-separator="至"
+              start-placeholder="识别开始"
+              type="datetimerange"
+              value-format="YYYY-MM-DDTHH:mm:ssZ"
+              @change="applyHeaderFilter()"
+            />
+          </ComplianceHeaderFilter>
+        </template>
+
         <template #cell-title="{ row }">
           <div class="min-w-0 text-left">
             <div class="truncate font-medium" :title="row.title">
@@ -624,23 +756,15 @@ onMounted(async () => {
         </template>
 
         <template #cell-line_changes="{ row }">
-          <span class="text-[var(--el-color-success)]"
-            >+{{ row.added_lines }}</span
-          >
+          <span class="text-[var(--el-color-success)]">+{{ row.added_lines }}</span>
           <span class="mx-1 text-[var(--el-text-color-secondary)]">/</span>
-          <span class="text-[var(--el-color-danger)]"
-            >-{{ row.removed_lines }}</span
-          >
+          <span class="text-[var(--el-color-danger)]">-{{ row.removed_lines }}</span>
         </template>
 
         <template #cell-actions="{ row }">
           <div class="flex items-center justify-center gap-1">
-            <ElButton link type="primary" @click="openDetail(row)"
-              >详情</ElButton
-            >
-            <ElButton link type="primary" @click="openStatusDialog(row)"
-              >处理</ElButton
-            >
+            <ElButton link type="primary" @click="openDetail(row)">详情</ElButton>
+            <ElButton link type="primary" @click="openStatusDialog(row)">处理</ElButton>
           </div>
         </template>
       </Grid>
@@ -649,7 +773,16 @@ onMounted(async () => {
         v-else
         class="min-h-0 flex-1"
         :active="activeView === 'dashboard'"
+        :merged-range="dashboardMergedRange"
+        :organizations="organizationTree"
         :params="dashboardParams"
+        :pl-group-ids="dashboardPlGroupIds"
+        :pl-groups="plGroupOptions"
+        :repository-options="repositoryOptions"
+        :scope-values="dashboardScopeValues"
+        @update:merged-range="dashboardMergedRange = $event"
+        @update:pl-group-ids="dashboardPlGroupIds = $event"
+        @update:scope-values="dashboardScopeValues = $event"
       />
     </div>
 
@@ -852,68 +985,6 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 
-.missing-merge-toolbar {
-  // 固定宽度筛选项按自然顺序换行，避免搜索栏出现无规律断行。
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  width: 100%;
-  min-width: 0;
-  gap: 10px 12px;
-  margin: 0;
-}
-
-.missing-merge-toolbar :deep(.el-form-item) {
-  margin: 0;
-}
-
-.missing-merge-toolbar :deep(.el-form-item__label) {
-  height: 32px;
-  justify-content: flex-end;
-  padding-right: 8px;
-  font-size: 12px;
-  line-height: 32px;
-  color: var(--el-text-color-regular);
-}
-
-.missing-merge-toolbar :deep(.el-form-item__content) {
-  flex: 1;
-  min-width: 0;
-}
-
-.missing-merge-toolbar :deep(.el-input),
-.missing-merge-toolbar :deep(.el-cascader),
-.missing-merge-toolbar :deep(.el-select),
-.missing-merge-toolbar :deep(.el-date-editor) {
-  width: 100%;
-}
-
-.toolbar-filter {
-  width: 260px;
-}
-
-.toolbar-filter-keyword {
-  width: 320px;
-}
-
-.toolbar-filter-scope {
-  width: 420px;
-}
-
-.toolbar-filter-range {
-  width: 430px;
-}
-
-.toolbar-actions-item {
-  width: auto;
-}
-
-.toolbar-actions-content {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 .detail-section {
   margin-top: 18px;
 }
@@ -974,18 +1045,6 @@ onMounted(async () => {
   .summary-right {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .toolbar-filter,
-  .toolbar-filter-keyword,
-  .toolbar-filter-scope,
-  .toolbar-filter-range,
-  .toolbar-actions-item {
-    width: 100%;
-  }
-
-  .toolbar-actions-content {
-    width: 100%;
   }
 }
 </style>
