@@ -382,7 +382,7 @@ class ProjectReleasePlanTests(TestCase):
                 ),
             )
 
-    def test_release_plan_list_and_calendar_filters(self):
+    def test_release_plan_project_board_filters_and_project_pagination(self):
         project_service.create_project(
             self.request,
             ProjectCreateSchema(
@@ -406,18 +406,77 @@ class ProjectReleasePlanTests(TestCase):
                 ],
             ),
         )
+        project_service.create_project(
+            self.request,
+            ProjectCreateSchema(
+                name="Vehicle Board Project",
+                domain="车控项目",
+                type="量产",
+                code="vehicle-board-project",
+                manager_ids=[str(self.user.id)],
+                enable_milestone=False,
+                enable_iteration=False,
+                enable_quality=False,
+                enable_dts=False,
+                release_plans=[
+                    {
+                        "branch_name": "vehicle-main",
+                        "release_date": "2026-08-11",
+                        "version_type": "Release",
+                        "idvp_platform_id": str(self.idvp.id),
+                        "release_vehicles": ["车型A"],
+                    },
+                    {
+                        "branch_name": "vehicle-dev",
+                        "release_date": "2026-08-17",
+                        "version_type": "Beta",
+                        "idvp_platform_id": str(self.idvp.id),
+                        "release_vehicles": ["车型B"],
+                    },
+                ],
+            ),
+        )
 
         filters = ReleasePlanFilterSchema(
             keyword="Calendar",
+            scenario="cockpit",
             platform_keyword="CDC-R1",
             vehicle_keyword="车型Z",
             release_date_start="2026-08-01",
             release_date_end="2026-08-31",
         )
         rows = release_plan_service.list_release_plans(filters)
-        calendar = release_plan_service.get_release_plan_calendar(filters)
+        board = release_plan_service.get_release_plan_project_board(
+            filters,
+            page=1,
+            page_size=1,
+        )
 
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["platform_name"], "CDC-R1")
-        self.assertEqual(calendar["total"], 1)
-        self.assertEqual(calendar["days"][0]["date"].isoformat(), "2026-08-10")
+        self.assertEqual(board["total"], 1)
+        self.assertEqual(len(board["items"]), 1)
+        self.assertEqual(board["items"][0]["plan_count"], 1)
+        self.assertEqual(board["items"][0]["branch_count"], 1)
+        self.assertEqual(board["items"][0]["plans"][0]["branch_name"], "cockpit-main")
+        self.assertTrue(
+            all(item["week_start"].weekday() == 0 for item in board["weekly_trend"])
+        )
+
+        vehicle_board = release_plan_service.get_release_plan_project_board(
+            ReleasePlanFilterSchema(scenario="vehicle"),
+            page=1,
+            page_size=1,
+        )
+        self.assertEqual(vehicle_board["total"], 1)
+        self.assertEqual(len(vehicle_board["items"]), 1)
+        self.assertEqual(vehicle_board["items"][0]["plan_count"], 2)
+        self.assertEqual(vehicle_board["items"][0]["branch_count"], 2)
+        self.assertEqual(len(vehicle_board["items"][0]["plans"]), 2)
+
+        with self.assertRaises(HttpError):
+            release_plan_service.get_release_plan_project_board(
+                ReleasePlanFilterSchema(scenario="all"),
+                page=1,
+                page_size=20,
+            )

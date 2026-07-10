@@ -37,22 +37,40 @@ class ReleasePlanOut(Schema):
     order: int
 
 
-class ReleasePlanCalendarDay(Schema):
-    date: date
-    items: List[ReleasePlanOut] = Field(default_factory=list)
+class ReleasePlanProjectGroupOut(Schema):
+    project_id: str
+    project_name: str
+    project_code: str
+    project_domain: str
+    manager_names: List[str] = Field(default_factory=list)
+    plan_count: int
+    branch_count: int
+    next_release_date: Optional[date] = None
+    latest_release_date: Optional[date] = None
+    branch_names: List[str] = Field(default_factory=list)
+    version_types: List[str] = Field(default_factory=list)
+    platform_names: List[str] = Field(default_factory=list)
+    release_vehicles: List[str] = Field(default_factory=list)
+    plans: List[ReleasePlanOut] = Field(default_factory=list)
 
 
-class ReleasePlanVersionStat(Schema):
-    version_type: str
-    version_type_label: str
+class ReleasePlanWeeklyTrendOut(Schema):
+    week: str
+    week_start: date
     count: int
 
 
-class ReleasePlanCalendarOut(Schema):
+class ReleasePlanVersionWeeklyTrendOut(Schema):
+    week: str
+    week_start: date
+    version_type: str
+    count: int
+
+
+class ReleasePlanProjectBoardOut(Schema):
+    items: List[ReleasePlanProjectGroupOut] = Field(default_factory=list)
     total: int
-    upcoming_count: int
-    active_project_count: int
-    start_date: date
-    end_date: date
-    version_stats: List[ReleasePlanVersionStat] = Field(default_factory=list)
-    days: List[ReleasePlanCalendarDay] = Field(default_factory=list)
+    weekly_trend: List[ReleasePlanWeeklyTrendOut] = Field(default_factory=list)
+    version_weekly_trend: List[ReleasePlanVersionWeeklyTrendOut] = Field(
+        default_factory=list
+    )
