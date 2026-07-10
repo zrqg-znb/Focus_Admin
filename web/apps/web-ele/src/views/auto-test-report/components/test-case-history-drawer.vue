@@ -78,6 +78,7 @@ watch(
         </div>
         <div class="grid grid-cols-2 gap-2 text-sm text-gray-500">
           <div>VIU编号：{{ item.viu_code || '-' }}</div>
+          <div v-if="item.module">模块：{{ item.module }}</div>
           <div>开始时间：{{ item.start_time || '-' }}</div>
           <div>执行时长：{{ formatDuration(item.duration_seconds) }}</div>
           <div>上报时间：{{ item.reported_at || '-' }}</div>

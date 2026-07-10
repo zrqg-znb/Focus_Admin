@@ -3,7 +3,11 @@ import type { AutoTestReportDomain } from '#/views/auto-test-report/shared/domai
 import { requestClient } from '#/api/request';
 
 export type ResultStatus =
-  'failed' | 'missing' | 'skip' | 'success' | 'timeout';
+  | 'failed'
+  | 'missing'
+  | 'skip'
+  | 'success'
+  | 'timeout';
 export type FailureCategory = 'case' | 'environment' | 'version';
 
 export interface McuPlatformItem {
@@ -72,6 +76,7 @@ export interface TestCaseItem {
   vehicle_code: string;
   platform_name: string;
   viu_code: string;
+  module: string;
   case_no: string;
   case_name: string;
   remark?: string;
@@ -85,6 +90,7 @@ export interface TestCaseItem {
 export interface TestCasePayload {
   vehicle_id: string;
   viu_code: string;
+  module: string;
   case_no: string;
   case_name: string;
   remark?: string;
@@ -94,6 +100,7 @@ export interface TestCasePayload {
 
 export interface ImportCaseRow {
   viu_code?: string;
+  module?: string;
   case_no: string;
   case_name: string;
   remark?: string;
@@ -192,6 +199,7 @@ export interface DailyResultItem {
   result_id?: string;
   case_id: string;
   viu_code: string;
+  module: string;
   case_no: string;
   case_name: string;
   remark?: string;
@@ -210,6 +218,7 @@ export interface TestCaseHistoryRow {
   id: string;
   execute_date: string;
   viu_code: string;
+  module: string;
   status: ResultStatus;
   failure_reason?: string;
   failure_category?: FailureCategory;

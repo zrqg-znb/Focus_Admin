@@ -73,6 +73,7 @@ const caseForm = ref<TestCaseFormState>({
   case_no: '',
   case_name: '',
   viu_code: '',
+  module: '',
   remark: '',
   sort: 0,
   is_active: true,
@@ -243,6 +244,7 @@ function openCreate() {
     vehicle_path: initialPath,
     case_no: '',
     case_name: '',
+    module: '',
     viu_code:
       domain.value === 'vehicle'
         ? selectedVehicleViuOptions.value[0]?.value || ''
@@ -263,6 +265,7 @@ function openEdit(row: TestCaseItem) {
     vehicle_path: getVehiclePath(row.vehicle_id),
     case_no: row.case_no,
     case_name: row.case_name,
+    module: row.module || '',
     viu_code: row.viu_code || '',
     remark: row.remark || '',
     sort: row.sort,
@@ -286,10 +289,15 @@ async function submitCase() {
       ElMessage.warning('请先选择 VIU 编号');
       return;
     }
+    if (domain.value === 'cockpit_soc' && !caseForm.value.module.trim()) {
+      ElMessage.warning('请先填写模块');
+      return;
+    }
 
     const payload: TestCasePayload = {
       vehicle_id: actualVehicleId,
       viu_code: domain.value === 'vehicle' ? caseForm.value.viu_code : '',
+      module: domain.value === 'cockpit_soc' ? caseForm.value.module : '',
       case_no: caseForm.value.case_no,
       case_name: caseForm.value.case_name,
       remark: caseForm.value.remark,
@@ -384,7 +392,7 @@ function openHistory(row: TestCaseItem) {
   currentCaseId.value = row.id;
   historyTitle.value = `${row.case_no}${
     row.viu_code ? ` / ${row.viu_code}` : ''
-  } / ${row.case_name}`;
+  }${row.module ? ` / ${row.module}` : ''} / ${row.case_name}`;
   historyVisible.value = true;
 }
 
@@ -552,7 +560,13 @@ onMounted(async () => {
         <template #toolbar-actions>
           <div class="flex items-center gap-2">
             <ElButton type="primary" @click="openCreate">
-              {{ domain === 'vehicle' ? '新增车控用例' : '新增座舱用例' }}
+              {{
+                domain === 'vehicle'
+                  ? '新增车控用例'
+                  : domain === 'cockpit_soc'
+                    ? '新增座舱SOC用例'
+                    : '新增座舱MCU用例'
+              }}
             </ElButton>
             <ElButton type="danger" @click="removeSelected">批量删除</ElButton>
             <ElButton :loading="templateLoading" @click="downloadTemplate">
@@ -606,10 +620,14 @@ onMounted(async () => {
         caseDialogMode === 'create'
           ? domain === 'vehicle'
             ? '新增车控用例'
-            : '新增座舱用例'
+            : domain === 'cockpit_soc'
+              ? '新增座舱SOC用例'
+              : '新增座舱MCU用例'
           : domain === 'vehicle'
             ? '编辑车控用例'
-            : '编辑座舱用例'
+            : domain === 'cockpit_soc'
+              ? '编辑座舱SOC用例'
+              : '编辑座舱MCU用例'
       "
       width="560px"
     >
@@ -655,6 +673,14 @@ onMounted(async () => {
         </ElFormItem>
         <ElFormItem label="用例名称" prop="case_name" required>
           <ElInput v-model="caseForm.case_name" />
+        </ElFormItem>
+        <ElFormItem
+          v-if="domain === 'cockpit_soc'"
+          label="模块"
+          prop="module"
+          required
+        >
+          <ElInput v-model="caseForm.module" />
         </ElFormItem>
         <ElFormItem label="备注">
           <ElInput v-model="caseForm.remark" type="textarea" :rows="3" />

@@ -190,7 +190,7 @@ const statusOptions = Object.keys(RESULT_LABEL_MAP).map((key) => ({
 }));
 const downstreamTriggerBlockReasons = computed(() => {
   if (domain.value !== 'cockpit') {
-    return ['仅座舱视图支持触发下游任务'];
+    return ['仅座舱 MCU 视图支持触发下游任务'];
   }
   if (selectedPlatformId.value) {
     return ['触发下游任务前请先切换为全部平台'];
@@ -206,10 +206,11 @@ const canTriggerDownstream = computed(
 );
 const downstreamTriggerTip = computed(() => {
   if (canTriggerDownstream.value) {
-    return '当前座舱结果满足下游任务触发条件';
+    return '当前座舱 MCU 结果满足下游任务触发条件';
   }
   return (
-    downstreamTriggerBlockReasons.value.join('；') || '请先加载座舱全量概览'
+    downstreamTriggerBlockReasons.value.join('；') ||
+    '请先加载座舱 MCU 全量概览'
   );
 });
 
@@ -259,8 +260,8 @@ function canEditFailureReason(row: DailyResultItem) {
 function isEditingFailureReason(row: DailyResultItem) {
   return Boolean(
     row.result_id &&
-    editingReasonCell.value?.resultId &&
-    editingReasonCell.value.resultId === row.result_id,
+      editingReasonCell.value?.resultId &&
+      editingReasonCell.value.resultId === row.result_id,
   );
 }
 
@@ -308,7 +309,8 @@ async function submitFailureCategory(
     return;
   }
   const nextCategory = (failureCategory || undefined) as
-    FailureCategory | undefined;
+    | FailureCategory
+    | undefined;
   row.failure_category = nextCategory;
   await updateDailyResultFailureReasonApi(
     row.result_id,
@@ -765,7 +767,7 @@ function handleVehicleDateChange() {
 
 function openHistory(row: DailyResultItem) {
   currentCaseId.value = row.case_id;
-  historyTitle.value = `${row.case_no}${row.viu_code ? ` / ${row.viu_code}` : ''} / ${row.case_name}`;
+  historyTitle.value = `${row.case_no}${row.viu_code ? ` / ${row.viu_code}` : ''}${row.module ? ` / ${row.module}` : ''} / ${row.case_name}`;
   historyVisible.value = true;
 }
 

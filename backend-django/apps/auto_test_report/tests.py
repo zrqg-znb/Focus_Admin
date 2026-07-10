@@ -6,6 +6,7 @@ from django.utils import timezone
 from apps.auto_test_report import auto_test_report_services as services
 from apps.auto_test_report.auto_test_report_model import (
     DailyExecutionResult,
+    DOMAIN_COCKPIT_SOC,
     DownstreamCommitUsage,
     FAILURE_CATEGORY_CASE,
     FAILURE_CATEGORY_ENVIRONMENT,
@@ -48,8 +49,16 @@ class AutoTestReportOverviewTests(TestCase):
         domain: str = DOMAIN_COCKPIT,
         viu_codes: list[str] | None = None,
     ) -> VehicleModel:
+        platform = self.platform
+        if platform.domain != domain:
+            platform = McuPlatform.objects.create(
+                name=f'Platform {suffix}',
+                version_code=f'platform-{suffix}',
+                domain=domain,
+                is_active=True,
+            )
         return VehicleModel.objects.create(
-            platform=self.platform,
+            platform=platform,
             name=f'Vehicle {suffix}',
             vehicle_code=f'VEH-{suffix}',
             cdc_platform='CDC',
@@ -62,6 +71,7 @@ class AutoTestReportOverviewTests(TestCase):
         return [
             AutoTestCase.objects.create(
                 vehicle=vehicle,
+                module='',
                 case_no=f'CASE-{vehicle.vehicle_code}-{index + 1}',
                 case_name=f'Case {index + 1}',
                 is_active=True,
@@ -652,3 +662,83 @@ class AutoTestReportOverviewTests(TestCase):
         )
         self.assertEqual(len(rows), 2)
         self.assertEqual({item['viu_code'] for item in rows}, {'viu0', 'viu1'})
+
+    def test_cockpit_soc_test_case_requires_module_and_returns_module_in_views(self):
+        soc_platform = McuPlatform.objects.create(
+            name='SOC Platform',
+            version_code='soc-platform',
+            domain=DOMAIN_COCKPIT_SOC,
+            is_active=True,
+        )
+        soc_vehicle = VehicleModel.objects.create(
+            platform=soc_platform,
+            name='SOC Vehicle',
+            vehicle_code='SOC-VEH-1',
+            cdc_platform='SOC-CDC',
+            execution_machine='soc-machine',
+            viu_codes=[],
+            is_active=True,
+        )
+
+        with self.assertRaisesMessage(Exception, '座舱SOC用例必须填写模块'):
+            services.create_test_case(
+                None,
+                type(
+                    'Payload',
+                    (),
+                    {
+                        'vehicle_id': str(soc_vehicle.id),
+                        'viu_code': '',
+                        'module': '',
+                        'case_no': 'SOC-CASE-001',
+                        'case_name': 'SOC Case',
+                        'remark': '',
+                        'sort': 0,
+                        'is_active': True,
+                    },
+                )(),
+            )
+
+        case = services.create_test_case(
+            None,
+            type(
+                'Payload',
+                (),
+                {
+                    'vehicle_id': str(soc_vehicle.id),
+                    'viu_code': '',
+                    'module': '音频',
+                    'case_no': 'SOC-CASE-001',
+                    'case_name': 'SOC Case',
+                    'remark': '',
+                    'sort': 0,
+                    'is_active': True,
+                },
+            )(),
+        )
+        self.assertEqual(case['module'], '音频')
+
+        DailyExecutionResult.objects.create(
+            vehicle=soc_vehicle,
+            test_case=AutoTestCase.objects.get(id=case['id']),
+            execute_date=self.execute_date,
+            start_time=timezone.now(),
+            duration_seconds=60,
+            result=RESULT_SUCCESS,
+            log_url='https://example.com/soc/testcase.html',
+        )
+
+        rows = services.list_test_cases(
+            TestCaseFilter(domain=DOMAIN_COCKPIT_SOC, vehicle_id=str(soc_vehicle.id))
+        )
+        self.assertEqual(rows[0]['module'], '音频')
+
+        daily_items = services.list_daily_results(
+            soc_vehicle.id,
+            self.execute_date,
+            DOMAIN_COCKPIT_SOC,
+        )
+        self.assertEqual(daily_items[0].module, '音频')
+
+        history_page = services.get_test_case_history(case['id'], page=1, page_size=10)
+        self.assertEqual(history_page.items[0].module, '音频')

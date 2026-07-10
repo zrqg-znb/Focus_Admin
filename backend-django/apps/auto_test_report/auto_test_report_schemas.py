@@ -51,6 +51,7 @@ class VehicleOption(Schema):
 class TestCaseIn(Schema):
     vehicle_id: str
     viu_code: str = ''
+    module: str = ''
     case_no: str
     case_name: str
     remark: Optional[str] = None
@@ -79,6 +80,7 @@ class TestCaseFilter(Schema):
 
 class ImportCaseRow(Schema):
     viu_code: Optional[str] = None
+    module: Optional[str] = None
     case_no: str
     case_name: str
     remark: Optional[str] = None
@@ -105,6 +107,7 @@ class DailyResultItemOut(Schema):
     result_id: Optional[str] = None
     case_id: str
     viu_code: str = ''
+    module: str = ''
     case_no: str
     case_name: str
     remark: Optional[str] = None
@@ -150,6 +153,7 @@ class DailyHistoryRow(Schema):
     id: str
     execute_date: date
     viu_code: str = ''
+    module: str = ''
     status: str
     failure_reason: Optional[str] = None
     failure_category: Optional[str] = None

@@ -4,9 +4,11 @@ from common.fu_model import RootModel
 
 
 DOMAIN_COCKPIT = 'cockpit'
+DOMAIN_COCKPIT_SOC = 'cockpit_soc'
 DOMAIN_VEHICLE = 'vehicle'
 DOMAIN_CHOICES = [
-    (DOMAIN_COCKPIT, '座舱'),
+    (DOMAIN_COCKPIT, '座舱MCU'),
+    (DOMAIN_COCKPIT_SOC, '座舱SOC'),
     (DOMAIN_VEHICLE, '车控'),
 ]
 
@@ -96,6 +98,7 @@ class TestCase(RootModel):
         verbose_name='车型',
     )
     viu_code = models.CharField(max_length=16, default='', blank=True, verbose_name='VIU编号')
+    module = models.CharField(max_length=128, default='', blank=True, verbose_name='模块')
     case_no = models.CharField(max_length=128, verbose_name='用例编号')
     case_name = models.CharField(max_length=255, verbose_name='用例名称')
     remark = models.TextField(null=True, blank=True, verbose_name='备注')

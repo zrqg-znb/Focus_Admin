@@ -381,7 +381,13 @@ onMounted(async () => {
                 :disabled="!activePlatformId"
                 @click="openVehicleCreate"
               >
-                新增{{ domain === 'vehicle' ? '车控车型' : '座舱车型' }}
+                新增{{
+                  domain === 'vehicle'
+                    ? '车控车型'
+                    : domain === 'cockpit_soc'
+                      ? '座舱SOC车型'
+                      : '座舱MCU车型'
+                }}
               </ElButton>
             </div>
           </template>
@@ -469,10 +475,14 @@ onMounted(async () => {
         vehicleDialogMode === 'create'
           ? domain === 'vehicle'
             ? '新增车控车型'
-            : '新增座舱车型'
+            : domain === 'cockpit_soc'
+              ? '新增座舱SOC车型'
+              : '新增座舱MCU车型'
           : domain === 'vehicle'
             ? '编辑车控车型'
-            : '编辑座舱车型'
+            : domain === 'cockpit_soc'
+              ? '编辑座舱SOC车型'
+              : '编辑座舱MCU车型'
       "
       width="560px"
     >
@@ -484,7 +494,7 @@ onMounted(async () => {
           <ElInput v-model="vehicleForm.vehicle_code" />
         </ElFormItem>
         <ElFormItem
-          v-if="domain === 'cockpit'"
+          v-if="domain !== 'vehicle'"
           label="CDC平台"
           prop="cdc_platform"
           required

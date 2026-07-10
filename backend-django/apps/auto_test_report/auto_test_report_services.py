@@ -15,6 +15,7 @@ from scheduler.module.executor import scheduler_task
 
 from .auto_test_report_model import (
     DOMAIN_COCKPIT,
+    DOMAIN_COCKPIT_SOC,
     DOMAIN_VEHICLE,
     DailyExecutionBatch,
     DailyExecutionResult,
@@ -67,7 +68,8 @@ VALID_RESULT_VALUES = {
     RESULT_TIMEOUT,
     RESULT_SKIP,
 }
-VALID_DOMAINS = {DOMAIN_COCKPIT, DOMAIN_VEHICLE}
+VALID_DOMAINS = {DOMAIN_COCKPIT, DOMAIN_COCKPIT_SOC, DOMAIN_VEHICLE}
+DOMAIN_ERROR_MESSAGE = '领域仅支持 cockpit、cockpit_soc 或 vehicle'
 NON_SUCCESS_RESULTS = {RESULT_FAILED, RESULT_TIMEOUT, RESULT_SKIP}
 VALID_FAILURE_CATEGORIES = {value for value, _ in FAILURE_CATEGORY_CHOICES}
 NON_VERSION_FAILURE_CATEGORIES = {
@@ -138,7 +140,7 @@ def _parse_domain_filter(domain: Optional[str]):
     if not value:
         return None
     if value not in VALID_DOMAINS:
-        raise HttpError(422, '领域仅支持 cockpit 或 vehicle')
+        raise HttpError(422, DOMAIN_ERROR_MESSAGE)
     return value
 
 
@@ -147,7 +149,7 @@ def _resolve_domain_value(domain: Optional[str], *, default: str = DOMAIN_COCKPI
     if not value:
         return default
     if value not in VALID_DOMAINS:
-        raise HttpError(422, '领域仅支持 cockpit 或 vehicle')
+        raise HttpError(422, DOMAIN_ERROR_MESSAGE)
     return value
 
 
@@ -192,7 +194,7 @@ def _normalize_viu_codes(viu_codes, *, require_non_empty: bool = False):
 
 def _normalize_case_viu_code(vehicle: VehicleModel, viu_code: Optional[str]):
     domain = vehicle.platform.domain
-    if domain == DOMAIN_COCKPIT:
+    if domain != DOMAIN_VEHICLE:
         return ''
     normalized = (viu_code or '').strip().lower()
     if not normalized:
@@ -201,6 +203,14 @@ def _normalize_case_viu_code(vehicle: VehicleModel, viu_code: Optional[str]):
     if normalized not in allowed_viu_codes:
         raise HttpError(422, f'车型 {vehicle.name} 未配置 VIU 编号: {normalized}')
     return normalized
+
+
+def _normalize_case_module(vehicle: VehicleModel, module: Optional[str]):
+    """标准化 SOC 用例模块，只有座舱 SOC 领域强制填写模块。"""
+    normalized = (module or '').strip()
+    if vehicle.platform.domain == DOMAIN_COCKPIT_SOC and not normalized:
+        raise HttpError(422, '座舱SOC用例必须填写模块')
+    return normalized if vehicle.platform.domain == DOMAIN_COCKPIT_SOC else ''
 
 
 def list_platforms(domain: Optional[str] = None):
@@ -335,7 +345,7 @@ def list_vehicle_options(domain: Optional[str] = None):
 def create_vehicle(user, payload):
     platform = get_platform(payload.platform_id)
     parsed_viu_codes = _normalize_viu_codes(payload.viu_codes, require_non_empty=platform.domain == DOMAIN_VEHICLE)
-    if platform.domain == DOMAIN_COCKPIT:
+    if platform.domain != DOMAIN_VEHICLE:
         parsed_viu_codes = []
     instance = VehicleModel(
         platform=platform,
@@ -360,7 +370,7 @@ def update_vehicle(user, vehicle_id: str, payload):
         payload.viu_codes,
         require_non_empty=instance.platform.domain == DOMAIN_VEHICLE,
     )
-    if instance.platform.domain == DOMAIN_COCKPIT:
+    if instance.platform.domain != DOMAIN_VEHICLE:
         parsed_viu_codes = []
     instance.name = payload.name.strip()
     instance.vehicle_code = payload.vehicle_code.strip()
@@ -423,6 +433,7 @@ def list_test_cases(filters):
         queryset = queryset.filter(
             Q(case_no__icontains=keyword)
             | Q(case_name__icontains=keyword)
+            | Q(module__icontains=keyword)
             | Q(remark__icontains=keyword)
             | Q(viu_code__icontains=keyword)
         )
@@ -451,6 +462,7 @@ def serialize_test_case(item: TestCase):
         'vehicle_code': item.vehicle.vehicle_code,
         'platform_name': item.vehicle.platform.name,
         'viu_code': item.viu_code,
+        'module': item.module,
         'case_no': item.case_no,
         'case_name': item.case_name,
         'remark': item.remark,
@@ -465,9 +477,11 @@ def serialize_test_case(item: TestCase):
 def create_test_case(user, payload):
     vehicle = get_vehicle(payload.vehicle_id)
     viu_code = _normalize_case_viu_code(vehicle, getattr(payload, 'viu_code', None))
+    module = _normalize_case_module(vehicle, getattr(payload, 'module', None))
     instance = TestCase(
         vehicle=vehicle,
         viu_code=viu_code,
+        module=module,
         case_no=payload.case_no.strip(),
         case_name=payload.case_name.strip(),
         remark=(payload.remark or '').strip() or None,
@@ -484,6 +498,7 @@ def update_test_case(user, case_id: str, payload):
     vehicle = get_vehicle(payload.vehicle_id)
     instance.vehicle = vehicle
     instance.viu_code = _normalize_case_viu_code(vehicle, getattr(payload, 'viu_code', None))
+    instance.module = _normalize_case_module(vehicle, getattr(payload, 'module', None))
     instance.case_no = payload.case_no.strip()
     instance.case_name = payload.case_name.strip()
     instance.remark = (payload.remark or '').strip() or None
@@ -528,6 +543,7 @@ def get_test_case(case_id: str) -> TestCase:
 def import_test_cases(user, payload) -> ImportResultOut:
     vehicle = get_vehicle(payload.vehicle_id)
     require_viu_code = vehicle.platform.domain == DOMAIN_VEHICLE
+    require_module = vehicle.platform.domain == DOMAIN_COCKPIT_SOC
     created_count = 0
     updated_count = 0
     ignored_count = 0
@@ -536,12 +552,18 @@ def import_test_cases(user, payload) -> ImportResultOut:
 
     for index, row in enumerate(payload.rows, start=1):
         raw_viu_code = (row.viu_code or '').strip().lower()
+        module = (row.module or '').strip()
         if require_viu_code and not raw_viu_code:
             errors.append(ImportErrorRow(row_no=index, message='车控车型导入时VIU编号不能为空'))
             continue
         if require_viu_code and raw_viu_code not in set(vehicle.viu_codes or []):
             errors.append(ImportErrorRow(row_no=index, message=f'车型 {vehicle.name} 未配置 VIU 编号: {raw_viu_code}'))
             continue
+        if require_module and not module:
+            errors.append(ImportErrorRow(row_no=index, message='座舱SOC车型导入时模块不能为空'))
+            continue
+        if not require_module:
+            module = ''
         viu_code = raw_viu_code if require_viu_code else ''
         case_no = (row.case_no or '').strip()
         case_name = (row.case_name or '').strip()
@@ -568,6 +590,7 @@ def import_test_cases(user, payload) -> ImportResultOut:
             instance = TestCase(
                 vehicle=vehicle,
                 viu_code=viu_code,
+                module=module,
                 case_no=case_no,
                 case_name=case_name,
                 remark=remark,
@@ -577,11 +600,12 @@ def import_test_cases(user, payload) -> ImportResultOut:
             instance.save()
             created_count += 1
             continue
-        if instance.case_name != case_name or instance.remark != remark:
+        if instance.case_name != case_name or instance.module != module or instance.remark != remark:
             instance.case_name = case_name
+            instance.module = module
             instance.remark = remark
             _apply_audit_fields(instance, user)
-            instance.save(update_fields=['case_name', 'remark', 'sys_modifier', 'sys_update_datetime'])
+            instance.save(update_fields=['case_name', 'module', 'remark', 'sys_modifier', 'sys_update_datetime'])
             updated_count += 1
         else:
             ignored_count += 1
@@ -594,7 +618,7 @@ def import_test_cases(user, payload) -> ImportResultOut:
     )
 
 
-def parse_excel_rows(file_obj, *, require_viu_code: bool = False) -> list[dict]:
+def parse_excel_rows(file_obj, *, require_module: bool = False, require_viu_code: bool = False) -> list[dict]:
     try:
         content = file_obj.read()
         workbook = openpyxl.load_workbook(
@@ -619,6 +643,9 @@ def parse_excel_rows(file_obj, *, require_viu_code: bool = False) -> list[dict]:
     viu_code_index = header.index('VIU编号') if 'VIU编号' in header else None
     if require_viu_code and viu_code_index is None:
         raise HttpError(400, 'Excel 模板缺少必填列：VIU编号')
+    module_index = header.index('模块') if '模块' in header else None
+    if require_module and module_index is None:
+        raise HttpError(400, 'Excel 模板缺少必填列：模块')
     remark_index = header.index('备注') if '备注' in header else None
 
     parsed_rows = []
@@ -631,6 +658,7 @@ def parse_excel_rows(file_obj, *, require_viu_code: bool = False) -> list[dict]:
             continue
         parsed_rows.append({
             'viu_code': str(row[viu_code_index] or '').strip() if viu_code_index is not None else '',
+            'module': str(row[module_index] or '').strip() if module_index is not None else '',
             'case_no': case_no,
             'case_name': case_name,
             'remark': str(row[remark_index] or '').strip() if remark_index is not None else '',
@@ -646,9 +674,12 @@ def build_test_case_template_response(domain: Optional[str] = None):
     if parsed_domain == DOMAIN_VEHICLE:
         sheet.append(['VIU编号', '用例编号', '用例名称', '备注'])
         sheet.append(['viu0', 'CASE-001', '示例车控用例', '固定备注示例'])
+    elif parsed_domain == DOMAIN_COCKPIT_SOC:
+        sheet.append(['模块', '用例编号', '用例名称', '备注'])
+        sheet.append(['座舱域控', 'CASE-001', '示例座舱SOC用例', '固定备注示例'])
     else:
         sheet.append(['用例编号', '用例名称', '备注'])
-        sheet.append(['CASE-001', '示例自动化用例', '固定备注示例'])
+        sheet.append(['CASE-001', '示例座舱MCU用例', '固定备注示例'])
     response = HttpResponse(
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
@@ -665,6 +696,9 @@ def build_test_case_export_response(filters):
     include_viu_code = parsed_domain == DOMAIN_VEHICLE or any(
         (item.get('viu_code') or '').strip() for item in rows
     )
+    include_module = parsed_domain == DOMAIN_COCKPIT_SOC or any(
+        (item.get('module') or '').strip() for item in rows
+    )
     workbook = openpyxl.Workbook(write_only=True)
     sheet = workbook.create_sheet('测试用例')
     header = [
@@ -674,6 +708,8 @@ def build_test_case_export_response(filters):
     ]
     if include_viu_code:
         header.append('VIU编号')
+    if include_module:
+        header.append('模块')
     header.extend([
         '用例编号',
         '用例名称',
@@ -690,6 +726,8 @@ def build_test_case_export_response(filters):
         ]
         if include_viu_code:
             row.append(item.get('viu_code') or '')
+        if include_module:
+            row.append(item.get('module') or '')
         row.extend([
             item['case_no'],
             item['case_name'],
@@ -1471,6 +1509,7 @@ def list_daily_results(vehicle_id: str, execute_date, domain: Optional[str] = No
                     result_id=None,
                     case_id=str(case.id),
                     viu_code=case.viu_code,
+                    module=case.module,
                     case_no=case.case_no,
                     case_name=case.case_name,
                     remark=case.remark,
@@ -1484,6 +1523,7 @@ def list_daily_results(vehicle_id: str, execute_date, domain: Optional[str] = No
                 result_id=str(result.id),
                 case_id=str(case.id),
                 viu_code=case.viu_code,
+                module=case.module,
                 case_no=case.case_no,
                 case_name=case.case_name,
                 remark=case.remark,
@@ -1539,6 +1579,7 @@ def get_test_case_history(case_id: str, page: int = 1, page_size: int = 10) -> D
             id=str(item.id),
             execute_date=item.execute_date,
             viu_code=item.test_case.viu_code,
+            module=item.test_case.module,
             status=item.result,
             failure_reason=item.failure_reason,
             failure_category=item.failure_category,

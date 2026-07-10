@@ -1,9 +1,10 @@
 import { computed, ref } from 'vue';
 
-export type AutoTestReportDomain = 'cockpit' | 'vehicle';
+export type AutoTestReportDomain = 'cockpit' | 'cockpit_soc' | 'vehicle';
 
 export const AUTO_TEST_REPORT_DOMAINS: AutoTestReportDomain[] = [
   'cockpit',
+  'cockpit_soc',
   'vehicle',
 ];
 
@@ -28,13 +29,22 @@ const DOMAIN_LABEL_MAP: Record<
   }
 > = {
   cockpit: {
-    badge: '座舱领域',
+    badge: '座舱MCU领域',
     platformLabel: 'MCU平台',
     platformPanelTitle: 'MCU平台配置',
-    platformPanelHint: '维护座舱场景下的 MCU 平台、车型与测试用例。',
+    platformPanelHint: '维护座舱 MCU 场景下的 MCU 平台、车型与测试用例。',
     selectorLabel: 'MCU 平台 / 车型',
     selectorPlaceholder: '选择 MCU 平台 / 车型',
-    switchLabel: '座舱视图',
+    switchLabel: '座舱 MCU 视图',
+  },
+  cockpit_soc: {
+    badge: '座舱SOC领域',
+    platformLabel: 'SOC版本',
+    platformPanelTitle: 'SOC版本配置',
+    platformPanelHint: '维护座舱 SOC 场景下的 SOC 版本、车型与测试用例。',
+    selectorLabel: 'SOC 版本 / 车型',
+    selectorPlaceholder: '选择 SOC 版本 / 车型',
+    switchLabel: '座舱 SOC 视图',
   },
   vehicle: {
     badge: '车控领域',
@@ -70,7 +80,7 @@ const sharedDomain = ref<AutoTestReportDomain>(getStoredDomain());
 export function normalizeAutoTestReportDomain(
   value?: null | string,
 ): AutoTestReportDomain {
-  return value === 'vehicle' ? 'vehicle' : 'cockpit';
+  return value === 'vehicle' || value === 'cockpit_soc' ? value : 'cockpit';
 }
 
 export function getAutoTestReportDomainMeta(domain: AutoTestReportDomain) {

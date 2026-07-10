@@ -6,6 +6,7 @@ from django.core.management.base import BaseCommand
 from core.user.user_model import User
 from apps.auto_test_report.auto_test_report_model import (
     DOMAIN_COCKPIT,
+    DOMAIN_COCKPIT_SOC,
     DOMAIN_VEHICLE,
     DailyExecutionResult,
     McuPlatform,
@@ -33,9 +34,11 @@ class Command(BaseCommand):
         platforms = [
             (DOMAIN_COCKPIT, 'MCU 2.0', 'mcu20'),
             (DOMAIN_COCKPIT, 'MCU 2.2', 'mcu22'),
+            (DOMAIN_COCKPIT_SOC, 'SOC 3.0', 'soc30'),
             (DOMAIN_VEHICLE, 'VIU 2.0', 'viu20'),
             (DOMAIN_VEHICLE, 'VIU 2.2', 'viu22'),
         ]
+        soc_modules = ['音频', '导航', '车机桌面', '蓝牙']
         viu_sets = [
             ['viu0', 'viu1', 'viu2'],
             ['viu0', 'viu1', 'viu2', 'viu3'],
@@ -107,6 +110,11 @@ class Command(BaseCommand):
                         viu_code=case_viu_code,
                         case_no=case_no,
                         defaults={
+                            'module': (
+                                soc_modules[(case_index - 1) % len(soc_modules)]
+                                if domain == DOMAIN_COCKPIT_SOC
+                                else ''
+                            ),
                             'case_name': f'自动化用例 {vehicle_index}-{case_index}',
                             'is_active': True,
                             'sort': 100 - case_index,
@@ -114,6 +122,12 @@ class Command(BaseCommand):
                             'sys_modifier': operator,
                         },
                     )
+                    if (
+                        domain == DOMAIN_COCKPIT_SOC
+                        and case.module != soc_modules[(case_index - 1) % len(soc_modules)]
+                    ):
+                        case.module = soc_modules[(case_index - 1) % len(soc_modules)]
+                        case.save(update_fields=['module', 'sys_update_datetime'])
                     created_case_count += int(created_case)
                     cases.append(case)
 

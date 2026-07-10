@@ -86,6 +86,17 @@ export function useResultColumns(
     });
   }
 
+  if (domain === 'cockpit_soc') {
+    columns.push({
+      key: 'module',
+      dataKey: 'module',
+      title: '模块',
+      width: 160,
+      align: 'center',
+      headerAlign: 'center',
+    });
+  }
+
   columns.push(
     {
       key: 'remark',
