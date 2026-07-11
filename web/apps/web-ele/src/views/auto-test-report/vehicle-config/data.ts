@@ -77,7 +77,7 @@ export function useVehicleColumns(
     },
   ];
 
-  if (domain !== 'vehicle') {
+  if (domain === 'cockpit') {
     columns.push({
       key: 'cdc_platform',
       dataKey: 'cdc_platform',

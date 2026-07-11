@@ -51,6 +51,7 @@ import { useVehicleColumns, useVehicleSearchSchema } from './data';
 defineOptions({ name: 'AutoTestVehicleConfig' });
 
 const { domain, domainMeta } = useAutoTestReportDomain();
+const showCdcPlatform = computed(() => domain.value === 'cockpit');
 const router = useRouter();
 const platformList = ref<McuPlatformItem[]>([]);
 const activePlatformId = ref('');
@@ -220,7 +221,7 @@ function openVehicleEdit(row: VehicleItem) {
     platform_id: row.platform_id,
     name: row.name,
     vehicle_code: row.vehicle_code,
-    cdc_platform: row.cdc_platform,
+    cdc_platform: showCdcPlatform.value ? row.cdc_platform : '',
     execution_machine: row.execution_machine,
     viu_codes: row.viu_codes || [],
     sort: row.sort,
@@ -236,6 +237,7 @@ async function submitVehicle() {
   try {
     const payload = {
       ...vehicleForm.value,
+      cdc_platform: showCdcPlatform.value ? vehicleForm.value.cdc_platform : '',
       viu_codes: domain.value === 'vehicle' ? vehicleForm.value.viu_codes : [],
     };
     if (domain.value === 'vehicle' && payload.viu_codes.length === 0) {
@@ -494,7 +496,7 @@ onMounted(async () => {
           <ElInput v-model="vehicleForm.vehicle_code" />
         </ElFormItem>
         <ElFormItem
-          v-if="domain !== 'vehicle'"
+          v-if="showCdcPlatform"
           label="CDC平台"
           prop="cdc_platform"
           required
