@@ -348,13 +348,13 @@ def _stock_metrics(payload: dict) -> dict:
 
 
 def get_dashboard_summary(**filters) -> dict:
-    """查询贡献看板 8 项核心指标。"""
+    """查询贡献看板核心指标，当前看板只统计筛选期内 CR 新增贡献。"""
     payload = _filter_payload_from_kwargs(**filters)
-    return {**_sum_lines(_base_record_queryset(payload)), **_stock_metrics(payload)}
+    return _sum_lines(_base_record_queryset(payload))
 
 
 def get_dashboard_trend(**filters) -> list[dict]:
-    """按贡献日期返回新增、删除、净增等日趋势。"""
+    """按贡献日期返回新增、删除、总变更趋势，新增行数是看板主口径。"""
     payload = _filter_payload_from_kwargs(**filters)
     rows = (
         _base_record_queryset(payload)
@@ -382,9 +382,9 @@ def get_dashboard_trend(**filters) -> list[dict]:
 
 
 def get_repository_ranking(limit: int = 20, **filters) -> list[dict]:
-    """按仓库和分支维度返回当前存量和统计期内合入排行。"""
+    """按仓库和分支维度返回统计期内新增贡献排行。"""
     payload = _filter_payload_from_kwargs(**filters)
-    rows = list(
+    rows = (
         _base_record_queryset(payload)
         .values("repository_id", "repository_name", "repository_project_id", "branch_name")
         .annotate(
@@ -395,41 +395,32 @@ def get_repository_ranking(limit: int = 20, **filters) -> list[dict]:
             net_lines=Sum("net_lines"),
             changed_lines=Sum("changed_lines"),
         )
+        .order_by("-added_lines", "-cr_count", "repository_name", "branch_name")[: max(min(int(limit or 20), 100), 1)]
     )
-    period_by_key = {(str(row["repository_id"]), row["branch_name"]): row for row in rows}
-    baselines = _load_current_baselines(payload)
-    items: list[dict] = []
-    for link in _load_stock_bindings(payload):
-        key = (str(link.repository_id), link.branch.branch_name)
-        period = period_by_key.get(key, {})
-        baseline = baselines.get(key)
-        stock_lines = 0
-        if baseline:
-            stock_lines = int(baseline.baseline_lines or 0) + _stock_increment_for_baseline(baseline)
-        items.append(
-            {
-                "id": f"{link.repository_id}:{link.branch.branch_name}",
-                "name": link.repository.project_name,
-                "project_id": link.repository.project_id,
-                "branch_name": link.branch.branch_name,
-                "repository_name": link.repository.project_name,
-                "baseline_id": str(baseline.id) if baseline else None,
-                "baseline_at": baseline.baseline_at if baseline else None,
-                "baseline_lines": int(baseline.baseline_lines or 0) if baseline else 0,
-                "stock_lines": stock_lines,
-                "has_baseline": bool(baseline),
-                **{
-                    key_name: int(period.get(key_name) or 0)
-                    for key_name in ("cr_count", "contributor_count", "added_lines", "removed_lines", "net_lines", "changed_lines")
-                },
-            }
-        )
-    items.sort(key=lambda item: (item["stock_lines"], item["changed_lines"], item["cr_count"]), reverse=True)
-    return items[: max(min(int(limit or 20), 100), 1)]
+    # 基线字段保留为兼容输出，当前看板不再按基线或存量排序。
+    return [
+        {
+            "id": f"{row['repository_id']}:{row['branch_name']}",
+            "name": row.get("repository_name") or "",
+            "project_id": row.get("repository_project_id") or "",
+            "branch_name": row.get("branch_name") or "",
+            "repository_name": row.get("repository_name") or "",
+            "baseline_id": None,
+            "baseline_at": None,
+            "baseline_lines": 0,
+            "stock_lines": 0,
+            "has_baseline": False,
+            **{
+                key_name: int(row.get(key_name) or 0)
+                for key_name in ("cr_count", "contributor_count", "added_lines", "removed_lines", "net_lines", "changed_lines")
+            },
+        }
+        for row in rows
+    ]
 
 
 def get_person_ranking(limit: int = 20, **filters) -> list[dict]:
-    """按 CR 创建人返回贡献排行。"""
+    """按 CR 创建人返回新增行数贡献排行。"""
     payload = _filter_payload_from_kwargs(**filters)
     rows = (
         _base_record_queryset(payload)
@@ -443,7 +434,7 @@ def get_person_ranking(limit: int = 20, **filters) -> list[dict]:
             net_lines=Sum("net_lines"),
             changed_lines=Sum("changed_lines"),
         )
-        .order_by("-changed_lines", "-cr_count")[: max(min(int(limit or 20), 100), 1)]
+        .order_by("-added_lines", "-cr_count")[: max(min(int(limit or 20), 100), 1)]
     )
     return [
         {
@@ -459,7 +450,7 @@ def get_person_ranking(limit: int = 20, **filters) -> list[dict]:
 
 
 def get_category_distribution(**filters) -> dict:
-    """返回仓库类型、领域和 PL 组的类别分布数据。"""
+    """返回仓库类型、领域和 PL 组的新增贡献分布数据。"""
     payload = _filter_payload_from_kwargs(**filters)
     queryset = _base_record_queryset(payload)
 
@@ -474,7 +465,7 @@ def get_category_distribution(**filters) -> dict:
                 net_lines=Sum("net_lines"),
                 changed_lines=Sum("changed_lines"),
             )
-            .order_by("-changed_lines", field)
+            .order_by("-added_lines", field)
         )
         result = []
         for row in rows:
@@ -1159,23 +1150,18 @@ def _build_export_workbook(task: ComplianceContributionExportTask):
                 item.merged_at,
             ])
     else:
-        sheet.title = "代码量看板"
-        headers = ["代码库", "项目ID", "分支", "当前存量", "基线代码量", "基线时间", "是否有基线", "本期CR数", "贡献人数", "本期新增", "本期删除", "本期净增", "本期总变更"]
+        sheet.title = "代码贡献看板"
+        headers = ["代码库", "项目ID", "分支", "CR数", "贡献人数", "新增行数", "删除行数", "总变更行数"]
         sheet.append(headers)
         for item in get_repository_ranking(limit=1000, **filters):
             sheet.append([
                 item["repository_name"],
                 item["project_id"],
                 item["branch_name"],
-                item["stock_lines"],
-                item["baseline_lines"],
-                item["baseline_at"],
-                "是" if item["has_baseline"] else "否",
                 item["cr_count"],
                 item["contributor_count"],
                 item["added_lines"],
                 item["removed_lines"],
-                item["net_lines"],
                 item["changed_lines"],
             ])
     return workbook

@@ -51,7 +51,7 @@ import { useVehicleColumns, useVehicleSearchSchema } from './data';
 defineOptions({ name: 'AutoTestVehicleConfig' });
 
 const { domain, domainMeta } = useAutoTestReportDomain();
-const showCdcPlatform = computed(() => domain.value === 'cockpit');
+const showCdcPlatform = computed(() => domain.value !== 'vehicle');
 const router = useRouter();
 const platformList = ref<McuPlatformItem[]>([]);
 const activePlatformId = ref('');

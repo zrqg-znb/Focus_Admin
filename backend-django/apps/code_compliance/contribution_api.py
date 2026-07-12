@@ -79,7 +79,7 @@ def get_contribution_trend(
     merged_after: Optional[datetime] = Query(None),
     merged_before: Optional[datetime] = Query(None),
 ):
-    """查询新增、删除、净增等日趋势。"""
+    """查询新增、删除、总变更等日趋势。"""
     return services.get_dashboard_trend(**_filters(**locals()))
 
 
