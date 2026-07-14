@@ -38,6 +38,15 @@ export interface ContributionTrendPoint {
   removed_lines: number;
 }
 
+export interface ContributionPlGroupTrendPoint {
+  added_lines: number;
+  changed_lines: number;
+  cr_count: number;
+  date: string;
+  pl_group_name: string;
+  removed_lines: number;
+}
+
 export interface ContributionRankingItem {
   added_lines: number;
   branch_name: string;
@@ -220,6 +229,13 @@ export function getContributionTrendApi(params?: ContributionFilters) {
   return requestClient.get<ContributionTrendPoint[]>(`${base}/dashboard/trend`, {
     params: normalizeParams(params),
   });
+}
+
+export function getContributionPlGroupTrendApi(params?: ContributionFilters) {
+  return requestClient.get<ContributionPlGroupTrendPoint[]>(
+    `${base}/dashboard/pl-group-trend`,
+    { params: normalizeParams(params) },
+  );
 }
 
 export function getContributionRepositoryRankingApi(params?: ContributionFilters) {

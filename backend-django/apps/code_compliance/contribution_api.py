@@ -16,6 +16,7 @@ from .contribution_schemas import (
     ContributionExportTaskPrepareOut,
     ContributionMetricOut,
     ContributionPersonRankingItemOut,
+    ContributionPlGroupTrendPointOut,
     ContributionRankingItemOut,
     ContributionRecordOut,
     ContributionTrendPointOut,
@@ -81,6 +82,29 @@ def get_contribution_trend(
 ):
     """查询新增、删除、总变更等日趋势。"""
     return services.get_dashboard_trend(**_filters(**locals()))
+
+
+@router.get(
+    "/dashboard/pl-group-trend",
+    response=list[ContributionPlGroupTrendPointOut],
+    summary="PL组代码贡献趋势",
+)
+def get_contribution_pl_group_trend(
+    request,
+    organization_ids: Optional[str] = Query(None),
+    repository_ids: Optional[str] = Query(None),
+    branch_ids: Optional[str] = Query(None),
+    branch_type: Optional[str] = Query(None),
+    repo_type: Optional[str] = Query(None),
+    domain: Optional[str] = Query(None),
+    pl_group_ids: Optional[str] = Query(None),
+    author_username: Optional[str] = Query(None),
+    keyword: Optional[str] = Query(None),
+    merged_after: Optional[datetime] = Query(None),
+    merged_before: Optional[datetime] = Query(None),
+):
+    """按日期和作者 PL 组查询新增代码贡献趋势。"""
+    return services.get_pl_group_trend(**_filters(**locals()))
 
 
 @router.get(

@@ -381,6 +381,33 @@ def get_dashboard_trend(**filters) -> list[dict]:
     ]
 
 
+def get_pl_group_trend(**filters) -> list[dict]:
+    """按贡献日期和作者 PL 组返回新增贡献趋势。"""
+    payload = _filter_payload_from_kwargs(**filters)
+    rows = (
+        _base_record_queryset(payload)
+        .values("contribution_date", "author_pl_group_name")
+        .annotate(
+            cr_count=Count("id"),
+            added_lines=Sum("added_lines"),
+            removed_lines=Sum("removed_lines"),
+            changed_lines=Sum("changed_lines"),
+        )
+        .order_by("contribution_date", "author_pl_group_name")
+    )
+    return [
+        {
+            "date": row["contribution_date"],
+            "pl_group_name": row.get("author_pl_group_name") or UNKNOWN_PL_GROUP_NAME,
+            "cr_count": int(row.get("cr_count") or 0),
+            "added_lines": int(row.get("added_lines") or 0),
+            "removed_lines": int(row.get("removed_lines") or 0),
+            "changed_lines": int(row.get("changed_lines") or 0),
+        }
+        for row in rows
+    ]
+
+
 def get_repository_ranking(limit: int = 20, **filters) -> list[dict]:
     """按仓库和分支维度返回统计期内新增贡献排行。"""
     payload = _filter_payload_from_kwargs(**filters)
@@ -851,15 +878,19 @@ def _rebuild_daily_aggregates(dates: set[Any], payload: dict) -> int:
     )
     objects = []
     for row in rows:
+        metrics = {
+            key: row.pop(key)
+            for key in ("cr_count", "added_lines", "removed_lines", "net_lines", "changed_lines")
+        }
         objects.append(
             ComplianceContributionDailyAggregate(
                 **row,
                 contributor_count=1 if row.get("author_username") else 0,
-                cr_count=int(row.get("cr_count") or 0),
-                added_lines=int(row.get("added_lines") or 0),
-                removed_lines=int(row.get("removed_lines") or 0),
-                net_lines=int(row.get("net_lines") or 0),
-                changed_lines=int(row.get("changed_lines") or 0),
+                cr_count=int(metrics.get("cr_count") or 0),
+                added_lines=int(metrics.get("added_lines") or 0),
+                removed_lines=int(metrics.get("removed_lines") or 0),
+                net_lines=int(metrics.get("net_lines") or 0),
+                changed_lines=int(metrics.get("changed_lines") or 0),
             )
         )
     ComplianceContributionDailyAggregate.objects.bulk_create(objects, batch_size=500)

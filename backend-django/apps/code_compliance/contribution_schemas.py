@@ -43,6 +43,15 @@ class ContributionTrendPointOut(Schema):
     cr_count: int
 
 
+class ContributionPlGroupTrendPointOut(Schema):
+    date: date
+    pl_group_name: str
+    added_lines: int
+    removed_lines: int
+    changed_lines: int
+    cr_count: int
+
+
 class ContributionRankingItemOut(Schema):
     id: str
     name: str
