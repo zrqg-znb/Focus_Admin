@@ -6,6 +6,7 @@ import math
 import tempfile
 import threading
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -26,8 +27,10 @@ from core.user.user_model import User
 from scheduler.module.executor import scheduler_task
 
 from . import base_services
-from .missing_merge_client import CodeComplianceCRClient, DEFAULT_PAGE_SIZE
+from .contribution_client import CodeComplianceCRClient, CodeComplianceMRClient, DEFAULT_PAGE_SIZE
 from .models import (
+    COMPLIANCE_MODE_CR,
+    COMPLIANCE_MODE_MR,
     COMPLIANCE_BRANCH_TYPE_CHOICES,
     COMPLIANCE_DOMAIN_CHOICES,
     CONTRIBUTION_EXPORT_SCOPE_RECORDS,
@@ -55,6 +58,8 @@ from .models import (
 
 UNKNOWN_PL_GROUP_ID = "unknown"
 UNKNOWN_PL_GROUP_NAME = "非底软领域"
+CONTRIBUTION_SOURCE_MODES = {COMPLIANCE_MODE_CR, COMPLIANCE_MODE_MR}
+MR_COLLECT_MAX_WORKERS = 5
 TASK_STATUS_LABELS = {
     CONTRIBUTION_TASK_STATUS_PENDING: "待执行",
     CONTRIBUTION_TASK_STATUS_RUNNING: "执行中",
@@ -110,10 +115,12 @@ def _default_assignment() -> AuthorAssignment:
 def _load_author_assignments(usernames: list[str]) -> dict[str, AuthorAssignment]:
     """批量解析 CR 创建人的 Focus 用户与 PL 组归属，避免逐条查询。"""
     unique_usernames = _normalize_id_list(usernames)
-    users = {
-        row["username"]: row
-        for row in User.objects.filter(username__in=unique_usernames).values("id", "username", "name")
-    }
+    users: dict[str, dict[str, Any]] = {}
+    # 历史数据若存在重复工号，优先使用最近创建的 Focus 用户，保证归属确定。
+    for row in User.objects.filter(username__in=unique_usernames).order_by(
+        "username", "-sys_create_datetime", "-id"
+    ).values("id", "username", "name"):
+        users.setdefault(row["username"], row)
     group_rows = (
         PlGroup.objects.filter(status=True, members__username__in=unique_usernames)
         .values("id", "name", "sort", "members__username")
@@ -193,6 +200,16 @@ def _filter_payload_from_kwargs(**kwargs) -> dict:
     return payload
 
 
+def _normalize_source_mode(value: Any, *, allow_empty: bool = True) -> str:
+    """规范化贡献来源模式，空值表示 CR 与 MR 汇总查询。"""
+    mode = _clean_text(value).upper()
+    if not mode and allow_empty:
+        return ""
+    if mode in CONTRIBUTION_SOURCE_MODES:
+        return mode
+    raise HttpError(400, "source_mode 仅支持 CR 或 MR")
+
+
 def _stock_payload(payload: dict) -> dict:
     """存量口径忽略时间、人员和 CR 关键词，只保留仓库分支范围。"""
     return {
@@ -208,6 +225,9 @@ def _apply_record_filters(queryset, payload: dict):
     repository_ids = _normalize_id_list(payload.get("repository_ids"))
     branch_ids = _normalize_id_list(payload.get("branch_ids"))
     pl_group_ids = _normalize_id_list(payload.get("pl_group_ids"))
+    source_mode = _normalize_source_mode(payload.get("source_mode"))
+    if source_mode:
+        queryset = queryset.filter(source_mode=source_mode)
     if organization_ids:
         queryset = queryset.filter(organization_id__in=organization_ids)
     if repository_ids:
@@ -413,7 +433,7 @@ def get_repository_ranking(limit: int = 20, **filters) -> list[dict]:
     payload = _filter_payload_from_kwargs(**filters)
     rows = (
         _base_record_queryset(payload)
-        .values("repository_id", "repository_name", "repository_project_id", "branch_name")
+        .values("repository_id", "repository_name", "repository_project_id", "branch_name", "source_mode")
         .annotate(
             cr_count=Count("id"),
             contributor_count=Count("author_username", distinct=True),
@@ -432,6 +452,7 @@ def get_repository_ranking(limit: int = 20, **filters) -> list[dict]:
             "project_id": row.get("repository_project_id") or "",
             "branch_name": row.get("branch_name") or "",
             "repository_name": row.get("repository_name") or "",
+            "source_mode": row.get("source_mode") or COMPLIANCE_MODE_CR,
             "baseline_id": None,
             "baseline_at": None,
             "baseline_lines": 0,
@@ -515,7 +536,7 @@ def get_category_distribution(**filters) -> dict:
 
 
 def serialize_record(item: ComplianceContributionRecord) -> dict:
-    """把贡献明细转换为 CR 明细表输出。"""
+    """把贡献明细转换为 CR/MR 兼容输出。"""
     repo_type_label = base_services._repo_type_label_map().get(item.repo_type, item.repo_type or "")
     return {
         "id": str(item.id),
@@ -534,6 +555,8 @@ def serialize_record(item: ComplianceContributionRecord) -> dict:
         "repo_type_label": repo_type_label,
         "domain": item.domain,
         "domain_label": DOMAIN_LABELS.get(item.domain, item.domain),
+        "source_mode": item.source_mode,
+        "source_change_id": item.source_change_id,
         "change_request_iid": item.change_request_iid,
         "change_key": item.change_key,
         "title": item.title,
@@ -554,7 +577,7 @@ def serialize_record(item: ComplianceContributionRecord) -> dict:
 
 
 def list_records(page: int = 1, page_size: int = 20, **filters) -> dict:
-    """分页查询 CR 贡献明细，下钻表格复用该接口。"""
+    """分页查询 CR/MR 贡献明细，下钻表格复用该接口。"""
     safe_page = max(int(page or 1), 1)
     safe_size = max(min(int(page_size or 20), 100), 1)
     queryset = _base_record_queryset(_filter_payload_from_kwargs(**filters)).order_by("-merged_at", "-contribution_date")
@@ -623,12 +646,15 @@ def _load_collect_bindings(payload: dict) -> list[ComplianceRepositoryBranch]:
     organization_ids = _normalize_id_list(payload.get("organization_ids"))
     repository_ids = _normalize_id_list(payload.get("repository_ids"))
     branch_ids = _normalize_id_list(payload.get("branch_ids"))
+    source_mode = _normalize_source_mode(payload.get("source_mode"))
     if organization_ids:
         queryset = queryset.filter(repository__organization_id__in=organization_ids)
     if repository_ids:
         queryset = queryset.filter(repository_id__in=repository_ids)
     if branch_ids:
         queryset = queryset.filter(branch_id__in=branch_ids)
+    if source_mode:
+        queryset = queryset.filter(repository__mode=source_mode)
     return list(queryset)
 
 
@@ -641,6 +667,7 @@ def create_collect_task(user, payload, trigger_type: str = CONTRIBUTION_TASK_TRI
         "organization_ids": _normalize_id_list(data.get("organization_ids")),
         "repository_ids": _normalize_id_list(data.get("repository_ids")),
         "branch_ids": _normalize_id_list(data.get("branch_ids")),
+        "source_mode": _normalize_source_mode(data.get("source_mode")),
     }
     return ComplianceContributionCollectTask.objects.create(
         trigger_type=trigger_type,
@@ -699,9 +726,9 @@ def execute_collect_task(task_id: str) -> dict:
 
 
 def _collect_contribution_records(task: ComplianceContributionCollectTask):
-    """按组织和活跃分支批量拉取 CR 明细并写入贡献事实表。"""
+    """按仓库模式拉取贡献明细；CR 按组织聚合，MR 按项目受控并发。"""
     bindings = _load_collect_bindings(task.filter_payload or {})
-    diagnostics: dict[str, Any] = {"groups": [], "branches": []}
+    diagnostics: dict[str, Any] = {"cr_groups": [], "cr_branches": [], "mr_projects": []}
     counters = {
         "scanned_organization_count": len({item.repository.organization_id for item in bindings}),
         "scanned_repository_count": len({item.repository_id for item in bindings}),
@@ -715,18 +742,20 @@ def _collect_contribution_records(task: ComplianceContributionCollectTask):
         diagnostics["reason"] = "未找到活跃代码库-分支绑定关系"
         return counters, diagnostics, set()
 
-    client = CodeComplianceCRClient()
+    cr_bindings = [item for item in bindings if item.repository.mode == COMPLIANCE_MODE_CR]
+    mr_bindings = [item for item in bindings if item.repository.mode == COMPLIANCE_MODE_MR]
     by_group: dict[str, list[ComplianceRepositoryBranch]] = defaultdict(list)
-    for link in bindings:
+    for link in cr_bindings:
         by_group[link.repository.organization.group_id].append(link)
 
     affected_dates: set[Any] = set()
+    client = CodeComplianceCRClient()
     for group_id, group_links in by_group.items():
         project_ids = sorted({link.repository.project_id for link in group_links})
         branch_names = sorted({link.branch.branch_name for link in group_links})
         repo_by_project = {link.repository.project_id: link.repository for link in group_links}
         branch_by_name = {link.branch.branch_name: link.branch for link in group_links}
-        diagnostics["groups"].append({"group_id": group_id, "project_count": len(project_ids), "branch_count": len(branch_names)})
+        diagnostics["cr_groups"].append({"group_id": group_id, "project_count": len(project_ids), "branch_count": len(branch_names)})
         for branch_name in branch_names:
             total = client.fetch_count(
                 group_id=group_id,
@@ -759,7 +788,7 @@ def _collect_contribution_records(task: ComplianceContributionCollectTask):
                 if not repo or not branch or not change_key:
                     branch_skipped += 1
                     continue
-                created = _upsert_contribution_record(repo, branch, row, assignments)
+                created = _upsert_contribution_record(repo, branch, row, assignments, source_mode=COMPLIANCE_MODE_CR)
                 contribution_date = _date_from_datetime(row.get("merged_at"))
                 affected_dates.add(contribution_date)
                 if created:
@@ -770,7 +799,7 @@ def _collect_contribution_records(task: ComplianceContributionCollectTask):
             counters["created_count"] += branch_created
             counters["updated_count"] += branch_updated
             counters["skipped_count"] += branch_skipped
-            diagnostics["branches"].append(
+            diagnostics["cr_branches"].append(
                 {
                     "group_id": group_id,
                     "target_branch": branch_name,
@@ -782,6 +811,63 @@ def _collect_contribution_records(task: ComplianceContributionCollectTask):
                     "skipped_count": branch_skipped,
                 }
             )
+
+    if mr_bindings:
+        # MR 数据湖不支持按组织批量查询；每个项目-分支请求由最多五个 worker 执行。
+        mr_client = CodeComplianceMRClient()
+        with ThreadPoolExecutor(max_workers=MR_COLLECT_MAX_WORKERS, thread_name_prefix="contribution-mr") as executor:
+            futures = {
+                executor.submit(
+                    mr_client.fetch_all,
+                    project_id=link.repository.project_id,
+                    target_branch=link.branch.branch_name,
+                    merged_after=task.merged_after,
+                    merged_before=task.merged_before,
+                    per_page=DEFAULT_PAGE_SIZE,
+                ): link
+                for link in mr_bindings
+            }
+            for future in as_completed(futures):
+                link = futures[future]
+                diagnostic = {
+                    "project_id": link.repository.project_id,
+                    "repository_id": str(link.repository_id),
+                    "target_branch": link.branch.branch_name,
+                    "only_count": 0,
+                    "detail_count": 0,
+                    "created_count": 0,
+                    "updated_count": 0,
+                    "skipped_count": 0,
+                    "error": "",
+                }
+                try:
+                    total, rows = future.result()
+                    diagnostic["only_count"] = total
+                    diagnostic["detail_count"] = len(rows)
+                    assignments = _load_author_assignments([_clean_text(row.get("author_username")) for row in rows])
+                    for row in rows:
+                        if _clean_text(row.get("project_id")) not in {"", link.repository.project_id}:
+                            diagnostic["skipped_count"] += 1
+                            continue
+                        if not _clean_text(row.get("source_change_id")):
+                            diagnostic["skipped_count"] += 1
+                            continue
+                        created = _upsert_contribution_record(
+                            link.repository,
+                            link.branch,
+                            row,
+                            assignments,
+                            source_mode=COMPLIANCE_MODE_MR,
+                        )
+                        affected_dates.add(_date_from_datetime(row.get("merged_at")))
+                        diagnostic["created_count" if created else "updated_count"] += 1
+                except Exception as exc:
+                    # 单项目异常不影响其他 MR 项目，但任务诊断必须可用于生产排障。
+                    diagnostic["error"] = str(exc)
+                finally:
+                    for key in ("detail_count", "created_count", "updated_count", "skipped_count"):
+                        counters[{"detail_count": "fetched_count", "created_count": "created_count", "updated_count": "updated_count", "skipped_count": "skipped_count"}[key]] += diagnostic[key]
+                    diagnostics["mr_projects"].append(diagnostic)
     return counters, diagnostics, affected_dates
 
 
@@ -790,8 +876,13 @@ def _upsert_contribution_record(
     branch: ComplianceManagedBranch,
     row: dict[str, Any],
     assignments: dict[str, AuthorAssignment],
+    source_mode: str = COMPLIANCE_MODE_CR,
 ) -> bool:
-    """按 repository + branch_name + change_key 幂等写入 CR 贡献明细。"""
+    """按来源模式和上游稳定标识幂等写入 CR/MR 贡献明细。"""
+    source_mode = _normalize_source_mode(source_mode, allow_empty=False)
+    source_change_id = _clean_text(row.get("source_change_id") or row.get("change_key"))
+    if not source_change_id:
+        raise HttpError(400, "贡献明细缺少上游变更唯一标识")
     author_username = _clean_text(row.get("author_username"))
     assignment = assignments.get(author_username, _default_assignment())
     added, removed, net, changed = _line_metrics(row)
@@ -810,7 +901,11 @@ def _upsert_contribution_record(
         "repo_type": repo.repo_type,
         "domain": repo.domain,
         "responsibility_group_names": responsibility_names,
+        "source_mode": source_mode,
+        "source_change_id": source_change_id,
         "change_request_iid": _clean_text(row.get("change_request_iid")),
+        # MR 数据湖没有 change_key；保留为空以避免把 MR 误用于 CR 漏合语义。
+        "change_key": _clean_text(row.get("change_key")) if source_mode == COMPLIANCE_MODE_CR else "",
         "title": _clean_text(row.get("title")),
         "description": _clean_text(row.get("description")),
         "web_url": _clean_text(row.get("web_url")),
@@ -829,7 +924,8 @@ def _upsert_contribution_record(
     _, created = ComplianceContributionRecord.objects.update_or_create(
         repository=repo,
         branch_name=branch.branch_name,
-        change_key=_clean_text(row.get("change_key")),
+        source_mode=source_mode,
+        source_change_id=source_change_id,
         defaults=defaults,
     )
     return created
@@ -851,6 +947,7 @@ def _rebuild_daily_aggregates(dates: set[Any], payload: dict) -> int:
     rows = (
         record_queryset.values(
             "contribution_date",
+            "source_mode",
             "organization_id",
             "organization_group_id",
             "organization_name",
@@ -899,6 +996,9 @@ def _rebuild_daily_aggregates(dates: set[Any], payload: dict) -> int:
 
 def _apply_aggregate_scope(queryset, payload: dict):
     """把采集范围应用到日聚合表删除查询。"""
+    source_mode = _normalize_source_mode(payload.get("source_mode"))
+    if source_mode:
+        queryset = queryset.filter(source_mode=source_mode)
     if _normalize_id_list(payload.get("organization_ids")):
         queryset = queryset.filter(organization_id__in=_normalize_id_list(payload.get("organization_ids")))
     if _normalize_id_list(payload.get("repository_ids")):
@@ -1071,7 +1171,7 @@ def run_scheduled_contribution_collect():
 
 
 def create_backfill_tasks(user, months: int = 12) -> list[dict]:
-    """按月创建近 12 个月历史回补任务，供初始化或运维触发。"""
+    """按月创建 CR 历史回补任务；MR 按产品约束仅从上线后增量采集。"""
     if not getattr(user, "is_superuser", False):
         raise HttpError(403, "仅管理员可以创建历史回补任务")
     now = _to_model_datetime(timezone.now())
@@ -1084,7 +1184,7 @@ def create_backfill_tasks(user, months: int = 12) -> list[dict]:
             status=CONTRIBUTION_TASK_STATUS_PENDING,
             merged_after=start,
             merged_before=end,
-            filter_payload={},
+            filter_payload={"source_mode": COMPLIANCE_MODE_CR},
         )
         tasks.append(_serialize_collect_task(task))
     return tasks
@@ -1156,16 +1256,18 @@ def _execute_export_task(task_id: str):
 
 
 def _build_export_workbook(task: ComplianceContributionExportTask):
-    """根据导出范围生成聚合排行或 CR 明细 Excel。"""
+    """根据导出范围生成 CR/MR 聚合排行或变更明细 Excel。"""
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     filters = (task.payload or {}).get("filters") or {}
     if task.scope == CONTRIBUTION_EXPORT_SCOPE_RECORDS:
-        sheet.title = "CR明细"
-        headers = ["日期", "代码库", "项目ID", "分支", "创建人", "PL组", "CR标题", "CR链接", "新增", "删除", "净增", "总变更", "合入时间"]
+        sheet.title = "变更明细"
+        headers = ["来源", "上游变更ID", "日期", "代码库", "项目ID", "分支", "创建人", "PL组", "标题", "链接", "新增", "删除", "净增", "总变更", "合入时间"]
         sheet.append(headers)
         for item in _base_record_queryset(filters).order_by("-merged_at")[:100000]:
             sheet.append([
+                item.source_mode,
+                item.source_change_id,
                 item.contribution_date,
                 item.repository_name,
                 item.repository_project_id,
@@ -1182,10 +1284,11 @@ def _build_export_workbook(task: ComplianceContributionExportTask):
             ])
     else:
         sheet.title = "代码贡献看板"
-        headers = ["代码库", "项目ID", "分支", "CR数", "贡献人数", "新增行数", "删除行数", "总变更行数"]
+        headers = ["来源", "代码库", "项目ID", "分支", "变更数", "贡献人数", "新增行数", "删除行数", "总变更行数"]
         sheet.append(headers)
         for item in get_repository_ranking(limit=1000, **filters):
             sheet.append([
+                item["source_mode"],
                 item["repository_name"],
                 item["project_id"],
                 item["branch_name"],

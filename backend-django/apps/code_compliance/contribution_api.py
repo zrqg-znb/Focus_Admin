@@ -32,6 +32,7 @@ router = Router()
 def _filters(**kwargs) -> dict:
     """把贡献看板查询参数集中成服务层筛选字典。"""
     return {
+        "source_mode": kwargs.get("source_mode"),
         "organization_ids": kwargs.get("organization_ids"),
         "repository_ids": kwargs.get("repository_ids"),
         "branch_ids": kwargs.get("branch_ids"),
@@ -49,6 +50,7 @@ def _filters(**kwargs) -> dict:
 @router.get("/dashboard/summary", response=ContributionMetricOut, summary="代码贡献核心指标")
 def get_contribution_summary(
     request,
+    source_mode: Optional[str] = Query(None),
     organization_ids: Optional[str] = Query(None),
     repository_ids: Optional[str] = Query(None),
     branch_ids: Optional[str] = Query(None),
@@ -68,6 +70,7 @@ def get_contribution_summary(
 @router.get("/dashboard/trend", response=list[ContributionTrendPointOut], summary="代码贡献日趋势")
 def get_contribution_trend(
     request,
+    source_mode: Optional[str] = Query(None),
     organization_ids: Optional[str] = Query(None),
     repository_ids: Optional[str] = Query(None),
     branch_ids: Optional[str] = Query(None),
@@ -91,6 +94,7 @@ def get_contribution_trend(
 )
 def get_contribution_pl_group_trend(
     request,
+    source_mode: Optional[str] = Query(None),
     organization_ids: Optional[str] = Query(None),
     repository_ids: Optional[str] = Query(None),
     branch_ids: Optional[str] = Query(None),
@@ -115,6 +119,7 @@ def get_contribution_pl_group_trend(
 def get_contribution_repository_ranking(
     request,
     limit: int = Query(20),
+    source_mode: Optional[str] = Query(None),
     organization_ids: Optional[str] = Query(None),
     repository_ids: Optional[str] = Query(None),
     branch_ids: Optional[str] = Query(None),
@@ -139,6 +144,7 @@ def get_contribution_repository_ranking(
 def get_contribution_person_ranking(
     request,
     limit: int = Query(20),
+    source_mode: Optional[str] = Query(None),
     organization_ids: Optional[str] = Query(None),
     repository_ids: Optional[str] = Query(None),
     branch_ids: Optional[str] = Query(None),
@@ -162,6 +168,7 @@ def get_contribution_person_ranking(
 )
 def get_contribution_category_distribution(
     request,
+    source_mode: Optional[str] = Query(None),
     organization_ids: Optional[str] = Query(None),
     repository_ids: Optional[str] = Query(None),
     branch_ids: Optional[str] = Query(None),
@@ -183,6 +190,7 @@ def list_contribution_records(
     request,
     page: int = Query(1),
     pageSize: int = Query(20),
+    source_mode: Optional[str] = Query(None),
     organization_ids: Optional[str] = Query(None),
     repository_ids: Optional[str] = Query(None),
     branch_ids: Optional[str] = Query(None),

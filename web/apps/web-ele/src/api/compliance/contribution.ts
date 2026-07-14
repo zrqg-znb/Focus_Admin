@@ -12,6 +12,7 @@ export interface ContributionFilters {
   pl_group_ids?: string[];
   repo_type?: string;
   repository_ids?: string[];
+  source_mode?: '' | 'CR' | 'MR';
 }
 
 export interface ContributionMetric {
@@ -63,6 +64,7 @@ export interface ContributionRankingItem {
   project_id: string;
   removed_lines: number;
   repository_name: string;
+  source_mode: 'CR' | 'MR';
   stock_lines: number;
 }
 
@@ -128,6 +130,8 @@ export interface ContributionRecordItem {
   repository_name: string;
   repository_project_id: string;
   repo_type: string;
+  source_change_id: string;
+  source_mode: 'CR' | 'MR';
   repo_type_label: string;
   target_branch: string;
   title: string;
@@ -276,6 +280,7 @@ export function runContributionCollectTaskApi(data: {
   merged_before: string;
   organization_ids?: string[];
   repository_ids?: string[];
+  source_mode?: '' | 'CR' | 'MR';
 }) {
   return requestClient.post<{
     accepted: boolean;

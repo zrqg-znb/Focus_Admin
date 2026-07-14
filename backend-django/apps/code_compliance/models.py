@@ -796,7 +796,7 @@ CONTRIBUTION_BASELINE_SOURCE_CHOICES = (
 
 
 class ComplianceContributionRecord(RootModel):
-    """代码贡献 CR 明细事实表，按仓库、分支和 change_key 幂等保存。"""
+    """代码贡献事实表，按仓库、分支、来源和上游变更 ID 幂等保存。"""
 
     contribution_date = models.DateField(db_index=True, verbose_name="贡献日期", help_text="按 merged_at 转换得到的日期")
     organization = models.ForeignKey(
@@ -850,8 +850,17 @@ class ComplianceContributionRecord(RootModel):
         verbose_name="领域快照",
     )
     responsibility_group_names = models.JSONField(default=list, blank=True, verbose_name="责任PL组快照")
+    source_mode = models.CharField(
+        max_length=8,
+        choices=COMPLIANCE_MODE_CHOICES,
+        default=COMPLIANCE_MODE_CR,
+        db_index=True,
+        verbose_name="数据来源模式",
+        help_text="CR/MR 数据湖来源快照",
+    )
+    source_change_id = models.CharField(max_length=255, db_index=True, verbose_name="上游变更唯一标识")
     change_request_iid = models.CharField(max_length=128, blank=True, default="", verbose_name="CR内部ID")
-    change_key = models.CharField(max_length=255, db_index=True, verbose_name="CR全局标识")
+    change_key = models.CharField(max_length=255, blank=True, default="", db_index=True, verbose_name="CR全局标识")
     title = models.CharField(max_length=500, blank=True, default="", verbose_name="CR标题")
     description = models.TextField(blank=True, default="", verbose_name="CR描述")
     web_url = models.CharField(max_length=1024, blank=True, default="", verbose_name="CR链接")
@@ -890,8 +899,8 @@ class ComplianceContributionRecord(RootModel):
         verbose_name_plural = verbose_name
         constraints = [
             models.UniqueConstraint(
-                fields=("repository", "branch_name", "change_key"),
-                name="cc_contribution_record_uniq",
+                fields=("repository", "branch_name", "source_mode", "source_change_id"),
+                name="cc_contribution_record_source_uniq",
             ),
         ]
         indexes = [
@@ -899,16 +908,24 @@ class ComplianceContributionRecord(RootModel):
             models.Index(fields=["author_user", "contribution_date"], name="cc_ctr_author_day_idx"),
             models.Index(fields=["author_pl_group", "contribution_date"], name="cc_ctr_pl_day_idx"),
             models.Index(fields=["repo_type", "domain"], name="cc_ctr_type_domain_idx"),
+            models.Index(fields=["source_mode", "contribution_date"], name="cc_ctr_mode_day_idx"),
         ]
 
     def __str__(self):
-        return f"{self.repository_name}:{self.branch_name}:{self.change_key}"
+        return f"{self.repository_name}:{self.branch_name}:{self.source_mode}:{self.source_change_id}"
 
 
 class ComplianceContributionDailyAggregate(RootModel):
     """代码贡献日聚合表，支撑看板高频筛选与排行查询。"""
 
     contribution_date = models.DateField(db_index=True, verbose_name="贡献日期")
+    source_mode = models.CharField(
+        max_length=8,
+        choices=COMPLIANCE_MODE_CHOICES,
+        default=COMPLIANCE_MODE_CR,
+        db_index=True,
+        verbose_name="数据来源模式",
+    )
     organization = models.ForeignKey(
         ComplianceOrganization,
         on_delete=models.SET_NULL,

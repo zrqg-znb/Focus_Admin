@@ -298,6 +298,29 @@ def _ensure_org_parent_valid(
         current = current.parent
 
 
+def _ensure_organization_mode_consistency(
+    *,
+    mode: str,
+    parent: Optional[ComplianceOrganization],
+    organization: Optional[ComplianceOrganization] = None,
+):
+    """强制组织树和直属代码库保持同一 CR/MR 来源模式。"""
+    if parent and parent.mode != mode:
+        raise HttpError(400, f"子组织模式必须与父组织一致: {parent.mode}")
+    if not organization:
+        return
+    if organization.children.filter(is_deleted=False).exclude(mode=mode).exists():
+        raise HttpError(400, "组织模式与现有子组织不一致，不能修改")
+    if organization.repositories.filter(is_deleted=False).exclude(mode=mode).exists():
+        raise HttpError(400, "组织模式与现有代码库不一致，不能修改")
+
+
+def _ensure_repository_mode_consistency(organization: ComplianceOrganization, mode: str):
+    """代码库必须继承所属组织模式，避免贡献采集混用两套数据湖接口。"""
+    if organization.mode != mode:
+        raise HttpError(400, f"代码库模式必须与所属组织一致: {organization.mode}")
+
+
 def _repo_type_items():
     """返回启用的代码合规仓库类型字典项。"""
     return DictItem.objects.filter(
@@ -518,11 +541,13 @@ def create_organization(user, payload) -> dict:
         raise HttpError(400, f"组织ID已存在: {group_id}")
 
     item = existing or ComplianceOrganization(group_id=group_id)
+    mode = _normalize_mode(data.get("mode"))
     _ensure_org_parent_valid(org_id=str(item.id) if existing else None, parent=parent)
+    _ensure_organization_mode_consistency(mode=mode, parent=parent, organization=item if existing else None)
     item.group_id = group_id
     item.name = name
     item.parent = parent
-    item.mode = _normalize_mode(data.get("mode"))
+    item.mode = mode
     item.domain = _normalize_domain(data.get("domain"))
     item.remark = _optional_text(data.get("remark"))
     item.sort = int(data.get("sort") or 0)
@@ -537,6 +562,16 @@ def update_organization(user, org_id: str, payload) -> dict:
     """更新组织字段，并重新校验外部 ID 和父组织合法性。"""
     item = _get_active_organization(org_id)
     data = payload.dict(exclude_unset=True)
+
+    next_parent = _get_parent(data.get("parent_id")) if "parent_id" in data else item.parent
+    next_mode = _normalize_mode(data.get("mode")) if "mode" in data else item.mode
+    _ensure_org_parent_valid(org_id=org_id, parent=next_parent)
+    # 仅模式变更时校验既有下级，历史脏数据可用检查命令定位，不阻塞普通信息维护。
+    _ensure_organization_mode_consistency(
+        mode=next_mode,
+        parent=next_parent,
+        organization=item if "mode" in data else None,
+    )
 
     if "group_id" in data:
         group_id = _clean_text(data["group_id"])
@@ -556,11 +591,9 @@ def update_organization(user, org_id: str, payload) -> dict:
             raise HttpError(400, "组织名不能为空")
         item.name = name
     if "parent_id" in data:
-        parent = _get_parent(data.get("parent_id"))
-        _ensure_org_parent_valid(org_id=org_id, parent=parent)
-        item.parent = parent
+        item.parent = next_parent
     if "mode" in data:
-        item.mode = _normalize_mode(data.get("mode"))
+        item.mode = next_mode
     if "domain" in data:
         item.domain = _normalize_domain(data.get("domain"))
     if "remark" in data:
@@ -1078,6 +1111,8 @@ def create_repository(user, payload) -> dict:
         raise HttpError(400, "代码库名不能为空")
 
     organization = _get_active_organization(data["organization_id"])
+    mode = _normalize_mode(data.get("mode"))
+    _ensure_repository_mode_consistency(organization, mode)
     repo_type = _ensure_repo_type_valid(data.get("repo_type"))
     pl_groups = _get_pl_groups(data.get("responsibility_group_ids") or [])
     existing = ComplianceRepository.objects.filter(project_id=project_id).first()
@@ -1089,7 +1124,7 @@ def create_repository(user, payload) -> dict:
     item.project_name = project_name
     item.project_url = _clean_text(data.get("project_url"))
     item.organization = organization
-    item.mode = _normalize_mode(data.get("mode"))
+    item.mode = mode
     item.repo_type = repo_type
     item.domain = _normalize_domain(data.get("domain"))
     item.remark = _optional_text(data.get("remark"))
@@ -1106,6 +1141,9 @@ def update_repository(user, repo_id: str, payload) -> dict:
     """更新代码库字段，责任 PL 组仅在请求显式传入时覆盖。"""
     item = _get_active_repository(repo_id)
     data = payload.dict(exclude_unset=True)
+    next_organization = _get_active_organization(data["organization_id"]) if "organization_id" in data else item.organization
+    next_mode = _normalize_mode(data.get("mode")) if "mode" in data else item.mode
+    _ensure_repository_mode_consistency(next_organization, next_mode)
 
     if "project_id" in data:
         project_id = _clean_text(data["project_id"])
@@ -1127,9 +1165,9 @@ def update_repository(user, repo_id: str, payload) -> dict:
     if "project_url" in data:
         item.project_url = _clean_text(data.get("project_url"))
     if "organization_id" in data:
-        item.organization = _get_active_organization(data["organization_id"])
+        item.organization = next_organization
     if "mode" in data:
-        item.mode = _normalize_mode(data.get("mode"))
+        item.mode = next_mode
     if "repo_type" in data:
         item.repo_type = _ensure_repo_type_valid(data.get("repo_type"))
     if "domain" in data:
@@ -1535,11 +1573,13 @@ def import_organizations(user, file_obj) -> ImportResultOut:
             if item is None:
                 item = ComplianceOrganization(group_id=group_id)
             _ensure_org_parent_valid(org_id=str(item.id) if item.id else None, parent=parent)
+            mode = _normalize_mode(_cell(row, "模式", "mode"))
+            _ensure_organization_mode_consistency(mode=mode, parent=parent, organization=item if item.id else None)
             values = {
                 "group_id": group_id,
                 "name": name,
                 "parent": parent,
-                "mode": _normalize_mode(_cell(row, "模式", "mode")),
+                "mode": mode,
                 "domain": _normalize_domain(_cell(row, "领域", "domain")),
                 "remark": _optional_text(_cell(row, "备注", "remark")),
                 "is_deleted": False,
@@ -1592,12 +1632,14 @@ def import_repositories(user, file_obj) -> ImportResultOut:
             is_create = item is None
             if item is None:
                 item = ComplianceRepository(project_id=project_id)
+            mode = _normalize_mode(_cell(row, "模式", "mode"))
+            _ensure_repository_mode_consistency(organization, mode)
             values = {
                 "project_id": project_id,
                 "project_name": project_name,
                 "project_url": _clean_text(_cell(row, "代码库URL", "project_url")),
                 "organization": organization,
-                "mode": _normalize_mode(_cell(row, "模式", "mode")),
+                "mode": mode,
                 "repo_type": repo_type,
                 "domain": _normalize_domain(_cell(row, "领域", "domain")),
                 "remark": _optional_text(_cell(row, "备注", "remark")),

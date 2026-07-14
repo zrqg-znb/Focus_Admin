@@ -32,10 +32,13 @@ import {
   ElInput,
   ElMessage,
   ElOption,
+  ElRadioButton,
+  ElRadioGroup,
   ElSelect,
   ElTabPane,
   ElTable,
   ElTableColumn,
+  ElTag,
   ElTabs,
 } from 'element-plus';
 
@@ -107,6 +110,7 @@ const filters = ref<ContributionFilters>({
   organization_ids: [],
   pl_group_ids: [],
   repository_ids: [],
+  source_mode: '',
 });
 const mergedRange = ref<string[]>([
   dayjs().subtract(30, 'day').startOf('day').format('YYYY-MM-DDTHH:mm:ssZ'),
@@ -119,13 +123,15 @@ const collectRange = ref<string[]>([
 
 const repositoriesByOrg = computed(() => {
   const result = new Map<string, RepositoryItem[]>();
-  repositoryOptions.value.forEach((item) => {
+  visibleRepositories.value.forEach((item) => {
     const rows = result.get(item.organization_id) || [];
     rows.push(item);
     result.set(item.organization_id, rows);
   });
   return result;
 });
+const visibleRepositories = computed(() => repositoryOptions.value.filter((item) => !filters.value.source_mode || item.mode === filters.value.source_mode));
+const visibleOrganizationTree = computed(() => filterOrganizationsByMode(organizationTree.value));
 const selectedRepositoryCount = computed(() => parseScopeSelection().repository_ids.length);
 
 const scopeCascaderProps = {
@@ -135,7 +141,7 @@ const scopeCascaderProps = {
   value: 'value',
 };
 
-const scopeOptions = computed<ScopeOption[]>(() => buildScopeOptions(organizationTree.value));
+const scopeOptions = computed<ScopeOption[]>(() => buildScopeOptions(visibleOrganizationTree.value));
 
 const metricCards = computed(() => {
   const data = summary.value || {
@@ -179,6 +185,12 @@ function buildScopeOptions(nodes: OrganizationItem[]): ScopeOption[] {
   });
 }
 
+function filterOrganizationsByMode(nodes: OrganizationItem[]): OrganizationItem[] {
+  return nodes
+    .filter((node) => !filters.value.source_mode || node.mode === filters.value.source_mode)
+    .map((node) => ({ ...node, children: filterOrganizationsByMode(node.children || []) }));
+}
+
 function collectRepositoryIdsFromOptions(values: string[], options = scopeOptions.value) {
   const selected = new Set<string>();
   const walk = (items: ScopeOption[]) => {
@@ -204,6 +216,13 @@ function buildParams(): ContributionFilters {
     merged_after: mergedRange.value?.[0],
     merged_before: mergedRange.value?.[1],
   };
+}
+
+function changeSourceMode() {
+  // 模式切换后清理可能属于另一数据湖的范围，避免筛选条件不可见却仍参与查询。
+  selectedScopeValues.value = [];
+  filters.value.branch_ids = [];
+  loadDashboard();
 }
 
 function formatNumber(value?: number) {
@@ -388,7 +407,7 @@ function clearScope() {
 }
 
 function selectAllScope() {
-  selectedScopeValues.value = repositoryOptions.value.map((item) => `repo:${item.id}`);
+  selectedScopeValues.value = visibleRepositories.value.map((item) => `repo:${item.id}`);
 }
 
 function stopExportPolling() {
@@ -448,6 +467,7 @@ async function submitCollectTask() {
       merged_after: collectRange.value[0],
       merged_before: collectRange.value[1],
       repository_ids: parseScopeSelection().repository_ids,
+      source_mode: filters.value.source_mode,
     });
     collectTask.value = result.task;
     collectVisible.value = false;
@@ -472,27 +492,43 @@ onUnmounted(() => {
     <div class="contribution-page" v-loading="loading">
       <section class="toolbar-panel">
         <ElForm class="filter-form" label-position="top">
-          <ElFormItem class="scope-item" label="组织 / 代码库">
-            <div class="scope-control">
-              <ElCascader
-                v-model="selectedScopeValues"
-                :options="scopeOptions as any"
-                :props="scopeCascaderProps"
-                clearable
-                collapse-tags
-                collapse-tags-tooltip
-                filterable
-                placeholder="搜索组织或代码库，选择组织将包含子孙仓库"
-              />
-              <div class="scope-actions">
-                <span class="muted">已选 {{ selectedRepositoryCount }} 个代码库</span>
-                <ElButton link type="primary" @click="selectAllScope">全选</ElButton>
-                <ElButton link @click="clearScope">清空</ElButton>
+          <!-- Row 1 -->
+          <ElFormItem class="col-span-2">
+            <template #label>
+              <div class="custom-label">
+                <span>组织 / 代码库</span>
+                <div class="scope-actions">
+                  <span class="scope-count">已选 {{ selectedRepositoryCount }} 个</span>
+                  <ElButton link type="primary" @click="selectAllScope">全选</ElButton>
+                  <ElButton link type="info" @click="clearScope">清空</ElButton>
+                </div>
               </div>
-            </div>
+            </template>
+            <ElCascader
+              v-model="selectedScopeValues"
+              :options="scopeOptions"
+              :props="scopeCascaderProps"
+              clearable
+              collapse-tags
+              collapse-tags-tooltip
+              filterable
+              placeholder="搜索组织或代码库"
+            />
           </ElFormItem>
+          <ElFormItem label="合入时间">
+            <ElDatePicker v-model="mergedRange" clearable end-placeholder="结束" range-separator="至" start-placeholder="开始" type="datetimerange" value-format="YYYY-MM-DDTHH:mm:ssZ" />
+          </ElFormItem>
+          <ElFormItem label="数据来源">
+            <ElRadioGroup v-model="filters.source_mode" class="source-mode" @change="changeSourceMode">
+              <ElRadioButton label="">全部</ElRadioButton>
+              <ElRadioButton label="CR">CR</ElRadioButton>
+              <ElRadioButton label="MR">MR</ElRadioButton>
+            </ElRadioGroup>
+          </ElFormItem>
+
+          <!-- Row 2 -->
           <ElFormItem label="分支">
-            <ElSelect v-model="filters.branch_ids" collapse-tags clearable filterable multiple placeholder="活跃分支">
+            <ElSelect v-model="filters.branch_ids" collapse-tags clearable filterable multiple placeholder="全部活跃分支">
               <ElOption v-for="item in branchOptions" :key="item.id" :label="item.branch_name" :value="item.id" />
             </ElSelect>
           </ElFormItem>
@@ -507,23 +543,22 @@ onUnmounted(() => {
               <ElOption label="车控" value="vehicle" />
             </ElSelect>
           </ElFormItem>
-          <ElFormItem label="PL组">
-            <ElSelect v-model="filters.pl_group_ids" collapse-tags clearable filterable multiple placeholder="贡献人PL组">
+          <ElFormItem label="贡献人 PL 组">
+            <ElSelect v-model="filters.pl_group_ids" collapse-tags clearable filterable multiple placeholder="全部 PL 组">
               <ElOption v-for="item in plGroupOptions" :key="item.id" :label="item.name" :value="item.id" />
               <ElOption label="非底软领域" value="unknown" />
             </ElSelect>
           </ElFormItem>
+
+          <!-- Row 3 -->
           <ElFormItem label="创建人">
             <ElInput v-model="filters.author_username" clearable placeholder="姓名 / 工号" />
           </ElFormItem>
-          <ElFormItem class="filter-range" label="合入时间">
-            <ElDatePicker v-model="mergedRange" clearable end-placeholder="结束" range-separator="至" start-placeholder="开始" type="datetimerange" value-format="YYYY-MM-DDTHH:mm:ssZ" />
-          </ElFormItem>
-          <ElFormItem class="filter-actions" label=" ">
-            <ElButton type="primary" @click="loadDashboard">查询</ElButton>
+          <div class="filter-actions col-span-3">
             <ElButton @click="collectVisible = true">手动同步</ElButton>
             <ElButton :loading="exportLoading" @click="submitExport">导出看板</ElButton>
-          </ElFormItem>
+            <ElButton type="primary" @click="loadDashboard">查询</ElButton>
+          </div>
         </ElForm>
       </section>
 
@@ -584,7 +619,10 @@ onUnmounted(() => {
                 <ElTableColumn fixed label="代码库 / 分支" min-width="240">
                   <template #default="{ row }">
                     <ElButton link type="primary" @click="drillByRepository(row)">{{ row.repository_name }}</ElButton>
-                    <div class="muted">{{ row.branch_name }} · {{ row.project_id }}</div>
+                    <div class="muted">
+                      <ElTag effect="plain" size="small" :type="row.source_mode === 'MR' ? 'warning' : 'primary'">{{ row.source_mode }}</ElTag>
+                      {{ row.branch_name }} · {{ row.project_id }}
+                    </div>
                   </template>
                 </ElTableColumn>
                 <ElTableColumn align="right" label="新增行数" prop="added_lines" width="120" />
@@ -626,7 +664,7 @@ onUnmounted(() => {
             <ElDatePicker v-model="collectRange" end-placeholder="结束" range-separator="至" start-placeholder="开始" type="datetimerange" value-format="YYYY-MM-DDTHH:mm:ssZ" />
           </ElFormItem>
           <ElFormItem label="同步范围">
-            <div class="collect-summary">默认复用当前选择的代码库和分支；未筛选时采集全部活跃绑定分支。</div>
+            <div class="collect-summary">默认复用当前选择的代码库和分支；未筛选时采集全部活跃绑定分支。MR 将按项目逐个请求。</div>
           </ElFormItem>
           <ElFormItem v-if="collectTask" label="最近任务">
             <div class="collect-summary">{{ collectTask.status_label }} · 拉取 {{ collectTask.fetched_count }} 条 · 新增 {{ collectTask.created_count }} 条</div>
@@ -659,18 +697,21 @@ onUnmounted(() => {
 }
 
 .toolbar-panel {
-  overflow-x: auto;
-  padding: 12px;
-  background:
-    linear-gradient(180deg, rgb(248 250 252 / 96%) 0%, #fff 100%);
+  padding: 20px;
 }
 
 .filter-form {
   display: grid;
-  grid-template-columns: 320px 180px 160px 150px 180px 180px 340px 230px;
-  gap: 12px;
-  align-items: end;
-  min-width: 1764px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px 24px;
+}
+
+.col-span-2 {
+  grid-column: span 2;
+}
+
+.col-span-3 {
+  grid-column: span 3;
 }
 
 .filter-form :deep(.el-form-item) {
@@ -679,9 +720,14 @@ onUnmounted(() => {
 }
 
 .filter-form :deep(.el-form-item__label) {
-  padding-bottom: 4px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  padding-bottom: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--el-text-color-regular, #475569);
+  display: flex;
+  width: 100%;
+  align-items: center;
 }
 
 .filter-form :deep(.el-select),
@@ -691,31 +737,90 @@ onUnmounted(() => {
   width: 100%;
 }
 
-.filter-form :deep(.scope-item) {
-  width: 100%;
-}
-
-.filter-form :deep(.filter-range) {
-  width: 100%;
-}
-
-.filter-form :deep(.filter-actions) {
-  width: auto;
-  min-width: 0;
-}
-
-.scope-control {
+.custom-label {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
 }
 
 .scope-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 24px;
-  white-space: nowrap;
+}
+
+.scope-actions :deep(.el-button) {
+  height: 18px;
+  padding: 0 4px;
+  font-size: 12px;
+}
+
+.scope-count {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-right: 4px;
+  font-weight: 400;
+}
+
+.source-mode {
+  display: flex;
+  width: 100%;
+}
+
+.source-mode :deep(.el-radio-button) {
+  flex: 1;
+}
+
+.source-mode :deep(.el-radio-button__inner) {
+  width: 100%;
+  border-color: #d6dee9;
+  padding-inline: 10px;
+}
+
+.filter-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-end;
+  gap: 12px;
+  padding-bottom: 2px;
+}
+
+.filter-actions :deep(.el-button) {
+  padding: 8px 20px;
+  margin: 0;
+}
+
+@media (max-width: 1280px) {
+  .filter-form {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .col-span-2 {
+    grid-column: span 2;
+  }
+  .col-span-3 {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 960px) {
+  .filter-form {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .col-span-2,
+  .col-span-3 {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 640px) {
+  .filter-form {
+    grid-template-columns: 1fr;
+  }
+  .col-span-2,
+  .col-span-3 {
+    grid-column: span 1;
+  }
 }
 
 .contribution-tabs {

@@ -20,7 +20,16 @@
 
 ## 数据来源与统计口径
 
-数据来源为数据湖 CR API 中已合入 CR 的 `added_lines`、`removed_lines` 字段，采集范围来自代码合规模块中启用的组织、代码库和活跃绑定分支。
+数据来源为数据湖中已合入的 CR、MR 的 `added_lines`、`removed_lines` 字段，采集范围来自代码合规模块中启用的组织、代码库和活跃绑定分支。
+
+### CR / MR 接入边界
+
+- CR 仍使用组织级接口 `GET /api/v4/groups/{group_id}/change_requests`，可按组织批量携带多个 `projects`。
+- MR 使用项目级接口 `GET /api/v4/projects/{project_id}/merge_requests`，数据湖不支持组织级 MR 查询，因此按“项目 x 活跃绑定分支”请求。
+- MR 与 CR 都使用 `only_count`、目标分支、合入时间范围和分页参数；MR 单个采集任务最多 5 个请求并发，项目失败会写入任务诊断，不会被静默视为零数据。
+- CR 的幂等标识为 `change_key`；MR 没有 `change_key`，使用上游全局 `id` 作为 `source_change_id`。事实表唯一键为 `repository + branch_name + source_mode + source_change_id`。
+- MR 首次接入不做历史回补，仅从上线后的定时增量和管理员手动同步开始积累。MR 不参与漏合检测、漏合风险和漏合任务历史。
+- 组织树按模式隔离：CR 父组织下只允许 CR 子组织和代码库，MR 同理；代码库模式必须与所属组织一致。
 
 核心指标：
 
@@ -37,7 +46,7 @@
 
 ## 本地存储模型
 
-- `ComplianceContributionRecord`：CR 贡献事实表，唯一键为 `repository + branch_name + change_key`，保留新增、删除、净增、总变更等明细字段。
+- `ComplianceContributionRecord`：CR/MR 贡献事实表，保留 `source_mode`、`source_change_id` 以及新增、删除、净增、总变更等明细字段。
 - `ComplianceContributionDailyAggregate`：日聚合表，按日期、代码库、分支、创建人等维度聚合。
 - `ComplianceContributionCollectTask`：贡献数据采集任务，记录定时、回补、手动任务和诊断信息。
 - `ComplianceContributionExportTask`：代码贡献看板异步导出任务。
@@ -50,6 +59,7 @@
 - 组织节点和代码库节点均可搜索。
 - 选择父组织时，前端展开为该组织下全部子孙代码库 ID 后提交。
 - 支持全选和清空全部，避免生产环境大量代码库时依赖普通下拉框翻找。
+- 来源模式提供 `全部 / CR / MR` 分段筛选，默认汇总两类数据；切换后会清空不匹配的组织、代码库和分支范围。
 
 页面主体：
 
@@ -78,6 +88,8 @@
 | POST | `/collect-tasks/run` | 管理员手动触发采集 |
 | POST | `/export-tasks` | 创建看板导出任务 |
 | GET | `/export-tasks/{id}/download` | 下载导出文件 |
+
+所有看板、排行、趋势、明细与导出接口支持可选 `source_mode=CR|MR`。未传时默认汇总两类来源；手动采集任务也可传该字段限定采集范围。
 
 兼容保留：
 

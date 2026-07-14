@@ -6,6 +6,7 @@ from pydantic import Field
 
 
 class ContributionFilterIn(Schema):
+    source_mode: Optional[str] = None
     organization_ids: Optional[str] = None
     repository_ids: Optional[str] = None
     branch_ids: Optional[str] = None
@@ -58,6 +59,7 @@ class ContributionRankingItemOut(Schema):
     project_id: str = ""
     branch_name: str = ""
     repository_name: str = ""
+    source_mode: str = "CR"
     baseline_id: Optional[str] = None
     baseline_at: Optional[datetime] = None
     baseline_lines: int = 0
@@ -121,6 +123,8 @@ class ContributionRecordOut(Schema):
     repo_type_label: str
     domain: str
     domain_label: str
+    source_mode: str
+    source_change_id: str
     change_request_iid: str
     change_key: str
     title: str
@@ -179,6 +183,7 @@ class ContributionCollectRunIn(Schema):
     organization_ids: List[str] = Field(default_factory=list)
     repository_ids: List[str] = Field(default_factory=list)
     branch_ids: List[str] = Field(default_factory=list)
+    source_mode: Optional[str] = None
 
 
 class ContributionCollectRunOut(Schema):

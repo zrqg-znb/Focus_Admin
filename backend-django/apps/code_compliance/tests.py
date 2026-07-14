@@ -21,9 +21,12 @@ from apps.code_compliance.base_schemas import (
 )
 from apps.code_compliance.missing_merge_client import (
     DEFAULT_CR_API_URL_TEMPLATE,
+    DEFAULT_MR_API_URL_TEMPLATE,
     build_cr_encoded_query,
     build_cr_request_params,
     build_cr_request_url,
+    build_mr_request_params,
+    build_mr_request_url,
 )
 from apps.code_compliance.missing_merge_schemas import MissingMergeRecordStatusIn, MissingMergeScanRunIn
 from apps.code_compliance.models import (
@@ -41,6 +44,7 @@ from apps.code_compliance.models import (
     MISSING_MERGE_STATUS_OPEN,
     ComplianceManagedBranch,
     ComplianceContributionDailyAggregate,
+    ComplianceContributionCollectTask,
     ComplianceContributionRecord,
     ComplianceMissingMergeOperationLog,
     ComplianceMissingMergeRecord,
@@ -104,18 +108,18 @@ class CodeComplianceFoundationTests(TestCase):
         )
         self.pl_group.members.add(self.pl_user)
 
-    def create_org(self, group_id: str = "10001", name: str = "座舱组织"):
+    def create_org(self, group_id: str = "10001", name: str = "座舱组织", mode: str = "CR"):
         return services.create_organization(
             self.user,
             OrganizationIn(
                 group_id=group_id,
                 name=name,
-                mode="CR",
+                mode=mode,
                 domain="cockpit",
             ),
         )
 
-    def create_repo(self, org_id: str, project_id: str = "20001"):
+    def create_repo(self, org_id: str, project_id: str = "20001", mode: str = "CR"):
         return services.create_repository(
             self.user,
             RepositoryIn(
@@ -125,7 +129,7 @@ class CodeComplianceFoundationTests(TestCase):
                 organization_id=org_id,
                 repo_type="business",
                 responsibility_group_ids=[str(self.pl_group.id)],
-                mode="MR",
+                mode=mode,
                 domain="cockpit",
             ),
         )
@@ -938,8 +942,8 @@ class CodeComplianceFoundationTests(TestCase):
         self.assertEqual(record.removed_lines, 5)
         self.assertEqual(record.net_lines, 15)
         self.assertEqual(record.changed_lines, 25)
-        self.assertEqual(record.author_user, author)
-        self.assertEqual(record.author_pl_group, self.pl_group)
+        self.assertEqual(record.author_user.username, author.username)
+        self.assertEqual(record.author_pl_group.code, self.pl_group.code)
         self.assertEqual(aggregate_count, 1)
         self.assertEqual(aggregate.cr_count, 1)
         self.assertEqual(aggregate.changed_lines, 25)
@@ -975,6 +979,57 @@ class CodeComplianceFoundationTests(TestCase):
         self.assertIsNone(record.author_user)
         self.assertEqual(record.author_username, "external01")
         self.assertEqual(record.author_pl_group_name, contribution_services.UNKNOWN_PL_GROUP_NAME)
+
+    def test_mr_contribution_collect_uses_project_endpoint_and_source_id(self):
+        """MR 贡献采集按项目请求，并使用上游 id 而非 CR change_key 幂等。"""
+        org = self.create_org("mr-group", "MR组织", mode="MR")
+        repo_data = self.create_repo(org["id"], "mr-project", mode="MR")
+        branch_data = self.create_branch("main", "trunk")
+        services.bind_branches_to_repositories([repo_data["id"]], [branch_data["id"]], "append")
+        now = timezone.now()
+        task = ComplianceContributionCollectTask.objects.create(
+            trigger_type="manual",
+            status="pending",
+            merged_after=now - timedelta(days=1),
+            merged_before=now,
+            filter_payload={"source_mode": "MR"},
+        )
+        with override_settings(CODE_COMPLIANCE_MR_FORCE_MOCK=True):
+            counters, diagnostics, _ = contribution_services._collect_contribution_records(task)
+
+        record = ComplianceContributionRecord.objects.filter(repository_id=repo_data["id"]).first()
+        self.assertIsNotNone(record)
+        self.assertEqual(record.source_mode, "MR")
+        self.assertTrue(record.source_change_id.startswith("mr-mr-project-"))
+        self.assertEqual(record.change_key, "")
+        self.assertGreater(counters["fetched_count"], 0)
+        self.assertEqual(len(diagnostics["mr_projects"]), 1)
+
+    def test_mr_request_url_uses_project_id_not_group(self):
+        """MR 数据湖 URL 只注入项目 ID，并复用目标分支和时间参数。"""
+        now = timezone.now()
+        params = build_mr_request_params(
+            page=1,
+            per_page=100,
+            target_branch="main",
+            merged_after=now - timedelta(days=1),
+            merged_before=now,
+            only_count=True,
+        )
+        url = build_mr_request_url(DEFAULT_MR_API_URL_TEMPLATE, "project/A", params)
+        self.assertTrue(url.startswith("http://apig.yinwang.com/api/v4/projects/project%2FA/merge_requests?"))
+        self.assertNotIn("groups/", url)
+
+    def test_organization_and_repository_modes_must_match(self):
+        """组织树与直属代码库禁止混用 CR/MR，避免进入错误的数据湖采集路径。"""
+        parent = self.create_org("mr-parent", "MR父组织", mode="MR")
+        with self.assertRaises(HttpError):
+            services.create_organization(
+                self.user,
+                OrganizationIn(group_id="cr-child", name="CR子组织", parent_id=parent["id"], mode="CR", domain="cockpit"),
+            )
+        with self.assertRaises(HttpError):
+            self.create_repo(parent["id"], "wrong-mode-project", mode="CR")
 
     @override_settings(CODE_COMPLIANCE_CR_FORCE_MOCK=True)
     def test_missing_merge_scan_accepts_multiple_repository_ids(self):

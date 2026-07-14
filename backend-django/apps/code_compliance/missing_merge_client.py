@@ -23,6 +23,7 @@ DEFAULT_API_TIMEOUT = 15.0
 DEFAULT_API_VERIFY_SSL = True
 BEIJING_TZ = timezone.get_fixed_timezone(8 * 60)
 DEFAULT_CR_API_URL_TEMPLATE = "http://apig.yinwang.com/api/v4/groups/{group_id}/change_requests"
+DEFAULT_MR_API_URL_TEMPLATE = "http://apig.yinwang.com/api/v4/projects/{project_id}/merge_requests"
 CRRequestParams = dict[str, list[str] | str]
 
 
@@ -137,6 +138,45 @@ def build_cr_request_url(url_template: str, group_id: str, params: CRRequestPara
     return f"{endpoint}{separator}{build_cr_encoded_query(params)}"
 
 
+def build_mr_request_params(
+    *,
+    page: int,
+    per_page: int,
+    target_branch: str,
+    merged_after: datetime,
+    merged_before: datetime,
+    only_count: bool,
+) -> CRRequestParams:
+    """构造 MR 项目级 GET 查询参数，保持与 CR 的时间和分页口径一致。"""
+    branch = _clean_text(target_branch)
+    if not branch:
+        raise HttpError(400, "target_branch 不能为空")
+    if merged_after > merged_before:
+        raise HttpError(400, "merged_after 不能晚于 merged_before")
+    return {
+        "page": str(max(int(page or 1), 1)),
+        "per_page": str(max(min(int(per_page or DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE), 1)),
+        "state": "merged",
+        "target_branch": branch,
+        "merged_after": format_data_lake_datetime(merged_after),
+        "merged_before": format_data_lake_datetime(merged_before),
+        "only_count": "True" if only_count else "False",
+    }
+
+
+def build_mr_request_url(url_template: str, project_id: str, params: CRRequestParams) -> str:
+    """把项目 ID 注入固定 MR URL 模板，并拼接编码后的查询参数。"""
+    project = _clean_text(project_id)
+    if not project:
+        raise HttpError(400, "project_id 不能为空")
+    template = _clean_text(url_template) or DEFAULT_MR_API_URL_TEMPLATE
+    if "{project_id}" not in template:
+        raise HttpError(500, "MR 数据湖 URL 模板必须包含 {project_id}")
+    endpoint = template.replace("{project_id}", quote(project, safe=""))
+    separator = "&" if "?" in endpoint else "?"
+    return f"{endpoint}{separator}{build_cr_encoded_query(params)}"
+
+
 def normalize_cr_detail(row: dict[str, Any]) -> dict[str, Any] | None:
     """把数据湖 CR 明细归一成漏合检测服务使用的字段。"""
     if not isinstance(row, dict):
@@ -154,6 +194,30 @@ def normalize_cr_detail(row: dict[str, Any]) -> dict[str, Any] | None:
             row.get("change_request_iid") or row.get("iid") or row.get("id")
         ),
         "change_key": change_key,
+        "title": _clean_text(row.get("title")),
+        "description": _clean_text(row.get("description")),
+        "web_url": _clean_text(row.get("web_url") or row.get("url")),
+        "added_lines": _safe_int(row.get("added_lines")),
+        "removed_lines": _safe_int(row.get("removed_lines")),
+        "merged_at": parse_data_lake_datetime(row.get("merged_at")),
+        "target_branch": _clean_text(row.get("target_branch")),
+        "author_username": _clean_text(author.get("username") or row.get("author_username")),
+    }
+
+
+def normalize_mr_detail(row: dict[str, Any]) -> dict[str, Any] | None:
+    """把 MR 明细归一为贡献采集字段，MR 使用上游全局 id 作为幂等标识。"""
+    if not isinstance(row, dict):
+        return None
+    author = row.get("author") if isinstance(row.get("author"), dict) else {}
+    project = row.get("project") if isinstance(row.get("project"), dict) else {}
+    source_change_id = _clean_text(row.get("id"))
+    if not source_change_id:
+        return None
+    return {
+        "project_id": _clean_text(row.get("project_id") or row.get("projectId") or project.get("id")),
+        "source_change_id": source_change_id,
+        "change_request_iid": _clean_text(row.get("change_request_iid") or row.get("iid")),
         "title": _clean_text(row.get("title")),
         "description": _clean_text(row.get("description")),
         "web_url": _clean_text(row.get("web_url") or row.get("url")),
@@ -355,6 +419,115 @@ class CodeComplianceCRClient:
             raise HttpError(502, "代码合规数据湖响应不是合法 JSON") from exc
 
 
+class CodeComplianceMRClient:
+    """代码贡献 MR 数据湖 client，按单个项目拉取已合入 MR。"""
+
+    def __init__(self):
+        self.url_template = DEFAULT_MR_API_URL_TEMPLATE
+        self.force_mock = _to_bool(
+            _get_setting("CODE_COMPLIANCE_MR_FORCE_MOCK", _get_setting("CODE_COMPLIANCE_CR_FORCE_MOCK", False)),
+            False,
+        )
+        self.timeout = DEFAULT_API_TIMEOUT
+        self.verify_ssl = DEFAULT_API_VERIFY_SSL
+
+    def fetch_count(
+        self,
+        *,
+        project_id: str,
+        target_branch: str,
+        merged_after: datetime,
+        merged_before: datetime,
+    ) -> int:
+        """请求单个 MR 项目的 only_count 统计。"""
+        params = build_mr_request_params(
+            page=1,
+            per_page=1,
+            target_branch=target_branch,
+            merged_after=merged_after,
+            merged_before=merged_before,
+            only_count=True,
+        )
+        return _extract_count(self._request(params, project_id=project_id))
+
+    def fetch_page(
+        self,
+        *,
+        project_id: str,
+        page: int,
+        per_page: int,
+        target_branch: str,
+        merged_after: datetime,
+        merged_before: datetime,
+    ) -> list[dict[str, Any]]:
+        """请求单个 MR 项目的指定分页明细。"""
+        params = build_mr_request_params(
+            page=page,
+            per_page=per_page,
+            target_branch=target_branch,
+            merged_after=merged_after,
+            merged_before=merged_before,
+            only_count=False,
+        )
+        rows = _extract_detail_rows(self._request(params, project_id=project_id))
+        return [item for item in (normalize_mr_detail(row) for row in rows) if item]
+
+    def fetch_all(
+        self,
+        *,
+        project_id: str,
+        target_branch: str,
+        merged_after: datetime,
+        merged_before: datetime,
+        per_page: int = DEFAULT_PAGE_SIZE,
+    ) -> tuple[int, list[dict[str, Any]]]:
+        """先计数再分页拉取单项目 MR，并返回计数供任务诊断展示。"""
+        total = self.fetch_count(
+            project_id=project_id,
+            target_branch=target_branch,
+            merged_after=merged_after,
+            merged_before=merged_before,
+        )
+        if total <= 0:
+            return total, []
+        safe_per_page = max(min(int(per_page or DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE), 1)
+        rows: list[dict[str, Any]] = []
+        for page in range(1, max(math.ceil(total / safe_per_page), 1) + 1):
+            rows.extend(
+                self.fetch_page(
+                    project_id=project_id,
+                    page=page,
+                    per_page=safe_per_page,
+                    target_branch=target_branch,
+                    merged_after=merged_after,
+                    merged_before=merged_before,
+                )
+            )
+        return total, rows
+
+    def _request(self, params: CRRequestParams, *, project_id: str) -> Any:
+        """按配置向 MR 项目级接口发送 GET 请求。"""
+        if self.force_mock:
+            logger.info("CodeCompliance MR data lake mock project_id=%s params=%s", project_id, params)
+            return _mock_mr_response(project_id, params)
+        request_url = build_mr_request_url(self.url_template, project_id, params)
+        try:
+            response = requests.get(
+                request_url,
+                headers=_build_request_headers(),
+                timeout=self.timeout,
+                verify=self.verify_ssl,
+            )
+        except requests.RequestException as exc:
+            raise HttpError(502, f"请求 MR 代码数据湖失败: {exc}") from exc
+        if response.status_code >= 400:
+            raise HttpError(502, f"MR 代码数据湖响应异常: HTTP {response.status_code}")
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise HttpError(502, "MR 代码数据湖响应不是合法 JSON") from exc
+
+
 def _mock_response(params: CRRequestParams) -> Any:
     """返回与真实 CR 数据湖同构的开发期 mock 数据。"""
     rows = _mock_rows(params)
@@ -371,6 +544,35 @@ def _mock_response(params: CRRequestParams) -> Any:
     start = (page - 1) * per_page
     end = start + per_page
     return rows[start:end]
+
+
+def _mock_mr_response(project_id: str, params: CRRequestParams) -> Any:
+    """返回与 MR 数据湖同构的稳定 mock，用于贡献采集测试。"""
+    branch = _clean_text(params.get("target_branch"))
+    merged_after = parse_data_lake_datetime(params.get("merged_after")) or timezone.now()
+    seed = hashlib.md5(f"mr:{project_id}:{branch}".encode("utf-8")).hexdigest()
+    rng = random.Random(seed)
+    rows = [
+        {
+            "id": f"mr-{project_id}-{index:03d}",
+            "project_id": project_id,
+            "iid": str(20_000 + index),
+            "title": f"Mock MR {index:03d} for {project_id}",
+            "description": f"Mock MR merged into {branch}",
+            "web_url": f"https://git.example.com/{project_id}/merge_requests/{index}",
+            "added_lines": rng.randint(10, 180),
+            "removed_lines": rng.randint(1, 90),
+            "merged_at": format_data_lake_datetime(merged_after + timedelta(minutes=index * 9)),
+            "target_branch": branch,
+            "author": {"username": f"mruser{index:02d}"},
+        }
+        for index in range(1, 7)
+    ]
+    if params.get("only_count") == "True":
+        return {"merged": len(rows)}
+    page = max(_safe_int(params.get("page")), 1)
+    per_page = max(min(_safe_int(params.get("per_page")) or DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE), 1)
+    return rows[(page - 1) * per_page : page * per_page]
 
 
 def _get_project_values(params: CRRequestParams) -> list[str]:
