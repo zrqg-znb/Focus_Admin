@@ -108,6 +108,8 @@ export interface ProjectFileBrowserItem {
   name: string;
   path: string;
   size: number;
+  selectable?: boolean;
+  unavailable_reason?: string;
 }
 
 export interface ProjectRepositorySpec {
@@ -280,6 +282,10 @@ export const api = {
               name: String(item.name || ''),
               path: String(item.path || ''),
               size: Number(item.size || 0),
+              selectable: item.selectable !== false,
+              unavailable_reason: item.unavailable_reason
+                ? String(item.unavailable_reason)
+                : undefined,
             }))
           : [],
         offset: Number(raw.offset || 0),

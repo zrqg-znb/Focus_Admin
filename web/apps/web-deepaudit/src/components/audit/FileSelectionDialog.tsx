@@ -330,7 +330,10 @@ export default function FileSelectionDialog({
   ]);
 
   const visibleItems = useMemo(
-    () => items.map((item) => ({ kind: item.kind, path: item.path })),
+    () =>
+      items
+        .filter((item) => item.selectable !== false)
+        .map((item) => ({ kind: item.kind, path: item.path })),
     [items],
   );
 
@@ -376,7 +379,9 @@ export default function FileSelectionDialog({
   const handleToggleItem = (
     path: string,
     kind: ProjectFileBrowserItem['kind'],
+    selectable = true,
   ) => {
+    if (!selectable) return;
     setSelectedEntries((prev) => {
       if (prev[path]) {
         const { [path]: _removed, ...rest } = prev;
@@ -487,18 +492,24 @@ export default function FileSelectionDialog({
         <div className="space-y-2 p-3">
           {items.map((item) => {
             const isDirectory = item.kind === 'directory';
+            const isSelectable = item.selectable !== false;
             const isChecked = Boolean(selectedEntries[item.path]);
             return (
               <div
-                className="hover:bg-muted hover:border-border flex items-center gap-3 rounded border border-transparent p-2 transition-colors"
+                className={`flex items-center gap-3 rounded border border-transparent p-2 transition-colors ${
+                  isSelectable
+                    ? 'hover:bg-muted hover:border-border'
+                    : 'cursor-not-allowed opacity-60'
+                }`}
                 key={`${item.kind}-${item.path}`}
               >
                 <div onClick={(event) => event.stopPropagation()}>
                   <Checkbox
                     checked={isChecked}
                     className="border-border data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                    disabled={!isSelectable}
                     onCheckedChange={() =>
-                      handleToggleItem(item.path, item.kind)
+                      handleToggleItem(item.path, item.kind, isSelectable)
                     }
                   />
                 </div>
@@ -521,11 +532,12 @@ export default function FileSelectionDialog({
                     {item.path}
                   </p>
                   <p className="text-muted-foreground truncate text-xs">
-                    {isDirectory ? '目录，递归包含其全部子文件' : '文件'}
+                    {item.unavailable_reason ||
+                      (isDirectory ? '目录，递归包含其全部子文件' : '文件')}
                   </p>
                 </div>
 
-                {isDirectory && (
+                {isDirectory && isSelectable && (
                   <Button
                     className="h-8 px-2 text-xs"
                     onClick={() => {

@@ -440,4 +440,64 @@ describe('FileSelectionDialog', () => {
       expect.objectContaining({ path: '', keyword: '' }),
     );
   });
+
+  it('shows unreadable symlinks but excludes them from selection', async () => {
+    const onConfirm = vi.fn();
+    browseProjectFiles.mockReset();
+    browseProjectFiles.mockResolvedValue({
+      has_more: false,
+      items: [
+        {
+          kind: 'file',
+          path: 'hwrdc',
+          size: 12,
+          selectable: true,
+        },
+        {
+          kind: 'file',
+          path: 'hwrdc-missing-link',
+          size: 0,
+          selectable: false,
+          unavailable_reason: '符号链接目标不存在或不可访问',
+        },
+      ],
+      keyword: '',
+      last_synced_at: 1710000000,
+      limit: 200,
+      offset: 0,
+      path: '',
+      repository_signature: 'repo-signature-a',
+      repository_spec: {
+        branch_name: 'release/main',
+        group: 'platform',
+        manifest_xml: 'default.xml',
+        repository_type: 'multi',
+        repository_url: 'https://example.com/manifest.git',
+      },
+      total: 2,
+    } as any);
+
+    act(() => {
+      root.render(<FileSelectionDialog {...baseProps} onConfirm={onConfirm} />);
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain('hwrdc-missing-link');
+    expect(container.textContent).toContain('符号链接目标不存在或不可访问');
+
+    const selectVisibleButton = findButtonByText('选择当前页可见项');
+    act(() => {
+      selectVisibleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    const confirmButton = findButtonByText('确认选择');
+    act(() => {
+      confirmButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ selectedFiles: ['hwrdc'] }),
+    );
+  });
 });

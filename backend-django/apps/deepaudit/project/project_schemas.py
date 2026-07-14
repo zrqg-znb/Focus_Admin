@@ -77,6 +77,8 @@ class ProjectFileBrowserItemSchema(Schema):
     name: str
     path: str
     size: int = 0
+    selectable: bool = True
+    unavailable_reason: str | None = None
 
 
 class ProjectFileBrowserResponseSchema(Schema):

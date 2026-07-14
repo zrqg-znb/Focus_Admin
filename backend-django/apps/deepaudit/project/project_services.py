@@ -132,13 +132,76 @@ def _raise_missing_browser_directory(
     raise HttpError(404, '目标目录不存在')
 
 
-def _build_browser_file_item(root: Path, entry: Path) -> dict:
+def _is_path_within_browser_root(root: Path, candidate: Path) -> bool:
+    try:
+        candidate.resolve(strict=True).relative_to(root.resolve(strict=True))
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _build_browser_file_item(
+    root: Path,
+    entry: Path,
+    *,
+    project_id: str | None = None,
+    repository_spec: dict[str, str] | None = None,
+) -> dict:
     relative_path = str(entry.relative_to(root)).replace('\\', '/')
+    repository_spec = repository_spec or {}
+
+    def unavailable(reason: str, *, target: Path | None = None) -> dict:
+        logger.warning(
+            'DeepAudit project file browser skipped unreadable entry: project_id=%s repository_type=%s branch=%s manifest=%s group=%s path=%s is_symlink=%s target=%s reason=%s',
+            project_id or '-',
+            repository_spec.get('repository_type') or '-',
+            repository_spec.get('branch_name') or '-',
+            repository_spec.get('manifest_xml') or '-',
+            repository_spec.get('group') or '-',
+            relative_path,
+            entry.is_symlink(),
+            target if target is not None else '-',
+            reason,
+        )
+        return {
+            'kind': 'file',
+            'name': entry.name,
+            'path': relative_path,
+            'size': 0,
+            'selectable': False,
+            'unavailable_reason': reason,
+        }
+
+    try:
+        entry.lstat()
+    except OSError:
+        return unavailable('无法读取目录项元数据')
+
+    if entry.is_symlink():
+        try:
+            resolved_target = entry.resolve(strict=True)
+        except OSError:
+            return unavailable('符号链接目标不存在或不可访问')
+        if not _is_path_within_browser_root(root, resolved_target):
+            return unavailable('符号链接目标位于仓库目录外', target=resolved_target)
+        try:
+            is_directory = resolved_target.is_dir()
+            size = 0 if is_directory else resolved_target.stat().st_size
+        except OSError:
+            return unavailable('符号链接目标不可读取', target=resolved_target)
+    else:
+        try:
+            is_directory = entry.is_dir()
+            size = 0 if is_directory else entry.stat().st_size
+        except OSError:
+            return unavailable('无法读取目录项内容')
+
     return {
-        'kind': 'directory' if entry.is_dir() else 'file',
+        'kind': 'directory' if is_directory else 'file',
         'name': entry.name,
         'path': relative_path,
-        'size': 0 if entry.is_dir() else entry.stat().st_size,
+        'size': size,
+        'selectable': True,
     }
 
 
@@ -167,7 +230,14 @@ def _browse_directory_items(
         relative_path = str(entry.relative_to(root)).replace('\\', '/')
         if should_exclude(relative_path, exclude_patterns):
             continue
-        items.append(_build_browser_file_item(root, entry))
+        items.append(
+            _build_browser_file_item(
+                root,
+                entry,
+                project_id=project_id,
+                repository_spec=repository_spec,
+            )
+        )
 
     items.sort(key=lambda item: (item['kind'] != 'directory', item['name'].lower(), item['path'].lower()))
     total = len(items)
@@ -215,7 +285,14 @@ def _search_repository_items(
             continue
         if keyword_text not in relative_path.lower():
             continue
-        matches.append(_build_browser_file_item(root, entry))
+        matches.append(
+            _build_browser_file_item(
+                root,
+                entry,
+                project_id=project_id,
+                repository_spec=repository_spec,
+            )
+        )
 
     matches.sort(key=lambda item: (item['kind'] != 'directory', item['path'].lower()))
     total = len(matches)

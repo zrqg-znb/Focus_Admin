@@ -686,6 +686,36 @@ class ProjectRepositoryFileListingTestCase(RuntimeRepositoryWorkspaceTestCase):
         self.assertEqual(raised.exception.status_code, 404)
         self.assertIn('目标目录不存在', str(raised.exception))
 
+    def test_browser_lists_extensionless_file_and_isolates_invalid_symlinks(self) -> None:
+        root = self.temp_root / 'browser-symlink-root'
+        root.mkdir(parents=True, exist_ok=True)
+        (root / 'hwrdc').write_text('plain extensionless file\n', encoding='utf-8')
+        (root / 'valid-target').mkdir()
+        (root / 'valid-target' / 'source.c').write_text('int main(void) { return 0; }\n', encoding='utf-8')
+        (root / 'valid-dir-link').symlink_to('valid-target', target_is_directory=True)
+        (root / 'hwrdc-missing-link').symlink_to('missing-target')
+        outside_target = self.temp_root / 'outside-target'
+        outside_target.write_text('outside\n', encoding='utf-8')
+        (root / 'outside-link').symlink_to(outside_target)
+
+        items, total = project_services._browse_directory_items(
+            root,
+            project_id='project-1',
+            repository_spec={'repository_type': 'single', 'branch_name': 'main'},
+        )
+        by_path = {item['path']: item for item in items}
+
+        self.assertEqual(total, 5)
+        self.assertEqual(by_path['hwrdc']['kind'], 'file')
+        self.assertTrue(by_path['hwrdc']['selectable'])
+        self.assertGreater(by_path['hwrdc']['size'], 0)
+        self.assertEqual(by_path['valid-dir-link']['kind'], 'directory')
+        self.assertTrue(by_path['valid-dir-link']['selectable'])
+        self.assertFalse(by_path['hwrdc-missing-link']['selectable'])
+        self.assertIn('符号链接目标不存在', by_path['hwrdc-missing-link']['unavailable_reason'])
+        self.assertFalse(by_path['outside-link']['selectable'])
+        self.assertIn('仓库目录外', by_path['outside-link']['unavailable_reason'])
+
 
 class RuntimeSelectedFilesValidationTestCase(RuntimeRepositoryWorkspaceTestCase):
     def test_validate_selected_file_paths_splits_existing_and_missing(self) -> None:
