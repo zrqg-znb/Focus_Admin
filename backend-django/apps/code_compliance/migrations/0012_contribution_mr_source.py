@@ -1,11 +1,16 @@
 from django.db import migrations, models
-from django.db.models import F
-
-
 def backfill_cr_contribution_source(apps, schema_editor):
-    """把历史贡献明细标记为 CR，并以原 change_key 作为上游幂等标识。"""
+    """把历史贡献明细标记为 CR，并为每行生成稳定且唯一的来源标识。"""
     Record = apps.get_model("code_compliance", "ComplianceContributionRecord")
-    Record.objects.filter(source_change_id="").update(source_change_id=F("change_key"))
+    # 不能给全部历史数据填同一个默认值；CR 原有 change_key 已经按仓库和分支唯一。
+    # 极少数旧数据若缺少 change_key，则使用主键兜底，保证迁移后仍可建立唯一约束。
+    for record in Record.objects.select_related("repository").all().only("id", "change_key", "repository__mode"):
+        source_change_id = (record.change_key or "").strip() or f"legacy-{record.pk}"
+        source_mode = getattr(record.repository, "mode", None) or "CR"
+        Record.objects.filter(pk=record.pk).update(
+            source_mode=source_mode,
+            source_change_id=source_change_id,
+        )
 
 
 class Migration(migrations.Migration):
@@ -27,8 +32,13 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="compliancecontributionrecord",
             name="source_change_id",
-            field=models.CharField(db_index=True, default="", max_length=255, verbose_name="上游变更唯一标识"),
-            preserve_default=False,
+            field=models.CharField(
+                blank=True,
+                db_index=True,
+                max_length=255,
+                null=True,
+                verbose_name="上游变更唯一标识",
+            ),
         ),
         migrations.AddField(
             model_name="compliancecontributiondailyaggregate",
@@ -47,6 +57,15 @@ class Migration(migrations.Migration):
             field=models.CharField(blank=True, db_index=True, default="", max_length=255, verbose_name="CR全局标识"),
         ),
         migrations.RunPython(backfill_cr_contribution_source, migrations.RunPython.noop),
+        migrations.AlterField(
+            model_name="compliancecontributionrecord",
+            name="source_change_id",
+            field=models.CharField(
+                db_index=True,
+                max_length=255,
+                verbose_name="上游变更唯一标识",
+            ),
+        ),
         migrations.RemoveConstraint(
             model_name="compliancecontributionrecord",
             name="cc_contribution_record_uniq",
