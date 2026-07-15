@@ -104,6 +104,7 @@ INSTALLED_APPS = [
     'apps.code_scan',
     'apps.deepaudit',
     'apps.environment_management',
+    'apps.tools',
 ]
 
 TEMPLATES = [
@@ -549,6 +550,7 @@ CODE_COMPLIANCE_CR_FORCE_MOCK = _env_bool('CODE_COMPLIANCE_CR_FORCE_MOCK', False
 
 DEEPAUDIT_DOCKER_ENABLED = os.environ.get('DEEPAUDIT_DOCKER_ENABLED', 'true').lower() not in {'0', 'false', 'no'}
 DEEPAUDIT_QUEUE = os.environ.get('DEEPAUDIT_QUEUE', 'deepaudit')
+AGENT_SKILLS_QUEUE = os.environ.get('AGENT_SKILLS_QUEUE', 'agent_skills')
 DEEPAUDIT_TIKTOKEN_MODE = _env_str('DEEPAUDIT_TIKTOKEN_MODE', 'local') or 'local'
 DEEPAUDIT_GIT_CLONE_TIMEOUT = _env_int('DEEPAUDIT_GIT_CLONE_TIMEOUT', 1800)
 DEEPAUDIT_GIT_LS_REMOTE_TIMEOUT = _env_int('DEEPAUDIT_GIT_LS_REMOTE_TIMEOUT', 120)
