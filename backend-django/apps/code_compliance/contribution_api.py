@@ -22,6 +22,9 @@ from .contribution_schemas import (
     ContributionTrendPointOut,
     PaginatedContributionCollectTaskOut,
     PaginatedContributionCodeBaselineOut,
+    PaginatedContributionPersonRankingOut,
+    PaginatedContributionPlGroupRankingOut,
+    PaginatedContributionRankingOut,
     PaginatedContributionRecordOut,
 )
 
@@ -159,6 +162,84 @@ def get_contribution_person_ranking(
 ):
     """按 CR 创建人查询贡献排行。"""
     return services.get_person_ranking(limit=limit, **_filters(**locals()))
+
+
+@router.get(
+    "/dashboard/rankings/repositories",
+    response=PaginatedContributionRankingOut,
+    summary="分页查询代码库分支贡献排行",
+)
+def list_contribution_repository_rankings(
+    request,
+    page: int = Query(1),
+    pageSize: int = Query(20),
+    source_mode: Optional[str] = Query(None),
+    organization_ids: Optional[str] = Query(None),
+    repository_ids: Optional[str] = Query(None),
+    branch_ids: Optional[str] = Query(None),
+    branch_type: Optional[str] = Query(None),
+    repo_type: Optional[str] = Query(None),
+    domain: Optional[str] = Query(None),
+    pl_group_ids: Optional[str] = Query(None),
+    author_username: Optional[str] = Query(None),
+    keyword: Optional[str] = Query(None),
+    merged_after: Optional[datetime] = Query(None),
+    merged_before: Optional[datetime] = Query(None),
+):
+    """按当前看板筛选条件分页查询完整仓库和分支排行。"""
+    return services.list_repository_rankings(page=page, page_size=pageSize, **_filters(**locals()))
+
+
+@router.get(
+    "/dashboard/rankings/persons",
+    response=PaginatedContributionPersonRankingOut,
+    summary="分页查询人员贡献排行",
+)
+def list_contribution_person_rankings(
+    request,
+    page: int = Query(1),
+    pageSize: int = Query(20),
+    source_mode: Optional[str] = Query(None),
+    organization_ids: Optional[str] = Query(None),
+    repository_ids: Optional[str] = Query(None),
+    branch_ids: Optional[str] = Query(None),
+    branch_type: Optional[str] = Query(None),
+    repo_type: Optional[str] = Query(None),
+    domain: Optional[str] = Query(None),
+    pl_group_ids: Optional[str] = Query(None),
+    author_username: Optional[str] = Query(None),
+    keyword: Optional[str] = Query(None),
+    merged_after: Optional[datetime] = Query(None),
+    merged_before: Optional[datetime] = Query(None),
+):
+    """按当前看板筛选条件分页查询完整人员排行。"""
+    return services.list_person_rankings(page=page, page_size=pageSize, **_filters(**locals()))
+
+
+@router.get(
+    "/dashboard/rankings/pl-groups",
+    response=PaginatedContributionPlGroupRankingOut,
+    summary="分页查询PL组贡献排行",
+)
+def list_contribution_pl_group_rankings(
+    request,
+    page: int = Query(1),
+    pageSize: int = Query(20),
+    source_mode: Optional[str] = Query(None),
+    organization_ids: Optional[str] = Query(None),
+    repository_ids: Optional[str] = Query(None),
+    branch_ids: Optional[str] = Query(None),
+    branch_type: Optional[str] = Query(None),
+    repo_type: Optional[str] = Query(None),
+    domain: Optional[str] = Query(None),
+    pl_group_ids: Optional[str] = Query(None),
+    author_username: Optional[str] = Query(None),
+    keyword: Optional[str] = Query(None),
+    merged_after: Optional[datetime] = Query(None),
+    merged_before: Optional[datetime] = Query(None),
+):
+    """按当前看板筛选条件分页查询完整 PL 组排行。"""
+    return services.list_pl_group_rankings(page=page, page_size=pageSize, **_filters(**locals()))
 
 
 @router.get(

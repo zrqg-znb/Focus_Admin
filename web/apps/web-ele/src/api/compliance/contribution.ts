@@ -50,6 +50,7 @@ export interface ContributionPlGroupTrendPoint {
 
 export interface ContributionRankingItem {
   added_lines: number;
+  branch_id?: null | string;
   branch_name: string;
   baseline_at?: null | string;
   baseline_id?: null | string;
@@ -64,6 +65,7 @@ export interface ContributionRankingItem {
   project_id: string;
   removed_lines: number;
   repository_name: string;
+  repository_id: string;
   source_mode: 'CR' | 'MR';
   stock_lines: number;
 }
@@ -80,6 +82,19 @@ export interface ContributionPersonRankingItem {
   changed_lines: number;
   cr_count: number;
   net_lines: number;
+  removed_lines: number;
+  repository_count: number;
+}
+
+export interface ContributionPlGroupRankingItem {
+  added_lines: number;
+  branch_count: number;
+  changed_lines: number;
+  contributor_count: number;
+  cr_count: number;
+  net_lines: number;
+  pl_group_id: string;
+  pl_group_name: string;
   removed_lines: number;
   repository_count: number;
 }
@@ -256,6 +271,33 @@ export function getContributionPersonRankingApi(params?: ContributionFilters) {
   );
 }
 
+export function listContributionRepositoryRankingsApi(
+  params?: ContributionFilters & { page?: number; pageSize?: number },
+) {
+  return requestClient.get<PaginatedResponse<ContributionRankingItem>>(
+    `${base}/dashboard/rankings/repositories`,
+    { params: normalizeParams(params) },
+  );
+}
+
+export function listContributionPersonRankingsApi(
+  params?: ContributionFilters & { page?: number; pageSize?: number },
+) {
+  return requestClient.get<PaginatedResponse<ContributionPersonRankingItem>>(
+    `${base}/dashboard/rankings/persons`,
+    { params: normalizeParams(params) },
+  );
+}
+
+export function listContributionPlGroupRankingsApi(
+  params?: ContributionFilters & { page?: number; pageSize?: number },
+) {
+  return requestClient.get<PaginatedResponse<ContributionPlGroupRankingItem>>(
+    `${base}/dashboard/rankings/pl-groups`,
+    { params: normalizeParams(params) },
+  );
+}
+
 export function getContributionCategoryDistributionApi(
   params?: ContributionFilters,
 ) {
@@ -287,6 +329,10 @@ export function runContributionCollectTaskApi(data: {
     message: string;
     task: ContributionCollectTask;
   }>(`${base}/collect-tasks/run`, data);
+}
+
+export function getContributionCollectTaskApi(id: string) {
+  return requestClient.get<ContributionCollectTask>(`${base}/collect-tasks/${id}`);
 }
 
 export function prepareContributionExportTaskApi(data: {

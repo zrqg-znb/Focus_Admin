@@ -30,6 +30,7 @@
 - CR 的幂等标识为 `change_key`；MR 没有 `change_key`，使用上游全局 `id` 作为 `source_change_id`。事实表唯一键为 `repository + branch_name + source_mode + source_change_id`。
 - MR 首次接入不做历史回补，仅从上线后的定时增量和管理员手动同步开始积累。MR 不参与漏合检测、漏合风险和漏合任务历史。
 - 组织树按模式隔离：CR 父组织下只允许 CR 子组织和代码库，MR 同理；代码库模式必须与所属组织一致。
+- 本地开发可通过 `CODE_COMPLIANCE_CR_FORCE_MOCK=true`、`CODE_COMPLIANCE_MR_FORCE_MOCK=true` 使用稳定 mock 数据；修改环境变量后必须重启后端。手动同步仍要求存在活跃的代码库-分支绑定，任务完成后以诊断中的 `only_count`、`detail_count` 判断取数结果。
 
 核心指标：
 
@@ -60,6 +61,7 @@
 - 选择父组织时，前端展开为该组织下全部子孙代码库 ID 后提交。
 - 支持全选和清空全部，避免生产环境大量代码库时依赖普通下拉框翻找。
 - 来源模式提供 `全部 / CR / MR` 分段筛选，默认汇总两类数据；切换后会清空不匹配的组织、代码库和分支范围。
+- 组织/代码库级联选择器采用父子联动：选中组织会视觉勾选全部子组织和代码库，查询时展开为去重后的代码库 ID；取消父节点会同步取消全部子孙节点。
 
 页面主体：
 
@@ -70,6 +72,8 @@
 - 人员合入贡献表：按创建人聚合，重点展示新增行数和 CR 数。
 - PL 组新增贡献表：按作者 PL 组聚合，重点展示新增行数和 CR 数。
 - 仓库/分支 Top、PL 组 Top、人员 Top 图表：均按新增行数贡献展示。
+- 排行明细：仓库/分支、人员、PL 组均为服务端分页表，表格高度随可用视口扩展；人员和 PL 组名称可下钻到贡献历史 Drawer。
+- 贡献历史 Drawer：默认继承当前筛选范围，支持独立切换全部/CR/MR，展示汇总、日趋势、仓库/分支 Top 10 与分页变更明细。
 
 ## API 设计
 
@@ -82,6 +86,9 @@
 | GET | `/dashboard/pl-group-trend` | PL 组新增贡献趋势 |
 | GET | `/dashboard/repository-ranking` | 仓库 / 分支新增贡献排行 |
 | GET | `/dashboard/person-ranking` | 创建人新增贡献排行 |
+| GET | `/dashboard/rankings/repositories` | 分页仓库/分支贡献排行 |
+| GET | `/dashboard/rankings/persons` | 分页人员贡献排行 |
+| GET | `/dashboard/rankings/pl-groups` | 分页 PL 组贡献排行 |
 | GET | `/dashboard/category-distribution` | 仓库类型、领域、PL 组新增贡献分布 |
 | GET | `/records` | CR 明细兼容接口，仅用于排障和后续复用 |
 | GET | `/collect-tasks` | 采集任务历史 |

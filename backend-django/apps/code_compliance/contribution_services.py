@@ -428,12 +428,12 @@ def get_pl_group_trend(**filters) -> list[dict]:
     ]
 
 
-def get_repository_ranking(limit: int = 20, **filters) -> list[dict]:
-    """按仓库和分支维度返回统计期内新增贡献排行。"""
+def _repository_ranking_queryset(filters: dict):
+    """构造仓库和分支新增贡献排行聚合查询。"""
     payload = _filter_payload_from_kwargs(**filters)
-    rows = (
+    return (
         _base_record_queryset(payload)
-        .values("repository_id", "repository_name", "repository_project_id", "branch_name", "source_mode")
+        .values("repository_id", "branch_id", "repository_name", "repository_project_id", "branch_name", "source_mode")
         .annotate(
             cr_count=Count("id"),
             contributor_count=Count("author_username", distinct=True),
@@ -442,35 +442,54 @@ def get_repository_ranking(limit: int = 20, **filters) -> list[dict]:
             net_lines=Sum("net_lines"),
             changed_lines=Sum("changed_lines"),
         )
-        .order_by("-added_lines", "-cr_count", "repository_name", "branch_name")[: max(min(int(limit or 20), 100), 1)]
+        .order_by("-added_lines", "-cr_count", "repository_name", "branch_name")
     )
-    # 基线字段保留为兼容输出，当前看板不再按基线或存量排序。
-    return [
-        {
-            "id": f"{row['repository_id']}:{row['branch_name']}",
-            "name": row.get("repository_name") or "",
-            "project_id": row.get("repository_project_id") or "",
-            "branch_name": row.get("branch_name") or "",
-            "repository_name": row.get("repository_name") or "",
-            "source_mode": row.get("source_mode") or COMPLIANCE_MODE_CR,
-            "baseline_id": None,
-            "baseline_at": None,
-            "baseline_lines": 0,
-            "stock_lines": 0,
-            "has_baseline": False,
-            **{
-                key_name: int(row.get(key_name) or 0)
-                for key_name in ("cr_count", "contributor_count", "added_lines", "removed_lines", "net_lines", "changed_lines")
-            },
-        }
-        for row in rows
-    ]
 
 
-def get_person_ranking(limit: int = 20, **filters) -> list[dict]:
-    """按 CR 创建人返回新增行数贡献排行。"""
+def _serialize_repository_ranking_row(row: dict) -> dict:
+    """序列化单条仓库和分支贡献排行。"""
+    return {
+        "id": f"{row['repository_id']}:{row['branch_name']}",
+        "repository_id": str(row["repository_id"]),
+        "branch_id": str(row["branch_id"]) if row.get("branch_id") else None,
+        "name": row.get("repository_name") or "",
+        "project_id": row.get("repository_project_id") or "",
+        "branch_name": row.get("branch_name") or "",
+        "repository_name": row.get("repository_name") or "",
+        "source_mode": row.get("source_mode") or COMPLIANCE_MODE_CR,
+        # 基线字段保留为兼容输出，当前看板不再按基线或存量排序。
+        "baseline_id": None,
+        "baseline_at": None,
+        "baseline_lines": 0,
+        "stock_lines": 0,
+        "has_baseline": False,
+        **{
+            key_name: int(row.get(key_name) or 0)
+            for key_name in ("cr_count", "contributor_count", "added_lines", "removed_lines", "net_lines", "changed_lines")
+        },
+    }
+
+
+def get_repository_ranking(limit: int = 20, **filters) -> list[dict]:
+    """按仓库和分支维度返回统计期内新增贡献 Top 排行。"""
+    rows = _repository_ranking_queryset(filters)[: max(min(int(limit or 20), 100), 1)]
+    return [_serialize_repository_ranking_row(row) for row in rows]
+
+
+def list_repository_rankings(page: int = 1, page_size: int = 20, **filters) -> dict:
+    """分页查询完整仓库和分支贡献排行。"""
+    queryset = _repository_ranking_queryset(filters)
+    safe_page = max(int(page or 1), 1)
+    safe_size = max(min(int(page_size or 20), 100), 1)
+    total = queryset.count()
+    rows = queryset[(safe_page - 1) * safe_size : safe_page * safe_size]
+    return {"items": [_serialize_repository_ranking_row(row) for row in rows], "total": total}
+
+
+def _person_ranking_queryset(filters: dict):
+    """构造创建人新增贡献排行聚合查询。"""
     payload = _filter_payload_from_kwargs(**filters)
-    rows = (
+    return (
         _base_record_queryset(payload)
         .values("author_user_id", "author_username", "author_user_name", "author_pl_group_id", "author_pl_group_name")
         .annotate(
@@ -482,19 +501,69 @@ def get_person_ranking(limit: int = 20, **filters) -> list[dict]:
             net_lines=Sum("net_lines"),
             changed_lines=Sum("changed_lines"),
         )
-        .order_by("-added_lines", "-cr_count")[: max(min(int(limit or 20), 100), 1)]
+        .order_by("-added_lines", "-cr_count", "author_username")
     )
-    return [
+
+
+def _serialize_person_ranking_row(row: dict) -> dict:
+    """序列化单条创建人贡献排行。"""
+    return {
+        **row,
+        "author_user_id": str(row["author_user_id"]) if row.get("author_user_id") else None,
+        "author_pl_group_id": str(row["author_pl_group_id"]) if row.get("author_pl_group_id") else None,
+        "author_pl_group_name": row.get("author_pl_group_name") or UNKNOWN_PL_GROUP_NAME,
+        "author_display_name": _author_display_name(row.get("author_user_name"), row.get("author_username")),
+        **{key: int(row.get(key) or 0) for key in ("repository_count", "branch_count", "cr_count", "added_lines", "removed_lines", "net_lines", "changed_lines")},
+    }
+
+
+def get_person_ranking(limit: int = 20, **filters) -> list[dict]:
+    """按创建人返回新增行数贡献 Top 排行。"""
+    rows = _person_ranking_queryset(filters)[: max(min(int(limit or 20), 100), 1)]
+    return [_serialize_person_ranking_row(row) for row in rows]
+
+
+def list_person_rankings(page: int = 1, page_size: int = 20, **filters) -> dict:
+    """分页查询完整创建人贡献排行。"""
+    queryset = _person_ranking_queryset(filters)
+    safe_page = max(int(page or 1), 1)
+    safe_size = max(min(int(page_size or 20), 100), 1)
+    total = queryset.count()
+    rows = queryset[(safe_page - 1) * safe_size : safe_page * safe_size]
+    return {"items": [_serialize_person_ranking_row(row) for row in rows], "total": total}
+
+
+def list_pl_group_rankings(page: int = 1, page_size: int = 20, **filters) -> dict:
+    """分页查询 PL 组贡献排行，未知归属使用稳定键 unknown。"""
+    payload = _filter_payload_from_kwargs(**filters)
+    queryset = (
+        _base_record_queryset(payload)
+        .values("author_pl_group_id", "author_pl_group_name")
+        .annotate(
+            contributor_count=Count("author_username", distinct=True),
+            repository_count=Count("repository_id", distinct=True),
+            branch_count=Count("branch_name", distinct=True),
+            cr_count=Count("id"),
+            added_lines=Sum("added_lines"),
+            removed_lines=Sum("removed_lines"),
+            net_lines=Sum("net_lines"),
+            changed_lines=Sum("changed_lines"),
+        )
+        .order_by("-added_lines", "-cr_count", "author_pl_group_name")
+    )
+    safe_page = max(int(page or 1), 1)
+    safe_size = max(min(int(page_size or 20), 100), 1)
+    total = queryset.count()
+    rows = queryset[(safe_page - 1) * safe_size : safe_page * safe_size]
+    items = [
         {
-            **row,
-            "author_user_id": str(row["author_user_id"]) if row.get("author_user_id") else None,
-            "author_pl_group_id": str(row["author_pl_group_id"]) if row.get("author_pl_group_id") else None,
-            "author_pl_group_name": row.get("author_pl_group_name") or UNKNOWN_PL_GROUP_NAME,
-            "author_display_name": _author_display_name(row.get("author_user_name"), row.get("author_username")),
-            **{key: int(row.get(key) or 0) for key in ("repository_count", "branch_count", "cr_count", "added_lines", "removed_lines", "net_lines", "changed_lines")},
+            "pl_group_id": str(row["author_pl_group_id"]) if row.get("author_pl_group_id") else UNKNOWN_PL_GROUP_ID,
+            "pl_group_name": row.get("author_pl_group_name") or UNKNOWN_PL_GROUP_NAME,
+            **{key: int(row.get(key) or 0) for key in ("contributor_count", "repository_count", "branch_count", "cr_count", "added_lines", "removed_lines", "net_lines", "changed_lines")},
         }
         for row in rows
     ]
+    return {"items": items, "total": total}
 
 
 def get_category_distribution(**filters) -> dict:

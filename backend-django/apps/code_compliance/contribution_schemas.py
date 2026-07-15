@@ -55,6 +55,8 @@ class ContributionPlGroupTrendPointOut(Schema):
 
 class ContributionRankingItemOut(Schema):
     id: str
+    repository_id: str
+    branch_id: Optional[str] = None
     name: str
     project_id: str = ""
     branch_name: str = ""
@@ -73,6 +75,11 @@ class ContributionRankingItemOut(Schema):
     changed_lines: int
 
 
+class PaginatedContributionRankingOut(Schema):
+    items: List[ContributionRankingItemOut] = Field(default_factory=list)
+    total: int
+
+
 class ContributionPersonRankingItemOut(Schema):
     author_user_id: Optional[str] = None
     author_username: str
@@ -87,6 +94,29 @@ class ContributionPersonRankingItemOut(Schema):
     removed_lines: int
     net_lines: int
     changed_lines: int
+
+
+class PaginatedContributionPersonRankingOut(Schema):
+    items: List[ContributionPersonRankingItemOut] = Field(default_factory=list)
+    total: int
+
+
+class ContributionPlGroupRankingItemOut(Schema):
+    pl_group_id: str
+    pl_group_name: str
+    contributor_count: int
+    repository_count: int
+    branch_count: int
+    cr_count: int
+    added_lines: int
+    removed_lines: int
+    net_lines: int
+    changed_lines: int
+
+
+class PaginatedContributionPlGroupRankingOut(Schema):
+    items: List[ContributionPlGroupRankingItemOut] = Field(default_factory=list)
+    total: int
 
 
 class ContributionCategoryItemOut(Schema):

@@ -980,6 +980,58 @@ class CodeComplianceFoundationTests(TestCase):
         self.assertEqual(record.author_username, "external01")
         self.assertEqual(record.author_pl_group_name, contribution_services.UNKNOWN_PL_GROUP_NAME)
 
+    def test_contribution_rankings_paginate_and_keep_pl_group_identity(self):
+        """三类贡献排行支持分页，重名 PL 组仍按真实 ID 分组。"""
+        org = self.create_org()
+        repo = ComplianceRepository.objects.get(id=self.create_repo(org["id"], "rank-repo")["id"])
+        branch_a = ComplianceManagedBranch.objects.get(id=self.create_branch("main", "trunk")["id"])
+        branch_b = ComplianceManagedBranch.objects.get(id=self.create_branch("release/2.0", "release")["id"])
+        author_a = User.objects.create(username="rank-a", password="secret", name="贡献人A")
+        author_b = User.objects.create(username="rank-b", password="secret", name="贡献人B")
+        group_b = PlGroup.objects.create(
+            name=self.pl_group.name,
+            code="cockpit-pl-b",
+            status=True,
+            pl_user=self.pl_user,
+        )
+        self.pl_group.members.add(author_a)
+        group_b.members.add(author_b)
+        rows = [
+            (branch_a, "rank-a", "rank-change-a", 30),
+            (branch_b, "rank-b", "rank-change-b", 20),
+        ]
+        assignments = contribution_services._load_author_assignments(["rank-a", "rank-b"])
+        for branch, username, change_key, added_lines in rows:
+            contribution_services._upsert_contribution_record(
+                repo,
+                branch,
+                {
+                    "added_lines": added_lines,
+                    "author_username": username,
+                    "change_key": change_key,
+                    "merged_at": timezone.now(),
+                    "removed_lines": 1,
+                    "target_branch": branch.branch_name,
+                },
+                assignments,
+            )
+
+        repositories = contribution_services.list_repository_rankings(page=1, page_size=1)
+        persons = contribution_services.list_person_rankings(page=1, page_size=1)
+        pl_groups = contribution_services.list_pl_group_rankings(page=1, page_size=20)
+
+        self.assertEqual(repositories["total"], 2)
+        self.assertEqual(len(repositories["items"]), 1)
+        self.assertEqual(repositories["items"][0]["repository_id"], str(repo.id))
+        self.assertEqual(repositories["items"][0]["branch_id"], str(branch_a.id))
+        self.assertEqual(persons["total"], 2)
+        self.assertEqual(len(persons["items"]), 1)
+        self.assertEqual(pl_groups["total"], 2)
+        self.assertEqual(
+            {item["pl_group_id"] for item in pl_groups["items"]},
+            {str(self.pl_group.id), str(group_b.id)},
+        )
+
     def test_mr_contribution_collect_uses_project_endpoint_and_source_id(self):
         """MR 贡献采集按项目请求，并使用上游 id 而非 CR change_key 幂等。"""
         org = self.create_org("mr-group", "MR组织", mode="MR")

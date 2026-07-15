@@ -9,6 +9,7 @@ import type {
   ContributionFilters,
   ContributionMetric,
   ContributionPersonRankingItem,
+  ContributionPlGroupRankingItem,
   ContributionPlGroupTrendPoint,
   ContributionRankingItem,
   ContributionTrendPoint,
@@ -22,6 +23,7 @@ import { Page } from '@vben/common-ui';
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
 import dayjs from 'dayjs';
+import { RotateCcw, SlidersHorizontal } from 'lucide-vue-next';
 import {
   ElButton,
   ElCascader,
@@ -32,12 +34,11 @@ import {
   ElInput,
   ElMessage,
   ElOption,
+  ElPopover,
   ElRadioButton,
   ElRadioGroup,
   ElSelect,
   ElTabPane,
-  ElTable,
-  ElTableColumn,
   ElTag,
   ElTabs,
 } from 'element-plus';
@@ -50,15 +51,21 @@ import {
 import {
   downloadContributionExportTaskApi,
   getContributionCategoryDistributionApi,
+  getContributionCollectTaskApi,
   getContributionExportTaskApi,
   getContributionPersonRankingApi,
   getContributionPlGroupTrendApi,
   getContributionRepositoryRankingApi,
   getContributionSummaryApi,
   getContributionTrendApi,
+  listContributionPersonRankingsApi,
+  listContributionPlGroupRankingsApi,
+  listContributionRepositoryRankingsApi,
   prepareContributionExportTaskApi,
   runContributionCollectTaskApi,
 } from '#/api/compliance/contribution';
+import ContributionHistoryDrawer from './components/ContributionHistoryDrawer.vue';
+import { useZqTable } from '#/components/zq-table';
 import { getDictItemByCodeApi } from '#/api/core/dict';
 import { getAllPlApi } from '#/api/core/pl';
 
@@ -77,6 +84,7 @@ const loading = ref(false);
 const exportLoading = ref(false);
 const collectSubmitting = ref(false);
 const collectVisible = ref(false);
+const advancedFilterVisible = ref(false);
 const activeTab = ref('overview');
 const trendChartRef = ref<EchartsUIType>();
 const personRankChartRef = ref<EchartsUIType>();
@@ -103,7 +111,14 @@ const personRanking = ref<ContributionPersonRankingItem[]>([]);
 const categoryDistribution = ref<ContributionCategoryDistribution>();
 const exportTask = ref<ContributionExportTask>();
 const collectTask = ref<ContributionCollectTask>();
+const historyVisible = ref(false);
+const historyEntity = ref<
+  | { id: string; label: string; type: 'person' }
+  | { id: string; label: string; type: 'pl_group' }
+  | { branchId?: string; id: string; label: string; type: 'repository' }
+>();
 let exportPollTimer: ReturnType<typeof setInterval> | undefined;
+let collectPollTimer: ReturnType<typeof setInterval> | undefined;
 
 const filters = ref<ContributionFilters>({
   branch_ids: [],
@@ -133,9 +148,15 @@ const repositoriesByOrg = computed(() => {
 const visibleRepositories = computed(() => repositoryOptions.value.filter((item) => !filters.value.source_mode || item.mode === filters.value.source_mode));
 const visibleOrganizationTree = computed(() => filterOrganizationsByMode(organizationTree.value));
 const selectedRepositoryCount = computed(() => parseScopeSelection().repository_ids.length);
+const activeAdvancedFilterCount = computed(() => [
+  filters.value.branch_ids?.length,
+  filters.value.repo_type,
+  filters.value.domain,
+  filters.value.pl_group_ids?.length,
+  filters.value.author_username,
+].filter(Boolean).length);
 
 const scopeCascaderProps = {
-  checkStrictly: true,
   emitPath: false,
   multiple: true,
   value: 'value',
@@ -216,6 +237,108 @@ function buildParams(): ContributionFilters {
     merged_after: mergedRange.value?.[0],
     merged_before: mergedRange.value?.[1],
   };
+}
+
+function resetAdvancedFilters() {
+  filters.value.branch_ids = [];
+  filters.value.repo_type = undefined;
+  filters.value.domain = undefined;
+  filters.value.pl_group_ids = [];
+  filters.value.author_username = undefined;
+}
+
+function applyAdvancedFilters() {
+  advancedFilterVisible.value = false;
+  loadDashboard();
+}
+
+const [RepositoryRankingGrid, repositoryRankingGridApi] = useZqTable<ContributionRankingItem>({
+  showSearchForm: false,
+  separator: false,
+  gridOptions: {
+    border: true,
+    columns: [
+      { dataKey: 'repository_name', key: 'repository_name', title: '代码库 / 分支', minWidth: 250 },
+      { align: 'right', dataKey: 'added_lines', key: 'added_lines', title: '新增行数', width: 110 },
+      { align: 'right', dataKey: 'removed_lines', key: 'removed_lines', title: '删除行数', width: 100 },
+      { align: 'right', dataKey: 'changed_lines', key: 'changed_lines', title: '总变更', width: 100 },
+      { align: 'right', dataKey: 'cr_count', key: 'cr_count', title: '变更数', width: 90 },
+      { align: 'right', dataKey: 'contributor_count', key: 'contributor_count', title: '贡献人数', width: 100 },
+    ],
+    pagerConfig: { enabled: true, pageSize: 20, pageSizes: [10, 20, 50, 100] },
+    proxyConfig: {
+      autoLoad: false,
+      ajax: {
+        query: ({ page }: { page: { currentPage: number; pageSize: number } }) =>
+          listContributionRepositoryRankingsApi({ ...buildParams(), page: page.currentPage, pageSize: page.pageSize }),
+      },
+    },
+    stripe: true,
+  },
+});
+
+const [PersonRankingGrid, personRankingGridApi] = useZqTable<ContributionPersonRankingItem>({
+  showSearchForm: false,
+  separator: false,
+  gridOptions: {
+    border: true,
+    columns: [
+      { dataKey: 'author_display_name', key: 'author_display_name', title: '创建人', minWidth: 170 },
+      { align: 'right', dataKey: 'repository_count', key: 'repository_count', title: '仓库', width: 72 },
+      { align: 'right', dataKey: 'added_lines', key: 'added_lines', title: '新增', width: 94 },
+      { align: 'right', dataKey: 'cr_count', key: 'cr_count', title: '变更数', width: 82 },
+    ],
+    pagerConfig: { enabled: true, pageSize: 20, pageSizes: [10, 20, 50, 100] },
+    proxyConfig: {
+      autoLoad: false,
+      ajax: {
+        query: ({ page }: { page: { currentPage: number; pageSize: number } }) =>
+          listContributionPersonRankingsApi({ ...buildParams(), page: page.currentPage, pageSize: page.pageSize }),
+      },
+    },
+    stripe: true,
+  },
+});
+
+const [PlGroupRankingGrid, plGroupRankingGridApi] = useZqTable<ContributionPlGroupRankingItem>({
+  showSearchForm: false,
+  separator: false,
+  gridOptions: {
+    border: true,
+    columns: [
+      { dataKey: 'pl_group_name', key: 'pl_group_name', title: 'PL组', minWidth: 160 },
+      { align: 'right', dataKey: 'contributor_count', key: 'contributor_count', title: '人数', width: 72 },
+      { align: 'right', dataKey: 'added_lines', key: 'added_lines', title: '新增', width: 94 },
+      { align: 'right', dataKey: 'cr_count', key: 'cr_count', title: '变更数', width: 82 },
+    ],
+    pagerConfig: { enabled: true, pageSize: 20, pageSizes: [10, 20, 50, 100] },
+    proxyConfig: {
+      autoLoad: false,
+      ajax: {
+        query: ({ page }: { page: { currentPage: number; pageSize: number } }) =>
+          listContributionPlGroupRankingsApi({ ...buildParams(), page: page.currentPage, pageSize: page.pageSize }),
+      },
+    },
+    stripe: true,
+  },
+});
+
+function reloadRankingTables(resetPage = false) {
+  const grids = [repositoryRankingGridApi, personRankingGridApi, plGroupRankingGridApi];
+  grids.forEach((gridApi) => {
+    if (resetPage) gridApi.pagination.currentPage = 1;
+    gridApi.query();
+  });
+}
+
+function openPersonHistory(row: ContributionPersonRankingItem) {
+  historyEntity.value = { id: row.author_username, label: row.author_display_name, type: 'person' };
+  historyVisible.value = true;
+}
+
+function openPlGroupHistory(row: ContributionPlGroupRankingItem) {
+  historyEntity.value = { id: row.pl_group_id, label: row.pl_group_name, type: 'pl_group' };
+  historyVisible.value = true;
 }
 
 function changeSourceMode() {
@@ -384,22 +507,20 @@ async function loadDashboard() {
     categoryDistribution.value = categoryData;
     await nextTick();
     renderCharts();
+    reloadRankingTables(true);
   } finally {
     loading.value = false;
   }
 }
 
-function drillByRepository(row: ContributionRankingItem) {
-  const repo = repositoryOptions.value.find((item) => item.project_id === row.project_id);
-  selectedScopeValues.value = repo ? [`repo:${repo.id}`] : [];
-  const branch = branchOptions.value.find((item) => item.branch_name === row.branch_name);
-  filters.value.branch_ids = branch ? [branch.id] : [];
-  loadDashboard();
-}
-
-function drillByPerson(row: ContributionPersonRankingItem) {
-  filters.value.author_username = row.author_username;
-  loadDashboard();
+function openRepositoryHistory(row: ContributionRankingItem) {
+  historyEntity.value = {
+    branchId: row.branch_id || undefined,
+    id: row.repository_id,
+    label: `${row.repository_name} · ${row.branch_name}`,
+    type: 'repository',
+  };
+  historyVisible.value = true;
 }
 
 function clearScope() {
@@ -414,6 +535,31 @@ function stopExportPolling() {
   if (!exportPollTimer) return;
   clearInterval(exportPollTimer);
   exportPollTimer = undefined;
+}
+
+function stopCollectPolling() {
+  if (!collectPollTimer) return;
+  clearInterval(collectPollTimer);
+  collectPollTimer = undefined;
+}
+
+async function refreshCollectTask(id: string) {
+  const task = await getContributionCollectTaskApi(id);
+  collectTask.value = task;
+  if (task.status === 'success') {
+    stopCollectPolling();
+    ElMessage.success(`同步完成：拉取 ${task.fetched_count} 条，新增 ${task.created_count} 条`);
+    await loadDashboard();
+  }
+  if (task.status === 'failed') {
+    stopCollectPolling();
+    ElMessage.error(task.error_message || '同步任务失败');
+  }
+}
+
+function startCollectPolling(id: string) {
+  stopCollectPolling();
+  collectPollTimer = setInterval(() => refreshCollectTask(id), 2000);
 }
 
 async function downloadExportTask(task?: ContributionExportTask) {
@@ -472,6 +618,7 @@ async function submitCollectTask() {
     collectTask.value = result.task;
     collectVisible.value = false;
     ElMessage[result.accepted ? 'success' : 'warning'](result.message);
+    if (result.accepted) startCollectPolling(result.task.id);
   } finally {
     collectSubmitting.value = false;
   }
@@ -484,6 +631,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopExportPolling();
+  stopCollectPolling();
 });
 </script>
 
@@ -491,19 +639,14 @@ onUnmounted(() => {
   <Page auto-content-height>
     <div class="contribution-page" v-loading="loading">
       <section class="toolbar-panel">
-        <ElForm class="filter-form" label-position="top">
-          <!-- Row 1 -->
-          <ElFormItem class="col-span-2">
-            <template #label>
-              <div class="custom-label">
-                <span>组织 / 代码库</span>
-                <div class="scope-actions">
-                  <span class="scope-count">已选 {{ selectedRepositoryCount }} 个</span>
-                  <ElButton link type="primary" @click="selectAllScope">全选</ElButton>
-                  <ElButton link type="info" @click="clearScope">清空</ElButton>
-                </div>
-              </div>
-            </template>
+        <div class="filter-ribbon">
+          <div class="ribbon-field ribbon-scope">
+            <div class="ribbon-label">
+              <span>组织 / 代码库</span>
+              <span class="scope-state">已选 {{ selectedRepositoryCount }} 个</span>
+              <ElButton link type="primary" @click="selectAllScope">全选</ElButton>
+              <ElButton link @click="clearScope">清空</ElButton>
+            </div>
             <ElCascader
               v-model="selectedScopeValues"
               :options="scopeOptions"
@@ -514,52 +657,69 @@ onUnmounted(() => {
               filterable
               placeholder="搜索组织或代码库"
             />
-          </ElFormItem>
-          <ElFormItem label="合入时间">
+          </div>
+          <div class="ribbon-field ribbon-time">
+            <div class="ribbon-label">合入时间</div>
             <ElDatePicker v-model="mergedRange" clearable end-placeholder="结束" range-separator="至" start-placeholder="开始" type="datetimerange" value-format="YYYY-MM-DDTHH:mm:ssZ" />
-          </ElFormItem>
-          <ElFormItem label="数据来源">
+          </div>
+          <div class="ribbon-field ribbon-source">
+            <div class="ribbon-label">数据来源</div>
             <ElRadioGroup v-model="filters.source_mode" class="source-mode" @change="changeSourceMode">
               <ElRadioButton label="">全部</ElRadioButton>
               <ElRadioButton label="CR">CR</ElRadioButton>
               <ElRadioButton label="MR">MR</ElRadioButton>
             </ElRadioGroup>
-          </ElFormItem>
-
-          <!-- Row 2 -->
-          <ElFormItem label="分支">
-            <ElSelect v-model="filters.branch_ids" collapse-tags clearable filterable multiple placeholder="全部活跃分支">
-              <ElOption v-for="item in branchOptions" :key="item.id" :label="item.branch_name" :value="item.id" />
-            </ElSelect>
-          </ElFormItem>
-          <ElFormItem label="仓库类型">
-            <ElSelect v-model="filters.repo_type" clearable placeholder="全部类型">
-              <ElOption v-for="item in repoTypeOptions" :key="item.value || item.id" :label="item.label" :value="item.value || ''" />
-            </ElSelect>
-          </ElFormItem>
-          <ElFormItem label="领域">
-            <ElSelect v-model="filters.domain" clearable placeholder="全部领域">
-              <ElOption label="座舱" value="cockpit" />
-              <ElOption label="车控" value="vehicle" />
-            </ElSelect>
-          </ElFormItem>
-          <ElFormItem label="贡献人 PL 组">
-            <ElSelect v-model="filters.pl_group_ids" collapse-tags clearable filterable multiple placeholder="全部 PL 组">
-              <ElOption v-for="item in plGroupOptions" :key="item.id" :label="item.name" :value="item.id" />
-              <ElOption label="非底软领域" value="unknown" />
-            </ElSelect>
-          </ElFormItem>
-
-          <!-- Row 3 -->
-          <ElFormItem label="创建人">
-            <ElInput v-model="filters.author_username" clearable placeholder="姓名 / 工号" />
-          </ElFormItem>
-          <div class="filter-actions col-span-3">
-            <ElButton @click="collectVisible = true">手动同步</ElButton>
-            <ElButton :loading="exportLoading" @click="submitExport">导出看板</ElButton>
-            <ElButton type="primary" @click="loadDashboard">查询</ElButton>
           </div>
-        </ElForm>
+        </div>
+        <div class="ribbon-commands">
+          <ElPopover v-model:visible="advancedFilterVisible" :width="760" placement="bottom-end" trigger="click">
+            <template #reference>
+              <ElButton :class="{ 'is-active-filter': activeAdvancedFilterCount > 0 }" aria-label="高级筛选" circle title="高级筛选">
+                <SlidersHorizontal :size="16" />
+              </ElButton>
+            </template>
+            <div class="advanced-filter-panel">
+              <div class="advanced-filter-header">
+                <span>高级条件</span>
+                <span v-if="activeAdvancedFilterCount" class="advanced-filter-count">已启用 {{ activeAdvancedFilterCount }} 项</span>
+              </div>
+              <ElForm class="advanced-filter-form" label-position="top">
+                <ElFormItem label="分支">
+                  <ElSelect v-model="filters.branch_ids" collapse-tags clearable filterable multiple placeholder="全部活跃分支">
+                    <ElOption v-for="item in branchOptions" :key="item.id" :label="item.branch_name" :value="item.id" />
+                  </ElSelect>
+                </ElFormItem>
+                <ElFormItem label="仓库类型">
+                  <ElSelect v-model="filters.repo_type" clearable placeholder="全部类型">
+                    <ElOption v-for="item in repoTypeOptions" :key="item.value || item.id" :label="item.label" :value="item.value || ''" />
+                  </ElSelect>
+                </ElFormItem>
+                <ElFormItem label="领域">
+                  <ElSelect v-model="filters.domain" clearable placeholder="全部领域">
+                    <ElOption label="座舱" value="cockpit" />
+                    <ElOption label="车控" value="vehicle" />
+                  </ElSelect>
+                </ElFormItem>
+                <ElFormItem label="贡献人 PL 组">
+                  <ElSelect v-model="filters.pl_group_ids" collapse-tags clearable filterable multiple placeholder="全部 PL 组">
+                    <ElOption v-for="item in plGroupOptions" :key="item.id" :label="item.name" :value="item.id" />
+                    <ElOption label="非底软领域" value="unknown" />
+                  </ElSelect>
+                </ElFormItem>
+                <ElFormItem label="创建人">
+                  <ElInput v-model="filters.author_username" clearable placeholder="姓名 / 工号" />
+                </ElFormItem>
+              </ElForm>
+              <div class="advanced-filter-footer">
+                <ElButton :icon="RotateCcw" @click="resetAdvancedFilters">重置</ElButton>
+                <ElButton type="primary" @click="applyAdvancedFilters">应用条件</ElButton>
+              </div>
+            </div>
+          </ElPopover>
+          <ElButton @click="collectVisible = true">手动同步</ElButton>
+          <ElButton :loading="exportLoading" @click="submitExport">导出看板</ElButton>
+          <ElButton type="primary" @click="loadDashboard">查询</ElButton>
+        </div>
       </section>
 
       <ElTabs v-model="activeTab" class="contribution-tabs">
@@ -612,47 +772,36 @@ onUnmounted(() => {
         </ElTabPane>
 
         <ElTabPane label="排行明细" name="ranking">
-          <section class="table-grid">
-            <div class="panel panel-wide">
-              <div class="panel-title">仓库 / 分支新增贡献</div>
-              <ElTable :data="repositoryRanking" border height="420">
-                <ElTableColumn fixed label="代码库 / 分支" min-width="240">
-                  <template #default="{ row }">
-                    <ElButton link type="primary" @click="drillByRepository(row)">{{ row.repository_name }}</ElButton>
-                    <div class="muted">
-                      <ElTag effect="plain" size="small" :type="row.source_mode === 'MR' ? 'warning' : 'primary'">{{ row.source_mode }}</ElTag>
-                      {{ row.branch_name }} · {{ row.project_id }}
-                    </div>
-                  </template>
-                </ElTableColumn>
-                <ElTableColumn align="right" label="新增行数" prop="added_lines" width="120" />
-                <ElTableColumn align="right" label="删除行数" prop="removed_lines" width="110" />
-                <ElTableColumn align="right" label="总变更" prop="changed_lines" width="110" />
-                <ElTableColumn align="right" label="CR数" prop="cr_count" width="90" />
-                <ElTableColumn align="right" label="贡献人数" prop="contributor_count" width="100" />
-              </ElTable>
+          <section class="table-grid ranking-workbench">
+            <div class="panel ranking-panel panel-wide">
+              <div class="panel-header"><div class="panel-title">仓库 / 分支新增贡献</div></div>
+              <RepositoryRankingGrid class="ranking-grid">
+                <template #cell-repository_name="{ row }">
+                  <ElButton link type="primary" @click="openRepositoryHistory(row)">{{ row.repository_name }}</ElButton>
+                  <div class="muted">
+                    <ElTag effect="plain" size="small" :type="row.source_mode === 'MR' ? 'warning' : 'primary'">{{ row.source_mode }}</ElTag>
+                    <ElButton link type="primary" @click="openRepositoryHistory(row)">{{ row.branch_name }}</ElButton>
+                    · {{ row.project_id }}
+                  </div>
+                </template>
+              </RepositoryRankingGrid>
             </div>
-            <div class="panel">
-              <div class="panel-title">人员合入贡献</div>
-              <ElTable :data="personRanking" border height="420">
-                <ElTableColumn label="创建人" min-width="180">
-                  <template #default="{ row }">
-                    <ElButton link type="primary" @click="drillByPerson(row)">{{ row.author_display_name }}</ElButton>
-                    <div class="muted">{{ row.author_pl_group_name }}</div>
-                  </template>
-                </ElTableColumn>
-                <ElTableColumn align="right" label="仓库" prop="repository_count" width="72" />
-                <ElTableColumn align="right" label="新增行数" prop="added_lines" width="110" />
-                <ElTableColumn align="right" label="CR数" prop="cr_count" width="80" />
-              </ElTable>
+            <div class="panel ranking-panel">
+              <div class="panel-header"><div class="panel-title">人员合入贡献</div></div>
+              <PersonRankingGrid class="ranking-grid">
+                <template #cell-author_display_name="{ row }">
+                  <ElButton link type="primary" @click="openPersonHistory(row)">{{ row.author_display_name }}</ElButton>
+                  <div class="muted">{{ row.author_pl_group_name }}</div>
+                </template>
+              </PersonRankingGrid>
             </div>
-            <div class="panel">
-              <div class="panel-title">PL组新增贡献</div>
-              <ElTable :data="categoryDistribution?.pl_groups || []" border height="420">
-                <ElTableColumn label="PL组" min-width="160" prop="category_label" />
-                <ElTableColumn align="right" label="新增行数" prop="added_lines" width="110" />
-                <ElTableColumn align="right" label="CR数" prop="cr_count" width="80" />
-              </ElTable>
+            <div class="panel ranking-panel">
+              <div class="panel-header"><div class="panel-title">PL组新增贡献</div></div>
+              <PlGroupRankingGrid class="ranking-grid">
+                <template #cell-pl_group_name="{ row }">
+                  <ElButton link type="primary" @click="openPlGroupHistory(row)">{{ row.pl_group_name }}</ElButton>
+                </template>
+              </PlGroupRankingGrid>
             </div>
           </section>
         </ElTabPane>
@@ -675,6 +824,12 @@ onUnmounted(() => {
           <ElButton :loading="collectSubmitting" type="primary" @click="submitCollectTask">提交任务</ElButton>
         </template>
       </ElDialog>
+
+      <ContributionHistoryDrawer
+        v-model="historyVisible"
+        :base-filters="buildParams()"
+        :entity="historyEntity"
+      />
     </div>
   </Page>
 </template>
@@ -697,70 +852,53 @@ onUnmounted(() => {
 }
 
 .toolbar-panel {
-  padding: 20px;
-}
-
-.filter-form {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px 24px;
-}
-
-.col-span-2 {
-  grid-column: span 2;
-}
-
-.col-span-3 {
-  grid-column: span 3;
-}
-
-.filter-form :deep(.el-form-item) {
-  width: 100%;
-  margin: 0;
-}
-
-.filter-form :deep(.el-form-item__label) {
-  padding-bottom: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.2;
-  color: var(--el-text-color-regular, #475569);
   display: flex;
-  width: 100%;
-  align-items: center;
-}
-
-.filter-form :deep(.el-select),
-.filter-form :deep(.el-input),
-.filter-form :deep(.el-date-editor),
-.filter-form :deep(.el-cascader) {
-  width: 100%;
-}
-
-.custom-label {
-  display: flex;
+  align-items: end;
   justify-content: space-between;
+  gap: 18px;
+  padding: 14px 16px;
+  box-shadow: 0 6px 18px rgb(15 23 42 / 3%);
+}
+
+.filter-ribbon {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  grid-template-columns: minmax(340px, 1.45fr) minmax(330px, 1.1fr) 178px;
+  gap: 14px;
+}
+
+.ribbon-field {
+  min-width: 0;
+}
+
+.ribbon-label {
+  display: flex;
+  height: 20px;
   align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ribbon-field :deep(.el-date-editor),
+.ribbon-field :deep(.el-cascader) {
   width: 100%;
 }
 
-.scope-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.scope-actions :deep(.el-button) {
-  height: 18px;
-  padding: 0 4px;
-  font-size: 12px;
-}
-
-.scope-count {
-  font-size: 12px;
+.scope-state {
+  margin-left: auto;
   color: #94a3b8;
-  margin-right: 4px;
+  font-size: 12px;
   font-weight: 400;
+}
+
+.ribbon-label :deep(.el-button) {
+  height: 18px;
+  padding: 0 2px;
+  font-size: 12px;
 }
 
 .source-mode {
@@ -775,52 +913,91 @@ onUnmounted(() => {
 .source-mode :deep(.el-radio-button__inner) {
   width: 100%;
   border-color: #d6dee9;
-  padding-inline: 10px;
+  padding-inline: 8px;
 }
 
-.filter-actions {
+.ribbon-commands {
   display: flex;
-  justify-content: flex-end;
-  align-items: flex-end;
-  gap: 12px;
-  padding-bottom: 2px;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 1px;
 }
 
-.filter-actions :deep(.el-button) {
-  padding: 8px 20px;
+.ribbon-commands :deep(.el-button) {
   margin: 0;
 }
 
-@media (max-width: 1280px) {
-  .filter-form {
-    grid-template-columns: repeat(3, 1fr);
+.ribbon-commands .is-active-filter {
+  border-color: #93c5fd;
+  color: #2563eb;
+  background: #eff6ff;
+}
+
+.advanced-filter-panel {
+  padding: 2px;
+}
+
+.advanced-filter-header,
+.advanced-filter-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.advanced-filter-header {
+  padding: 3px 2px 12px;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.advanced-filter-count {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.advanced-filter-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.advanced-filter-form :deep(.el-form-item) {
+  width: 100%;
+  margin: 0;
+}
+
+.advanced-filter-form :deep(.el-select),
+.advanced-filter-form :deep(.el-input) {
+  width: 100%;
+}
+
+.advanced-filter-footer {
+  margin-top: 16px;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 12px;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 1260px) {
+  .filter-ribbon {
+    grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr);
   }
-  .col-span-2 {
+
+  .ribbon-source {
     grid-column: span 2;
-  }
-  .col-span-3 {
-    grid-column: span 2;
+    max-width: 220px;
   }
 }
 
-@media (max-width: 960px) {
-  .filter-form {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  .col-span-2,
-  .col-span-3 {
-    grid-column: span 2;
-  }
-}
-
-@media (max-width: 640px) {
-  .filter-form {
-    grid-template-columns: 1fr;
-  }
-  .col-span-2,
-  .col-span-3 {
-    grid-column: span 1;
-  }
+@media (max-width: 900px) {
+  .toolbar-panel { align-items: stretch; flex-direction: column; }
+  .filter-ribbon { grid-template-columns: 1fr; }
+  .ribbon-source { grid-column: auto; max-width: none; }
+  .ribbon-commands { justify-content: flex-end; }
+  .advanced-filter-form { grid-template-columns: 1fr; }
 }
 
 .contribution-tabs {
@@ -910,6 +1087,26 @@ onUnmounted(() => {
   grid-template-columns: 2fr 1fr 1fr;
 }
 
+.ranking-workbench {
+  height: max(620px, calc(100vh - 278px));
+  min-height: 0;
+}
+
+.ranking-panel {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.ranking-panel .panel-header {
+  flex: 0 0 auto;
+}
+
+.ranking-grid {
+  min-height: 0;
+  flex: 1;
+}
+
 .panel {
   min-width: 0;
   padding: 12px;
@@ -970,6 +1167,14 @@ onUnmounted(() => {
   .rank-grid,
   .table-grid {
     grid-template-columns: 1fr;
+  }
+
+  .ranking-workbench {
+    height: auto;
+  }
+
+  .ranking-panel {
+    height: 620px;
   }
 }
 </style>
