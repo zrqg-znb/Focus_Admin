@@ -124,6 +124,11 @@ export interface ImportResult {
   created_count: number;
   updated_count: number;
   ignored_count: number;
+  platform_created_count: number;
+  platform_updated_count: number;
+  vehicle_created_count: number;
+  vehicle_updated_count: number;
+  configuration_row_count: number;
   errors: ImportErrorRow[];
 }
 
@@ -375,6 +380,20 @@ export async function importTestCasesExcelApi(vehicle_id: string, file: File) {
   formData.append('file', file);
   return requestClient.post<ImportResult>(
     `${base}/test-cases/import-excel`,
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  );
+}
+
+export async function importFullTestCasesExcelApi(
+  domain: AutoTestReportDomain,
+  file: File,
+) {
+  const formData = new FormData();
+  formData.append('domain', domain);
+  formData.append('file', file);
+  return requestClient.post<ImportResult>(
+    `${base}/test-cases/import-full-excel`,
     formData,
     { headers: { 'Content-Type': 'multipart/form-data' } },
   );

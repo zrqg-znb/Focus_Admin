@@ -131,8 +131,23 @@ def import_test_cases_excel(
     return services.import_test_cases(request.auth, payload)
 
 
+@router.post(
+    '/test-cases/import-full-excel',
+    response=ImportResultOut,
+    summary='Excel批量导入平台车型和用例',
+)
+def import_full_test_cases_excel(
+    request,
+    domain: str = Form(...),
+    file: UploadedFile = File(...),
+):
+    """按领域从单个 Excel 批量维护平台、车型和用例。"""
+    return services.import_full_test_case_excel(request.auth, domain, file)
+
+
 @router.get('/test-cases/template', summary='下载测试用例导入模板')
 def download_test_case_template(request, domain: str = Query('')):
+    """下载包含平台、车型和用例字段的一站式导入模板。"""
     return services.build_test_case_template_response(domain)
 
 

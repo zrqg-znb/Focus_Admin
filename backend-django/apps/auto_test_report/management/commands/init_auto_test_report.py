@@ -99,6 +99,7 @@ PERMISSION_SEEDS = {
         {'name': '用例批量删除接口', 'code': 'auto-test-report:api:test-cases:batch-delete', 'permission_type': 1, 'api_path': '/api/auto-test-report/test-cases/batch-delete', 'http_method': 'POST'},
         {'name': '用例导入接口', 'code': 'auto-test-report:api:test-cases:import', 'permission_type': 1, 'api_path': '/api/auto-test-report/test-cases/import', 'http_method': 'POST'},
         {'name': '用例Excel导入接口', 'code': 'auto-test-report:api:test-cases:import-excel', 'permission_type': 1, 'api_path': '/api/auto-test-report/test-cases/import-excel', 'http_method': 'POST'},
+        {'name': '平台车型用例Excel导入接口', 'code': 'auto-test-report:api:test-cases:import-full-excel', 'permission_type': 1, 'api_path': '/api/auto-test-report/test-cases/import-full-excel', 'http_method': 'POST'},
         {'name': '用例模板接口', 'code': 'auto-test-report:api:test-cases:template', 'permission_type': 1, 'api_path': '/api/auto-test-report/test-cases/template', 'http_method': 'GET'},
         {'name': '用例导出接口', 'code': 'auto-test-report:api:test-cases:export', 'permission_type': 1, 'api_path': '/api/auto-test-report/test-cases/export', 'http_method': 'GET'},
         {'name': '用例历史接口', 'code': 'auto-test-report:api:test-cases:history', 'permission_type': 1, 'api_path': '/api/auto-test-report/test-cases/:id/history', 'http_method': 'GET'},

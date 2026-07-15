@@ -33,7 +33,7 @@ import {
   deleteTestCaseApi,
   downloadTestCaseExportApi,
   downloadTestCaseTemplateApi,
-  importTestCasesExcelApi,
+  importFullTestCasesExcelApi,
   listTestCasesApi,
   listVehicleOptionsApi,
   updateTestCaseApi,
@@ -345,26 +345,15 @@ async function removeSelected() {
 }
 
 async function onImportFile(file?: File | null) {
-  if (!currentVehicleId.value) {
-    ElMessage.warning(`请先通过级联选择一个${domainMeta.value.selectorLabel}`);
-    return false;
-  }
-  if (
-    domain.value === 'vehicle' &&
-    (currentVehicle.value?.viu_codes?.length || 0) === 0
-  ) {
-    ElMessage.warning('当前车型未配置可用 VIU 编号，请先维护车型配置');
-    return false;
-  }
   if (!file) {
     ElMessage.warning('请选择 Excel 文件');
     return false;
   }
   importLoading.value = true;
   try {
-    const result = await importTestCasesExcelApi(currentVehicleId.value, file);
+    const result = await importFullTestCasesExcelApi(domain.value, file);
     ElMessage.success(
-      `导入完成：新增 ${result.created_count}，更新 ${result.updated_count}，忽略 ${result.ignored_count}`,
+      `导入完成：平台新增 ${result.platform_created_count} / 更新 ${result.platform_updated_count}，车型新增 ${result.vehicle_created_count} / 更新 ${result.vehicle_updated_count}，用例新增 ${result.created_count} / 更新 ${result.updated_count} / 忽略 ${result.ignored_count}，纯配置行 ${result.configuration_row_count}`,
     );
     if ((result.errors || []).length > 0) {
       await ElMessageBox.alert(
@@ -377,6 +366,7 @@ async function onImportFile(file?: File | null) {
         },
       );
     }
+    await reloadVehicleOptions();
     await refreshGrid();
   } finally {
     importLoading.value = false;
@@ -448,6 +438,9 @@ async function exportCases() {
 function handleExcelInputChange(event: Event) {
   const target = event.target as HTMLInputElement | null;
   void onImportFile(target?.files?.[0] || null);
+  if (target) {
+    target.value = '';
+  }
 }
 
 watch(

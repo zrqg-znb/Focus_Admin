@@ -1,5 +1,7 @@
+import io
 from datetime import date, timedelta
 
+import openpyxl
 from django.test import TestCase
 from django.utils import timezone
 
@@ -30,6 +32,132 @@ from apps.auto_test_report.auto_test_report_schemas import (
     ReportResultItemIn,
     TestCaseFilter,
 )
+
+
+class AutoTestReportFullExcelImportTests(TestCase):
+    MCU_HEADER = [
+        '版本名称', '版本标识', '车型名称', '车型编号', 'CDC平台',
+        '执行机器', '用例编号', '用例名称', '备注',
+    ]
+    SOC_HEADER = [
+        '版本名称', '版本标识', '车型名称', '车型编号', 'CDC平台',
+        '执行机器', '模块', '用例编号', '用例名称', '备注',
+    ]
+    VEHICLE_HEADER = [
+        '版本名称', '版本标识', '车型名称', '车型编号', '执行机器',
+        'VIU编号', '用例编号', '用例名称', '备注',
+    ]
+
+    def _build_excel(self, header, rows):
+        """构造与下载模板一致的内存 Excel，供批量导入测试复用。"""
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.append(header)
+        for row in rows:
+            sheet.append(row)
+        output = io.BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        return output
+
+    def test_full_import_creates_multiple_platforms_vehicles_cases_and_config_row(self):
+        file_obj = self._build_excel(self.MCU_HEADER, [
+            ['MCU V1', 'mcu-v1', '车型A', 'MCU-A', 'CDC-A', 'host-a', 'CASE-1', '用例1', ''],
+            ['MCU V1', 'mcu-v1', '车型B', 'MCU-B', 'CDC-B', 'host-b', 'CASE-2', '用例2', ''],
+            ['MCU V2', 'mcu-v2', '车型C', 'MCU-C', 'CDC-C', 'host-c', '', '', ''],
+        ])
+
+        result = services.import_full_test_case_excel(None, DOMAIN_COCKPIT, file_obj)
+
+        self.assertEqual(result.platform_created_count, 2)
+        self.assertEqual(result.vehicle_created_count, 3)
+        self.assertEqual(result.created_count, 2)
+        self.assertEqual(result.configuration_row_count, 1)
+        self.assertEqual(result.errors, [])
+        self.assertEqual(McuPlatform.objects.filter(domain=DOMAIN_COCKPIT).count(), 2)
+        self.assertEqual(VehicleModel.objects.count(), 3)
+        self.assertEqual(AutoTestCase.objects.count(), 2)
+
+    def test_full_import_updates_existing_records_without_removing_other_cases(self):
+        first_file = self._build_excel(self.MCU_HEADER, [
+            ['MCU V1', 'mcu-v1', '车型A', 'MCU-A', 'CDC-A', 'host-a', 'CASE-1', '用例1', '旧备注'],
+            ['MCU V1', 'mcu-v1', '车型A', 'MCU-A', 'CDC-A', 'host-a', 'CASE-2', '保留用例', ''],
+        ])
+        services.import_full_test_case_excel(None, DOMAIN_COCKPIT, first_file)
+        second_file = self._build_excel(self.MCU_HEADER, [
+            ['MCU V1 新名称', 'mcu-v1', '车型A新名称', 'MCU-A', 'CDC-NEW', 'host-new', 'CASE-1', '用例1新名称', '新备注'],
+        ])
+
+        result = services.import_full_test_case_excel(None, DOMAIN_COCKPIT, second_file)
+
+        self.assertEqual(result.platform_updated_count, 1)
+        self.assertEqual(result.vehicle_updated_count, 1)
+        self.assertEqual(result.updated_count, 1)
+        self.assertEqual(AutoTestCase.objects.filter(is_deleted=False).count(), 2)
+        vehicle = VehicleModel.objects.get(vehicle_code='MCU-A')
+        self.assertEqual(vehicle.name, '车型A新名称')
+        self.assertEqual(vehicle.cdc_platform, 'CDC-NEW')
+        self.assertEqual(vehicle.execution_machine, 'host-new')
+        case = AutoTestCase.objects.get(vehicle=vehicle, case_no='CASE-1')
+        self.assertEqual(case.case_name, '用例1新名称')
+        self.assertEqual(case.remark, '新备注')
+
+    def test_soc_case_missing_module_reports_excel_row_and_writes_nothing(self):
+        file_obj = self._build_excel(self.SOC_HEADER, [
+            ['SOC V1', 'soc-v1', 'SOC车型', 'SOC-A', 'CDC-SOC', 'host-soc', '', 'CASE-1', 'SOC用例', ''],
+        ])
+
+        result = services.import_full_test_case_excel(None, DOMAIN_COCKPIT_SOC, file_obj)
+
+        self.assertEqual(result.created_count, 0)
+        self.assertEqual(result.errors[0].row_no, 2)
+        self.assertIn('座舱SOC用例必须填写模块', result.errors[0].message)
+        self.assertFalse(McuPlatform.objects.filter(version_code='soc-v1').exists())
+        self.assertFalse(VehicleModel.objects.filter(vehicle_code='SOC-A').exists())
+
+    def test_vehicle_import_does_not_require_cdc_and_merges_viu_codes(self):
+        file_obj = self._build_excel(self.VEHICLE_HEADER, [
+            ['VIU V1', 'viu-v1', '车控车型', 'CTRL-A', 'host-ctrl', '', '', '', ''],
+            ['VIU V1', 'viu-v1', '车控车型', 'CTRL-A', 'host-ctrl', 'viu1', 'CASE-1', '车控用例', ''],
+        ])
+
+        result = services.import_full_test_case_excel(None, DOMAIN_VEHICLE, file_obj)
+
+        self.assertEqual(result.vehicle_created_count, 1)
+        self.assertEqual(result.configuration_row_count, 1)
+        self.assertEqual(result.created_count, 1)
+        vehicle = VehicleModel.objects.get(vehicle_code='CTRL-A')
+        self.assertEqual(vehicle.cdc_platform, '')
+        self.assertEqual(vehicle.viu_codes, ['viu1'])
+        self.assertTrue(
+            AutoTestCase.objects.filter(vehicle=vehicle, viu_code='viu1', case_no='CASE-1').exists()
+        )
+
+    def test_conflicting_vehicle_rows_are_all_rejected(self):
+        file_obj = self._build_excel(self.MCU_HEADER, [
+            ['MCU V1', 'mcu-v1', '车型A', 'MCU-A', 'CDC-A', 'host-a', 'CASE-1', '用例1', ''],
+            ['MCU V1', 'mcu-v1', '车型A', 'MCU-A', 'CDC-A', 'host-b', 'CASE-2', '用例2', ''],
+        ])
+
+        result = services.import_full_test_case_excel(None, DOMAIN_COCKPIT, file_obj)
+
+        self.assertEqual([item.row_no for item in result.errors], [2, 3])
+        self.assertTrue(all('配置不一致' in item.message for item in result.errors))
+        self.assertFalse(McuPlatform.objects.filter(version_code='mcu-v1').exists())
+
+    def test_download_templates_have_domain_specific_hierarchy_columns(self):
+        mcu_response = services.build_test_case_template_response(DOMAIN_COCKPIT)
+        soc_response = services.build_test_case_template_response(DOMAIN_COCKPIT_SOC)
+        vehicle_response = services.build_test_case_template_response(DOMAIN_VEHICLE)
+
+        def header_of(response):
+            workbook = openpyxl.load_workbook(io.BytesIO(response.content), read_only=True)
+            return [cell.value for cell in next(workbook.active.iter_rows())]
+
+        self.assertIn('CDC平台', header_of(mcu_response))
+        self.assertIn('模块', header_of(soc_response))
+        self.assertNotIn('CDC平台', header_of(vehicle_response))
+        self.assertIn('VIU编号', header_of(vehicle_response))
 
 
 class AutoTestReportOverviewTests(TestCase):

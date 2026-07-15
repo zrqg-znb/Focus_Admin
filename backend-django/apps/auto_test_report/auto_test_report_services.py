@@ -1,11 +1,11 @@
 import io
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
 
 import openpyxl
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import F, OuterRef, Q, Subquery, Window
 from django.db.models.functions import RowNumber
 from django.http import HttpResponse
@@ -618,7 +618,8 @@ def import_test_cases(user, payload) -> ImportResultOut:
     )
 
 
-def parse_excel_rows(file_obj, *, require_module: bool = False, require_viu_code: bool = False) -> list[dict]:
+def _read_excel_rows(file_obj) -> list[tuple]:
+    """读取 Excel 活动工作表，统一处理文件损坏和空表错误。"""
     try:
         content = file_obj.read()
         workbook = openpyxl.load_workbook(
@@ -629,10 +630,15 @@ def parse_excel_rows(file_obj, *, require_module: bool = False, require_viu_code
     except Exception as exc:
         raise HttpError(400, f'Excel 解析失败: {exc}')
 
-    sheet = workbook.active
-    rows = list(sheet.iter_rows(values_only=True))
+    rows = list(workbook.active.iter_rows(values_only=True))
     if not rows:
         raise HttpError(400, 'Excel 内容为空')
+    return rows
+
+
+def parse_excel_rows(file_obj, *, require_module: bool = False, require_viu_code: bool = False) -> list[dict]:
+    """解析兼容旧接口的单车型用例 Excel。"""
+    rows = _read_excel_rows(file_obj)
 
     header = [str(item or '').strip() for item in rows[0]]
     try:
@@ -666,20 +672,364 @@ def parse_excel_rows(file_obj, *, require_module: bool = False, require_viu_code
     return parsed_rows
 
 
+def parse_full_test_case_excel_rows(file_obj, domain: str) -> list[dict]:
+    """解析一站式导入模板，并保留真实 Excel 行号用于错误定位。"""
+    rows = _read_excel_rows(file_obj)
+    header = [str(item or '').strip() for item in rows[0]]
+    required_headers = [
+        '版本名称',
+        '版本标识',
+        '车型名称',
+        '车型编号',
+        '执行机器',
+        '用例编号',
+        '用例名称',
+        '备注',
+    ]
+    if domain != DOMAIN_VEHICLE:
+        required_headers.append('CDC平台')
+    if domain == DOMAIN_VEHICLE:
+        required_headers.append('VIU编号')
+    if domain == DOMAIN_COCKPIT_SOC:
+        required_headers.append('模块')
+    missing_headers = [name for name in required_headers if name not in header]
+    if missing_headers:
+        raise HttpError(400, f'Excel 模板缺少必填列：{"、".join(missing_headers)}')
+
+    indexes = {name: header.index(name) for name in required_headers}
+
+    def read_cell(row, name: str) -> str:
+        """按列名读取单元格，缺失或空值统一转换为空字符串。"""
+        index = indexes.get(name)
+        if index is None or index >= len(row):
+            return ''
+        return str(row[index] or '').strip()
+
+    parsed_rows = []
+    for row_no, row in enumerate(rows[1:], start=2):
+        if not row or not any(str(item or '').strip() for item in row):
+            continue
+        parsed_rows.append({
+            'row_no': row_no,
+            'platform_name': read_cell(row, '版本名称'),
+            'version_code': read_cell(row, '版本标识'),
+            'vehicle_name': read_cell(row, '车型名称'),
+            'vehicle_code': read_cell(row, '车型编号'),
+            'cdc_platform': read_cell(row, 'CDC平台'),
+            'execution_machine': read_cell(row, '执行机器'),
+            'viu_code': read_cell(row, 'VIU编号').lower(),
+            'module': read_cell(row, '模块'),
+            'case_no': read_cell(row, '用例编号'),
+            'case_name': read_cell(row, '用例名称'),
+            'remark': read_cell(row, '备注'),
+        })
+    if not parsed_rows:
+        raise HttpError(400, 'Excel 中没有可导入的数据行')
+    return parsed_rows
+
+
+def _validate_full_import_rows(rows: list[dict], domain: str) -> dict[int, list[str]]:
+    """校验必填字段及文件内配置冲突，冲突涉及的所有行都标记失败。"""
+    errors: dict[int, list[str]] = defaultdict(list)
+    platform_groups = defaultdict(list)
+    vehicle_groups = defaultdict(list)
+    case_groups = defaultdict(list)
+
+    for row in rows:
+        row_no = row['row_no']
+        required_fields = {
+            '版本名称': row['platform_name'],
+            '版本标识': row['version_code'],
+            '车型名称': row['vehicle_name'],
+            '车型编号': row['vehicle_code'],
+            '执行机器': row['execution_machine'],
+        }
+        if domain != DOMAIN_VEHICLE:
+            required_fields['CDC平台'] = row['cdc_platform']
+        for label, value in required_fields.items():
+            if not value:
+                errors[row_no].append(f'{label}不能为空')
+
+        has_case_no = bool(row['case_no'])
+        has_case_name = bool(row['case_name'])
+        if has_case_no != has_case_name:
+            errors[row_no].append('用例编号和用例名称必须同时填写或同时留空')
+        if domain == DOMAIN_VEHICLE:
+            if row['viu_code'] and row['viu_code'] not in VIU_CODE_VALUES:
+                errors[row_no].append(f'VIU编号仅支持: {", ".join(VIU_CODE_VALUES)}')
+            if has_case_no and not row['viu_code']:
+                errors[row_no].append('车控用例必须填写VIU编号')
+        if domain == DOMAIN_COCKPIT_SOC and has_case_no and not row['module']:
+            errors[row_no].append('座舱SOC用例必须填写模块')
+
+        if row['version_code']:
+            platform_groups[row['version_code']].append((row_no, row['platform_name']))
+        if row['vehicle_code']:
+            vehicle_signature = (
+                row['version_code'],
+                row['vehicle_name'],
+                row['cdc_platform'] if domain != DOMAIN_VEHICLE else '',
+                row['execution_machine'],
+            )
+            vehicle_groups[row['vehicle_code']].append((row_no, vehicle_signature))
+        if has_case_no and has_case_name and row['vehicle_code']:
+            viu_code = row['viu_code'] if domain == DOMAIN_VEHICLE else ''
+            case_key = (row['vehicle_code'], viu_code, row['case_no'])
+            case_signature = (
+                row['case_name'],
+                row['module'] if domain == DOMAIN_COCKPIT_SOC else '',
+                row['remark'],
+            )
+            case_groups[case_key].append((row_no, case_signature))
+
+    for version_code, values in platform_groups.items():
+        if len({signature for _, signature in values}) > 1:
+            for row_no, _ in values:
+                errors[row_no].append(f'版本标识 {version_code} 在文件内对应多个版本名称')
+    for vehicle_code, values in vehicle_groups.items():
+        if len({signature for _, signature in values}) > 1:
+            for row_no, _ in values:
+                errors[row_no].append(f'车型编号 {vehicle_code} 在文件内配置不一致')
+    for case_key, values in case_groups.items():
+        if len({signature for _, signature in values}) > 1:
+            for row_no, _ in values:
+                errors[row_no].append(f'用例 {case_key[2]} 在文件内配置不一致')
+    return errors
+
+
+def _upsert_full_import_platform(user, domain: str, row: dict):
+    """按版本标识新增、恢复或更新平台，返回实例与处理状态。"""
+    platform = McuPlatform.objects.filter(version_code=row['version_code']).first()
+    if platform and platform.domain != domain:
+        raise ValueError(f'版本标识 {row["version_code"]} 已属于其他领域')
+    name_conflict = McuPlatform.objects.filter(name=row['platform_name'])
+    if platform:
+        name_conflict = name_conflict.exclude(id=platform.id)
+    if name_conflict.exists():
+        raise ValueError(f'版本名称 {row["platform_name"]} 已被其他版本使用')
+
+    if not platform:
+        platform = McuPlatform(
+            name=row['platform_name'],
+            version_code=row['version_code'],
+            domain=domain,
+            is_active=True,
+        )
+        _apply_audit_fields(platform, user, is_create=True)
+        platform.save()
+        return platform, 'created'
+
+    changed = False
+    if platform.name != row['platform_name']:
+        platform.name = row['platform_name']
+        changed = True
+    if platform.is_deleted:
+        platform.is_deleted = False
+        platform.is_active = True
+        changed = True
+    if changed:
+        _apply_audit_fields(platform, user)
+        platform.save()
+        return platform, 'updated'
+    return platform, 'ignored'
+
+
+def _upsert_full_import_vehicle(user, domain: str, platform: McuPlatform, row: dict):
+    """按车型编号新增、恢复或更新车型，并增量合并车控 VIU 配置。"""
+    vehicle = VehicleModel.objects.filter(vehicle_code=row['vehicle_code']).first()
+    if vehicle and vehicle.platform.domain != domain:
+        raise ValueError(f'车型编号 {row["vehicle_code"]} 已属于其他领域')
+    name_conflict = VehicleModel.objects.filter(platform=platform, name=row['vehicle_name'])
+    if vehicle:
+        name_conflict = name_conflict.exclude(id=vehicle.id)
+    if name_conflict.exists():
+        raise ValueError(f'车型名称 {row["vehicle_name"]} 在该版本下已存在')
+
+    viu_codes = list(vehicle.viu_codes or []) if vehicle else []
+    if domain == DOMAIN_VEHICLE and row['viu_code'] and row['viu_code'] not in viu_codes:
+        viu_codes.append(row['viu_code'])
+    cdc_platform = row['cdc_platform'] if domain != DOMAIN_VEHICLE else ''
+    if not vehicle:
+        vehicle = VehicleModel(
+            platform=platform,
+            name=row['vehicle_name'],
+            vehicle_code=row['vehicle_code'],
+            cdc_platform=cdc_platform,
+            execution_machine=row['execution_machine'],
+            viu_codes=viu_codes,
+            is_active=True,
+        )
+        _apply_audit_fields(vehicle, user, is_create=True)
+        vehicle.save()
+        return vehicle, 'created'
+
+    changed = any([
+        vehicle.platform_id != platform.id,
+        vehicle.name != row['vehicle_name'],
+        vehicle.cdc_platform != cdc_platform,
+        vehicle.execution_machine != row['execution_machine'],
+        list(vehicle.viu_codes or []) != viu_codes,
+        vehicle.is_deleted,
+    ])
+    if changed:
+        vehicle.platform = platform
+        vehicle.name = row['vehicle_name']
+        vehicle.cdc_platform = cdc_platform
+        vehicle.execution_machine = row['execution_machine']
+        vehicle.viu_codes = viu_codes
+        if vehicle.is_deleted:
+            vehicle.is_deleted = False
+            vehicle.is_active = True
+        _apply_audit_fields(vehicle, user)
+        vehicle.save()
+        return vehicle, 'updated'
+    return vehicle, 'ignored'
+
+
+def _upsert_full_import_case(user, domain: str, vehicle: VehicleModel, row: dict):
+    """按领域用例唯一键新增、恢复或更新用例。"""
+    viu_code = row['viu_code'] if domain == DOMAIN_VEHICLE else ''
+    module = row['module'] if domain == DOMAIN_COCKPIT_SOC else ''
+    remark = row['remark'] or None
+    instance = TestCase.objects.filter(
+        vehicle=vehicle,
+        viu_code=viu_code,
+        case_no=row['case_no'],
+    ).first()
+    if not instance:
+        instance = TestCase(
+            vehicle=vehicle,
+            viu_code=viu_code,
+            module=module,
+            case_no=row['case_no'],
+            case_name=row['case_name'],
+            remark=remark,
+            is_active=True,
+        )
+        _apply_audit_fields(instance, user, is_create=True)
+        instance.save()
+        return 'created'
+
+    changed = any([
+        instance.case_name != row['case_name'],
+        instance.module != module,
+        instance.remark != remark,
+        instance.is_deleted,
+    ])
+    if changed:
+        instance.case_name = row['case_name']
+        instance.module = module
+        instance.remark = remark
+        if instance.is_deleted:
+            instance.is_deleted = False
+            instance.is_active = True
+        _apply_audit_fields(instance, user)
+        instance.save()
+        return 'updated'
+    return 'ignored'
+
+
+def import_full_test_case_excel(user, domain: str, file_obj) -> ImportResultOut:
+    """从一个 Excel 按行批量导入平台、车型及可选用例。"""
+    parsed_domain = _parse_domain_filter(domain)
+    if not parsed_domain:
+        raise HttpError(422, '领域不能为空')
+    rows = parse_full_test_case_excel_rows(file_obj, parsed_domain)
+    validation_errors = _validate_full_import_rows(rows, parsed_domain)
+    platform_created_ids = set()
+    platform_updated_ids = set()
+    vehicle_created_ids = set()
+    vehicle_updated_ids = set()
+    case_counts = Counter()
+    configuration_row_count = 0
+
+    for row in rows:
+        row_no = row['row_no']
+        if validation_errors.get(row_no):
+            continue
+        try:
+            # 每行独立保存点，避免用例失败后留下半条平台或车型配置。
+            with transaction.atomic():
+                platform, platform_status = _upsert_full_import_platform(
+                    user, parsed_domain, row
+                )
+                vehicle, vehicle_status = _upsert_full_import_vehicle(
+                    user, parsed_domain, platform, row
+                )
+                case_status = None
+                if row['case_no']:
+                    case_status = _upsert_full_import_case(
+                        user, parsed_domain, vehicle, row
+                    )
+        except (IntegrityError, ValueError) as exc:
+            validation_errors[row_no].append(str(exc))
+            continue
+
+        if platform_status == 'created':
+            platform_created_ids.add(platform.id)
+        elif platform_status == 'updated' and platform.id not in platform_created_ids:
+            platform_updated_ids.add(platform.id)
+        if vehicle_status == 'created':
+            vehicle_created_ids.add(vehicle.id)
+        elif vehicle_status == 'updated' and vehicle.id not in vehicle_created_ids:
+            vehicle_updated_ids.add(vehicle.id)
+        if case_status:
+            case_counts[case_status] += 1
+        else:
+            configuration_row_count += 1
+
+    error_rows = [
+        ImportErrorRow(row_no=row_no, message='；'.join(messages))
+        for row_no, messages in sorted(validation_errors.items())
+        if messages
+    ]
+    return ImportResultOut(
+        created_count=case_counts['created'],
+        updated_count=case_counts['updated'],
+        ignored_count=case_counts['ignored'],
+        platform_created_count=len(platform_created_ids),
+        platform_updated_count=len(platform_updated_ids),
+        vehicle_created_count=len(vehicle_created_ids),
+        vehicle_updated_count=len(vehicle_updated_ids),
+        configuration_row_count=configuration_row_count,
+        errors=error_rows,
+    )
+
+
 def build_test_case_template_response(domain: Optional[str] = None):
+    """生成可一次导入多个平台、车型及用例的一站式模板。"""
     parsed_domain = _parse_domain_filter(domain) or DOMAIN_COCKPIT
     workbook = openpyxl.Workbook()
     sheet = workbook.active
-    sheet.title = '测试用例模板'
+    sheet.title = '平台车型用例'
+    header = ['版本名称', '版本标识', '车型名称', '车型编号']
     if parsed_domain == DOMAIN_VEHICLE:
-        sheet.append(['VIU编号', '用例编号', '用例名称', '备注'])
-        sheet.append(['viu0', 'CASE-001', '示例车控用例', '固定备注示例'])
+        header.extend(['执行机器', 'VIU编号', '用例编号', '用例名称', '备注'])
+        example = [
+            'VIU版本 2026.07', 'viu-2026.07', '示例车控车型', 'VEH-CTRL-001',
+            '10.0.0.20', 'viu0', 'CASE-001', '示例车控用例', '固定备注示例',
+        ]
     elif parsed_domain == DOMAIN_COCKPIT_SOC:
-        sheet.append(['模块', '用例编号', '用例名称', '备注'])
-        sheet.append(['座舱域控', 'CASE-001', '示例座舱SOC用例', '固定备注示例'])
+        header.extend(['CDC平台', '执行机器', '模块', '用例编号', '用例名称', '备注'])
+        example = [
+            'SOC版本 2026.07', 'soc-2026.07', '示例SOC车型', 'VEH-SOC-001',
+            'CDC-SOC-01', '10.0.0.21', '座舱域控', 'CASE-001',
+            '示例座舱SOC用例', '固定备注示例',
+        ]
     else:
-        sheet.append(['用例编号', '用例名称', '备注'])
-        sheet.append(['CASE-001', '示例座舱MCU用例', '固定备注示例'])
+        header.extend(['CDC平台', '执行机器', '用例编号', '用例名称', '备注'])
+        example = [
+            'MCU版本 2026.07', 'mcu-2026.07', '示例MCU车型', 'VEH-MCU-001',
+            'CDC-MCU-01', '10.0.0.22', 'CASE-001', '示例座舱MCU用例',
+            '固定备注示例',
+        ]
+    sheet.append(header)
+    sheet.append(example)
+    sheet.freeze_panes = 'A2'
+    for column in sheet.columns:
+        letter = column[0].column_letter
+        max_length = max(len(str(cell.value or '')) for cell in column)
+        sheet.column_dimensions[letter].width = min(max(max_length + 2, 12), 32)
     response = HttpResponse(
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )

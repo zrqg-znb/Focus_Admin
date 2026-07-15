@@ -100,6 +100,11 @@ class ImportResultOut(Schema):
     created_count: int
     updated_count: int
     ignored_count: int
+    platform_created_count: int = 0
+    platform_updated_count: int = 0
+    vehicle_created_count: int = 0
+    vehicle_updated_count: int = 0
+    configuration_row_count: int = 0
     errors: List[ImportErrorRow]
 
 
