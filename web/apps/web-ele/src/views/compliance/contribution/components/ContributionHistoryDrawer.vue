@@ -51,7 +51,9 @@ const repositoryRows = ref<ContributionRankingItem[]>([]);
 const overviewLoading = ref(false);
 const sourceMode = ref<'' | 'CR' | 'MR'>('');
 const trendChartRef = ref<EchartsUIType>();
-const { renderEcharts: renderTrendChart } = useEcharts(trendChartRef);
+const drawerOpened = ref(false);
+let overviewRequestId = 0;
+const { renderEcharts: renderTrendChart, resize: resizeTrendChart } = useEcharts(trendChartRef);
 
 const title = computed(() => `${props.entity?.label || '-'} · 贡献历史`);
 
@@ -78,7 +80,7 @@ function formatTime(value?: string | null) {
 }
 
 function renderTrend() {
-  renderTrendChart({
+  return renderTrendChart({
     color: ['#2563eb', '#dc2626', '#64748b'],
     grid: { bottom: 28, containLabel: true, left: 14, right: 16, top: 32 },
     legend: { top: 0 },
@@ -95,6 +97,7 @@ function renderTrend() {
 
 async function loadOverview() {
   if (!props.entity) return;
+  const requestId = ++overviewRequestId;
   overviewLoading.value = true;
   try {
     const filters = getFilters();
@@ -103,13 +106,18 @@ async function loadOverview() {
       getContributionTrendApi(filters),
       getContributionRepositoryRankingApi({ ...filters, limit: 10 } as ContributionFilters),
     ]);
+    // 快速切换下钻对象时，只允许最后一次请求刷新抽屉内容。
+    if (requestId !== overviewRequestId || !props.modelValue) return;
     summary.value = summaryData;
     trendRows.value = trendData;
     repositoryRows.value = repositoryData;
     await nextTick();
-    renderTrend();
+    if (drawerOpened.value) {
+      await renderTrend();
+      resizeTrendChart();
+    }
   } finally {
-    overviewLoading.value = false;
+    if (requestId === overviewRequestId) overviewLoading.value = false;
   }
 }
 
@@ -160,11 +168,31 @@ function openRecord(row: ContributionRecordItem) {
   if (row.web_url) window.open(row.web_url, '_blank', 'noopener,noreferrer');
 }
 
+async function handleDrawerOpened() {
+  drawerOpened.value = true;
+  await nextTick();
+  await renderTrend();
+  resizeTrendChart();
+}
+
 watch(
-  () => props.modelValue,
-  (visible) => {
-    if (!visible) return;
+  () => [
+    props.modelValue,
+    props.entity?.type,
+    props.entity?.id,
+    props.entity?.type === 'repository' ? props.entity.branchId : undefined,
+  ] as const,
+  ([visible]) => {
+    if (!visible) {
+      drawerOpened.value = false;
+      overviewRequestId += 1;
+      overviewLoading.value = false;
+      return;
+    }
     sourceMode.value = props.baseFilters.source_mode || '';
+    summary.value = undefined;
+    trendRows.value = [];
+    repositoryRows.value = [];
     loadOverview();
     reloadRecords(true);
   },
@@ -176,7 +204,7 @@ watch(
     :model-value="modelValue"
     :title="title"
     :size="'min(1160px, 94vw)'"
-    destroy-on-close
+    @opened="handleDrawerOpened"
     @update:model-value="emit('update:modelValue', $event)"
   >
     <template v-if="entity">
