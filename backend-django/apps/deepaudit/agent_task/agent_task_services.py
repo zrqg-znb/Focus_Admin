@@ -1188,6 +1188,7 @@ def create_task(user, payload: dict) -> AgentTask:
 
 def cancel_task(user, task_id: str) -> bool:
     instance = get_task(user, task_id)
+    require_project_role(user, instance.project, min_role='member')
     if instance.status not in ACTIVE_STATUSES:
         return True
     instance.status = 'cancelled'

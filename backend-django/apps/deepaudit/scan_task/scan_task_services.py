@@ -404,6 +404,7 @@ def create_task(user, payload: dict, *, task_type: str) -> AuditTask:
 
 def cancel_task(user, task_id: str) -> bool:
     task = get_task(user, task_id)
+    require_project_role(user, task.project, min_role='member')
     if task.status not in ACTIVE_TASK_STATUSES:
         return True
     task.status = 'cancelled'
