@@ -505,6 +505,26 @@ def _strip_html_text(value: Any) -> str:
     return " ".join(text.split())
 
 
+def _strip_html_text_for_export(value: Any) -> str:
+    """将基础信息富文本转换为保留段落换行的 Excel 纯文本。"""
+    text = _clean_text(value)
+    if not text:
+        return ""
+
+    text = html.unescape(text)
+    # Drawer 中的只读富文本以段落、列表和换行标签组织，导出时保留其阅读结构。
+    text = re.sub(r"<\s*br\s*/?\s*>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"<\s*/?\s*(?:p|div|li|tr|h[1-6])\b[^>]*>",
+        "\n",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"<[^>]+>", "", text)
+    lines = (" ".join(line.split()) for line in text.splitlines())
+    return "\n".join(line for line in lines if line)
+
+
 def _normalize_text_list(values: Any) -> list[str]:
     if values is None:
         return []
@@ -4014,6 +4034,24 @@ _EXPORT_COLUMN_SPECS: list[tuple[str, Callable[[dict[str, Any]], str]]] = [
     ("定位周期", lambda item: _format_cycle_integer_value(item.get("iNumOfLocateDays"))),
     ("修改周期", lambda item: _format_cycle_integer_value(item.get("iNumofModifyDays"))),
     ("回归测试周期", lambda item: _format_cycle_integer_value(item.get("iNumofTestDays"))),
+    (
+        "审核人员具体意见",
+        lambda item: _strip_html_text_for_export(item.get("sSuggestByReviewer")),
+    ),
+    (
+        "开发人员测试报告",
+        lambda item: _strip_html_text_for_export(item.get("sTestReport")),
+    ),
+    ("测试建议", lambda item: _strip_html_text_for_export(item.get("sTestSuggest"))),
+    (
+        "修改文件清单",
+        lambda item: _strip_html_text_for_export(item.get("sModifyDocument")),
+    ),
+    ("测试报告", lambda item: _strip_html_text_for_export(item.get("sTestorTestReport"))),
+    (
+        "实施修改环节最后原因分析",
+        lambda item: _strip_html_text_for_export(item.get("dts009ReasonAnalysis")),
+    ),
     ("是否下游", lambda item: _clean_text(item.get("is_downstream"))),
     ("过程质量分类", lambda item: _clean_text(item.get("process_quality_type"))),
     ("是否需要AAR", lambda item: _clean_text(item.get("need_aar"))),

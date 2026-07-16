@@ -627,6 +627,7 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
         )
 
     def test_export_workbook_headers_match_detail_export_columns(self):
+        """导出表头应覆盖 Drawer 基础信息中的全部字段。"""
         workbook = dts_statistics_services._build_export_workbook(
             [self._defect("D-1")]
         )
@@ -639,6 +640,46 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
         header = next(worksheet.iter_rows(values_only=True))
 
         self.assertEqual(tuple(header), dts_statistics_services._EXPORT_HEADERS)
+        base_rich_text_headers = (
+            "审核人员具体意见",
+            "开发人员测试报告",
+            "测试建议",
+            "修改文件清单",
+            "测试报告",
+            "实施修改环节最后原因分析",
+        )
+        self.assertEqual(
+            header[28 : 28 + len(base_rich_text_headers)],
+            base_rich_text_headers,
+        )
+
+    def test_export_workbook_converts_base_rich_text_to_readable_plain_text(self):
+        """基础信息富文本导出为无标签且保留段落换行的纯文本。"""
+        defect = self._defect("D-1")
+        defect.update(
+            {
+                "sSuggestByReviewer": "<p>意见一</p><p>意见二<br>意见三</p>",
+                "sTestReport": "<div>开发报告</div>",
+                "sTestSuggest": "<ul><li>建议 A</li><li>建议 B</li></ul>",
+                "sModifyDocument": "<p>src/main.py</p>",
+                "sTestorTestReport": "<p>测试通过</p>",
+                "dts009ReasonAnalysis": "<p>修改原因</p>",
+            }
+        )
+        workbook = dts_statistics_services._build_export_workbook([defect])
+        buffer = BytesIO()
+        workbook.save(buffer)
+        buffer.seek(0)
+
+        loaded = openpyxl.load_workbook(buffer, read_only=True)
+        worksheet = loaded.active
+        row = next(worksheet.iter_rows(min_row=2, values_only=True))
+        exported = dict(zip(dts_statistics_services._EXPORT_HEADERS, row, strict=True))
+
+        self.assertEqual(exported["审核人员具体意见"], "意见一\n意见二\n意见三")
+        self.assertEqual(exported["开发人员测试报告"], "开发报告")
+        self.assertEqual(exported["测试建议"], "建议 A\n建议 B")
+        self.assertNotIn("<", "\n".join(str(value) for value in exported.values()))
 
     def test_low_level_export_file_prefix(self):
         self.assertEqual(
