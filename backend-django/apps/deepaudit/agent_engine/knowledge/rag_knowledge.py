@@ -53,9 +53,16 @@ class SecurityKnowledgeRAG:
         try:
             from ...rag import CodeIndexer, CodeRetriever, EmbeddingService
 
+            # Knowledge retrieval shares the global production embedding configuration.
             embedding_config = resolve_embedding_config(None)
             provider = str(embedding_config.get("provider") or "openai").strip().lower()
             api_key = str(embedding_config.get("api_key") or "").strip()
+            logger.info(
+                "SecurityKnowledgeRAG embedding config: provider=%s model=%s source=%s",
+                provider,
+                embedding_config.get("model") or "default",
+                embedding_config.get("config_source") or "default",
+            )
             if provider != "ollama" and not api_key:
                 logger.info(
                     "SecurityKnowledgeRAG fallback enabled: embedding provider=%s has no API key",

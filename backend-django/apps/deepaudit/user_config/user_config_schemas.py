@@ -64,6 +64,7 @@ class EmbeddingConfigSchema(Schema):
     batch_size: int | None = None
     config_locked: bool = False
     api_key_configured: bool = False
+    config_source: str = 'default'
 
 
 class EmbeddingConfigUpdateSchema(Schema):
@@ -76,10 +77,10 @@ class EmbeddingConfigUpdateSchema(Schema):
 
 
 class EmbeddingTestSchema(Schema):
-    provider: str = 'openai'
-    model: str = ''
-    api_key: str = ''
-    base_url: str = ''
+    provider: str | None = None
+    model: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
     dimensions: int | None = None
     dimension: int | None = None
     test_text: str = 'Focus DeepAudit embedding health check'

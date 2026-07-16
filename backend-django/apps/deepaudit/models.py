@@ -4,7 +4,11 @@ from apps.deepaudit.project.project_model import AuditProject, AuditProjectMembe
 from apps.deepaudit.prompt_template.prompt_template_model import PromptTemplate
 from apps.deepaudit.scenario.scenario_model import AuditScenarioProfile
 from apps.deepaudit.scan_task.scan_task_model import AuditArtifact, AuditIssue, AuditTask, InstantAnalysisRecord
-from apps.deepaudit.user_config.user_config_model import AuditSshCredential, AuditUserConfig
+from apps.deepaudit.user_config.user_config_model import (
+    AuditGlobalEmbeddingConfig,
+    AuditSshCredential,
+    AuditUserConfig,
+)
 
 __all__ = [
     'AgentEvent',
@@ -20,6 +24,7 @@ __all__ = [
     'AuditScenarioProfile',
     'AuditTask',
     'AuditUserConfig',
+    'AuditGlobalEmbeddingConfig',
     'InstantAnalysisRecord',
     'PromptTemplate',
 ]

@@ -33,7 +33,11 @@ from apps.deepaudit.config_resolver import (
 from apps.deepaudit.encryption import decrypt_value, encrypt_value
 from apps.deepaudit.permissions import get_user_id
 from apps.deepaudit.serialization import format_datetime_text
-from apps.deepaudit.user_config.user_config_model import AuditSshCredential, AuditUserConfig
+from apps.deepaudit.user_config.user_config_model import (
+    AuditGlobalEmbeddingConfig,
+    AuditSshCredential,
+    AuditUserConfig,
+)
 
 try:
     from cryptography.hazmat.backends import default_backend
@@ -632,19 +636,18 @@ def get_embedding_provider_models(provider: str) -> dict:
 
 
 def get_embedding_config(user) -> dict:
-    config = get_user_config(user)
-    resolved = resolve_embedding_config(config)
-    saved_embedding_config = dict(config.get('other_config', {}).get('embedding_config') or {})
+    resolved = resolve_embedding_config(None)
     locked = embedding_config_locked()
     return {
         'provider': resolved.get('provider') or 'openai',
         'model': resolved.get('model') or '',
-        'api_key': '' if locked else str(saved_embedding_config.get('api_key') or resolved.get('api_key') or ''),
+        'api_key': '',
         'base_url': resolved.get('base_url') or '',
         'dimensions': resolved.get('dimensions'),
         'batch_size': resolved.get('batch_size'),
         'config_locked': locked,
         'api_key_configured': bool(str(resolved.get('api_key') or '').strip()),
+        'config_source': resolved.get('config_source') or 'default',
     }
 
 
@@ -652,12 +655,23 @@ def update_embedding_config(user, payload: dict) -> dict:
     if embedding_config_locked():
         raise HttpError(403, '当前 embedding 配置由生产环境统一管理，不能在页面保存覆盖')
     normalized_payload = _normalize_embedding_update_payload(payload)
-    update_user_config(user, {'other_config': {'embedding_config': normalized_payload}})
+    config, _ = AuditGlobalEmbeddingConfig.objects.get_or_create(config_key='default')
+    config.provider = normalized_payload['provider']
+    config.model = normalized_payload['model']
+    config.base_url = normalized_payload['base_url']
+    config.dimensions = normalized_payload['dimensions']
+    config.batch_size = normalized_payload['batch_size']
+    if normalized_payload['provider'] == 'ollama':
+        config.api_key_encrypted = ''
+    elif normalized_payload['api_key']:
+        config.api_key_encrypted = encrypt_value(normalized_payload['api_key'])
+    config.save()
     return get_embedding_config(user)
 
 
 def test_embedding(user, payload: dict) -> dict:
-    provider = normalize_embedding_provider(payload.get('provider'))
+    provider_input = str(payload.get('provider') or '').strip()
+    provider = normalize_embedding_provider(provider_input) if provider_input else None
     model = str(payload.get('model') or '').strip()
     test_text = str(payload.get('test_text') or 'Focus DeepAudit embedding health check')
     dimension = payload.get('dimensions') or payload.get('dimension')
@@ -671,10 +685,10 @@ def test_embedding(user, payload: dict) -> dict:
             'sample_embedding': [],
             'latency_ms': None,
         }
-    user_config = get_user_config(user) if user is not None else None
+    user_config = None
     resolved = resolve_embedding_config(
         user_config,
-        provider=provider or None,
+        provider=provider,
         model=model or None,
         api_key=api_key or None,
         base_url=str(payload.get('base_url') or '').strip() or None,

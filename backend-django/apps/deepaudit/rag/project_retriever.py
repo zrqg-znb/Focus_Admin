@@ -54,6 +54,7 @@ class ProjectCodeRetriever:
         self._embedding_service: EmbeddingService | None = None
         self._indexer: CodeIndexer | None = None
         self._retriever: CodeRetriever | None = None
+        self._preparation_metadata: dict[str, Any] = {}
 
     def _build_collection_name(self) -> str:
         base = self.project_id or self.project_name or self.project_root.name or "workspace"
@@ -65,6 +66,22 @@ class ProjectCodeRetriever:
 
     def get_unavailable_reason(self) -> str | None:
         return self._unavailable_reason
+
+    async def prepare(self) -> dict[str, Any]:
+        """Force an embedding health probe and project index preparation before agents run."""
+        await self._ensure_ready()
+        if self._unavailable_reason:
+            return {
+                "success": False,
+                "collection_name": self.collection_name,
+                "reason": self._unavailable_reason,
+                **self._preparation_metadata,
+            }
+        return {
+            "success": True,
+            "collection_name": self.collection_name,
+            **self._preparation_metadata,
+        }
 
     def _embedding_unavailable_reason(self) -> str | None:
         embedding_config = resolve_embedding_config(self.user_config)
@@ -95,6 +112,15 @@ class ProjectCodeRetriever:
 
             try:
                 embedding_config = resolve_embedding_config(self.user_config)
+                self._preparation_metadata = {
+                    "provider": embedding_config.get("provider"),
+                    "model": embedding_config.get("model"),
+                    "base_url": embedding_config.get("base_url"),
+                    "dimensions": embedding_config.get("dimensions"),
+                    "config_source": embedding_config.get("config_source", "default"),
+                    "health_probe": False,
+                    "embedding_batches": 0,
+                }
                 self._embedding_service = EmbeddingService(
                     provider=embedding_config.get("provider"),
                     model=embedding_config.get("model"),
@@ -102,6 +128,19 @@ class ProjectCodeRetriever:
                     base_url=embedding_config.get("base_url"),
                     dimension=embedding_config.get("dimensions"),
                     user_config=self.user_config,
+                )
+                probe = await self._embedding_service.embed("DeepAudit RAG readiness probe")
+                expected_dimension = int(embedding_config.get("dimensions") or 0)
+                if expected_dimension and len(probe) != expected_dimension:
+                    raise RuntimeError(
+                        f"embedding 返回维度异常: expected={expected_dimension}, actual={len(probe)}"
+                    )
+                self._preparation_metadata.update(
+                    {
+                        "health_probe": True,
+                        "returned_dimensions": len(probe),
+                        "embedding_batches": 1,
+                    }
                 )
                 self._indexer = CodeIndexer(
                     collection_name=self.collection_name,
@@ -116,11 +155,18 @@ class ProjectCodeRetriever:
                 )
 
                 progress_count = 0
+                final_progress = None
+
+                def on_embedding_batch(_processed: int, _total: int) -> None:
+                    self._preparation_metadata["embedding_batches"] += 1
+
                 async for progress in self._indexer.smart_index_directory(
                     directory=str(self.project_root),
                     exclude_patterns=self.exclude_patterns,
                     include_patterns=self.target_files or None,
+                    embedding_progress_callback=on_embedding_batch,
                 ):
+                    final_progress = progress
                     progress_count += 1
                     if progress_count <= 3 or progress_count % 25 == 0:
                         logger.info(
@@ -133,6 +179,17 @@ class ProjectCodeRetriever:
 
                 await self._retriever.initialize()
                 self._ready = True
+                if final_progress is not None:
+                    self._preparation_metadata.update(
+                        {
+                            "index_mode": final_progress.update_mode,
+                            "total_files": final_progress.total_files,
+                            "processed_files": final_progress.processed_files,
+                            "total_chunks": final_progress.total_chunks,
+                            "indexed_chunks": final_progress.indexed_chunks,
+                            "index_errors": len(final_progress.errors or []),
+                        }
+                    )
                 logger.info(
                     "[ProjectCodeRetriever] ready: collection=%s project=%s",
                     self.collection_name,

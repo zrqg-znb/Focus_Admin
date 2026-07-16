@@ -9,6 +9,7 @@ from django.apps import apps
 
 from apps.deepaudit.constants import (
     AGENT_PHASE_ANALYSIS,
+    AGENT_PHASE_INDEXING,
     AGENT_PHASE_PLANNING,
     AGENT_PHASE_RECONNAISSANCE,
     AGENT_PHASE_REPORTING,
@@ -430,6 +431,7 @@ async def _initialize_tools(
     *,
     enable_c_family_rag_fallback: bool = False,
     scenario_profile: Dict[str, Any] | None = None,
+    project_retriever=None,
 ) -> Dict[str, Dict[str, Any]]:
     from apps.deepaudit.agent_engine.tools import (
         BanditTool,
@@ -479,7 +481,7 @@ async def _initialize_tools(
     sandbox_manager = SandboxManager()
     await sandbox_manager.initialize()
 
-    project_retriever = ProjectCodeRetriever(
+    project_retriever = project_retriever or ProjectCodeRetriever(
         project_root=project_root,
         user_config={
             "llm_config": dict(input_data.get("llm_config") or {}),
@@ -1047,12 +1049,41 @@ async def run_orchestrator_agent_async(task_id: str, input_data: Dict[str, Any],
         task_id,
         int(normalized_input.get("project_info", {}).get("file_count") or 0),
     )
+    from apps.deepaudit.rag import ProjectCodeRetriever
+
+    project_retriever = ProjectCodeRetriever(
+        project_root=workspace,
+        user_config={
+            "llm_config": dict(input_data.get("llm_config") or {}),
+            "other_config": dict(input_data.get("other_config") or {}),
+        },
+        project_id=str(input_data.get("project_id") or "").strip() or None,
+        project_name=str(input_data.get("project_name") or "").strip() or None,
+        exclude_patterns=list(input_data.get("exclude_patterns") or []),
+        target_files=_effective_target_files_from_input(input_data),
+    )
+    rag_preflight = await project_retriever.prepare()
+    if rag_preflight.get("success"):
+        await event_manager.emit(
+            event_type="info",
+            phase=AGENT_PHASE_INDEXING,
+            message="RAG embedding 预热和项目索引准备完成",
+            event_metadata={"rag_preflight": rag_preflight},
+        )
+    else:
+        await event_manager.emit(
+            event_type="warning",
+            phase=AGENT_PHASE_INDEXING,
+            message="RAG embedding 预热失败，已降级为关键词检索继续审计",
+            event_metadata={"rag_preflight": rag_preflight},
+        )
     tools = await _initialize_tools(
         workspace,
         llm_service,
         input_data,
         enable_c_family_rag_fallback=bool(scenario_profile.get("legacy_c_family")),
         scenario_profile=scenario_profile,
+        project_retriever=project_retriever,
     )
 
     recon_agent = ReconAgent(

@@ -100,6 +100,15 @@ EMBEDDING_API_KEY_SETTINGS = {
     "ollama": (),
 }
 
+KNOWN_EMBEDDING_DIMENSIONS = {
+    ("ollama", "nomic-embed-text"): 768,
+    ("ollama", "mxbai-embed-large"): 1024,
+    ("ollama", "all-minilm"): 384,
+    ("ollama", "snowflake-arctic-embed"): 1024,
+    ("ollama", "bge-m3"): 1024,
+    ("ollama", "qwen3-embedding"): 1024,
+}
+
 
 def get_setting(name: str, default: Any = None) -> Any:
     return getattr(settings, name, default)
@@ -107,6 +116,35 @@ def get_setting(name: str, default: Any = None) -> Any:
 
 def embedding_config_locked() -> bool:
     return bool(get_setting("EMBEDDING_CONFIG_LOCKED", False))
+
+
+def known_embedding_dimension(provider: str, model: str) -> int | None:
+    return KNOWN_EMBEDDING_DIMENSIONS.get((str(provider).lower(), str(model).lower()))
+
+
+def get_global_embedding_config() -> dict[str, Any]:
+    """Load the shared UI-managed embedding configuration without creating rows on reads."""
+    try:
+        from apps.deepaudit.encryption import decrypt_value
+        from apps.deepaudit.user_config.user_config_model import AuditGlobalEmbeddingConfig
+
+        config = AuditGlobalEmbeddingConfig.objects.filter(
+            config_key="default", is_deleted=False
+        ).first()
+    except Exception:
+        # The resolver is also used while migrations and lightweight commands start up.
+        return {}
+
+    if not config:
+        return {}
+    return {
+        "provider": str(config.provider or "").strip(),
+        "model": str(config.model or "").strip(),
+        "api_key": decrypt_value(str(config.api_key_encrypted or "")),
+        "base_url": str(config.base_url or "").strip(),
+        "dimensions": config.dimensions,
+        "batch_size": config.batch_size,
+    }
 
 
 def deep_merge(base: dict | None, override: dict | None) -> dict:
@@ -476,8 +514,29 @@ def resolve_embedding_config(
 ) -> dict[str, Any]:
     normalized = normalize_runtime_user_config(user_config)
     llm_config = dict(normalized["llm_config"] or {})
-    embedding_config = dict(normalized["other_config"].get("embedding_config") or {})
+    legacy_embedding_config = dict(normalized["other_config"].get("embedding_config") or {})
+    raw_other_config = dict(
+        (user_config or {}).get("other_config")
+        or (user_config or {}).get("otherConfig")
+        or {}
+    )
+    raw_legacy_embedding_config = dict(
+        raw_other_config.get("embedding_config")
+        or raw_other_config.get("embeddingConfig")
+        or {}
+    )
     locked = embedding_config_locked()
+    global_embedding_config = get_global_embedding_config() if not locked else {}
+    embedding_config = global_embedding_config or legacy_embedding_config
+    config_source = (
+        "environment_locked"
+        if locked
+        else "global_ui"
+        if global_embedding_config
+        else "legacy_user"
+        if raw_legacy_embedding_config.get("provider") or raw_legacy_embedding_config.get("model")
+        else "default"
+    )
     saved_provider = normalize_embedding_provider(embedding_config.get("provider"))
 
     configured_provider = (
@@ -508,16 +567,14 @@ def resolve_embedding_config(
     )
 
     resolved_provider = normalize_embedding_provider(
-        provider
-        or configured_provider
+        (configured_provider if locked else provider or configured_provider)
         or get_setting("EMBEDDING_PROVIDER", "")
         or DEFAULT_OTHER_CONFIG["embedding_config"]["provider"]
     )
     same_saved_provider = locked or saved_provider == resolved_provider
 
     resolved_model = str(
-        model
-        or (configured_model if same_saved_provider else "")
+        (configured_model if locked else model or configured_model if same_saved_provider else "")
         or get_setting("EMBEDDING_MODEL", "")
         or EMBEDDING_DEFAULT_MODELS.get(
             resolved_provider,
@@ -528,7 +585,9 @@ def resolve_embedding_config(
         DEFAULT_OTHER_CONFIG["embedding_config"]["model"],
     )
 
-    resolved_api_key = str(api_key or (configured_api_key if same_saved_provider else "") or "").strip()
+    resolved_api_key = str(
+        ("" if locked else api_key or (configured_api_key if same_saved_provider else "")) or ""
+    ).strip()
     if not resolved_api_key:
         for setting_name in EMBEDDING_API_KEY_SETTINGS.get(resolved_provider, ()):
             resolved_api_key = str(get_setting(setting_name, "") or "").strip()
@@ -542,7 +601,7 @@ def resolve_embedding_config(
 
     resolved_base_url = normalize_embedding_base_url(
         resolved_provider,
-        base_url or (configured_base_url if same_saved_provider else "") or "",
+        (configured_base_url if locked else base_url or (configured_base_url if same_saved_provider else "")) or "",
     )
     if not resolved_base_url:
         resolved_base_url = normalize_embedding_base_url(
@@ -560,9 +619,14 @@ def resolve_embedding_config(
             EMBEDDING_DEFAULT_BASE_URLS.get(resolved_provider, ""),
         )
 
+    configured_dimension = (
+        configured_dimensions
+        if locked
+        else dimensions or (configured_dimensions if same_saved_provider else None)
+    )
     resolved_dimensions = (
-        dimensions
-        or (configured_dimensions if same_saved_provider else None)
+        configured_dimension
+        or (None if locked else known_embedding_dimension(resolved_provider, resolved_model))
         or _coerce_int(get_setting("EMBEDDING_DIMENSIONS", None))
         or _coerce_int(DEFAULT_OTHER_CONFIG["embedding_config"]["dimensions"])
     )
@@ -579,4 +643,5 @@ def resolve_embedding_config(
         "base_url": resolved_base_url,
         "dimensions": resolved_dimensions,
         "batch_size": resolved_batch_size,
+        "config_source": config_source,
     }

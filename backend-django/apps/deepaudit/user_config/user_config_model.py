@@ -15,6 +15,23 @@ class AuditUserConfig(RootModel):
         verbose_name_plural = verbose_name
 
 
+class AuditGlobalEmbeddingConfig(RootModel):
+    """Singleton configuration used by every DeepAudit worker."""
+
+    config_key = models.CharField(max_length=64, unique=True, default='default', verbose_name='配置键')
+    provider = models.CharField(max_length=64, blank=True, default='', verbose_name='Embedding Provider')
+    model = models.CharField(max_length=255, blank=True, default='', verbose_name='Embedding 模型')
+    base_url = models.CharField(max_length=1024, blank=True, default='', verbose_name='Embedding 服务地址')
+    api_key_encrypted = models.TextField(blank=True, default='', verbose_name='加密后的 API Key')
+    dimensions = models.PositiveIntegerField(blank=True, null=True, verbose_name='向量维度')
+    batch_size = models.PositiveIntegerField(blank=True, null=True, verbose_name='批处理大小')
+
+    class Meta:
+        db_table = 'deepaudit_global_embedding_config'
+        verbose_name = 'DeepAudit 全局 Embedding 配置'
+        verbose_name_plural = verbose_name
+
+
 class AuditSshCredential(RootModel):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='deepaudit_ssh_credential', db_constraint=False, verbose_name='所属用户')
     private_key_encrypted = models.TextField(blank=True, null=True, verbose_name='加密后的私钥')

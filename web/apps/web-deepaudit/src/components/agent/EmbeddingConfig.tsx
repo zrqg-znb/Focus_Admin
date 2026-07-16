@@ -53,6 +53,7 @@ interface EmbeddingConfigResponse {
   base_url: string | null;
   batch_size: number | null;
   config_locked?: boolean;
+  config_source?: string;
   dimensions: number | null;
   model: string;
   provider: string;
