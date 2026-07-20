@@ -90,6 +90,16 @@ def _normalize_history_keywords(*values) -> List[str]:
     return normalized
 
 
+def _get_query_list(request, name: str) -> List[str]:
+    """
+    从原始请求中读取数组参数，兼容前端 repeat 和 brackets 两种序列化格式。
+    """
+    query_params = getattr(request, "GET", None)
+    if not query_params:
+        return []
+    return list(query_params.getlist(name)) + list(query_params.getlist(f"{name}[]"))
+
+
 def _build_history_keyword_q(keyword: str, fields: List[str]) -> Q:
     """
     构造单个历史页关键词在一组业务字段上的模糊查询条件。
@@ -330,10 +340,15 @@ def history(
     if not start or not end:
         raise HttpError(400, "start/end 必填")
 
-    normalized_keywords = _normalize_history_keywords(keyword, keywords)
+    normalized_keywords = _normalize_history_keywords(
+        keyword,
+        keywords,
+        _get_query_list(request, "keywords"),
+    )
     normalized_caretaker_keywords = _normalize_history_keywords(
         caretaker_keyword,
         caretaker_keywords,
+        _get_query_list(request, "caretaker_keywords"),
     )
     normalized_match_mode = "any" if keyword_match_mode == "any" else "all"
     config_keyword_fields = ["config__name", "config__project__name"]

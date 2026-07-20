@@ -486,6 +486,32 @@ class IntegrationReportTests(TestCase):
         self.assertEqual(len(payload.dt_fuzz_items), 1)
         self.assertEqual(payload.dt_fuzz_items[0].project_name, "Vehicle Platform")
 
+    def test_history_accepts_bracket_array_keyword_params(self):
+        record_date = date(2026, 7, 20)
+        self._create_history_config(
+            config_name="MCU Integration",
+            project_name="Vehicle Platform",
+            record_date=record_date,
+        )
+        self._create_history_config(
+            config_name="Cloud Integration",
+            project_name="Vehicle Platform",
+            record_date=record_date,
+        )
+
+        request = self.factory.get(
+            "/api/integration-report/history",
+            {
+                "start": record_date.isoformat(),
+                "end": record_date.isoformat(),
+                "keywords[]": ["MCU", "Vehicle"],
+            },
+        )
+        payload = history(request, start=record_date, end=record_date)
+
+        self.assertEqual(len(payload.items), 1)
+        self.assertEqual(payload.items[0].config_name, "MCU Integration")
+
     def test_code_scan_metrics_fallback_to_unscoped_submodule_tasks(self):
         record_date = timezone.now().date()
         scan_project = self._create_scan_project(project_key="scan-key-fallback")

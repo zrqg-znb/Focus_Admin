@@ -234,6 +234,7 @@ export async function queryIntegrationHistoryApi(params: {
 }) {
   return requestClient.get<HistoryQueryOut>('/api/integration-report/history', {
     params,
+    paramsSerializer: 'repeat',
   });
 }
 
