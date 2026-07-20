@@ -63,6 +63,62 @@ def _normalize_config_ids(config_ids: Optional[List[str]]) -> List[str]:
     return []
 
 
+def _normalize_history_keywords(*values) -> List[str]:
+    """
+    归一化历史页关键词参数，兼容旧单值、逗号分隔和新数组传参。
+    """
+    normalized = []
+    seen = set()
+    for value in values:
+        if not value:
+            continue
+        if isinstance(value, str):
+            raw_items = value.split(",")
+        elif isinstance(value, (list, tuple, set)):
+            raw_items = []
+            for item in value:
+                raw_items.extend(str(item).split(","))
+        else:
+            # Ninja 的 Query(None) 在单元测试直接调用 API 函数时会保留为参数对象。
+            raw_items = []
+        for item in raw_items:
+            keyword = item.strip()
+            dedupe_key = keyword.lower()
+            if keyword and dedupe_key not in seen:
+                normalized.append(keyword)
+                seen.add(dedupe_key)
+    return normalized
+
+
+def _build_history_keyword_q(keyword: str, fields: List[str]) -> Q:
+    """
+    构造单个历史页关键词在一组业务字段上的模糊查询条件。
+    """
+    query = Q()
+    for field in fields:
+        query |= Q(**{f"{field}__icontains": keyword})
+    return query
+
+
+def _apply_history_keyword_filters(qs, keywords: List[str], fields: List[str], match_mode: str):
+    """
+    将多关键词过滤应用到历史页查询集，交集模式逐个 filter 以兼容多对多字段。
+    """
+    if not keywords:
+        return qs
+
+    if match_mode == "any":
+        combined_q = Q()
+        for keyword in keywords:
+            combined_q |= _build_history_keyword_q(keyword, fields)
+        return qs.filter(combined_q)
+
+    for keyword in keywords:
+        # 交集模式要求每个关键词都命中；逐个 filter 可让不同负责人分别贡献命中。
+        qs = qs.filter(_build_history_keyword_q(keyword, fields))
+    return qs
+
+
 def _join_user_names(users) -> str:
     return ",".join([user.name or user.username for user in users])
 
@@ -260,13 +316,33 @@ def toggle_sub(request, config_id: str, payload: SubscriptionToggleIn):
 def history(
     request,
     config_ids: List[str] = Query(None),
+    keywords: List[str] = Query(None),
+    caretaker_keywords: List[str] = Query(None),
     start: Optional[date] = None,
     end: Optional[date] = None,
     keyword: Optional[str] = None,
     caretaker_keyword: Optional[str] = None,
+    keyword_match_mode: str = "all",
 ):
+    """
+    查询每日集成报告历史数据，支持配置/项目和数据看护人的多关键词过滤。
+    """
     if not start or not end:
         raise HttpError(400, "start/end 必填")
+
+    normalized_keywords = _normalize_history_keywords(keyword, keywords)
+    normalized_caretaker_keywords = _normalize_history_keywords(
+        caretaker_keyword,
+        caretaker_keywords,
+    )
+    normalized_match_mode = "any" if keyword_match_mode == "any" else "all"
+    config_keyword_fields = ["config__name", "config__project__name"]
+    caretaker_keyword_fields = [
+        "config__managers__name",
+        "config__managers__username",
+        "config__project__managers__name",
+        "config__project__managers__username",
+    ]
 
     integration_service.ensure_default_metric_definitions()
     defs = {d.key: d for d in IntegrationMetricDefinition.objects.filter(is_deleted=False, enabled=True)}
@@ -284,19 +360,18 @@ def history(
     if normalized_config_ids:
         qs = qs.filter(config_id__in=normalized_config_ids)
 
-    if keyword:
-        qs = qs.filter(
-            Q(config__name__icontains=keyword)
-            | Q(config__project__name__icontains=keyword),
-        )
-
-    if caretaker_keyword:
-        qs = qs.filter(
-            Q(config__managers__name__icontains=caretaker_keyword)
-            | Q(config__managers__username__icontains=caretaker_keyword)
-            | Q(config__project__managers__name__icontains=caretaker_keyword)
-            | Q(config__project__managers__username__icontains=caretaker_keyword),
-        )
+    qs = _apply_history_keyword_filters(
+        qs,
+        normalized_keywords,
+        config_keyword_fields,
+        normalized_match_mode,
+    )
+    qs = _apply_history_keyword_filters(
+        qs,
+        normalized_caretaker_keywords,
+        caretaker_keyword_fields,
+        normalized_match_mode,
+    )
 
     qs = qs.distinct()
 
@@ -347,18 +422,18 @@ def history(
     )
     if normalized_config_ids:
         dt_fuzz_qs = dt_fuzz_qs.filter(config_id__in=normalized_config_ids)
-    if keyword:
-        dt_fuzz_qs = dt_fuzz_qs.filter(
-            Q(config__name__icontains=keyword)
-            | Q(config__project__name__icontains=keyword),
-        )
-    if caretaker_keyword:
-        dt_fuzz_qs = dt_fuzz_qs.filter(
-            Q(config__managers__name__icontains=caretaker_keyword)
-            | Q(config__managers__username__icontains=caretaker_keyword)
-            | Q(config__project__managers__name__icontains=caretaker_keyword)
-            | Q(config__project__managers__username__icontains=caretaker_keyword),
-        )
+    dt_fuzz_qs = _apply_history_keyword_filters(
+        dt_fuzz_qs,
+        normalized_keywords,
+        config_keyword_fields,
+        normalized_match_mode,
+    )
+    dt_fuzz_qs = _apply_history_keyword_filters(
+        dt_fuzz_qs,
+        normalized_caretaker_keywords,
+        caretaker_keyword_fields,
+        normalized_match_mode,
+    )
 
     dt_fuzz_items: List[DtFuzzHistoryItem] = []
     for snapshot in dt_fuzz_qs.distinct().order_by("-record_date", "config__name", "branch"):

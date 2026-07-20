@@ -15,9 +15,11 @@ import {
   ElButton,
   ElDatePicker,
   ElEmpty,
-  ElInput,
   ElLink,
   ElMessage,
+  ElOption,
+  ElSegmented,
+  ElSelect,
   ElSkeleton,
   ElSkeletonItem,
   ElTabPane,
@@ -31,24 +33,56 @@ defineOptions({ name: 'DailyIntegrationHistory' });
 type HistoryTabKey = 'code' | 'dt' | 'dt_fuzz';
 type HistorySortOrder = 'asc' | 'desc';
 type HistoryMetricGroup = 'code_metrics' | 'dt_metrics';
+type HistoryKeywordMatchMode = 'all' | 'any';
 type HistorySortState = { key: string; order: HistorySortOrder };
 type SortableValue = { category: number; value: number | string };
 type DtFuzzDisplayRow = DtFuzzNode & { depth: number };
 
 const loading = ref(false);
-const keyword = ref('');
-const caretakerKeyword = ref('');
+const keywords = ref<string[]>([]);
+const caretakerKeywords = ref<string[]>([]);
+const keywordMatchMode = ref<HistoryKeywordMatchMode>('all');
 const range = ref<Date | null>(null);
 const rows = ref<HistoryRow[]>([]);
 const dtFuzzItems = ref<DtFuzzHistoryItem[]>([]);
 const expandedDtFuzzKeys = ref<Set<string>>(new Set());
 const activeTab = ref<HistoryTabKey>('code');
+const keywordMatchModeOptions = [
+  { label: '交集', value: 'all' },
+  { label: '并集', value: 'any' },
+];
+
+const keywordOptions = computed(() =>
+  keywords.value.map((item) => ({ label: item, value: item })),
+);
+const caretakerKeywordOptions = computed(() =>
+  caretakerKeywords.value.map((item) => ({ label: item, value: item })),
+);
 
 function formatDate(d: Date) {
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function normalizeKeywords(value: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of value) {
+    const keyword = `${item}`.trim();
+    const dedupeKey = keyword.toLowerCase();
+    if (keyword && !seen.has(dedupeKey)) {
+      result.push(keyword);
+      seen.add(dedupeKey);
+    }
+  }
+  return result;
+}
+
+function normalizeKeywordInputs() {
+  keywords.value = normalizeKeywords(keywords.value);
+  caretakerKeywords.value = normalizeKeywords(caretakerKeywords.value);
 }
 
 const startStr = computed(() => (range.value ? formatDate(range.value) : ''));
@@ -375,13 +409,15 @@ function toggleDtFuzzRow(row: DtFuzzDisplayRow) {
 
 async function query() {
   if (!range.value) return;
+  normalizeKeywordInputs();
   try {
     loading.value = true;
     const res = await queryIntegrationHistoryApi({
       start: startStr.value,
       end: endStr.value,
-      keyword: keyword.value.trim(),
-      caretaker_keyword: caretakerKeyword.value.trim(),
+      keywords: keywords.value,
+      caretaker_keywords: caretakerKeywords.value,
+      keyword_match_mode: keywordMatchMode.value,
     });
     rows.value = res.items;
     dtFuzzItems.value = res.dt_fuzz_items || [];
@@ -425,27 +461,60 @@ onMounted(() => {
             </div>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <ElInput
-              v-model="keyword"
-              class="!w-48"
-              clearable
-              placeholder="搜索配置/项目"
+            <ElSegmented
+              v-model="keywordMatchMode"
+              :options="keywordMatchModeOptions"
               size="small"
-              @keyup.enter="query"
+              @change="query"
             />
-            <ElInput
-              v-model="caretakerKeyword"
-              class="!w-44"
+            <ElSelect
+              v-model="keywords"
+              allow-create
+              class="history-keyword-select"
               clearable
-              placeholder="搜索数据看护人"
+              collapse-tags
+              collapse-tags-tooltip
+              default-first-option
+              filterable
+              multiple
+              placeholder="配置/项目关键词"
+              reserve-keyword
               size="small"
-              @keyup.enter="query"
-            />
+            >
+              <ElOption
+                v-for="item in keywordOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </ElSelect>
+            <ElSelect
+              v-model="caretakerKeywords"
+              allow-create
+              class="history-keyword-select history-keyword-select--owner"
+              clearable
+              collapse-tags
+              collapse-tags-tooltip
+              default-first-option
+              filterable
+              multiple
+              placeholder="数据看护人关键词"
+              reserve-keyword
+              size="small"
+            >
+              <ElOption
+                v-for="item in caretakerKeywordOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </ElSelect>
             <ElDatePicker
               v-model="range"
               :clearable="false"
               size="small"
               type="date"
+              @change="query"
             />
             <ElButton
               :loading="loading"
@@ -1202,6 +1271,18 @@ onMounted(() => {
   opacity: 0.7;
 }
 
+.history-keyword-select {
+  width: 220px;
+}
+
+.history-keyword-select--owner {
+  width: 200px;
+}
+
+.history-keyword-select :deep(.el-select__wrapper) {
+  min-height: 24px;
+}
+
 .history-skeleton-track {
   display: flex;
   flex-direction: column;
@@ -1304,5 +1385,4 @@ onMounted(() => {
   color: var(--el-color-danger);
   font-weight: 600;
 }
-
 </style>

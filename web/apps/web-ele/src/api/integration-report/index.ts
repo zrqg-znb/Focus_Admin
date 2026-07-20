@@ -224,9 +224,12 @@ export async function toggleIntegrationSubscriptionApi(
 
 export async function queryIntegrationHistoryApi(params: {
   caretaker_keyword?: string;
+  caretaker_keywords?: string[];
   config_ids?: string[];
   end: string;
   keyword?: string;
+  keyword_match_mode?: 'all' | 'any';
+  keywords?: string[];
   start: string;
 }) {
   return requestClient.get<HistoryQueryOut>('/api/integration-report/history', {

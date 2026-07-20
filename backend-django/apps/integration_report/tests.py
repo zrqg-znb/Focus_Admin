@@ -41,6 +41,51 @@ class IntegrationReportTests(TestCase):
             name="Integration Report Tester",
             is_active=True,
         )
+        self.history_project_index = 0
+
+    def _create_history_config(
+        self,
+        *,
+        config_name: str,
+        project_name: str,
+        record_date: date,
+        managers=None,
+        enable_dt_fuzz: bool = False,
+    ) -> IntegrationProjectConfig:
+        integration_service.ensure_default_metric_definitions()
+        self.history_project_index += 1
+        project = Project.objects.create(
+            name=project_name,
+            domain="vehicle",
+            type="platform",
+            code=f"history-project-{self.history_project_index}",
+        )
+        config = IntegrationProjectConfig.objects.create(
+            project=project,
+            name=config_name,
+            enabled=True,
+            enable_dt_fuzz=enable_dt_fuzz,
+        )
+        if managers:
+            config.managers.set(managers)
+        metric = IntegrationMetricDefinition.objects.get(key="codecheck_error_num")
+        IntegrationProjectMetricValue.objects.create(
+            config=config,
+            record_date=record_date,
+            metric=metric,
+            value_number=1,
+            value_text="",
+            detail_url="",
+        )
+        if enable_dt_fuzz:
+            IntegrationDtFuzzSnapshot.objects.create(
+                config=config,
+                record_date=record_date,
+                branch="main",
+                source_due_date=f"{record_date.isoformat()} 12:00:00",
+                tree_payload={"name": config_name, "type": "version", "children": []},
+            )
+        return config
 
     def _create_scan_project(self, *, project_key: str = "scan-key") -> ScanProject:
         return ScanProject.objects.create(
@@ -278,6 +323,168 @@ class IntegrationReportTests(TestCase):
         self.assertIsNone(dt_bin_cell.text)
         self.assertIsNone(cooddy_check_cell.value)
         self.assertIsNone(cooddy_check_cell.text)
+
+    def test_history_keywords_default_to_intersection(self):
+        record_date = date(2026, 7, 20)
+        self._create_history_config(
+            config_name="Alpha Integration",
+            project_name="Vehicle Platform",
+            record_date=record_date,
+        )
+        self._create_history_config(
+            config_name="Alpha Integration",
+            project_name="Cloud Platform",
+            record_date=record_date,
+        )
+        self._create_history_config(
+            config_name="Gamma Integration",
+            project_name="Vehicle Platform",
+            record_date=record_date,
+        )
+
+        request = self.factory.get(
+            "/api/integration-report/history",
+            {"start": record_date.isoformat(), "end": record_date.isoformat()},
+        )
+        payload = history(
+            request,
+            start=record_date,
+            end=record_date,
+            keywords=["Alpha", "Vehicle"],
+        )
+
+        self.assertEqual(len(payload.items), 1)
+        self.assertEqual(payload.items[0].config_name, "Alpha Integration")
+        self.assertEqual(payload.items[0].project_name, "Vehicle Platform")
+
+    def test_history_keywords_can_use_union_mode(self):
+        record_date = date(2026, 7, 20)
+        self._create_history_config(
+            config_name="Alpha Integration",
+            project_name="Cloud Platform",
+            record_date=record_date,
+        )
+        self._create_history_config(
+            config_name="Gamma Integration",
+            project_name="Vehicle Platform",
+            record_date=record_date,
+        )
+        self._create_history_config(
+            config_name="Quiet Integration",
+            project_name="Desktop Platform",
+            record_date=record_date,
+        )
+
+        request = self.factory.get(
+            "/api/integration-report/history",
+            {"start": record_date.isoformat(), "end": record_date.isoformat()},
+        )
+        payload = history(
+            request,
+            start=record_date,
+            end=record_date,
+            keywords=["Alpha", "Vehicle"],
+            keyword_match_mode="any",
+        )
+
+        names = {(item.config_name, item.project_name) for item in payload.items}
+        self.assertEqual(
+            names,
+            {
+                ("Alpha Integration", "Cloud Platform"),
+                ("Gamma Integration", "Vehicle Platform"),
+            },
+        )
+
+    def test_history_caretaker_keywords_support_intersection_and_union(self):
+        record_date = date(2026, 7, 20)
+        alice = User.objects.create(
+            username="alice-owner",
+            password="secret",
+            name="Alice Owner",
+            is_active=True,
+        )
+        bob = User.objects.create(
+            username="bob-owner",
+            password="secret",
+            name="Bob Owner",
+            is_active=True,
+        )
+        self._create_history_config(
+            config_name="Both Owners",
+            project_name="Both Project",
+            record_date=record_date,
+            managers=[alice, bob],
+        )
+        self._create_history_config(
+            config_name="Alice Only",
+            project_name="Alice Project",
+            record_date=record_date,
+            managers=[alice],
+        )
+        self._create_history_config(
+            config_name="Bob Only",
+            project_name="Bob Project",
+            record_date=record_date,
+            managers=[bob],
+        )
+
+        request = self.factory.get(
+            "/api/integration-report/history",
+            {"start": record_date.isoformat(), "end": record_date.isoformat()},
+        )
+        intersection_payload = history(
+            request,
+            start=record_date,
+            end=record_date,
+            caretaker_keywords=["Alice", "Bob"],
+        )
+        union_payload = history(
+            request,
+            start=record_date,
+            end=record_date,
+            caretaker_keywords=["Alice", "Bob"],
+            keyword_match_mode="any",
+        )
+
+        self.assertEqual(len(intersection_payload.items), 1)
+        self.assertEqual(intersection_payload.items[0].config_name, "Both Owners")
+        self.assertEqual(
+            {item.config_name for item in union_payload.items},
+            {"Both Owners", "Alice Only", "Bob Only"},
+        )
+
+    def test_history_merges_legacy_and_array_keywords_and_filters_dt_fuzz(self):
+        record_date = date(2026, 7, 20)
+        self._create_history_config(
+            config_name="Alpha DT Fuzz",
+            project_name="Vehicle Platform",
+            record_date=record_date,
+            enable_dt_fuzz=True,
+        )
+        self._create_history_config(
+            config_name="Alpha DT Fuzz",
+            project_name="Cloud Platform",
+            record_date=record_date,
+            enable_dt_fuzz=True,
+        )
+
+        request = self.factory.get(
+            "/api/integration-report/history",
+            {"start": record_date.isoformat(), "end": record_date.isoformat()},
+        )
+        payload = history(
+            request,
+            start=record_date,
+            end=record_date,
+            keyword="Alpha",
+            keywords=["Vehicle", "Alpha"],
+        )
+
+        self.assertEqual(len(payload.items), 1)
+        self.assertEqual(payload.items[0].project_name, "Vehicle Platform")
+        self.assertEqual(len(payload.dt_fuzz_items), 1)
+        self.assertEqual(payload.dt_fuzz_items[0].project_name, "Vehicle Platform")
 
     def test_code_scan_metrics_fallback_to_unscoped_submodule_tasks(self):
         record_date = timezone.now().date()

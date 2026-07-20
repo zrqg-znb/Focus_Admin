@@ -36,7 +36,8 @@ const apis = [
   {
     consumer: '历史趋势页',
     method: 'GET',
-    params: 'start, end, keyword, config_ids, caretaker_keyword',
+    params:
+      'start, end, keyword/keywords, config_ids, caretaker_keyword/caretaker_keywords, keyword_match_mode',
     path: '/api/integration-report/history',
     purpose: '按日期区间返回项目级 code / dt 指标历史',
     returns: 'HistoryQueryOut',
@@ -62,10 +63,8 @@ const apis = [
 
 <FocusModuleHero :module="moduleMeta" />
 
-<FocusModuleSection
-  kicker="Module Purpose"
-  title="模块定位"
-  summary="集成报告模块负责把多个外部任务系统和扫描系统的数据统一拉取、归档、评估并按订阅发送给相关负责人。它是一个典型的‘配置驱动采集 + 指标驱动投递’模块。"
+<FocusModuleSection kicker="Module Purpose" title="模块定位" summary="集成报告模块负责把多个外部任务系统和扫描系统的数据统一拉取、归档、评估并按订阅发送给相关负责人。它是一个典型的‘配置驱动采集 + 指标驱动投递’模块。"
+
 >
 
 它关注的不是单次邮件发送，而是一整条日常经营链：
@@ -80,10 +79,8 @@ const apis = [
 
 </FocusModuleSection>
 
-<FocusModuleSection
-  kicker="Data Model"
-  title="表结构与关系设计"
-  summary="集成报告围绕配置、指标定义、每日指标值、订阅和投递日志五类对象展开。"
+<FocusModuleSection kicker="Data Model" title="表结构与关系设计" summary="集成报告围绕配置、指标定义、每日指标值、订阅和投递日志五类对象展开。"
+
 >
 
 ```mermaid
@@ -139,33 +136,22 @@ erDiagram
 
 配置对象定义了一个项目应该从哪些外部系统采哪些数据，关键字段包括：
 
-- `project`
-  对应项目管理主数据
-- `managers`
-  项目负责人集合
-- `enabled`
-  是否参与采集
-- `code_check_task_id / bin_scope_task_id / build_check_task_id / compile_check_task_id`
-  各类代码或构建任务 ID
-- `dt_project_id`
-  DT 维度外部标识
-- `code_scan_project_key`
-  关联代码扫描项目
-- `valgrind_sub_modules`
-  指定需要纳入统计的子模块
+- `project` 对应项目管理主数据
+- `managers` 项目负责人集合
+- `enabled` 是否参与采集
+- `code_check_task_id / bin_scope_task_id / build_check_task_id / compile_check_task_id` 各类代码或构建任务 ID
+- `dt_project_id` DT 维度外部标识
+- `code_scan_project_key` 关联代码扫描项目
+- `valgrind_sub_modules` 指定需要纳入统计的子模块
 
 ### `IntegrationMetricDefinition`
 
 指标字典定义“采回来之后如何解释”，关键字段包括：
 
-- `group`
-  `code` 或 `dt`
-- `key`
-  指标唯一标识
-- `value_type`
-  `number / string / percent`
-- `warn_operator / warn_value`
-  预警判断规则
+- `group` `code` 或 `dt`
+- `key` 指标唯一标识
+- `value_type` `number / string / percent`
+- `warn_operator / warn_value` 预警判断规则
 
 ### `IntegrationProjectMetricValue`
 
@@ -178,10 +164,8 @@ erDiagram
 
 </FocusModuleSection>
 
-<FocusModuleSection
-  kicker="Implementation"
-  title="关键实现原理"
-  summary="集成报告模块的核心在于默认指标字典初始化、配置驱动采集、指标分级和订阅驱动投递。"
+<FocusModuleSection kicker="Implementation" title="关键实现原理" summary="集成报告模块的核心在于默认指标字典初始化、配置驱动采集、指标分级和订阅驱动投递。"
+
 >
 
 ### 默认指标定义：`ensure_default_metric_definitions`
@@ -234,22 +218,16 @@ erDiagram
 
 </FocusModuleSection>
 
-<FocusModuleSection
-  kicker="Frontend Entry"
-  title="前端入口与页面结构"
-  summary="前端按配置、订阅、历史、投递日志四个视角拆分，和后端对象分层一一对应。"
+<FocusModuleSection kicker="Frontend Entry" title="前端入口与页面结构" summary="前端按配置、订阅、历史、投递日志四个视角拆分，和后端对象分层一一对应。"
+
 >
 
 前端主入口包括：
 
-- `web/apps/web-ele/src/views/integration-report/config/index.vue`
-  配置维护页
-- `web/apps/web-ele/src/views/integration-report/subscription/index.vue`
-  用户订阅页
-- `web/apps/web-ele/src/views/integration-report/history/index.vue`
-  历史指标趋势页
-- `web/apps/web-ele/src/views/integration-report/email-logs/index.vue`
-  邮件日志页
+- `web/apps/web-ele/src/views/integration-report/config/index.vue` 配置维护页
+- `web/apps/web-ele/src/views/integration-report/subscription/index.vue` 用户订阅页
+- `web/apps/web-ele/src/views/integration-report/history/index.vue` 历史指标趋势页
+- `web/apps/web-ele/src/views/integration-report/email-logs/index.vue` 邮件日志页
 
 对应 API 类型定义位于 `web/apps/web-ele/src/api/integration-report/index.ts`。
 
@@ -260,12 +238,12 @@ erDiagram
 - 历史页消费 `queryIntegrationHistoryApi`
 - 日志页消费 `listEmailDeliveriesApi`
 
+历史页关键词搜索支持配置/项目与数据看护人两组多关键词。新参数 `keywords`、`caretaker_keywords` 接收数组，旧参数 `keyword`、`caretaker_keyword` 保持兼容并会合并去重；`keyword_match_mode=all` 为默认交集模式，要求每个关键词都命中，`any` 为并集模式，命中任一关键词即可。普通 code / dt 历史和 DT_FUZZ 历史使用同一套过滤语义。
+
 </FocusModuleSection>
 
-<FocusModuleSection
-  kicker="Sequence"
-  title="时序图：一次日报采集与邮件投递"
-  summary="集成报告模块的主链是‘配置 -> 采集 -> 指标归档 -> 订阅投递 -> 日志审计’。"
+<FocusModuleSection kicker="Sequence" title="时序图：一次日报采集与邮件投递" summary="集成报告模块的主链是‘配置 -> 采集 -> 指标归档 -> 订阅投递 -> 日志审计’。"
+
 >
 
 ```mermaid
@@ -293,20 +271,14 @@ sequenceDiagram
 
 </FocusModuleSection>
 
-<FocusModuleSection
-  kicker="Dependencies"
-  title="相关依赖与上下游"
-  summary="集成报告是典型的编排中台：上游来自项目、代码扫描和外部任务系统，下游是订阅邮件和历史趋势查询。"
+<FocusModuleSection kicker="Dependencies" title="相关依赖与上下游" summary="集成报告是典型的编排中台：上游来自项目、代码扫描和外部任务系统，下游是订阅邮件和历史趋势查询。"
+
 >
 
-- 上游依赖
-  `project-manager` 提供项目主数据
-- 上游依赖
-  `code-scan` 提供 `code_scan_project_key` 与子模块错误数
-- 上游依赖
-  外部代码检查、构建检查、DT 系统
-- 下游消费
-  订阅页、历史趋势页、邮件日志页、日报邮件
+- 上游依赖 `project-manager` 提供项目主数据
+- 上游依赖 `code-scan` 提供 `code_scan_project_key` 与子模块错误数
+- 上游依赖外部代码检查、构建检查、DT 系统
+- 下游消费订阅页、历史趋势页、邮件日志页、日报邮件
 
 </FocusModuleSection>
 
