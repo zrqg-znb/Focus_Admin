@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from django.db.models import Q, QuerySet
-from django.conf import settings
 from ninja.errors import HttpError
 
 from apps.deepaudit.constants import (
@@ -64,11 +63,6 @@ ROLE_LABELS = {
 DEFAULT_ROLE = PROJECT_MEMBER_ROLE_VIEWER
 
 
-def department_wide_read_enabled() -> bool:
-    """Whether every authenticated department user can view active audit projects."""
-    return bool(getattr(settings, 'DEEPAUDIT_DEPARTMENT_WIDE_READ', True))
-
-
 def get_user_id(user) -> str:
     return str(getattr(user, 'id', '') or '')
 
@@ -100,15 +94,13 @@ def accessible_project_queryset(user, include_deleted: bool = False) -> QuerySet
     user_id = get_user_id(user)
     if not user_id:
         return queryset.none()
-    # Department deployments share active projects, tasks, findings, and reports.
+    # Focus is a shared platform: every authenticated user can read active projects.
     # Deleted projects remain visible only to their existing members and administrators.
-    if department_wide_read_enabled():
-        if not include_deleted:
-            return queryset.distinct()
-        return queryset.filter(
-            Q(is_deleted=False) | Q(owner_id=user_id) | Q(members__user_id=user_id)
-        ).distinct()
-    return queryset.filter(Q(owner_id=user_id) | Q(members__user_id=user_id)).distinct()
+    if not include_deleted:
+        return queryset.distinct()
+    return queryset.filter(
+        Q(is_deleted=False) | Q(owner_id=user_id) | Q(members__user_id=user_id)
+    ).distinct()
 
 
 def get_project_access(user, project_or_id: AuditProject | str, *, include_deleted: bool = False) -> ProjectAccess:
@@ -137,7 +129,7 @@ def get_project_access(user, project_or_id: AuditProject | str, *, include_delet
     if membership:
         return ProjectAccess(project=project, role=normalize_role(membership.role))
 
-    if department_wide_read_enabled() and not project.is_deleted:
+    if not project.is_deleted:
         return ProjectAccess(project=project, role=PROJECT_MEMBER_ROLE_VIEWER)
 
     raise HttpError(403, '无项目访问权限')

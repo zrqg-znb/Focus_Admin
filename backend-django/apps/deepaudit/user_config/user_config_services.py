@@ -25,7 +25,6 @@ from apps.deepaudit.rag import EmbeddingService
 from apps.deepaudit.constants import DEFAULT_LLM_CONFIG, DEFAULT_OTHER_CONFIG, EMBEDDING_PROVIDERS
 from apps.deepaudit.config_resolver import (
     coerce_llm_provider,
-    embedding_config_locked,
     normalize_embedding_base_url,
     normalize_embedding_provider,
     resolve_embedding_config,
@@ -637,7 +636,6 @@ def get_embedding_provider_models(provider: str) -> dict:
 
 def get_embedding_config(user) -> dict:
     resolved = resolve_embedding_config(None)
-    locked = embedding_config_locked()
     return {
         'provider': resolved.get('provider') or 'openai',
         'model': resolved.get('model') or '',
@@ -645,15 +643,13 @@ def get_embedding_config(user) -> dict:
         'base_url': resolved.get('base_url') or '',
         'dimensions': resolved.get('dimensions'),
         'batch_size': resolved.get('batch_size'),
-        'config_locked': locked,
+        'config_locked': False,
         'api_key_configured': bool(str(resolved.get('api_key') or '').strip()),
         'config_source': resolved.get('config_source') or 'default',
     }
 
 
 def update_embedding_config(user, payload: dict) -> dict:
-    if embedding_config_locked():
-        raise HttpError(403, '当前 embedding 配置由生产环境统一管理，不能在页面保存覆盖')
     normalized_payload = _normalize_embedding_update_payload(payload)
     config, _ = AuditGlobalEmbeddingConfig.objects.get_or_create(config_key='default')
     config.provider = normalized_payload['provider']

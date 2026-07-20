@@ -90,7 +90,7 @@ EMBEDDING_PROVIDER_IDS = {
 
 EMBEDDING_DEFAULT_BASE_URLS = {
     "openai": "https://api.openai.com/v1",
-    "ollama": "http://localhost:11434",
+    "ollama": "http://127.0.0.1:11434",
     "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
 }
 
@@ -112,10 +112,6 @@ KNOWN_EMBEDDING_DIMENSIONS = {
 
 def get_setting(name: str, default: Any = None) -> Any:
     return getattr(settings, name, default)
-
-
-def embedding_config_locked() -> bool:
-    return bool(get_setting("EMBEDDING_CONFIG_LOCKED", False))
 
 
 def known_embedding_dimension(provider: str, model: str) -> int | None:
@@ -177,6 +173,8 @@ def normalize_embedding_base_url(provider: str, base_url: str | None) -> str:
     text = str(base_url or "").strip()
     if not text:
         return ""
+    if "://" not in text:
+        text = f"http://{text}"
     if normalized_provider != "ollama":
         return text.rstrip("/")
 
@@ -513,7 +511,6 @@ def resolve_embedding_config(
     dimensions: int | None = None,
 ) -> dict[str, Any]:
     normalized = normalize_runtime_user_config(user_config)
-    llm_config = dict(normalized["llm_config"] or {})
     legacy_embedding_config = dict(normalized["other_config"].get("embedding_config") or {})
     raw_other_config = dict(
         (user_config or {}).get("other_config")
@@ -525,114 +522,42 @@ def resolve_embedding_config(
         or raw_other_config.get("embeddingConfig")
         or {}
     )
-    locked = embedding_config_locked()
-    global_embedding_config = get_global_embedding_config() if not locked else {}
+    global_embedding_config = get_global_embedding_config()
     embedding_config = global_embedding_config or legacy_embedding_config
     config_source = (
-        "environment_locked"
-        if locked
-        else "global_ui"
+        "global_ui"
         if global_embedding_config
         else "legacy_user"
         if raw_legacy_embedding_config.get("provider") or raw_legacy_embedding_config.get("model")
         else "default"
     )
     saved_provider = normalize_embedding_provider(embedding_config.get("provider"))
-
-    configured_provider = (
-        get_setting("EMBEDDING_PROVIDER", "")
-        if locked
-        else embedding_config.get("provider")
-    )
-    configured_model = (
-        get_setting("EMBEDDING_MODEL", "")
-        if locked
-        else embedding_config.get("model")
-    )
-    configured_api_key = "" if locked else embedding_config.get("api_key")
-    configured_base_url = (
-        get_setting("EMBEDDING_BASE_URL", "")
-        if locked
-        else embedding_config.get("base_url")
-    )
-    configured_dimensions = (
-        _coerce_int(get_setting("EMBEDDING_DIMENSIONS", None))
-        if locked
-        else _coerce_int(embedding_config.get("dimensions") or embedding_config.get("dimension"))
-    )
-    configured_batch_size = (
-        _coerce_int(get_setting("EMBEDDING_BATCH_SIZE", None))
-        if locked
-        else _coerce_int(embedding_config.get("batch_size"))
-    )
-
     resolved_provider = normalize_embedding_provider(
-        (configured_provider if locked else provider or configured_provider)
-        or get_setting("EMBEDDING_PROVIDER", "")
-        or DEFAULT_OTHER_CONFIG["embedding_config"]["provider"]
+        provider or embedding_config.get("provider") or DEFAULT_OTHER_CONFIG["embedding_config"]["provider"]
     )
-    same_saved_provider = locked or saved_provider == resolved_provider
-
+    same_saved_provider = saved_provider == resolved_provider
     resolved_model = str(
-        (configured_model if locked else model or configured_model if same_saved_provider else "")
-        or get_setting("EMBEDDING_MODEL", "")
-        or EMBEDDING_DEFAULT_MODELS.get(
-            resolved_provider,
-            DEFAULT_OTHER_CONFIG["embedding_config"]["model"],
-        )
-    ).strip() or EMBEDDING_DEFAULT_MODELS.get(
-        resolved_provider,
-        DEFAULT_OTHER_CONFIG["embedding_config"]["model"],
-    )
-
-    resolved_api_key = str(
-        ("" if locked else api_key or (configured_api_key if same_saved_provider else "")) or ""
+        model
+        or (embedding_config.get("model") if same_saved_provider else "")
+        or EMBEDDING_DEFAULT_MODELS.get(resolved_provider, DEFAULT_OTHER_CONFIG["embedding_config"]["model"])
     ).strip()
-    if not resolved_api_key:
-        for setting_name in EMBEDDING_API_KEY_SETTINGS.get(resolved_provider, ()):
-            resolved_api_key = str(get_setting(setting_name, "") or "").strip()
-            if resolved_api_key:
-                break
-    if not locked and not resolved_api_key and resolved_provider == llm_config.get("provider"):
-        resolved_api_key = resolve_provider_api_key(
-            resolved_provider,
-            llm_config,
-        )
-
+    resolved_api_key = str(
+        api_key or (embedding_config.get("api_key") if same_saved_provider else "") or ""
+    ).strip()
     resolved_base_url = normalize_embedding_base_url(
         resolved_provider,
-        (configured_base_url if locked else base_url or (configured_base_url if same_saved_provider else "")) or "",
-    )
-    if not resolved_base_url:
-        resolved_base_url = normalize_embedding_base_url(
-            resolved_provider,
-            get_setting("EMBEDDING_BASE_URL", "") or "",
-        )
-    if not locked and not resolved_base_url and resolved_provider == llm_config.get("provider"):
-        resolved_base_url = normalize_embedding_base_url(
-            resolved_provider,
-            resolve_provider_base_url(resolved_provider, llm_config) or "",
-        )
-    if not resolved_base_url:
-        resolved_base_url = normalize_embedding_base_url(
-            resolved_provider,
-            EMBEDDING_DEFAULT_BASE_URLS.get(resolved_provider, ""),
-        )
-
-    configured_dimension = (
-        configured_dimensions
-        if locked
-        else dimensions or (configured_dimensions if same_saved_provider else None)
+        base_url or (embedding_config.get("base_url") if same_saved_provider else ""),
+    ) or normalize_embedding_base_url(
+        resolved_provider,
+        EMBEDDING_DEFAULT_BASE_URLS.get(resolved_provider, ""),
     )
     resolved_dimensions = (
-        configured_dimension
-        or (None if locked else known_embedding_dimension(resolved_provider, resolved_model))
-        or _coerce_int(get_setting("EMBEDDING_DIMENSIONS", None))
+        dimensions
+        or (_coerce_int(embedding_config.get("dimensions") or embedding_config.get("dimension")) if same_saved_provider else None)
+        or known_embedding_dimension(resolved_provider, resolved_model)
         or _coerce_int(DEFAULT_OTHER_CONFIG["embedding_config"]["dimensions"])
     )
-    resolved_batch_size = (
-        configured_batch_size if same_saved_provider else None
-    ) or _coerce_int(get_setting("EMBEDDING_BATCH_SIZE", None)) or _coerce_int(
+    resolved_batch_size = _coerce_int(embedding_config.get("batch_size")) or _coerce_int(
         DEFAULT_OTHER_CONFIG["embedding_config"]["batch_size"]
     )
 

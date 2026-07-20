@@ -162,7 +162,7 @@ EMBEDDING_PROVIDERS = [
         'description': '本地嵌入模型',
         'models': ['nomic-embed-text', 'mxbai-embed-large', 'all-minilm', 'snowflake-arctic-embed', 'bge-m3', 'qwen3-embedding'],
         'requires_api_key': False,
-        'default_model': 'nomic-embed-text',
+        'default_model': 'bge-m3',
     },
     {
         'id': 'cohere',
@@ -249,11 +249,11 @@ DEFAULT_OTHER_CONFIG = {
         ],
     },
     'embedding_config': {
-        'provider': 'openai',
-        'model': 'text-embedding-3-small',
+        'provider': 'ollama',
+        'model': 'bge-m3',
         'api_key': '',
-        'base_url': '',
-        'dimensions': 1536,
+        'base_url': 'http://127.0.0.1:11434',
+        'dimensions': 1024,
         'batch_size': 100,
     },
 }

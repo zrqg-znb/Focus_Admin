@@ -1,16 +1,56 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import requests
-from django.test import SimpleTestCase, override_settings
-from ninja.errors import HttpError
+from django.test import SimpleTestCase
 
 from apps.deepaudit.user_config import user_config_services
+from apps.deepaudit.rag.embeddings import OllamaEmbedding
 
 
 class UserConfigServicesTestCase(SimpleTestCase):
+    def test_ollama_embedding_falls_back_to_legacy_endpoint_with_selected_model(self) -> None:
+        calls: list[tuple[str, dict]] = []
+
+        class Response:
+            def __init__(self, status_code: int, payload: dict) -> None:
+                self.status_code = status_code
+                self._payload = payload
+
+            def raise_for_status(self) -> None:
+                if self.status_code >= 400:
+                    raise RuntimeError(f'HTTP {self.status_code}')
+
+            def json(self) -> dict:
+                return self._payload
+
+        class Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args) -> None:
+                return None
+
+            async def post(self, url: str, json: dict):
+                calls.append((url, json))
+                if url.endswith('/api/embed'):
+                    return Response(404, {})
+                return Response(200, {'embedding': [0.1, 0.2]})
+
+        with patch('apps.deepaudit.rag.embeddings.httpx.AsyncClient', return_value=Client()):
+            results = asyncio.run(
+                OllamaEmbedding(base_url='http://127.0.0.1:11434', model='bge-m3').embed_texts(['hello'])
+            )
+
+        self.assertEqual(results[0].embedding, [0.1, 0.2])
+        self.assertEqual(calls[0][0], 'http://127.0.0.1:11434/api/embed')
+        self.assertEqual(calls[0][1]['model'], 'bge-m3')
+        self.assertEqual(calls[1][0], 'http://127.0.0.1:11434/api/embeddings')
+        self.assertEqual(calls[1][1], {'model': 'bge-m3', 'prompt': 'hello'})
+
     @patch("apps.deepaudit.user_config.user_config_services.decrypt_value", side_effect=lambda value: value)
     def test_serialize_user_config_maps_legacy_token_to_codehub(self, _mock_decrypt) -> None:
         instance = SimpleNamespace(
@@ -142,6 +182,7 @@ class UserConfigServicesTestCase(SimpleTestCase):
 
         self.assertTrue(result["success"])
         self.assertEqual(mock_embedding_service.call_args.kwargs["provider"], "ollama")
+        self.assertEqual(mock_embedding_service.call_args.kwargs["model"], "bge-m3")
         self.assertIsNone(mock_embedding_service.call_args.kwargs["api_key"])
         self.assertEqual(mock_embedding_service.call_args.kwargs["base_url"], "http://10.0.0.8:11434")
 
@@ -157,18 +198,3 @@ class UserConfigServicesTestCase(SimpleTestCase):
 
         self.assertFalse(result["success"])
         self.assertIn("ASCII", result["message"])
-
-    @override_settings(EMBEDDING_CONFIG_LOCKED=True)
-    def test_update_embedding_config_rejects_changes_when_locked(self) -> None:
-        with self.assertRaises(HttpError) as raised:
-            user_config_services.update_embedding_config(
-                object(),
-                {
-                    "provider": "ollama",
-                    "model": "bge-m3",
-                    "base_url": "http://10.0.0.8:11434",
-                },
-            )
-
-        self.assertEqual(raised.exception.status_code, 403)
-        self.assertIn("统一管理", str(raised.exception))

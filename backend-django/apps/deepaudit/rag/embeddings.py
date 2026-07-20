@@ -241,6 +241,27 @@ class OllamaEmbedding(EmbeddingProvider):
         
         async with httpx.AsyncClient(timeout=120) as client:
             response = await client.post(url, json=payload)
+            if response.status_code == 404:
+                # Ollama versions before /api/embed expose the single-input endpoint.
+                legacy_url = f"{self.base_url.rstrip('/')}/api/embeddings"
+                results = []
+                for text in texts:
+                    legacy_response = await client.post(
+                        legacy_url,
+                        json={"model": self.model, "prompt": text},
+                    )
+                    legacy_response.raise_for_status()
+                    embedding = legacy_response.json().get("embedding") or []
+                    if not embedding:
+                        raise RuntimeError("Ollama /api/embeddings 未返回 embedding")
+                    results.append(
+                        EmbeddingResult(
+                            embedding=embedding,
+                            tokens_used=len(text) // 4,
+                            model=self.model,
+                        )
+                    )
+                return results
             response.raise_for_status()
             data = response.json()
             

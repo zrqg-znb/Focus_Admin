@@ -6,7 +6,7 @@ import sys
 import types
 from unittest.mock import patch
 
-from django.test import SimpleTestCase, override_settings
+from django.test import SimpleTestCase
 
 from apps.deepaudit.agent_engine.agents.base import AgentConfig, AgentResult, AgentType, BaseAgent
 from apps.deepaudit.agent_engine.tools.base import AgentTool, ToolResult
@@ -213,31 +213,13 @@ class RuntimeFallbacksTestCase(SimpleTestCase):
         self.assertEqual(timeout_config["llm_first_token_timeout"], 90)
         self.assertEqual(timeout_config["llm_stream_timeout"], 60)
 
-    @override_settings(
-        EMBEDDING_CONFIG_LOCKED=True,
-        EMBEDDING_PROVIDER="ollama",
-        EMBEDDING_MODEL="bge-m3",
-        EMBEDDING_BASE_URL="http://10.0.0.8:11434/v1",
-        EMBEDDING_DIMENSIONS=1024,
-    )
-    def test_locked_embedding_config_prefers_system_ollama_settings(self) -> None:
-        resolved = resolve_embedding_config(
-            {
-                "other_config": {
-                    "embedding_config": {
-                        "provider": "openai",
-                        "model": "text-embedding-3-small",
-                        "api_key": "user-key",
-                        "base_url": "https://gateway.example/v1",
-                        "dimensions": 1536,
-                    }
-                }
-            }
-        )
+    def test_embedding_defaults_to_local_ollama_bge_m3(self) -> None:
+        with patch("apps.deepaudit.config_resolver.get_global_embedding_config", return_value={}):
+            resolved = resolve_embedding_config(None)
 
         self.assertEqual(resolved["provider"], "ollama")
         self.assertEqual(resolved["model"], "bge-m3")
-        self.assertEqual(resolved["base_url"], "http://10.0.0.8:11434")
+        self.assertEqual(resolved["base_url"], "http://127.0.0.1:11434")
         self.assertEqual(resolved["dimensions"], 1024)
         self.assertEqual(resolved["api_key"], "")
 
