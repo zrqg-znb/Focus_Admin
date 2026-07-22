@@ -27,6 +27,13 @@ class CmcContributionServiceTests(TestCase):
         self.assertEqual(summary["zero_comment_mr_count"], 6)
         self.assertEqual(summary["effective_comment_count"], 1)
         self.assertEqual(summary["effective_comment_density"], 0.01)
+        trend = services.get_trend(first_day, second_day)
+        self.assertEqual([item["effective_comment_count"] for item in trend], [1, 0])
+        self.assertEqual(services.get_person_ranking(first_day, second_day)[0]["user"], "张三")
+        self.assertEqual(
+            services.get_comment_distribution(first_day, second_day)[0],
+            {"label": "严重", "value": 1},
+        )
 
     @override_settings(CMC_CONTRIBUTION_API_URL="https://cmc.example.test/api", CMC_CONTRIBUTION_MAX_PAGES=5)
     @patch("apps.cmc_contribution.services.requests.post")

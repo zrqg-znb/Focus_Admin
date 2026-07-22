@@ -57,6 +57,33 @@ class CmcPersonPageOut(Schema):
     total: int = 0
 
 
+class CmcTrendPointOut(Schema):
+    """CMC 每日趋势图数据点。"""
+
+    date: date
+    cnt_total: int
+    zero_comment_mr_count: int
+    effective_comment_count: int
+    checked_mr_lines: int
+
+
+class CmcPersonRankingOut(Schema):
+    """有效检视意见 Top 人员。"""
+
+    user: str
+    cnt_total: int
+    effective_comment_count: int
+    checked_mr_lines: int
+    effective_comment_density: float | None = None
+
+
+class CmcCommentDistributionOut(Schema):
+    """各等级有效检视意见分布。"""
+
+    label: str
+    value: int
+
+
 class CmcSyncRunIn(Schema):
     """管理员手动补数请求。"""
 

@@ -1,13 +1,19 @@
 <script lang="ts" setup>
+import type { EchartsUIType } from '@vben/plugins/echarts';
+
 import type {
+  CmcCommentDistribution,
+  CmcPersonRanking,
   CmcPersonRecord,
   CmcSummary,
   CmcSyncTask,
+  CmcTrendPoint,
 } from '#/api/cmc-contribution';
 
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
+import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
 import { Filter } from '@element-plus/icons-vue';
 import {
@@ -22,11 +28,15 @@ import {
   ElTabs,
   ElTag,
 } from 'element-plus';
+import { RefreshCw } from 'lucide-vue-next';
 
 import {
   createCmcSyncTask,
+  getCmcCommentDistribution,
+  getCmcPersonRanking,
   getCmcSummary,
   getCmcSyncTask,
+  getCmcTrend,
   listCmcPersons,
 } from '#/api/cmc-contribution';
 import { useZqTable } from '#/components/zq-table';
@@ -42,6 +52,9 @@ const dateRange = ref<[string, string]>([
 ]);
 const activeTab = ref<'dashboard' | 'table'>('dashboard');
 const summary = ref<CmcSummary>();
+const trendRows = ref<CmcTrendPoint[]>([]);
+const personRanking = ref<CmcPersonRanking[]>([]);
+const commentDistribution = ref<CmcCommentDistribution[]>([]);
 const loading = ref(false);
 const userKeyword = ref('');
 const userFilterVisible = ref(false);
@@ -49,41 +62,55 @@ const syncVisible = ref(false);
 const syncRange = ref<[string, string]>();
 const syncTask = ref<CmcSyncTask>();
 const syncSubmitting = ref(false);
+const trendChartRef = ref<EchartsUIType>();
+const rankingChartRef = ref<EchartsUIType>();
+const distributionChartRef = ref<EchartsUIType>();
+const { renderEcharts: renderTrendChart } = useEcharts(trendChartRef);
+const { renderEcharts: renderRankingChart } = useEcharts(rankingChartRef);
+const { renderEcharts: renderDistributionChart } =
+  useEcharts(distributionChartRef);
 let pollTimer: ReturnType<typeof setInterval> | undefined;
 
 const params = computed(() => ({
   startDate: dateRange.value[0],
   endDate: dateRange.value[1],
 }));
-const cards = computed(() => {
-  const value = summary.value;
-  if (!value) return [];
-  const percent = (number: number) => `${(number * 100).toFixed(2)}%`;
+const formatNumber = (value?: number) => Number(value || 0).toLocaleString();
+const formatPercent = (value?: number) =>
+  `${(Number(value || 0) * 100).toFixed(2)}%`;
+const formatDensity = (value: null | number | undefined) =>
+  value === null || value === undefined ? '--' : value.toFixed(4);
+const metricCards = computed(() => {
+  const data = summary.value;
+  if (!data) return [];
   return [
-    ['合入 MR', value.cnt_total],
-    ['零检视 MR', value.zero_comment_mr_count],
-    ['零检视占比', percent(value.zero_comment_rate)],
-    ['有效检视意见', value.effective_comment_count],
-    [
-      '有效检视意见密度',
-      value.effective_comment_density === null
-        ? '--'
-        : value.effective_comment_density.toFixed(4),
-    ],
-    ['检视代码行', value.checked_mr_lines],
-    ['提交 MR 代码量', value.cmt_lines],
-    ['贡献人数', value.contributor_count],
-    [
-      '严重 / 致命意见',
-      `${value.major_comments_cnt} / ${value.fatal_comments_cnt}`,
-    ],
-    [
-      '一般 / 建议意见',
-      `${value.minor_comments_cnt} / ${value.sugge_comments_cnt}`,
-    ],
-    ['提交 Issue', value.cmt_issue],
+    {
+      label: '有效检视意见',
+      tone: 'primary',
+      value: formatNumber(data.effective_comment_count),
+    },
+    {
+      label: '检视代码行',
+      tone: 'cyan',
+      value: formatNumber(data.checked_mr_lines),
+    },
+    {
+      label: '意见密度',
+      tone: 'amber',
+      value: formatDensity(data.effective_comment_density),
+    },
+    { label: '合入 MR', value: formatNumber(data.cnt_total) },
+    {
+      label: '零检视占比',
+      tone: 'danger',
+      value: formatPercent(data.zero_comment_rate),
+    },
+    { label: '贡献人数', value: formatNumber(data.contributor_count) },
   ];
 });
+const periodDescription = computed(
+  () => `${dateRange.value[0]} 至 ${dateRange.value[1]} · 底层软件开发部`,
+);
 
 const [Grid, gridApi] = useZqTable<CmcPersonRecord>({
   columns: [
@@ -98,15 +125,14 @@ const [Grid, gridApi] = useZqTable<CmcPersonRecord>({
     {
       align: 'right',
       field: 'zero_comment_rate',
-      formatter: ({ cellValue }) => `${(Number(cellValue) * 100).toFixed(2)}%`,
+      formatter: ({ cellValue }) => formatPercent(Number(cellValue)),
       title: '零检视占比',
     },
     { align: 'right', field: 'effective_comment_count', title: '有效检视意见' },
     {
       align: 'right',
       field: 'effective_comment_density',
-      formatter: ({ cellValue }) =>
-        cellValue === null ? '--' : Number(cellValue).toFixed(4),
+      formatter: ({ cellValue }) => formatDensity(cellValue),
       title: '意见密度',
     },
     { align: 'right', field: 'major_comments_cnt', title: '严重' },
@@ -131,18 +157,107 @@ const [Grid, gridApi] = useZqTable<CmcPersonRecord>({
   },
 });
 
-async function loadSummary() {
+function renderCharts() {
+  renderTrendChart({
+    color: ['#2563eb', '#d97706', '#0891b2'],
+    grid: { bottom: 28, containLabel: true, left: 12, right: 20, top: 38 },
+    legend: { top: 0 },
+    series: [
+      {
+        data: trendRows.value.map((item) => item.effective_comment_count),
+        name: '有效检视意见',
+        smooth: true,
+        type: 'line',
+      },
+      {
+        data: trendRows.value.map((item) => item.cnt_total),
+        name: '合入MR',
+        smooth: true,
+        type: 'line',
+      },
+      {
+        data: trendRows.value.map((item) => item.checked_mr_lines),
+        name: '检视代码行',
+        smooth: true,
+        type: 'line',
+        yAxisIndex: 1,
+      },
+    ],
+    tooltip: { trigger: 'axis' },
+    xAxis: {
+      boundaryGap: false,
+      data: trendRows.value.map((item) => item.date),
+      type: 'category',
+    },
+    yAxis: [{ type: 'value' }, { type: 'value' }],
+  });
+
+  const rankingRows = personRanking.value.slice(0, 10).reverse();
+  renderRankingChart({
+    color: ['#2563eb'],
+    grid: { bottom: 18, containLabel: true, left: 10, right: 42, top: 12 },
+    series: [
+      {
+        barMaxWidth: 18,
+        data: rankingRows.map((item) => item.effective_comment_count),
+        label: { position: 'right', show: true },
+        type: 'bar',
+      },
+    ],
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'value' },
+    yAxis: {
+      axisLabel: {
+        formatter: (value: string) =>
+          value.length > 10 ? `${value.slice(0, 10)}…` : value,
+      },
+      data: rankingRows.map((item) => item.user),
+      type: 'category',
+    },
+  });
+
+  renderDistributionChart({
+    color: ['#dc2626', '#ea580c', '#eab308', '#2563eb', '#64748b'],
+    legend: { bottom: 0, icon: 'circle' },
+    series: [
+      {
+        avoidLabelOverlap: true,
+        data: commentDistribution.value.map((item) => ({
+          name: item.label,
+          value: item.value,
+        })),
+        label: { formatter: '{b}\n{d}%' },
+        radius: ['48%', '72%'],
+        type: 'pie',
+      },
+    ],
+    tooltip: { trigger: 'item' },
+  });
+}
+
+async function loadDashboard() {
   loading.value = true;
   try {
-    summary.value = await getCmcSummary(params.value);
+    const [summaryData, trendData, rankingData, distributionData] =
+      await Promise.all([
+        getCmcSummary(params.value),
+        getCmcTrend(params.value),
+        getCmcPersonRanking(params.value),
+        getCmcCommentDistribution(params.value),
+      ]);
+    summary.value = summaryData;
+    trendRows.value = trendData;
+    personRanking.value = rankingData;
+    commentDistribution.value = distributionData;
+    await nextTick();
+    renderCharts();
   } finally {
     loading.value = false;
   }
 }
-async function reloadAll(resetPage = true) {
-  await loadSummary();
-  if (activeTab.value === 'table')
-    await gridApi.query({ page: resetPage ? 1 : undefined });
+async function reloadAll() {
+  await loadDashboard();
+  if (activeTab.value === 'table') await gridApi.query({ page: 1 });
 }
 function applyUserFilter() {
   userFilterVisible.value = false;
@@ -190,29 +305,33 @@ async function submitSync() {
     syncSubmitting.value = false;
   }
 }
-onMounted(loadSummary);
+onMounted(loadDashboard);
 onUnmounted(stopPolling);
 </script>
 
 <template>
   <Page auto-content-height>
-    <div class="flex h-full min-h-0 flex-col gap-3" v-loading="loading">
-      <section
-        class="flex flex-wrap items-center justify-between gap-3 rounded border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-900"
-      >
-        <div class="flex items-center gap-3">
-          <span class="font-medium">统计日期</span>
-          <ElDatePicker
-            v-model="dateRange"
-            type="daterange"
-            value-format="YYYY-MM-DD"
-            :clearable="false"
-            start-placeholder="开始日期"
-            end-placeholder="结束日期"
-            @change="reloadAll"
-          />
+    <div class="cmc-page" v-loading="loading">
+      <section class="toolbar-panel">
+        <div class="toolbar-context">
+          <div class="eyebrow">CMC CONTRIBUTION / QUALITY SIGNAL</div>
+          <div class="toolbar-title">检视贡献看板</div>
+          <div class="toolbar-desc">{{ periodDescription }}</div>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="toolbar-controls">
+          <div class="date-field">
+            <span>统计日期</span>
+            <ElDatePicker
+              v-model="dateRange"
+              :clearable="false"
+              end-placeholder="结束"
+              range-separator="至"
+              start-placeholder="开始"
+              type="daterange"
+              value-format="YYYY-MM-DD"
+              @change="reloadAll"
+            />
+          </div>
           <ElTag
             v-if="syncTask"
             :type="
@@ -223,67 +342,111 @@ onUnmounted(stopPolling);
                   : 'warning'
             "
           >
-            最近任务：{{ syncTask.status }}
+            同步：{{ syncTask.status }}
           </ElTag>
-          <ElButton type="primary" @click="syncVisible = true">
+          <ElButton :icon="RefreshCw" @click="syncVisible = true">
             管理员补数
           </ElButton>
+          <ElButton type="primary" @click="reloadAll">刷新看板</ElButton>
         </div>
       </section>
+
       <ElTabs
         v-model="activeTab"
-        class="min-h-0 flex-1"
+        class="cmc-tabs"
         @tab-change="(tab) => tab === 'table' && gridApi.query({ page: 1 })"
       >
-        <ElTabPane label="看板" name="dashboard">
-          <div
-            v-if="summary"
-            class="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6"
-          >
+        <ElTabPane label="总览看板" name="dashboard">
+          <section v-if="summary" class="metric-grid">
             <div
-              v-for="[label, value] in cards"
-              :key="label"
-              class="rounded border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900"
+              v-for="item in metricCards"
+              :key="item.label"
+              class="metric-card"
+              :class="[item.tone && `metric-${item.tone}`]"
             >
-              <div class="text-sm text-gray-500">{{ label }}</div>
-              <div class="mt-2 text-2xl font-semibold">{{ value }}</div>
+              <div class="metric-label">{{ item.label }}</div>
+              <div class="metric-value">{{ item.value }}</div>
             </div>
-          </div>
+          </section>
           <ElEmpty v-else description="当前日期范围暂无已同步数据" />
-        </ElTabPane>
-        <ElTabPane label="表格" name="table">
-          <div class="min-h-100 h-[calc(100vh-290px)]">
-            <Grid class="h-full">
-              <template #header-user>
-                <div class="flex items-center gap-1">
-                  <span>人员</span>
-                  <ElPopover
-                    v-model:visible="userFilterVisible"
-                    trigger="click"
-                    width="240"
-                  >
-                    <template #reference>
-                      <Filter class="cursor-pointer" :size="15" />
-                    </template>
-                    <div class="space-y-2">
-                      <ElInput
-                        v-model="userKeyword"
-                        clearable
-                        placeholder="输入人员名称"
-                        @keyup.enter="applyUserFilter"
-                      />
-                      <div class="flex justify-end gap-2">
-                        <ElButton link @click="clearUserFilter">清空</ElButton>
-                        <ElButton type="primary" @click="applyUserFilter">
-                          应用
-                        </ElButton>
-                      </div>
-                    </div>
-                  </ElPopover>
+          <section v-if="summary" class="hero-grid">
+            <div class="panel panel-hero">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-title">每日检视节奏</div>
+                  <div class="panel-desc">
+                    有效检视意见、合入 MR 与检视代码行的每日变化。
+                  </div>
                 </div>
-              </template>
-            </Grid>
-          </div>
+              </div>
+              <EchartsUI ref="trendChartRef" class="chart-body chart-large" />
+            </div>
+          </section>
+          <section v-if="summary" class="insight-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-title">人员检视贡献 Top 10</div>
+                  <div class="panel-desc">
+                    以有效检视意见排序，快速识别主要检视贡献者。
+                  </div>
+                </div>
+              </div>
+              <EchartsUI ref="rankingChartRef" class="chart-body" />
+            </div>
+            <div class="panel">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-title">意见等级组成</div>
+                  <div class="panel-desc">
+                    四个等级意见与 Issue 的分布占比。
+                  </div>
+                </div>
+              </div>
+              <EchartsUI ref="distributionChartRef" class="chart-body" />
+            </div>
+          </section>
+        </ElTabPane>
+        <ElTabPane label="人员明细" name="table">
+          <section class="table-panel">
+            <div class="table-panel-title">
+              人员检视贡献明细 <span>按当前统计日期范围汇总</span>
+            </div>
+            <div class="table-content">
+              <Grid class="h-full">
+                <template #header-user>
+                  <div class="flex items-center gap-1">
+                    <span>人员</span>
+                    <ElPopover
+                      v-model:visible="userFilterVisible"
+                      trigger="click"
+                      width="240"
+                    >
+                      <template #reference>
+                        <Filter class="cursor-pointer" :size="15" />
+                      </template>
+                      <div class="space-y-2">
+                        <ElInput
+                          v-model="userKeyword"
+                          clearable
+                          placeholder="输入人员名称"
+                          @keyup.enter="applyUserFilter"
+                        />
+                        <div class="flex justify-end gap-2">
+                          <ElButton link @click="clearUserFilter">
+                            清空
+                          </ElButton>
+                          <ElButton type="primary" @click="applyUserFilter">
+                            应用
+                          </ElButton>
+                        </div>
+                      </div>
+                    </ElPopover>
+                  </div>
+                </template>
+              </Grid>
+            </div>
+          </section>
         </ElTabPane>
       </ElTabs>
     </div>
@@ -294,10 +457,10 @@ onUnmounted(stopPolling);
       <ElDatePicker
         v-model="syncRange"
         class="w-full"
+        end-placeholder="结束日期"
+        start-placeholder="开始日期"
         type="daterange"
         value-format="YYYY-MM-DD"
-        start-placeholder="开始日期"
-        end-placeholder="结束日期"
       />
       <template #footer>
         <ElButton @click="syncVisible = false">取消</ElButton>
@@ -308,3 +471,241 @@ onUnmounted(stopPolling);
     </ElDialog>
   </Page>
 </template>
+
+<style scoped lang="less">
+.cmc-page {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 14px;
+}
+.toolbar-panel,
+.panel,
+.metric-card,
+.table-panel {
+  border: 1px solid #dfe7f1;
+  border-radius: 10px;
+  background: var(--el-bg-color);
+  box-shadow: 0 10px 28px rgb(15 23 42 / 5%);
+}
+.toolbar-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  overflow: hidden;
+  padding: 15px 18px;
+  background: linear-gradient(100deg, #f8fbff 0%, #fff 56%, #f9fafb 100%);
+}
+.toolbar-context {
+  min-width: 260px;
+}
+.eyebrow {
+  color: #2563eb;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+}
+.toolbar-title {
+  margin-top: 3px;
+  color: #0f172a;
+  font-size: 20px;
+  font-weight: 750;
+  letter-spacing: -0.03em;
+}
+.toolbar-desc {
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 12px;
+}
+.toolbar-controls {
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.date-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 650;
+}
+.date-field :deep(.el-date-editor) {
+  width: 265px;
+}
+.cmc-tabs {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.cmc-tabs :deep(.el-tabs__header) {
+  margin: 0 0 12px;
+  border: 1px solid #dfe7f1;
+  border-radius: 9px;
+  background: var(--el-bg-color);
+  padding: 0 14px;
+}
+.cmc-tabs :deep(.el-tabs__nav-wrap::after) {
+  display: none;
+}
+.cmc-tabs :deep(.el-tabs__content),
+.cmc-tabs :deep(.el-tab-pane) {
+  min-height: 0;
+  flex: 1;
+}
+.cmc-tabs :deep(.el-tab-pane) {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(128px, 1fr));
+  gap: 10px;
+}
+.metric-card {
+  position: relative;
+  min-height: 92px;
+  overflow: hidden;
+  padding: 13px;
+}
+.metric-card::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 34px;
+  height: 4px;
+  background: #94a3b8;
+  content: '';
+}
+.metric-primary {
+  border-color: #bfdbfe;
+  background:
+    radial-gradient(circle at 90% 12%, rgb(37 99 235 / 16%), transparent 38%),
+    #fff;
+}
+.metric-primary::after {
+  background: #2563eb;
+}
+.metric-cyan::after {
+  background: #0891b2;
+}
+.metric-amber {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+.metric-amber::after {
+  background: #d97706;
+}
+.metric-danger {
+  background: #fff7f7;
+  border-color: #fecaca;
+}
+.metric-danger::after {
+  background: #dc2626;
+}
+.metric-label {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+.metric-value {
+  margin-top: 11px;
+  color: #0f172a;
+  font-size: 24px;
+  font-weight: 760;
+  letter-spacing: -0.04em;
+}
+.hero-grid,
+.insight-grid {
+  display: grid;
+  gap: 12px;
+}
+.insight-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.panel {
+  min-width: 0;
+  padding: 14px;
+}
+.panel-hero {
+  background:
+    radial-gradient(circle at 95% 0, rgb(37 99 235 / 10%), transparent 36%),
+    var(--el-bg-color);
+}
+.panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.panel-title,
+.table-panel-title {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 750;
+}
+.panel-desc,
+.table-panel-title span {
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 400;
+}
+.chart-body {
+  width: 100%;
+  height: 310px;
+}
+.chart-large {
+  height: 335px;
+}
+.table-panel {
+  display: flex;
+  height: max(610px, calc(100vh - 275px));
+  min-height: 0;
+  flex-direction: column;
+  padding: 13px;
+}
+.table-panel-title {
+  flex: 0 0 auto;
+  padding: 0 0 12px;
+}
+.table-content {
+  min-height: 0;
+  flex: 1;
+}
+@media (max-width: 1280px) {
+  .metric-grid {
+    grid-template-columns: repeat(3, minmax(150px, 1fr));
+  }
+  .toolbar-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .toolbar-controls {
+    justify-content: flex-start;
+  }
+  .insight-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 720px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+  .toolbar-controls {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+  .date-field {
+    width: 100%;
+  }
+  .date-field :deep(.el-date-editor) {
+    width: 100%;
+  }
+}
+</style>

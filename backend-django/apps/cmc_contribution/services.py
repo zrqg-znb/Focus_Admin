@@ -30,6 +30,17 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+# 当前 v1 仅面向一个已确认的部门。固定业务参数收敛在服务内，避免无意义的部署配置。
+CMC_FIXED_QUERY = {
+    "CMC_LEVEL": 2,
+    "CMCDEPTID": 100294,
+    "FLAG": 3,
+    "TAG": 1,
+    "SORT_TYPE": "asc",
+    "SORT_COLUMN": "SCORE",
+    "DEPT_NAME": "底层软件开发部",
+}
+
 
 def _setting(name: str, default: Any = None) -> Any:
     """读取可由部署环境覆盖的 CMC 配置。"""
@@ -72,15 +83,9 @@ def _payload(day: date, page: int) -> dict[str, Any]:
     return {
         "START_DATE": day.strftime("%Y%m%d"),
         "END_DATE": day.strftime("%Y%m%d"),
-        "CMC_LEVEL": _setting("CMC_CONTRIBUTION_CMC_LEVEL", 2),
-        "CMCDEPTID": _setting("CMC_CONTRIBUTION_DEPT_ID", 100294),
-        "FLAG": _setting("CMC_CONTRIBUTION_FLAG", 3),
-        "TAG": _setting("CMC_CONTRIBUTION_TAG", 1),
-        "SORT_TYPE": _setting("CMC_CONTRIBUTION_SORT_TYPE", "asc"),
-        "SORT_COLUMN": _setting("CMC_CONTRIBUTION_SORT_COLUMN", "SCORE"),
+        **CMC_FIXED_QUERY,
         "START_PAGE": page,
         "END_PAGE": page,
-        "DEPT_NAME": _setting("CMC_CONTRIBUTION_DEPT_NAME", "底层软件开发部"),
     }
 
 
@@ -257,6 +262,71 @@ def get_summary(start: date, end: date) -> dict[str, Any]:
     queryset = _query(start, end)
     values = queryset.aggregate(**{field: Sum(field) for field in ("cnt_total", "zero_comment_mr_count", "major_comments_cnt", "fatal_comments_cnt", "minor_comments_cnt", "sugge_comments_cnt", "cmt_issue", "checked_mr_lines", "cmt_lines")})
     return _metrics(values, queryset.values("user_name").distinct().count())
+
+
+def get_trend(start: date, end: date) -> list[dict[str, Any]]:
+    """按日期聚合 CMC 关键产出，用于趋势图而不重新访问数据湖。"""
+    fields = (
+        "cnt_total", "zero_comment_mr_count", "major_comments_cnt",
+        "fatal_comments_cnt", "minor_comments_cnt", "sugge_comments_cnt",
+        "cmt_issue", "checked_mr_lines",
+    )
+    rows = _query(start, end).values("statistic_date").annotate(
+        **{field: Sum(field) for field in fields},
+    ).order_by("statistic_date")
+    result = []
+    for row in rows:
+        metrics = _metrics(row, 0)
+        result.append({
+            "date": row["statistic_date"],
+            "cnt_total": metrics["cnt_total"],
+            "zero_comment_mr_count": metrics["zero_comment_mr_count"],
+            "effective_comment_count": metrics["effective_comment_count"],
+            "checked_mr_lines": metrics["checked_mr_lines"],
+        })
+    return result
+
+
+def get_person_ranking(start: date, end: date, limit: int = 10) -> list[dict[str, Any]]:
+    """按有效检视意见降序返回人员 Top 榜，密度作为同分排序依据。"""
+    fields = (
+        "cnt_total", "zero_comment_mr_count", "major_comments_cnt",
+        "fatal_comments_cnt", "minor_comments_cnt", "sugge_comments_cnt",
+        "cmt_issue", "checked_mr_lines", "cmt_lines",
+    )
+    rows = _query(start, end).values("user_name").annotate(
+        **{field: Sum(field) for field in fields},
+    )
+    rankings = []
+    for row in rows:
+        metrics = _metrics(row, 0)
+        rankings.append({
+            "user": row["user_name"],
+            "cnt_total": metrics["cnt_total"],
+            "effective_comment_count": metrics["effective_comment_count"],
+            "checked_mr_lines": metrics["checked_mr_lines"],
+            "effective_comment_density": metrics["effective_comment_density"],
+        })
+    return sorted(
+        rankings,
+        key=lambda item: (
+            item["effective_comment_count"],
+            item["effective_comment_density"] or 0,
+        ),
+        reverse=True,
+    )[: max(min(int(limit or 10), 20), 1)]
+
+
+def get_comment_distribution(start: date, end: date) -> list[dict[str, Any]]:
+    """汇总四个意见等级与 Issue，供环形图展示组成。"""
+    summary = get_summary(start, end)
+    return [
+        {"label": "严重", "value": summary["major_comments_cnt"]},
+        {"label": "致命", "value": summary["fatal_comments_cnt"]},
+        {"label": "一般", "value": summary["minor_comments_cnt"]},
+        {"label": "建议", "value": summary["sugge_comments_cnt"]},
+        {"label": "Issue", "value": summary["cmt_issue"]},
+    ]
 
 
 def list_persons(start: date, end: date, page: int, page_size: int, user_keyword: str = "") -> dict[str, Any]:
