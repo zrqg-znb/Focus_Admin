@@ -437,6 +437,13 @@ def list_test_cases(filters):
             | Q(remark__icontains=keyword)
             | Q(viu_code__icontains=keyword)
         )
+    # 表头筛选按列独立生效，两个关键词同时填写时按交集收窄结果。
+    case_no_keyword = (getattr(filters, 'case_no_keyword', None) or '').strip()
+    if case_no_keyword:
+        queryset = queryset.filter(case_no__icontains=case_no_keyword)
+    case_name_keyword = (getattr(filters, 'case_name_keyword', None) or '').strip()
+    if case_name_keyword:
+        queryset = queryset.filter(case_name__icontains=case_name_keyword)
     queryset = queryset.order_by('-sort', 'viu_code', 'case_no')
     return [serialize_test_case(item) for item in queryset]
 

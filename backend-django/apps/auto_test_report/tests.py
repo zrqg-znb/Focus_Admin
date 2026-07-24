@@ -870,3 +870,38 @@ class AutoTestReportOverviewTests(TestCase):
 
         history_page = services.get_test_case_history(case['id'], page=1, page_size=10)
         self.assertEqual(history_page.items[0].module, '音频')
+
+    def test_list_test_cases_supports_independent_case_header_keywords(self):
+        vehicle = self._create_vehicle('header-filter')
+        AutoTestCase.objects.create(
+            vehicle=vehicle,
+            case_no='LOGIN-001',
+            case_name='用户登录流程',
+            is_active=True,
+        )
+        AutoTestCase.objects.create(
+            vehicle=vehicle,
+            case_no='LOGIN-002',
+            case_name='用户退出流程',
+            is_active=True,
+        )
+        AutoTestCase.objects.create(
+            vehicle=vehicle,
+            case_no='PAYMENT-001',
+            case_name='支付登录联动',
+            is_active=True,
+        )
+
+        by_case_no = services.list_test_cases(
+            TestCaseFilter(case_no_keyword='login')
+        )
+        by_case_name = services.list_test_cases(
+            TestCaseFilter(case_name_keyword='登录')
+        )
+        combined = services.list_test_cases(
+            TestCaseFilter(case_no_keyword='payment', case_name_keyword='登录')
+        )
+
+        self.assertEqual({item['case_no'] for item in by_case_no}, {'LOGIN-001', 'LOGIN-002'})
+        self.assertEqual({item['case_no'] for item in by_case_name}, {'LOGIN-001', 'PAYMENT-001'})
+        self.assertEqual([item['case_no'] for item in combined], ['PAYMENT-001'])

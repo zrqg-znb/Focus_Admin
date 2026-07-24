@@ -46,6 +46,7 @@ import {
   AUTO_TEST_REPORT_VIU_CODES,
   useAutoTestReportDomain,
 } from '../shared/domain';
+import TestCaseHeaderKeywordFilter from './components/TestCaseHeaderKeywordFilter.vue';
 import { useCaseColumns } from './data';
 
 defineOptions({ name: 'AutoTestCaseList' });
@@ -61,7 +62,8 @@ const cascaderOptions = ref<any[]>([]);
 const selectedVehiclePaths = ref<string[][]>([]);
 const selectedViuCode = ref('');
 const vehicleKeyword = ref('');
-const keyword = ref('');
+const caseNoKeyword = ref('');
+const caseNameKeyword = ref('');
 const selectedIds = ref<string[]>([]);
 const excelInputRef = ref<HTMLInputElement | null>(null);
 
@@ -144,7 +146,8 @@ const [Grid, gridApi] = useZqTable({
           const items =
             (await listTestCasesApi({
               domain: domain.value,
-              keyword: keyword.value || undefined,
+              case_no_keyword: caseNoKeyword.value || undefined,
+              case_name_keyword: caseNameKeyword.value || undefined,
               viu_code:
                 domain.value === 'vehicle'
                   ? selectedViuCode.value || undefined
@@ -226,6 +229,11 @@ async function reloadVehicleOptions() {
 
 async function refreshGrid() {
   await gridApi.reload();
+}
+
+async function applyCaseHeaderFilter() {
+  gridApi.pagination.currentPage = 1;
+  await refreshGrid();
 }
 
 function openCreate() {
@@ -416,7 +424,8 @@ async function exportCases() {
   try {
     const res = await downloadTestCaseExportApi({
       domain: domain.value,
-      keyword: keyword.value || undefined,
+      case_no_keyword: caseNoKeyword.value || undefined,
+      case_name_keyword: caseNameKeyword.value || undefined,
       vehicle_id:
         selectedVehicleIds.value.length === 1
           ? selectedVehicleIds.value[0]
@@ -450,6 +459,8 @@ watch(
     selectedViuCode.value = '';
     selectedIds.value = [];
     vehicleKeyword.value = '';
+    caseNoKeyword.value = '';
+    caseNameKeyword.value = '';
     gridApi.setGridOptions({
       columns: useCaseColumns(domain.value),
     });
@@ -517,15 +528,6 @@ onMounted(async () => {
             @change="refreshGrid"
           />
         </ElFormItem>
-        <ElFormItem label="用例关键词" class="!mb-0">
-          <ElInput
-            v-model="keyword"
-            class="w-[220px]"
-            clearable
-            placeholder="按用例编号/名称"
-            @change="refreshGrid"
-          />
-        </ElFormItem>
         <ElFormItem v-if="domain === 'vehicle'" label="VIU编号" class="!mb-0">
           <ElSelect
             v-model="selectedViuCode"
@@ -550,6 +552,24 @@ onMounted(async () => {
 
     <div class="min-h-0 flex-1">
       <Grid class="h-full" @selection-change="handleSelectionChange">
+        <template #header-case_no>
+          <TestCaseHeaderKeywordFilter
+            v-model="caseNoKeyword"
+            label="用例编号"
+            placeholder="模糊搜索用例编号"
+            @apply="applyCaseHeaderFilter"
+            @clear="applyCaseHeaderFilter"
+          />
+        </template>
+        <template #header-case_name>
+          <TestCaseHeaderKeywordFilter
+            v-model="caseNameKeyword"
+            label="用例名称"
+            placeholder="模糊搜索用例名称"
+            @apply="applyCaseHeaderFilter"
+            @clear="applyCaseHeaderFilter"
+          />
+        </template>
         <template #toolbar-actions>
           <div class="flex items-center gap-2">
             <ElButton type="primary" @click="openCreate">

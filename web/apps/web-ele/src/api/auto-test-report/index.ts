@@ -113,6 +113,8 @@ export interface TestCaseQueryParams {
   platform_id?: string;
   vehicle_id?: string;
   viu_code?: string;
+  case_no_keyword?: string;
+  case_name_keyword?: string;
 }
 
 export interface ImportErrorRow {

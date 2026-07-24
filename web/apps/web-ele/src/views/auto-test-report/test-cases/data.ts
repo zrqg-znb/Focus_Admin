@@ -65,6 +65,7 @@ export function useCaseColumns(
       width: 180,
       align: 'center',
       headerAlign: 'center',
+      slots: { header: 'header-case_no' },
     },
     {
       key: 'case_name',
@@ -73,6 +74,7 @@ export function useCaseColumns(
       width: 260,
       align: 'center',
       headerAlign: 'center',
+      slots: { header: 'header-case_name' },
     },
     {
       key: 'remark',

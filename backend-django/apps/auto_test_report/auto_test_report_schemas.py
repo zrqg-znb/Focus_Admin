@@ -75,6 +75,8 @@ class TestCaseFilter(Schema):
     vehicle_id: Optional[str] = None
     viu_code: Optional[str] = None
     keyword: Optional[str] = None
+    case_no_keyword: Optional[str] = None
+    case_name_keyword: Optional[str] = None
     is_active: Optional[bool] = None
 
 
