@@ -67,6 +67,7 @@ import {
   setAutoTestReportDailyResultsView,
 } from '../shared/daily-results-state';
 import { useAutoTestReportDomain } from '../shared/domain';
+import TestCaseHeaderKeywordFilter from '../test-cases/components/TestCaseHeaderKeywordFilter.vue';
 import {
   FAILURE_CATEGORY_LABEL_MAP,
   FAILURE_CATEGORY_OPTIONS,
@@ -114,6 +115,8 @@ const abnormalOnly = ref(false);
 const selectedStatus = ref<string[]>([]);
 const draftStatus = ref<string[]>([]);
 const statusPopoverVisible = ref(false);
+const detailCaseNoKeyword = ref('');
+const detailCaseNameKeyword = ref('');
 const overviewLoading = ref(false);
 const detailLoading = ref(false);
 const downstreamTriggerLoading = ref(false);
@@ -249,6 +252,8 @@ function resetVehicleDetailFilters() {
   draftStatus.value = [];
   detailSortState.value = null;
   statusPopoverVisible.value = false;
+  detailCaseNoKeyword.value = '';
+  detailCaseNameKeyword.value = '';
 }
 
 function canEditFailureReason(row: DailyResultItem) {
@@ -387,6 +392,19 @@ const [DetailGrid, detailGridApi] = useZqTable({
           if (selectedStatus.value.length > 0) {
             filtered = items.filter((item) =>
               selectedStatus.value.includes(item.status),
+            );
+          }
+          // 表头关键词在全量明细上叠加过滤，保证分页前后的结果口径一致。
+          if (detailCaseNoKeyword.value) {
+            const keyword = detailCaseNoKeyword.value.toLowerCase();
+            filtered = filtered.filter((item) =>
+              item.case_no.toLowerCase().includes(keyword),
+            );
+          }
+          if (detailCaseNameKeyword.value) {
+            const keyword = detailCaseNameKeyword.value.toLowerCase();
+            filtered = filtered.filter((item) =>
+              item.case_name.toLowerCase().includes(keyword),
             );
           }
           if (
@@ -802,6 +820,11 @@ function handleDetailSortChange(data: {
   if (activeView.value === 'vehicle') {
     void loadVehicleView();
   }
+}
+
+async function applyDetailCaseHeaderFilter() {
+  detailGridApi.pagination.currentPage = 1;
+  await detailGridApi.reload();
 }
 
 function getCommitUploadedTimestamp(item: DownstreamCommitItem) {
@@ -1231,6 +1254,24 @@ onMounted(async () => {
                   class="h-full rounded-lg border-0 shadow-sm"
                   @sort-change="handleDetailSortChange"
                 >
+                  <template #header-case_no>
+                    <TestCaseHeaderKeywordFilter
+                      v-model="detailCaseNoKeyword"
+                      label="用例编号"
+                      placeholder="模糊搜索用例编号"
+                      @apply="applyDetailCaseHeaderFilter"
+                      @clear="applyDetailCaseHeaderFilter"
+                    />
+                  </template>
+                  <template #header-case_name>
+                    <TestCaseHeaderKeywordFilter
+                      v-model="detailCaseNameKeyword"
+                      label="用例名称"
+                      placeholder="模糊搜索用例名称"
+                      @apply="applyDetailCaseHeaderFilter"
+                      @clear="applyDetailCaseHeaderFilter"
+                    />
+                  </template>
                   <template #header-status="{ column }">
                     <div
                       class="flex cursor-pointer select-none items-center justify-center gap-1"
