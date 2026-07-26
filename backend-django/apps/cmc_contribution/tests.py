@@ -53,12 +53,12 @@ class CmcContributionServiceTests(TestCase):
 
     @override_settings(CMC_CONTRIBUTION_API_URL="https://cmc.example.test/api", CMC_CONTRIBUTION_MAX_PAGES=5)
     @patch("apps.cmc_contribution.services.requests.post")
-    def test_fetch_day_walks_pages_until_empty(self, post):
-        """上游未返回总页数时，客户端应持续请求直到空页。"""
+    def test_fetch_day_reads_top_level_result_and_paging(self, post):
+        """响应 result 为列表，顶层分页字段应驱动后续请求。"""
         responses = []
         for body in (
-            {"result": {"total": 2, "pageIndex": 1, "pageSize": 1, "list": [{"name": "张三", "merged_login": "zhangsan"}]}},
-            {"result": {"total": 2, "pageIndex": 2, "pageSize": 1, "list": [{"name": "李四", "merged_login": "lisi"}]}},
+            {"result": [{"name": "张三", "merged_login": "zhangsan"}], "total": 2, "pageIndex": 1, "pageSize": 1},
+            {"result": [{"name": "李四", "merged_login": "lisi"}], "total": 2, "pageIndex": 2, "pageSize": 1},
         ):
             response = Mock()
             response.raise_for_status.return_value = None

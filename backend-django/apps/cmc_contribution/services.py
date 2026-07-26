@@ -94,21 +94,19 @@ def _payload(day: date, page_index: int) -> dict[str, Any]:
 
 
 def _response_rows(payload: Any) -> list[dict[str, Any]]:
-    """读取新版数据湖响应 result.list。"""
+    """读取新版数据湖响应顶层 result 列表。"""
     if not isinstance(payload, dict):
         return []
-    result = payload.get("result")
-    rows = result.get("list", []) if isinstance(result, dict) else []
+    rows = payload.get("result", [])
     return [item for item in rows if isinstance(item, dict)] if isinstance(rows, list) else []
 
 
 def _total_pages(payload: Any) -> int | None:
-    """通过新版 result.total/pageSize 计算总页数，缺失时仍由空页收敛。"""
-    result = payload.get("result") if isinstance(payload, dict) else None
-    if not isinstance(result, dict):
+    """通过响应顶层 total/pageSize 计算总页数，缺失时仍由空页收敛。"""
+    if not isinstance(payload, dict):
         return None
-    total = _safe_int(result.get("total"))
-    page_size = _safe_int(result.get("pageSize")) or CMC_REQUEST_PAGE_SIZE
+    total = _safe_int(payload.get("total"))
+    page_size = _safe_int(payload.get("pageSize")) or CMC_REQUEST_PAGE_SIZE
     return (total + page_size - 1) // page_size if total > 0 else 0
 
 
@@ -132,7 +130,7 @@ def fetch_day(day: date) -> tuple[list[dict[str, Any]], int]:
         page_rows = _response_rows(payload)
         rows.extend(page_rows)
         known_total = known_total or _total_pages(payload)
-        # result 未给总数时以空页停止；有 total 时按照 total/pageSize 的页面边界结束。
+        # 响应未给总数时以空页停止；有 total 时按 total/pageSize 的页面边界结束。
         if known_total is not None and page >= known_total:
             return rows, page
         if known_total is None and not page_rows:
