@@ -113,48 +113,57 @@ const periodDescription = computed(
 );
 
 const [Grid, gridApi] = useZqTable<CmcPersonRecord>({
-  columns: [
-    {
-      field: 'user',
-      minWidth: 140,
-      slots: { header: 'header-user' },
-      title: '人员',
-    },
-    { align: 'right', field: 'cnt_total', title: '合入MR' },
-    { align: 'right', field: 'zero_comment_mr_count', title: '零检视MR' },
-    {
-      align: 'right',
-      field: 'zero_comment_rate',
-      formatter: ({ cellValue }) => formatPercent(Number(cellValue)),
-      title: '零检视占比',
-    },
-    { align: 'right', field: 'effective_comment_count', title: '有效检视意见' },
-    {
-      align: 'right',
-      field: 'effective_comment_density',
-      formatter: ({ cellValue }) => formatDensity(cellValue),
-      title: '意见密度',
-    },
-    { align: 'right', field: 'major_comments_cnt', title: '严重' },
-    { align: 'right', field: 'fatal_comments_cnt', title: '致命' },
-    { align: 'right', field: 'minor_comments_cnt', title: '一般' },
-    { align: 'right', field: 'sugge_comments_cnt', title: '建议' },
-    { align: 'right', field: 'cmt_issue', title: 'Issue' },
-    { align: 'right', field: 'checked_mr_lines', title: '检视代码行' },
-    { align: 'right', field: 'cmt_lines', title: '提交MR代码量' },
-  ],
-  pagerConfig: { enabled: true, pageSize: 20, pageSizes: [20, 50, 100] },
-  proxyConfig: {
-    // 表格 Tab 初次挂载后才主动查询，避免隐藏状态下 zq-table 忽略刷新请求。
-    autoLoad: false,
-    ajax: {
-      query: async ({ page }) =>
-        listCmcPersons({
-          ...params.value,
-          page: page.currentPage,
-          pageSize: page.pageSize,
-          userKeyword: userKeyword.value,
-        }),
+  showSearchForm: false,
+  gridOptions: {
+    border: true,
+    stripe: true,
+    columns: [
+      {
+        field: 'user',
+        minWidth: 140,
+        slots: { header: 'header-user' },
+        title: '人员',
+      },
+      { align: 'right', field: 'cnt_total', title: '合入MR' },
+      { align: 'right', field: 'zero_comment_mr_count', title: '零检视MR' },
+      {
+        align: 'right',
+        field: 'zero_comment_rate',
+        formatter: ({ cellValue }) => formatPercent(Number(cellValue)),
+        title: '零检视占比',
+      },
+      {
+        align: 'right',
+        field: 'effective_comment_count',
+        title: '有效检视意见',
+      },
+      {
+        align: 'right',
+        field: 'effective_comment_density',
+        formatter: ({ cellValue }) => formatDensity(cellValue),
+        title: '意见密度',
+      },
+      { align: 'right', field: 'major_comments_cnt', title: '严重' },
+      { align: 'right', field: 'fatal_comments_cnt', title: '致命' },
+      { align: 'right', field: 'minor_comments_cnt', title: '一般' },
+      { align: 'right', field: 'sugge_comments_cnt', title: '建议' },
+      { align: 'right', field: 'cmt_issue', title: 'Issue' },
+      { align: 'right', field: 'checked_mr_lines', title: '检视代码行' },
+      { align: 'right', field: 'cmt_lines', title: '提交MR代码量' },
+    ],
+    pagerConfig: { enabled: true, pageSize: 20, pageSizes: [20, 50, 100] },
+    proxyConfig: {
+      // 页面进入总览时不加载；切换到人员明细后由 handleTabChange 主动查询。
+      autoLoad: false,
+      ajax: {
+        query: async ({ page }) =>
+          listCmcPersons({
+            ...params.value,
+            page: page.currentPage,
+            pageSize: page.pageSize,
+            userKeyword: userKeyword.value,
+          }),
+      },
     },
   },
 });
@@ -259,22 +268,26 @@ async function loadDashboard() {
 }
 async function reloadAll() {
   await loadDashboard();
-  if (activeTab.value === 'table') await gridApi.query({ page: 1 });
+  if (activeTab.value === 'table') await reloadPersonTable();
+}
+async function reloadPersonTable() {
+  // 日期或列头筛选条件变化后，始终从第一页重新读取人员汇总结果。
+  gridApi.pagination.currentPage = 1;
+  await gridApi.query();
 }
 async function handleTabChange(tab: number | string) {
   // 切换到明细 Tab 后等待 Grid 挂载完成，再发起首屏分页查询。
   if (tab !== 'table') return;
   await nextTick();
-  gridApi.pagination.currentPage = 1;
-  await gridApi.query();
+  await reloadPersonTable();
 }
-function applyUserFilter() {
+async function applyUserFilter() {
   userFilterVisible.value = false;
-  gridApi.query({ page: 1 });
+  await reloadPersonTable();
 }
-function clearUserFilter() {
+async function clearUserFilter() {
   userKeyword.value = '';
-  applyUserFilter();
+  await applyUserFilter();
 }
 function stopPolling() {
   if (pollTimer) clearInterval(pollTimer);
@@ -422,7 +435,7 @@ onUnmounted(stopPolling);
               人员检视贡献明细 <span>按当前统计日期范围汇总</span>
             </div>
             <div class="table-content">
-              <Grid class="h-full">
+              <Grid class="cmc-person-grid h-full">
                 <template #header-user>
                   <div class="flex items-center gap-1">
                     <span>人员</span>
@@ -686,6 +699,19 @@ onUnmounted(stopPolling);
 .table-content {
   min-height: 0;
   flex: 1;
+}
+.cmc-person-grid :deep(.el-table__header th.el-table__cell) {
+  background: linear-gradient(180deg, #f8fbff 0%, #eef4ff 100%);
+}
+.cmc-person-grid :deep(.el-table__row td.el-table__cell) {
+  vertical-align: middle;
+}
+.cmc-person-grid :deep(.el-table__row td.el-table__cell:first-child) {
+  color: #0f172a;
+  font-weight: 700;
+}
+.cmc-person-grid :deep(.el-table__row td.el-table__cell:nth-child(n + 2)) {
+  font-variant-numeric: tabular-nums;
 }
 @media (max-width: 1280px) {
   .metric-grid {
