@@ -25,7 +25,23 @@ class CmcContributionDailyRecord(RootModel):
     """数据湖返回的人员每日 CMC 贡献快照。"""
 
     statistic_date = models.DateField(db_index=True, verbose_name="统计日期")
+    user = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        db_constraint=False,
+        related_name="cmc_contribution_daily_records",
+        verbose_name="系统用户",
+    )
     user_name = models.CharField(max_length=255, db_index=True, verbose_name="人员姓名")
+    merged_login = models.CharField(
+        max_length=150,
+        blank=True,
+        default="",
+        db_index=True,
+        verbose_name="数据湖登录名",
+    )
     cnt_total = models.IntegerField(default=0, verbose_name="合入MR总数")
     major_comments_cnt = models.IntegerField(default=0, verbose_name="严重检视意见数")
     fatal_comments_cnt = models.IntegerField(default=0, verbose_name="致命检视意见数")

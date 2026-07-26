@@ -6,6 +6,8 @@ from unittest.mock import Mock, patch
 from django.test import TestCase, override_settings
 from ninja.errors import HttpError
 
+from core.user.user_model import User
+
 from . import services
 from .models import CmcContributionDailyRecord
 
@@ -17,12 +19,17 @@ class CmcContributionServiceTests(TestCase):
         """同日重跑覆盖旧行，跨日密度和零意见数按既定口径汇总。"""
         first_day = date(2026, 7, 20)
         second_day = date(2026, 7, 21)
-        services.replace_day_snapshot(first_day, [{"user": "张三", "cnt_total": 33, "not_0_comment_rate": "48.26%", "major_comments_cnt": 1, "fatal_comments_cnt": 2, "minor_comments_cnt": 3, "sugge_comments_cnt": 4, "cmt_issue": 5, "checked_mr_lines": 100, "cmt_lines": 88}])
+        user = User.objects.create(username="zhangsan", password="secret", name="张三")
+        services.replace_day_snapshot(first_day, [{"name": "张三", "merged_login": "zhangsan", "cnt_total": 33, "not_0_comment_rate": "48.26%", "major_comments_cnt": 1, "fatal_comments_cnt": 2, "minor_comments_cnt": 3, "sugge_comments_cnt": 4, "cmt_issue": 5, "checked_mr_lines": 100, "cmt_lines": 88}])
         services.replace_day_snapshot(second_day, [{"user": "张三", "cnt_total": 2, "not_0_comment_rate": "50%", "checked_mr_lines": 0, "cmt_lines": 6}])
         # 替换首日快照不能保留已经从上游消失的人员或旧数值。
-        services.replace_day_snapshot(first_day, [{"user": "张三", "cnt_total": 10, "not_0_comment_rate": "50%", "major_comments_cnt": 1, "checked_mr_lines": 100}])
+        services.replace_day_snapshot(first_day, [{"name": "张三", "merged_login": "zhangsan", "cnt_total": 10, "not_0_comment_rate": "50%", "major_comments_cnt": 1, "checked_mr_lines": 100}])
         summary = services.get_summary(first_day, second_day)
         self.assertEqual(CmcContributionDailyRecord.objects.filter(statistic_date=first_day).count(), 1)
+        self.assertEqual(
+            CmcContributionDailyRecord.objects.get(statistic_date=first_day).user_id,
+            str(user.id),
+        )
         self.assertEqual(summary["cnt_total"], 12)
         self.assertEqual(summary["zero_comment_mr_count"], 6)
         self.assertEqual(summary["effective_comment_count"], 1)
@@ -40,16 +47,23 @@ class CmcContributionServiceTests(TestCase):
     def test_fetch_day_walks_pages_until_empty(self, post):
         """上游未返回总页数时，客户端应持续请求直到空页。"""
         responses = []
-        for body in ({"data": [{"user": "张三"}]}, {"data": [{"user": "李四"}]}, {"data": []}):
+        for body in (
+            {"result": {"total": 2, "pageIndex": 1, "pageSize": 1, "list": [{"name": "张三", "merged_login": "zhangsan"}]}},
+            {"result": {"total": 2, "pageIndex": 2, "pageSize": 1, "list": [{"name": "李四", "merged_login": "lisi"}]}},
+        ):
             response = Mock()
             response.raise_for_status.return_value = None
             response.json.return_value = body
             responses.append(response)
         post.side_effect = responses
         rows, pages = services.fetch_day(date(2026, 7, 20))
-        self.assertEqual((len(rows), pages), (2, 3))
-        self.assertEqual(post.call_args_list[0].kwargs["json"]["START_PAGE"], 1)
-        self.assertEqual(post.call_args_list[1].kwargs["json"]["START_PAGE"], 2)
+        self.assertEqual((len(rows), pages), (2, 2))
+        first_payload = post.call_args_list[0].kwargs["json"]
+        self.assertEqual(set(first_payload), {"pageIndex", "pageSize", "params"})
+        self.assertEqual(first_payload["pageIndex"], 1)
+        self.assertEqual(post.call_args_list[1].kwargs["json"]["pageIndex"], 2)
+        self.assertNotIn("START_PAGE", first_payload["params"])
+        self.assertNotIn("END_PAGE", first_payload["params"])
 
     def test_manual_sync_rejects_non_admin_and_long_range(self):
         """手动补数必须由管理员在 31 天窗口内发起。"""

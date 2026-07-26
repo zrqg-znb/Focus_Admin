@@ -16,6 +16,7 @@ from django.db.models import Count, Sum
 from django.utils import timezone
 from ninja.errors import HttpError
 from scheduler.module.executor import scheduler_task
+from core.user.user_model import User
 
 from .models import (
     SYNC_STATUS_FAILED,
@@ -40,6 +41,7 @@ CMC_FIXED_QUERY = {
     "SORT_COLUMN": "SCORE",
     "DEPT_NAME": "底层软件开发部",
 }
+CMC_REQUEST_PAGE_SIZE = 100
 
 
 def _setting(name: str, default: Any = None) -> Any:
@@ -78,35 +80,36 @@ def _headers() -> dict[str, str]:
     return headers
 
 
-def _payload(day: date, page: int) -> dict[str, Any]:
-    """按固定部门配置和单页范围构造数据湖请求体。"""
+def _payload(day: date, page_index: int) -> dict[str, Any]:
+    """构造新版数据湖三字段请求体，分页字段不再混入业务 params。"""
     return {
-        "START_DATE": day.strftime("%Y%m%d"),
-        "END_DATE": day.strftime("%Y%m%d"),
-        **CMC_FIXED_QUERY,
-        "START_PAGE": page,
-        "END_PAGE": page,
+        "pageIndex": page_index,
+        "pageSize": CMC_REQUEST_PAGE_SIZE,
+        "params": {
+            "START_DATE": day.strftime("%Y%m%d"),
+            "END_DATE": day.strftime("%Y%m%d"),
+            **CMC_FIXED_QUERY,
+        },
     }
 
 
 def _response_rows(payload: Any) -> list[dict[str, Any]]:
-    """兼容数据湖将列表放在 data 或 dataList 的响应格式。"""
+    """读取新版数据湖响应 result.list。"""
     if not isinstance(payload, dict):
         return []
-    rows = payload.get("data", payload.get("dataList", []))
+    result = payload.get("result")
+    rows = result.get("list", []) if isinstance(result, dict) else []
     return [item for item in rows if isinstance(item, dict)] if isinstance(rows, list) else []
 
 
 def _total_pages(payload: Any) -> int | None:
-    """从多种常见分页字段提取总页数，缺失时由空页收敛。"""
-    if not isinstance(payload, dict):
+    """通过新版 result.total/pageSize 计算总页数，缺失时仍由空页收敛。"""
+    result = payload.get("result") if isinstance(payload, dict) else None
+    if not isinstance(result, dict):
         return None
-    page_info = payload.get("pageResult") or payload.get("pageInfo") or payload.get("pagination") or payload
-    for key in ("pageSum", "totalPages", "total_pages"):
-        value = _safe_int(page_info.get(key) if isinstance(page_info, dict) else 0)
-        if value > 0:
-            return value
-    return None
+    total = _safe_int(result.get("total"))
+    page_size = _safe_int(result.get("pageSize")) or CMC_REQUEST_PAGE_SIZE
+    return (total + page_size - 1) // page_size if total > 0 else 0
 
 
 def fetch_day(day: date) -> tuple[list[dict[str, Any]], int]:
@@ -129,7 +132,7 @@ def fetch_day(day: date) -> tuple[list[dict[str, Any]], int]:
         page_rows = _response_rows(payload)
         rows.extend(page_rows)
         known_total = known_total or _total_pages(payload)
-        # 上游未给分页元数据时，首个空页就是终止信号；给出总页数则严格按其结束。
+        # result 未给总数时以空页停止；有 total 时按照 total/pageSize 的页面边界结束。
         if known_total is not None and page >= known_total:
             return rows, page
         if known_total is None and not page_rows:
@@ -137,17 +140,24 @@ def fetch_day(day: date) -> tuple[list[dict[str, Any]], int]:
     raise HttpError(502, f"CMC 数据湖分页超过最大页数 {max_pages}")
 
 
-def _record_from_row(day: date, row: dict[str, Any]) -> CmcContributionDailyRecord | None:
-    """标准化上游人员行，并计算零检视 MR 数。"""
-    user_name = str(row.get("user") or "").strip()
+def _record_from_row(
+    day: date,
+    row: dict[str, Any],
+    users_by_login: dict[str, User],
+) -> CmcContributionDailyRecord | None:
+    """标准化新版人员行，并按 merged_login 关联 core.User。"""
+    user_name = str(row.get("name") or row.get("user") or "").strip()
     if not user_name:
         return None
+    merged_login = str(row.get("merged_login") or "").strip()
     total = _safe_int(row.get("cnt_total"))
     rate = _rate(row.get("not_0_comment_rate"))
     zero_count = int((Decimal(total) * rate).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
     return CmcContributionDailyRecord(
         statistic_date=day,
+        user=users_by_login.get(merged_login),
         user_name=user_name,
+        merged_login=merged_login,
         cnt_total=total,
         major_comments_cnt=_safe_int(row.get("major_comments_cnt")),
         fatal_comments_cnt=_safe_int(row.get("fatal_comments_cnt")),
@@ -164,7 +174,15 @@ def _record_from_row(day: date, row: dict[str, Any]) -> CmcContributionDailyReco
 
 def replace_day_snapshot(day: date, rows: list[dict[str, Any]]) -> int:
     """只有整日拉取成功后才原子替换本地快照，避免失败污染历史数据。"""
-    normalized = [item for row in rows if (item := _record_from_row(day, row)) is not None]
+    logins = {str(row.get("merged_login") or "").strip() for row in rows}
+    logins.discard("")
+    # 先批量读取系统用户，避免随上游行数增加产生 N+1 查询。
+    users_by_login = User.objects.in_bulk(logins, field_name="username")
+    normalized = [
+        item
+        for row in rows
+        if (item := _record_from_row(day, row, users_by_login)) is not None
+    ]
     with transaction.atomic():
         CmcContributionDailyRecord.objects.filter(statistic_date=day).delete()
         CmcContributionDailyRecord.objects.bulk_create(normalized, batch_size=500)

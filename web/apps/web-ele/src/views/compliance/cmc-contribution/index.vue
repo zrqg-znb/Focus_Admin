@@ -145,6 +145,8 @@ const [Grid, gridApi] = useZqTable<CmcPersonRecord>({
   ],
   pagerConfig: { enabled: true, pageSize: 20, pageSizes: [20, 50, 100] },
   proxyConfig: {
+    // 表格 Tab 初次挂载后才主动查询，避免隐藏状态下 zq-table 忽略刷新请求。
+    autoLoad: false,
     ajax: {
       query: async ({ page }) =>
         listCmcPersons({
@@ -259,6 +261,13 @@ async function reloadAll() {
   await loadDashboard();
   if (activeTab.value === 'table') await gridApi.query({ page: 1 });
 }
+async function handleTabChange(tab: number | string) {
+  // 切换到明细 Tab 后等待 Grid 挂载完成，再发起首屏分页查询。
+  if (tab !== 'table') return;
+  await nextTick();
+  gridApi.pagination.currentPage = 1;
+  await gridApi.query();
+}
 function applyUserFilter() {
   userFilterVisible.value = false;
   gridApi.query({ page: 1 });
@@ -354,7 +363,7 @@ onUnmounted(stopPolling);
       <ElTabs
         v-model="activeTab"
         class="cmc-tabs"
-        @tab-change="(tab) => tab === 'table' && gridApi.query({ page: 1 })"
+        @tab-change="handleTabChange"
       >
         <ElTabPane label="总览看板" name="dashboard">
           <section v-if="summary" class="metric-grid">
