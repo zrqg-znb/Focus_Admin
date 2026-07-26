@@ -77,6 +77,8 @@ export const listCmcPersons = (
   params: CmcDateRange & {
     page: number;
     pageSize: number;
+    sortField?: string;
+    sortOrder?: 'asc' | 'desc';
     userKeyword?: string;
   },
 ) => requestClient.get<CmcPersonPage>(`${base}/persons`, { params });

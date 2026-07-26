@@ -15,7 +15,6 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { Page } from '@vben/common-ui';
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
-import { Filter } from '@element-plus/icons-vue';
 import {
   ElButton,
   ElDatePicker,
@@ -23,7 +22,6 @@ import {
   ElEmpty,
   ElInput,
   ElMessage,
-  ElPopover,
   ElTabPane,
   ElTabs,
   ElTag,
@@ -41,6 +39,9 @@ import {
 } from '#/api/cmc-contribution';
 import { useZqTable } from '#/components/zq-table';
 
+import ComplianceHeaderFilter from '../components/ComplianceHeaderFilter.vue';
+import { useCmcPersonColumns } from './data';
+
 defineOptions({ name: 'CmcContribution' });
 
 const today = new Date();
@@ -57,7 +58,10 @@ const personRanking = ref<CmcPersonRanking[]>([]);
 const commentDistribution = ref<CmcCommentDistribution[]>([]);
 const loading = ref(false);
 const userKeyword = ref('');
-const userFilterVisible = ref(false);
+const personSort = ref<{
+  order: 'ascending' | 'descending' | null;
+  prop: string;
+}>({ order: null, prop: '' });
 const syncVisible = ref(false);
 const syncRange = ref<[string, string]>();
 const syncTask = ref<CmcSyncTask>();
@@ -75,6 +79,11 @@ const params = computed(() => ({
   startDate: dateRange.value[0],
   endDate: dateRange.value[1],
 }));
+function getPersonSortOrder() {
+  if (personSort.value.order === 'ascending') return 'asc';
+  if (personSort.value.order === 'descending') return 'desc';
+  return undefined;
+}
 const formatNumber = (value?: number) => Number(value || 0).toLocaleString();
 const formatPercent = (value?: number) =>
   `${(Number(value || 0) * 100).toFixed(2)}%`;
@@ -117,40 +126,7 @@ const [Grid, gridApi] = useZqTable<CmcPersonRecord>({
   gridOptions: {
     border: true,
     stripe: true,
-    columns: [
-      {
-        field: 'user',
-        minWidth: 140,
-        slots: { header: 'header-user' },
-        title: '人员',
-      },
-      { align: 'right', field: 'cnt_total', title: '合入MR' },
-      { align: 'right', field: 'zero_comment_mr_count', title: '零检视MR' },
-      {
-        align: 'right',
-        field: 'zero_comment_rate',
-        formatter: ({ cellValue }) => formatPercent(Number(cellValue)),
-        title: '零检视占比',
-      },
-      {
-        align: 'right',
-        field: 'effective_comment_count',
-        title: '有效检视意见',
-      },
-      {
-        align: 'right',
-        field: 'effective_comment_density',
-        formatter: ({ cellValue }) => formatDensity(cellValue),
-        title: '意见密度',
-      },
-      { align: 'right', field: 'major_comments_cnt', title: '严重' },
-      { align: 'right', field: 'fatal_comments_cnt', title: '致命' },
-      { align: 'right', field: 'minor_comments_cnt', title: '一般' },
-      { align: 'right', field: 'sugge_comments_cnt', title: '建议' },
-      { align: 'right', field: 'cmt_issue', title: 'Issue' },
-      { align: 'right', field: 'checked_mr_lines', title: '检视代码行' },
-      { align: 'right', field: 'cmt_lines', title: '提交MR代码量' },
-    ],
+    columns: useCmcPersonColumns(),
     pagerConfig: { enabled: true, pageSize: 20, pageSizes: [20, 50, 100] },
     proxyConfig: {
       // 页面进入总览时不加载；切换到人员明细后由 handleTabChange 主动查询。
@@ -161,6 +137,8 @@ const [Grid, gridApi] = useZqTable<CmcPersonRecord>({
             ...params.value,
             page: page.currentPage,
             pageSize: page.pageSize,
+            sortField: personSort.value.prop || undefined,
+            sortOrder: getPersonSortOrder(),
             userKeyword: userKeyword.value,
           }),
       },
@@ -281,8 +259,18 @@ async function handleTabChange(tab: number | string) {
   await nextTick();
   await reloadPersonTable();
 }
+async function handlePersonSortChange(data: {
+  order: 'ascending' | 'descending' | null;
+  prop?: string;
+}) {
+  // zq-table 透传 Element Plus 排序事件；排序在后端完整聚合结果上执行。
+  personSort.value = {
+    order: data.order,
+    prop: data.order ? String(data.prop || '') : '',
+  };
+  await reloadPersonTable();
+}
 async function applyUserFilter() {
-  userFilterVisible.value = false;
   await reloadPersonTable();
 }
 async function clearUserFilter() {
@@ -435,36 +423,21 @@ onUnmounted(stopPolling);
               人员检视贡献明细 <span>按当前统计日期范围汇总</span>
             </div>
             <div class="table-content">
-              <Grid class="cmc-person-grid h-full">
+              <Grid class="h-full" @sort-change="handlePersonSortChange">
                 <template #header-user>
-                  <div class="flex items-center gap-1">
-                    <span>人员</span>
-                    <ElPopover
-                      v-model:visible="userFilterVisible"
-                      trigger="click"
-                      width="240"
-                    >
-                      <template #reference>
-                        <Filter class="cursor-pointer" :size="15" />
-                      </template>
-                      <div class="space-y-2">
-                        <ElInput
-                          v-model="userKeyword"
-                          clearable
-                          placeholder="输入人员名称"
-                          @keyup.enter="applyUserFilter"
-                        />
-                        <div class="flex justify-end gap-2">
-                          <ElButton link @click="clearUserFilter">
-                            清空
-                          </ElButton>
-                          <ElButton type="primary" @click="applyUserFilter">
-                            应用
-                          </ElButton>
-                        </div>
-                      </div>
-                    </ElPopover>
-                  </div>
+                  <ComplianceHeaderFilter
+                    label="人员"
+                    :active="Boolean(userKeyword)"
+                    @apply="applyUserFilter"
+                    @clear="clearUserFilter"
+                  >
+                    <ElInput
+                      v-model="userKeyword"
+                      clearable
+                      placeholder="输入人员名称"
+                      @keyup.enter="applyUserFilter"
+                    />
+                  </ComplianceHeaderFilter>
                 </template>
               </Grid>
             </div>
@@ -699,19 +672,6 @@ onUnmounted(stopPolling);
 .table-content {
   min-height: 0;
   flex: 1;
-}
-.cmc-person-grid :deep(.el-table__header th.el-table__cell) {
-  background: linear-gradient(180deg, #f8fbff 0%, #eef4ff 100%);
-}
-.cmc-person-grid :deep(.el-table__row td.el-table__cell) {
-  vertical-align: middle;
-}
-.cmc-person-grid :deep(.el-table__row td.el-table__cell:first-child) {
-  color: #0f172a;
-  font-weight: 700;
-}
-.cmc-person-grid :deep(.el-table__row td.el-table__cell:nth-child(n + 2)) {
-  font-variant-numeric: tabular-nums;
 }
 @media (max-width: 1280px) {
   .metric-grid {

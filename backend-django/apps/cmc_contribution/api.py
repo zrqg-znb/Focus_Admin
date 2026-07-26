@@ -43,9 +43,26 @@ def get_cmc_comment_distribution(request, startDate: date = Query(...), endDate:
 
 
 @router.get("/persons", response=CmcPersonPageOut, summary="CMC贡献人员汇总表")
-def list_cmc_persons(request, startDate: date = Query(...), endDate: date = Query(...), page: int = Query(1), pageSize: int = Query(20), userKeyword: str = Query("")):
-    """按人员分页查看日期范围内的 CMC 贡献数据。"""
-    return services.list_persons(startDate, endDate, page, pageSize, userKeyword)
+def list_cmc_persons(
+    request,
+    startDate: date = Query(...),
+    endDate: date = Query(...),
+    page: int = Query(1),
+    pageSize: int = Query(20),
+    userKeyword: str = Query(""),
+    sortField: str = Query(""),
+    sortOrder: str = Query(""),
+):
+    """按人员分页查看日期范围内的 CMC 贡献数据，并支持数值指标排序。"""
+    return services.list_persons(
+        startDate,
+        endDate,
+        page,
+        pageSize,
+        userKeyword,
+        sortField,
+        sortOrder,
+    )
 
 
 @router.post("/sync-tasks", response=CmcSyncTaskOut, summary="手动同步CMC贡献数据")

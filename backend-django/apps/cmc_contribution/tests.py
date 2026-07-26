@@ -51,6 +51,80 @@ class CmcContributionServiceTests(TestCase):
             )
         self.assertFalse(CmcContributionDailyRecord.objects.exists())
 
+    def test_list_persons_sorts_derived_metrics_before_pagination(self):
+        """人员表排序覆盖原始、派生字段、同分稳定顺序和筛选分页。"""
+        statistic_date = date(2026, 7, 20)
+        for username, name in (("alice", "Alice"), ("bob", "Bob"), ("carol", "Carol")):
+            User.objects.create(username=username, password="secret", name=name)
+        services.replace_day_snapshot(
+            statistic_date,
+            [
+                {
+                    "name": "Alice",
+                    "merged_login": "alice",
+                    "cnt_total": 5,
+                    "major_comments_cnt": 10,
+                    "checked_mr_lines": 100,
+                },
+                {
+                    "name": "Bob",
+                    "merged_login": "bob",
+                    "cnt_total": 3,
+                    "major_comments_cnt": 10,
+                    "checked_mr_lines": 0,
+                },
+                {
+                    "name": "Carol",
+                    "merged_login": "carol",
+                    "cnt_total": 9,
+                    "major_comments_cnt": 3,
+                    "checked_mr_lines": 20,
+                },
+            ],
+        )
+
+        by_count = services.list_persons(
+            statistic_date,
+            statistic_date,
+            1,
+            20,
+            sort_field="cnt_total",
+            sort_order="asc",
+        )
+        self.assertEqual([item["user"] for item in by_count["items"]], ["Bob", "Alice", "Carol"])
+
+        by_density = services.list_persons(
+            statistic_date,
+            statistic_date,
+            1,
+            20,
+            sort_field="effective_comment_density",
+            sort_order="desc",
+        )
+        self.assertEqual([item["user"] for item in by_density["items"]], ["Carol", "Alice", "Bob"])
+
+        default_order = services.list_persons(
+            statistic_date,
+            statistic_date,
+            1,
+            20,
+            sort_field="not_allowed",
+            sort_order="desc",
+        )
+        self.assertEqual([item["user"] for item in default_order["items"]], ["Alice", "Bob", "Carol"])
+
+        filtered_page = services.list_persons(
+            statistic_date,
+            statistic_date,
+            1,
+            1,
+            user_keyword="Bob",
+            sort_field="cnt_total",
+            sort_order="desc",
+        )
+        self.assertEqual(filtered_page["total"], 1)
+        self.assertEqual(filtered_page["items"][0]["user"], "Bob")
+
     @override_settings(CMC_CONTRIBUTION_API_URL="https://cmc.example.test/api", CMC_CONTRIBUTION_MAX_PAGES=5)
     @patch("apps.cmc_contribution.services.requests.post")
     def test_fetch_day_reads_top_level_result_and_paging(self, post):

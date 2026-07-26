@@ -349,18 +349,41 @@ def get_comment_distribution(start: date, end: date) -> list[dict[str, Any]]:
     ]
 
 
-def list_persons(start: date, end: date, page: int, page_size: int, user_keyword: str = "") -> dict[str, Any]:
-    """按人员聚合本地快照并返回稳定分页表格。"""
+def list_persons(
+    start: date,
+    end: date,
+    page: int,
+    page_size: int,
+    user_keyword: str = "",
+    sort_field: str = "",
+    sort_order: str = "",
+) -> dict[str, Any]:
+    """按人员聚合本地快照，完成白名单排序后返回稳定分页表格。"""
     fields = ("cnt_total", "zero_comment_mr_count", "major_comments_cnt", "fatal_comments_cnt", "minor_comments_cnt", "sugge_comments_cnt", "cmt_issue", "checked_mr_lines", "cmt_lines")
     grouped = _query(start, end, user_keyword).values(
         "user_id", "user_name", "merged_login",
-    ).annotate(**{field: Sum(field) for field in fields}).order_by("user_name")
-    total = grouped.count()
+    ).annotate(**{field: Sum(field) for field in fields})
     safe_page, safe_size = max(int(page or 1), 1), max(min(int(page_size or 20), 100), 1)
     items = []
-    for row in grouped[(safe_page - 1) * safe_size : safe_page * safe_size]:
+    for row in grouped:
         metrics = _metrics(row, 0)
         metrics["user"] = row["user_name"]
         metrics.pop("contributor_count", None)
         items.append(metrics)
-    return {"items": items, "total": total}
+
+    sortable_fields = set(fields) | {
+        "zero_comment_rate",
+        "effective_comment_count",
+        "effective_comment_density",
+    }
+    # 先按姓名排序作为所有数值相同场景的稳定次级规则，再处理用户指定的数值列排序。
+    items.sort(key=lambda item: item["user"])
+    if sort_field in sortable_fields and sort_order in {"asc", "desc"}:
+        items.sort(
+            key=lambda item: item[sort_field] if item[sort_field] is not None else -1,
+            reverse=sort_order == "desc",
+        )
+
+    total = len(items)
+    offset = (safe_page - 1) * safe_size
+    return {"items": items[offset : offset + safe_size], "total": total}
