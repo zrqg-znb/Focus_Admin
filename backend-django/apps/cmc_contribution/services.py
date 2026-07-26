@@ -144,18 +144,26 @@ def _record_from_row(
     day: date,
     row: dict[str, Any],
     users_by_login: dict[str, User],
-) -> CmcContributionDailyRecord | None:
-    """标准化新版人员行，并按 merged_login 关联 core.User。"""
+) -> CmcContributionDailyRecord:
+    """标准化新版人员行，并严格校验其与 core.User 是同一人。"""
     user_name = str(row.get("name") or row.get("user") or "").strip()
-    if not user_name:
-        return None
     merged_login = str(row.get("merged_login") or "").strip()
+    if not user_name or not merged_login:
+        raise HttpError(422, "CMC 成员缺少 name 或 merged_login，无法关联 Focus 用户")
+    user = users_by_login.get(merged_login)
+    if user is None:
+        raise HttpError(422, f"未找到 merged_login={merged_login} 对应的 Focus 用户")
+    if str(user.name or "").strip() != user_name:
+        raise HttpError(
+            422,
+            f"CMC 成员 {merged_login} 的 name={user_name} 与 Focus 用户姓名不一致",
+        )
     total = _safe_int(row.get("cnt_total"))
     rate = _rate(row.get("not_0_comment_rate"))
     zero_count = int((Decimal(total) * rate).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
     return CmcContributionDailyRecord(
         statistic_date=day,
-        user=users_by_login.get(merged_login),
+        user=user,
         user_name=user_name,
         merged_login=merged_login,
         cnt_total=total,
@@ -178,11 +186,7 @@ def replace_day_snapshot(day: date, rows: list[dict[str, Any]]) -> int:
     logins.discard("")
     # 先批量读取系统用户，避免随上游行数增加产生 N+1 查询。
     users_by_login = User.objects.in_bulk(logins, field_name="username")
-    normalized = [
-        item
-        for row in rows
-        if (item := _record_from_row(day, row, users_by_login)) is not None
-    ]
+    normalized = [_record_from_row(day, row, users_by_login) for row in rows]
     with transaction.atomic():
         CmcContributionDailyRecord.objects.filter(statistic_date=day).delete()
         CmcContributionDailyRecord.objects.bulk_create(normalized, batch_size=500)
@@ -279,7 +283,7 @@ def get_summary(start: date, end: date) -> dict[str, Any]:
     """查询日期范围内 CMC 核心指标卡。"""
     queryset = _query(start, end)
     values = queryset.aggregate(**{field: Sum(field) for field in ("cnt_total", "zero_comment_mr_count", "major_comments_cnt", "fatal_comments_cnt", "minor_comments_cnt", "sugge_comments_cnt", "cmt_issue", "checked_mr_lines", "cmt_lines")})
-    return _metrics(values, queryset.values("user_name").distinct().count())
+    return _metrics(values, queryset.values("user_id").distinct().count())
 
 
 def get_trend(start: date, end: date) -> list[dict[str, Any]]:
@@ -312,7 +316,7 @@ def get_person_ranking(start: date, end: date, limit: int = 10) -> list[dict[str
         "fatal_comments_cnt", "minor_comments_cnt", "sugge_comments_cnt",
         "cmt_issue", "checked_mr_lines", "cmt_lines",
     )
-    rows = _query(start, end).values("user_name").annotate(
+    rows = _query(start, end).values("user_id", "user_name", "merged_login").annotate(
         **{field: Sum(field) for field in fields},
     )
     rankings = []
@@ -350,7 +354,9 @@ def get_comment_distribution(start: date, end: date) -> list[dict[str, Any]]:
 def list_persons(start: date, end: date, page: int, page_size: int, user_keyword: str = "") -> dict[str, Any]:
     """按人员聚合本地快照并返回稳定分页表格。"""
     fields = ("cnt_total", "zero_comment_mr_count", "major_comments_cnt", "fatal_comments_cnt", "minor_comments_cnt", "sugge_comments_cnt", "cmt_issue", "checked_mr_lines", "cmt_lines")
-    grouped = _query(start, end, user_keyword).values("user_name").annotate(**{field: Sum(field) for field in fields}).order_by("user_name")
+    grouped = _query(start, end, user_keyword).values(
+        "user_id", "user_name", "merged_login",
+    ).annotate(**{field: Sum(field) for field in fields}).order_by("user_name")
     total = grouped.count()
     safe_page, safe_size = max(int(page or 1), 1), max(min(int(page_size or 20), 100), 1)
     items = []

@@ -21,7 +21,7 @@ class CmcContributionServiceTests(TestCase):
         second_day = date(2026, 7, 21)
         user = User.objects.create(username="zhangsan", password="secret", name="张三")
         services.replace_day_snapshot(first_day, [{"name": "张三", "merged_login": "zhangsan", "cnt_total": 33, "not_0_comment_rate": "48.26%", "major_comments_cnt": 1, "fatal_comments_cnt": 2, "minor_comments_cnt": 3, "sugge_comments_cnt": 4, "cmt_issue": 5, "checked_mr_lines": 100, "cmt_lines": 88}])
-        services.replace_day_snapshot(second_day, [{"user": "张三", "cnt_total": 2, "not_0_comment_rate": "50%", "checked_mr_lines": 0, "cmt_lines": 6}])
+        services.replace_day_snapshot(second_day, [{"name": "张三", "merged_login": "zhangsan", "cnt_total": 2, "not_0_comment_rate": "50%", "checked_mr_lines": 0, "cmt_lines": 6}])
         # 替换首日快照不能保留已经从上游消失的人员或旧数值。
         services.replace_day_snapshot(first_day, [{"name": "张三", "merged_login": "zhangsan", "cnt_total": 10, "not_0_comment_rate": "50%", "major_comments_cnt": 1, "checked_mr_lines": 100}])
         summary = services.get_summary(first_day, second_day)
@@ -41,6 +41,15 @@ class CmcContributionServiceTests(TestCase):
             services.get_comment_distribution(first_day, second_day)[0],
             {"label": "严重", "value": 1},
         )
+
+    def test_replace_snapshot_rejects_unmatched_focus_user(self):
+        """登录名或姓名无法同时匹配 Focus 用户时，整日快照不得被写入。"""
+        with self.assertRaises(HttpError):
+            services.replace_day_snapshot(
+                date(2026, 7, 20),
+                [{"name": "张三", "merged_login": "missing-user"}],
+            )
+        self.assertFalse(CmcContributionDailyRecord.objects.exists())
 
     @override_settings(CMC_CONTRIBUTION_API_URL="https://cmc.example.test/api", CMC_CONTRIBUTION_MAX_PAGES=5)
     @patch("apps.cmc_contribution.services.requests.post")

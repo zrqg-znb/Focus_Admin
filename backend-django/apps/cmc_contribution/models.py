@@ -57,8 +57,18 @@ class CmcContributionDailyRecord(RootModel):
     class Meta:
         db_table = "cmc_contribution_daily_record"
         ordering = ("-statistic_date", "user_name")
-        constraints = [models.UniqueConstraint(fields=("statistic_date", "user_name"), name="cmc_contribution_daily_user_uniq")]
-        indexes = [models.Index(fields=("statistic_date", "user_name"), name="cmc_contrib_day_user_idx")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("statistic_date", "user"),
+                name="cmc_contribution_daily_user_uniq",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=("statistic_date", "user"),
+                name="cmc_contrib_day_user_idx",
+            )
+        ]
 
 
 class CmcContributionSyncTask(RootModel):
