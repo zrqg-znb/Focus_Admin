@@ -38,6 +38,8 @@ import {
   updateProviderApi,
 } from '#/api/agent-tools/skill-optimizer';
 
+import AgentToolsPageShell from '../../components/agent-tools-page-shell.vue';
+
 defineOptions({ name: 'SkillOptimizerProviders' });
 const providers = ref<Provider[]>([]);
 const dialogVisible = ref(false);
@@ -106,7 +108,7 @@ onMounted(load);
 
 <template>
   <Page title="模型配置" auto-content-height>
-    <div class="model-page">
+    <AgentToolsPageShell class="model-page">
       <section class="model-hero">
         <div>
           <div class="hero-kicker">
@@ -186,7 +188,7 @@ onMounted(load);
           ><small>OpenAI 兼容 API</small>
         </button>
       </section>
-    </div>
+    </AgentToolsPageShell>
     <ElDialog
       v-model="dialogVisible"
       :title="editingId ? '编辑模型连接' : '新增模型连接'"

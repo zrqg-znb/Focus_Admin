@@ -12,6 +12,7 @@ import { ElButton, ElTag } from 'element-plus';
 import { listRunsApi } from '#/api/agent-tools/skill-optimizer';
 import { useZqTable } from '#/components/zq-table';
 
+import AgentToolsPageShell from '../../components/agent-tools-page-shell.vue';
 import { useRunColumns } from './data';
 
 defineOptions({ name: 'SkillOptimizerRecords' });
@@ -44,7 +45,7 @@ const tags: Record<string, any> = {
 </script>
 <template>
   <Page title="优化记录" auto-content-height>
-    <div class="flex h-full min-h-0 flex-col">
+    <AgentToolsPageShell class="h-full min-h-0">
       <Grid class="h-full">
         <template #cell-status="{ row }">
           <ElTag :type="tags[row.status]">{{ row.status }}</ElTag> </template
@@ -67,6 +68,6 @@ const tags: Record<string, any> = {
           </ElButton>
         </template>
       </Grid>
-    </div>
+    </AgentToolsPageShell>
   </Page>
 </template>

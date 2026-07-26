@@ -48,6 +48,8 @@ import {
   uploadSkillApi,
 } from '#/api/agent-tools/skill-optimizer';
 
+import AgentToolsPageShell from '../../components/agent-tools-page-shell.vue';
+
 defineOptions({ name: 'SkillOptimizerWorkbench' });
 const route = useRoute();
 const providers = ref<Provider[]>([]);
@@ -217,7 +219,7 @@ onBeforeUnmount(() => {
 
 <template>
   <Page title="Skill Optimizer 工作台" auto-content-height>
-    <div class="workbench-shell">
+    <AgentToolsPageShell class="workbench-shell">
       <ElSteps :active="currentStep" simple class="workbench-steps">
         <ElStep title="选择技能" /><ElStep title="复核评测" /><ElStep
           title="优化运行"
@@ -472,7 +474,7 @@ onBeforeUnmount(() => {
           </template>
         </ElCard>
       </div>
-    </div>
+    </AgentToolsPageShell>
   </Page>
 </template>
 

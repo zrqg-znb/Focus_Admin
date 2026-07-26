@@ -1,6 +1,7 @@
 import { requestClient } from '#/api/request';
 
 const base = '/api/agent-tools/skill-optimizer';
+const configGenerationTimeout = 2 * 60 * 1000;
 
 export interface PageResult<T> {
   items: T[];
@@ -116,7 +117,13 @@ export const saveRunConfigApi = (
   data: { evaluations: Evaluation[]; scenarios: Scenario[] },
 ) => requestClient.put<SkillRun>(`${base}/runs/${id}/config`, data);
 export const regenerateRunConfigApi = (id: string) =>
-  requestClient.post<SkillRun>(`${base}/runs/${id}/config/regenerate`);
+  requestClient.post<SkillRun>(
+    `${base}/runs/${id}/config/regenerate`,
+    undefined,
+    {
+      timeout: configGenerationTimeout,
+    },
+  );
 export const startRunApi = (id: string) =>
   requestClient.post<SkillRun>(`${base}/runs/${id}/start`);
 export const cancelRunApi = (id: string) =>

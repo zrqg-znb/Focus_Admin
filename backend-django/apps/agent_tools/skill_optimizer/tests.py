@@ -1,13 +1,16 @@
 import io
 import zipfile
+from unittest.mock import patch
 
 from django.test import TestCase
+from ninja.errors import HttpError
+from requests import Response
 
 from core.user.user_model import User
 
 from .crypto import credential_cipher
 from .models import AgentSkillProvider, AgentSkillRun
-from .services import _safe_zip_entries, download_run, upload_skill
+from .services import _chat_completion, _safe_zip_entries, configure_run, download_run, upload_skill
 from .schemas import SkillOut
 
 
@@ -70,3 +73,51 @@ class SkillOptimizerServiceTests(TestCase):
         archive = zipfile.ZipFile(io.BytesIO(b''.join(response.streaming_content)))
         self.assertEqual(archive.read('demo/SKILL.md').decode(), '---\nname: demo\n---\n# Improved')
         self.assertEqual(archive.read('demo/assets/logo.bin'), b'asset')
+
+    def test_chat_completion_reports_non_json_provider_response(self):
+        """网关 HTML 页面不能再被转换为不可读的 JSONDecodeError。"""
+        provider = AgentSkillProvider.objects.create(
+            name='html-response-provider', base_url='https://example.com/v1', model='test',
+            api_key_encrypted=credential_cipher.encrypt('key'), sys_creator=self.user, sys_modifier=self.user,
+        )
+        response = Response()
+        response.status_code = 200
+        response.headers['Content-Type'] = 'text/html'
+        response._content = b'<html>Not Found</html>'
+        with patch('apps.agent_tools.skill_optimizer.services.requests.post', return_value=response) as post:
+            with self.assertRaisesRegex(RuntimeError, '非 JSON 响应'):
+                _chat_completion(provider, [{'role': 'user', 'content': 'hello'}])
+        self.assertEqual(post.call_args.args[0], 'https://example.com/v1/chat/completions')
+
+    def test_chat_completion_accepts_complete_endpoint_url(self):
+        """用户填写完整 Chat Completions 地址时不应重复拼接路径。"""
+        provider = AgentSkillProvider.objects.create(
+            name='complete-endpoint-provider', base_url='https://example.com/v1/chat/completions', model='test',
+            api_key_encrypted=credential_cipher.encrypt('key'), sys_creator=self.user, sys_modifier=self.user,
+        )
+        response = Response()
+        response.status_code = 200
+        response.headers['Content-Type'] = 'application/json'
+        response._content = b'{"choices":[{"message":{"content":"OK"}}]}'
+        with patch('apps.agent_tools.skill_optimizer.services.requests.post', return_value=response) as post:
+            self.assertEqual(_chat_completion(provider, [{'role': 'user', 'content': 'hello'}]), 'OK')
+        self.assertEqual(post.call_args.args[0], 'https://example.com/v1/chat/completions')
+
+    def test_regenerate_config_returns_upstream_error(self):
+        """重新生成配置应把模型错误转换为可显示的 502 业务错误。"""
+        skill_data = upload_skill(self.user, 'demo.zip', make_skill_zip('# Demo'))
+        provider = AgentSkillProvider.objects.create(
+            name='config-error-provider', base_url='https://example.com/v1', model='test',
+            api_key_encrypted=credential_cipher.encrypt('key'), sys_creator=self.user, sys_modifier=self.user,
+        )
+        from .models import AgentSkill
+        skill = AgentSkill.objects.get(id=skill_data['id'])
+        run = AgentSkillRun.objects.create(
+            skill=skill, provider=provider, provider_snapshot={}, status='draft', original_skill_md='# Demo',
+            sys_creator=self.user, sys_modifier=self.user,
+        )
+        payload = type('Payload', (), {'scenarios': [], 'evaluations': []})()
+        with patch('apps.agent_tools.skill_optimizer.services._generate_config', side_effect=RuntimeError('上游返回 HTML')):
+            with self.assertRaisesRegex(HttpError, '生成评测配置失败') as context:
+                configure_run(self.user, str(run.id), payload, regenerate=True)
+        self.assertEqual(context.exception.status_code, 502)

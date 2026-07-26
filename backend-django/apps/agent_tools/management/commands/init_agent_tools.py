@@ -68,8 +68,15 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         """幂等写入菜单、权限并把全部权限授予 Agent Tools 管理员。"""
         operator = User.objects.filter(is_superuser=True).order_by('sys_create_datetime').first()
-        # 删除旧 Tools 菜单及当前目录，避免历史菜单继续下发已移除的 API 前缀。
-        Menu.objects.filter(path__in=['/tools', '/tools/agent-skills', '/agent-tools', '/agent-tools/agent-hub', '/agent-tools/hub', '/agent-tools/skill-optimizer', '/agent-tools/skill-optimizer/records', '/agent-tools/model-config']).delete()
+        # 清理已废弃的目录树，避免旧 /ai-tools 与当前菜单同时出现在侧边栏。
+        Menu.objects.filter(path__in=[
+            '/tools', '/tools/agent-skills',
+            '/ai-tools', '/ai-tools/agent-hub', '/ai-tools/agent-skills',
+            '/ai-tools/agent-skills/records', '/ai-tools/model-config',
+            '/agent-tools', '/agent-tools/agent-hub', '/agent-tools/hub',
+            '/agent-tools/skill-optimizer', '/agent-tools/skill-optimizer/records',
+            '/agent-tools/model-config',
+        ]).delete()
         menus = self._seed_menus(operator)
         self._seed_permissions(menus, operator)
         user_role, _ = Role.objects.update_or_create(code='tools_user', defaults={'name': 'AI 辅助工具用户', 'description': '使用已授权的 AI 辅助工具', 'role_type': 1, 'status': True, 'priority': 50, 'sys_creator': operator, 'sys_modifier': operator})

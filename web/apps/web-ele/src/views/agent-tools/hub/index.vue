@@ -5,8 +5,6 @@ import type { Provider, SkillRun } from '#/api/agent-tools/skill-optimizer';
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
-import { Page } from '@vben/common-ui';
-
 import { ElButton, ElTag } from 'element-plus';
 import {
   ArrowUpRight,
@@ -19,6 +17,8 @@ import {
 } from 'lucide-vue-next';
 
 import { listProvidersApi, listRunsApi } from '#/api/agent-tools/skill-optimizer';
+
+import AgentToolsPageShell from '../components/agent-tools-page-shell.vue';
 
 defineOptions({ name: 'AgentHub' });
 const router = useRouter();
@@ -57,8 +57,8 @@ onMounted(loadHub);
 </script>
 
 <template>
-  <Page title="AI辅助工具" auto-content-height>
-    <div class="hub-page">
+  <FuPage auto-content-height>
+    <AgentToolsPageShell class="hub-page">
       <section class="hub-intro">
         <div>
           <div class="eyebrow"><Sparkles :size="15" /> AI WORKSPACE</div>
@@ -210,8 +210,8 @@ onMounted(loadHub);
           </div>
         </div>
       </section>
-    </div>
-  </Page>
+    </AgentToolsPageShell>
+  </FuPage>
 </template>
 
 <style scoped>

@@ -75,16 +75,34 @@ def save_provider(user: User, payload, provider_id: str | None = None) -> dict:
     return _serialize_provider(provider)
 
 
+def _chat_completion_url(base_url: str) -> str:
+    """兼容保存 API 根地址或完整 Chat Completions 地址两种配置方式。"""
+    normalized_url = base_url.rstrip('/')
+    return normalized_url if normalized_url.endswith('/chat/completions') else f'{normalized_url}/chat/completions'
+
+
 def _chat_completion(provider: AgentSkillProvider, messages: list[dict], temperature: float = 0.2) -> str:
     """调用 OpenAI Chat Completions 兼容端点，所有角色均从同一档案读取。"""
     api_key = credential_cipher.decrypt(provider.api_key_encrypted)
     if not api_key:
         raise RuntimeError('模型档案缺少 API Key')
-    response = requests.post(f'{provider.base_url.rstrip("/")}/chat/completions', headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-                             json={'model': provider.model, 'messages': messages, 'temperature': temperature}, timeout=(10, 120))
+    endpoint = _chat_completion_url(provider.base_url)
+    try:
+        response = requests.post(endpoint, headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                                 json={'model': provider.model, 'messages': messages, 'temperature': temperature}, timeout=(10, 120))
+    except requests.RequestException as exc:
+        raise RuntimeError(f'无法连接模型服务 {endpoint}：{exc}') from exc
     if not response.ok:
         raise RuntimeError(f'模型服务请求失败（HTTP {response.status_code}）：{response.text[:300]}')
-    payload = response.json()
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        content_type = response.headers.get('Content-Type', '未提供')
+        preview = ' '.join(response.text.split())[:160] or '空响应'
+        raise RuntimeError(
+            f'模型服务返回了非 JSON 响应（Content-Type: {content_type}，地址：{endpoint}，内容：{preview}）。'
+            '请确认 Base URL 是 OpenAI 兼容接口根地址；部分服务需要以 /v1 结尾。'
+        ) from exc
     try:
         return str(payload['choices'][0]['message']['content']).strip()
     except (KeyError, IndexError, TypeError) as exc:
@@ -199,7 +217,11 @@ def configure_run(user: User, run_id: str, payload, regenerate: bool = False) ->
     run = get_object_or_404(AgentSkillRun, id=run_id, is_deleted=False)
     if run.status not in ('draft', 'failed', 'cancelled'):
         raise HttpError(400, '运行中的任务不能修改配置')
-    scenarios, evaluations = _generate_config(run) if regenerate else (payload.scenarios, payload.evaluations)
+    try:
+        scenarios, evaluations = _generate_config(run) if regenerate else (payload.scenarios, payload.evaluations)
+    except RuntimeError as exc:
+        # 模型配置错误属于上游依赖失败，向页面返回可操作的信息而非未处理的 500。
+        raise HttpError(502, f'生成评测配置失败：{exc}') from exc
     if not scenarios or not evaluations:
         raise HttpError(400, '至少需要一个测试场景和一个评估标准')
     run.scenarios, run.evaluations, run.status, run.error_message, run.sys_modifier = scenarios, evaluations, 'draft', '', user
