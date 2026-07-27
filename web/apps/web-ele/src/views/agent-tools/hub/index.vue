@@ -1,6 +1,7 @@
 <script setup lang="ts">
-/* eslint-disable prettier/prettier */
-import type { Provider, SkillRun } from '#/api/agent-tools/skill-optimizer';
+/* eslint-disable vue/html-closing-bracket-newline, vue/multiline-html-element-content-newline */
+import type { Provider } from '#/api/agent-tools/providers';
+import type { SkillRun } from '#/api/agent-tools/skill-optimizer';
 
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
@@ -16,7 +17,8 @@ import {
   WandSparkles,
 } from 'lucide-vue-next';
 
-import { listProvidersApi, listRunsApi } from '#/api/agent-tools/skill-optimizer';
+import { listProvidersApi } from '#/api/agent-tools/providers';
+import { listRunsApi } from '#/api/agent-tools/skill-optimizer';
 
 import AgentToolsPageShell from '../components/agent-tools-page-shell.vue';
 
@@ -57,7 +59,7 @@ onMounted(loadHub);
 </script>
 
 <template>
-  <FuPage auto-content-height>
+  <Page auto-content-height>
     <AgentToolsPageShell class="hub-page">
       <section class="hub-intro">
         <div>
@@ -70,8 +72,8 @@ onMounted(loadHub);
         </div>
         <div class="intro-actions">
           <ElButton plain @click="openModels">
-            <Settings2 :size="16" /> 模型配置
-</ElButton><ElButton type="primary" @click="openSkillAgent">
+            <Settings2 :size="16" /> 模型配置 </ElButton
+          ><ElButton type="primary" @click="openSkillAgent">
             <WandSparkles :size="16" /> 开始一次优化
           </ElButton>
         </div>
@@ -80,12 +82,14 @@ onMounted(loadHub);
       <section class="hub-metrics">
         <div><span>可用 Agent</span><strong>01</strong></div>
         <div>
-          <span>已连接模型</span><strong>{{
+          <span>已连接模型</span
+          ><strong>{{
             activeProviders.length.toString().padStart(2, '0')
           }}</strong>
         </div>
         <div>
-          <span>近期运行</span><strong>{{ runs.length.toString().padStart(2, '0') }}</strong>
+          <span>近期运行</span
+          ><strong>{{ runs.length.toString().padStart(2, '0') }}</strong>
         </div>
         <div class="metric-note"><CircleDot :size="15" /> 工作区状态正常</div>
       </section>
@@ -95,7 +99,9 @@ onMounted(loadHub);
           <span class="section-kicker">AVAILABLE AGENTS</span>
           <h2>选择一个 Agent 开始工作</h2>
         </div>
-        <span class="section-caption">Agent 是可独立配置、运行和审计的 AI 工具单元</span>
+        <span class="section-caption"
+          >Agent 是可独立配置、运行和审计的 AI 工具单元</span
+        >
       </section>
       <section class="agent-grid">
         <article class="agent-card featured" @click="openSkillAgent">
@@ -164,8 +170,11 @@ onMounted(loadHub);
             >
               <div class="run-mark"><BrainCircuit :size="16" /></div>
               <div class="run-main">
-                <strong>{{ run.skill_name }}</strong><span>{{ run.provider_model }} ·
-                  {{ run.sys_create_datetime }}</span>
+                <strong>{{ run.skill_name }}</strong
+                ><span
+                  >{{ run.provider_model }} ·
+                  {{ run.sys_create_datetime }}</span
+                >
               </div>
               <ElTag
                 size="small"
@@ -177,8 +186,8 @@ onMounted(loadHub);
                       : 'warning'
                 "
               >
-                {{ statusText[run.status] || run.status }}
-</ElTag><ArrowUpRight :size="16" class="run-arrow" />
+                {{ statusText[run.status] || run.status }} </ElTag
+              ><ArrowUpRight :size="16" class="run-arrow" />
             </div>
           </div>
         </div>
@@ -191,7 +200,8 @@ onMounted(loadHub);
             <ElButton link type="primary" @click="openModels">管理</ElButton>
           </div>
           <div v-if="activeProviders.length === 0" class="model-empty">
-            <Settings2 :size="22" /><span>配置一个模型，解锁 Agent</span><ElButton type="primary" plain size="small" @click="openModels">
+            <Settings2 :size="22" /><span>配置一个模型，解锁 Agent</span
+            ><ElButton type="primary" plain size="small" @click="openModels">
               去配置
             </ElButton>
           </div>
@@ -203,7 +213,8 @@ onMounted(loadHub);
             >
               <span class="model-dot"></span>
               <div>
-                <strong>{{ provider.name }}</strong><small>{{ provider.model }}</small>
+                <strong>{{ provider.name }}</strong
+                ><small>{{ provider.model }}</small>
               </div>
               <span class="model-online">ONLINE</span>
             </div>
@@ -211,7 +222,7 @@ onMounted(loadHub);
         </div>
       </section>
     </AgentToolsPageShell>
-  </FuPage>
+  </Page>
 </template>
 
 <style scoped>

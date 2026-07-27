@@ -7,24 +7,6 @@ export interface PageResult<T> {
   items: T[];
   total: number;
 }
-export interface Provider {
-  id: string;
-  name: string;
-  base_url: string;
-  model: string;
-  has_api_key: boolean;
-  is_active: boolean;
-  description: string;
-  sys_create_datetime?: string;
-}
-export interface ProviderPayload {
-  name: string;
-  base_url: string;
-  model: string;
-  api_key: string;
-  is_active: boolean;
-  description: string;
-}
 export interface Skill {
   id: string;
   name: string;
@@ -80,17 +62,18 @@ export interface Iteration {
   evaluation_summary: Record<string, unknown>[];
   sys_create_datetime?: string;
 }
+export interface SkillTrace {
+  id: string;
+  round_number: number;
+  stage: string;
+  status: string;
+  request_content: string;
+  response_content: string;
+  error_message: string;
+  duration_ms: number;
+  sys_create_datetime?: string;
+}
 
-export const listProvidersApi = () =>
-  requestClient.get<Provider[]>(`${base}/providers`);
-export const createProviderApi = (data: ProviderPayload) =>
-  requestClient.post<Provider>(`${base}/providers`, data);
-export const updateProviderApi = (id: string, data: ProviderPayload) =>
-  requestClient.put<Provider>(`${base}/providers/${id}`, data);
-export const testProviderApi = (id: string) =>
-  requestClient.post<{ message: string; ok: boolean }>(
-    `${base}/providers/${id}/test`,
-  );
 export const listSkillsApi = (params: {
   keyword?: string;
   page?: number;
@@ -130,6 +113,8 @@ export const cancelRunApi = (id: string) =>
   requestClient.post<SkillRun>(`${base}/runs/${id}/cancel`);
 export const listIterationsApi = (id: string) =>
   requestClient.get<Iteration[]>(`${base}/runs/${id}/iterations`);
+export const listTracesApi = (id: string) =>
+  requestClient.get<SkillTrace[]>(`${base}/runs/${id}/traces`);
 export const downloadRunUrl = (id: string) => `${base}/runs/${id}/download`;
 export const downloadRunApi = (id: string) =>
   requestClient.get<Blob>(downloadRunUrl(id), { responseType: 'blob' });

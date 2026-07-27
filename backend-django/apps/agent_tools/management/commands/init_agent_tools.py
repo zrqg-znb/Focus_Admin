@@ -34,7 +34,7 @@ MENU_SEEDS = [
     MenuSeed('skill_optimizer_workbench', 'agent_tools', 'AgentHub', 'Agent Hub', '/agent-tools/hub', '/agent-tools/hub/index', auth_code='agent-tools:skill-optimizer:workbench'),
     MenuSeed('skill_optimizer_editor', 'agent_tools', 'SkillOptimizer', 'Skill 自进化', '/agent-tools/skill-optimizer', '/agent-tools/skill-optimizer/workbench/index', auth_code='agent-tools:skill-optimizer:workbench', hide_in_menu=True),
     MenuSeed('skill_optimizer_records', 'agent_tools', 'SkillOptimizerRecords', 'Skill自进化记录', '/agent-tools/skill-optimizer/records', '/agent-tools/skill-optimizer/records/index', auth_code='agent-tools:skill-optimizer:records', hide_in_menu=True),
-    MenuSeed('skill_optimizer_providers', 'agent_tools', 'AgentToolsModelConfig', '模型配置', '/agent-tools/model-config', '/agent-tools/skill-optimizer/providers/index', auth_code='agent-tools:skill-optimizer:providers'),
+    MenuSeed('agent_tools_providers', 'agent_tools', 'AgentToolsModelConfig', '模型配置', '/agent-tools/model-config', '/agent-tools/providers/index', auth_code='agent-tools:providers'),
 ]
 
 PERMISSIONS = {
@@ -42,7 +42,6 @@ PERMISSIONS = {
         ('技能工作台查看', 'agent-tools:skill-optimizer:workbench:view', 0, None, 'GET'),
         ('技能列表', 'agent-tools:skill-optimizer:api:skills:list', 1, '/api/agent-tools/skill-optimizer/skills', 'GET'),
         ('上传技能包', 'agent-tools:skill-optimizer:api:skills:upload', 1, '/api/agent-tools/skill-optimizer/skills/upload', 'POST'),
-        ('模型档案选项', 'agent-tools:skill-optimizer:api:providers:list', 1, '/api/agent-tools/skill-optimizer/providers', 'GET'),
         ('创建优化任务', 'agent-tools:skill-optimizer:api:runs:create', 1, '/api/agent-tools/skill-optimizer/runs', 'POST'),
         ('读取优化任务', 'agent-tools:skill-optimizer:api:runs:detail', 1, '/api/agent-tools/skill-optimizer/runs/:id', 'GET'),
         ('保存优化配置', 'agent-tools:skill-optimizer:api:runs:config', 1, '/api/agent-tools/skill-optimizer/runs/:id/config', 'PUT'),
@@ -53,11 +52,12 @@ PERMISSIONS = {
         ('下载技能包', 'agent-tools:skill-optimizer:api:runs:download', 1, '/api/agent-tools/skill-optimizer/runs/:id/download', 'GET'),
     ],
     'skill_optimizer_records': [('优化记录查看', 'agent-tools:skill-optimizer:records:view', 0, None, 'GET'), ('优化记录列表', 'agent-tools:skill-optimizer:api:runs:list', 1, '/api/agent-tools/skill-optimizer/runs', 'GET')],
-    'skill_optimizer_providers': [
-        ('模型配置查看', 'agent-tools:skill-optimizer:providers:view', 0, None, 'GET'),
-        ('创建模型档案', 'agent-tools:skill-optimizer:api:providers:create', 1, '/api/agent-tools/skill-optimizer/providers', 'POST'),
-        ('更新模型档案', 'agent-tools:skill-optimizer:api:providers:update', 1, '/api/agent-tools/skill-optimizer/providers/:id', 'PUT'),
-        ('测试模型档案', 'agent-tools:skill-optimizer:api:providers:test', 1, '/api/agent-tools/skill-optimizer/providers/:id/test', 'POST'),
+    'agent_tools_providers': [
+        ('模型配置查看', 'agent-tools:providers:view', 0, None, 'GET'),
+        ('模型档案列表', 'agent-tools:providers:api:list', 1, '/api/agent-tools/providers', 'GET'),
+        ('创建模型档案', 'agent-tools:providers:api:create', 1, '/api/agent-tools/providers', 'POST'),
+        ('更新模型档案', 'agent-tools:providers:api:update', 1, '/api/agent-tools/providers/:id', 'PUT'),
+        ('测试模型档案', 'agent-tools:providers:api:test', 1, '/api/agent-tools/providers/:id/test', 'POST'),
     ],
 }
 
@@ -81,12 +81,12 @@ class Command(BaseCommand):
         self._seed_permissions(menus, operator)
         user_role, _ = Role.objects.update_or_create(code='tools_user', defaults={'name': 'AI 辅助工具用户', 'description': '使用已授权的 AI 辅助工具', 'role_type': 1, 'status': True, 'priority': 50, 'sys_creator': operator, 'sys_modifier': operator})
         admin_role, _ = Role.objects.update_or_create(code='tools_admin', defaults={'name': 'AI 辅助工具管理员', 'description': '维护模型档案和 AI 辅助工具', 'role_type': 1, 'status': True, 'priority': 50, 'sys_creator': operator, 'sys_modifier': operator})
-        user_menus = [menus['agent_tools'], menus['skill_optimizer_workbench'], menus['skill_optimizer_editor'], menus['skill_optimizer_providers']]
-        user_permissions = Permission.objects.filter(code__startswith='agent-tools:skill-optimizer:')
+        user_menus = [menus['agent_tools'], menus['skill_optimizer_workbench'], menus['skill_optimizer_editor'], menus['agent_tools_providers']]
+        user_permissions = Permission.objects.filter(code__startswith='agent-tools:skill-optimizer:') | Permission.objects.filter(code__startswith='agent-tools:providers:')
         user_role.menu.add(*user_menus)
         user_role.permission.add(*user_permissions)
         admin_role.menu.add(*menus.values())
-        admin_role.permission.add(*Permission.objects.filter(code__startswith='agent-tools:skill-optimizer:'))
+        admin_role.permission.add(*user_permissions)
         MenuCacheManager.invalidate_menu_cache(); PermissionCacheManager.invalidate_permission_cache(); PermissionCacheManager.invalidate_global_permissions()
         self.stdout.write(self.style.SUCCESS('Agent Tools 初始化完成。'))
 

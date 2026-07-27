@@ -6,8 +6,8 @@ import os
 import re
 import zipfile
 from datetime import datetime
+from time import perf_counter
 
-import requests
 from django.db import transaction
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
@@ -16,109 +16,83 @@ from ninja.errors import HttpError
 
 from core.user.user_model import User
 
-from .crypto import credential_cipher
-from .models import AgentSkill, AgentSkillIteration, AgentSkillProvider, AgentSkillRun
+from ..providers.models import AgentSkillProvider
+from ..providers.services import chat_completion, get_provider_for_user, normalize_upstream_text
+from .models import AgentSkill, AgentSkillIteration, AgentSkillRun, AgentSkillTrace
 
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 MAX_FILE_SIZE = 1024 * 1024
 MAX_FILE_COUNT = 50
 ALLOWED_TEXT_EXTENSIONS = {'.md', '.txt', '.json', '.yaml', '.yml', '.py', '.js', '.ts', '.html', '.css', '.xml', '.toml', '.cfg', '.ini', '.sh'}
-
-
-def _role_codes(user: User | None) -> set[str]:
-    """读取用户角色，用于 Tools 模块的独立业务授权。"""
-    return set(user.core_roles.filter(status=True).values_list('code', flat=True)) if user else set()
-
-
-def is_tools_admin(user: User | None) -> bool:
-    """超级管理员或 tools_admin 才能维护模型服务档案。"""
-    return bool(user and (user.is_superuser or 'tools_admin' in _role_codes(user)))
-
-
-def require_tools_admin(user: User | None) -> None:
-    """拒绝非管理员修改模型凭证。"""
-    if not is_tools_admin(user):
-        raise HttpError(403, '只有 Tools 管理员可以维护模型档案')
+TRACE_CONTENT_LIMIT = 12_000
 
 
 def _display_name(user: User | None) -> str:
     return (user.name or user.username) if user else ''
 
 
-def _serialize_provider(provider: AgentSkillProvider) -> dict:
-    """序列化档案时明确排除 API Key。"""
-    return {'id': str(provider.id), 'name': provider.name, 'base_url': provider.base_url, 'model': provider.model,
-            'has_api_key': bool(provider.api_key_encrypted), 'is_active': provider.is_active, 'description': provider.description,
-            'owner_name': _display_name(provider.owner),
-            'sys_create_datetime': provider.sys_create_datetime}
+def _trace_content(content: str) -> str:
+    """限制调用记录大小，避免长 SKILL.md 无限放大任务数据。"""
+    if len(content) <= TRACE_CONTENT_LIMIT:
+        return content
+    return f'{content[:TRACE_CONTENT_LIMIT]}\n\n[内容已截断，仅保留前 {TRACE_CONTENT_LIMIT} 个字符]'
 
 
-def list_providers(user: User) -> list[dict]:
-    """返回当前用户自己的模型档案，管理员可额外看到所有档案。"""
-    queryset = AgentSkillProvider.objects.filter(is_deleted=False).filter(owner=user)
-    if is_tools_admin(user):
-        queryset = AgentSkillProvider.objects.filter(is_deleted=False)
-    return [_serialize_provider(item) for item in queryset]
+def _trace_request(messages: list[dict]) -> str:
+    """以可读形式记录发送给模型的消息，不包含请求头或 API Key。"""
+    return _trace_content('\n\n'.join(f'[{item.get("role", "user")}]\n{item.get("content", "")}' for item in messages))
 
 
-def save_provider(user: User, payload, provider_id: str | None = None) -> dict:
-    """保存当前用户自己的服务档案；管理员可以维护全部档案。"""
-    provider = get_object_or_404(AgentSkillProvider, id=provider_id, is_deleted=False) if provider_id else AgentSkillProvider(owner=user, sys_creator=user)
-    if provider_id and not is_tools_admin(user) and provider.owner_id != user.id:
-        raise HttpError(403, '不能修改其他用户的模型配置')
-    provider.name, provider.base_url, provider.model = payload.name.strip(), payload.base_url.rstrip('/'), payload.model.strip()
-    provider.is_active, provider.description, provider.sys_modifier = payload.is_active, payload.description.strip(), user
-    if payload.api_key.strip():
-        provider.api_key_encrypted = credential_cipher.encrypt(payload.api_key.strip())
-    provider.owner = provider.owner or user
-    provider.save()
-    return _serialize_provider(provider)
+def _start_trace(run: AgentSkillRun | None, stage: str, round_number: int, messages: list[dict]) -> AgentSkillTrace | None:
+    """在网络请求前写入运行中轨迹，使长调用也能被前端感知。"""
+    if not run or not stage:
+        return None
+    return AgentSkillTrace.objects.create(
+        run=run,
+        round_number=round_number,
+        stage=stage,
+        request_content=_trace_request(messages),
+        sys_creator=run.sys_creator,
+        sys_modifier=run.sys_creator,
+    )
 
 
-def _chat_completion_url(base_url: str) -> str:
-    """兼容保存 API 根地址或完整 Chat Completions 地址两种配置方式。"""
-    normalized_url = base_url.rstrip('/')
-    return normalized_url if normalized_url.endswith('/chat/completions') else f'{normalized_url}/chat/completions'
+def _finish_trace(trace: AgentSkillTrace | None, started_at: float, response_content: str = '', error_message: str = '') -> None:
+    """写入模型调用结果与耗时，失败调用同样保留在活动流中。"""
+    if not trace:
+        return
+    trace.status = 'failed' if error_message else 'completed'
+    trace.response_content = _trace_content(response_content)
+    trace.error_message = error_message[:2000]
+    trace.duration_ms = round((perf_counter() - started_at) * 1000)
+    trace.save(update_fields=['status', 'response_content', 'error_message', 'duration_ms', 'sys_update_datetime'])
 
 
-def _chat_completion(provider: AgentSkillProvider, messages: list[dict], temperature: float = 0.2) -> str:
-    """调用 OpenAI Chat Completions 兼容端点，所有角色均从同一档案读取。"""
-    api_key = credential_cipher.decrypt(provider.api_key_encrypted)
-    if not api_key:
-        raise RuntimeError('模型档案缺少 API Key')
-    endpoint = _chat_completion_url(provider.base_url)
+def _update_trace_stream(trace: AgentSkillTrace | None, started_at: float, response_content: str) -> None:
+    """节流更新运行中响应，让前端可在模型生成期间读取增量文本。"""
+    if not trace:
+        return
+    trace.response_content = _trace_content(response_content)
+    trace.duration_ms = round((perf_counter() - started_at) * 1000)
+    trace.save(update_fields=['response_content', 'duration_ms', 'sys_update_datetime'])
+
+
+def _chat_completion(provider: AgentSkillProvider, messages: list[dict], temperature: float = 0.2, *, run: AgentSkillRun | None = None, stage: str = '', round_number: int = 0) -> str:
+    """为 Skill Optimizer 调用平台模型服务并持久化本次运行轨迹。"""
+    trace = _start_trace(run, stage, round_number, messages)
+    started_at = perf_counter()
     try:
-        response = requests.post(endpoint, headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-                                 json={'model': provider.model, 'messages': messages, 'temperature': temperature}, timeout=(10, 120))
-    except requests.RequestException as exc:
-        raise RuntimeError(f'无法连接模型服务 {endpoint}：{exc}') from exc
-    if not response.ok:
-        raise RuntimeError(f'模型服务请求失败（HTTP {response.status_code}）：{response.text[:300]}')
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        content_type = response.headers.get('Content-Type', '未提供')
-        preview = ' '.join(response.text.split())[:160] or '空响应'
-        raise RuntimeError(
-            f'模型服务返回了非 JSON 响应（Content-Type: {content_type}，地址：{endpoint}，内容：{preview}）。'
-            '请确认 Base URL 是 OpenAI 兼容接口根地址；部分服务需要以 /v1 结尾。'
-        ) from exc
-    try:
-        return str(payload['choices'][0]['message']['content']).strip()
-    except (KeyError, IndexError, TypeError) as exc:
-        raise RuntimeError('模型服务响应不包含 choices[0].message.content') from exc
-
-
-def test_provider(user: User, provider_id: str) -> dict:
-    """测试当前用户可见的模型档案连接。"""
-    provider = get_object_or_404(AgentSkillProvider, id=provider_id, is_deleted=False)
-    if not is_tools_admin(user) and provider.owner_id != user.id:
-        raise HttpError(403, '不能测试其他用户的模型配置')
-    try:
-        _chat_completion(provider, [{'role': 'user', 'content': 'Reply with OK only.'}], temperature=0)
-        return {'ok': True, 'message': '模型服务连接成功'}
+        content = chat_completion(
+            provider,
+            messages,
+            temperature,
+            on_stream_update=(lambda response: _update_trace_stream(trace, started_at, response)) if trace else None,
+        )
     except Exception as exc:
-        return {'ok': False, 'message': str(exc)}
+        _finish_trace(trace, started_at, error_message=str(exc))
+        raise
+    _finish_trace(trace, started_at, response_content=content)
+    return content
 
 
 def _safe_zip_entries(content: bytes) -> tuple[list[str], str, dict[str, bytes]]:
@@ -178,9 +152,7 @@ def list_skills(page: int, page_size: int, keyword: str = '') -> dict:
 def create_run(user: User, payload) -> dict:
     """为指定技能和模型档案创建待配置优化任务。"""
     skill = get_object_or_404(AgentSkill, id=payload.skill_id, is_deleted=False)
-    provider = get_object_or_404(AgentSkillProvider, id=payload.provider_id, is_deleted=False, is_active=True)
-    if not is_tools_admin(user) and provider.owner_id != user.id:
-        raise HttpError(403, '不能使用其他用户的模型配置')
+    provider = get_provider_for_user(user, payload.provider_id, active_only=True)
     run = AgentSkillRun.objects.create(skill=skill, provider=provider, provider_snapshot={'name': provider.name, 'base_url': provider.base_url, 'model': provider.model},
                                        max_rounds=payload.max_rounds, original_skill_md=skill.latest_skill_md or skill.original_skill_md,
                                        sys_creator=user, sys_modifier=user)
@@ -204,7 +176,7 @@ def _parse_json(text: str, fallback):
 def _generate_config(run: AgentSkillRun) -> tuple[list[dict], list[dict]]:
     """从技能提示词生成可由用户复核的测试场景和二元标准。"""
     content = _chat_completion(run.provider, [{'role': 'system', 'content': 'You design evaluation plans for agent skills. Return JSON only.'},
-        {'role': 'user', 'content': f'''Analyze this SKILL.md and return JSON: {{"scenarios":[{{"id":1,"name":"","input":""}}],"evaluations":[{{"id":1,"name":"","question":"binary yes/no question","pass_condition":""}}]}}. Generate 3-4 scenarios and 4-6 evaluations.\n\n{run.original_skill_md}'''}])
+        {'role': 'user', 'content': f'''Analyze this SKILL.md and return JSON: {{"scenarios":[{{"id":1,"name":"","input":""}}],"evaluations":[{{"id":1,"name":"","question":"binary yes/no question","pass_condition":""}}]}}. Generate 3-4 scenarios and 4-6 evaluations.\n\n{run.original_skill_md}'''}], run=run, stage='config_generation')
     payload = _parse_json(content, {})
     scenarios, evaluations = payload.get('scenarios', []), payload.get('evaluations', []) if isinstance(payload, dict) else ([], [])
     if not scenarios or not evaluations:
@@ -277,14 +249,14 @@ def cancel_run(user: User, run_id: str) -> dict:
     return _serialize_run(run)
 
 
-def _score_skill(provider: AgentSkillProvider, skill_md: str, scenarios: list[dict], evaluations: list[dict]) -> tuple[float, list[dict]]:
+def _score_skill(provider: AgentSkillProvider, skill_md: str, scenarios: list[dict], evaluations: list[dict], *, run: AgentSkillRun | None = None, round_number: int = 0, phase: str = 'baseline') -> tuple[float, list[dict]]:
     """模拟执行技能并以每个场景的二元标准计算百分制评分。"""
     results, passed, total = [], 0, 0
     for scenario in scenarios:
         output = _chat_completion(provider, [{'role': 'system', 'content': 'Follow the supplied skill exactly. Return only the response to the user.'},
-            {'role': 'user', 'content': f'SKILL.md:\n{skill_md}\n\nUser request:\n{scenario.get("input", "")}'}])
+            {'role': 'user', 'content': f'SKILL.md:\n{skill_md}\n\nUser request:\n{scenario.get("input", "")}'}], run=run, stage=f'{phase}_response', round_number=round_number)
         score_text = _chat_completion(provider, [{'role': 'system', 'content': 'Evaluate the response. Return JSON only.'},
-            {'role': 'user', 'content': f'Input: {scenario.get("input", "")}\nOutput: {output}\nCriteria: {json.dumps(evaluations, ensure_ascii=False)}\nReturn {{"results":[{{"eval_id":1,"passed":true,"reason":""}}]}}'}], temperature=0)
+            {'role': 'user', 'content': f'Input: {scenario.get("input", "")}\nOutput: {output}\nCriteria: {json.dumps(evaluations, ensure_ascii=False)}\nReturn {{"results":[{{"eval_id":1,"passed":true,"reason":""}}]}}'}], temperature=0, run=run, stage=f'{phase}_evaluation', round_number=round_number)
         scored = _parse_json(score_text, {}).get('results', [])
         for result in scored:
             is_passed = bool(result.get('passed'))
@@ -293,13 +265,13 @@ def _score_skill(provider: AgentSkillProvider, skill_md: str, scenarios: list[di
     return (round(passed / max(total, 1) * 100, 1), results)
 
 
-def _diagnose_and_mutate(provider: AgentSkillProvider, skill_md: str, failures: list[dict]) -> tuple[dict, dict]:
+def _diagnose_and_mutate(provider: AgentSkillProvider, skill_md: str, failures: list[dict], *, run: AgentSkillRun | None = None, round_number: int = 0) -> tuple[dict, dict]:
     """使用诊断与改写两个独立提示词得到一次受限的技能改动。"""
     analysis_text = _chat_completion(provider, [{'role': 'system', 'content': 'Diagnose skill failures. Return JSON only.'},
-        {'role': 'user', 'content': f'Return {{"diagnosis":"","strategy":"add_example|add_constraint|restructure|add_edge_case","target":"","suggested_change":""}} for failures: {json.dumps(failures[:8], ensure_ascii=False)}'}])
+        {'role': 'user', 'content': f'Return {{"diagnosis":"","strategy":"add_example|add_constraint|restructure|add_edge_case","target":"","suggested_change":""}} for failures: {json.dumps(failures[:8], ensure_ascii=False)}'}], run=run, stage='diagnosis', round_number=round_number)
     analysis = _parse_json(analysis_text, {'diagnosis': 'Unable to diagnose', 'strategy': 'add_constraint', 'target': '', 'suggested_change': ''})
     mutation_text = _chat_completion(provider, [{'role': 'system', 'content': 'Edit a SKILL.md. Return JSON only; preserve YAML frontmatter and make exactly one targeted change.'},
-        {'role': 'user', 'content': f'SKILL.md:\n{skill_md}\n\nDiagnosis:\n{json.dumps(analysis, ensure_ascii=False)}\nReturn {{"description":"","new_skill_md":""}}'}])
+        {'role': 'user', 'content': f'SKILL.md:\n{skill_md}\n\nDiagnosis:\n{json.dumps(analysis, ensure_ascii=False)}\nReturn {{"description":"","new_skill_md":""}}'}], run=run, stage='mutation', round_number=round_number)
     mutation = _parse_json(mutation_text, {'description': '未能解析模型改写结果', 'new_skill_md': skill_md})
     return analysis, mutation
 
@@ -309,7 +281,7 @@ def execute_run(run_id: str) -> None:
     run = AgentSkillRun.objects.select_related('skill', 'provider').get(id=run_id, is_deleted=False)
     run.status, run.started_at = 'running', timezone.now(); run.save(update_fields=['status', 'started_at', 'sys_update_datetime'])
     try:
-        baseline_score, baseline_details = _score_skill(run.provider, run.original_skill_md, run.scenarios, run.evaluations)
+        baseline_score, baseline_details = _score_skill(run.provider, run.original_skill_md, run.scenarios, run.evaluations, run=run, phase='baseline')
         AgentSkillIteration.objects.update_or_create(run=run, round_number=0, defaults={'status': 'baseline', 'score_before': baseline_score, 'score_after': baseline_score,
             'kept': True, 'evaluation_summary': baseline_details, 'sys_creator': run.sys_creator, 'sys_modifier': run.sys_creator})
         current_md, current_score, details = run.original_skill_md, baseline_score, baseline_details
@@ -319,9 +291,9 @@ def execute_run(run_id: str) -> None:
             if run.cancel_requested:
                 run.status, run.completed_at = 'cancelled', timezone.now(); run.save(update_fields=['status', 'completed_at', 'sys_update_datetime']); return
             failures = [item for item in details if not item.get('passed')]
-            analysis, mutation = _diagnose_and_mutate(run.provider, current_md, failures)
+            analysis, mutation = _diagnose_and_mutate(run.provider, current_md, failures, run=run, round_number=round_number)
             candidate_md = str(mutation.get('new_skill_md') or current_md)
-            candidate_score, candidate_details = _score_skill(run.provider, candidate_md, run.scenarios, run.evaluations)
+            candidate_score, candidate_details = _score_skill(run.provider, candidate_md, run.scenarios, run.evaluations, run=run, round_number=round_number, phase='candidate')
             kept = candidate_score > current_score
             AgentSkillIteration.objects.update_or_create(run=run, round_number=round_number, defaults={'status': 'kept' if kept else 'discarded', 'score_before': current_score,
                 'score_after': candidate_score, 'kept': kept, 'strategy': str(analysis.get('strategy', '')), 'diagnosis': str(analysis.get('diagnosis', '')),
@@ -342,6 +314,22 @@ def list_iterations(run_id: str) -> list[dict]:
     return [{'id': str(item.id), 'round_number': item.round_number, 'status': item.status, 'score_before': item.score_before, 'score_after': item.score_after,
              'kept': item.kept, 'strategy': item.strategy, 'diagnosis': item.diagnosis, 'description': item.description,
              'evaluation_summary': item.evaluation_summary, 'sys_create_datetime': item.sys_create_datetime} for item in AgentSkillIteration.objects.filter(run_id=run_id, is_deleted=False)]
+
+
+def list_traces(run_id: str) -> list[dict]:
+    """按发生顺序返回调用轨迹，供工作台实时活动流轮询展示。"""
+    return [
+        {
+            'id': str(item.id), 'round_number': item.round_number, 'stage': item.stage,
+            'status': item.status,
+            # 已持久化的旧轨迹也在读取时修复，无需要求用户重跑历史任务。
+            'request_content': normalize_upstream_text(item.request_content),
+            'response_content': normalize_upstream_text(item.response_content),
+            'error_message': normalize_upstream_text(item.error_message),
+            'duration_ms': item.duration_ms, 'sys_create_datetime': item.sys_create_datetime,
+        }
+        for item in AgentSkillTrace.objects.filter(run_id=run_id, is_deleted=False)
+    ]
 
 
 def download_run(run_id: str) -> FileResponse:

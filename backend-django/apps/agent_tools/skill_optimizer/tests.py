@@ -1,6 +1,7 @@
 import io
+import json
 import zipfile
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.test import TestCase
 from ninja.errors import HttpError
@@ -8,9 +9,11 @@ from requests import Response
 
 from core.user.user_model import User
 
-from .crypto import credential_cipher
-from .models import AgentSkillProvider, AgentSkillRun
-from .services import _chat_completion, _safe_zip_entries, configure_run, download_run, upload_skill
+from ..providers.crypto import credential_cipher
+from ..providers.models import AgentSkillProvider
+from ..providers.services import normalize_upstream_text
+from .models import AgentSkillRun, AgentSkillTrace
+from .services import _chat_completion, _safe_zip_entries, configure_run, download_run, list_traces, upload_skill
 from .schemas import SkillOut
 
 
@@ -84,7 +87,7 @@ class SkillOptimizerServiceTests(TestCase):
         response.status_code = 200
         response.headers['Content-Type'] = 'text/html'
         response._content = b'<html>Not Found</html>'
-        with patch('apps.agent_tools.skill_optimizer.services.requests.post', return_value=response) as post:
+        with patch('apps.agent_tools.providers.services.requests.post', return_value=response) as post:
             with self.assertRaisesRegex(RuntimeError, '非 JSON 响应'):
                 _chat_completion(provider, [{'role': 'user', 'content': 'hello'}])
         self.assertEqual(post.call_args.args[0], 'https://example.com/v1/chat/completions')
@@ -99,7 +102,7 @@ class SkillOptimizerServiceTests(TestCase):
         response.status_code = 200
         response.headers['Content-Type'] = 'application/json'
         response._content = b'{"choices":[{"message":{"content":"OK"}}]}'
-        with patch('apps.agent_tools.skill_optimizer.services.requests.post', return_value=response) as post:
+        with patch('apps.agent_tools.providers.services.requests.post', return_value=response) as post:
             self.assertEqual(_chat_completion(provider, [{'role': 'user', 'content': 'hello'}]), 'OK')
         self.assertEqual(post.call_args.args[0], 'https://example.com/v1/chat/completions')
 
@@ -121,3 +124,113 @@ class SkillOptimizerServiceTests(TestCase):
             with self.assertRaisesRegex(HttpError, '生成评测配置失败') as context:
                 configure_run(self.user, str(run.id), payload, regenerate=True)
         self.assertEqual(context.exception.status_code, 502)
+
+    def test_chat_completion_persists_auditable_trace(self):
+        """运行中的模型调用应保存请求、响应、阶段与耗时，供前端活动流展示。"""
+        skill_data = upload_skill(self.user, 'trace.zip', make_skill_zip('# Trace'))
+        provider = AgentSkillProvider.objects.create(
+            name='trace-provider', base_url='https://example.com/v1', model='test',
+            api_key_encrypted=credential_cipher.encrypt('key'), sys_creator=self.user, sys_modifier=self.user,
+        )
+        from .models import AgentSkill
+        run = AgentSkillRun.objects.create(
+            skill=AgentSkill.objects.get(id=skill_data['id']), provider=provider, provider_snapshot={},
+            status='running', original_skill_md='# Trace', sys_creator=self.user, sys_modifier=self.user,
+        )
+        response = Response()
+        response.status_code = 200
+        response.headers['Content-Type'] = 'application/json'
+        response._content = b'{"choices":[{"message":{"content":"model reply"}}]}'
+        with patch('apps.agent_tools.providers.services.requests.post', return_value=response):
+            _chat_completion(
+                provider, [{'role': 'user', 'content': 'trace request'}], run=run,
+                stage='baseline_response', round_number=0,
+            )
+        trace = AgentSkillTrace.objects.get(run=run)
+        self.assertEqual(trace.status, 'completed')
+        self.assertEqual(trace.stage, 'baseline_response')
+        self.assertIn('trace request', trace.request_content)
+        self.assertEqual(trace.response_content, 'model reply')
+        self.assertGreaterEqual(trace.duration_ms, 0)
+
+    def test_chat_completion_streams_partial_response_into_trace(self):
+        """OpenAI 兼容 SSE 分块输出应在调用结束前持续写入可见轨迹。"""
+        skill_data = upload_skill(self.user, 'stream.zip', make_skill_zip('# Stream'))
+        provider = AgentSkillProvider.objects.create(
+            name='stream-provider', base_url='https://example.com/v1', model='test',
+            api_key_encrypted=credential_cipher.encrypt('key'), sys_creator=self.user, sys_modifier=self.user,
+        )
+        from .models import AgentSkill
+        run = AgentSkillRun.objects.create(
+            skill=AgentSkill.objects.get(id=skill_data['id']), provider=provider, provider_snapshot={},
+            status='running', original_skill_md='# Stream', sys_creator=self.user, sys_modifier=self.user,
+        )
+        response = MagicMock()
+        response.ok = True
+        response.headers = {'Content-Type': 'text/event-stream'}
+        response.iter_lines.return_value = [
+            'data: {"choices":[{"delta":{"content":"first "}}]}',
+            'data: {"choices":[{"delta":{"content":"chunk"}}]}',
+            'data: [DONE]',
+        ]
+        with patch('apps.agent_tools.providers.services.requests.post', return_value=response):
+            self.assertEqual(
+                _chat_completion(
+                    provider, [{'role': 'user', 'content': 'stream request'}], run=run,
+                    stage='baseline_response', round_number=0,
+                ),
+                'first chunk',
+            )
+        trace = AgentSkillTrace.objects.get(run=run)
+        self.assertEqual(trace.status, 'completed')
+        self.assertEqual(trace.response_content, 'first chunk')
+
+    def test_stream_decodes_utf8_bytes_and_repairs_known_mojibake(self):
+        """流式轨迹必须保留中文与弯引号，不能受上游错误 charset 影响。"""
+        skill_data = upload_skill(self.user, 'encoding.zip', make_skill_zip('# Encoding'))
+        provider = AgentSkillProvider.objects.create(
+            name='encoding-provider', base_url='https://example.com/v1', model='test',
+            api_key_encrypted=credential_cipher.encrypt('key'), sys_creator=self.user, sys_modifier=self.user,
+        )
+        from .models import AgentSkill
+        run = AgentSkillRun.objects.create(
+            skill=AgentSkill.objects.get(id=skill_data['id']), provider=provider, provider_snapshot={},
+            status='running', original_skill_md='# Encoding', sys_creator=self.user, sys_modifier=self.user,
+        )
+        expected = 'I’m making one change：需求设计'
+        response = MagicMock()
+        response.ok = True
+        response.headers = {'Content-Type': 'text/event-stream'}
+        payload = json.dumps({'choices': [{'delta': {'content': expected}}]}, ensure_ascii=False)
+        response.iter_lines.return_value = [f'data: {payload}'.encode('utf-8'), b'data: [DONE]']
+        with patch('apps.agent_tools.providers.services.requests.post', return_value=response):
+            self.assertEqual(
+                _chat_completion(
+                    provider, [{'role': 'user', 'content': 'encoding request'}], run=run,
+                    stage='baseline_response', round_number=0,
+                ),
+                expected,
+            )
+        doubly_mojibaked = expected.encode('utf-8').decode('latin-1').encode('utf-8').decode('latin-1')
+        self.assertEqual(normalize_upstream_text(doubly_mojibaked), expected)
+
+    def test_list_traces_repairs_existing_mojibake_without_data_migration(self):
+        """历史轨迹在读取时修复，避免要求用户重新运行已完成的任务。"""
+        skill_data = upload_skill(self.user, 'history.zip', make_skill_zip('# History'))
+        provider = AgentSkillProvider.objects.create(
+            name='history-provider', base_url='https://example.com/v1', model='test',
+            api_key_encrypted=credential_cipher.encrypt('key'), sys_creator=self.user, sys_modifier=self.user,
+        )
+        from .models import AgentSkill
+        run = AgentSkillRun.objects.create(
+            skill=AgentSkill.objects.get(id=skill_data['id']), provider=provider, provider_snapshot={},
+            status='completed', original_skill_md='# History', sys_creator=self.user, sys_modifier=self.user,
+        )
+        expected = 'I’m making one change：需求设计'
+        AgentSkillTrace.objects.create(
+            run=run,
+            response_content=expected.encode('utf-8').decode('latin-1').encode('utf-8').decode('latin-1'),
+            sys_creator=self.user,
+            sys_modifier=self.user,
+        )
+        self.assertEqual(list_traces(str(run.id))[0]['response_content'], expected)

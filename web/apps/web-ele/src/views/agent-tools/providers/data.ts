@@ -1,4 +1,4 @@
-import type { Provider } from '#/api/agent-tools/skill-optimizer';
+import type { Provider } from '#/api/agent-tools/providers';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
 export function useProviderColumns(): ZqTableGridOptions<Provider>['columns'] {

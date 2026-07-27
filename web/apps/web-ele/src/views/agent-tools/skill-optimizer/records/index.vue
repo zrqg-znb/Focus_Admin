@@ -44,7 +44,7 @@ const tags: Record<string, any> = {
 };
 </script>
 <template>
-  <Page title="优化记录" auto-content-height>
+  <Page auto-content-height>
     <AgentToolsPageShell class="h-full min-h-0">
       <Grid class="h-full">
         <template #cell-status="{ row }">

@@ -7,40 +7,14 @@ from . import services
 from .schemas import (
     IterationOut,
     PageOut,
-    ProviderIn,
-    ProviderOut,
-    ProviderTestOut,
     RunConfigIn,
     RunCreateIn,
     RunOut,
     SkillOut,
+    TraceOut,
 )
 
 router = Router(tags=['AgentTools-SkillOptimizer'], auth=GlobalAuth())
-
-
-@router.get('/providers', response=list[ProviderOut], summary='模型档案列表')
-def list_providers(request):
-    """返回当前用户可选择的模型档案，响应不会包含 API Key。"""
-    return services.list_providers(request.auth)
-
-
-@router.post('/providers', response=ProviderOut, summary='创建模型档案')
-def create_provider(request, payload: ProviderIn):
-    """创建当前用户自己的 OpenAI 兼容模型档案。"""
-    return services.save_provider(request.auth, payload)
-
-
-@router.put('/providers/{provider_id}', response=ProviderOut, summary='更新模型档案')
-def update_provider(request, provider_id: str, payload: ProviderIn):
-    """更新模型档案；空 API Key 会保留原加密凭证。"""
-    return services.save_provider(request.auth, payload, provider_id)
-
-
-@router.post('/providers/{provider_id}/test', response=ProviderTestOut, summary='测试模型档案')
-def test_provider(request, provider_id: str):
-    """发起最小模型请求以验证 Base URL、Key 与模型名称。"""
-    return services.test_provider(request.auth, provider_id)
 
 
 @router.get('/skills', response=PageOut, summary='技能包列表')
@@ -104,6 +78,12 @@ def cancel_run(request, run_id: str):
 def list_iterations(request, run_id: str):
     """读取基线和每轮单点改写的评分记录。"""
     return services.list_iterations(run_id)
+
+
+@router.get('/runs/{run_id}/traces', response=list[TraceOut], summary='优化调用过程')
+def list_traces(request, run_id: str):
+    """返回任务中每次模型调用的请求、回复、耗时和失败信息。"""
+    return services.list_traces(run_id)
 
 
 @router.get('/runs/{run_id}/download', summary='下载改进技能包')

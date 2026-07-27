@@ -1,9 +1,6 @@
 <script setup lang="ts">
 /* eslint-disable unicorn/empty-brace-spaces, vue/html-closing-bracket-newline, vue/multiline-html-element-content-newline */
-import type {
-  Provider,
-  ProviderPayload,
-} from '#/api/agent-tools/skill-optimizer';
+import type { Provider, ProviderPayload } from '#/api/agent-tools/providers';
 
 import { computed, onMounted, reactive, ref } from 'vue';
 
@@ -36,11 +33,11 @@ import {
   listProvidersApi,
   testProviderApi,
   updateProviderApi,
-} from '#/api/agent-tools/skill-optimizer';
+} from '#/api/agent-tools/providers';
 
-import AgentToolsPageShell from '../../components/agent-tools-page-shell.vue';
+import AgentToolsPageShell from '../components/agent-tools-page-shell.vue';
 
-defineOptions({ name: 'SkillOptimizerProviders' });
+defineOptions({ name: 'AgentToolsProviders' });
 const providers = ref<Provider[]>([]);
 const dialogVisible = ref(false);
 const editingId = ref('');
@@ -107,7 +104,7 @@ onMounted(load);
 </script>
 
 <template>
-  <Page title="模型配置" auto-content-height>
+  <Page auto-content-height>
     <AgentToolsPageShell class="model-page">
       <section class="model-hero">
         <div>

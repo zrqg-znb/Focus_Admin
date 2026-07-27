@@ -5,32 +5,6 @@ from ninja import Schema
 from pydantic import Field
 
 
-class ProviderIn(Schema):
-    name: str
-    base_url: str
-    model: str
-    api_key: str = ''
-    is_active: bool = True
-    description: str = ''
-
-
-class ProviderOut(Schema):
-    id: str
-    name: str
-    base_url: str
-    model: str
-    has_api_key: bool
-    is_active: bool
-    description: str
-    owner_name: str = ''
-    sys_create_datetime: datetime | None = None
-
-
-class ProviderTestOut(Schema):
-    ok: bool
-    message: str
-
-
 class SkillOut(Schema):
     id: str
     name: str
@@ -91,4 +65,16 @@ class IterationOut(Schema):
     diagnosis: str
     description: str
     evaluation_summary: list[dict]
+    sys_create_datetime: datetime | None = None
+
+
+class TraceOut(Schema):
+    id: str
+    round_number: int
+    stage: str
+    status: str
+    request_content: str
+    response_content: str
+    error_message: str
+    duration_ms: int
     sys_create_datetime: datetime | None = None

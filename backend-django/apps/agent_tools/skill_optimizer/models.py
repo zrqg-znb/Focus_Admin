@@ -1,23 +1,7 @@
 from django.db import models
 
 from common.fu_model import RootModel
-from core.user.user_model import User
-
-
-class AgentSkillProvider(RootModel):
-    """管理员维护的 OpenAI 兼容模型服务档案。"""
-
-    name = models.CharField(max_length=100, unique=True, verbose_name='档案名称')
-    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='tools_agent_skill_providers', null=True, blank=True, verbose_name='所属用户')
-    base_url = models.URLField(max_length=500, verbose_name='API Base URL')
-    model = models.CharField(max_length=200, verbose_name='模型名称')
-    api_key_encrypted = models.TextField(blank=True, default='', verbose_name='加密 API Key')
-    is_active = models.BooleanField(default=True, db_index=True, verbose_name='是否启用')
-    description = models.TextField(blank=True, default='', verbose_name='说明')
-
-    class Meta:
-        db_table = 'tools_skill_optimizer_provider'
-        ordering = ['is_deleted', '-is_active', 'name']
+from ..providers.models import AgentSkillProvider
 
 
 class AgentSkill(RootModel):
@@ -83,3 +67,21 @@ class AgentSkillIteration(RootModel):
         db_table = 'tools_skill_optimizer_iteration'
         unique_together = ('run', 'round_number')
         ordering = ['round_number']
+
+
+class AgentSkillTrace(RootModel):
+    """一次模型调用的可审计过程记录，不保存任何认证凭证。"""
+
+    run = models.ForeignKey(AgentSkillRun, on_delete=models.CASCADE, related_name='traces', verbose_name='优化任务')
+    round_number = models.PositiveSmallIntegerField(default=0, verbose_name='轮次')
+    stage = models.CharField(max_length=50, db_index=True, verbose_name='调用阶段')
+    status = models.CharField(max_length=20, default='running', db_index=True, verbose_name='调用状态')
+    request_content = models.TextField(blank=True, default='', verbose_name='请求内容')
+    response_content = models.TextField(blank=True, default='', verbose_name='响应内容')
+    error_message = models.TextField(blank=True, default='', verbose_name='失败信息')
+    duration_ms = models.PositiveIntegerField(default=0, verbose_name='耗时毫秒')
+
+    class Meta:
+        db_table = 'tools_skill_optimizer_trace'
+        ordering = ['sys_create_datetime']
+        indexes = [models.Index(fields=['run', 'sys_create_datetime'])]
