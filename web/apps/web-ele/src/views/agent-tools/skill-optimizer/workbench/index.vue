@@ -71,6 +71,7 @@ import AgentToolsPageShell from '../../components/agent-tools-page-shell.vue';
 defineOptions({ name: 'SkillOptimizerWorkbench' });
 
 const POLL_INTERVAL_MS = 1200;
+const QUEUE_DELAY_WARNING_SECONDS = 60;
 const route = useRoute();
 const providers = ref<Provider[]>([]);
 const skills = ref<Skill[]>([]);
@@ -81,6 +82,7 @@ const selectedSkillId = ref('');
 const selectedProviderId = ref('');
 const selectedTraceId = ref('');
 const traceOutputRef = ref<HTMLElement>();
+const lastRunRefreshAt = ref(Date.now());
 const maxRounds = ref(5);
 const uploading = ref(false);
 const working = ref(false);
@@ -104,6 +106,28 @@ const progress = computed(() => {
       Math.max(currentRun.value.max_rounds + 1, 1),
     95,
   );
+});
+const queuedWaitSeconds = computed(() => {
+  if (currentRun.value?.status !== 'queued') return 0;
+  const queuedAt = Date.parse(
+    currentRun.value.queued_at || currentRun.value.sys_create_datetime || '',
+  );
+  if (Number.isNaN(queuedAt)) return 0;
+  return Math.max(0, Math.floor((lastRunRefreshAt.value - queuedAt) / 1000));
+});
+const hasQueueDelay = computed(
+  () => queuedWaitSeconds.value >= QUEUE_DELAY_WARNING_SECONDS,
+);
+const runStatusMessage = computed(() => {
+  if (!currentRun.value) return '';
+  if (currentRun.value.error_message) return currentRun.value.error_message;
+  if (hasQueueDelay.value) {
+    return `已排队 ${queuedWaitSeconds.value} 秒，Worker 尚未消费任务；请检查 Celery 是否订阅 skill_optimizer 队列。`;
+  }
+  if (isTerminal.value) return '任务已结束';
+  return currentRun.value.status === 'queued'
+    ? '任务已投递，正在等待 Worker 消费'
+    : '模型调用实时更新中';
 });
 const selectedTrace = computed(
   () =>
@@ -170,6 +194,7 @@ async function loadOptions() {
 async function refreshRun() {
   if (!currentRun.value) return;
   currentRun.value = await getRunApi(currentRun.value.id);
+  lastRunRefreshAt.value = Date.now();
   scenarios.value = currentRun.value.scenarios || [];
   evaluations.value = currentRun.value.evaluations || [];
   const [nextIterations, nextTraces] = await Promise.all([
@@ -635,11 +660,8 @@ onBeforeUnmount(() => {
                 >
                   {{ currentRun.status }}
                 </ElTag>
-                <small>
-                  {{
-                    currentRun.error_message ||
-                    (isTerminal ? '任务已结束' : '模型调用实时更新中')
-                  }}
+                <small :class="{ 'queue-delay': hasQueueDelay }">
+                  {{ runStatusMessage }}
                 </small>
               </div>
             </section>
@@ -698,7 +720,11 @@ onBeforeUnmount(() => {
                   </small>
                 </button>
                 <p v-if="traces.length === 0" class="trace-empty">
-                  正在等待模型调用...
+                  {{
+                    hasQueueDelay
+                      ? '任务持续排队，等待 Worker 消费 skill_optimizer 队列。'
+                      : '正在等待模型调用...'
+                  }}
                 </p>
               </aside>
 
@@ -1228,6 +1254,9 @@ onBeforeUnmount(() => {
   color: var(--el-text-color-secondary);
   font-size: 12px;
   line-height: 1.5;
+}
+.run-state small.queue-delay {
+  color: var(--el-color-warning);
 }
 .run-content :deep(.el-progress) {
   margin-top: 15px;

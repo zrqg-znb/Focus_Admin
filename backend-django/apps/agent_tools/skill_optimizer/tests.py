@@ -13,7 +13,7 @@ from ..providers.crypto import credential_cipher
 from ..providers.models import AgentSkillProvider
 from ..providers.services import normalize_upstream_text
 from .models import AgentSkillRun, AgentSkillTrace
-from .services import _chat_completion, _safe_zip_entries, configure_run, download_run, list_traces, upload_skill
+from .services import _chat_completion, _safe_zip_entries, configure_run, download_run, list_traces, start_run, upload_skill
 from .schemas import SkillOut
 
 
@@ -76,6 +76,28 @@ class SkillOptimizerServiceTests(TestCase):
         archive = zipfile.ZipFile(io.BytesIO(b''.join(response.streaming_content)))
         self.assertEqual(archive.read('demo/SKILL.md').decode(), '---\nname: demo\n---\n# Improved')
         self.assertEqual(archive.read('demo/assets/logo.bin'), b'asset')
+
+    def test_start_run_records_the_actual_queue_entry_time(self):
+        """进度告警必须以投递时间为准，而不是用户最初创建草稿的时间。"""
+        skill_data = upload_skill(self.user, 'queued.zip', make_skill_zip('# Queue'))
+        provider = AgentSkillProvider.objects.create(
+            name='queued-provider', base_url='https://example.com/v1', model='test',
+            api_key_encrypted=credential_cipher.encrypt('key'), sys_creator=self.user, sys_modifier=self.user,
+        )
+        from .models import AgentSkill
+        run = AgentSkillRun.objects.create(
+            skill=AgentSkill.objects.get(id=skill_data['id']), provider=provider, provider_snapshot={},
+            scenarios=[{'id': 1, 'name': 'case', 'input': 'hello'}],
+            evaluations=[{'id': 1, 'name': 'rule', 'question': 'ok?', 'pass_condition': 'yes'}],
+            status='draft', original_skill_md='# Queue', sys_creator=self.user, sys_modifier=self.user,
+        )
+        with patch('apps.agent_tools.tasks.dispatch_agent_skill_run', return_value=None) as dispatch:
+            response = start_run(self.user, str(run.id))
+        run.refresh_from_db()
+        self.assertEqual(response['status'], 'queued')
+        self.assertEqual(run.status, 'queued')
+        self.assertIsNotNone(run.queued_at)
+        dispatch.assert_called_once()
 
     def test_chat_completion_reports_non_json_provider_response(self):
         """网关 HTML 页面不能再被转换为不可读的 JSONDecodeError。"""

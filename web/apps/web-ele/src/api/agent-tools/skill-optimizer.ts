@@ -44,6 +44,7 @@ export interface SkillRun {
   improved_skill_md: string;
   error_message: string;
   cancel_requested: boolean;
+  queued_at?: string;
   started_at?: string;
   completed_at?: string;
   sys_creator_name: string;

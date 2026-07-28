@@ -207,6 +207,7 @@ def _serialize_run(run: AgentSkillRun) -> dict:
             'status': run.status, 'max_rounds': run.max_rounds, 'scenarios': run.scenarios, 'evaluations': run.evaluations,
             'baseline_score': run.baseline_score, 'final_score': run.final_score, 'original_skill_md': run.original_skill_md,
             'improved_skill_md': run.improved_skill_md, 'error_message': run.error_message, 'cancel_requested': run.cancel_requested,
+            'queued_at': run.queued_at,
             'started_at': run.started_at, 'completed_at': run.completed_at, 'sys_creator_name': _display_name(run.sys_creator), 'sys_create_datetime': run.sys_create_datetime}
 
 
@@ -224,13 +225,14 @@ def list_runs(page: int, page_size: int, status: str = '', provider_id: str = ''
 
 
 def start_run(user: User, run_id: str) -> dict:
-    """提交具备配置的任务到独立 Celery 队列。"""
+    """提交具备配置的任务到 Agent Tools 共用 Celery Worker 队列。"""
     from ..tasks import dispatch_agent_skill_run, run_agent_skill
     run = get_object_or_404(AgentSkillRun, id=run_id, is_deleted=False)
     if run.status not in ('draft', 'failed', 'cancelled') or not run.scenarios or not run.evaluations:
         raise HttpError(400, '请先完成场景和评估标准配置')
-    run.status, run.cancel_requested, run.error_message, run.sys_modifier = 'queued', False, '', user
-    run.save(update_fields=['status', 'cancel_requested', 'error_message', 'sys_modifier', 'sys_update_datetime'])
+    # 单独记录本次投递时间，前端据此识别无人消费导致的异常长时间排队。
+    run.status, run.cancel_requested, run.error_message, run.queued_at, run.sys_modifier = 'queued', False, '', timezone.now(), user
+    run.save(update_fields=['status', 'cancel_requested', 'error_message', 'queued_at', 'sys_modifier', 'sys_update_datetime'])
     error = dispatch_agent_skill_run(run_agent_skill, str(run.id))
     if error:
         run.status, run.error_message = 'failed', error

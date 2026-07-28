@@ -135,10 +135,10 @@ nohup env ZQ_ENV=dev ENABLE_SCHEDULER=false \
   --concurrency=2 --max-tasks-per-child=5 \
   > /srv/focus/Focus_Admin/backend-django/logs/celery-default-ip-http.log 2>&1 &
 
-# 4) DeepAudit worker
+# 4) DeepAudit 与 AI 辅助工具共用 worker
 nohup env ZQ_ENV=dev ENABLE_SCHEDULER=false \
   /srv/focus/venv/bin/python -m celery -A application worker \
-  -Q deepaudit -n focus-deepaudit@$(hostname -s) -l info \
+  -Q deepaudit,skill_optimizer -n focus-deepaudit@$(hostname -s) -l info \
   --concurrency=2 --prefetch-multiplier=1 --max-tasks-per-child=5 \
   > /srv/focus/Focus_Admin/backend-django/logs/celery-deepaudit-ip-http.log 2>&1 &
 

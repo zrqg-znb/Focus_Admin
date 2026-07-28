@@ -249,6 +249,7 @@ REDIS_DB=2
 REDIS_CELERY_DB=3
 REDIS_CHANNEL_DB=4
 DEEPAUDIT_QUEUE=deepaudit
+SKILL_OPTIMIZER_QUEUE=skill_optimizer
 
 # DeepAudit 默认 LLM / Embedding
 LLM_PROVIDER=openai
@@ -298,6 +299,7 @@ REDIS_DB=5
 REDIS_CELERY_DB=6
 REDIS_CHANNEL_DB=7
 DEEPAUDIT_QUEUE=deepaudit
+SKILL_OPTIMIZER_QUEUE=skill_optimizer
 
 # DeepAudit 默认 LLM / Embedding
 LLM_PROVIDER=openai
@@ -532,14 +534,14 @@ nohup env ENABLE_SCHEDULER=false \
 echo $! > run/celery-default-prod.pid
 ```
 
-#### 正式 celery-deepaudit
+#### 正式 celery-deepaudit（同时消费 AI 辅助工具队列）
 
 ```bash
 cd /srv/focus-prod/Focus_Admin/backend-django
 source /srv/focus-prod/venv/bin/activate
 nohup env ENABLE_SCHEDULER=false \
   /srv/focus-prod/venv/bin/python -m celery -A application worker \
-  -Q deepaudit \
+  -Q deepaudit,skill_optimizer \
   -n focus-prod-deepaudit@%h \
   -l info \
   --concurrency=2 \
@@ -600,7 +602,7 @@ cd /srv/focus-test/Focus_Admin/backend-django
 source /srv/focus-test/venv/bin/activate
 nohup env ENABLE_SCHEDULER=false \
   /srv/focus-test/venv/bin/python -m celery -A application worker \
-  -Q deepaudit \
+  -Q deepaudit,skill_optimizer \
   -n focus-test-deepaudit@%h \
   -l info \
   --concurrency=2 \
@@ -757,7 +759,7 @@ WantedBy=multi-user.target
 
 ```ini
 [Unit]
-Description=Focus Prod Celery Worker (DeepAudit queue)
+Description=Focus Prod Celery Worker (DeepAudit and Agent Tools queues)
 After=network.target redis.service focus-prod-backend.service
 Requires=redis.service
 
@@ -769,7 +771,7 @@ WorkingDirectory=/srv/focus-prod/Focus_Admin/backend-django
 EnvironmentFile=/srv/focus-prod/Focus_Admin/backend-django/.env
 Environment=PATH=/srv/focus-prod/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 Environment=ENABLE_SCHEDULER=false
-ExecStart=/srv/focus-prod/venv/bin/python -m celery -A application worker -Q deepaudit -n focus-prod-deepaudit@%%h -l info --concurrency=2 --prefetch-multiplier=1 --max-tasks-per-child=5
+ExecStart=/srv/focus-prod/venv/bin/python -m celery -A application worker -Q deepaudit,skill_optimizer -n focus-prod-deepaudit@%%h -l info --concurrency=2 --prefetch-multiplier=1 --max-tasks-per-child=5
 Restart=always
 RestartSec=5
 
@@ -855,7 +857,7 @@ WantedBy=multi-user.target
 
 ```ini
 [Unit]
-Description=Focus Test Celery Worker (DeepAudit queue)
+Description=Focus Test Celery Worker (DeepAudit and Agent Tools queues)
 After=network.target redis.service focus-test-backend.service
 Requires=redis.service
 
@@ -867,7 +869,7 @@ WorkingDirectory=/srv/focus-test/Focus_Admin/backend-django
 EnvironmentFile=/srv/focus-test/Focus_Admin/backend-django/.env
 Environment=PATH=/srv/focus-test/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 Environment=ENABLE_SCHEDULER=false
-ExecStart=/srv/focus-test/venv/bin/python -m celery -A application worker -Q deepaudit -n focus-test-deepaudit@%%h -l info --concurrency=2 --prefetch-multiplier=1 --max-tasks-per-child=5
+ExecStart=/srv/focus-test/venv/bin/python -m celery -A application worker -Q deepaudit,skill_optimizer -n focus-test-deepaudit@%%h -l info --concurrency=2 --prefetch-multiplier=1 --max-tasks-per-child=5
 Restart=always
 RestartSec=5
 
@@ -928,6 +930,11 @@ sudo systemctl restart focus-test-scheduler
 
 sudo systemctl status focus-prod-backend focus-prod-celery-default focus-prod-celery-deepaudit focus-prod-scheduler
 sudo systemctl status focus-test-backend focus-test-celery-default focus-test-celery-deepaudit focus-test-scheduler
+
+# 输出中必须同时包含 deepaudit 与 skill_optimizer
+cd /srv/focus-prod/Focus_Admin/backend-django
+source /srv/focus-prod/venv/bin/activate
+celery -A application inspect active_queues
 ```
 
 日志查看：

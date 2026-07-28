@@ -40,6 +40,7 @@ class AgentSkillRun(RootModel):
     improved_skill_md = models.TextField(blank=True, default='', verbose_name='优化后 SKILL.md')
     error_message = models.TextField(blank=True, default='', verbose_name='失败信息')
     cancel_requested = models.BooleanField(default=False, verbose_name='请求取消')
+    queued_at = models.DateTimeField(null=True, blank=True, verbose_name='进入队列时间')
     started_at = models.DateTimeField(null=True, blank=True, verbose_name='开始时间')
     completed_at = models.DateTimeField(null=True, blank=True, verbose_name='完成时间')
 

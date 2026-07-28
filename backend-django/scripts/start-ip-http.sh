@@ -11,6 +11,9 @@ ENABLE_SCHEDULER="${ENABLE_SCHEDULER:-false}"
 UVICORN_HOST="${UVICORN_HOST:-127.0.0.1}"
 UVICORN_PORT="${UVICORN_PORT:-8001}"
 UVICORN_WORKERS="${UVICORN_WORKERS:-1}"
+DEEPAUDIT_QUEUE="${DEEPAUDIT_QUEUE:-deepaudit}"
+SKILL_OPTIMIZER_QUEUE="${SKILL_OPTIMIZER_QUEUE:-skill_optimizer}"
+CELERY_WORKER_QUEUES="${CELERY_WORKER_QUEUES:-${DEEPAUDIT_QUEUE},${SKILL_OPTIMIZER_QUEUE}}"
 
 HOST_TAG="$(hostname -s 2>/dev/null || hostname || echo local)"
 HOST_TAG="${HOST_TAG//[^A-Za-z0-9._-]/-}"
@@ -47,6 +50,9 @@ usage() {
   UVICORN_HOST=127.0.0.1
   UVICORN_PORT=8001
   UVICORN_WORKERS=1
+  DEEPAUDIT_QUEUE=deepaudit
+  SKILL_OPTIMIZER_QUEUE=skill_optimizer
+  CELERY_WORKER_QUEUES=deepaudit,skill_optimizer
 EOF
 }
 
@@ -145,12 +151,13 @@ start_default_worker() {
 }
 
 start_deepaudit_worker() {
+  echo "启动 DeepAudit 与 AI 辅助工具共用 Worker: QUEUES=$CELERY_WORKER_QUEUES"
   run_nohup \
     "$DEEPAUDIT_WORKER_PID_FILE" \
     "$DEEPAUDIT_WORKER_LOG_FILE" \
-    env ZQ_ENV="$ZQ_ENV" ENABLE_SCHEDULER="$ENABLE_SCHEDULER" \
+    env ZQ_ENV="$ZQ_ENV" ENABLE_SCHEDULER="$ENABLE_SCHEDULER" DEEPAUDIT_QUEUE="$DEEPAUDIT_QUEUE" SKILL_OPTIMIZER_QUEUE="$SKILL_OPTIMIZER_QUEUE" \
     "$PYTHON_BIN" -m celery -A application worker \
-    -Q deepaudit \
+    -Q "$CELERY_WORKER_QUEUES" \
     -n "focus-deepaudit@${HOST_TAG}" \
     -l info \
     --concurrency=2 \
@@ -169,14 +176,14 @@ start_scheduler() {
 stop_all() {
   stop_one "backend" "$BACKEND_PID_FILE"
   stop_one "default worker" "$DEFAULT_WORKER_PID_FILE"
-  stop_one "deepaudit worker" "$DEEPAUDIT_WORKER_PID_FILE"
+  stop_one "deepaudit / agent-tools worker" "$DEEPAUDIT_WORKER_PID_FILE"
   stop_one "scheduler" "$SCHEDULER_PID_FILE"
 }
 
 status_all() {
   status_one "backend" "$BACKEND_PID_FILE"
   status_one "default worker" "$DEFAULT_WORKER_PID_FILE"
-  status_one "deepaudit worker" "$DEEPAUDIT_WORKER_PID_FILE"
+  status_one "deepaudit / agent-tools worker" "$DEEPAUDIT_WORKER_PID_FILE"
   status_one "scheduler" "$SCHEDULER_PID_FILE"
 }
 

@@ -48,6 +48,7 @@ class RunOut(Schema):
     improved_skill_md: str
     error_message: str
     cancel_requested: bool
+    queued_at: datetime | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
     sys_creator_name: str = ''

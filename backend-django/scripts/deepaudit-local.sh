@@ -54,6 +54,12 @@ resolve_python_bin() {
 PYTHON_BIN="$(resolve_python_bin)"
 RUNSERVER_ADDR="${RUNSERVER_ADDR:-0.0.0.0:8001}"
 DEEPAUDIT_QUEUE="${DEEPAUDIT_QUEUE:-deepaudit}"
+SKILL_OPTIMIZER_QUEUE="${SKILL_OPTIMIZER_QUEUE:-skill_optimizer}"
+DEFAULT_CELERY_WORKER_QUEUES="$DEEPAUDIT_QUEUE"
+if [[ "$SKILL_OPTIMIZER_QUEUE" != "$DEEPAUDIT_QUEUE" ]]; then
+  DEFAULT_CELERY_WORKER_QUEUES+=",$SKILL_OPTIMIZER_QUEUE"
+fi
+CELERY_WORKER_QUEUES="${CELERY_WORKER_QUEUES:-$DEFAULT_CELERY_WORKER_QUEUES}"
 REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 REDIS_PASSWORD="${REDIS_PASSWORD:-}"
@@ -94,10 +100,10 @@ print_usage() {
 用法:
   bash scripts/deepaudit-local.sh check   # 检查 DeepAudit 本地依赖与配置
   bash scripts/deepaudit-local.sh redis   # 确保本地 Redis 可用
-  bash scripts/deepaudit-local.sh worker  # 启动 DeepAudit Celery Worker
-  bash scripts/deepaudit-local.sh stop    # 停止 DeepAudit Celery Worker
-  bash scripts/deepaudit-local.sh restart # 重启 DeepAudit Celery Worker
-  bash scripts/deepaudit-local.sh status  # 查看 DeepAudit Celery Worker 状态
+  bash scripts/deepaudit-local.sh worker  # 启动 Focus Celery Worker
+  bash scripts/deepaudit-local.sh stop    # 停止 Focus Celery Worker
+  bash scripts/deepaudit-local.sh restart # 重启 Focus Celery Worker
+  bash scripts/deepaudit-local.sh status  # 查看 Focus Celery Worker 状态
   bash scripts/deepaudit-local.sh server  # 启动 Django ASGI 服务器
   bash scripts/deepaudit-local.sh all     # 自动拉起 Redis + Worker，并在前台启动 Django ASGI 服务器
 
@@ -107,6 +113,8 @@ print_usage() {
   REDIS_PORT=6379
   REDIS_PASSWORD=
   DEEPAUDIT_QUEUE=deepaudit
+  SKILL_OPTIMIZER_QUEUE=skill_optimizer
+  CELERY_WORKER_QUEUES=deepaudit,skill_optimizer
   RUNSERVER_ADDR=0.0.0.0:8001
   WORKER_NAME=focus-local-deepaudit@your-host
   DEEPAUDIT_LOG_LEVEL=DEBUG
@@ -138,7 +146,7 @@ ensure_no_duplicate_worker() {
   local pid
   pid="$(read_worker_pid)"
   if [[ -n "$pid" ]] && worker_process_alive "$pid"; then
-    echo "DeepAudit Worker 已在运行: PID=$pid NAME=$WORKER_NAME QUEUE=$DEEPAUDIT_QUEUE"
+    echo "Focus Worker 已在运行: PID=$pid NAME=$WORKER_NAME QUEUES=$CELERY_WORKER_QUEUES"
     return 1
   fi
   return 0
@@ -149,7 +157,7 @@ ensure_fresh_worker_for_local_mode() {
   local pid
   pid="$(read_worker_pid)"
   if [[ -n "$pid" ]] && worker_process_alive "$pid"; then
-    echo "检测到已有 DeepAudit Worker，执行 fresh start: PID=$pid NAME=$WORKER_NAME"
+    echo "检测到已有 Focus Worker，执行 fresh start: PID=$pid NAME=$WORKER_NAME"
     run_stop
   fi
 }
@@ -179,10 +187,10 @@ reset_worker_log_file() {
 write_worker_log_banner() {
   local started_at
   started_at="$(date '+%Y-%m-%d %H:%M:%S')"
-  printf '[%s][launcher] fresh start worker=%s queue=%s celery_log_level=%s deepaudit_log_level=%s\n' \
+  printf '[%s][launcher] fresh start worker=%s queues=%s celery_log_level=%s deepaudit_log_level=%s\n' \
     "$started_at" \
     "$WORKER_NAME" \
-    "$DEEPAUDIT_QUEUE" \
+    "$CELERY_WORKER_QUEUES" \
     "$CELERY_LOG_LEVEL" \
     "$DEEPAUDIT_LOG_LEVEL" >>"$WORKER_LOG_FILE"
 }
@@ -195,7 +203,7 @@ print_log_destinations() {
 }
 
 print_worker_launch_context() {
-  echo "Worker fresh start: queue=$DEEPAUDIT_QUEUE name=$WORKER_NAME celery_log_level=$CELERY_LOG_LEVEL deepaudit_log_level=$DEEPAUDIT_LOG_LEVEL"
+  echo "Worker fresh start: queues=$CELERY_WORKER_QUEUES name=$WORKER_NAME celery_log_level=$CELERY_LOG_LEVEL deepaudit_log_level=$DEEPAUDIT_LOG_LEVEL"
 }
 
 check_python_deps() {
@@ -212,7 +220,9 @@ PY
 }
 
 check_django_settings() {
-  DJANGO_SETTINGS_MODULE=application.settings "$PYTHON_BIN" - <<'PY'
+  CELERY_WORKER_QUEUES="$CELERY_WORKER_QUEUES" DJANGO_SETTINGS_MODULE=application.settings "$PYTHON_BIN" - <<'PY'
+import os
+
 import django
 django.setup()
 from django.conf import settings
@@ -221,6 +231,8 @@ print(f'CELERY_BROKER_URL={settings.CELERY_BROKER_URL}')
 print(f'CHANNEL_LAYER_BACKEND={settings.CHANNEL_LAYERS["default"]["BACKEND"]}')
 print(f'CHANNEL_LAYER_HOSTS={settings.CHANNEL_LAYERS["default"]["CONFIG"]["hosts"]}')
 print(f'DEEPAUDIT_QUEUE={getattr(settings, "DEEPAUDIT_QUEUE", "deepaudit")}')
+print(f'SKILL_OPTIMIZER_QUEUE={getattr(settings, "SKILL_OPTIMIZER_QUEUE", "skill_optimizer")}')
+print(f'CELERY_WORKER_QUEUES={os.environ.get("CELERY_WORKER_QUEUES", "deepaudit,skill_optimizer")}')
 print(f'DEEPAUDIT_LOG_LEVEL={getattr(settings, "DEEPAUDIT_LOG_LEVEL", "INFO")}')
 PY
 }
@@ -309,7 +321,7 @@ run_worker() {
     DEEPAUDIT_LOG_FILE="$WORKER_LOG_FILE" \
     CELERY_LOG_LEVEL="$CELERY_LOG_LEVEL" \
     PYTHONUNBUFFERED=1 \
-    "$PYTHON_BIN" -u -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l "$CELERY_LOG_LEVEL" >>"$WORKER_LOG_FILE" 2>&1
+    "$PYTHON_BIN" -u -m celery -A application worker -Q "$CELERY_WORKER_QUEUES" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l "$CELERY_LOG_LEVEL" --prefetch-multiplier=1 >>"$WORKER_LOG_FILE" 2>&1
 }
 
 run_stop() {
@@ -317,15 +329,15 @@ run_stop() {
   local pid
   pid="$(read_worker_pid)"
   if [[ -z "$pid" ]]; then
-    echo "DeepAudit Worker 未运行。"
+    echo "Focus Worker 未运行。"
     return 0
   fi
-  echo "停止 DeepAudit Worker: PID=$pid NAME=$WORKER_NAME"
+  echo "停止 Focus Worker: PID=$pid NAME=$WORKER_NAME"
   kill "$pid" >/dev/null 2>&1 || true
   for _ in {1..10}; do
     if ! worker_process_alive "$pid"; then
       rm -f "$WORKER_PID_FILE"
-      echo "DeepAudit Worker 已停止。"
+      echo "Focus Worker 已停止。"
       return 0
     fi
     sleep 1
@@ -340,11 +352,11 @@ run_status() {
   local pid
   pid="$(read_worker_pid)"
   if [[ -n "$pid" ]] && worker_process_alive "$pid"; then
-    echo "DeepAudit Worker 运行中: PID=$pid NAME=$WORKER_NAME QUEUE=$DEEPAUDIT_QUEUE"
+    echo "Focus Worker 运行中: PID=$pid NAME=$WORKER_NAME QUEUES=$CELERY_WORKER_QUEUES"
     print_log_destinations
     return 0
   fi
-  echo "DeepAudit Worker 未运行。"
+  echo "Focus Worker 未运行。"
 }
 
 run_restart() {
@@ -367,9 +379,9 @@ run_background_worker() {
     DEEPAUDIT_LOG_FILE="$WORKER_LOG_FILE" \
     CELERY_LOG_LEVEL="$CELERY_LOG_LEVEL" \
     PYTHONUNBUFFERED=1 \
-    "$PYTHON_BIN" -u -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l "$CELERY_LOG_LEVEL" >>"$WORKER_LOG_FILE" 2>&1 < /dev/null &
+    "$PYTHON_BIN" -u -m celery -A application worker -Q "$CELERY_WORKER_QUEUES" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l "$CELERY_LOG_LEVEL" --prefetch-multiplier=1 >>"$WORKER_LOG_FILE" 2>&1 < /dev/null &
   local celery_pid=$!
-  printf 'DeepAudit Celery Worker 已启动，PID=%s，NAME=%s\n' "$celery_pid" "$WORKER_NAME"
+  printf 'Focus Celery Worker 已启动，PID=%s，NAME=%s，QUEUES=%s\n' "$celery_pid" "$WORKER_NAME" "$CELERY_WORKER_QUEUES"
 }
 
 run_server() {
@@ -402,9 +414,9 @@ run_all() {
     DEEPAUDIT_LOG_FILE="$WORKER_LOG_FILE" \
     CELERY_LOG_LEVEL="$CELERY_LOG_LEVEL" \
     PYTHONUNBUFFERED=1 \
-    "$PYTHON_BIN" -u -m celery -A application worker -Q "$DEEPAUDIT_QUEUE" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l "$CELERY_LOG_LEVEL" >>"$WORKER_LOG_FILE" 2>&1 < /dev/null &
+    "$PYTHON_BIN" -u -m celery -A application worker -Q "$CELERY_WORKER_QUEUES" -n "$WORKER_NAME" --pidfile "$WORKER_PID_FILE" -l "$CELERY_LOG_LEVEL" --prefetch-multiplier=1 >>"$WORKER_LOG_FILE" 2>&1 < /dev/null &
   celery_pid=$!
-  printf 'DeepAudit Celery Worker 已启动，PID=%s，NAME=%s\n' "$celery_pid" "$WORKER_NAME"
+  printf 'Focus Celery Worker 已启动，PID=%s，NAME=%s，QUEUES=%s\n' "$celery_pid" "$WORKER_NAME" "$CELERY_WORKER_QUEUES"
   trap cleanup EXIT INT TERM
 
   start_uvicorn_server

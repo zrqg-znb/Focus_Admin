@@ -37,6 +37,7 @@ REDIS_DB=2
 REDIS_CELERY_DB=3
 REDIS_CHANNEL_DB=4
 DEEPAUDIT_QUEUE=deepaudit
+SKILL_OPTIMIZER_QUEUE=skill_optimizer
 
 # DeepAudit 全局默认 LLM（给未单独配置用户做回退）
 LLM_PROVIDER=openai
@@ -93,7 +94,7 @@ DATA_GYM_CACHE_DIR=/srv/focus-test/tiktoken-cache
 
 ## 2. Celery Worker 启动参数检查
 
-DeepAudit Worker 推荐单独消费专用队列。双环境 service 名称分别是：
+DeepAudit 与 AI 辅助工具共用同一 Worker，并同时消费两个专用队列。双环境 service 名称分别是：
 
 - 正式：`focus-prod-celery-deepaudit.service`
 - 测试：`focus-test-celery-deepaudit.service`
@@ -102,7 +103,7 @@ DeepAudit Worker 推荐单独消费专用队列。双环境 service 名称分别
 
 ```ini
 [Unit]
-Description=Focus Prod Celery Worker (DeepAudit queue)
+Description=Focus Prod Celery Worker (DeepAudit and Agent Tools queues)
 After=network.target redis.service focus-prod-backend.service
 Requires=redis.service
 
@@ -114,7 +115,7 @@ WorkingDirectory=/srv/focus-prod/Focus_Admin/backend-django
 EnvironmentFile=/srv/focus-prod/Focus_Admin/backend-django/.env
 Environment=PATH=/srv/focus-prod/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 Environment=ENABLE_SCHEDULER=false
-ExecStart=/srv/focus-prod/venv/bin/python -m celery -A application worker -Q deepaudit -n focus-prod-deepaudit@%%h -l info --concurrency=2 --prefetch-multiplier=1 --max-tasks-per-child=5
+ExecStart=/srv/focus-prod/venv/bin/python -m celery -A application worker -Q deepaudit,skill_optimizer -n focus-prod-deepaudit@%%h -l info --concurrency=2 --prefetch-multiplier=1 --max-tasks-per-child=5
 Restart=always
 RestartSec=5
 
@@ -126,11 +127,17 @@ WantedBy=multi-user.target
 
 推荐检查项：
 
-- `-Q deepaudit` 必须和 `.env` 里的 `DEEPAUDIT_QUEUE=deepaudit` 一致。
+- `-Q deepaudit,skill_optimizer` 必须同时覆盖 `.env` 里的 `DEEPAUDIT_QUEUE=deepaudit` 和 `SKILL_OPTIMIZER_QUEUE=skill_optimizer`。
 - `EnvironmentFile` 必须和 Django Web 进程使用同一份 `.env`。
 - `--prefetch-multiplier=1` 可减少单 Worker 抢太多重任务。
 - `--max-tasks-per-child=5` 可缓解长时间运行后的内存与连接残留。
 - 如果首 Token 很慢，先不要把 `--concurrency` 调太高，建议从 `2` 开始。
+
+重启 Worker 后，在同一虚拟环境内执行以下命令，输出中应同时出现 `deepaudit` 和 `skill_optimizer`：
+
+```bash
+celery -A application inspect active_queues
+```
 
 ## 3. tiktoken 缓存预热
 
