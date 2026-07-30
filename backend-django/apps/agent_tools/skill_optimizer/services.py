@@ -77,6 +77,11 @@ def _update_trace_stream(trace: AgentSkillTrace | None, started_at: float, respo
     trace.save(update_fields=['response_content', 'duration_ms', 'sys_update_datetime'])
 
 
+def _update_trace_retry(trace: AgentSkillTrace | None, started_at: float, message: str) -> None:
+    """把模型服务恢复等待写入活动流，避免用户误以为优化任务已经停止。"""
+    _update_trace_stream(trace, started_at, f'[正在等待模型服务恢复]\n{message}')
+
+
 def _chat_completion(provider: AgentSkillProvider, messages: list[dict], temperature: float = 0.2, *, run: AgentSkillRun | None = None, stage: str = '', round_number: int = 0) -> str:
     """为 Skill Optimizer 调用平台模型服务并持久化本次运行轨迹。"""
     trace = _start_trace(run, stage, round_number, messages)
@@ -87,6 +92,7 @@ def _chat_completion(provider: AgentSkillProvider, messages: list[dict], tempera
             messages,
             temperature,
             on_stream_update=(lambda response: _update_trace_stream(trace, started_at, response)) if trace else None,
+            on_retry=(lambda message: _update_trace_retry(trace, started_at, message)) if trace else None,
         )
     except Exception as exc:
         _finish_trace(trace, started_at, error_message=str(exc))

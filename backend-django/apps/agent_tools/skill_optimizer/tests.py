@@ -3,7 +3,7 @@ import json
 import zipfile
 from unittest.mock import MagicMock, patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from ninja.errors import HttpError
 from requests import Response
 
@@ -11,7 +11,8 @@ from core.user.user_model import User
 
 from ..providers.crypto import credential_cipher
 from ..providers.models import AgentSkillProvider
-from ..providers.services import normalize_upstream_text
+from ..providers import services as provider_services
+from ..providers.services import chat_completion, normalize_upstream_text
 from .models import AgentSkillRun, AgentSkillTrace
 from .services import _chat_completion, _safe_zip_entries, configure_run, download_run, list_traces, start_run, upload_skill
 from .schemas import SkillOut
@@ -127,6 +128,87 @@ class SkillOptimizerServiceTests(TestCase):
         with patch('apps.agent_tools.providers.services.requests.post', return_value=response) as post:
             self.assertEqual(_chat_completion(provider, [{'role': 'user', 'content': 'hello'}]), 'OK')
         self.assertEqual(post.call_args.args[0], 'https://example.com/v1/chat/completions')
+
+    @override_settings(
+        AGENT_TOOLS_MODEL_RECOVERY_TIMEOUT_SECONDS=300,
+        AGENT_TOOLS_MODEL_RETRY_INITIAL_DELAY_SECONDS=1,
+        AGENT_TOOLS_MODEL_RETRY_MAX_DELAY_SECONDS=1,
+    )
+    def test_chat_completion_retries_503_and_reports_recovery_progress(self):
+        """内网模型短暂 503 后应继续同一请求，并向活动流报告恢复等待。"""
+        provider = AgentSkillProvider.objects.create(
+            name='recoverable-503-provider', base_url='https://example.com/v1', model='test',
+            api_key_encrypted=credential_cipher.encrypt('key'), sys_creator=self.user, sys_modifier=self.user,
+        )
+        unavailable = Response()
+        unavailable.status_code = 503
+        unavailable.headers['Retry-After'] = '1'
+        unavailable._content = b'service unavailable'
+        success = Response()
+        success.status_code = 200
+        success.headers['Content-Type'] = 'application/json'
+        success._content = b'{"choices":[{"message":{"content":"Recovered"}}]}'
+        retry_messages: list[str] = []
+        with (
+            patch('apps.agent_tools.providers.services.requests.post', side_effect=[unavailable, success]) as post,
+            patch('apps.agent_tools.providers.services.sleep') as sleep_mock,
+        ):
+            content = chat_completion(
+                provider,
+                [{'role': 'user', 'content': 'hello'}],
+                on_retry=retry_messages.append,
+            )
+        self.assertEqual(content, 'Recovered')
+        self.assertEqual(post.call_count, 2)
+        sleep_mock.assert_called_once_with(1.0)
+        self.assertIn('HTTP 503', retry_messages[0])
+        self.assertIn('第 2 次尝试', retry_messages[0])
+
+    @override_settings(AGENT_TOOLS_MODEL_RECOVERY_TIMEOUT_SECONDS=3)
+    def test_chat_completion_fails_after_the_configured_recovery_window(self):
+        """持续 503 只能占用固定恢复窗口，耗尽后必须返回明确超时错误。"""
+        provider = AgentSkillProvider.objects.create(
+            name='timeout-503-provider', base_url='https://example.com/v1', model='test',
+            api_key_encrypted=credential_cipher.encrypt('key'), sys_creator=self.user, sys_modifier=self.user,
+        )
+        clock = [0.0]
+
+        def unavailable_response(*args, **kwargs):
+            response = Response()
+            response.status_code = 503
+            response.headers['Retry-After'] = '2'
+            response._content = b'service unavailable'
+            return response
+
+        def advance_clock(delay: float) -> None:
+            clock[0] += delay
+
+        with (
+            patch('apps.agent_tools.providers.services.requests.post', side_effect=unavailable_response) as post,
+            patch.object(provider_services, 'monotonic', side_effect=lambda: clock[0]),
+            patch.object(provider_services, 'sleep', side_effect=advance_clock),
+        ):
+            with self.assertRaisesRegex(RuntimeError, '3 秒内未恢复'):
+                chat_completion(provider, [{'role': 'user', 'content': 'hello'}])
+        self.assertEqual(post.call_count, 2)
+
+    def test_chat_completion_does_not_retry_non_recoverable_http_error(self):
+        """鉴权或请求参数错误不能被错误地重试五分钟。"""
+        provider = AgentSkillProvider.objects.create(
+            name='invalid-request-provider', base_url='https://example.com/v1', model='test',
+            api_key_encrypted=credential_cipher.encrypt('key'), sys_creator=self.user, sys_modifier=self.user,
+        )
+        response = Response()
+        response.status_code = 400
+        response._content = b'bad request'
+        with (
+            patch('apps.agent_tools.providers.services.requests.post', return_value=response) as post,
+            patch('apps.agent_tools.providers.services.sleep') as sleep_mock,
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'HTTP 400'):
+                chat_completion(provider, [{'role': 'user', 'content': 'hello'}])
+        post.assert_called_once()
+        sleep_mock.assert_not_called()
 
     def test_regenerate_config_returns_upstream_error(self):
         """重新生成配置应把模型错误转换为可显示的 502 业务错误。"""

@@ -70,3 +70,4 @@ __pycache__/
 /docs/
 */*.md/
 /DeepAudit/
+/.trae/

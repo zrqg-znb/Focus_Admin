@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
-from time import perf_counter
+import logging
+import random
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
+from time import monotonic, perf_counter, sleep
 from typing import Callable
 
 import requests
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from ninja.errors import HttpError
 
@@ -12,6 +17,11 @@ from core.user.user_model import User
 
 from .crypto import credential_cipher
 from .models import AgentSkillProvider
+
+logger = logging.getLogger(__name__)
+
+# 仅对通常表示上游暂时不可用的状态码重试，鉴权和请求参数问题必须立即暴露。
+RETRYABLE_MODEL_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
 
 
 def _role_codes(user: User | None) -> set[str]:
@@ -131,49 +141,188 @@ def _stream_completion_content(response: requests.Response, on_update: Callable[
     return content
 
 
+def _positive_setting(name: str, default: float, *, minimum: float = 0.1) -> float:
+    """读取正数配置，避免异常环境变量让模型调用失去超时边界。"""
+    try:
+        value = float(getattr(settings, name, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, value)
+
+
+def _retry_after_seconds(response: requests.Response) -> float | None:
+    """解析上游的 Retry-After 秒数或 HTTP 日期，优先遵守服务端恢复建议。"""
+    raw_value = response.headers.get('Retry-After', '').strip()
+    if not raw_value:
+        return None
+    try:
+        return max(0.0, float(raw_value))
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(raw_value)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=UTC)
+            return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+        except (TypeError, ValueError, IndexError):
+            return None
+
+
+def _close_response(response: requests.Response | None) -> None:
+    """在每次失败或完成后释放连接，防止多次恢复重试耗尽连接池。"""
+    if response is None:
+        return
+    try:
+        response.close()
+    except (AttributeError, requests.RequestException):
+        logger.debug('关闭模型服务响应失败', exc_info=True)
+
+
+def _retry_delay_seconds(retry_number: int, retry_after: float | None) -> float:
+    """计算带抖动的退避时间，降低服务恢复瞬间的并发重试峰值。"""
+    initial_delay = _positive_setting('AGENT_TOOLS_MODEL_RETRY_INITIAL_DELAY_SECONDS', 2)
+    max_delay = max(
+        initial_delay,
+        _positive_setting('AGENT_TOOLS_MODEL_RETRY_MAX_DELAY_SECONDS', 30),
+    )
+    if retry_after is not None:
+        # 即便上游错误返回 Retry-After: 0，也要留出极短缓冲，避免恢复前形成热循环。
+        return max(0.5, retry_after)
+    capped_delay = min(max_delay, initial_delay * (2 ** min(retry_number - 1, 8)))
+    return random.uniform(capped_delay * 0.75, capped_delay * 1.25)
+
+
+def _recovery_timeout_error(timeout_seconds: float, last_error: str) -> RuntimeError:
+    """构造总恢复窗口耗尽后的统一失败信息。"""
+    return RuntimeError(
+        f'模型服务在 {timeout_seconds:g} 秒内未恢复（最后一次错误：{last_error}）。'
+        '已停止重试，请稍后重新执行或检查模型服务。'
+    )
+
+
+def _wait_for_model_recovery(
+    *,
+    retry_number: int,
+    deadline: float,
+    timeout_seconds: float,
+    last_error: str,
+    retry_after: float | None,
+    on_retry: Callable[[str], None] | None,
+) -> None:
+    """在全局五分钟窗口内等待后重试，并把等待状态回传给调用方。"""
+    remaining_seconds = deadline - monotonic()
+    if remaining_seconds <= 0:
+        raise _recovery_timeout_error(timeout_seconds, last_error)
+
+    delay_seconds = min(_retry_delay_seconds(retry_number, retry_after), remaining_seconds)
+    next_attempt = retry_number + 1
+    wait_message = (
+        f'模型服务暂时不可用（{last_error}），将在 {delay_seconds:.0f} 秒后进行第 {next_attempt} 次尝试。'
+        f'最长等待 {timeout_seconds:g} 秒。'
+    )
+    if on_retry:
+        try:
+            on_retry(wait_message)
+        except Exception:
+            # 过程展示异常不能中断真正的模型恢复流程。
+            logger.exception('写入模型服务重试状态失败')
+    sleep(delay_seconds)
+    if monotonic() >= deadline:
+        raise _recovery_timeout_error(timeout_seconds, last_error)
+
+
+def _request_timeout(remaining_seconds: float) -> tuple[float, float]:
+    """为单次请求分配剩余预算，保证连接和读取合计不会无限越过总窗口。"""
+    connect_timeout = min(
+        _positive_setting('AGENT_TOOLS_MODEL_CONNECT_TIMEOUT_SECONDS', 10),
+        max(0.1, remaining_seconds / 2),
+    )
+    read_timeout = min(
+        _positive_setting('AGENT_TOOLS_MODEL_READ_TIMEOUT_SECONDS', 120),
+        max(0.1, remaining_seconds - connect_timeout),
+    )
+    return connect_timeout, read_timeout
+
+
 def chat_completion(
     provider: AgentSkillProvider,
     messages: list[dict],
     temperature: float = 0.2,
     *,
     on_stream_update: Callable[[str], None] | None = None,
+    on_retry: Callable[[str], None] | None = None,
 ) -> str:
-    """通过平台级模型连接发起 OpenAI Chat Completions 兼容请求。"""
+    """通过平台级模型连接调用模型，并在暂时不可用时最多恢复等待五分钟。"""
     api_key = credential_cipher.decrypt(provider.api_key_encrypted)
     if not api_key:
         raise RuntimeError('模型档案缺少 API Key')
     endpoint = chat_completion_url(provider.base_url)
     use_stream = on_stream_update is not None
-    try:
-        response = requests.post(
-            endpoint,
-            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-            json={'model': provider.model, 'messages': messages, 'temperature': temperature, 'stream': use_stream},
-            stream=use_stream,
-            timeout=(10, 120),
-        )
-    except requests.RequestException as exc:
-        raise RuntimeError(f'无法连接模型服务 {endpoint}：{exc}') from exc
-    if not response.ok:
-        raise RuntimeError(f'模型服务请求失败（HTTP {response.status_code}）：{response.text[:300]}')
-    if use_stream and 'text/event-stream' in response.headers.get('Content-Type', '').lower():
-        content = _stream_completion_content(response, on_stream_update)
-        if not content:
-            raise RuntimeError('模型服务流式响应未包含可用文本')
-        return content
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        content_type = response.headers.get('Content-Type', '未提供')
-        preview = ' '.join(response.text.split())[:160] or '空响应'
-        raise RuntimeError(
-            f'模型服务返回了非 JSON 响应（Content-Type: {content_type}，地址：{endpoint}，内容：{preview}）。'
-            '请确认 Base URL 是 OpenAI 兼容接口根地址；部分服务需要以 /v1 结尾。'
-        ) from exc
-    try:
-        return normalize_upstream_text(str(payload['choices'][0]['message']['content']).strip())
-    except (KeyError, IndexError, TypeError) as exc:
-        raise RuntimeError('模型服务响应不包含 choices[0].message.content') from exc
+    recovery_timeout_seconds = _positive_setting('AGENT_TOOLS_MODEL_RECOVERY_TIMEOUT_SECONDS', 300, minimum=1)
+    deadline = monotonic() + recovery_timeout_seconds
+    retry_number = 0
+
+    while True:
+        response: requests.Response | None = None
+        try:
+            remaining_seconds = deadline - monotonic()
+            if remaining_seconds <= 0:
+                raise _recovery_timeout_error(recovery_timeout_seconds, '等待模型服务响应超时')
+            response = requests.post(
+                endpoint,
+                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                json={'model': provider.model, 'messages': messages, 'temperature': temperature, 'stream': use_stream},
+                stream=use_stream,
+                timeout=_request_timeout(remaining_seconds),
+            )
+            if response.status_code in RETRYABLE_MODEL_STATUS_CODES:
+                retry_number += 1
+                status_error = f'HTTP {response.status_code}'
+                retry_after = _retry_after_seconds(response)
+                _close_response(response)
+                response = None
+                _wait_for_model_recovery(
+                    retry_number=retry_number,
+                    deadline=deadline,
+                    timeout_seconds=recovery_timeout_seconds,
+                    last_error=status_error,
+                    retry_after=retry_after,
+                    on_retry=on_retry,
+                )
+                continue
+            if not response.ok:
+                raise RuntimeError(f'模型服务请求失败（HTTP {response.status_code}）：{response.text[:300]}')
+            if use_stream and 'text/event-stream' in response.headers.get('Content-Type', '').lower():
+                content = _stream_completion_content(response, on_stream_update)
+                if not content:
+                    raise RuntimeError('模型服务流式响应未包含可用文本')
+                return content
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                content_type = response.headers.get('Content-Type', '未提供')
+                preview = ' '.join(response.text.split())[:160] or '空响应'
+                raise RuntimeError(
+                    f'模型服务返回了非 JSON 响应（Content-Type: {content_type}，地址：{endpoint}，内容：{preview}）。'
+                    '请确认 Base URL 是 OpenAI 兼容接口根地址；部分服务需要以 /v1 结尾。'
+                ) from exc
+            try:
+                return normalize_upstream_text(str(payload['choices'][0]['message']['content']).strip())
+            except (KeyError, IndexError, TypeError) as exc:
+                raise RuntimeError('模型服务响应不包含 choices[0].message.content') from exc
+        except (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError) as exc:
+            retry_number += 1
+            _close_response(response)
+            response = None
+            _wait_for_model_recovery(
+                retry_number=retry_number,
+                deadline=deadline,
+                timeout_seconds=recovery_timeout_seconds,
+                last_error=f'连接异常：{exc}',
+                retry_after=None,
+                on_retry=on_retry,
+            )
+        finally:
+            _close_response(response)
 
 
 def test_provider(user: User, provider_id: str) -> dict:
