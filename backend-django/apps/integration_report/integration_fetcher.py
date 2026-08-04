@@ -1,6 +1,6 @@
 import random
 from datetime import date, datetime
-from typing import Dict, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 class IntegrationDataFetcher:
@@ -54,23 +54,35 @@ class IntegrationDataFetcher:
         results = {}
 
         # 1. Code Check
-        results["codecheck_error_num"] = self._fetch_single_metric(
-            self.config.code_check_task_id, "codecheck", lambda: float(random.choice([0, 0, 0, random.randint(1, 5)]))
+        results["codecheck_error_num"] = self._fetch_task_metric(
+            self.config.code_check_task_id,
+            getattr(self.config, "code_check_task_ids", []),
+            "codecheck",
+            lambda: float(random.choice([0, 0, 0, random.randint(1, 5)])),
         )
 
         # 2. DT_Bin
-        results["dt_bin_error_num"] = self._fetch_single_metric(
-            self.config.dt_bin_task_id, "dt-bin", lambda: float(random.choice([0, 0, random.randint(1, 3)]))
+        results["dt_bin_error_num"] = self._fetch_task_metric(
+            self.config.dt_bin_task_id,
+            getattr(self.config, "dt_bin_task_ids", []),
+            "dt-bin",
+            lambda: float(random.choice([0, 0, random.randint(1, 3)])),
         )
 
         # 3. Cooddy Check
-        results["cooddy_check_error_num"] = self._fetch_single_metric(
-            self.config.cooddy_check_task_id, "cooddy-check", lambda: float(random.choice([0, 0, 0, random.randint(1, 4)]))
+        results["cooddy_check_error_num"] = self._fetch_task_metric(
+            self.config.cooddy_check_task_id,
+            getattr(self.config, "cooddy_check_task_ids", []),
+            "cooddy-check",
+            lambda: float(random.choice([0, 0, 0, random.randint(1, 4)])),
         )
 
         # 4. Bin Scope
-        results["bin_scope_error_num"] = self._fetch_single_metric(
-            self.config.bin_scope_task_id, "bin-scope", lambda: float(random.choice([0, 0, random.randint(1, 3)]))
+        results["bin_scope_error_num"] = self._fetch_task_metric(
+            self.config.bin_scope_task_id,
+            getattr(self.config, "bin_scope_task_ids", []),
+            "bin-scope",
+            lambda: float(random.choice([0, 0, random.randint(1, 3)])),
         )
 
         # 5. Build Check
@@ -124,6 +136,48 @@ class IntegrationDataFetcher:
             return generator(), url
         except Exception:
             return None, url
+
+    def _normalize_task_ids(self, legacy_task_id: str, task_ids) -> List[str]:
+        """
+        归一化数据湖任务 ID，按领域获取开启后优先使用多 ID，否则回退旧单 ID。
+        """
+        raw_items = task_ids if getattr(self.config, "enable_domain_metrics", False) else []
+        normalized = []
+        seen = set()
+        if isinstance(raw_items, str):
+            candidates = raw_items.replace(",", "\n").splitlines()
+        elif isinstance(raw_items, (list, tuple, set)):
+            candidates = raw_items
+        else:
+            candidates = []
+        for item in candidates:
+            value = str(item).strip()
+            if value and value not in seen:
+                normalized.append(value)
+                seen.add(value)
+        legacy = (legacy_task_id or "").strip()
+        if not normalized and legacy:
+            normalized.append(legacy)
+        return normalized
+
+    def _fetch_task_metric(self, legacy_task_id: str, task_ids, kind: str, generator) -> Tuple[Optional[float], str]:
+        """
+        按任务 ID 分别获取指标并累加；真实数据湖请求后续替换 _fetch_single_metric 即可。
+        """
+        normalized_ids = self._normalize_task_ids(legacy_task_id, task_ids)
+        if not normalized_ids:
+            return None, ""
+        total = 0.0
+        has_value = False
+        urls = []
+        for task_id in normalized_ids:
+            value, url = self._fetch_single_metric(task_id, kind, generator)
+            if url:
+                urls.append(url)
+            if value is not None:
+                total += value
+                has_value = True
+        return (total if has_value else None, "\n".join(urls))
 
     def _mock_dt_fuzz_tree(self, payload: dict) -> dict:
         seed = f"{self.config.id}-{payload.get('branch')}-{payload.get('dueDate')}"

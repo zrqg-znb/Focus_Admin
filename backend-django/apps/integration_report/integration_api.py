@@ -24,6 +24,12 @@ from .integration_schema import (
     EmailDeliveryRow,
     EmailDeliveryQueryIn,
     EmailDeliveryQueryOut,
+    DomainDirectorySetDetailOut,
+    DomainDirectorySetOptionOut,
+    DomainDirectorySetQueryIn,
+    DomainDirectorySetQueryOut,
+    DomainDirectorySetRow,
+    DomainDirectorySetUpsertIn,
     SubscriptionBatchResultOut,
     SubscriptionBatchProjectUsersIn,
     SubscriptionManagementProjectQueryIn,
@@ -153,7 +159,7 @@ def list_projects(request, filters: ConfigFilterSchema = Query(...)):
 @paginate
 def list_configs(request, filters: ConfigFilterSchema = Query(...)):
     qs = (
-        IntegrationProjectConfig.objects.select_related("project")
+        IntegrationProjectConfig.objects.select_related("project", "domain_directory_set")
         .prefetch_related("managers")
         .filter(is_deleted=False)
         .order_by("-sys_update_datetime")
@@ -180,6 +186,25 @@ def list_configs(request, filters: ConfigFilterSchema = Query(...)):
                 dt_bin_task_id=cfg.dt_bin_task_id,
                 cooddy_check_task_id=cfg.cooddy_check_task_id,
                 bin_scope_task_id=cfg.bin_scope_task_id,
+                enable_domain_metrics=cfg.enable_domain_metrics,
+                domain_directory_set_id=str(cfg.domain_directory_set_id or ""),
+                domain_directory_set_name=cfg.domain_directory_set.name if cfg.domain_directory_set else "",
+                code_check_task_ids=integration_service.normalize_metric_task_ids(
+                    cfg.code_check_task_ids,
+                    cfg.code_check_task_id,
+                ),
+                dt_bin_task_ids=integration_service.normalize_metric_task_ids(
+                    cfg.dt_bin_task_ids,
+                    cfg.dt_bin_task_id,
+                ),
+                cooddy_check_task_ids=integration_service.normalize_metric_task_ids(
+                    cfg.cooddy_check_task_ids,
+                    cfg.cooddy_check_task_id,
+                ),
+                bin_scope_task_ids=integration_service.normalize_metric_task_ids(
+                    cfg.bin_scope_task_ids,
+                    cfg.bin_scope_task_id,
+                ),
                 build_check_task_id=cfg.build_check_task_id,
                 compile_check_task_id=cfg.compile_check_task_id,
                 dt_project_id=cfg.dt_project_id,
@@ -203,6 +228,7 @@ def list_configs(request, filters: ConfigFilterSchema = Query(...)):
 @router.post("/configs", response=str, summary="新建配置")
 def create_config(request, payload: ProjectConfigUpsertIn):
     try:
+        integration_service.validate_domain_metric_config_payload(payload)
         integration_service.validate_dt_fuzz_config_payload(payload)
     except ValueError as exc:
         raise HttpError(400, str(exc))
@@ -219,6 +245,24 @@ def create_config(request, payload: ProjectConfigUpsertIn):
         dt_bin_task_id=payload.dt_bin_task_id,
         cooddy_check_task_id=payload.cooddy_check_task_id,
         bin_scope_task_id=payload.bin_scope_task_id,
+        enable_domain_metrics=payload.enable_domain_metrics,
+        domain_directory_set_id=payload.domain_directory_set_id or None,
+        code_check_task_ids=integration_service.normalize_metric_task_ids(
+            payload.code_check_task_ids,
+            payload.code_check_task_id,
+        ),
+        dt_bin_task_ids=integration_service.normalize_metric_task_ids(
+            payload.dt_bin_task_ids,
+            payload.dt_bin_task_id,
+        ),
+        cooddy_check_task_ids=integration_service.normalize_metric_task_ids(
+            payload.cooddy_check_task_ids,
+            payload.cooddy_check_task_id,
+        ),
+        bin_scope_task_ids=integration_service.normalize_metric_task_ids(
+            payload.bin_scope_task_ids,
+            payload.bin_scope_task_id,
+        ),
         build_check_task_id=payload.build_check_task_id,
         compile_check_task_id=payload.compile_check_task_id,
         dt_project_id=payload.dt_project_id,
@@ -243,6 +287,7 @@ def create_config(request, payload: ProjectConfigUpsertIn):
 @router.put("/configs/{config_id}", response=bool, summary="更新配置")
 def update_config(request, config_id: str, payload: ProjectConfigUpsertIn):
     try:
+        integration_service.validate_domain_metric_config_payload(payload)
         integration_service.validate_dt_fuzz_config_payload(payload)
     except ValueError as exc:
         raise HttpError(400, str(exc))
@@ -264,6 +309,24 @@ def update_config(request, config_id: str, payload: ProjectConfigUpsertIn):
     cfg.dt_bin_task_id = payload.dt_bin_task_id
     cfg.cooddy_check_task_id = payload.cooddy_check_task_id
     cfg.bin_scope_task_id = payload.bin_scope_task_id
+    cfg.enable_domain_metrics = payload.enable_domain_metrics
+    cfg.domain_directory_set_id = payload.domain_directory_set_id or None
+    cfg.code_check_task_ids = integration_service.normalize_metric_task_ids(
+        payload.code_check_task_ids,
+        payload.code_check_task_id,
+    )
+    cfg.dt_bin_task_ids = integration_service.normalize_metric_task_ids(
+        payload.dt_bin_task_ids,
+        payload.dt_bin_task_id,
+    )
+    cfg.cooddy_check_task_ids = integration_service.normalize_metric_task_ids(
+        payload.cooddy_check_task_ids,
+        payload.cooddy_check_task_id,
+    )
+    cfg.bin_scope_task_ids = integration_service.normalize_metric_task_ids(
+        payload.bin_scope_task_ids,
+        payload.bin_scope_task_id,
+    )
     cfg.build_check_task_id = payload.build_check_task_id
     cfg.compile_check_task_id = payload.compile_check_task_id
     cfg.dt_project_id = payload.dt_project_id
@@ -294,6 +357,99 @@ def delete_config(request, config_id: str):
         is_deleted=False,
     ).update(is_deleted=True, enabled=False)
     return True
+
+
+@router.get(
+    "/domain-directory-sets",
+    response=DomainDirectorySetQueryOut,
+    summary="责任田目录配置集列表",
+)
+def list_domain_directory_sets(request, filters: DomainDirectorySetQueryIn = Query(...)):
+    """
+    分页查询责任田领域 x 目录配置集。
+    """
+    rows, count, page, page_size = integration_service.query_domain_directory_sets(filters)
+    return DomainDirectorySetQueryOut(
+        items=[DomainDirectorySetRow(**row) for row in rows],
+        count=count,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get(
+    "/domain-directory-sets/options",
+    response=List[DomainDirectorySetOptionOut],
+    summary="责任田目录配置集选项",
+)
+def list_domain_directory_set_options(request):
+    """
+    查询项目配置可绑定的责任田目录配置集选项。
+    """
+    return [
+        DomainDirectorySetOptionOut(**row)
+        for row in integration_service.list_domain_directory_set_options()
+    ]
+
+
+@router.get(
+    "/domain-directory-sets/{set_id}",
+    response=DomainDirectorySetDetailOut,
+    summary="责任田目录配置集详情",
+)
+def get_domain_directory_set(request, set_id: str):
+    """
+    查询单个责任田目录配置集详情。
+    """
+    try:
+        return DomainDirectorySetDetailOut(**integration_service.get_domain_directory_set_detail(set_id))
+    except ValueError as exc:
+        raise HttpError(404, str(exc))
+
+
+@router.post(
+    "/domain-directory-sets",
+    response=str,
+    summary="新建责任田目录配置集",
+)
+def create_domain_directory_set(request, payload: DomainDirectorySetUpsertIn):
+    """
+    新建责任田领域 x 目录配置集。
+    """
+    try:
+        return integration_service.create_domain_directory_set(payload)
+    except ValueError as exc:
+        raise HttpError(400, str(exc))
+
+
+@router.put(
+    "/domain-directory-sets/{set_id}",
+    response=bool,
+    summary="更新责任田目录配置集",
+)
+def update_domain_directory_set(request, set_id: str, payload: DomainDirectorySetUpsertIn):
+    """
+    更新责任田领域 x 目录配置集。
+    """
+    try:
+        return integration_service.update_domain_directory_set(set_id, payload)
+    except ValueError as exc:
+        raise HttpError(400, str(exc))
+
+
+@router.delete(
+    "/domain-directory-sets/{set_id}",
+    response=bool,
+    summary="删除责任田目录配置集",
+)
+def delete_domain_directory_set(request, set_id: str):
+    """
+    软删除责任田领域 x 目录配置集。
+    """
+    try:
+        return integration_service.delete_domain_directory_set(set_id)
+    except ValueError as exc:
+        raise HttpError(404, str(exc))
 
 
 @router.post("/configs/init", response=int, summary="为无配置的项目初始化默认配置")

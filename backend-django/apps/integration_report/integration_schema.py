@@ -27,6 +27,13 @@ class ProjectConfigOut(Schema):
     latest_date: Optional[date] = None
     dt_bin_task_id: str = ""
     cooddy_check_task_id: str = ""
+    enable_domain_metrics: bool = False
+    domain_directory_set_id: str = ""
+    domain_directory_set_name: str = ""
+    code_check_task_ids: List[str] = []
+    dt_bin_task_ids: List[str] = []
+    cooddy_check_task_ids: List[str] = []
+    bin_scope_task_ids: List[str] = []
     code_scan_project_key: str = ""
     valgrind_sub_modules: List[str] = []
     enable_dt_fuzz: bool = False
@@ -48,6 +55,12 @@ class ProjectConfigUpsertIn(Schema):
     dt_bin_task_id: str = ""
     cooddy_check_task_id: str = ""
     bin_scope_task_id: str = ""
+    enable_domain_metrics: bool = False
+    domain_directory_set_id: Optional[str] = None
+    code_check_task_ids: List[str] = []
+    dt_bin_task_ids: List[str] = []
+    cooddy_check_task_ids: List[str] = []
+    bin_scope_task_ids: List[str] = []
     build_check_task_id: str = ""
     compile_check_task_id: str = ""
     dt_project_id: str = ""
@@ -77,6 +90,13 @@ class ProjectConfigManageRow(Schema):
     dt_bin_task_id: str
     cooddy_check_task_id: str
     bin_scope_task_id: str
+    enable_domain_metrics: bool = False
+    domain_directory_set_id: str = ""
+    domain_directory_set_name: str = ""
+    code_check_task_ids: List[str] = []
+    dt_bin_task_ids: List[str] = []
+    cooddy_check_task_ids: List[str] = []
+    bin_scope_task_ids: List[str] = []
     build_check_task_id: str
     compile_check_task_id: str
     dt_project_id: str
@@ -150,6 +170,62 @@ class HistoryQueryOut(Schema):
 class MockCollectIn(Schema):
     record_date: Optional[date] = None
     config_ids: List[str] = []
+
+
+class DomainDirectoryRuleIn(Schema):
+    id: Optional[str] = None
+    domain_name: str
+    directory: str
+    sort_order: int = 0
+    enabled: bool = True
+
+
+class DomainDirectorySetUpsertIn(Schema):
+    name: str
+    description: str = ""
+    enabled: bool = True
+    rules: List[DomainDirectoryRuleIn] = []
+
+
+class DomainDirectorySetQueryIn(Schema):
+    keyword: Optional[str] = None
+    enabled: Optional[bool] = None
+    page: int = 1
+    page_size: int = 20
+
+
+class DomainDirectoryRuleOut(Schema):
+    id: str
+    domain_name: str
+    directory: str
+    sort_order: int
+    enabled: bool
+
+
+class DomainDirectorySetRow(Schema):
+    id: str
+    name: str
+    description: str = ""
+    enabled: bool
+    domain_count: int = 0
+    directory_count: int = 0
+    sys_update_datetime: Optional[datetime] = None
+
+
+class DomainDirectorySetDetailOut(DomainDirectorySetRow):
+    rules: List[DomainDirectoryRuleOut] = []
+
+
+class DomainDirectorySetQueryOut(Schema):
+    items: List[DomainDirectorySetRow]
+    count: int
+    page: int
+    page_size: int
+
+
+class DomainDirectorySetOptionOut(Schema):
+    id: str
+    name: str
 
 
 class EmailDeliveryRow(Schema):

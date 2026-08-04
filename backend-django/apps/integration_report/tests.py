@@ -16,15 +16,19 @@ from apps.code_scan.models import (
 from apps.code_scan.services import ScanService
 from apps.integration_report.integration_api import create_config, history, update_config
 from apps.integration_report.integration_email import CODE_COLUMNS
+from apps.integration_report.integration_fetcher import IntegrationDataFetcher
 from apps.integration_report.integration_models import (
+    IntegrationDomainDirectoryRule,
+    IntegrationDomainDirectorySet,
     IntegrationDtFuzzSnapshot,
     IntegrationEmailSubscription,
     IntegrationMetricDefinition,
     IntegrationProjectConfig,
     IntegrationProjectMetricValue,
 )
-from apps.integration_report.integration_schema import ProjectConfigUpsertIn
+from apps.integration_report.integration_schema import DomainDirectorySetUpsertIn, ProjectConfigUpsertIn
 from apps.integration_report.integration_schema import (
+    DomainDirectoryRuleIn,
     SubscriptionManagementProjectQueryIn,
     SubscriptionSubscriberQueryIn,
 )
@@ -197,6 +201,119 @@ class IntegrationReportTests(TestCase):
         row = next(item for item in rows if item.id == str(config.id))
         self.assertEqual(row.dt_bin_task_id, "dt-bin-2")
         self.assertEqual(row.cooddy_check_task_id, "cooddy-check-2")
+
+    def test_domain_directory_set_allows_same_directory_in_multiple_domains(self):
+        payload = DomainDirectorySetUpsertIn(
+            name="Shared Directory Set",
+            description="domain directory mapping",
+            enabled=True,
+            rules=[
+                DomainDirectoryRuleIn(
+                    domain_name="座舱",
+                    directory="/repo/common",
+                    sort_order=0,
+                    enabled=True,
+                ),
+                DomainDirectoryRuleIn(
+                    domain_name="车控",
+                    directory="/repo/common",
+                    sort_order=1,
+                    enabled=True,
+                ),
+            ],
+        )
+
+        set_id = integration_service.create_domain_directory_set(payload)
+        detail = integration_service.get_domain_directory_set_detail(set_id)
+
+        self.assertEqual(detail["domain_count"], 2)
+        self.assertEqual(detail["directory_count"], 2)
+        self.assertEqual(
+            IntegrationDomainDirectoryRule.objects.filter(
+                directory_set_id=set_id,
+                directory="/repo/common",
+                is_deleted=False,
+            ).count(),
+            2,
+        )
+
+    def test_config_supports_domain_metrics_and_multiple_task_ids(self):
+        directory_set = IntegrationDomainDirectorySet.objects.create(
+            name="Project Domain Directories",
+            enabled=True,
+        )
+        payload = ProjectConfigUpsertIn(
+            project_id=None,
+            name="Domain Metrics Config",
+            managers=[],
+            enabled=True,
+            code_check_task_id="legacy-codecheck",
+            dt_bin_task_id="legacy-dt-bin",
+            cooddy_check_task_id="legacy-cooddy",
+            bin_scope_task_id="legacy-bin-scope",
+            enable_domain_metrics=True,
+            domain_directory_set_id=str(directory_set.id),
+            code_check_task_ids=["codecheck-1", "codecheck-2", "codecheck-1"],
+            dt_bin_task_ids=["dt-bin-1", "dt-bin-2"],
+            cooddy_check_task_ids=["cooddy-1"],
+            bin_scope_task_ids=["bin-scope-1", "bin-scope-2"],
+        )
+
+        request = self.factory.post("/api/integration-report/configs")
+        config_id = create_config(request, payload)
+
+        config = IntegrationProjectConfig.objects.get(id=config_id)
+        self.assertTrue(config.enable_domain_metrics)
+        self.assertEqual(config.domain_directory_set_id, str(directory_set.id))
+        self.assertEqual(config.code_check_task_ids, ["codecheck-1", "codecheck-2"])
+        self.assertEqual(config.dt_bin_task_ids, ["dt-bin-1", "dt-bin-2"])
+
+    def test_domain_metric_task_ids_fall_back_to_legacy_single_id(self):
+        directory_set = IntegrationDomainDirectorySet.objects.create(
+            name="Fallback Directories",
+            enabled=True,
+        )
+        payload = ProjectConfigUpsertIn(
+            project_id=None,
+            name="Fallback Domain Config",
+            managers=[],
+            enabled=True,
+            code_check_task_id="legacy-codecheck",
+            enable_domain_metrics=True,
+            domain_directory_set_id=str(directory_set.id),
+            code_check_task_ids=[],
+        )
+
+        request = self.factory.post("/api/integration-report/configs")
+        config_id = create_config(request, payload)
+
+        config = IntegrationProjectConfig.objects.get(id=config_id)
+        self.assertEqual(config.code_check_task_ids, ["legacy-codecheck"])
+
+    def test_fetcher_sums_multiple_domain_metric_task_ids(self):
+        config = IntegrationProjectConfig.objects.create(
+            name="Fetch Sum Config",
+            enabled=True,
+            enable_domain_metrics=True,
+            code_check_task_id="legacy-codecheck",
+            code_check_task_ids=["codecheck-1", "codecheck-2"],
+        )
+        fetcher = IntegrationDataFetcher(config)
+
+        with patch.object(
+            fetcher,
+            "_fetch_single_metric",
+            side_effect=[(2.0, "url-1"), (3.0, "url-2")],
+        ):
+            value, url = fetcher._fetch_task_metric(
+                config.code_check_task_id,
+                config.code_check_task_ids,
+                "codecheck",
+                lambda: 0.0,
+            )
+
+        self.assertEqual(value, 5.0)
+        self.assertEqual(url, "url-1\nurl-2")
 
     def test_default_metric_definitions_include_new_metrics_and_labels(self):
         integration_service.ensure_default_metric_definitions()
@@ -727,7 +844,7 @@ class IntegrationReportTests(TestCase):
 
     def test_code_scan_metrics_prefer_matching_submodule_tasks(self):
         record_date = timezone.now().date()
-        base_time = timezone.now().replace(microsecond=0)
+        base_time = timezone.now().replace(hour=9, minute=0, second=0, microsecond=0)
         scan_project = self._create_scan_project(project_key="scan-key-match")
         config = IntegrationProjectConfig.objects.create(
             name="Code Scan Config",

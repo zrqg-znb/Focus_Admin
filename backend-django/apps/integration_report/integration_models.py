@@ -25,6 +25,19 @@ class IntegrationProjectConfig(RootModel):
     dt_bin_task_id = models.CharField(max_length=128, blank=True, default="", verbose_name="DT_Bin任务ID")
     cooddy_check_task_id = models.CharField(max_length=128, blank=True, default="", verbose_name="Cooddy Check任务ID")
     bin_scope_task_id = models.CharField(max_length=128, blank=True, default="", verbose_name="二进制范围任务ID")
+    enable_domain_metrics = models.BooleanField(default=False, verbose_name="是否按责任田领域获取")
+    domain_directory_set = models.ForeignKey(
+        "IntegrationDomainDirectorySet",
+        on_delete=models.SET_NULL,
+        related_name="project_configs",
+        verbose_name="责任田目录配置集",
+        null=True,
+        blank=True,
+    )
+    code_check_task_ids = models.JSONField(default=list, blank=True, verbose_name="CodeCheck任务ID列表")
+    dt_bin_task_ids = models.JSONField(default=list, blank=True, verbose_name="DT_Bin任务ID列表")
+    cooddy_check_task_ids = models.JSONField(default=list, blank=True, verbose_name="Cooddy Check任务ID列表")
+    bin_scope_task_ids = models.JSONField(default=list, blank=True, verbose_name="Bin Scope任务ID列表")
     build_check_task_id = models.CharField(max_length=128, blank=True, default="", verbose_name="构建检测任务ID")
     compile_check_task_id = models.CharField(max_length=128, blank=True, default="", verbose_name="编译检测任务ID")
     dt_project_id = models.CharField(max_length=128, blank=True, default="", verbose_name="DT项目ID")
@@ -50,6 +63,36 @@ class IntegrationProjectConfig(RootModel):
         db_table = "ir_project_config"
         verbose_name = "每日集成报告项目配置"
         verbose_name_plural = verbose_name
+
+
+class IntegrationDomainDirectorySet(RootModel):
+    name = models.CharField(max_length=128, verbose_name="配置集名称")
+    description = models.TextField(blank=True, default="", verbose_name="说明")
+    enabled = models.BooleanField(default=True, verbose_name="是否启用")
+
+    class Meta:
+        db_table = "ir_domain_directory_set"
+        verbose_name = "集成报告责任田目录配置集"
+        verbose_name_plural = verbose_name
+
+
+class IntegrationDomainDirectoryRule(RootModel):
+    directory_set = models.ForeignKey(
+        IntegrationDomainDirectorySet,
+        on_delete=models.CASCADE,
+        related_name="rules",
+        verbose_name="配置集",
+    )
+    domain_name = models.CharField(max_length=128, verbose_name="责任田领域")
+    directory = models.CharField(max_length=512, verbose_name="目录字符串")
+    sort_order = models.PositiveIntegerField(default=0, verbose_name="排序")
+    enabled = models.BooleanField(default=True, verbose_name="是否启用")
+
+    class Meta:
+        db_table = "ir_domain_directory_rule"
+        verbose_name = "集成报告责任田目录规则"
+        verbose_name_plural = verbose_name
+        ordering = ("sort_order", "sys_create_datetime")
 
 
 class IntegrationMetricDefinition(RootModel):

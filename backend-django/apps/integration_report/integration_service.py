@@ -1,17 +1,21 @@
-from collections import defaultdict
 import logging
 import threading
-from datetime import date, timedelta
+from collections import defaultdict
+from datetime import date, datetime, time, timedelta
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
 
+from django.conf import settings
 from django.db import close_old_connections, transaction
 from django.db.models import Count, Max, Q
+from django.utils import timezone
 
 from apps.code_scan.models import ScanProject, ScanResult, ScanResultOccurrence, ScanTask
 from core.user.user_model import User
 
 from .integration_models import (
+    IntegrationDomainDirectoryRule,
+    IntegrationDomainDirectorySet,
     IntegrationDtFuzzSnapshot,
     IntegrationEmailDelivery,
     IntegrationEmailSubscription,
@@ -128,6 +132,27 @@ def normalize_dt_fuzz_branches(raw_value) -> List[str]:
     return normalize_sub_modules(raw_value)
 
 
+def normalize_metric_task_ids(raw_value, legacy_value: str = "") -> List[str]:
+    """归一化指标多任务 ID，保留顺序去重，并在新字段为空时兼容旧单 ID。"""
+    normalized = normalize_sub_modules(raw_value)
+    if normalized:
+        return normalized
+    legacy = (legacy_value or "").strip()
+    return [legacy] if legacy else []
+
+
+def validate_domain_metric_config_payload(payload) -> None:
+    """校验按责任田领域获取的项目配置，确保开启后绑定了可用目录配置集。"""
+    if not getattr(payload, "enable_domain_metrics", False):
+        return
+
+    set_id = (getattr(payload, "domain_directory_set_id", "") or "").strip()
+    if not set_id:
+        raise ValueError("启用按领域获取时必须选择责任田目录配置")
+    if not IntegrationDomainDirectorySet.objects.filter(id=set_id, is_deleted=False).exists():
+        raise ValueError("责任田目录配置不存在或已删除")
+
+
 def validate_dt_fuzz_config_payload(payload) -> None:
     if not getattr(payload, "enable_dt_fuzz", False):
         return
@@ -145,6 +170,14 @@ def validate_dt_fuzz_config_payload(payload) -> None:
         missing.append("project-id")
     if missing:
         raise ValueError(f"启用 DT_FUZZ 时以下字段必填：{', '.join(missing)}")
+
+
+def _record_date_end_datetime(record_date: date) -> datetime:
+    """生成目标日期的结束时间，并兼容项目当前 USE_TZ 设置。"""
+    naive_end = datetime.combine(record_date, time.max)
+    if settings.USE_TZ:
+        return timezone.make_aware(naive_end)
+    return naive_end
 
 
 def _dt_fuzz_due_date(record_date: date) -> str:
@@ -303,14 +336,17 @@ def _count_results_for_sub_modules(
     record_date: date,
     sub_modules: List[str],
 ) -> tuple[float, list[str]]:
+    """按子模块匹配当天已产生的最新扫描任务，并统计对应问题数。"""
     module_lower_set = {item.lower() for item in sub_modules}
+    record_end = _record_date_end_datetime(record_date)
     tasks = (
         ScanTask.objects.filter(
             is_deleted=False,
             project=scan_project,
             tool_name=tool_name,
             status="success",
-            sys_create_datetime__date__lte=record_date,
+            # 以当天结束时间作为边界，避免数据库 DATE cast 或时区差异漏掉当天任务。
+            sys_create_datetime__lte=record_end,
         )
         .order_by("-sys_create_datetime")
         .values("id", "sub_module")
@@ -353,6 +389,7 @@ def _fetch_code_scan_metrics(
     config: IntegrationProjectConfig,
     record_date: date,
 ) -> Dict[str, tuple[Optional[float], str]]:
+    """从代码扫描模块读取最新任务并转换为集成报告指标。"""
     metric_payload = _build_scan_metric_defaults()
     project_key = (config.code_scan_project_key or "").strip()
     if not project_key:
@@ -371,12 +408,14 @@ def _fetch_code_scan_metrics(
     }
 
     latest_task_by_metric: Dict[str, str] = {}
+    record_end = _record_date_end_datetime(record_date)
     tasks = (
         ScanTask.objects.filter(
             is_deleted=False,
             project=scan_project,
             status="success",
-            sys_create_datetime__date__lte=record_date,
+            # 取目标日期当天结束前的最新任务，保证当天晚些时候生成的任务可被统计。
+            sys_create_datetime__lte=record_end,
         )
         .order_by("-sys_create_datetime")
         .values("id", "tool_name")
@@ -572,7 +611,7 @@ def list_configs_with_latest(user: User, keyword: Optional[str] = None) -> List[
     ensure_default_metric_definitions()
 
     configs = (
-        IntegrationProjectConfig.objects.select_related("project")
+        IntegrationProjectConfig.objects.select_related("project", "domain_directory_set")
         .prefetch_related("managers")
         .filter(is_deleted=False)
         .order_by("-sys_update_datetime")
@@ -649,6 +688,25 @@ def list_configs_with_latest(user: User, keyword: Optional[str] = None) -> List[
                 latest_date=latest_date,
                 dt_bin_task_id=cfg.dt_bin_task_id,
                 cooddy_check_task_id=cfg.cooddy_check_task_id,
+                enable_domain_metrics=cfg.enable_domain_metrics,
+                domain_directory_set_id=str(cfg.domain_directory_set_id or ""),
+                domain_directory_set_name=cfg.domain_directory_set.name if cfg.domain_directory_set else "",
+                code_check_task_ids=normalize_metric_task_ids(
+                    cfg.code_check_task_ids,
+                    cfg.code_check_task_id,
+                ),
+                dt_bin_task_ids=normalize_metric_task_ids(
+                    cfg.dt_bin_task_ids,
+                    cfg.dt_bin_task_id,
+                ),
+                cooddy_check_task_ids=normalize_metric_task_ids(
+                    cfg.cooddy_check_task_ids,
+                    cfg.cooddy_check_task_id,
+                ),
+                bin_scope_task_ids=normalize_metric_task_ids(
+                    cfg.bin_scope_task_ids,
+                    cfg.bin_scope_task_id,
+                ),
                 code_scan_project_key=cfg.code_scan_project_key,
                 valgrind_sub_modules=normalize_sub_modules(cfg.valgrind_sub_modules),
                 enable_dt_fuzz=cfg.enable_dt_fuzz,
@@ -769,6 +827,162 @@ def _normalize_page(page: Optional[int], page_size: Optional[int]) -> tuple[int,
     normalized_page = max(int(page or 1), 1)
     normalized_page_size = min(max(int(page_size or 20), 1), 5000)
     return normalized_page, normalized_page_size
+
+
+def _serialize_domain_directory_set_row(directory_set: IntegrationDomainDirectorySet) -> dict:
+    """序列化责任田目录配置集列表行，并统计领域和目录数量。"""
+    cached_rules = getattr(directory_set, "_prefetched_objects_cache", {}).get("rules")
+    if cached_rules is not None:
+        active_rules = [rule for rule in cached_rules if not rule.is_deleted]
+        domain_count = len({rule.domain_name for rule in active_rules})
+        directory_count = len(active_rules)
+    else:
+        rule_qs = directory_set.rules.filter(is_deleted=False)
+        domain_count = rule_qs.values("domain_name").distinct().count()
+        directory_count = rule_qs.count()
+    return {
+        "id": str(directory_set.id),
+        "name": directory_set.name,
+        "description": directory_set.description,
+        "enabled": directory_set.enabled,
+        "domain_count": domain_count,
+        "directory_count": directory_count,
+        "sys_update_datetime": directory_set.sys_update_datetime,
+    }
+
+
+def query_domain_directory_sets(filters):
+    """分页查询责任田目录配置集。"""
+    page, page_size = _normalize_page(filters.page, filters.page_size)
+    qs = IntegrationDomainDirectorySet.objects.filter(is_deleted=False)
+    if filters.keyword:
+        qs = qs.filter(
+            Q(name__icontains=filters.keyword)
+            | Q(description__icontains=filters.keyword)
+            | Q(rules__domain_name__icontains=filters.keyword)
+            | Q(rules__directory__icontains=filters.keyword),
+        )
+    if filters.enabled is not None:
+        qs = qs.filter(enabled=filters.enabled)
+    qs = qs.distinct().prefetch_related("rules").order_by("-sys_update_datetime")
+
+    count = qs.count()
+    rows = [
+        _serialize_domain_directory_set_row(item)
+        for item in qs[(page - 1) * page_size : page * page_size]
+    ]
+    return rows, count, page, page_size
+
+
+def list_domain_directory_set_options():
+    """查询可绑定到项目配置的启用责任田目录配置集。"""
+    return [
+        {"id": str(item.id), "name": item.name}
+        for item in IntegrationDomainDirectorySet.objects.filter(
+            is_deleted=False,
+            enabled=True,
+        ).order_by("name")
+    ]
+
+
+def get_domain_directory_set_detail(set_id: str) -> dict:
+    """查询责任田目录配置集详情和完整规则列表。"""
+    directory_set = IntegrationDomainDirectorySet.objects.filter(
+        id=set_id,
+        is_deleted=False,
+    ).first()
+    if not directory_set:
+        raise ValueError("责任田目录配置不存在")
+    row = _serialize_domain_directory_set_row(directory_set)
+    row["rules"] = [
+        {
+            "id": str(rule.id),
+            "domain_name": rule.domain_name,
+            "directory": rule.directory,
+            "sort_order": rule.sort_order,
+            "enabled": rule.enabled,
+        }
+        for rule in directory_set.rules.filter(is_deleted=False).order_by(
+            "sort_order",
+            "sys_create_datetime",
+        )
+    ]
+    return row
+
+
+def _normalize_domain_directory_rules(rules) -> List[dict]:
+    """清洗责任田目录规则，保留重复目录配置，不添加业务唯一性限制。"""
+    normalized = []
+    for index, rule in enumerate(rules or []):
+        domain_name = (rule.domain_name or "").strip()
+        directory = (rule.directory or "").strip()
+        if not domain_name and not directory:
+            continue
+        if not domain_name or not directory:
+            raise ValueError("责任田领域和目录均不能为空")
+        normalized.append(
+            {
+                "domain_name": domain_name,
+                "directory": directory,
+                "sort_order": rule.sort_order if rule.sort_order is not None else index,
+                "enabled": rule.enabled,
+            }
+        )
+    return normalized
+
+
+@transaction.atomic
+def create_domain_directory_set(payload) -> str:
+    """创建责任田目录配置集和规则。"""
+    name = (payload.name or "").strip()
+    if not name:
+        raise ValueError("配置集名称不能为空")
+    directory_set = IntegrationDomainDirectorySet.objects.create(
+        name=name,
+        description=(payload.description or "").strip(),
+        enabled=payload.enabled,
+    )
+    for rule in _normalize_domain_directory_rules(payload.rules):
+        IntegrationDomainDirectoryRule.objects.create(directory_set=directory_set, **rule)
+    return str(directory_set.id)
+
+
+@transaction.atomic
+def update_domain_directory_set(set_id: str, payload) -> bool:
+    """更新责任田目录配置集，规则采用全量替换以保持页面维护语义简单明确。"""
+    directory_set = IntegrationDomainDirectorySet.objects.filter(
+        id=set_id,
+        is_deleted=False,
+    ).first()
+    if not directory_set:
+        raise ValueError("责任田目录配置不存在")
+    name = (payload.name or "").strip()
+    if not name:
+        raise ValueError("配置集名称不能为空")
+    directory_set.name = name
+    directory_set.description = (payload.description or "").strip()
+    directory_set.enabled = payload.enabled
+    directory_set.save(update_fields=["name", "description", "enabled", "sys_update_datetime"])
+    directory_set.rules.filter(is_deleted=False).update(is_deleted=True)
+    for rule in _normalize_domain_directory_rules(payload.rules):
+        IntegrationDomainDirectoryRule.objects.create(directory_set=directory_set, **rule)
+    return True
+
+
+@transaction.atomic
+def delete_domain_directory_set(set_id: str) -> bool:
+    """软删除责任田目录配置集，同时保留项目上的历史绑定字段供审计。"""
+    directory_set = IntegrationDomainDirectorySet.objects.filter(
+        id=set_id,
+        is_deleted=False,
+    ).first()
+    if not directory_set:
+        raise ValueError("责任田目录配置不存在")
+    directory_set.is_deleted = True
+    directory_set.enabled = False
+    directory_set.save(update_fields=["is_deleted", "enabled", "sys_update_datetime"])
+    directory_set.rules.filter(is_deleted=False).update(is_deleted=True, enabled=False)
+    return True
 
 
 def _join_subscription_user_names(users) -> str:
