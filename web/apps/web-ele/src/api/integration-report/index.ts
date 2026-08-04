@@ -26,6 +26,13 @@ export interface ProjectConfigOut {
   latest_date?: null | string;
   dt_bin_task_id: string;
   cooddy_check_task_id: string;
+  enable_domain_metrics: boolean;
+  domain_directory_set_id: string;
+  domain_directory_set_name: string;
+  code_check_task_ids: string[];
+  dt_bin_task_ids: string[];
+  cooddy_check_task_ids: string[];
+  bin_scope_task_ids: string[];
   code_scan_project_key?: string;
   valgrind_sub_modules?: string[];
   enable_dt_fuzz: boolean;
@@ -50,6 +57,13 @@ export interface ProjectConfigManageRow {
   dt_bin_task_id: string;
   cooddy_check_task_id: string;
   bin_scope_task_id: string;
+  enable_domain_metrics: boolean;
+  domain_directory_set_id?: null | string;
+  domain_directory_set_name: string;
+  code_check_task_ids: string[];
+  dt_bin_task_ids: string[];
+  cooddy_check_task_ids: string[];
+  bin_scope_task_ids: string[];
   build_check_task_id: string;
   compile_check_task_id: string;
   dt_project_id: string;
@@ -72,6 +86,12 @@ export interface ProjectConfigUpsertIn {
   dt_bin_task_id: string;
   cooddy_check_task_id: string;
   bin_scope_task_id: string;
+  enable_domain_metrics: boolean;
+  domain_directory_set_id: string;
+  code_check_task_ids: string[];
+  dt_bin_task_ids: string[];
+  cooddy_check_task_ids: string[];
+  bin_scope_task_ids: string[];
   build_check_task_id: string;
   compile_check_task_id: string;
   dt_project_id: string;
@@ -266,6 +286,94 @@ export async function listEmailDeliveriesApi(
   return requestClient.get<PaginatedResponse<EmailDeliveryRow>>(
     '/api/integration-report/email-deliveries',
     { params },
+  );
+}
+
+export interface DomainDirectoryRule {
+  id?: string;
+  domain_name: string;
+  directory: string;
+  sort_order: number;
+  enabled: boolean;
+}
+
+export interface DomainDirectorySetRow {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  domain_count: number;
+  directory_count: number;
+  sys_update_datetime?: null | string;
+}
+
+export interface DomainDirectorySetDetail extends DomainDirectorySetRow {
+  rules: DomainDirectoryRule[];
+}
+
+export interface DomainDirectorySetPayload {
+  name: string;
+  description: string;
+  enabled: boolean;
+  rules: DomainDirectoryRule[];
+}
+
+export interface DomainDirectorySetQueryParams {
+  keyword?: string;
+  enabled?: boolean;
+  page?: number;
+  pageSize?: number;
+  page_size?: number;
+}
+
+export interface DomainDirectorySetOption {
+  id: string;
+  name: string;
+}
+
+export async function listDomainDirectorySetsApi(
+  params?: DomainDirectorySetQueryParams,
+) {
+  return requestClient.get<PaginatedResponse<DomainDirectorySetRow>>(
+    '/api/integration-report/domain-directory-sets',
+    { params },
+  );
+}
+
+export async function listDomainDirectorySetOptionsApi() {
+  return requestClient.get<DomainDirectorySetOption[]>(
+    '/api/integration-report/domain-directory-sets/options',
+  );
+}
+
+export async function getDomainDirectorySetApi(setId: string) {
+  return requestClient.get<DomainDirectorySetDetail>(
+    `/api/integration-report/domain-directory-sets/${setId}`,
+  );
+}
+
+export async function createDomainDirectorySetApi(
+  payload: DomainDirectorySetPayload,
+) {
+  return requestClient.post<string>(
+    '/api/integration-report/domain-directory-sets',
+    payload,
+  );
+}
+
+export async function updateDomainDirectorySetApi(
+  setId: string,
+  payload: DomainDirectorySetPayload,
+) {
+  return requestClient.put<boolean>(
+    `/api/integration-report/domain-directory-sets/${setId}`,
+    payload,
+  );
+}
+
+export async function deleteDomainDirectorySetApi(setId: string) {
+  return requestClient.delete<boolean>(
+    `/api/integration-report/domain-directory-sets/${setId}`,
   );
 }
 

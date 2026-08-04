@@ -38,6 +38,57 @@ export function useColumns(
       minWidth: 170,
     },
     { field: 'bin_scope_task_id', title: 'BinScope ID', minWidth: 150 },
+    {
+      field: 'enable_domain_metrics',
+      title: '按领域获取',
+      width: 120,
+      formatter: ({ row }) => (row.enable_domain_metrics ? '启用' : '关闭'),
+    },
+    {
+      field: 'domain_directory_set_name',
+      title: '责任田目录配置',
+      minWidth: 180,
+      formatter: ({ row }) => row.domain_directory_set_name || '-',
+    },
+    {
+      field: 'code_check_task_ids',
+      title: 'CodeCheck ID列表',
+      minWidth: 190,
+      formatter: ({ row }) =>
+        Array.isArray(row.code_check_task_ids) &&
+        row.code_check_task_ids.length > 0
+          ? row.code_check_task_ids.join(', ')
+          : '-',
+    },
+    {
+      field: 'dt_bin_task_ids',
+      title: 'DT_Bin ID列表',
+      minWidth: 180,
+      formatter: ({ row }) =>
+        Array.isArray(row.dt_bin_task_ids) && row.dt_bin_task_ids.length > 0
+          ? row.dt_bin_task_ids.join(', ')
+          : '-',
+    },
+    {
+      field: 'cooddy_check_task_ids',
+      title: 'Cooddy Check ID列表',
+      minWidth: 210,
+      formatter: ({ row }) =>
+        Array.isArray(row.cooddy_check_task_ids) &&
+        row.cooddy_check_task_ids.length > 0
+          ? row.cooddy_check_task_ids.join(', ')
+          : '-',
+    },
+    {
+      field: 'bin_scope_task_ids',
+      title: 'BinScope ID列表',
+      minWidth: 190,
+      formatter: ({ row }) =>
+        Array.isArray(row.bin_scope_task_ids) &&
+        row.bin_scope_task_ids.length > 0
+          ? row.bin_scope_task_ids.join(', ')
+          : '-',
+    },
     { field: 'build_check_task_id', title: 'BuildCheck ID', minWidth: 150 },
     { field: 'compile_check_task_id', title: 'CompileCheck ID', minWidth: 150 },
     {

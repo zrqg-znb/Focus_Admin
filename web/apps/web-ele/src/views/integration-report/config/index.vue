@@ -29,6 +29,7 @@ import {
   createIntegrationConfigApi,
   deleteIntegrationConfigApi,
   initIntegrationConfigsApi,
+  listDomainDirectorySetOptionsApi,
   listIntegrationConfigsApi,
   mockCollectIntegrationApi,
   mockSendIntegrationEmailsApi,
@@ -52,6 +53,11 @@ const allProjects = ref<
 const formConfigId = ref<string>('');
 const valgrindSubModulesText = ref('');
 const dtFuzzBranchesText = ref('');
+const codeCheckTaskIdsText = ref('');
+const dtBinTaskIdsText = ref('');
+const cooddyCheckTaskIdsText = ref('');
+const binScopeTaskIdsText = ref('');
+const domainDirectoryOptions = ref<Array<{ id: string; name: string }>>([]);
 const form = ref<ProjectConfigUpsertIn>({
   project_id: '',
   name: '',
@@ -61,6 +67,12 @@ const form = ref<ProjectConfigUpsertIn>({
   dt_bin_task_id: '',
   cooddy_check_task_id: '',
   bin_scope_task_id: '',
+  enable_domain_metrics: false,
+  domain_directory_set_id: '',
+  code_check_task_ids: [],
+  dt_bin_task_ids: [],
+  cooddy_check_task_ids: [],
+  bin_scope_task_ids: [],
   build_check_task_id: '',
   compile_check_task_id: '',
   dt_project_id: '',
@@ -145,6 +157,10 @@ function normalizeDtFuzzBranches(rawValue: string) {
   return normalizeValgrindSubModules(rawValue);
 }
 
+function normalizeTaskIds(rawValue: string) {
+  return normalizeValgrindSubModules(rawValue);
+}
+
 function payloadOf(r: ProjectConfigManageRow): ProjectConfigUpsertIn {
   return {
     project_id: r.project_id,
@@ -155,6 +171,12 @@ function payloadOf(r: ProjectConfigManageRow): ProjectConfigUpsertIn {
     dt_bin_task_id: r.dt_bin_task_id || '',
     cooddy_check_task_id: r.cooddy_check_task_id || '',
     bin_scope_task_id: r.bin_scope_task_id || '',
+    enable_domain_metrics: r.enable_domain_metrics || false,
+    domain_directory_set_id: r.domain_directory_set_id || '',
+    code_check_task_ids: r.code_check_task_ids || [],
+    dt_bin_task_ids: r.dt_bin_task_ids || [],
+    cooddy_check_task_ids: r.cooddy_check_task_ids || [],
+    bin_scope_task_ids: r.bin_scope_task_ids || [],
     build_check_task_id: r.build_check_task_id || '',
     compile_check_task_id: r.compile_check_task_id || '',
     dt_project_id: r.dt_project_id || '',
@@ -172,6 +194,10 @@ function payloadOf(r: ProjectConfigManageRow): ProjectConfigUpsertIn {
 function buildSubmitPayload(): ProjectConfigUpsertIn {
   return {
     ...form.value,
+    code_check_task_ids: normalizeTaskIds(codeCheckTaskIdsText.value),
+    dt_bin_task_ids: normalizeTaskIds(dtBinTaskIdsText.value),
+    cooddy_check_task_ids: normalizeTaskIds(cooddyCheckTaskIdsText.value),
+    bin_scope_task_ids: normalizeTaskIds(binScopeTaskIdsText.value),
     valgrind_sub_modules: normalizeValgrindSubModules(
       valgrindSubModulesText.value,
     ),
@@ -199,6 +225,15 @@ async function ensureProjectsLoaded() {
   }
 }
 
+async function ensureDomainDirectoryOptionsLoaded() {
+  try {
+    domainDirectoryOptions.value = await listDomainDirectorySetOptionsApi();
+  } catch {
+    domainDirectoryOptions.value = [];
+    ElMessage.error('获取责任田目录配置失败，请检查权限或接口');
+  }
+}
+
 // --- Actions ---
 
 function openCreate() {
@@ -213,6 +248,12 @@ function openCreate() {
     dt_bin_task_id: '',
     cooddy_check_task_id: '',
     bin_scope_task_id: '',
+    enable_domain_metrics: false,
+    domain_directory_set_id: '',
+    code_check_task_ids: [],
+    dt_bin_task_ids: [],
+    cooddy_check_task_ids: [],
+    bin_scope_task_ids: [],
     build_check_task_id: '',
     compile_check_task_id: '',
     dt_project_id: '',
@@ -227,8 +268,13 @@ function openCreate() {
   };
   valgrindSubModulesText.value = '';
   dtFuzzBranchesText.value = '';
+  codeCheckTaskIdsText.value = '';
+  dtBinTaskIdsText.value = '';
+  cooddyCheckTaskIdsText.value = '';
+  binScopeTaskIdsText.value = '';
   dialogVisible.value = true;
   ensureProjectsLoaded();
+  ensureDomainDirectoryOptionsLoaded();
 }
 
 function openEdit(r: ProjectConfigManageRow) {
@@ -237,8 +283,13 @@ function openEdit(r: ProjectConfigManageRow) {
   form.value = payloadOf(r);
   valgrindSubModulesText.value = (r.valgrind_sub_modules || []).join('\n');
   dtFuzzBranchesText.value = (r.dt_fuzz_branches || []).join('\n');
+  codeCheckTaskIdsText.value = (r.code_check_task_ids || []).join('\n');
+  dtBinTaskIdsText.value = (r.dt_bin_task_ids || []).join('\n');
+  cooddyCheckTaskIdsText.value = (r.cooddy_check_task_ids || []).join('\n');
+  binScopeTaskIdsText.value = (r.bin_scope_task_ids || []).join('\n');
   dialogVisible.value = true;
   ensureProjectsLoaded();
+  ensureDomainDirectoryOptionsLoaded();
 }
 
 async function saveRow(r: ProjectConfigManageRow) {
@@ -256,17 +307,21 @@ async function submitDialog() {
     return;
   }
   const payload = buildSubmitPayload();
-  if (payload.enable_dt_fuzz) {
-    if (
-      !payload.dt_fuzz_version_name.trim() ||
-      payload.dt_fuzz_branches.length === 0 ||
-      !payload.dt_fuzz_pbi_id.trim() ||
-      !payload.dt_fuzz_domain_id.trim() ||
-      !payload.dt_fuzz_project_id.trim()
-    ) {
-      ElMessage.warning('启用 DT_FUZZ 时请完整填写 versionName、分支、pbiId、domian-id、project-id');
-      return;
-    }
+  if (payload.enable_domain_metrics && !payload.domain_directory_set_id) {
+    ElMessage.warning('启用按领域获取时请选择责任田目录配置');
+    return;
+  }
+  const missingDtFuzzConfig =
+    !payload.dt_fuzz_version_name.trim() ||
+    payload.dt_fuzz_branches.length === 0 ||
+    !payload.dt_fuzz_pbi_id.trim() ||
+    !payload.dt_fuzz_domain_id.trim() ||
+    !payload.dt_fuzz_project_id.trim();
+  if (payload.enable_dt_fuzz && missingDtFuzzConfig) {
+    ElMessage.warning(
+      '启用 DT_FUZZ 时请完整填写 versionName、分支、pbiId、domian-id、project-id',
+    );
+    return;
   }
   try {
     dialogSaving.value = true;
@@ -458,6 +513,7 @@ async function mockSendEmails() {
         <ElFormItem label="BinScope ID">
           <ElInput v-model="form.bin_scope_task_id" placeholder="Task ID" />
         </ElFormItem>
+
         <ElFormItem label="BuildCheck ID">
           <ElInput v-model="form.build_check_task_id" placeholder="Task ID" />
         </ElFormItem>
@@ -514,6 +570,60 @@ async function mockSendEmails() {
             <ElInput
               v-model="form.dt_fuzz_project_id"
               placeholder="数据湖字段 project-id"
+            />
+          </ElFormItem>
+        </template>
+
+        <ElDivider content-position="left">责任田领域采集配置</ElDivider>
+        <ElFormItem label="按领域获取">
+          <ElSwitch v-model="form.enable_domain_metrics" />
+        </ElFormItem>
+        <template v-if="form.enable_domain_metrics">
+          <ElFormItem label="责任田目录配置" required>
+            <ElSelect
+              v-model="form.domain_directory_set_id"
+              filterable
+              placeholder="请选择可复用的责任田目录配置"
+              style="width: 100%"
+            >
+              <ElOption
+                v-for="item in domainDirectoryOptions"
+                :key="item.id"
+                :label="item.name"
+                :value="item.id"
+              />
+            </ElSelect>
+          </ElFormItem>
+          <ElFormItem label="CodeCheck ID列表">
+            <ElInput
+              v-model="codeCheckTaskIdsText"
+              :rows="3"
+              type="textarea"
+              placeholder="每行一个 task id，采集时分别请求后累加"
+            />
+          </ElFormItem>
+          <ElFormItem label="DT_Bin ID列表">
+            <ElInput
+              v-model="dtBinTaskIdsText"
+              :rows="3"
+              type="textarea"
+              placeholder="每行一个 task id，采集时分别请求后累加"
+            />
+          </ElFormItem>
+          <ElFormItem label="Cooddy Check ID列表">
+            <ElInput
+              v-model="cooddyCheckTaskIdsText"
+              :rows="3"
+              type="textarea"
+              placeholder="每行一个 task id，采集时分别请求后累加"
+            />
+          </ElFormItem>
+          <ElFormItem label="BinScope ID列表">
+            <ElInput
+              v-model="binScopeTaskIdsText"
+              :rows="3"
+              type="textarea"
+              placeholder="每行一个 task id，采集时分别请求后累加"
             />
           </ElFormItem>
         </template>
