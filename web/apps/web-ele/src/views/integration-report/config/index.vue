@@ -192,12 +192,32 @@ function payloadOf(r: ProjectConfigManageRow): ProjectConfigUpsertIn {
 }
 
 function buildSubmitPayload(): ProjectConfigUpsertIn {
+  const enableDomainMetrics = form.value.enable_domain_metrics;
   return {
     ...form.value,
-    code_check_task_ids: normalizeTaskIds(codeCheckTaskIdsText.value),
-    dt_bin_task_ids: normalizeTaskIds(dtBinTaskIdsText.value),
-    cooddy_check_task_ids: normalizeTaskIds(cooddyCheckTaskIdsText.value),
-    bin_scope_task_ids: normalizeTaskIds(binScopeTaskIdsText.value),
+    code_check_task_id: enableDomainMetrics
+      ? ''
+      : form.value.code_check_task_id,
+    dt_bin_task_id: enableDomainMetrics ? '' : form.value.dt_bin_task_id,
+    cooddy_check_task_id: enableDomainMetrics
+      ? ''
+      : form.value.cooddy_check_task_id,
+    bin_scope_task_id: enableDomainMetrics ? '' : form.value.bin_scope_task_id,
+    domain_directory_set_id: enableDomainMetrics
+      ? form.value.domain_directory_set_id
+      : '',
+    code_check_task_ids: enableDomainMetrics
+      ? normalizeTaskIds(codeCheckTaskIdsText.value)
+      : [],
+    dt_bin_task_ids: enableDomainMetrics
+      ? normalizeTaskIds(dtBinTaskIdsText.value)
+      : [],
+    cooddy_check_task_ids: enableDomainMetrics
+      ? normalizeTaskIds(cooddyCheckTaskIdsText.value)
+      : [],
+    bin_scope_task_ids: enableDomainMetrics
+      ? normalizeTaskIds(binScopeTaskIdsText.value)
+      : [],
     valgrind_sub_modules: normalizeValgrindSubModules(
       valgrindSubModulesText.value,
     ),
@@ -501,18 +521,23 @@ async function mockSendEmails() {
           <ElSwitch v-model="form.enabled" />
         </ElFormItem>
 
-        <ElFormItem label="CodeCheck ID">
-          <ElInput v-model="form.code_check_task_id" placeholder="Task ID" />
-        </ElFormItem>
-        <ElFormItem label="DT_Bin ID">
-          <ElInput v-model="form.dt_bin_task_id" placeholder="Task ID" />
-        </ElFormItem>
-        <ElFormItem label="Cooddy Check ID">
-          <ElInput v-model="form.cooddy_check_task_id" placeholder="Task ID" />
-        </ElFormItem>
-        <ElFormItem label="BinScope ID">
-          <ElInput v-model="form.bin_scope_task_id" placeholder="Task ID" />
-        </ElFormItem>
+        <template v-if="!form.enable_domain_metrics">
+          <ElFormItem label="CodeCheck ID">
+            <ElInput v-model="form.code_check_task_id" placeholder="Task ID" />
+          </ElFormItem>
+          <ElFormItem label="DT_Bin ID">
+            <ElInput v-model="form.dt_bin_task_id" placeholder="Task ID" />
+          </ElFormItem>
+          <ElFormItem label="Cooddy Check ID">
+            <ElInput
+              v-model="form.cooddy_check_task_id"
+              placeholder="Task ID"
+            />
+          </ElFormItem>
+          <ElFormItem label="BinScope ID">
+            <ElInput v-model="form.bin_scope_task_id" placeholder="Task ID" />
+          </ElFormItem>
+        </template>
 
         <ElFormItem label="BuildCheck ID">
           <ElInput v-model="form.build_check_task_id" placeholder="Task ID" />

@@ -291,29 +291,67 @@ class IntegrationReportTests(TestCase):
         self.assertEqual(config.code_check_task_ids, ["legacy-codecheck"])
 
     def test_fetcher_sums_multiple_domain_metric_task_ids(self):
+        directory_set = IntegrationDomainDirectorySet.objects.create(
+            name="Fetch Directories",
+            enabled=True,
+        )
+        IntegrationDomainDirectoryRule.objects.create(
+            directory_set=directory_set,
+            domain_name="座舱",
+            directory="/repo/cockpit",
+            sort_order=1,
+        )
+        IntegrationDomainDirectoryRule.objects.create(
+            directory_set=directory_set,
+            domain_name="车控",
+            directory="/repo/body",
+            sort_order=2,
+        )
         config = IntegrationProjectConfig.objects.create(
             name="Fetch Sum Config",
             enabled=True,
             enable_domain_metrics=True,
-            code_check_task_id="legacy-codecheck",
+            domain_directory_set=directory_set,
             code_check_task_ids=["codecheck-1", "codecheck-2"],
         )
         fetcher = IntegrationDataFetcher(config)
 
         with patch.object(
             fetcher,
-            "_fetch_single_metric",
-            side_effect=[(2.0, "url-1"), (3.0, "url-2")],
+            "_fetch_domain_directory_single_metric",
+            side_effect=[
+                (1.0, "url-1"),
+                (2.0, "url-2"),
+                (3.0, "url-3"),
+                (4.0, "url-4"),
+            ],
         ):
-            value, url = fetcher._fetch_task_metric(
-                config.code_check_task_id,
-                config.code_check_task_ids,
-                "codecheck",
-                lambda: 0.0,
-            )
+            value, url = fetcher.fetch_codecheck_error_num()
 
-        self.assertEqual(value, 5.0)
-        self.assertEqual(url, "url-1\nurl-2")
+        self.assertEqual(value, 10.0)
+        self.assertEqual(url, "url-1\nurl-2\nurl-3\nurl-4")
+
+    def test_fetcher_keeps_legacy_single_id_metric_when_domain_disabled(self):
+        config = IntegrationProjectConfig.objects.create(
+            name="Legacy Single Config",
+            enabled=True,
+            enable_domain_metrics=False,
+            code_check_task_id="legacy-codecheck",
+            code_check_task_ids=["hidden-codecheck-1", "hidden-codecheck-2"],
+        )
+        fetcher = IntegrationDataFetcher(config)
+
+        with patch.object(
+            fetcher,
+            "_fetch_single_metric",
+            return_value=(7.0, "legacy-url"),
+        ) as fetch_single:
+            value, url = fetcher.fetch_codecheck_error_num()
+
+        self.assertEqual(value, 7.0)
+        self.assertEqual(url, "legacy-url")
+        fetch_single.assert_called_once()
+        self.assertEqual(fetch_single.call_args.args[0], "legacy-codecheck")
 
     def test_default_metric_definitions_include_new_metrics_and_labels(self):
         integration_service.ensure_default_metric_definitions()
