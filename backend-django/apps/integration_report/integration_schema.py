@@ -120,8 +120,39 @@ class HistoryRow(Schema):
     config_name: str
     project_name: str
     caretaker_names: str = ""
+    enable_domain_metrics: bool = False
     code_metrics: List[MetricCell] = []
     dt_metrics: List[MetricCell] = []
+
+
+class DomainMetricTaskDetailOut(Schema):
+    task_id: str
+    issue_count: int = 0
+    detail_url: str = ""
+
+
+class DomainMetricDirectoryDetailOut(Schema):
+    directory: str
+    issue_count: int = 0
+    task_details: List[DomainMetricTaskDetailOut] = []
+
+
+class DomainMetricDomainDetailOut(Schema):
+    domain_name: str
+    issue_count: int = 0
+    directories: List[DomainMetricDirectoryDetailOut] = []
+
+
+class DomainMetricHistoryDetailOut(Schema):
+    config_id: str
+    config_name: str
+    project_name: str
+    record_date: date
+    metric_key: str
+    metric_name: str
+    domain_directory_set_name: str
+    issue_count: int = 0
+    domains: List[DomainMetricDomainDetailOut] = []
 
 
 class DtFuzzNode(Schema):

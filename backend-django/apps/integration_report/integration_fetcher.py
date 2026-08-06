@@ -179,7 +179,6 @@ class IntegrationDataFetcher:
 
         total = 0.0
         has_value = False
-        urls = []
         for task_id in normalized_task_ids:
             for domain_name, directory in directory_rules:
                 # 真实环境中这里会访问按目录过滤的接口；当前保留 mock 入口和 URL 形状。
@@ -190,12 +189,12 @@ class IntegrationDataFetcher:
                     domain_name,
                     generator,
                 )
-                if url:
-                    urls.append(url)
                 if value is not None:
                     total += value
                     has_value = True
-        return (total if has_value else None, "\n".join(urls))
+        # 一条汇总记录对应多个 task_id 和目录，不存在可安全保存的单一详情 URL。
+        # 详情链接由 history 页的领域详情接口按目录和 task_id 分别返回，避免写入 512 长度字段时溢出。
+        return total if has_value else None, ""
 
     def _fetch_domain_directory_single_metric(
         self,

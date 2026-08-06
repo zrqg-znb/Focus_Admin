@@ -30,6 +30,7 @@ from .integration_schema import (
     DomainDirectorySetQueryOut,
     DomainDirectorySetRow,
     DomainDirectorySetUpsertIn,
+    DomainMetricHistoryDetailOut,
     SubscriptionBatchResultOut,
     SubscriptionBatchProjectUsersIn,
     SubscriptionManagementProjectQueryIn,
@@ -574,6 +575,7 @@ def history(
                 config_name=cfg.name,
                 project_name=cfg.project.name if cfg.project else "",
                 caretaker_names=_resolve_history_caretaker_names(cfg),
+                enable_domain_metrics=cfg.enable_domain_metrics,
                 code_metrics=code_cells,
                 dt_metrics=dt_cells,
             )
@@ -633,6 +635,30 @@ def history(
         )
 
     return HistoryQueryOut(items=items, dt_fuzz_items=dt_fuzz_items)
+
+
+@router.get(
+    "/history/domain-metric-details",
+    response=DomainMetricHistoryDetailOut,
+    summary="查询领域指标目录问题详情",
+)
+def get_domain_metric_history_details(
+    request,
+    config_id: str,
+    record_date: date,
+    metric_key: str,
+):
+    """按当前项目领域目录配置返回指定历史指标的目录明细。"""
+    try:
+        return integration_service.get_domain_metric_history_details(
+            config_id,
+            record_date,
+            metric_key,
+        )
+    except LookupError as exc:
+        raise HttpError(404, str(exc))
+    except ValueError as exc:
+        raise HttpError(400, str(exc))
 
 
 @router.post("/mock/collect", response=bool, summary="Mock 采集一次（异步写入今日数据）")

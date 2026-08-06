@@ -1,5 +1,6 @@
 import logging
 import threading
+from hashlib import sha256
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 from typing import Dict, List, Optional
@@ -50,6 +51,17 @@ DT_KEYS = [
     "dt_line_coverage",
     "dt_method_coverage",
 ]
+
+DOMAIN_METRIC_TASK_FIELDS = {
+    "codecheck_error_num": ("code_check_task_ids", "code_check_task_id", "codecheck"),
+    "dt_bin_error_num": ("dt_bin_task_ids", "dt_bin_task_id", "dt-bin"),
+    "cooddy_check_error_num": (
+        "cooddy_check_task_ids",
+        "cooddy_check_task_id",
+        "cooddy-check",
+    ),
+    "bin_scope_error_num": ("bin_scope_task_ids", "bin_scope_task_id", "bin-scope"),
+}
 
 SCAN_METRIC_TOOL_ALIAS_MAP = {
     "tscan_error_num": {"tscan"},
@@ -139,6 +151,121 @@ def normalize_metric_task_ids(raw_value, legacy_value: str = "") -> List[str]:
         return normalized
     legacy = (legacy_value or "").strip()
     return [legacy] if legacy else []
+
+
+def _mock_domain_metric_issue_count(
+    config_id: str,
+    record_date: date,
+    metric_key: str,
+    directory: str,
+    task_id: str,
+) -> int:
+    """为领域指标详情生成可复现的临时问题数，待数据湖详情接口接入后替换。"""
+    seed = ":".join([config_id, record_date.isoformat(), metric_key, directory, task_id])
+    return int(sha256(seed.encode("utf-8")).hexdigest()[:8], 16) % 8
+
+
+def get_domain_metric_history_details(
+    config_id: str,
+    record_date: date,
+    metric_key: str,
+) -> dict:
+    """按当前责任田目录配置返回领域指标详情的临时 Mock 数据。"""
+    config = (
+        IntegrationProjectConfig.objects.select_related("project", "domain_directory_set")
+        .filter(id=config_id, is_deleted=False)
+        .first()
+    )
+    if not config:
+        raise LookupError("项目配置不存在")
+    if metric_key not in DOMAIN_METRIC_TASK_FIELDS:
+        raise ValueError("该指标不支持按责任田领域查看详情")
+    if not config.enable_domain_metrics:
+        raise ValueError("当前项目未启用按领域获取")
+
+    directory_set = config.domain_directory_set
+    if not directory_set or directory_set.is_deleted or not directory_set.enabled:
+        raise ValueError("当前项目未绑定可用的责任田目录配置")
+
+    ensure_default_metric_definitions()
+    metric = IntegrationMetricDefinition.objects.filter(
+        key=metric_key,
+        is_deleted=False,
+    ).first()
+    if not metric:
+        raise ValueError("指标定义不存在")
+
+    task_ids_field, legacy_task_id_field, metric_kind = DOMAIN_METRIC_TASK_FIELDS[metric_key]
+    task_ids = normalize_metric_task_ids(
+        getattr(config, task_ids_field, []),
+        getattr(config, legacy_task_id_field, ""),
+    )
+
+    domains: list[dict] = []
+    domains_by_name: dict[str, dict] = {}
+    directories_by_domain: dict[str, set[str]] = defaultdict(set)
+    # 保留跨领域重复目录；同一领域的重复目录合并为一行，避免重复展示同一查看入口。
+    rules = directory_set.rules.filter(is_deleted=False, enabled=True).order_by(
+        "sort_order",
+        "sys_create_datetime",
+    )
+    for rule in rules:
+        domain_name = (rule.domain_name or "").strip() or "未命名领域"
+        directory = (rule.directory or "").strip()
+        if not directory or directory in directories_by_domain[domain_name]:
+            continue
+        directories_by_domain[domain_name].add(directory)
+        domain = domains_by_name.get(domain_name)
+        if not domain:
+            domain = {"domain_name": domain_name, "issue_count": 0, "directories": []}
+            domains_by_name[domain_name] = domain
+            domains.append(domain)
+
+        task_details = []
+        for task_id in task_ids:
+            issue_count = _mock_domain_metric_issue_count(
+                str(config.id), record_date, metric_key, directory, task_id
+            )
+            detail_url = (
+                f"https://dataplatform.example.com/{metric_kind}/domain-directory?"
+                + urlencode(
+                    {
+                        "id": task_id,
+                        "date": record_date.isoformat(),
+                        "directory": directory,
+                        "domain": domain_name,
+                    }
+                )
+            )
+            task_details.append(
+                {
+                    "task_id": task_id,
+                    "issue_count": issue_count,
+                    "detail_url": detail_url,
+                }
+            )
+
+        directory_issue_count = sum(item["issue_count"] for item in task_details)
+        domain["issue_count"] += directory_issue_count
+        domain["directories"].append(
+            {
+                "directory": directory,
+                "issue_count": directory_issue_count,
+                "task_details": task_details,
+            }
+        )
+
+    return {
+        "config_id": str(config.id),
+        "config_name": config.name,
+        "project_name": config.project.name if config.project else "",
+        "record_date": record_date,
+        "metric_key": metric_key,
+        "metric_name": metric.name,
+        "domain_directory_set_name": directory_set.name,
+        "issue_count": sum(domain["issue_count"] for domain in domains),
+        "domains": domains,
+    }
 
 
 def validate_domain_metric_config_payload(payload) -> None:

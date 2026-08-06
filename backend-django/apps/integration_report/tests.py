@@ -334,7 +334,7 @@ class IntegrationReportTests(TestCase):
             )
 
         self.assertEqual(value, 10.0)
-        self.assertEqual(url, "url-1\nurl-2\nurl-3\nurl-4")
+        self.assertEqual(url, "")
 
     def test_fetcher_keeps_legacy_single_id_metric_when_domain_disabled(self):
         config = IntegrationProjectConfig.objects.create(
@@ -362,6 +362,110 @@ class IntegrationReportTests(TestCase):
         self.assertEqual(url, "legacy-url")
         fetch_single.assert_called_once()
         self.assertEqual(fetch_single.call_args.args[0], "legacy-codecheck")
+
+    def test_domain_metric_history_details_group_directories_and_keep_shared_directory(self):
+        record_date = date(2026, 8, 6)
+        directory_set = IntegrationDomainDirectorySet.objects.create(
+            name="领域详情配置",
+            enabled=True,
+        )
+        IntegrationDomainDirectoryRule.objects.create(
+            directory_set=directory_set,
+            domain_name="座舱",
+            directory="/repo/shared",
+            sort_order=1,
+        )
+        IntegrationDomainDirectoryRule.objects.create(
+            directory_set=directory_set,
+            domain_name="座舱",
+            directory="/repo/cockpit",
+            sort_order=2,
+        )
+        IntegrationDomainDirectoryRule.objects.create(
+            directory_set=directory_set,
+            domain_name="车控",
+            directory="/repo/shared",
+            sort_order=3,
+        )
+        config = IntegrationProjectConfig.objects.create(
+            name="领域历史详情项目",
+            enabled=True,
+            enable_domain_metrics=True,
+            domain_directory_set=directory_set,
+            code_check_task_ids=["codecheck-1", "codecheck-2"],
+        )
+
+        detail = integration_service.get_domain_metric_history_details(
+            str(config.id),
+            record_date,
+            "codecheck_error_num",
+        )
+
+        self.assertEqual(detail["metric_name"], "CodeCheck 错误数")
+        self.assertEqual([item["domain_name"] for item in detail["domains"]], ["座舱", "车控"])
+        self.assertEqual(len(detail["domains"][0]["directories"]), 2)
+        self.assertEqual(len(detail["domains"][1]["directories"]), 1)
+        self.assertEqual(detail["domains"][1]["directories"][0]["directory"], "/repo/shared")
+        self.assertEqual(
+            len(detail["domains"][0]["directories"][0]["task_details"]),
+            2,
+        )
+        self.assertEqual(
+            detail["issue_count"],
+            sum(item["issue_count"] for item in detail["domains"]),
+        )
+        self.assertEqual(
+            detail,
+            integration_service.get_domain_metric_history_details(
+                str(config.id),
+                record_date,
+                "codecheck_error_num",
+            ),
+        )
+
+    def test_domain_metric_history_details_reject_invalid_config_or_metric(self):
+        with self.assertRaisesRegex(LookupError, "项目配置不存在"):
+            integration_service.get_domain_metric_history_details(
+                "missing-config",
+                date(2026, 8, 6),
+                "codecheck_error_num",
+            )
+
+        config = IntegrationProjectConfig.objects.create(
+            name="未启用领域项目",
+            enabled=True,
+        )
+        with self.assertRaisesRegex(ValueError, "该指标不支持"):
+            integration_service.get_domain_metric_history_details(
+                str(config.id),
+                date(2026, 8, 6),
+                "compile_error_num",
+            )
+        with self.assertRaisesRegex(ValueError, "未启用按领域获取"):
+            integration_service.get_domain_metric_history_details(
+                str(config.id),
+                date(2026, 8, 6),
+                "codecheck_error_num",
+            )
+
+    def test_history_returns_current_domain_metric_flag(self):
+        record_date = date(2026, 8, 6)
+        config = self._create_history_config(
+            config_name="领域历史配置",
+            project_name="领域历史项目",
+            record_date=record_date,
+        )
+        config.enable_domain_metrics = True
+        config.save(update_fields=["enable_domain_metrics"])
+
+        request = self.factory.get(
+            "/api/integration-report/history",
+            {"start": record_date.isoformat(), "end": record_date.isoformat()},
+        )
+        payload = history(request, start=record_date, end=record_date)
+
+        self.assertEqual(len(payload.items), 1)
+        self.assertTrue(payload.items[0].enable_domain_metrics)
 
     def test_default_metric_definitions_include_new_metrics_and_labels(self):
         integration_service.ensure_default_metric_definitions()
