@@ -1,6 +1,6 @@
 import random
 from datetime import date, datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 from urllib.parse import urlencode
 
 
@@ -22,25 +22,6 @@ class IntegrationDataFetcher:
         if not task_id:
             return ""
         return f"https://dataplatform.example.com/{kind}?id={task_id}&date={self.record_date.isoformat()}"
-
-    def _get_domain_directory_url(
-        self,
-        kind: str,
-        task_id: str,
-        directory: str,
-        domain_name: str = "",
-    ) -> str:
-        """构造按责任田目录采集的详情 URL，目录按精确字符串作为接口参数传递。"""
-        if not task_id or not directory:
-            return ""
-        params = {
-            "id": task_id,
-            "date": self.record_date.isoformat(),
-            "directory": directory,
-        }
-        if domain_name:
-            params["domain"] = domain_name
-        return f"https://dataplatform.example.com/{kind}/domain-directory?{urlencode(params)}"
 
     def build_dt_fuzz_payload(self, branch: str, due_date: str) -> dict:
         return {
@@ -74,10 +55,30 @@ class IntegrationDataFetcher:
         results = {}
 
         # 1-4. 四个数据湖问题数指标在普通模式下走旧单 ID 接口，按领域开启后走目录遍历接口。
-        results["codecheck_error_num"] = self.fetch_codecheck_error_num()
-        results["dt_bin_error_num"] = self.fetch_dt_bin_error_num()
-        results["cooddy_check_error_num"] = self.fetch_cooddy_check_error_num()
-        results["bin_scope_error_num"] = self.fetch_bin_scope_error_num()
+        results["codecheck_error_num"] = self._fetch_metric(
+            self.config.code_check_task_id,
+            getattr(self.config, "code_check_task_ids", []),
+            "codecheck",
+            lambda: float(random.choice([0, 0, 0, random.randint(1, 5)])),
+        )
+        results["dt_bin_error_num"] = self._fetch_metric(
+            self.config.dt_bin_task_id,
+            getattr(self.config, "dt_bin_task_ids", []),
+            "dt-bin",
+            lambda: float(random.choice([0, 0, random.randint(1, 3)])),
+        )
+        results["cooddy_check_error_num"] = self._fetch_metric(
+            self.config.cooddy_check_task_id,
+            getattr(self.config, "cooddy_check_task_ids", []),
+            "cooddy-check",
+            lambda: float(random.choice([0, 0, 0, random.randint(1, 4)])),
+        )
+        results["bin_scope_error_num"] = self._fetch_metric(
+            self.config.bin_scope_task_id,
+            getattr(self.config, "bin_scope_task_ids", []),
+            "bin-scope",
+            lambda: float(random.choice([0, 0, random.randint(1, 3)])),
+        )
 
         # 5. Build Check
         results["build_check_error_num"] = self._fetch_single_metric(
@@ -132,48 +133,19 @@ class IntegrationDataFetcher:
         except Exception:
             return None, url
 
-    def fetch_codecheck_error_num(self) -> Tuple[Optional[float], str]:
-        """获取 CodeCheck 错误数，按配置自动选择旧单 ID 或领域目录采集路径。"""
-        return self._fetch_domain_or_legacy_metric(
-            self.config.code_check_task_id,
-            getattr(self.config, "code_check_task_ids", []),
-            "codecheck",
-            lambda: float(random.choice([0, 0, 0, random.randint(1, 5)])),
-        )
+    def _fetch_metric(
+        self,
+        legacy_task_id: str,
+        task_ids,
+        kind: str,
+        generator,
+    ) -> Tuple[Optional[float], str]:
+        """按配置获取指标：关闭按领域时走旧单 ID，开启后按 ID 和目录笛卡尔积累加。"""
+        if not getattr(self.config, "enable_domain_metrics", False):
+            return self._fetch_single_metric((legacy_task_id or "").strip(), kind, generator)
 
-    def fetch_dt_bin_error_num(self) -> Tuple[Optional[float], str]:
-        """获取 DT_Bin 错误数，按配置自动选择旧单 ID 或领域目录采集路径。"""
-        return self._fetch_domain_or_legacy_metric(
-            self.config.dt_bin_task_id,
-            getattr(self.config, "dt_bin_task_ids", []),
-            "dt-bin",
-            lambda: float(random.choice([0, 0, random.randint(1, 3)])),
-        )
-
-    def fetch_cooddy_check_error_num(self) -> Tuple[Optional[float], str]:
-        """获取 Cooddy Check 错误数，按配置自动选择旧单 ID 或领域目录采集路径。"""
-        return self._fetch_domain_or_legacy_metric(
-            self.config.cooddy_check_task_id,
-            getattr(self.config, "cooddy_check_task_ids", []),
-            "cooddy-check",
-            lambda: float(random.choice([0, 0, 0, random.randint(1, 4)])),
-        )
-
-    def fetch_bin_scope_error_num(self) -> Tuple[Optional[float], str]:
-        """获取 Bin Scope 错误数，按配置自动选择旧单 ID 或领域目录采集路径。"""
-        return self._fetch_domain_or_legacy_metric(
-            self.config.bin_scope_task_id,
-            getattr(self.config, "bin_scope_task_ids", []),
-            "bin-scope",
-            lambda: float(random.choice([0, 0, random.randint(1, 3)])),
-        )
-
-    def _normalize_task_ids(self, legacy_task_id: str, task_ids) -> List[str]:
-        """
-        归一化数据湖任务 ID，按领域获取开启后优先使用多 ID，否则回退旧单 ID。
-        """
-        normalized = []
-        seen = set()
+        normalized_task_ids = []
+        seen_task_ids = set()
         if isinstance(task_ids, str):
             candidates = task_ids.replace(",", "\n").splitlines()
         elif isinstance(task_ids, (list, tuple, set)):
@@ -181,73 +153,41 @@ class IntegrationDataFetcher:
         else:
             candidates = []
         for item in candidates:
-            value = str(item).strip()
-            if value and value not in seen:
-                normalized.append(value)
-                seen.add(value)
+            task_id = str(item).strip()
+            if task_id and task_id not in seen_task_ids:
+                normalized_task_ids.append(task_id)
+                seen_task_ids.add(task_id)
         legacy = (legacy_task_id or "").strip()
-        if not normalized and legacy:
-            normalized.append(legacy)
-        return normalized
+        if not normalized_task_ids and legacy:
+            normalized_task_ids.append(legacy)
+        if not normalized_task_ids:
+            return None, ""
 
-    def _get_domain_directory_rules(self) -> List[dict]:
-        """读取项目绑定配置集下的启用目录规则，保留重复目录归属以支持后续按领域统计。"""
         directory_set = getattr(self.config, "domain_directory_set", None)
         if not directory_set:
-            return []
-        rules = directory_set.rules.filter(is_deleted=False, enabled=True).order_by(
+            return None, ""
+        directory_rules = []
+        for rule in directory_set.rules.filter(is_deleted=False, enabled=True).order_by(
             "sort_order",
             "sys_create_datetime",
-        )
-        return [
-            {
-                "domain_name": rule.domain_name,
-                "directory": rule.directory,
-            }
-            for rule in rules
-            if (rule.directory or "").strip()
-        ]
-
-    def _fetch_domain_or_legacy_metric(
-        self,
-        legacy_task_id: str,
-        task_ids,
-        kind: str,
-        generator,
-    ) -> Tuple[Optional[float], str]:
-        """根据配置选择旧接口或责任田目录接口；单 ID 普通模式保持旧行为。"""
-        if not getattr(self.config, "enable_domain_metrics", False):
-            return self._fetch_single_metric(
-                (legacy_task_id or "").strip(),
-                kind,
-                generator,
-            )
-        normalized_ids = self._normalize_task_ids(legacy_task_id, task_ids)
-        return self._fetch_domain_directory_metric(normalized_ids, kind, generator)
-
-    def _fetch_domain_directory_metric(
-        self,
-        task_ids: List[str],
-        kind: str,
-        generator,
-    ) -> Tuple[Optional[float], str]:
-        """按 task_id 和绑定目录逐个请求领域目录接口，并对返回的问题数求和。"""
-        if not task_ids:
-            return None, ""
-        directory_rules = self._get_domain_directory_rules()
+        ):
+            directory = (rule.directory or "").strip()
+            if directory:
+                directory_rules.append((rule.domain_name, directory))
         if not directory_rules:
             return None, ""
+
         total = 0.0
         has_value = False
         urls = []
-        for task_id in task_ids:
-            for rule in directory_rules:
+        for task_id in normalized_task_ids:
+            for domain_name, directory in directory_rules:
                 # 真实环境中这里会访问按目录过滤的接口；当前保留 mock 入口和 URL 形状。
                 value, url = self._fetch_domain_directory_single_metric(
                     task_id,
                     kind,
-                    rule["directory"],
-                    rule["domain_name"],
+                    directory,
+                    domain_name,
                     generator,
                 )
                 if url:
@@ -266,9 +206,16 @@ class IntegrationDataFetcher:
         generator,
     ) -> Tuple[Optional[float], str]:
         """按单个 task_id 和目录请求领域目录指标。"""
-        url = self._get_domain_directory_url(kind, task_id, directory, domain_name)
         if not task_id or not directory:
             return None, ""
+        params = {
+            "id": task_id,
+            "date": self.record_date.isoformat(),
+            "directory": directory,
+        }
+        if domain_name:
+            params["domain"] = domain_name
+        url = f"https://dataplatform.example.com/{kind}/domain-directory?{urlencode(params)}"
 
         if random.random() < 0.05:
             return None, url
@@ -277,19 +224,6 @@ class IntegrationDataFetcher:
             return generator(), url
         except Exception:
             return None, url
-
-    def _fetch_task_metric(
-        self,
-        legacy_task_id: str,
-        task_ids,
-        kind: str,
-        generator,
-    ) -> Tuple[Optional[float], str]:
-        """兼容旧测试和外部调用的指标获取入口，新逻辑委托给拆分后的采集方法。"""
-        if getattr(self.config, "enable_domain_metrics", False):
-            normalized_ids = self._normalize_task_ids(legacy_task_id, task_ids)
-            return self._fetch_domain_directory_metric(normalized_ids, kind, generator)
-        return self._fetch_single_metric((legacy_task_id or "").strip(), kind, generator)
 
     def _mock_dt_fuzz_tree(self, payload: dict) -> dict:
         seed = f"{self.config.id}-{payload.get('branch')}-{payload.get('dueDate')}"

@@ -326,7 +326,12 @@ class IntegrationReportTests(TestCase):
                 (4.0, "url-4"),
             ],
         ):
-            value, url = fetcher.fetch_codecheck_error_num()
+            value, url = fetcher._fetch_metric(
+                config.code_check_task_id,
+                config.code_check_task_ids,
+                "codecheck",
+                lambda: 0.0,
+            )
 
         self.assertEqual(value, 10.0)
         self.assertEqual(url, "url-1\nurl-2\nurl-3\nurl-4")
@@ -346,7 +351,12 @@ class IntegrationReportTests(TestCase):
             "_fetch_single_metric",
             return_value=(7.0, "legacy-url"),
         ) as fetch_single:
-            value, url = fetcher.fetch_codecheck_error_num()
+            value, url = fetcher._fetch_metric(
+                config.code_check_task_id,
+                config.code_check_task_ids,
+                "codecheck",
+                lambda: 0.0,
+            )
 
         self.assertEqual(value, 7.0)
         self.assertEqual(url, "legacy-url")
