@@ -111,8 +111,39 @@ export interface HistoryRow {
   config_name: string;
   project_name: string;
   caretaker_names: string;
+  enable_domain_metrics: boolean;
   code_metrics: MetricCell[];
   dt_metrics: MetricCell[];
+}
+
+export interface DomainMetricTaskDetail {
+  task_id: string;
+  issue_count: number;
+  detail_url: string;
+}
+
+export interface DomainMetricDirectoryDetail {
+  directory: string;
+  issue_count: number;
+  task_details: DomainMetricTaskDetail[];
+}
+
+export interface DomainMetricDomainDetail {
+  domain_name: string;
+  issue_count: number;
+  directories: DomainMetricDirectoryDetail[];
+}
+
+export interface DomainMetricHistoryDetail {
+  config_id: string;
+  config_name: string;
+  project_name: string;
+  record_date: string;
+  metric_key: string;
+  metric_name: string;
+  domain_directory_set_name: string;
+  issue_count: number;
+  domains: DomainMetricDomainDetail[];
 }
 
 export interface DtFuzzNode {
@@ -256,6 +287,17 @@ export async function queryIntegrationHistoryApi(params: {
     params,
     paramsSerializer: 'repeat',
   });
+}
+
+export async function getDomainMetricHistoryDetailsApi(params: {
+  config_id: string;
+  metric_key: string;
+  record_date: string;
+}) {
+  return requestClient.get<DomainMetricHistoryDetail>(
+    '/api/integration-report/history/domain-metric-details',
+    { params },
+  );
 }
 
 export interface EmailDeliveryRow {

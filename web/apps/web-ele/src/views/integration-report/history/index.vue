@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { DomainMetricDetailContext } from './components/domain-metric-detail-dialog.vue';
+
 import type {
   DtFuzzHistoryItem,
   DtFuzzNode,
@@ -28,6 +30,8 @@ import {
 
 import { queryIntegrationHistoryApi } from '#/api/integration-report';
 
+import DomainMetricDetailDialog from './components/domain-metric-detail-dialog.vue';
+
 defineOptions({ name: 'DailyIntegrationHistory' });
 
 type HistoryTabKey = 'code' | 'dt' | 'dt_fuzz';
@@ -47,6 +51,8 @@ const rows = ref<HistoryRow[]>([]);
 const dtFuzzItems = ref<DtFuzzHistoryItem[]>([]);
 const expandedDtFuzzKeys = ref<Set<string>>(new Set());
 const activeTab = ref<HistoryTabKey>('code');
+const domainMetricDetailVisible = ref(false);
+const domainMetricDetailContext = ref<DomainMetricDetailContext>();
 const keywordMatchModeOptions = [
   { label: '交集', value: 'all' },
   { label: '并集', value: 'any' },
@@ -105,6 +111,13 @@ const CODE_COLS = [
   { key: 'binexplorer_error_num', name: 'BinExplorer 问题数' },
   { key: 'clang_tidy_error_num', name: 'Clang-Tidy 问题数' },
 ];
+
+const DOMAIN_METRIC_KEYS = new Set([
+  'bin_scope_error_num',
+  'codecheck_error_num',
+  'cooddy_check_error_num',
+  'dt_bin_error_num',
+]);
 
 const DT_COLS = [
   { key: 'dt_pass_rate', name: 'DT 通过率' },
@@ -179,6 +192,27 @@ function dtFuzzPlainText(value?: string) {
 
 function getMetric(metrics: MetricCell[], key: string) {
   return metrics.find((m) => m.key === key);
+}
+
+function canOpenDomainMetricDetail(row: HistoryRow, key: string) {
+  const metric = getMetric(row.code_metrics, key);
+  return (
+    row.enable_domain_metrics &&
+    DOMAIN_METRIC_KEYS.has(key) &&
+    metric?.value !== null &&
+    metric?.value !== undefined
+  );
+}
+
+function openDomainMetricDetail(row: HistoryRow, key: string) {
+  domainMetricDetailContext.value = {
+    configId: row.config_id,
+    configName: row.config_name,
+    metricKey: key,
+    projectName: row.project_name,
+    recordDate: row.record_date,
+  };
+  domainMetricDetailVisible.value = true;
 }
 
 function getSortState(tab: HistoryTabKey) {
@@ -731,8 +765,26 @@ onMounted(() => {
                             :key="col.key"
                             class="py-3 pr-3"
                           >
+                            <ElButton
+                              v-if="canOpenDomainMetricDetail(r, col.key)"
+                              class="history-domain-metric-trigger"
+                              link
+                              @click="openDomainMetricDetail(r, col.key)"
+                            >
+                              <span
+                                :class="
+                                  cellClass(getMetric(r.code_metrics, col.key))
+                                "
+                              >
+                                {{
+                                  cellText(getMetric(r.code_metrics, col.key))
+                                }}
+                              </span>
+                            </ElButton>
                             <ElLink
-                              v-if="getMetric(r.code_metrics, col.key)?.url"
+                              v-else-if="
+                                getMetric(r.code_metrics, col.key)?.url
+                              "
                               :href="
                                 getMetric(r.code_metrics, col.key)?.url ||
                                 undefined
@@ -1178,6 +1230,10 @@ onMounted(() => {
         </ElTabs>
       </div>
     </div>
+    <DomainMetricDetailDialog
+      v-model="domainMetricDetailVisible"
+      :context="domainMetricDetailContext"
+    />
   </Page>
 </template>
 
@@ -1269,6 +1325,16 @@ onMounted(() => {
 .history-sort-icon {
   font-size: 12px;
   opacity: 0.7;
+}
+
+.history-domain-metric-trigger {
+  height: auto;
+  padding: 0;
+  vertical-align: baseline;
+}
+
+.history-domain-metric-trigger:hover :deep(span) {
+  text-decoration: underline;
 }
 
 .history-keyword-select {
