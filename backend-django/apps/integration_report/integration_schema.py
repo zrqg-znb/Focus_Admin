@@ -125,22 +125,24 @@ class HistoryRow(Schema):
     dt_metrics: List[MetricCell] = []
 
 
-class DomainMetricTaskDetailOut(Schema):
+class DomainMetricIssueOut(Schema):
+    id: str
     task_id: str
-    issue_count: int = 0
-    detail_url: str = ""
-
-
-class DomainMetricDirectoryDetailOut(Schema):
+    task_detail_url: str = ""
     directory: str
-    issue_count: int = 0
-    task_details: List[DomainMetricTaskDetailOut] = []
+    file_name: str = ""
+    file_path: str = ""
+    function_name: str = ""
+    line_num: str = ""
+    description: str = ""
+    code_context_start_line: Optional[int] = None
+    code_context: str = ""
 
 
 class DomainMetricDomainDetailOut(Schema):
     domain_name: str
     issue_count: int = 0
-    directories: List[DomainMetricDirectoryDetailOut] = []
+    issues: List[DomainMetricIssueOut] = []
 
 
 class DomainMetricHistoryDetailOut(Schema):

@@ -116,22 +116,24 @@ export interface HistoryRow {
   dt_metrics: MetricCell[];
 }
 
-export interface DomainMetricTaskDetail {
+export interface DomainMetricIssue {
+  id: string;
   task_id: string;
-  issue_count: number;
-  detail_url: string;
-}
-
-export interface DomainMetricDirectoryDetail {
+  task_detail_url: string;
   directory: string;
-  issue_count: number;
-  task_details: DomainMetricTaskDetail[];
+  file_name: string;
+  file_path: string;
+  function_name: string;
+  line_num: string;
+  description: string;
+  code_context_start_line?: null | number;
+  code_context: string;
 }
 
 export interface DomainMetricDomainDetail {
   domain_name: string;
   issue_count: number;
-  directories: DomainMetricDirectoryDetail[];
+  issues: DomainMetricIssue[];
 }
 
 export interface DomainMetricHistoryDetail {

@@ -648,7 +648,7 @@ def get_domain_metric_history_details(
     record_date: date,
     metric_key: str,
 ):
-    """按当前项目领域目录配置返回指定历史指标的目录明细。"""
+    """读取指定历史指标在每日采集时写入的领域问题明细快照。"""
     try:
         return integration_service.get_domain_metric_history_details(
             config_id,

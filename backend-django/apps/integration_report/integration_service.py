@@ -1,12 +1,15 @@
 import logging
+import os
 import threading
-from hashlib import sha256
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
-from typing import Dict, List, Optional
-from urllib.parse import urlencode
+from hashlib import sha256
+from typing import Any, Dict, List, Optional
+from urllib.parse import quote, urlencode
 
+import requests
 from django.conf import settings
+from django.core.cache import cache
 from django.db import close_old_connections, transaction
 from django.db.models import Count, Max, Q
 from django.utils import timezone
@@ -62,6 +65,46 @@ DOMAIN_METRIC_TASK_FIELDS = {
     ),
     "bin_scope_error_num": ("bin_scope_task_ids", "bin_scope_task_id", "bin-scope"),
 }
+DOMAIN_ISSUE_PAGE_SIZE = 100
+DOMAIN_METRIC_DETAIL_CACHE_TTL = 24 * 60 * 60
+DOMAIN_METRIC_DETAIL_CACHE_PREFIX = "integration_report:domain_metric_detail"
+
+
+class DomainMetricUpstreamError(RuntimeError):
+    """责任田问题详情数据湖请求失败。"""
+
+
+def _mock_domain_issue_page(task_id: str, directory: str, page: int) -> tuple[int, list[dict]]:
+    """本地未配置数据湖地址时生成稳定的领域问题 Mock 数据。"""
+    seed = sha256(f"{task_id}:{directory}".encode("utf-8")).hexdigest()
+    total = int(seed[:2], 16) % 3 + 1
+    items = []
+    for index in range(total):
+        line_num = 20 + int(seed[2 + index * 2 : 4 + index * 2], 16) % 180
+        items.append(
+            {
+                "file_name": f"mock_issue_{index + 1}.c",
+                "file_path": f"{directory.rstrip('/')}/mock_issue_{index + 1}.c",
+                "function_name": f"mock_function_{index + 1}",
+                "fragment": [
+                    {
+                        "line_num": str(line_num),
+                        "file_path": f"{directory.rstrip('/')}/mock_issue_{index + 1}.c",
+                        "description": f"Mock 问题 {index + 1}（任务 {task_id}）",
+                        "codeContextStartLine": max(1, line_num - 2),
+                        "codeContext": (
+                            f"// Mock data for {task_id}\n"
+                            f"int mock_function_{index + 1}(void) {{\n"
+                            "  return 0;\n"
+                            "}"
+                        ),
+                    }
+                ],
+            }
+        )
+    start = (page - 1) * DOMAIN_ISSUE_PAGE_SIZE
+    return total, items[start : start + DOMAIN_ISSUE_PAGE_SIZE]
+
 
 SCAN_METRIC_TOOL_ALIAS_MAP = {
     "tscan_error_num": {"tscan"},
@@ -153,39 +196,135 @@ def normalize_metric_task_ids(raw_value, legacy_value: str = "") -> List[str]:
     return [legacy] if legacy else []
 
 
-def _mock_domain_metric_issue_count(
+def _request_domain_issue_page(task_id: str, directory: str, page: int) -> tuple[int, list[dict]]:
+    """请求数据湖的一页领域问题，并校验上游固定响应结构。"""
+    url = (os.environ.get("INTEGRATION_REPORT_DOMAIN_ISSUE_API_URL") or "").strip()
+    if not url:
+        if settings.DEBUG:
+            return _mock_domain_issue_page(task_id, directory, page)
+        raise DomainMetricUpstreamError("未配置领域问题数据湖接口地址")
+
+    payload = {
+        "task_id": task_id,
+        "file_path": directory,
+        "page": page,
+        "pageSize": DOMAIN_ISSUE_PAGE_SIZE,
+    }
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        raise DomainMetricUpstreamError(f"请求数据湖失败: {exc}") from exc
+
+    if response.status_code >= 400:
+        raise DomainMetricUpstreamError(f"数据湖响应异常: HTTP {response.status_code}")
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise DomainMetricUpstreamError("数据湖响应不是合法 JSON") from exc
+    if not isinstance(data, dict):
+        raise DomainMetricUpstreamError("数据湖响应格式异常")
+    if data.get("status") != "success" or data.get("error"):
+        raise DomainMetricUpstreamError(
+            f"数据湖返回失败: {data.get('error') or data.get('status') or '未知错误'}"
+        )
+
+    result = data.get("result")
+    if not isinstance(result, dict) or not isinstance(result.get("info"), list):
+        raise DomainMetricUpstreamError("数据湖响应缺少 result.info")
+    try:
+        total = int(result.get("total"))
+    except (TypeError, ValueError) as exc:
+        raise DomainMetricUpstreamError("数据湖响应 total 格式异常") from exc
+    if total < 0:
+        raise DomainMetricUpstreamError("数据湖响应 total 不能小于 0")
+
+    info_items = [item for item in result["info"] if isinstance(item, dict)]
+    if len(info_items) != len(result["info"]):
+        raise DomainMetricUpstreamError("数据湖响应 info 包含非法条目")
+    return total, info_items
+
+
+def _fetch_domain_issue_info(task_id: str, directory: str) -> list[dict]:
+    """按数据湖 total 顺序拉取一个 task ID 与目录下的全部问题。"""
+    page = 1
+    total, info_items = _request_domain_issue_page(task_id, directory, page)
+    all_items = list(info_items)
+    if len(all_items) > total:
+        raise DomainMetricUpstreamError("数据湖首批问题数超过 total")
+
+    # 首批数据不足 total 时继续翻页；空页意味着上游 total 与实际数据不一致。
+    while len(all_items) < total:
+        page += 1
+        _, page_items = _request_domain_issue_page(task_id, directory, page)
+        if not page_items:
+            raise DomainMetricUpstreamError("数据湖分页提前返回空数据")
+        all_items.extend(page_items)
+        if len(all_items) > total:
+            raise DomainMetricUpstreamError("数据湖分页问题数超过 total")
+    return all_items
+
+
+def _build_domain_metric_issue_rows(task_id: str, directory: str, info_items: list[dict]) -> list[dict]:
+    """将数据湖 info 中的全部 fragment 展平为领域详情表格行。"""
+    rows: list[dict] = []
+    for info_index, info in enumerate(info_items):
+        fragments = info.get("fragment")
+        if not isinstance(fragments, list) or not fragments:
+            fragments = [{}]
+        for fragment_index, fragment in enumerate(fragments):
+            fragment = fragment if isinstance(fragment, dict) else {}
+            start_line = fragment.get("codeContextStartLine")
+            try:
+                start_line = int(start_line) if start_line is not None else None
+            except (TypeError, ValueError):
+                start_line = None
+            rows.append(
+                {
+                    "id": f"{task_id}:{directory}:{info_index}:{fragment_index}",
+                    "task_id": task_id,
+                    "task_detail_url": f"http://codecheck.rnd.com/{quote(task_id, safe='')}",
+                    "directory": directory,
+                    "file_name": str(info.get("file_name") or ""),
+                    "file_path": str(
+                        fragment.get("file_path") or info.get("file_path") or ""
+                    ),
+                    "function_name": str(info.get("function_name") or ""),
+                    "line_num": str(fragment.get("line_num") or ""),
+                    "description": str(fragment.get("description") or ""),
+                    "code_context_start_line": start_line,
+                    "code_context": str(fragment.get("codeContext") or ""),
+                }
+            )
+    return rows
+
+
+def _domain_metric_detail_cache_key(
     config_id: str,
     record_date: date,
     metric_key: str,
-    directory: str,
-    task_id: str,
-) -> int:
-    """为领域指标详情生成可复现的临时问题数，待数据湖详情接口接入后替换。"""
-    seed = ":".join([config_id, record_date.isoformat(), metric_key, directory, task_id])
-    return int(sha256(seed.encode("utf-8")).hexdigest()[:8], 16) % 8
-
-
-def get_domain_metric_history_details(
-    config_id: str,
-    record_date: date,
-    metric_key: str,
-) -> dict:
-    """按当前责任田目录配置返回领域指标详情的临时 Mock 数据。"""
-    config = (
-        IntegrationProjectConfig.objects.select_related("project", "domain_directory_set")
-        .filter(id=config_id, is_deleted=False)
-        .first()
+) -> str:
+    """生成按采集日期隔离的领域问题详情 Redis 键。"""
+    return ":".join(
+        [DOMAIN_METRIC_DETAIL_CACHE_PREFIX, record_date.isoformat(), str(config_id), metric_key]
     )
-    if not config:
-        raise LookupError("项目配置不存在")
+
+
+def _build_domain_metric_snapshot(
+    config: IntegrationProjectConfig,
+    record_date: date,
+    metric_key: str,
+) -> Optional[dict]:
+    """采集单项领域指标的完整问题详情，并构造可缓存快照。"""
     if metric_key not in DOMAIN_METRIC_TASK_FIELDS:
         raise ValueError("该指标不支持按责任田领域查看详情")
-    if not config.enable_domain_metrics:
-        raise ValueError("当前项目未启用按领域获取")
 
     directory_set = config.domain_directory_set
     if not directory_set or directory_set.is_deleted or not directory_set.enabled:
-        raise ValueError("当前项目未绑定可用的责任田目录配置")
+        raise DomainMetricUpstreamError("当前项目未绑定可用的责任田目录配置")
 
     ensure_default_metric_definitions()
     metric = IntegrationMetricDefinition.objects.filter(
@@ -195,15 +334,18 @@ def get_domain_metric_history_details(
     if not metric:
         raise ValueError("指标定义不存在")
 
-    task_ids_field, legacy_task_id_field, metric_kind = DOMAIN_METRIC_TASK_FIELDS[metric_key]
+    task_ids_field, legacy_task_id_field, _ = DOMAIN_METRIC_TASK_FIELDS[metric_key]
     task_ids = normalize_metric_task_ids(
         getattr(config, task_ids_field, []),
         getattr(config, legacy_task_id_field, ""),
     )
+    if not task_ids:
+        return None
 
     domains: list[dict] = []
     domains_by_name: dict[str, dict] = {}
     directories_by_domain: dict[str, set[str]] = defaultdict(set)
+    upstream_cache: dict[tuple[str, str], list[dict]] = {}
     # 保留跨领域重复目录；同一领域的重复目录合并为一行，避免重复展示同一查看入口。
     rules = directory_set.rules.filter(is_deleted=False, enabled=True).order_by(
         "sort_order",
@@ -217,43 +359,22 @@ def get_domain_metric_history_details(
         directories_by_domain[domain_name].add(directory)
         domain = domains_by_name.get(domain_name)
         if not domain:
-            domain = {"domain_name": domain_name, "issue_count": 0, "directories": []}
+            domain = {"domain_name": domain_name, "issue_count": 0, "issues": []}
             domains_by_name[domain_name] = domain
             domains.append(domain)
 
-        task_details = []
         for task_id in task_ids:
-            issue_count = _mock_domain_metric_issue_count(
-                str(config.id), record_date, metric_key, directory, task_id
-            )
-            detail_url = (
-                f"https://dataplatform.example.com/{metric_kind}/domain-directory?"
-                + urlencode(
-                    {
-                        "id": task_id,
-                        "date": record_date.isoformat(),
-                        "directory": directory,
-                        "domain": domain_name,
-                    }
-                )
-            )
-            task_details.append(
-                {
-                    "task_id": task_id,
-                    "issue_count": issue_count,
-                    "detail_url": detail_url,
-                }
+            cache_key = (task_id, directory)
+            if cache_key not in upstream_cache:
+                upstream_cache[cache_key] = _fetch_domain_issue_info(task_id, directory)
+            info_items = upstream_cache[cache_key]
+            domain["issue_count"] += len(info_items)
+            domain["issues"].extend(
+                _build_domain_metric_issue_rows(task_id, directory, info_items)
             )
 
-        directory_issue_count = sum(item["issue_count"] for item in task_details)
-        domain["issue_count"] += directory_issue_count
-        domain["directories"].append(
-            {
-                "directory": directory,
-                "issue_count": directory_issue_count,
-                "task_details": task_details,
-            }
-        )
+    if not domains:
+        raise DomainMetricUpstreamError("当前项目未配置可用的责任田目录")
 
     return {
         "config_id": str(config.id),
@@ -266,6 +387,36 @@ def get_domain_metric_history_details(
         "issue_count": sum(domain["issue_count"] for domain in domains),
         "domains": domains,
     }
+
+
+def _cache_domain_metric_snapshot(
+    config_id: str,
+    record_date: date,
+    metric_key: str,
+    payload: dict,
+) -> None:
+    """将领域指标详情或采集失败信息写入 Redis 一天。"""
+    cache.set(
+        _domain_metric_detail_cache_key(config_id, record_date, metric_key),
+        payload,
+        timeout=DOMAIN_METRIC_DETAIL_CACHE_TTL,
+    )
+
+
+def get_domain_metric_history_details(
+    config_id: str,
+    record_date: date,
+    metric_key: str,
+) -> dict:
+    """读取每日采集时写入 Redis 的领域问题详情快照。"""
+    if metric_key not in DOMAIN_METRIC_TASK_FIELDS:
+        raise ValueError("该指标不支持按责任田领域查看详情")
+    snapshot = cache.get(_domain_metric_detail_cache_key(config_id, record_date, metric_key))
+    if not isinstance(snapshot, dict):
+        raise LookupError("当日领域问题明细缓存不存在或已过期")
+    if snapshot.get("error"):
+        raise LookupError(str(snapshot["error"]))
+    return snapshot
 
 
 def validate_domain_metric_config_payload(payload) -> None:
@@ -657,7 +808,10 @@ def collect_daily_metrics(record_date: Optional[date] = None, config_ids: Option
     if record_date is None:
         record_date = date.today()
 
-    configs = IntegrationProjectConfig.objects.select_related("project").filter(is_deleted=False, enabled=True)
+    configs = IntegrationProjectConfig.objects.select_related(
+        "project",
+        "domain_directory_set",
+    ).filter(is_deleted=False, enabled=True)
     if config_ids:
         configs = configs.filter(id__in=config_ids)
     def_map = {d.key: d for d in IntegrationMetricDefinition.objects.filter(is_deleted=False, enabled=True)}
@@ -665,6 +819,37 @@ def collect_daily_metrics(record_date: Optional[date] = None, config_ids: Option
     for cfg in configs:
         fetcher = IntegrationDataFetcher(cfg).set_date(record_date)
         payload = fetcher.fetch_metrics()
+        domain_metric_errors: set[str] = set()
+        if cfg.enable_domain_metrics:
+            for metric_key in DOMAIN_METRIC_TASK_FIELDS:
+                try:
+                    snapshot = _build_domain_metric_snapshot(cfg, record_date, metric_key)
+                    if snapshot is None:
+                        cache.delete(
+                            _domain_metric_detail_cache_key(
+                                str(cfg.id),
+                                record_date,
+                                metric_key,
+                            )
+                        )
+                        payload[metric_key] = (None, "")
+                        continue
+                    _cache_domain_metric_snapshot(
+                        str(cfg.id),
+                        record_date,
+                        metric_key,
+                        snapshot,
+                    )
+                    payload[metric_key] = (float(snapshot["issue_count"]), "")
+                except DomainMetricUpstreamError as exc:
+                    domain_metric_errors.add(metric_key)
+                    _cache_domain_metric_snapshot(
+                        str(cfg.id),
+                        record_date,
+                        metric_key,
+                        {"error": str(exc)},
+                    )
+                    payload[metric_key] = (None, "")
         payload.update(_fetch_code_scan_metrics(cfg, record_date))
 
         for key, (val, url) in payload.items():
@@ -678,7 +863,9 @@ def collect_daily_metrics(record_date: Optional[date] = None, config_ids: Option
                 defaults={
                     "value_number": val,
                     "value_text": (
-                        ""
+                        "error"
+                        if key in domain_metric_errors
+                        else ""
                         if key in SCAN_METRIC_TOOL_ALIAS_MAP or val is not None or not url
                         else ("error" if val is None else "")
                     ),

@@ -1,7 +1,7 @@
 from datetime import date, timedelta
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from django.test import RequestFactory, TestCase
+from django.test import RequestFactory, TestCase, override_settings
 from django.utils import timezone
 from ninja.errors import HttpError
 
@@ -395,57 +395,367 @@ class IntegrationReportTests(TestCase):
             code_check_task_ids=["codecheck-1", "codecheck-2"],
         )
 
-        detail = integration_service.get_domain_metric_history_details(
-            str(config.id),
-            record_date,
-            "codecheck_error_num",
-        )
+        info_items = [
+            {
+                "file_name": "shared.c",
+                "file_path": "/repo/shared/shared.c",
+                "function_name": "shared_entry",
+                "fragment": [
+                    {
+                        "line_num": "14",
+                        "description": "共享目录问题",
+                        "codeContextStartLine": 10,
+                        "codeContext": "int shared_entry() {}",
+                    }
+                ],
+            }
+        ]
+        with patch.object(
+            integration_service,
+            "_fetch_domain_issue_info",
+            return_value=info_items,
+        ) as fetch_issues:
+            snapshot = integration_service._build_domain_metric_snapshot(
+                config,
+                record_date,
+                "codecheck_error_num",
+            )
+        with patch.object(
+            integration_service.cache,
+            "get",
+            return_value=snapshot,
+        ) as cache_get, patch.object(
+            integration_service,
+            "_fetch_domain_issue_info",
+        ) as fetch_again:
+            detail = integration_service.get_domain_metric_history_details(
+                str(config.id),
+                record_date,
+                "codecheck_error_num",
+            )
 
         self.assertEqual(detail["metric_name"], "CodeCheck 错误数")
         self.assertEqual([item["domain_name"] for item in detail["domains"]], ["座舱", "车控"])
-        self.assertEqual(len(detail["domains"][0]["directories"]), 2)
-        self.assertEqual(len(detail["domains"][1]["directories"]), 1)
-        self.assertEqual(detail["domains"][1]["directories"][0]["directory"], "/repo/shared")
+        self.assertEqual(detail["domains"][0]["issue_count"], 4)
+        self.assertEqual(detail["domains"][1]["issue_count"], 2)
+        self.assertEqual(len(detail["domains"][0]["issues"]), 4)
+        self.assertEqual(len(detail["domains"][1]["issues"]), 2)
+        self.assertEqual(detail["domains"][1]["issues"][0]["directory"], "/repo/shared")
         self.assertEqual(
-            len(detail["domains"][0]["directories"][0]["task_details"]),
-            2,
+            detail["domains"][0]["issues"][0]["description"],
+            "共享目录问题",
         )
         self.assertEqual(
             detail["issue_count"],
             sum(item["issue_count"] for item in detail["domains"]),
         )
+        self.assertEqual(fetch_issues.call_count, 4)
+        self.assertEqual(fetch_again.call_count, 0)
+        self.assertEqual(cache_get.call_count, 1)
         self.assertEqual(
-            detail,
-            integration_service.get_domain_metric_history_details(
+            detail["domains"][0]["issues"][0]["task_detail_url"],
+            "http://codecheck.rnd.com/codecheck-1",
+        )
+
+    def test_collect_daily_metrics_caches_domain_snapshot_and_uses_its_total(self):
+        record_date = date(2026, 8, 7)
+        directory_set = IntegrationDomainDirectorySet.objects.create(
+            name="采集缓存配置",
+            enabled=True,
+        )
+        IntegrationDomainDirectoryRule.objects.create(
+            directory_set=directory_set,
+            domain_name="座舱",
+            directory="/repo/cockpit",
+        )
+        config = IntegrationProjectConfig.objects.create(
+            name="领域采集缓存项目",
+            enabled=True,
+            enable_domain_metrics=True,
+            domain_directory_set=directory_set,
+            code_check_task_ids=["codecheck-1"],
+        )
+        info_items = [
+            {"file_name": "a.c", "fragment": [{"line_num": "12"}]},
+            {"file_name": "b.c", "fragment": [{"line_num": "24"}]},
+        ]
+
+        with patch.object(
+            integration_service.IntegrationDataFetcher,
+            "fetch_metrics",
+            return_value={},
+        ), patch.object(
+            integration_service,
+            "_fetch_domain_issue_info",
+            return_value=info_items,
+        ), patch.object(integration_service.cache, "set") as cache_set, patch.object(
+            integration_service.cache,
+            "delete",
+        ):
+            integration_service.collect_daily_metrics(
+                record_date=record_date,
+                config_ids=[str(config.id)],
+            )
+
+        value = IntegrationProjectMetricValue.objects.select_related("metric").get(
+            config=config,
+            record_date=record_date,
+            metric__key="codecheck_error_num",
+        )
+        self.assertEqual(value.value_number, 2.0)
+        self.assertEqual(value.value_text, "")
+        cached_payload = next(
+            call.args[1]
+            for call in cache_set.call_args_list
+            if call.args[0]
+            == integration_service._domain_metric_detail_cache_key(
                 str(config.id),
                 record_date,
                 "codecheck_error_num",
+            )
+        )
+        self.assertEqual(cached_payload["issue_count"], 2)
+        self.assertEqual(cached_payload["domains"][0]["issues"][0]["task_id"], "codecheck-1")
+        self.assertEqual(
+            next(
+                call.kwargs["timeout"]
+                for call in cache_set.call_args_list
+                if call.args[0]
+                == integration_service._domain_metric_detail_cache_key(
+                    str(config.id),
+                    record_date,
+                    "codecheck_error_num",
+                )
             ),
+            integration_service.DOMAIN_METRIC_DETAIL_CACHE_TTL,
         )
 
-    def test_domain_metric_history_details_reject_invalid_config_or_metric(self):
-        with self.assertRaisesRegex(LookupError, "项目配置不存在"):
-            integration_service.get_domain_metric_history_details(
-                "missing-config",
-                date(2026, 8, 6),
-                "codecheck_error_num",
-            )
-
-        config = IntegrationProjectConfig.objects.create(
-            name="未启用领域项目",
+    def test_collect_domain_metric_failure_is_cached_and_saved_as_error(self):
+        record_date = date(2026, 8, 7)
+        directory_set = IntegrationDomainDirectorySet.objects.create(
+            name="采集失败配置",
             enabled=True,
         )
+        IntegrationDomainDirectoryRule.objects.create(
+            directory_set=directory_set,
+            domain_name="座舱",
+            directory="/repo/cockpit",
+        )
+        config = IntegrationProjectConfig.objects.create(
+            name="领域采集失败项目",
+            enabled=True,
+            enable_domain_metrics=True,
+            domain_directory_set=directory_set,
+            code_check_task_ids=["codecheck-1"],
+        )
+
+        with patch.object(
+            integration_service.IntegrationDataFetcher,
+            "fetch_metrics",
+            return_value={},
+        ), patch.object(
+            integration_service,
+            "_fetch_domain_issue_info",
+            side_effect=integration_service.DomainMetricUpstreamError("数据湖不可用"),
+        ), patch.object(integration_service.cache, "set") as cache_set, patch.object(
+            integration_service.cache,
+            "delete",
+        ):
+            integration_service.collect_daily_metrics(
+                record_date=record_date,
+                config_ids=[str(config.id)],
+            )
+
+        value = IntegrationProjectMetricValue.objects.select_related("metric").get(
+            config=config,
+            record_date=record_date,
+            metric__key="codecheck_error_num",
+        )
+        self.assertIsNone(value.value_number)
+        self.assertEqual(value.value_text, "error")
+        error_payload = next(
+            call.args[1]
+            for call in cache_set.call_args_list
+            if call.args[0]
+            == integration_service._domain_metric_detail_cache_key(
+                str(config.id),
+                record_date,
+                "codecheck_error_num",
+            )
+        )
+        self.assertEqual(error_payload["error"], "数据湖不可用")
+        with patch.object(integration_service.cache, "get", return_value=error_payload):
+            with self.assertRaisesRegex(LookupError, "数据湖不可用"):
+                integration_service.get_domain_metric_history_details(
+                    str(config.id),
+                    record_date,
+                    "codecheck_error_num",
+                )
+
+    def test_domain_issue_fetch_reads_all_upstream_pages_and_flattens_fragments(self):
+        first_response = Mock(status_code=200)
+        first_response.json.return_value = {
+            "status": "success",
+            "error": None,
+            "result": {
+                "total": "3",
+                "info": [
+                    {
+                        "file_name": "first.c",
+                        "file_path": "/repo/first.c",
+                        "function_name": "first",
+                        "fragment": [
+                            {
+                                "line_num": "10",
+                                "description": "first issue",
+                                "codeContextStartLine": 8,
+                                "codeContext": "first context",
+                            },
+                            {
+                                "line_num": "11",
+                                "description": "second fragment",
+                            },
+                        ],
+                    },
+                    {
+                        "file_name": "second.c",
+                        "file_path": "/repo/second.c",
+                        "function_name": "second",
+                        "fragment": [],
+                    },
+                ],
+            },
+        }
+        second_response = Mock(status_code=200)
+        second_response.json.return_value = {
+            "status": "success",
+            "error": None,
+            "result": {
+                "total": "3",
+                "info": [
+                    {
+                        "file_name": "third.c",
+                        "file_path": "/repo/third.c",
+                        "function_name": "third",
+                        "fragment": [{"line_num": "24", "description": "third issue"}],
+                    }
+                ],
+            },
+        }
+
+        with patch.dict(
+            "os.environ",
+            {"INTEGRATION_REPORT_DOMAIN_ISSUE_API_URL": "https://example.com/issues"},
+        ), patch(
+            "apps.integration_report.integration_service.requests.post",
+            side_effect=[first_response, second_response],
+        ) as post:
+            info_items = integration_service._fetch_domain_issue_info(
+                "task-1",
+                "/repo",
+            )
+
+        self.assertEqual(len(info_items), 3)
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(post.call_args_list[0].kwargs["json"]["page"], 1)
+        self.assertEqual(post.call_args_list[1].kwargs["json"]["page"], 2)
+        self.assertEqual(post.call_args_list[0].kwargs["json"]["pageSize"], 100)
+        rows = integration_service._build_domain_metric_issue_rows(
+            "task-1",
+            "/repo",
+            info_items,
+        )
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(rows[0]["line_num"], "10")
+        self.assertEqual(rows[2]["file_name"], "second.c")
+        self.assertEqual(rows[3]["description"], "third issue")
+
+    @override_settings(DEBUG=True)
+    def test_domain_issue_fetch_uses_stable_mock_without_local_url(self):
+        with patch.dict(
+            "os.environ",
+            {"INTEGRATION_REPORT_DOMAIN_ISSUE_API_URL": ""},
+        ):
+            first_items = integration_service._fetch_domain_issue_info("task-1", "/repo")
+            second_items = integration_service._fetch_domain_issue_info("task-1", "/repo")
+
+        self.assertGreater(len(first_items), 0)
+        self.assertEqual(first_items, second_items)
+        self.assertTrue(first_items[0]["fragment"][0]["description"].startswith("Mock 问题"))
+
+    def test_domain_issue_fetch_rejects_upstream_error_or_incomplete_page(self):
+        http_error_response = Mock(status_code=503)
+        with patch.dict(
+            "os.environ",
+            {"INTEGRATION_REPORT_DOMAIN_ISSUE_API_URL": "https://example.com/issues"},
+        ), patch(
+            "apps.integration_report.integration_service.requests.post",
+            return_value=http_error_response,
+        ):
+            with self.assertRaisesRegex(
+                integration_service.DomainMetricUpstreamError,
+                "HTTP 503",
+            ):
+                integration_service._fetch_domain_issue_info("task-1", "/repo")
+
+        error_response = Mock(status_code=200)
+        error_response.json.return_value = {
+            "status": "failed",
+            "error": "task unavailable",
+            "result": {},
+        }
+        with patch.dict(
+            "os.environ",
+            {"INTEGRATION_REPORT_DOMAIN_ISSUE_API_URL": "https://example.com/issues"},
+        ), patch(
+            "apps.integration_report.integration_service.requests.post",
+            return_value=error_response,
+        ):
+            with self.assertRaisesRegex(
+                integration_service.DomainMetricUpstreamError,
+                "task unavailable",
+            ):
+                integration_service._fetch_domain_issue_info("task-1", "/repo")
+
+        first_response = Mock(status_code=200)
+        first_response.json.return_value = {
+            "status": "success",
+            "error": None,
+            "result": {"total": "2", "info": [{"file_name": "first.c"}]},
+        }
+        empty_response = Mock(status_code=200)
+        empty_response.json.return_value = {
+            "status": "success",
+            "error": None,
+            "result": {"total": "2", "info": []},
+        }
+        with patch.dict(
+            "os.environ",
+            {"INTEGRATION_REPORT_DOMAIN_ISSUE_API_URL": "https://example.com/issues"},
+        ), patch(
+            "apps.integration_report.integration_service.requests.post",
+            side_effect=[first_response, empty_response],
+        ):
+            with self.assertRaisesRegex(
+                integration_service.DomainMetricUpstreamError,
+                "提前返回空数据",
+            ):
+                integration_service._fetch_domain_issue_info("task-1", "/repo")
+
+    def test_domain_metric_history_details_reject_invalid_config_or_metric(self):
+        with patch.object(integration_service.cache, "get", return_value=None):
+            with self.assertRaisesRegex(LookupError, "缓存不存在或已过期"):
+                integration_service.get_domain_metric_history_details(
+                    "missing-config",
+                    date(2026, 8, 6),
+                    "codecheck_error_num",
+                )
+
         with self.assertRaisesRegex(ValueError, "该指标不支持"):
             integration_service.get_domain_metric_history_details(
-                str(config.id),
+                "config-id",
                 date(2026, 8, 6),
                 "compile_error_num",
-            )
-        with self.assertRaisesRegex(ValueError, "未启用按领域获取"):
-            integration_service.get_domain_metric_history_details(
-                str(config.id),
-                date(2026, 8, 6),
-                "codecheck_error_num",
             )
 
     def test_history_returns_current_domain_metric_flag(self):

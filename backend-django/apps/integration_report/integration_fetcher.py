@@ -54,31 +54,41 @@ class IntegrationDataFetcher:
 
         results = {}
 
-        # 1-4. 四个数据湖问题数指标在普通模式下走旧单 ID 接口，按领域开启后走目录遍历接口。
-        results["codecheck_error_num"] = self._fetch_metric(
-            self.config.code_check_task_id,
-            getattr(self.config, "code_check_task_ids", []),
-            "codecheck",
-            lambda: float(random.choice([0, 0, 0, random.randint(1, 5)])),
-        )
-        results["dt_bin_error_num"] = self._fetch_metric(
-            self.config.dt_bin_task_id,
-            getattr(self.config, "dt_bin_task_ids", []),
-            "dt-bin",
-            lambda: float(random.choice([0, 0, random.randint(1, 3)])),
-        )
-        results["cooddy_check_error_num"] = self._fetch_metric(
-            self.config.cooddy_check_task_id,
-            getattr(self.config, "cooddy_check_task_ids", []),
-            "cooddy-check",
-            lambda: float(random.choice([0, 0, 0, random.randint(1, 4)])),
-        )
-        results["bin_scope_error_num"] = self._fetch_metric(
-            self.config.bin_scope_task_id,
-            getattr(self.config, "bin_scope_task_ids", []),
-            "bin-scope",
-            lambda: float(random.choice([0, 0, random.randint(1, 3)])),
-        )
+        # 1-4. 领域模式由每日采集服务拉取完整问题明细并同时写入 Redis 快照。
+        if getattr(self.config, "enable_domain_metrics", False):
+            results.update(
+                {
+                    "codecheck_error_num": (None, ""),
+                    "dt_bin_error_num": (None, ""),
+                    "cooddy_check_error_num": (None, ""),
+                    "bin_scope_error_num": (None, ""),
+                }
+            )
+        else:
+            results["codecheck_error_num"] = self._fetch_metric(
+                self.config.code_check_task_id,
+                getattr(self.config, "code_check_task_ids", []),
+                "codecheck",
+                lambda: float(random.choice([0, 0, 0, random.randint(1, 5)])),
+            )
+            results["dt_bin_error_num"] = self._fetch_metric(
+                self.config.dt_bin_task_id,
+                getattr(self.config, "dt_bin_task_ids", []),
+                "dt-bin",
+                lambda: float(random.choice([0, 0, random.randint(1, 3)])),
+            )
+            results["cooddy_check_error_num"] = self._fetch_metric(
+                self.config.cooddy_check_task_id,
+                getattr(self.config, "cooddy_check_task_ids", []),
+                "cooddy-check",
+                lambda: float(random.choice([0, 0, 0, random.randint(1, 4)])),
+            )
+            results["bin_scope_error_num"] = self._fetch_metric(
+                self.config.bin_scope_task_id,
+                getattr(self.config, "bin_scope_task_ids", []),
+                "bin-scope",
+                lambda: float(random.choice([0, 0, random.randint(1, 3)])),
+            )
 
         # 5. Build Check
         results["build_check_error_num"] = self._fetch_single_metric(
