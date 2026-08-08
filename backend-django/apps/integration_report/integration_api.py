@@ -48,6 +48,7 @@ from .integration_models import (
     IntegrationEmailSubscription,
     IntegrationDtFuzzSnapshot,
 )
+from .integration_fetcher import get_domain_metric_detail_snapshot
 from . import integration_service
 from .integration_models import IntegrationProjectConfig
 
@@ -117,7 +118,9 @@ def _build_history_keyword_q(keyword: str, fields: List[str]) -> Q:
     return query
 
 
-def _apply_history_keyword_filters(qs, keywords: List[str], fields: List[str], match_mode: str):
+def _apply_history_keyword_filters(
+    qs, keywords: List[str], fields: List[str], match_mode: str
+):
     """
     将多关键词过滤应用到历史页查询集，交集模式逐个 filter 以兼容多对多字段。
     """
@@ -150,17 +153,27 @@ def _resolve_history_caretaker_names(config: IntegrationProjectConfig) -> str:
     return _join_user_names(project.managers.all())
 
 
-@router.get("/projects", response=List[ProjectConfigOut], summary="集成报告配置列表（用于订阅页）")
+@router.get(
+    "/projects",
+    response=List[ProjectConfigOut],
+    summary="集成报告配置列表（用于订阅页）",
+)
 @paginate
 def list_projects(request, filters: ConfigFilterSchema = Query(...)):
-    return integration_service.list_configs_with_latest(request.auth, filters.project_name)
+    return integration_service.list_configs_with_latest(
+        request.auth, filters.project_name
+    )
 
 
-@router.get("/configs", response=List[ProjectConfigManageRow], summary="配置列表（维护用）")
+@router.get(
+    "/configs", response=List[ProjectConfigManageRow], summary="配置列表（维护用）"
+)
 @paginate
 def list_configs(request, filters: ConfigFilterSchema = Query(...)):
     qs = (
-        IntegrationProjectConfig.objects.select_related("project", "domain_directory_set")
+        IntegrationProjectConfig.objects.select_related(
+            "project", "domain_directory_set"
+        )
         .prefetch_related("managers")
         .filter(is_deleted=False)
         .order_by("-sys_update_datetime")
@@ -189,7 +202,9 @@ def list_configs(request, filters: ConfigFilterSchema = Query(...)):
                 bin_scope_task_id=cfg.bin_scope_task_id,
                 enable_domain_metrics=cfg.enable_domain_metrics,
                 domain_directory_set_id=str(cfg.domain_directory_set_id or ""),
-                domain_directory_set_name=cfg.domain_directory_set.name if cfg.domain_directory_set else "",
+                domain_directory_set_name=(
+                    cfg.domain_directory_set.name if cfg.domain_directory_set else ""
+                ),
                 code_check_task_ids=integration_service.normalize_metric_task_ids(
                     cfg.code_check_task_ids,
                     cfg.code_check_task_id,
@@ -294,7 +309,11 @@ def update_config(request, config_id: str, payload: ProjectConfigUpsertIn):
         raise HttpError(400, str(exc))
     cfg = get_object_or_404(IntegrationProjectConfig, id=config_id, is_deleted=False)
     cfg.name = payload.name
-    fields_set = getattr(payload, "model_fields_set", None) or getattr(payload, "__fields_set__", None) or set()
+    fields_set = (
+        getattr(payload, "model_fields_set", None)
+        or getattr(payload, "__fields_set__", None)
+        or set()
+    )
     if "project_id" in fields_set:
         if payload.project_id:
             proj = Project.objects.filter(id=payload.project_id).first()
@@ -365,11 +384,15 @@ def delete_config(request, config_id: str):
     response=DomainDirectorySetQueryOut,
     summary="责任田目录配置集列表",
 )
-def list_domain_directory_sets(request, filters: DomainDirectorySetQueryIn = Query(...)):
+def list_domain_directory_sets(
+    request, filters: DomainDirectorySetQueryIn = Query(...)
+):
     """
     分页查询责任田领域 x 目录配置集。
     """
-    rows, count, page, page_size = integration_service.query_domain_directory_sets(filters)
+    rows, count, page, page_size = integration_service.query_domain_directory_sets(
+        filters
+    )
     return DomainDirectorySetQueryOut(
         items=[DomainDirectorySetRow(**row) for row in rows],
         count=count,
@@ -403,7 +426,9 @@ def get_domain_directory_set(request, set_id: str):
     查询单个责任田目录配置集详情。
     """
     try:
-        return DomainDirectorySetDetailOut(**integration_service.get_domain_directory_set_detail(set_id))
+        return DomainDirectorySetDetailOut(
+            **integration_service.get_domain_directory_set_detail(set_id)
+        )
     except ValueError as exc:
         raise HttpError(404, str(exc))
 
@@ -428,7 +453,9 @@ def create_domain_directory_set(request, payload: DomainDirectorySetUpsertIn):
     response=bool,
     summary="更新责任田目录配置集",
 )
-def update_domain_directory_set(request, set_id: str, payload: DomainDirectorySetUpsertIn):
+def update_domain_directory_set(
+    request, set_id: str, payload: DomainDirectorySetUpsertIn
+):
     """
     更新责任田领域 x 目录配置集。
     """
@@ -459,12 +486,17 @@ def init_configs(request):
     projects = Project.objects.filter(is_deleted=False, is_closed=False)
     for p in projects:
         # If project has NO config, create one
-        if not IntegrationProjectConfig.objects.filter(project=p, is_deleted=False).exists():
+        if not IntegrationProjectConfig.objects.filter(
+            project=p, is_deleted=False
+        ).exists():
             cfg = IntegrationProjectConfig.objects.create(project=p, name=p.name)
-            
+
             # Auto subscribe all active users
             users = User.objects.filter(is_deleted=False, is_active=True)
-            subs = [IntegrationEmailSubscription(user=u, config=cfg, enabled=True) for u in users]
+            subs = [
+                IntegrationEmailSubscription(user=u, config=cfg, enabled=True)
+                for u in users
+            ]
             IntegrationEmailSubscription.objects.bulk_create(subs)
 
             count += 1
@@ -474,7 +506,9 @@ def init_configs(request):
 @router.post("/subscriptions/{config_id}", response=bool, summary="订阅/取消订阅配置")
 def toggle_sub(request, config_id: str, payload: SubscriptionToggleIn):
     try:
-        return integration_service.toggle_subscription(request.auth, config_id, payload.enabled)
+        return integration_service.toggle_subscription(
+            request.auth, config_id, payload.enabled
+        )
     except ValueError as exc:
         raise HttpError(404, str(exc))
 
@@ -517,9 +551,16 @@ def history(
     ]
 
     integration_service.ensure_default_metric_definitions()
-    defs = {d.key: d for d in IntegrationMetricDefinition.objects.filter(is_deleted=False, enabled=True)}
+    defs = {
+        d.key: d
+        for d in IntegrationMetricDefinition.objects.filter(
+            is_deleted=False, enabled=True
+        )
+    }
     qs = (
-        IntegrationProjectMetricValue.objects.select_related("config", "config__project", "metric")
+        IntegrationProjectMetricValue.objects.select_related(
+            "config", "config__project", "metric"
+        )
         .prefetch_related("config__managers", "config__project__managers")
         .filter(
             is_deleted=False,
@@ -561,13 +602,26 @@ def history(
             url=v.detail_url or "",
             level=integration_service._eval_level(defn, v.value_number),
         )
-        (by_key[key]["code"] if defn.group == "code" else by_key[key]["dt"])[defn.key] = cell
+        (by_key[key]["code"] if defn.group == "code" else by_key[key]["dt"])[
+            defn.key
+        ] = cell
 
     items: List[HistoryRow] = []
-    for (d, cid), data in sorted(by_key.items(), key=lambda x: (x[0][0], x[0][1]), reverse=True):
+    for (d, cid), data in sorted(
+        by_key.items(), key=lambda x: (x[0][0], x[0][1]), reverse=True
+    ):
         cfg = data["config"]
-        code_cells = [data["code"].get(k) or MetricCell(key=k, name=defs[k].name, unit=defs[k].unit) for k in integration_service.CODE_KEYS if k in defs]
-        dt_cells = [data["dt"].get(k) or MetricCell(key=k, name=defs[k].name, unit=defs[k].unit) for k in integration_service.DT_KEYS if k in defs]
+        code_cells = [
+            data["code"].get(k)
+            or MetricCell(key=k, name=defs[k].name, unit=defs[k].unit)
+            for k in integration_service.CODE_KEYS
+            if k in defs
+        ]
+        dt_cells = [
+            data["dt"].get(k) or MetricCell(key=k, name=defs[k].name, unit=defs[k].unit)
+            for k in integration_service.DT_KEYS
+            if k in defs
+        ]
         items.append(
             HistoryRow(
                 record_date=d,
@@ -609,7 +663,9 @@ def history(
     )
 
     dt_fuzz_items: List[DtFuzzHistoryItem] = []
-    for snapshot in dt_fuzz_qs.distinct().order_by("-record_date", "config__name", "branch"):
+    for snapshot in dt_fuzz_qs.distinct().order_by(
+        "-record_date", "config__name", "branch"
+    ):
         cfg = snapshot.config
         owner = _resolve_history_caretaker_names(cfg)
         payload = snapshot.tree_payload or {}
@@ -650,7 +706,7 @@ def get_domain_metric_history_details(
 ):
     """读取指定历史指标在每日采集时写入的领域问题明细快照。"""
     try:
-        return integration_service.get_domain_metric_history_details(
+        return get_domain_metric_detail_snapshot(
             config_id,
             record_date,
             metric_key,
@@ -661,24 +717,34 @@ def get_domain_metric_history_details(
         raise HttpError(400, str(exc))
 
 
-@router.post("/mock/collect", response=bool, summary="Mock 采集一次（异步写入今日数据）")
+@router.post(
+    "/mock/collect", response=bool, summary="Mock 采集一次（异步写入今日数据）"
+)
 def mock_collect(request, payload: MockCollectIn):
-    integration_service.mock_collect_daily_async(payload.record_date, payload.config_ids)
+    integration_service.mock_collect_daily_async(
+        payload.record_date, payload.config_ids
+    )
     return True
 
 
-@router.post("/mock/send-emails", response=int, summary="Mock 发送一次邮件（按订阅拆分）")
+@router.post(
+    "/mock/send-emails", response=int, summary="Mock 发送一次邮件（按订阅拆分）"
+)
 def mock_send(request, record_date: Optional[date] = None):
     return integration_service.send_daily_emails(record_date)
 
 
-@router.get("/email-deliveries", response=EmailDeliveryQueryOut, summary="邮件投递日志查询")
+@router.get(
+    "/email-deliveries", response=EmailDeliveryQueryOut, summary="邮件投递日志查询"
+)
 def list_email_deliveries(request, filters: EmailDeliveryQueryIn = Query(...)):
     """
     查询每日集成报告邮件投递日志。
     """
-    qs = IntegrationEmailDelivery.objects.select_related("user").filter(is_deleted=False)
-    
+    qs = IntegrationEmailDelivery.objects.select_related("user").filter(
+        is_deleted=False
+    )
+
     if filters.status:
         qs = qs.filter(status=filters.status)
     if filters.start_date:
@@ -689,14 +755,14 @@ def list_email_deliveries(request, filters: EmailDeliveryQueryIn = Query(...)):
         qs = qs.filter(user_id=filters.user_id)
     if filters.to_email:
         qs = qs.filter(to_email__icontains=filters.to_email)
-    
+
     qs = qs.order_by("-sys_create_datetime")
-    
+
     count = qs.count()
-    
+
     page = filters.page or 1
     page_size = filters.page_size or 20
-    
+
     start = (page - 1) * page_size
     end = start + page_size
     qs = qs[start:end]
@@ -717,10 +783,7 @@ def list_email_deliveries(request, filters: EmailDeliveryQueryIn = Query(...)):
             )
         )
     return EmailDeliveryQueryOut(
-        items=rows,
-        count=count,
-        page=page,
-        page_size=page_size
+        items=rows, count=count, page=page, page_size=page_size
     )
 
 
@@ -736,7 +799,9 @@ def list_subscription_management_projects(
     """
     分页查询邮件订阅管理的项目配置列表。
     """
-    rows, count, page, page_size = integration_service.query_subscription_management_projects(filters)
+    rows, count, page, page_size = (
+        integration_service.query_subscription_management_projects(filters)
+    )
     return SubscriptionManagementProjectQueryOut(
         items=[SubscriptionManagementProjectRow(**row) for row in rows],
         count=count,
@@ -759,7 +824,9 @@ def list_subscription_management_subscribers(
     分页查询单个项目配置的订阅人。
     """
     try:
-        rows, count, page, page_size = integration_service.query_subscription_subscribers(config_id, filters)
+        rows, count, page, page_size = (
+            integration_service.query_subscription_subscribers(config_id, filters)
+        )
     except ValueError as exc:
         raise HttpError(404, str(exc))
     return SubscriptionSubscriberQueryOut(
@@ -784,7 +851,9 @@ def replace_subscription_management_subscribers(
     全量保存单个项目配置的订阅人集合。
     """
     try:
-        changed_count = integration_service.replace_subscription_users(config_id, payload.user_ids)
+        changed_count = integration_service.replace_subscription_users(
+            config_id, payload.user_ids
+        )
     except ValueError as exc:
         raise HttpError(400, str(exc))
     return SubscriptionBatchResultOut(changed_count=changed_count)
@@ -804,7 +873,9 @@ def add_subscription_management_subscribers(
     批量追加单个项目配置的订阅人。
     """
     try:
-        changed_count = integration_service.add_subscription_users(config_id, payload.user_ids)
+        changed_count = integration_service.add_subscription_users(
+            config_id, payload.user_ids
+        )
     except ValueError as exc:
         raise HttpError(400, str(exc))
     return SubscriptionBatchResultOut(changed_count=changed_count)
@@ -823,7 +894,9 @@ def batch_add_subscription_management_subscribers(
     批量给多个项目配置追加订阅人。
     """
     try:
-        changed_count = integration_service.batch_add_subscription_users(payload.config_ids, payload.user_ids)
+        changed_count = integration_service.batch_add_subscription_users(
+            payload.config_ids, payload.user_ids
+        )
     except ValueError as exc:
         raise HttpError(400, str(exc))
     return SubscriptionBatchResultOut(changed_count=changed_count)
@@ -843,7 +916,9 @@ def remove_subscription_management_subscribers(
     批量移除单个项目配置的订阅人。
     """
     try:
-        changed_count = integration_service.remove_subscription_users(config_id, payload.user_ids)
+        changed_count = integration_service.remove_subscription_users(
+            config_id, payload.user_ids
+        )
     except ValueError as exc:
         raise HttpError(400, str(exc))
     return SubscriptionBatchResultOut(changed_count=changed_count)

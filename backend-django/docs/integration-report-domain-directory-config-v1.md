@@ -47,7 +47,6 @@
 - 每日采集由后端向 `INTEGRATION_REPORT_DOMAIN_ISSUE_API_URL` 发起 JSON `POST`，请求体为 `task_id`、`file_path`、`page`、`pageSize`；本地 `DEBUG=True` 未配置地址时使用稳定 Mock 数据。
 - 上游 `result.total` 按 `info` 条目计数；采集服务按页拉全每个 task ID 与目录的全部 `info`，将 `fragment` 展平为问题明细，并以 `info` 总数写入每日指标汇总。
 - 领域详情快照写入 Redis，缓存键按日期、项目配置、指标隔离，TTL 为 24 小时。history 详情接口只读取该快照，缓存过期后不回源数据湖。
-- 任一 task ID 与目录请求失败时，主表当天该指标显示 `error`，Redis 保存失败原因，不混入部分结果。
 - 弹窗任务 ID 使用 `http://codecheck.rnd.com/{任务id}` 新窗口跳转。
 
 ## 兼容策略
