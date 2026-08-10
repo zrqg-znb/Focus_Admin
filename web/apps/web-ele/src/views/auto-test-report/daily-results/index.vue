@@ -1163,6 +1163,12 @@ onMounted(async () => {
         >
           <div class="h-full min-h-0 min-w-0">
             <OverviewGrid class="h-full rounded-lg border-0 shadow-sm">
+              <template #cell-responsible_users="{ row }">
+                {{
+                  row.responsible_users.map((user) => user.name).join('、') ||
+                  '-'
+                }}
+              </template>
               <template #cell-is_abnormal="{ row }">
                 <ElTag :type="row.is_abnormal ? 'danger' : 'success'">
                   {{ row.is_abnormal ? '异常' : '正常' }}

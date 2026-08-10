@@ -11,6 +11,8 @@ from .auto_test_report_schemas import (
     DownstreamCommitPage,
     DownstreamCommitUsagePage,
     DailyHistoryPage,
+    DailyAnalysisStatsQuery,
+    DailyAnalysisStatsResponse,
     DailyOverviewQuery,
     DailyOverviewResponse,
     DailyResultItemOut,
@@ -180,6 +182,17 @@ def get_daily_summary(request, query: DailyResultQuery = Query(...)):
 def get_daily_overview(request, query: DailyOverviewQuery = Query(...)):
     """查询每日全量概览，并返回座舱下游触发门禁摘要。"""
     return services.get_daily_overview(query)
+
+
+@router.get(
+    '/daily-results/analysis-stats',
+    response=DailyAnalysisStatsResponse,
+    summary='第三方获取失败分析统计',
+    auth=None,
+)
+def get_daily_analysis_stats(request, query: DailyAnalysisStatsQuery = Query(...)):
+    """供受控第三方按领域获取当天或指定日期的车型失败分析统计，无需认证。"""
+    return services.get_daily_analysis_stats(query.domain, query.execute_date)
 
 
 @router.get('/daily-results/list', response=List[DailyResultItemOut], summary='每日执行结果列表')

@@ -75,6 +75,14 @@ export function useVehicleColumns(
       align: 'center',
       headerAlign: 'center',
     },
+    {
+      key: 'responsible_users',
+      dataKey: 'responsible_users',
+      title: '责任人',
+      width: 180,
+      align: 'center',
+      headerAlign: 'center',
+    },
   ];
 
   if (domain !== 'vehicle') {

@@ -12,6 +12,7 @@ from django.http import HttpResponse
 from django.utils import timezone
 from ninja.errors import HttpError
 from scheduler.module.executor import scheduler_task
+from core.user.user_model import User
 
 from .auto_test_report_model import (
     DOMAIN_COCKPIT,
@@ -38,6 +39,9 @@ from .auto_test_report_model import (
 )
 from .auto_test_report_schemas import (
     DailyHistoryPage,
+    DailyAnalysisStatsResponse,
+    DailyAnalysisStatsRow,
+    DailyAnalysisStatsSummary,
     DailyOverviewResponse,
     DailyOverviewRow,
     DailyOverviewSummary,
@@ -283,7 +287,8 @@ def get_platform(platform_id: str) -> McuPlatform:
 
 
 def list_vehicles(domain: Optional[str] = None, platform_id: Optional[str] = None, keyword: str = ''):
-    queryset = VehicleModel.objects.select_related('platform').filter(is_deleted=False)
+    """查询车型并预取责任人，避免列表展示产生逐行查询。"""
+    queryset = VehicleModel.objects.select_related('platform').prefetch_related('responsible_users').filter(is_deleted=False)
     parsed_domain = _parse_domain_filter(domain)
     if parsed_domain:
         queryset = queryset.filter(platform__domain=parsed_domain)
@@ -302,11 +307,15 @@ def list_vehicles(domain: Optional[str] = None, platform_id: Optional[str] = Non
 
 
 def serialize_vehicle(item: VehicleModel):
+    """序列化车型及其绑定责任人，供配置、用例和看板接口复用。"""
+    responsible_users = _serialize_responsible_users(item)
     return {
         'id': str(item.id),
         'platform_id': str(item.platform_id),
         'platform_name': item.platform.name,
         'viu_codes': list(item.viu_codes or []),
+        'responsible_user_ids': [item['id'] for item in responsible_users],
+        'responsible_users': responsible_users,
         'name': item.name,
         'vehicle_code': item.vehicle_code,
         'cdc_platform': item.cdc_platform,
@@ -319,8 +328,43 @@ def serialize_vehicle(item: VehicleModel):
     }
 
 
+def _serialize_responsible_users(vehicle: VehicleModel):
+    """按姓名稳定输出车型责任人，姓名为空时使用用户名作为展示名。"""
+    users = sorted(
+        (user for user in vehicle.responsible_users.all() if not user.is_deleted),
+        key=lambda user: (user.name or '', user.username),
+    )
+    return [
+        {
+            'id': str(user.id),
+            'name': user.name or user.username,
+            'username': user.username,
+        }
+        for user in users
+    ]
+
+
+def _resolve_responsible_users(user_ids):
+    """校验责任人 ID 并返回可写入车型关联的正常记录。"""
+    normalized_ids = []
+    for user_id in user_ids or []:
+        value = str(user_id or '').strip()
+        if value and value not in normalized_ids:
+            normalized_ids.append(value)
+    try:
+        users = list(User.objects.filter(id__in=normalized_ids, is_deleted=False))
+    except (TypeError, ValueError):
+        raise HttpError(422, '责任人ID格式不正确')
+    found_ids = {str(user.id) for user in users}
+    missing_ids = [user_id for user_id in normalized_ids if user_id not in found_ids]
+    if missing_ids:
+        raise HttpError(422, '责任人不存在或已删除')
+    return users
+
+
 def list_vehicle_options(domain: Optional[str] = None):
-    queryset = VehicleModel.objects.select_related('platform').filter(
+    """返回可选择车型及责任人信息，供用例和看板页面复用。"""
+    queryset = VehicleModel.objects.select_related('platform').prefetch_related('responsible_users').filter(
         is_deleted=False,
         is_active=True,
         platform__is_deleted=False,
@@ -329,20 +373,24 @@ def list_vehicle_options(domain: Optional[str] = None):
     parsed_domain = _parse_domain_filter(domain)
     if parsed_domain:
         queryset = queryset.filter(platform__domain=parsed_domain)
-    return [
-        {
+    items = []
+    for item in queryset:
+        responsible_users = _serialize_responsible_users(item)
+        items.append({
             'id': str(item.id),
             'name': item.name,
             'vehicle_code': item.vehicle_code,
             'platform_id': str(item.platform_id),
             'platform_name': item.platform.name,
             'viu_codes': list(item.viu_codes or []),
-        }
-        for item in queryset
-    ]
+            'responsible_user_ids': [user['id'] for user in responsible_users],
+            'responsible_users': responsible_users,
+        })
+    return items
 
 
 def create_vehicle(user, payload):
+    """创建车型并保存其多选责任人关联。"""
     platform = get_platform(payload.platform_id)
     parsed_viu_codes = _normalize_viu_codes(payload.viu_codes, require_non_empty=platform.domain == DOMAIN_VEHICLE)
     if platform.domain != DOMAIN_VEHICLE:
@@ -360,10 +408,12 @@ def create_vehicle(user, payload):
     )
     _apply_audit_fields(instance, user, is_create=True)
     instance.save()
+    instance.responsible_users.set(_resolve_responsible_users(payload.responsible_user_ids))
     return serialize_vehicle(instance)
 
 
 def update_vehicle(user, vehicle_id: str, payload):
+    """更新车型基础配置，并以请求中的责任人列表全量覆盖关联。"""
     instance = get_vehicle(vehicle_id)
     instance.platform = get_platform(payload.platform_id)
     parsed_viu_codes = _normalize_viu_codes(
@@ -382,6 +432,7 @@ def update_vehicle(user, vehicle_id: str, payload):
     instance.remark = (payload.remark or '').strip() or None
     _apply_audit_fields(instance, user)
     instance.save()
+    instance.responsible_users.set(_resolve_responsible_users(payload.responsible_user_ids))
     return serialize_vehicle(instance)
 
 
@@ -413,7 +464,7 @@ def list_test_cases(filters):
         .values('start_time')[:1]
     )
     queryset = (
-        TestCase.objects.select_related('vehicle', 'vehicle__platform')
+        TestCase.objects.select_related('vehicle', 'vehicle__platform').prefetch_related('vehicle__responsible_users')
         .filter(is_deleted=False, vehicle__is_deleted=False)
         .annotate(latest_execute_time=Subquery(latest_execute_time_subquery))
     )
@@ -449,6 +500,7 @@ def list_test_cases(filters):
 
 
 def serialize_test_case(item: TestCase):
+    """序列化用例及所属车型责任人。"""
     latest_execute_time = getattr(item, 'latest_execute_time', None)
     if latest_execute_time is None:
         latest_result = (
@@ -462,12 +514,15 @@ def serialize_test_case(item: TestCase):
             .first()
         )
         latest_execute_time = latest_result.start_time if latest_result else None
+    responsible_users = _serialize_responsible_users(item.vehicle)
     return {
         'id': str(item.id),
         'vehicle_id': str(item.vehicle_id),
         'vehicle_name': item.vehicle.name,
         'vehicle_code': item.vehicle.vehicle_code,
         'platform_name': item.vehicle.platform.name,
+        'responsible_user_ids': [user['id'] for user in responsible_users],
+        'responsible_users': responsible_users,
         'viu_code': item.viu_code,
         'module': item.module,
         'case_no': item.case_no,
@@ -1696,10 +1751,13 @@ def get_daily_summary(vehicle_id: str, execute_date, domain: Optional[str] = Non
         ratio = round((count / total), 4) if total else 0
         return SummaryStat(key=key, label=RESULT_LABELS[key], count=count, ratio=ratio)
 
+    responsible_users = _serialize_responsible_users(vehicle)
     return DailySummaryOut(
         vehicle_id=str(vehicle.id),
         vehicle_name=vehicle.name,
         vehicle_code=vehicle.vehicle_code,
+        responsible_user_ids=[user['id'] for user in responsible_users],
+        responsible_users=responsible_users,
         execute_date=execute_date,
         total_count=active_case_count,
         success_count=batch.success_count,
@@ -1721,7 +1779,7 @@ def get_daily_summary(vehicle_id: str, execute_date, domain: Optional[str] = Non
 
 def get_daily_overview(query) -> DailyOverviewResponse:
     """获取每日全量概览，并携带座舱下游触发门禁摘要。"""
-    vehicles = VehicleModel.objects.select_related('platform').filter(
+    vehicles = VehicleModel.objects.select_related('platform').prefetch_related('responsible_users').filter(
         is_deleted=False,
         is_active=True,
         platform__is_deleted=False,
@@ -1758,12 +1816,15 @@ def get_daily_overview(query) -> DailyOverviewResponse:
         category_counts = _build_result_category_counts(latest_results)
         vehicle_missing_result_count = max(active_case_count - len(latest_results), 0)
 
+        responsible_users = _serialize_responsible_users(vehicle)
         row = DailyOverviewRow(
             vehicle_id=str(vehicle.id),
             vehicle_name=vehicle.name,
             vehicle_code=vehicle.vehicle_code,
             platform_id=str(vehicle.platform_id),
             platform_name=vehicle.platform.name,
+            responsible_user_ids=[user['id'] for user in responsible_users],
+            responsible_users=responsible_users,
             total_count=active_case_count,
             success_count=batch.success_count,
             failed_count=batch.failed_count,
@@ -1843,6 +1904,67 @@ def get_daily_overview(query) -> DailyOverviewResponse:
             summary.downstream_trigger_enabled = gate['enabled']
             summary.downstream_trigger_block_reasons = gate['block_reasons']
     return DailyOverviewResponse(items=rows, summary=summary)
+
+
+def get_daily_analysis_stats(domain: str, execute_date=None) -> DailyAnalysisStatsResponse:
+    """按领域汇总当日需责任人分析的最新非成功用例，并保留车型归属。"""
+    parsed_domain = _parse_domain_filter(domain)
+    if not parsed_domain:
+        raise HttpError(422, '领域不能为空')
+    target_date = execute_date or timezone.localdate()
+    vehicles = (
+        VehicleModel.objects.select_related('platform')
+        .prefetch_related('responsible_users')
+        .filter(
+            is_deleted=False,
+            is_active=True,
+            platform__is_deleted=False,
+            platform__is_active=True,
+            platform__domain=parsed_domain,
+        )
+        .order_by('platform__name', 'name')
+    )
+    items = []
+    totals = Counter()
+    for vehicle in vehicles:
+        results = _list_latest_active_results(vehicle, target_date)
+        failed_count = sum(result.result == RESULT_FAILED for result in results)
+        non_success_results = [result for result in results if result.result in NON_SUCCESS_RESULTS]
+        pending_analysis_count = sum(not result.failure_category for result in non_success_results)
+        version_failure_count = sum(
+            result.failure_category == FAILURE_CATEGORY_VERSION
+            for result in non_success_results
+        )
+        responsible_users = _serialize_responsible_users(vehicle)
+        items.append(DailyAnalysisStatsRow(
+            vehicle_id=str(vehicle.id),
+            vehicle_name=vehicle.name,
+            vehicle_code=vehicle.vehicle_code,
+            platform_id=str(vehicle.platform_id),
+            platform_name=vehicle.platform.name,
+            responsible_user_ids=[user['id'] for user in responsible_users],
+            responsible_users=responsible_users,
+            failed_count=failed_count,
+            need_analysis_count=len(non_success_results),
+            pending_analysis_count=pending_analysis_count,
+            version_failure_count=version_failure_count,
+        ))
+        totals['failed_count'] += failed_count
+        totals['need_analysis_count'] += len(non_success_results)
+        totals['pending_analysis_count'] += pending_analysis_count
+        totals['version_failure_count'] += version_failure_count
+    return DailyAnalysisStatsResponse(
+        summary=DailyAnalysisStatsSummary(
+            domain=parsed_domain,
+            execute_date=target_date,
+            vehicle_count=len(items),
+            failed_count=totals['failed_count'],
+            need_analysis_count=totals['need_analysis_count'],
+            pending_analysis_count=totals['pending_analysis_count'],
+            version_failure_count=totals['version_failure_count'],
+        ),
+        items=items,
+    )
 
 
 def list_daily_results(vehicle_id: str, execute_date, domain: Optional[str] = None):

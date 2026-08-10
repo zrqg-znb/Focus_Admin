@@ -41,6 +41,8 @@ export interface VehicleItem {
   cdc_platform: string;
   execution_machine: string;
   viu_codes: string[];
+  responsible_user_ids: string[];
+  responsible_users: ResponsibleUser[];
   sort: number;
   is_active: boolean;
   remark?: string;
@@ -55,9 +57,16 @@ export interface VehiclePayload {
   cdc_platform: string;
   execution_machine: string;
   viu_codes: string[];
+  responsible_user_ids: string[];
   sort: number;
   is_active: boolean;
   remark?: string;
+}
+
+export interface ResponsibleUser {
+  id: string;
+  name: string;
+  username: string;
 }
 
 export interface VehicleOption {
@@ -67,6 +76,8 @@ export interface VehicleOption {
   platform_id: string;
   platform_name: string;
   viu_codes: string[];
+  responsible_user_ids: string[];
+  responsible_users: ResponsibleUser[];
 }
 
 export interface TestCaseItem {
@@ -75,6 +86,8 @@ export interface TestCaseItem {
   vehicle_name: string;
   vehicle_code: string;
   platform_name: string;
+  responsible_user_ids: string[];
+  responsible_users: ResponsibleUser[];
   viu_code: string;
   module: string;
   case_no: string;
@@ -145,6 +158,8 @@ export interface DailySummary {
   vehicle_id: string;
   vehicle_name: string;
   vehicle_code: string;
+  responsible_user_ids: string[];
+  responsible_users: ResponsibleUser[];
   execute_date: string;
   total_count: number;
   success_count: number;
@@ -163,6 +178,8 @@ export interface DailyOverviewRow {
   vehicle_code: string;
   platform_id: string;
   platform_name: string;
+  responsible_user_ids: string[];
+  responsible_users: ResponsibleUser[];
   total_count: number;
   success_count: number;
   failed_count: number;

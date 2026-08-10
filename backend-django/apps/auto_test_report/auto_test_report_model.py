@@ -75,6 +75,12 @@ class VehicleModel(RootModel):
     cdc_platform = models.CharField(max_length=128, verbose_name='CDC平台')
     execution_machine = models.CharField(max_length=255, verbose_name='执行机器')
     viu_codes = models.JSONField(default=list, blank=True, verbose_name='可用VIU编号')
+    responsible_users = models.ManyToManyField(
+        to='core.User',
+        blank=True,
+        related_name='auto_test_report_responsible_vehicles',
+        verbose_name='责任人',
+    )
     is_active = models.BooleanField(default=True, verbose_name='是否启用')
     remark = models.TextField(null=True, blank=True, verbose_name='备注')
 

@@ -552,6 +552,9 @@ onMounted(async () => {
 
     <div class="min-h-0 flex-1">
       <Grid class="h-full" @selection-change="handleSelectionChange">
+        <template #cell-responsible_users="{ row }">
+          {{ row.responsible_users.map((user) => user.name).join('、') || '-' }}
+        </template>
         <template #header-case_no>
           <TestCaseHeaderKeywordFilter
             v-model="caseNoKeyword"

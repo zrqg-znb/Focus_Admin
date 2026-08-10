@@ -1,9 +1,11 @@
 import io
 from datetime import date, timedelta
+from unittest.mock import patch
 
 import openpyxl
 from django.test import TestCase
 from django.utils import timezone
+from core.user.user_model import User
 
 from apps.auto_test_report import auto_test_report_services as services
 from apps.auto_test_report.auto_test_report_model import (
@@ -31,6 +33,7 @@ from apps.auto_test_report.auto_test_report_schemas import (
     ReportDailyResultsIn,
     ReportResultItemIn,
     TestCaseFilter,
+    VehicleIn,
 )
 
 
@@ -905,3 +908,163 @@ class AutoTestReportOverviewTests(TestCase):
         self.assertEqual({item['case_no'] for item in by_case_no}, {'LOGIN-001', 'LOGIN-002'})
         self.assertEqual({item['case_no'] for item in by_case_name}, {'LOGIN-001', 'PAYMENT-001'})
         self.assertEqual([item['case_no'] for item in combined], ['PAYMENT-001'])
+
+
+class AutoTestReportResponsibleUserAndAnalysisStatsTests(TestCase):
+    """验证车型责任人关联与第三方失败分析统计口径。"""
+
+    def setUp(self):
+        self.execute_date = date(2026, 8, 11)
+        self.platform = McuPlatform.objects.create(
+            name='Responsibility Platform',
+            version_code='responsibility-platform',
+            domain=DOMAIN_COCKPIT,
+            is_active=True,
+        )
+
+    def _create_vehicle(self, suffix: str, *, domain=DOMAIN_COCKPIT):
+        """创建归属指定领域的启用车型。"""
+        platform = self.platform
+        if domain != DOMAIN_COCKPIT:
+            platform = McuPlatform.objects.create(
+                name=f'{suffix} Platform',
+                version_code=f'{suffix}-platform',
+                domain=domain,
+                is_active=True,
+            )
+        return VehicleModel.objects.create(
+            platform=platform,
+            name=f'{suffix} Vehicle',
+            vehicle_code=f'{suffix}-vehicle',
+            cdc_platform='CDC',
+            execution_machine='machine',
+            is_active=True,
+        )
+
+    def test_vehicle_responsible_users_are_saved_and_returned_by_related_views(self):
+        owner = User.objects.create(username='owner-a', password='test', name='张三')
+        fallback_owner = User.objects.create(username='owner-b', password='test', name='')
+        payload = VehicleIn(
+            platform_id=str(self.platform.id),
+            name='Responsible Vehicle',
+            vehicle_code='responsible-vehicle',
+            cdc_platform='CDC',
+            execution_machine='machine',
+            responsible_user_ids=[str(owner.id), str(fallback_owner.id)],
+        )
+
+        created = services.create_vehicle(None, payload)
+        vehicle = VehicleModel.objects.get(id=created['id'])
+        case = AutoTestCase.objects.create(
+            vehicle=vehicle,
+            case_no='RESP-CASE',
+            case_name='Responsible case',
+            is_active=True,
+        )
+
+        self.assertEqual(
+            set(created['responsible_user_ids']),
+            {str(owner.id), str(fallback_owner.id)},
+        )
+        self.assertEqual(
+            {item['name'] for item in created['responsible_users']},
+            {'张三', 'owner-b'},
+        )
+        listed_case = services.list_test_cases(TestCaseFilter(vehicle_id=str(vehicle.id)))[0]
+        self.assertEqual({item['id'] for item in listed_case['responsible_users']}, {str(owner.id), str(fallback_owner.id)})
+        overview = services.get_daily_overview(DailyOverviewQuery(execute_date=self.execute_date))
+        overview_row = next(item for item in overview.items if item.vehicle_id == str(vehicle.id))
+        self.assertEqual({item.id for item in overview_row.responsible_users}, {str(owner.id), str(fallback_owner.id)})
+
+        fallback_owner.soft_delete()
+        payload.responsible_user_ids = [str(fallback_owner.id)]
+        with self.assertRaisesMessage(Exception, '责任人不存在或已删除'):
+            services.update_vehicle(None, str(vehicle.id), payload)
+        self.assertEqual(case.vehicle_id, vehicle.id)
+
+    def test_analysis_stats_uses_latest_active_results_and_keeps_empty_vehicle(self):
+        vehicle = self._create_vehicle('cockpit')
+        empty_vehicle = self._create_vehicle('empty')
+        other_domain_vehicle = self._create_vehicle('vehicle-domain', domain=DOMAIN_VEHICLE)
+        cases = [
+            AutoTestCase.objects.create(
+                vehicle=vehicle,
+                case_no=f'CASE-{index}',
+                case_name=f'Case {index}',
+                is_active=True,
+            )
+            for index in range(3)
+        ]
+        DailyExecutionResult.objects.create(
+            vehicle=vehicle,
+            test_case=cases[0],
+            execute_date=self.execute_date,
+            start_time=timezone.now(),
+            duration_seconds=10,
+            result=RESULT_SUCCESS,
+        )
+        DailyExecutionResult.objects.create(
+            vehicle=vehicle,
+            test_case=cases[0],
+            execute_date=self.execute_date,
+            start_time=timezone.now() + timedelta(minutes=1),
+            duration_seconds=10,
+            result=RESULT_FAILED,
+            failure_category=FAILURE_CATEGORY_VERSION,
+        )
+        DailyExecutionResult.objects.create(
+            vehicle=vehicle,
+            test_case=cases[1],
+            execute_date=self.execute_date,
+            start_time=timezone.now() + timedelta(minutes=2),
+            duration_seconds=10,
+            result=RESULT_TIMEOUT,
+        )
+        DailyExecutionResult.objects.create(
+            vehicle=vehicle,
+            test_case=cases[2],
+            execute_date=self.execute_date,
+            start_time=timezone.now() + timedelta(minutes=3),
+            duration_seconds=10,
+            result=RESULT_SKIP,
+            failure_category=FAILURE_CATEGORY_ENVIRONMENT,
+        )
+        AutoTestCase.objects.create(
+            vehicle=other_domain_vehicle,
+            case_no='OTHER-CASE',
+            case_name='Other case',
+            is_active=True,
+        )
+
+        result = services.get_daily_analysis_stats(DOMAIN_COCKPIT, self.execute_date)
+        row = next(item for item in result.items if item.vehicle_id == str(vehicle.id))
+        empty_row = next(item for item in result.items if item.vehicle_id == str(empty_vehicle.id))
+
+        self.assertEqual(result.summary.vehicle_count, 2)
+        self.assertEqual(result.summary.failed_count, 1)
+        self.assertEqual(result.summary.need_analysis_count, 3)
+        self.assertEqual(result.summary.pending_analysis_count, 1)
+        self.assertEqual(result.summary.version_failure_count, 1)
+        self.assertEqual(row.failed_count, 1)
+        self.assertEqual(row.need_analysis_count, 3)
+        self.assertEqual(row.pending_analysis_count, 1)
+        self.assertEqual(row.version_failure_count, 1)
+        self.assertEqual(empty_row.need_analysis_count, 0)
+        self.assertEqual(empty_row.responsible_users, [])
+
+    def test_analysis_stats_api_allows_anonymous_request(self):
+        """接口显式关闭鉴权，第三方无需 Bearer token 即可调用。"""
+        response = self.client.get(
+            '/api/auto-test-report/daily-results/analysis-stats',
+            {'domain': DOMAIN_COCKPIT, 'execute_date': self.execute_date.isoformat()},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['summary']['domain'], DOMAIN_COCKPIT)
+
+    def test_analysis_stats_defaults_to_server_local_date(self):
+        """未传执行日期时按服务端当天统计，便于第三方定时拉取。"""
+        with patch.object(services.timezone, 'localdate', return_value=self.execute_date):
+            result = services.get_daily_analysis_stats(DOMAIN_COCKPIT)
+
+        self.assertEqual(result.summary.execute_date, self.execute_date)

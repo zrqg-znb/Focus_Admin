@@ -27,14 +27,22 @@ class VehicleIn(Schema):
     cdc_platform: str
     execution_machine: str
     viu_codes: List[str] = Field(default_factory=list)
+    responsible_user_ids: List[str] = Field(default_factory=list)
     sort: int = 0
     is_active: bool = True
     remark: Optional[str] = None
 
 
+class ResponsibleUserOut(Schema):
+    id: str
+    name: str
+    username: str
+
+
 class VehicleOut(VehicleIn):
     id: str
     platform_name: str
+    responsible_users: List[ResponsibleUserOut] = Field(default_factory=list)
     sys_create_datetime: Optional[datetime] = None
     sys_update_datetime: Optional[datetime] = None
 
@@ -46,6 +54,8 @@ class VehicleOption(Schema):
     platform_id: str
     platform_name: str
     viu_codes: List[str] = Field(default_factory=list)
+    responsible_user_ids: List[str] = Field(default_factory=list)
+    responsible_users: List[ResponsibleUserOut] = Field(default_factory=list)
 
 
 class TestCaseIn(Schema):
@@ -64,6 +74,8 @@ class TestCaseOut(TestCaseIn):
     vehicle_name: str
     vehicle_code: str
     platform_name: str
+    responsible_user_ids: List[str] = Field(default_factory=list)
+    responsible_users: List[ResponsibleUserOut] = Field(default_factory=list)
     latest_execute_time: Optional[datetime] = None
     sys_create_datetime: Optional[datetime] = None
     sys_update_datetime: Optional[datetime] = None
@@ -144,6 +156,8 @@ class DailySummaryOut(Schema):
     vehicle_id: str
     vehicle_name: str
     vehicle_code: str
+    responsible_user_ids: List[str] = Field(default_factory=list)
+    responsible_users: List[ResponsibleUserOut] = Field(default_factory=list)
     execute_date: date
     total_count: int
     success_count: int
@@ -221,6 +235,8 @@ class DailyOverviewRow(Schema):
     vehicle_code: str
     platform_id: str
     platform_name: str
+    responsible_user_ids: List[str] = Field(default_factory=list)
+    responsible_users: List[ResponsibleUserOut] = Field(default_factory=list)
     total_count: int
     success_count: int
     failed_count: int
@@ -258,6 +274,40 @@ class DailyOverviewSummary(Schema):
 class DailyOverviewResponse(Schema):
     items: List[DailyOverviewRow]
     summary: DailyOverviewSummary
+
+
+class DailyAnalysisStatsQuery(Schema):
+    domain: str
+    execute_date: Optional[date] = None
+
+
+class DailyAnalysisStatsRow(Schema):
+    vehicle_id: str
+    vehicle_name: str
+    vehicle_code: str
+    platform_id: str
+    platform_name: str
+    responsible_user_ids: List[str] = Field(default_factory=list)
+    responsible_users: List[ResponsibleUserOut] = Field(default_factory=list)
+    failed_count: int = 0
+    need_analysis_count: int = 0
+    pending_analysis_count: int = 0
+    version_failure_count: int = 0
+
+
+class DailyAnalysisStatsSummary(Schema):
+    domain: str
+    execute_date: date
+    vehicle_count: int = 0
+    failed_count: int = 0
+    need_analysis_count: int = 0
+    pending_analysis_count: int = 0
+    version_failure_count: int = 0
+
+
+class DailyAnalysisStatsResponse(Schema):
+    summary: DailyAnalysisStatsSummary
+    items: List[DailyAnalysisStatsRow]
 
 
 class UpdateFailureReasonIn(Schema):

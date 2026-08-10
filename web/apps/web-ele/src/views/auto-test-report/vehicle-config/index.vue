@@ -38,6 +38,7 @@ import {
   updatePlatformApi,
   updateVehicleApi,
 } from '#/api/auto-test-report';
+import { UserSelector } from '#/components/zq-form/user-selector';
 import { useZqTable } from '#/components/zq-table';
 
 import DomainSwitcher from '../components/domain-switcher.vue';
@@ -80,6 +81,7 @@ const vehicleForm = ref<VehiclePayload & { id?: string }>({
   cdc_platform: '',
   execution_machine: '',
   viu_codes: [],
+  responsible_user_ids: [],
   sort: 0,
   is_active: true,
   remark: '',
@@ -207,6 +209,7 @@ function openVehicleCreate() {
     cdc_platform: '',
     execution_machine: '',
     viu_codes: [],
+    responsible_user_ids: [],
     sort: 0,
     is_active: true,
     remark: '',
@@ -224,6 +227,7 @@ function openVehicleEdit(row: VehicleItem) {
     cdc_platform: showCdcPlatform.value ? row.cdc_platform : '',
     execution_machine: row.execution_machine,
     viu_codes: row.viu_codes || [],
+    responsible_user_ids: row.responsible_user_ids || [],
     sort: row.sort,
     is_active: row.is_active,
     remark: row.remark || '',
@@ -371,6 +375,11 @@ onMounted(async () => {
 
       <div class="min-h-0 min-w-0 flex-1">
         <VehicleGrid class="h-full w-full min-w-0">
+          <template #cell-responsible_users="{ row }">
+            {{
+              row.responsible_users.map((user) => user.name).join('、') || '-'
+            }}
+          </template>
           <template #toolbar-actions>
             <div class="flex items-center gap-2">
               <div class="text-sm text-gray-500">
@@ -505,6 +514,14 @@ onMounted(async () => {
         </ElFormItem>
         <ElFormItem label="执行机器" prop="execution_machine" required>
           <ElInput v-model="vehicleForm.execution_machine" />
+        </ElFormItem>
+        <ElFormItem label="责任人">
+          <UserSelector
+            v-model="vehicleForm.responsible_user_ids"
+            multiple
+            class="w-full"
+            placeholder="请选择责任人"
+          />
         </ElFormItem>
         <ElFormItem v-if="domain === 'vehicle'" label="可用 VIU 编号">
           <ElCheckboxGroup

@@ -210,6 +210,14 @@ export function useOverviewColumns(
       headerAlign: 'center',
     },
     {
+      key: 'responsible_users',
+      dataKey: 'responsible_users',
+      title: '责任人',
+      width: 180,
+      align: 'center',
+      headerAlign: 'center',
+    },
+    {
       key: 'total_count',
       dataKey: 'total_count',
       title: '总用例',
