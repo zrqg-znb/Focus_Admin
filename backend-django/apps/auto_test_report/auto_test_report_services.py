@@ -1928,8 +1928,9 @@ def get_daily_analysis_stats(domain: str, execute_date=None) -> DailyAnalysisSta
     totals = Counter()
     for vehicle in vehicles:
         results = _list_latest_active_results(vehicle, target_date)
-        failed_count = sum(result.result == RESULT_FAILED for result in results)
         non_success_results = [result for result in results if result.result in NON_SUCCESS_RESULTS]
+        # 第三方 IM 以 failed_count 表示全部未成功结果，不只限于 failed 状态。
+        failed_count = len(non_success_results)
         pending_analysis_count = sum(not result.failure_category for result in non_success_results)
         version_failure_count = sum(
             result.failure_category == FAILURE_CATEGORY_VERSION

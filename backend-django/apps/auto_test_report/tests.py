@@ -1041,11 +1041,11 @@ class AutoTestReportResponsibleUserAndAnalysisStatsTests(TestCase):
         empty_row = next(item for item in result.items if item.vehicle_id == str(empty_vehicle.id))
 
         self.assertEqual(result.summary.vehicle_count, 2)
-        self.assertEqual(result.summary.failed_count, 1)
+        self.assertEqual(result.summary.failed_count, 3)
         self.assertEqual(result.summary.need_analysis_count, 3)
         self.assertEqual(result.summary.pending_analysis_count, 1)
         self.assertEqual(result.summary.version_failure_count, 1)
-        self.assertEqual(row.failed_count, 1)
+        self.assertEqual(row.failed_count, 3)
         self.assertEqual(row.need_analysis_count, 3)
         self.assertEqual(row.pending_analysis_count, 1)
         self.assertEqual(row.version_failure_count, 1)

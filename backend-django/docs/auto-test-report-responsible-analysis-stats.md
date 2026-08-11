@@ -19,7 +19,7 @@
 
 返回 `summary`（领域总计）和 `items`（车型明细）。车型明细包含平台、车型、责任人及以下计数：
 
-- `failed_count`：当日最新结果中状态为 `failed` 的用例数。
+- `failed_count`：当日最新结果中未成功的用例数，包含 `failed`、`timeout` 和 `skip`。
 - `need_analysis_count`：当日最新结果中状态为 `failed`、`timeout` 或 `skip` 的用例数。
 - `pending_analysis_count`：需要分析的用例中尚未填写 `failure_category` 的数量。
 - `version_failure_count`：需要分析的用例中根因分类为 `version` 的数量。
