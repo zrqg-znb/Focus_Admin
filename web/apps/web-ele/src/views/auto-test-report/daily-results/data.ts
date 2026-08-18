@@ -33,6 +33,7 @@ export const FAILURE_CATEGORY_LABEL_MAP: Record<string, string> = {
   version: '版本问题',
   environment: '环境问题',
   case: '用例问题',
+  non_mcu: '非MCU问题',
 };
 
 export const FAILURE_CATEGORY_OPTIONS = Object.entries(

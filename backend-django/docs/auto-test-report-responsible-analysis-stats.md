@@ -21,7 +21,9 @@
 
 - `failed_count`：当日最新结果中未成功的用例数，包含 `failed`、`timeout` 和 `skip`。
 - `need_analysis_count`：当日最新结果中状态为 `failed`、`timeout` 或 `skip` 的用例数。
-- `pending_analysis_count`：需要分析的用例中尚未填写 `failure_category` 的数量。
+- `pending_analysis_count`：需要分析的用例中尚未填写 `failure_category` 的数量。`items` 仅返回该值大于 0 的车型，`summary` 仍统计领域下所有活跃车型。
+
+失败根因大类支持 `version`（版本问题）、`environment`（环境问题）、`case`（用例问题）和 `non_mcu`（非MCU问题）。其中环境问题、用例问题和非MCU问题均不阻塞座舱 MCU 下游任务放行。
 - `version_failure_count`：需要分析的用例中根因分类为 `version` 的数量。
 
 统计仅纳入当前启用的车型和用例，并按车型、执行日期、用例取最新一条上报结果。同日未执行用例不并入上述四项计数，但车型会保留在 `items` 中，责任人为空时返回空数组。

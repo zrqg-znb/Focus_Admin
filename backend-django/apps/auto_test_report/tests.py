@@ -14,6 +14,7 @@ from apps.auto_test_report.auto_test_report_model import (
     DownstreamCommitUsage,
     FAILURE_CATEGORY_CASE,
     FAILURE_CATEGORY_ENVIRONMENT,
+    FAILURE_CATEGORY_NON_MCU,
     FAILURE_CATEGORY_VERSION,
     McuPlatform,
     TestCase as AutoTestCase,
@@ -402,21 +403,25 @@ class AutoTestReportOverviewTests(TestCase):
 
     def test_failure_category_can_be_updated_for_all_non_success_results(self):
         vehicle = self._create_vehicle('failure-category')
-        cases = self._create_cases(vehicle, 3)
+        cases = self._create_cases(vehicle, 4)
         failed = self._report_result(vehicle, cases[0], RESULT_FAILED)
         timeout = self._report_result(vehicle, cases[1], RESULT_TIMEOUT, minutes_offset=1)
         skipped = self._report_result(vehicle, cases[2], RESULT_SKIP, minutes_offset=2)
+        non_mcu = self._report_result(vehicle, cases[3], RESULT_FAILED, minutes_offset=3)
 
         services.update_daily_result_failure_reason(None, str(failed.id), '失败原因', FAILURE_CATEGORY_VERSION)
         services.update_daily_result_failure_reason(None, str(timeout.id), '环境不稳定', FAILURE_CATEGORY_ENVIRONMENT)
         services.update_daily_result_failure_reason(None, str(skipped.id), '用例需调整', FAILURE_CATEGORY_CASE)
+        services.update_daily_result_failure_reason(None, str(non_mcu.id), '外部依赖异常', FAILURE_CATEGORY_NON_MCU)
 
         failed.refresh_from_db()
         timeout.refresh_from_db()
         skipped.refresh_from_db()
+        non_mcu.refresh_from_db()
         self.assertEqual(failed.failure_category, FAILURE_CATEGORY_VERSION)
         self.assertEqual(timeout.failure_category, FAILURE_CATEGORY_ENVIRONMENT)
         self.assertEqual(skipped.failure_category, FAILURE_CATEGORY_CASE)
+        self.assertEqual(non_mcu.failure_category, FAILURE_CATEGORY_NON_MCU)
 
     def test_failure_category_rejects_success_and_unknown_category(self):
         vehicle = self._create_vehicle('failure-category-reject')
@@ -431,7 +436,7 @@ class AutoTestReportOverviewTests(TestCase):
 
     def test_cockpit_overview_counts_downstream_gate_fields(self):
         vehicle = self._create_vehicle('gate-counts')
-        cases = self._create_cases(vehicle, 5)
+        cases = self._create_cases(vehicle, 6)
         self._report_result(vehicle, cases[0], RESULT_SUCCESS)
         self._report_result(
             vehicle,
@@ -448,17 +453,24 @@ class AutoTestReportOverviewTests(TestCase):
             failure_category=FAILURE_CATEGORY_ENVIRONMENT,
         )
         self._report_result(vehicle, cases[3], RESULT_SKIP, minutes_offset=3)
+        self._report_result(
+            vehicle,
+            cases[4],
+            RESULT_FAILED,
+            minutes_offset=4,
+            failure_category=FAILURE_CATEGORY_NON_MCU,
+        )
 
         overview = self._build_overview()
         row = self._get_row(overview, vehicle)
 
         self.assertEqual(row.version_failure_count, 1)
-        self.assertEqual(row.non_version_failure_count, 1)
+        self.assertEqual(row.non_version_failure_count, 2)
         self.assertEqual(row.uncategorized_failure_count, 1)
         self.assertEqual(row.missing_result_count, 1)
         self.assertFalse(overview.summary.downstream_trigger_enabled)
         self.assertEqual(overview.summary.version_failure_count, 1)
-        self.assertEqual(overview.summary.non_version_failure_count, 1)
+        self.assertEqual(overview.summary.non_version_failure_count, 2)
         self.assertEqual(overview.summary.uncategorized_failure_count, 1)
         self.assertEqual(overview.summary.missing_result_count, 1)
 
@@ -489,7 +501,7 @@ class AutoTestReportOverviewTests(TestCase):
 
     def test_manual_downstream_trigger_allows_non_version_failures_when_classified(self):
         vehicle = self._create_vehicle('manual-pass')
-        cases = self._create_cases(vehicle, 2)
+        cases = self._create_cases(vehicle, 3)
         commit = services.report_downstream_commit(DownstreamCommitIn(commit_id='commit-manual-pass'))
         self._report_result(vehicle, cases[0], RESULT_SUCCESS)
         self._report_result(
@@ -499,6 +511,13 @@ class AutoTestReportOverviewTests(TestCase):
             minutes_offset=1,
             failure_category=FAILURE_CATEGORY_ENVIRONMENT,
         )
+        self._report_result(
+            vehicle,
+            cases[2],
+            RESULT_TIMEOUT,
+            minutes_offset=2,
+            failure_category=FAILURE_CATEGORY_NON_MCU,
+        )
 
         result = services.trigger_cockpit_downstream(None, self.execute_date, commit.commit_id)
 
@@ -506,7 +525,7 @@ class AutoTestReportOverviewTests(TestCase):
         self.assertTrue(result.dry_run)
         self.assertEqual(result.commit_id, commit.commit_id)
         self.assertIsNotNone(result.usage_id)
-        self.assertEqual(result.non_version_failure_count, 1)
+        self.assertEqual(result.non_version_failure_count, 2)
         self.assertEqual(DownstreamCommitUsage.objects.count(), 1)
 
     def test_manual_downstream_trigger_rejects_version_uncategorized_and_missing(self):
@@ -982,7 +1001,7 @@ class AutoTestReportResponsibleUserAndAnalysisStatsTests(TestCase):
             services.update_vehicle(None, str(vehicle.id), payload)
         self.assertEqual(case.vehicle_id, vehicle.id)
 
-    def test_analysis_stats_uses_latest_active_results_and_keeps_empty_vehicle(self):
+    def test_analysis_stats_filters_completed_vehicles_but_keeps_full_summary(self):
         vehicle = self._create_vehicle('cockpit')
         empty_vehicle = self._create_vehicle('empty')
         other_domain_vehicle = self._create_vehicle('vehicle-domain', domain=DOMAIN_VEHICLE)
@@ -1038,7 +1057,6 @@ class AutoTestReportResponsibleUserAndAnalysisStatsTests(TestCase):
 
         result = services.get_daily_analysis_stats(DOMAIN_COCKPIT, self.execute_date)
         row = next(item for item in result.items if item.vehicle_id == str(vehicle.id))
-        empty_row = next(item for item in result.items if item.vehicle_id == str(empty_vehicle.id))
 
         self.assertEqual(result.summary.vehicle_count, 2)
         self.assertEqual(result.summary.failed_count, 3)
@@ -1049,8 +1067,8 @@ class AutoTestReportResponsibleUserAndAnalysisStatsTests(TestCase):
         self.assertEqual(row.need_analysis_count, 3)
         self.assertEqual(row.pending_analysis_count, 1)
         self.assertEqual(row.version_failure_count, 1)
-        self.assertEqual(empty_row.need_analysis_count, 0)
-        self.assertEqual(empty_row.responsible_users, [])
+        self.assertEqual(len(result.items), 1)
+        self.assertNotIn(str(empty_vehicle.id), {item.vehicle_id for item in result.items})
 
     def test_analysis_stats_api_allows_anonymous_request(self):
         """接口显式关闭鉴权，第三方无需 Bearer token 即可调用。"""

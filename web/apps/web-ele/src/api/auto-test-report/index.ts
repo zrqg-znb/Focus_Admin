@@ -8,7 +8,7 @@ export type ResultStatus =
   | 'skip'
   | 'success'
   | 'timeout';
-export type FailureCategory = 'case' | 'environment' | 'version';
+export type FailureCategory = 'case' | 'environment' | 'non_mcu' | 'version';
 
 export interface McuPlatformItem {
   id: string;

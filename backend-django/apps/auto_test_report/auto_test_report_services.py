@@ -27,6 +27,7 @@ from .auto_test_report_model import (
     FAILURE_CATEGORY_CASE,
     FAILURE_CATEGORY_CHOICES,
     FAILURE_CATEGORY_ENVIRONMENT,
+    FAILURE_CATEGORY_NON_MCU,
     FAILURE_CATEGORY_VERSION,
     McuPlatform,
     TestCase,
@@ -79,6 +80,7 @@ VALID_FAILURE_CATEGORIES = {value for value, _ in FAILURE_CATEGORY_CHOICES}
 NON_VERSION_FAILURE_CATEGORIES = {
     FAILURE_CATEGORY_ENVIRONMENT,
     FAILURE_CATEGORY_CASE,
+    FAILURE_CATEGORY_NON_MCU,
 }
 TESTCASE_LOG_SUFFIX = 'testcase.html'
 
@@ -172,7 +174,7 @@ def _normalize_failure_category(value: Optional[str]) -> Optional[str]:
     if not normalized:
         return None
     if normalized not in VALID_FAILURE_CATEGORIES:
-        raise HttpError(422, '失败根因大类仅支持 version、environment、case')
+        raise HttpError(422, '失败根因大类仅支持 version、environment、case、non_mcu')
     return normalized
 
 
@@ -1925,8 +1927,10 @@ def get_daily_analysis_stats(domain: str, execute_date=None) -> DailyAnalysisSta
         .order_by('platform__name', 'name')
     )
     items = []
+    vehicle_count = 0
     totals = Counter()
     for vehicle in vehicles:
+        vehicle_count += 1
         results = _list_latest_active_results(vehicle, target_date)
         non_success_results = [result for result in results if result.result in NON_SUCCESS_RESULTS]
         # 第三方 IM 以 failed_count 表示全部未成功结果，不只限于 failed 状态。
@@ -1937,19 +1941,21 @@ def get_daily_analysis_stats(domain: str, execute_date=None) -> DailyAnalysisSta
             for result in non_success_results
         )
         responsible_users = _serialize_responsible_users(vehicle)
-        items.append(DailyAnalysisStatsRow(
-            vehicle_id=str(vehicle.id),
-            vehicle_name=vehicle.name,
-            vehicle_code=vehicle.vehicle_code,
-            platform_id=str(vehicle.platform_id),
-            platform_name=vehicle.platform.name,
-            responsible_user_ids=[user['id'] for user in responsible_users],
-            responsible_users=responsible_users,
-            failed_count=failed_count,
-            need_analysis_count=len(non_success_results),
-            pending_analysis_count=pending_analysis_count,
-            version_failure_count=version_failure_count,
-        ))
+        # IM 只需要通知仍有根因待补齐的车型，已分析完成的车型不返回明细。
+        if pending_analysis_count > 0:
+            items.append(DailyAnalysisStatsRow(
+                vehicle_id=str(vehicle.id),
+                vehicle_name=vehicle.name,
+                vehicle_code=vehicle.vehicle_code,
+                platform_id=str(vehicle.platform_id),
+                platform_name=vehicle.platform.name,
+                responsible_user_ids=[user['id'] for user in responsible_users],
+                responsible_users=responsible_users,
+                failed_count=failed_count,
+                need_analysis_count=len(non_success_results),
+                pending_analysis_count=pending_analysis_count,
+                version_failure_count=version_failure_count,
+            ))
         totals['failed_count'] += failed_count
         totals['need_analysis_count'] += len(non_success_results)
         totals['pending_analysis_count'] += pending_analysis_count
@@ -1958,7 +1964,7 @@ def get_daily_analysis_stats(domain: str, execute_date=None) -> DailyAnalysisSta
         summary=DailyAnalysisStatsSummary(
             domain=parsed_domain,
             execute_date=target_date,
-            vehicle_count=len(items),
+            vehicle_count=vehicle_count,
             failed_count=totals['failed_count'],
             need_analysis_count=totals['need_analysis_count'],
             pending_analysis_count=totals['pending_analysis_count'],
