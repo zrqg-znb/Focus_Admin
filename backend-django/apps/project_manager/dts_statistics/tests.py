@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import datetime
+import importlib
 from io import BytesIO
 from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 
 import openpyxl
+from django.apps import apps as django_apps
 from django.test import TransactionTestCase
 from django.utils import timezone
+
+from core.models import DictItem
 
 from .dts_statistics_model import DtsExtension
 from .dts_statistics_schemas import (
@@ -69,12 +74,13 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
         dts004_reason_analysis: str = "",
         dts009_reason_analyses: str = "",
         s_achieve_descibe: str = "",
+        test_miss_reason: list[str] | None = None,
         update_at: str = "2026-05-01 10:00:00",
         create_at: str = "2026-04-25 10:00:00",
         close_time: str = "",
         close_type: str = "",
         close_days: str = "",
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         return {
             "dtsBizNo": defect_no,
             "briefDesc": brief_desc,
@@ -98,6 +104,7 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
             "dts004ReasonAnalysis": dts004_reason_analysis,
             "dts009ReasonAnalyses": dts009_reason_analyses,
             "sAchieveDescibe": s_achieve_descibe,
+            "test_miss_reason": test_miss_reason or [],
         }
 
     @mock.patch(
@@ -381,6 +388,74 @@ class DtsStatisticsSummaryTests(TransactionTestCase):
                 {"label": "已完成", "value": 1},
             ],
         )
+
+    def test_test_miss_reason_filter_matches_empty_value(self):
+        query = DtsStatisticsQuerySchema(
+            updateTimeBegin=self._ms(2026, 5, 1),
+            updateTimeEnd=self._ms(2026, 5, 3),
+            test_miss_reason_values=[
+                dts_statistics_services._EMPTY_TEST_MISS_REASON_FILTER_VALUE,
+            ],
+        )
+        rows = [
+            self._defect("D-1", test_miss_reason=["原因A"]),
+            self._defect("D-2", test_miss_reason=[]),
+            self._defect("D-3"),
+        ]
+
+        result = dts_statistics_services._apply_local_filters(rows, query)
+
+        self.assertEqual([item["dtsBizNo"] for item in result], ["D-2", "D-3"])
+
+    def test_test_miss_reason_filter_matches_reason_or_empty_value(self):
+        query = DtsStatisticsQuerySchema(
+            updateTimeBegin=self._ms(2026, 5, 1),
+            updateTimeEnd=self._ms(2026, 5, 3),
+            test_miss_reason_values=[
+                "原因A",
+                dts_statistics_services._EMPTY_TEST_MISS_REASON_FILTER_VALUE,
+            ],
+        )
+        rows = [
+            self._defect("D-1", test_miss_reason=["原因A"]),
+            self._defect("D-2", test_miss_reason=["原因B"]),
+            self._defect("D-3", test_miss_reason=[]),
+        ]
+
+        result = dts_statistics_services._apply_local_filters(rows, query)
+
+        self.assertEqual([item["dtsBizNo"] for item in result], ["D-1", "D-3"])
+
+    def test_test_miss_reason_field_set_includes_empty_filter_value(self):
+        values = dts_statistics_services._collect_field_set_values(
+            [
+                self._defect("D-1", test_miss_reason=["原因A"]),
+                self._defect("D-2", test_miss_reason=[]),
+            ],
+            "test_miss_reason",
+        )
+
+        self.assertIn(
+            dts_statistics_services._EMPTY_TEST_MISS_REASON_FILTER_VALUE,
+            values,
+        )
+
+    def test_seed_dts_test_miss_reason_outer_domain_migration(self):
+        migration = importlib.import_module(
+            "apps.project_manager.migrations."
+            "0052_seed_dts_test_miss_reason_outer_domain"
+        )
+
+        migration.seed_dts_test_miss_reason_outer_domain(django_apps, None)
+        migration.seed_dts_test_miss_reason_outer_domain(django_apps, None)
+
+        items = DictItem.objects.filter(
+            dict__code="dts_test_miss_reason",
+            value="外领域未按处理建议关单",
+            label="外领域未按处理建议关单",
+            status=True,
+        )
+        self.assertEqual(items.count(), 1)
 
     @mock.patch(
         "apps.project_manager.dts_statistics.dts_statistics_services._resolve_runtime_defects"

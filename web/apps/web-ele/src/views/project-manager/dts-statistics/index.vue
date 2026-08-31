@@ -347,6 +347,8 @@ const SEVERITY_OPTIONS: Array<{ label: string; value: string }> = [
   { value: 'Critical', label: '关键' },
 ];
 
+const EMPTY_TEST_MISS_REASON_FILTER_VALUE = '__EMPTY_TEST_MISS_REASON__';
+
 function createRecentTwoMonthRange(): [Date, Date] {
   const end = new Date();
   const start = new Date(end);
@@ -1500,7 +1502,26 @@ function resolveDictCandidateValues(config: GovernanceSelectFilterConfig) {
     seen.add(text);
     result.push(text);
   });
+  if (
+    config.filterKey === 'test_miss_reason_values' &&
+    !seen.has(EMPTY_TEST_MISS_REASON_FILTER_VALUE)
+  ) {
+    result.push(EMPTY_TEST_MISS_REASON_FILTER_VALUE);
+  }
   return result;
+}
+
+function formatGovernanceSelectOptionLabel(
+  config: GovernanceSelectFilterConfig,
+  value: string,
+) {
+  if (
+    config.filterKey === 'test_miss_reason_values' &&
+    value === EMPTY_TEST_MISS_REASON_FILTER_VALUE
+  ) {
+    return '未填写';
+  }
+  return value;
 }
 
 function getGovernanceSelectOptions(config: GovernanceSelectFilterConfig) {
@@ -6075,7 +6096,12 @@ onUnmounted(() => {
                                 :label="item"
                                 :value="item"
                               >
-                                {{ item }}
+                                {{
+                                  formatGovernanceSelectOptionLabel(
+                                    config,
+                                    item,
+                                  )
+                                }}
                               </ElCheckbox>
                             </ElCheckboxGroup>
                           </div>

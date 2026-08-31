@@ -532,6 +532,7 @@ Schema：`DtsStatisticsQuerySchema`
 | `dts_action_status` | `dev_status/test_status` | 改进状态（开发/测试共用） |
 
 > 注意：当前 DTS 统计模块的扩展字段落库采用“可读口径”：前端在保存时会将字典项的 **label** 作为 value 一并提交（即 DB 中存储的是中文可读值），以保证列表/导出/统计看板天然可读，避免二次映射。
+> 「漏测原因」表头筛选中的「未填写」是前后端约定的虚拟筛选项，实际请求值为 `__EMPTY_TEST_MISS_REASON__`，不作为 `dts_test_miss_reason` 字典项落库。
 
 ### 9.1 字典初始化建议（可直接作为首次初始化）
 
@@ -590,6 +591,7 @@ Schema：`DtsStatisticsQuerySchema`
   - 数据构造不足
   - 自动化缺失
   - 执行遗漏
+  - 外领域未按处理建议关单
   - 其他
 - `dts_dev_non_base_desc`（DTS-非底软问题说明）
   - 硬件/平台原因

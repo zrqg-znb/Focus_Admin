@@ -361,6 +361,8 @@ _EXTENSION_LIST_FIELDS = {
     "test_improvements",
 }
 
+_EMPTY_TEST_MISS_REASON_FILTER_VALUE = "__EMPTY_TEST_MISS_REASON__"
+
 _SEVERITY_NAME_TO_CODE = {
     "提示": "Suggestion",
     "一般": "Minor",
@@ -2229,6 +2231,22 @@ def _match_list_intersects(value: Any, selected_values: set[str]) -> bool:
     return bool(normalized_values.intersection(selected_values))
 
 
+def _match_test_miss_reason_filter(
+    value: Any,
+    selected_values: set[str],
+) -> bool:
+    if not selected_values:
+        return True
+    selected_reasons = set(selected_values)
+    match_empty = _EMPTY_TEST_MISS_REASON_FILTER_VALUE in selected_reasons
+    selected_reasons.discard(_EMPTY_TEST_MISS_REASON_FILTER_VALUE)
+
+    normalized_values = set(_normalize_text_list(value))
+    if not normalized_values:
+        return match_empty
+    return bool(normalized_values.intersection(selected_reasons))
+
+
 def _match_list_keyword_like(value: Any, keyword: str) -> bool:
     normalized_keyword = _clean_text(keyword).lower()
     if not normalized_keyword:
@@ -2729,7 +2747,7 @@ def _apply_local_filters(
             row.get("test_owner_name"), test_owner_name_keywords
         ):
             continue
-        if not _match_list_intersects(
+        if not _match_test_miss_reason_filter(
             row.get("test_miss_reason"), test_miss_reason_values
         ):
             continue
@@ -3290,6 +3308,8 @@ def _collect_field_set_values(
             if _resolve_field_set_option_value(item, field)
         }
     )
+    if field == "test_miss_reason":
+        values.append(_EMPTY_TEST_MISS_REASON_FILTER_VALUE)
     return values
 
 
