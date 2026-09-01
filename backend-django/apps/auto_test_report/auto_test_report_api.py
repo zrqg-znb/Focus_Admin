@@ -127,7 +127,7 @@ def import_test_cases_excel(
     rows = services.parse_excel_rows(
         file,
         require_module=vehicle.platform.domain == services.DOMAIN_COCKPIT_SOC,
-        require_viu_code=vehicle.platform.domain == services.DOMAIN_VEHICLE,
+        require_viu_code=services._is_vehicle_control_domain(vehicle.platform.domain),
     )
     payload = ImportCasePayload(vehicle_id=vehicle_id, rows=rows)
     return services.import_test_cases(request.auth, payload)

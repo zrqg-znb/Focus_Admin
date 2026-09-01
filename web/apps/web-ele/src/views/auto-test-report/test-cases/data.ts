@@ -3,7 +3,10 @@ import type { AutoTestReportDomain } from '../shared/domain';
 import type { TestCaseItem } from '#/api/auto-test-report';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
-import { getAutoTestReportDomainMeta } from '../shared/domain';
+import {
+  getAutoTestReportDomainMeta,
+  isVehicleControlDomain,
+} from '../shared/domain';
 
 export function useCaseColumns(
   domain: AutoTestReportDomain,
@@ -43,7 +46,7 @@ export function useCaseColumns(
     },
   ];
 
-  if (domain === 'vehicle') {
+  if (isVehicleControlDomain(domain)) {
     columns.push({
       key: 'viu_code',
       dataKey: 'viu_code',

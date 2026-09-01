@@ -8,7 +8,10 @@ import type {
 } from '#/api/auto-test-report';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
-import { getAutoTestReportDomainMeta } from '../shared/domain';
+import {
+  getAutoTestReportDomainMeta,
+  isVehicleControlDomain,
+} from '../shared/domain';
 
 export const RESULT_LABEL_MAP: Record<string, string> = {
   success: '成功',
@@ -78,7 +81,7 @@ export function useResultColumns(
     },
   ];
 
-  if (domain === 'vehicle') {
+  if (isVehicleControlDomain(domain)) {
     columns.push({
       key: 'viu_code',
       dataKey: 'viu_code',

@@ -21,6 +21,7 @@ from apps.auto_test_report.auto_test_report_model import (
     VehicleModel,
     DOMAIN_COCKPIT,
     DOMAIN_VEHICLE,
+    DOMAIN_VEHICLE_IO,
     RESULT_FAILED,
     RESULT_SUCCESS,
     RESULT_SKIP,
@@ -153,6 +154,7 @@ class AutoTestReportFullExcelImportTests(TestCase):
         mcu_response = services.build_test_case_template_response(DOMAIN_COCKPIT)
         soc_response = services.build_test_case_template_response(DOMAIN_COCKPIT_SOC)
         vehicle_response = services.build_test_case_template_response(DOMAIN_VEHICLE)
+        vehicle_io_response = services.build_test_case_template_response(DOMAIN_VEHICLE_IO)
 
         def header_of(response):
             workbook = openpyxl.load_workbook(io.BytesIO(response.content), read_only=True)
@@ -162,6 +164,24 @@ class AutoTestReportFullExcelImportTests(TestCase):
         self.assertIn('模块', header_of(soc_response))
         self.assertNotIn('CDC平台', header_of(vehicle_response))
         self.assertIn('VIU编号', header_of(vehicle_response))
+        self.assertNotIn('CDC平台', header_of(vehicle_io_response))
+        self.assertIn('VIU编号', header_of(vehicle_io_response))
+
+    def test_vehicle_io_import_reuses_vehicle_viu_structure(self):
+        file_obj = self._build_excel(self.VEHICLE_HEADER, [
+            ['IO V1', 'io-v1', '车控IO车型', 'IO-A', 'host-io', 'viu2', 'CASE-1', 'IO用例', ''],
+        ])
+
+        result = services.import_full_test_case_excel(None, DOMAIN_VEHICLE_IO, file_obj)
+
+        self.assertEqual(result.errors, [])
+        vehicle = VehicleModel.objects.get(vehicle_code='IO-A')
+        self.assertEqual(vehicle.platform.domain, DOMAIN_VEHICLE_IO)
+        self.assertEqual(vehicle.cdc_platform, '')
+        self.assertEqual(vehicle.viu_codes, ['viu2'])
+        self.assertTrue(
+            AutoTestCase.objects.filter(vehicle=vehicle, viu_code='viu2', case_no='CASE-1').exists()
+        )
 
 
 class AutoTestReportOverviewTests(TestCase):
@@ -761,6 +781,48 @@ class AutoTestReportOverviewTests(TestCase):
 
         self.assertEqual(case0.viu_code, 'viu0')
         self.assertEqual(case1.viu_code, 'viu1')
+
+    def test_vehicle_io_daily_report_requires_and_matches_viu_code(self):
+        platform = McuPlatform.objects.create(
+            name='Vehicle IO Platform',
+            version_code='vehicle-io-platform',
+            domain=DOMAIN_VEHICLE_IO,
+            is_active=True,
+        )
+        vehicle = VehicleModel.objects.create(
+            platform=platform,
+            name='Vehicle IO model',
+            vehicle_code='VEH-IO',
+            cdc_platform='',
+            execution_machine='machine-io',
+            viu_codes=['viu0'],
+            is_active=True,
+        )
+        case = AutoTestCase.objects.create(
+            vehicle=vehicle,
+            viu_code='viu0',
+            case_no='IO-CASE-001',
+            case_name='IO Case',
+            is_active=True,
+        )
+
+        result = services.report_daily_results(ReportDailyResultsIn(
+            vehicle_code=vehicle.vehicle_code,
+            execute_date=self.execute_date,
+            results=[
+                ReportResultItemIn(
+                    viu_code='viu0',
+                    case_no=case.case_no,
+                    start_time=timezone.now(),
+                    duration_seconds=30,
+                    result=RESULT_SUCCESS,
+                ),
+            ],
+        ))
+
+        self.assertEqual(result['created_count'], 1)
+        items = services.list_daily_results(vehicle.id, self.execute_date, DOMAIN_VEHICLE_IO)
+        self.assertEqual(items[0].viu_code, 'viu0')
 
     def test_get_test_case_history_includes_car_log_url(self):
         vehicle = self._create_vehicle('history')

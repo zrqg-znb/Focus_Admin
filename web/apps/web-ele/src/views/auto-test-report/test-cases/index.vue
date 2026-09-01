@@ -44,6 +44,7 @@ import DomainSwitcher from '../components/domain-switcher.vue';
 import TestCaseHistoryDrawer from '../components/test-case-history-drawer.vue';
 import {
   AUTO_TEST_REPORT_VIU_CODES,
+  isVehicleControlDomain,
   useAutoTestReportDomain,
 } from '../shared/domain';
 import TestCaseHeaderKeywordFilter from './components/TestCaseHeaderKeywordFilter.vue';
@@ -149,7 +150,7 @@ const [Grid, gridApi] = useZqTable({
               case_no_keyword: caseNoKeyword.value || undefined,
               case_name_keyword: caseNameKeyword.value || undefined,
               viu_code:
-                domain.value === 'vehicle'
+                isVehicleControlDomain(domain.value)
                   ? selectedViuCode.value || undefined
                   : undefined,
             })) || [];
@@ -217,7 +218,7 @@ async function reloadVehicleOptions() {
   );
 
   if (
-    domain.value === 'vehicle' &&
+    isVehicleControlDomain(domain.value) &&
     selectedViuCode.value &&
     !vehicleViuOptions.value.some(
       (item) => item.value === selectedViuCode.value,
@@ -241,7 +242,7 @@ function openCreate() {
 
   const initialPath = getVehiclePath(currentVehicleId.value);
   if (
-    domain.value === 'vehicle' &&
+    isVehicleControlDomain(domain.value) &&
     selectedVehicleViuOptions.value.length === 0
   ) {
     ElMessage.warning('当前车型未配置可用 VIU 编号，请先维护车型配置');
@@ -254,7 +255,7 @@ function openCreate() {
     case_name: '',
     module: '',
     viu_code:
-      domain.value === 'vehicle'
+      isVehicleControlDomain(domain.value)
         ? selectedVehicleViuOptions.value[0]?.value || ''
         : '',
     remark: '',
@@ -293,7 +294,7 @@ async function submitCase() {
       ElMessage.warning(`请选择${domainMeta.value.selectorLabel}`);
       return;
     }
-    if (domain.value === 'vehicle' && !caseForm.value.viu_code) {
+    if (isVehicleControlDomain(domain.value) && !caseForm.value.viu_code) {
       ElMessage.warning('请先选择 VIU 编号');
       return;
     }
@@ -304,7 +305,9 @@ async function submitCase() {
 
     const payload: TestCasePayload = {
       vehicle_id: actualVehicleId,
-      viu_code: domain.value === 'vehicle' ? caseForm.value.viu_code : '',
+      viu_code: isVehicleControlDomain(domain.value)
+        ? caseForm.value.viu_code
+        : '',
       module: domain.value === 'cockpit_soc' ? caseForm.value.module : '',
       case_no: caseForm.value.case_no,
       case_name: caseForm.value.case_name,
@@ -431,7 +434,7 @@ async function exportCases() {
           ? selectedVehicleIds.value[0]
           : undefined,
       viu_code:
-        domain.value === 'vehicle'
+        isVehicleControlDomain(domain.value)
           ? selectedViuCode.value || undefined
           : undefined,
     });
@@ -528,7 +531,7 @@ onMounted(async () => {
             @change="refreshGrid"
           />
         </ElFormItem>
-        <ElFormItem v-if="domain === 'vehicle'" label="VIU编号" class="!mb-0">
+        <ElFormItem v-if="isVehicleControlDomain(domain)" label="VIU编号" class="!mb-0">
           <ElSelect
             v-model="selectedViuCode"
             class="w-[180px]"
@@ -577,8 +580,10 @@ onMounted(async () => {
           <div class="flex items-center gap-2">
             <ElButton type="primary" @click="openCreate">
               {{
-                domain === 'vehicle'
-                  ? '新增车控用例'
+                isVehicleControlDomain(domain)
+                  ? domain === 'vehicle_io'
+                    ? '新增车控IO用例'
+                    : '新增车控用例'
                   : domain === 'cockpit_soc'
                     ? '新增座舱SOC用例'
                     : '新增座舱MCU用例'
@@ -634,13 +639,17 @@ onMounted(async () => {
       v-model="caseDialogVisible"
       :title="
         caseDialogMode === 'create'
-          ? domain === 'vehicle'
-            ? '新增车控用例'
+          ? isVehicleControlDomain(domain)
+            ? domain === 'vehicle_io'
+              ? '新增车控IO用例'
+              : '新增车控用例'
             : domain === 'cockpit_soc'
               ? '新增座舱SOC用例'
               : '新增座舱MCU用例'
-          : domain === 'vehicle'
-            ? '编辑车控用例'
+          : isVehicleControlDomain(domain)
+            ? domain === 'vehicle_io'
+              ? '编辑车控IO用例'
+              : '编辑车控用例'
             : domain === 'cockpit_soc'
               ? '编辑座舱SOC用例'
               : '编辑座舱MCU用例'
@@ -665,7 +674,7 @@ onMounted(async () => {
           />
         </ElFormItem>
         <ElFormItem
-          v-if="domain === 'vehicle'"
+          v-if="isVehicleControlDomain(domain)"
           label="VIU编号"
           prop="viu_code"
           required

@@ -6,10 +6,12 @@ from common.fu_model import RootModel
 DOMAIN_COCKPIT = 'cockpit'
 DOMAIN_COCKPIT_SOC = 'cockpit_soc'
 DOMAIN_VEHICLE = 'vehicle'
+DOMAIN_VEHICLE_IO = 'vehicle_io'
 DOMAIN_CHOICES = [
     (DOMAIN_COCKPIT, '座舱MCU'),
     (DOMAIN_COCKPIT_SOC, '座舱SOC'),
     (DOMAIN_VEHICLE, '车控'),
+    (DOMAIN_VEHICLE_IO, '车控IO'),
 ]
 
 VIU_CODE_VALUES = ['viu0', 'viu1', 'viu2', 'viu3', 'viu4']

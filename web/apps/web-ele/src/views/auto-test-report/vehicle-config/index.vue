@@ -45,6 +45,7 @@ import DomainSwitcher from '../components/domain-switcher.vue';
 import { setAutoTestReportDailyResultsState } from '../shared/daily-results-state';
 import {
   AUTO_TEST_REPORT_VIU_CODES,
+  isVehicleControlDomain,
   useAutoTestReportDomain,
 } from '../shared/domain';
 import { useVehicleColumns, useVehicleSearchSchema } from './data';
@@ -52,7 +53,7 @@ import { useVehicleColumns, useVehicleSearchSchema } from './data';
 defineOptions({ name: 'AutoTestVehicleConfig' });
 
 const { domain, domainMeta } = useAutoTestReportDomain();
-const showCdcPlatform = computed(() => domain.value !== 'vehicle');
+const showCdcPlatform = computed(() => !isVehicleControlDomain(domain.value));
 const router = useRouter();
 const platformList = ref<McuPlatformItem[]>([]);
 const activePlatformId = ref('');
@@ -242,10 +243,12 @@ async function submitVehicle() {
     const payload = {
       ...vehicleForm.value,
       cdc_platform: showCdcPlatform.value ? vehicleForm.value.cdc_platform : '',
-      viu_codes: domain.value === 'vehicle' ? vehicleForm.value.viu_codes : [],
+      viu_codes: isVehicleControlDomain(domain.value)
+        ? vehicleForm.value.viu_codes
+        : [],
     };
-    if (domain.value === 'vehicle' && payload.viu_codes.length === 0) {
-      ElMessage.warning('车控车型至少需要选择一个可用 VIU 编号');
+    if (isVehicleControlDomain(domain.value) && payload.viu_codes.length === 0) {
+      ElMessage.warning('车控或车控IO车型至少需要选择一个可用 VIU 编号');
       return;
     }
     if (vehicleDialogMode.value === 'create') {
@@ -393,8 +396,10 @@ onMounted(async () => {
                 @click="openVehicleCreate"
               >
                 新增{{
-                  domain === 'vehicle'
-                    ? '车控车型'
+                  isVehicleControlDomain(domain)
+                    ? domain === 'vehicle_io'
+                      ? '车控IO车型'
+                      : '车控车型'
                     : domain === 'cockpit_soc'
                       ? '座舱SOC车型'
                       : '座舱MCU车型'
@@ -484,13 +489,17 @@ onMounted(async () => {
       v-model="vehicleDialogVisible"
       :title="
         vehicleDialogMode === 'create'
-          ? domain === 'vehicle'
-            ? '新增车控车型'
+          ? isVehicleControlDomain(domain)
+            ? domain === 'vehicle_io'
+              ? '新增车控IO车型'
+              : '新增车控车型'
             : domain === 'cockpit_soc'
               ? '新增座舱SOC车型'
               : '新增座舱MCU车型'
-          : domain === 'vehicle'
-            ? '编辑车控车型'
+          : isVehicleControlDomain(domain)
+            ? domain === 'vehicle_io'
+              ? '编辑车控IO车型'
+              : '编辑车控车型'
             : domain === 'cockpit_soc'
               ? '编辑座舱SOC车型'
               : '编辑座舱MCU车型'
@@ -523,7 +532,7 @@ onMounted(async () => {
             placeholder="请选择责任人"
           />
         </ElFormItem>
-        <ElFormItem v-if="domain === 'vehicle'" label="可用 VIU 编号">
+        <ElFormItem v-if="isVehicleControlDomain(domain)" label="可用 VIU 编号">
           <ElCheckboxGroup
             v-model="vehicleForm.viu_codes"
             class="flex flex-wrap gap-3"

@@ -1,11 +1,16 @@
 import { computed, ref } from 'vue';
 
-export type AutoTestReportDomain = 'cockpit' | 'cockpit_soc' | 'vehicle';
+export type AutoTestReportDomain =
+  | 'cockpit'
+  | 'cockpit_soc'
+  | 'vehicle'
+  | 'vehicle_io';
 
 export const AUTO_TEST_REPORT_DOMAINS: AutoTestReportDomain[] = [
   'cockpit',
   'cockpit_soc',
   'vehicle',
+  'vehicle_io',
 ];
 
 export const AUTO_TEST_REPORT_VIU_CODES = [
@@ -55,6 +60,15 @@ const DOMAIN_LABEL_MAP: Record<
     selectorPlaceholder: '选择 VIU 平台 / 车型',
     switchLabel: '车控视图',
   },
+  vehicle_io: {
+    badge: '车控IO领域',
+    platformLabel: 'IO平台',
+    platformPanelTitle: 'IO平台配置',
+    platformPanelHint: '维护车控 IO 场景下的 IO 平台、车型与可用 VIU 编号。',
+    selectorLabel: 'IO 平台 / 车型',
+    selectorPlaceholder: '选择 IO 平台 / 车型',
+    switchLabel: '车控 IO 视图',
+  },
 };
 
 export const AUTO_TEST_REPORT_DOMAIN_OPTIONS = AUTO_TEST_REPORT_DOMAINS.map(
@@ -80,7 +94,13 @@ const sharedDomain = ref<AutoTestReportDomain>(getStoredDomain());
 export function normalizeAutoTestReportDomain(
   value?: null | string,
 ): AutoTestReportDomain {
-  return value === 'vehicle' || value === 'cockpit_soc' ? value : 'cockpit';
+  return value === 'vehicle' || value === 'vehicle_io' || value === 'cockpit_soc'
+    ? value
+    : 'cockpit';
+}
+
+export function isVehicleControlDomain(domain: AutoTestReportDomain) {
+  return domain === 'vehicle' || domain === 'vehicle_io';
 }
 
 export function getAutoTestReportDomainMeta(domain: AutoTestReportDomain) {

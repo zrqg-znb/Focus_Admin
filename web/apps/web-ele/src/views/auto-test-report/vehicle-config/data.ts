@@ -4,7 +4,10 @@ import type { VbenFormSchema } from '#/adapter/form';
 import type { McuPlatformItem, VehicleItem } from '#/api/auto-test-report';
 import type { ZqTableGridOptions } from '#/components/zq-table';
 
-import { getAutoTestReportDomainMeta } from '../shared/domain';
+import {
+  getAutoTestReportDomainMeta,
+  isVehicleControlDomain,
+} from '../shared/domain';
 
 export function usePlatformColumns(
   domain: AutoTestReportDomain,
@@ -85,7 +88,7 @@ export function useVehicleColumns(
     },
   ];
 
-  if (domain !== 'vehicle') {
+  if (!isVehicleControlDomain(domain)) {
     columns.push({
       key: 'cdc_platform',
       dataKey: 'cdc_platform',
@@ -105,7 +108,7 @@ export function useVehicleColumns(
     headerAlign: 'center',
   });
 
-  if (domain === 'vehicle') {
+  if (isVehicleControlDomain(domain)) {
     columns.push({
       key: 'viu_codes',
       dataKey: 'viu_codes',

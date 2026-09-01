@@ -8,6 +8,7 @@ from apps.auto_test_report.auto_test_report_model import (
     DOMAIN_COCKPIT,
     DOMAIN_COCKPIT_SOC,
     DOMAIN_VEHICLE,
+    DOMAIN_VEHICLE_IO,
     DailyExecutionResult,
     McuPlatform,
     TestCase,
@@ -37,6 +38,7 @@ class Command(BaseCommand):
             (DOMAIN_COCKPIT_SOC, 'SOC 3.0', 'soc30'),
             (DOMAIN_VEHICLE, 'VIU 2.0', 'viu20'),
             (DOMAIN_VEHICLE, 'VIU 2.2', 'viu22'),
+            (DOMAIN_VEHICLE_IO, 'IO 1.0', 'io10'),
         ]
         soc_modules = ['音频', '导航', '车机桌面', '蓝牙']
         viu_sets = [
@@ -69,7 +71,7 @@ class Command(BaseCommand):
                 vehicle_code = f'{code}-veh-{vehicle_index}'
                 viu_codes = (
                     viu_sets[(index + vehicle_index - 2) % len(viu_sets)]
-                    if domain == DOMAIN_VEHICLE
+                    if domain in {DOMAIN_VEHICLE, DOMAIN_VEHICLE_IO}
                     else []
                 )
                 vehicle, created_vehicle = VehicleModel.objects.get_or_create(

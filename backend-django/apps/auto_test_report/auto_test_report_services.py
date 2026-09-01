@@ -18,6 +18,7 @@ from .auto_test_report_model import (
     DOMAIN_COCKPIT,
     DOMAIN_COCKPIT_SOC,
     DOMAIN_VEHICLE,
+    DOMAIN_VEHICLE_IO,
     DailyExecutionBatch,
     DailyExecutionResult,
     DownstreamCommit,
@@ -73,8 +74,9 @@ VALID_RESULT_VALUES = {
     RESULT_TIMEOUT,
     RESULT_SKIP,
 }
-VALID_DOMAINS = {DOMAIN_COCKPIT, DOMAIN_COCKPIT_SOC, DOMAIN_VEHICLE}
-DOMAIN_ERROR_MESSAGE = '领域仅支持 cockpit、cockpit_soc 或 vehicle'
+VEHICLE_CONTROL_DOMAINS = {DOMAIN_VEHICLE, DOMAIN_VEHICLE_IO}
+VALID_DOMAINS = {DOMAIN_COCKPIT, DOMAIN_COCKPIT_SOC, *VEHICLE_CONTROL_DOMAINS}
+DOMAIN_ERROR_MESSAGE = '领域仅支持 cockpit、cockpit_soc、vehicle 或 vehicle_io'
 NON_SUCCESS_RESULTS = {RESULT_FAILED, RESULT_TIMEOUT, RESULT_SKIP}
 VALID_FAILURE_CATEGORIES = {value for value, _ in FAILURE_CATEGORY_CHOICES}
 NON_VERSION_FAILURE_CATEGORIES = {
@@ -183,6 +185,11 @@ def _is_non_version_failure(result: DailyExecutionResult) -> bool:
     return result.result in NON_SUCCESS_RESULTS and result.failure_category in NON_VERSION_FAILURE_CATEGORIES
 
 
+def _is_vehicle_control_domain(domain: str) -> bool:
+    """判断领域是否复用车控的 VIU、车型和用例规则。"""
+    return domain in VEHICLE_CONTROL_DOMAINS
+
+
 def _normalize_viu_codes(viu_codes, *, require_non_empty: bool = False):
     normalized = []
     for raw_code in viu_codes or []:
@@ -200,11 +207,11 @@ def _normalize_viu_codes(viu_codes, *, require_non_empty: bool = False):
 
 def _normalize_case_viu_code(vehicle: VehicleModel, viu_code: Optional[str]):
     domain = vehicle.platform.domain
-    if domain != DOMAIN_VEHICLE:
+    if not _is_vehicle_control_domain(domain):
         return ''
     normalized = (viu_code or '').strip().lower()
     if not normalized:
-        raise HttpError(422, '车控领域用例必须配置VIU编号')
+        raise HttpError(422, '车控或车控IO领域用例必须配置VIU编号')
     allowed_viu_codes = set(vehicle.viu_codes or [])
     if normalized not in allowed_viu_codes:
         raise HttpError(422, f'车型 {vehicle.name} 未配置 VIU 编号: {normalized}')
@@ -394,8 +401,8 @@ def list_vehicle_options(domain: Optional[str] = None):
 def create_vehicle(user, payload):
     """创建车型并保存其多选责任人关联。"""
     platform = get_platform(payload.platform_id)
-    parsed_viu_codes = _normalize_viu_codes(payload.viu_codes, require_non_empty=platform.domain == DOMAIN_VEHICLE)
-    if platform.domain != DOMAIN_VEHICLE:
+    parsed_viu_codes = _normalize_viu_codes(payload.viu_codes, require_non_empty=_is_vehicle_control_domain(platform.domain))
+    if not _is_vehicle_control_domain(platform.domain):
         parsed_viu_codes = []
     instance = VehicleModel(
         platform=platform,
@@ -420,9 +427,9 @@ def update_vehicle(user, vehicle_id: str, payload):
     instance.platform = get_platform(payload.platform_id)
     parsed_viu_codes = _normalize_viu_codes(
         payload.viu_codes,
-        require_non_empty=instance.platform.domain == DOMAIN_VEHICLE,
+        require_non_empty=_is_vehicle_control_domain(instance.platform.domain),
     )
-    if instance.platform.domain != DOMAIN_VEHICLE:
+    if not _is_vehicle_control_domain(instance.platform.domain):
         parsed_viu_codes = []
     instance.name = payload.name.strip()
     instance.vehicle_code = payload.vehicle_code.strip()
@@ -606,7 +613,7 @@ def get_test_case(case_id: str) -> TestCase:
 @transaction.atomic
 def import_test_cases(user, payload) -> ImportResultOut:
     vehicle = get_vehicle(payload.vehicle_id)
-    require_viu_code = vehicle.platform.domain == DOMAIN_VEHICLE
+    require_viu_code = _is_vehicle_control_domain(vehicle.platform.domain)
     require_module = vehicle.platform.domain == DOMAIN_COCKPIT_SOC
     created_count = 0
     updated_count = 0
@@ -618,7 +625,7 @@ def import_test_cases(user, payload) -> ImportResultOut:
         raw_viu_code = (row.viu_code or '').strip().lower()
         module = (row.module or '').strip()
         if require_viu_code and not raw_viu_code:
-            errors.append(ImportErrorRow(row_no=index, message='车控车型导入时VIU编号不能为空'))
+            errors.append(ImportErrorRow(row_no=index, message='车控或车控IO车型导入时VIU编号不能为空'))
             continue
         if require_viu_code and raw_viu_code not in set(vehicle.viu_codes or []):
             errors.append(ImportErrorRow(row_no=index, message=f'车型 {vehicle.name} 未配置 VIU 编号: {raw_viu_code}'))
@@ -750,9 +757,9 @@ def parse_full_test_case_excel_rows(file_obj, domain: str) -> list[dict]:
         '用例名称',
         '备注',
     ]
-    if domain != DOMAIN_VEHICLE:
+    if not _is_vehicle_control_domain(domain):
         required_headers.append('CDC平台')
-    if domain == DOMAIN_VEHICLE:
+    if _is_vehicle_control_domain(domain):
         required_headers.append('VIU编号')
     if domain == DOMAIN_COCKPIT_SOC:
         required_headers.append('模块')
@@ -808,7 +815,7 @@ def _validate_full_import_rows(rows: list[dict], domain: str) -> dict[int, list[
             '车型编号': row['vehicle_code'],
             '执行机器': row['execution_machine'],
         }
-        if domain != DOMAIN_VEHICLE:
+        if not _is_vehicle_control_domain(domain):
             required_fields['CDC平台'] = row['cdc_platform']
         for label, value in required_fields.items():
             if not value:
@@ -818,11 +825,11 @@ def _validate_full_import_rows(rows: list[dict], domain: str) -> dict[int, list[
         has_case_name = bool(row['case_name'])
         if has_case_no != has_case_name:
             errors[row_no].append('用例编号和用例名称必须同时填写或同时留空')
-        if domain == DOMAIN_VEHICLE:
+        if _is_vehicle_control_domain(domain):
             if row['viu_code'] and row['viu_code'] not in VIU_CODE_VALUES:
                 errors[row_no].append(f'VIU编号仅支持: {", ".join(VIU_CODE_VALUES)}')
             if has_case_no and not row['viu_code']:
-                errors[row_no].append('车控用例必须填写VIU编号')
+                errors[row_no].append('车控或车控IO用例必须填写VIU编号')
         if domain == DOMAIN_COCKPIT_SOC and has_case_no and not row['module']:
             errors[row_no].append('座舱SOC用例必须填写模块')
 
@@ -832,12 +839,12 @@ def _validate_full_import_rows(rows: list[dict], domain: str) -> dict[int, list[
             vehicle_signature = (
                 row['version_code'],
                 row['vehicle_name'],
-                row['cdc_platform'] if domain != DOMAIN_VEHICLE else '',
+                row['cdc_platform'] if not _is_vehicle_control_domain(domain) else '',
                 row['execution_machine'],
             )
             vehicle_groups[row['vehicle_code']].append((row_no, vehicle_signature))
         if has_case_no and has_case_name and row['vehicle_code']:
-            viu_code = row['viu_code'] if domain == DOMAIN_VEHICLE else ''
+            viu_code = row['viu_code'] if _is_vehicle_control_domain(domain) else ''
             case_key = (row['vehicle_code'], viu_code, row['case_no'])
             case_signature = (
                 row['case_name'],
@@ -910,9 +917,9 @@ def _upsert_full_import_vehicle(user, domain: str, platform: McuPlatform, row: d
         raise ValueError(f'车型名称 {row["vehicle_name"]} 在该版本下已存在')
 
     viu_codes = list(vehicle.viu_codes or []) if vehicle else []
-    if domain == DOMAIN_VEHICLE and row['viu_code'] and row['viu_code'] not in viu_codes:
+    if _is_vehicle_control_domain(domain) and row['viu_code'] and row['viu_code'] not in viu_codes:
         viu_codes.append(row['viu_code'])
-    cdc_platform = row['cdc_platform'] if domain != DOMAIN_VEHICLE else ''
+    cdc_platform = row['cdc_platform'] if not _is_vehicle_control_domain(domain) else ''
     if not vehicle:
         vehicle = VehicleModel(
             platform=platform,
@@ -952,7 +959,7 @@ def _upsert_full_import_vehicle(user, domain: str, platform: McuPlatform, row: d
 
 def _upsert_full_import_case(user, domain: str, vehicle: VehicleModel, row: dict):
     """按领域用例唯一键新增、恢复或更新用例。"""
-    viu_code = row['viu_code'] if domain == DOMAIN_VEHICLE else ''
+    viu_code = row['viu_code'] if _is_vehicle_control_domain(domain) else ''
     module = row['module'] if domain == DOMAIN_COCKPIT_SOC else ''
     remark = row['remark'] or None
     instance = TestCase.objects.filter(
@@ -1067,7 +1074,7 @@ def build_test_case_template_response(domain: Optional[str] = None):
     sheet = workbook.active
     sheet.title = '平台车型用例'
     header = ['版本名称', '版本标识', '车型名称', '车型编号']
-    if parsed_domain == DOMAIN_VEHICLE:
+    if _is_vehicle_control_domain(parsed_domain):
         header.extend(['执行机器', 'VIU编号', '用例编号', '用例名称', '备注'])
         example = [
             'VIU版本 2026.07', 'viu-2026.07', '示例车控车型', 'VEH-CTRL-001',
@@ -1107,7 +1114,7 @@ def build_test_case_template_response(domain: Optional[str] = None):
 def build_test_case_export_response(filters):
     rows = list_test_cases(filters)
     parsed_domain = _parse_domain_filter(getattr(filters, 'domain', None))
-    include_viu_code = parsed_domain == DOMAIN_VEHICLE or any(
+    include_viu_code = _is_vehicle_control_domain(parsed_domain) or any(
         (item.get('viu_code') or '').strip() for item in rows
     )
     include_module = parsed_domain == DOMAIN_COCKPIT_SOC or any(
@@ -1209,9 +1216,9 @@ def report_daily_results(payload):
             continue
 
         viu_code = (item.viu_code or '').strip().lower()
-        if vehicle_domain == DOMAIN_VEHICLE:
+        if _is_vehicle_control_domain(vehicle_domain):
             if not viu_code:
-                errors.append(ImportErrorRow(row_no=index, message='车控领域上报结果需要填写VIU编号'))
+                errors.append(ImportErrorRow(row_no=index, message='车控或车控IO领域上报结果需要填写VIU编号'))
                 ignored_count += 1
                 continue
             if viu_code not in allowed_viu_codes:

@@ -9,6 +9,7 @@
 - `cockpit`: 座舱 MCU
 - `cockpit_soc`: 座舱 SOC
 - `vehicle`: 车控
+- `vehicle_io`: 车控 IO
 
 为兼容历史数据和下游 CI，原有 `cockpit` 编码保持不变，只调整前端与后台展示文案。
 
@@ -21,13 +22,13 @@
 
 ## 导入导出
 
-- 三个领域的模板均支持在一个 Excel 中直接导入多个版本、车型和用例。
+- 四个领域的模板均支持在一个 Excel 中直接导入多个版本、车型和用例。
 - 座舱 MCU 和座舱 SOC 模板包含 CDC 平台，座舱 SOC 额外包含模块。
-- 车控模板包含 VIU 编号，不包含 CDC 平台。
+- 车控和车控 IO 模板均包含 VIU 编号，不包含 CDC 平台；两者的用例唯一键均为车型、VIU 编号、用例编号。
 - 完整字段和重复导入规则见 `auto-test-report-full-excel-import.md`。
 
 ## 看板与下游任务
 
 - 座舱 SOC 每日结果明细和历史会展示 `module`。
-- 车控仍展示 `VIU编号`。
+- 车控和车控 IO 均展示 `VIU编号`，并要求上报执行结果时携带 VIU 编号。
 - 座舱 MCU 下游 CI 触发能力仍只作用于 `cockpit`，即座舱 MCU；座舱 SOC 不参与该门禁和触发链路。
