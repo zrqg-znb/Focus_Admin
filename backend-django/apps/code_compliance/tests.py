@@ -11,6 +11,7 @@ from ninja.errors import HttpError
 from apps.code_compliance import base_services as services
 from apps.code_compliance import contribution_services
 from apps.code_compliance import missing_merge_services
+from apps.code_compliance.missing_merge_dts import MissingMergeDtsResolver
 from apps.code_compliance.base_schemas import (
     BatchBindBranchesIn,
     BatchBindRepositoriesIn,
@@ -47,6 +48,7 @@ from apps.code_compliance.models import (
     ComplianceContributionCollectTask,
     ComplianceContributionRecord,
     ComplianceMissingMergeOperationLog,
+    ComplianceMissingMergeDtsBackfillTask,
     ComplianceMissingMergeRecord,
     ComplianceMissingMergeScanTask,
     ComplianceOrganization,
@@ -198,6 +200,46 @@ class CodeComplianceFoundationTests(TestCase):
         """测试中同步执行已创建任务，避免后台线程带来竞态。"""
         task = missing_merge_services.create_scan_task(self.user, payload)
         return missing_merge_services.execute_scan_task(str(task.id), str(self.user.id))
+
+    @override_settings(CODE_COMPLIANCE_DTS_FORCE_MOCK=True)
+    def test_missing_merge_dts_resolver_uses_first_dts_and_snapshot_cache(self):
+        """DTS 解析只采纳首项 DTS，并优先使用 dts-statistics 快照状态。"""
+        with patch(
+            "apps.code_compliance.missing_merge_dts.dts_statistics_services.get_dts_snapshot_statuses",
+            return_value={"DTS26070600011": {"dts_title": "缓存标题", "dts_status_name": "缓存状态"}},
+        ) as get_cached, patch.object(MissingMergeDtsResolver, "_fetch_statuses") as fetch_status:
+            resolved = MissingMergeDtsResolver().resolve_rows(
+                [{"project_id": "0001", "change_request_iid": "10001"}]
+            )
+        self.assertEqual(resolved[("0001", "10001")]["dts_no"], "DTS26070600011")
+        self.assertEqual(resolved[("0001", "10001")]["dts_status_name"], "缓存状态")
+        get_cached.assert_called_once_with({"DTS26070600011"})
+        fetch_status.assert_not_called()
+
+    @override_settings(CODE_COMPLIANCE_DTS_FORCE_MOCK=True)
+    def test_missing_merge_dts_backfill_updates_and_clears_snapshots(self):
+        """历史 DTS 回填可重跑，并清理 CR 已不再关联 DTS 时遗留的旧快照。"""
+        org = ComplianceOrganization.objects.get(id=self.create_org()["id"])
+        repo = ComplianceRepository.objects.get(id=self.create_repo(org.id)["id"])
+        linked = self.create_missing_record(repo, org, change_key="dts-linked")
+        linked.change_request_iid = "10001"
+        linked.save(update_fields=["change_request_iid"])
+        ignored = self.create_missing_record(repo, org, change_key="dts-cleared")
+        ignored.change_request_iid = "10003"
+        ignored.dts_no = "DTS-old"
+        ignored.dts_title = "旧标题"
+        ignored.dts_status_name = "旧状态"
+        ignored.save(update_fields=["change_request_iid", "dts_no", "dts_title", "dts_status_name"])
+        task = ComplianceMissingMergeDtsBackfillTask.objects.create(requested_by=self.user)
+
+        result = missing_merge_services.execute_missing_merge_dts_backfill_task(str(task.id), str(self.user.id))
+
+        linked.refresh_from_db()
+        ignored.refresh_from_db()
+        self.assertEqual(result["status"], "success")
+        self.assertTrue(linked.dts_no.startswith("DTS"))
+        self.assertEqual(ignored.dts_no, "")
+        self.assertEqual(ignored.dts_status_name, "")
 
     def test_organization_tree_counts_direct_repositories(self):
         root = self.create_org()

@@ -23,6 +23,7 @@ from core.user.user_model import User
 
 from . import base_services
 from .missing_merge_client import CodeComplianceCRClient, DEFAULT_PAGE_SIZE
+from .missing_merge_dts import MissingMergeDtsResolver
 from .models import (
     COMPLIANCE_BRANCH_TYPE_RELEASE,
     COMPLIANCE_BRANCH_TYPE_TRUNK,
@@ -30,6 +31,11 @@ from .models import (
     MISSING_MERGE_SCAN_STATUS_PENDING,
     MISSING_MERGE_SCAN_STATUS_RUNNING,
     MISSING_MERGE_SCAN_STATUS_SUCCESS,
+    MISSING_MERGE_DTS_BACKFILL_STATUS_FAILED,
+    MISSING_MERGE_DTS_BACKFILL_STATUS_PENDING,
+    MISSING_MERGE_DTS_BACKFILL_STATUS_RUNNING,
+    MISSING_MERGE_DTS_BACKFILL_STATUS_SUCCESS,
+    MISSING_MERGE_DTS_BACKFILL_STATUS_CHOICES,
     MISSING_MERGE_SCAN_TRIGGER_CHOICES,
     MISSING_MERGE_SCAN_TRIGGER_MANUAL,
     MISSING_MERGE_SCAN_TRIGGER_SCHEDULED,
@@ -46,6 +52,7 @@ from .models import (
     MISSING_MERGE_STATUS_IGNORED,
     MISSING_MERGE_STATUS_OPEN,
     ComplianceMissingMergeOperationLog,
+    ComplianceMissingMergeDtsBackfillTask,
     ComplianceMissingMergeRecord,
     ComplianceMissingMergeScanTask,
     ComplianceOrganization,
@@ -64,6 +71,7 @@ SCAN_STATUS_LABELS = {
     MISSING_MERGE_SCAN_STATUS_FAILED: "失败",
 }
 SCAN_TRIGGER_LABELS = dict(MISSING_MERGE_SCAN_TRIGGER_CHOICES)
+BACKFILL_STATUS_LABELS = dict(MISSING_MERGE_DTS_BACKFILL_STATUS_CHOICES)
 OPERATION_LABELS = dict(MISSING_MERGE_OPERATION_CHOICES)
 OPERATION_SOURCE_LABELS = dict(MISSING_MERGE_OPERATION_SOURCE_CHOICES)
 SUPPORTED_RECORD_STATUSES = {
@@ -375,6 +383,9 @@ def serialize_missing_merge_record(item: ComplianceMissingMergeRecord, *, includ
         "author_user_name": item.author_user_name or "",
         "author_pl_group_id": str(item.author_pl_group_id) if item.author_pl_group_id else None,
         "author_pl_group_name": item.author_pl_group_name or UNKNOWN_PL_GROUP_NAME,
+        "dts_no": item.dts_no or "",
+        "dts_title": item.dts_title or "",
+        "dts_status_name": item.dts_status_name or "",
         "detected_at": item.detected_at,
         "status": item.status,
         "status_label": STATUS_LABELS.get(item.status, item.status),
@@ -629,6 +640,139 @@ def get_scan_task(task_id: str) -> dict:
     """读取单条漏合检测任务详情。"""
     item = get_object_or_404(ComplianceMissingMergeScanTask, id=task_id, is_deleted=False)
     return serialize_scan_task(item)
+
+
+def serialize_dts_backfill_task(item: ComplianceMissingMergeDtsBackfillTask) -> dict:
+    """序列化 DTS 历史回填任务，供运维轮询进度和排障。"""
+    return {
+        "id": str(item.id),
+        "status": item.status,
+        "status_label": BACKFILL_STATUS_LABELS.get(item.status, item.status),
+        "started_at": item.started_at,
+        "finished_at": item.finished_at,
+        "scanned_count": item.scanned_count,
+        "linked_count": item.linked_count,
+        "status_resolved_count": item.status_resolved_count,
+        "failed_count": item.failed_count,
+        "diagnostics": item.diagnostics or {},
+        "error_message": item.error_message or "",
+        "sys_create_datetime": item.sys_create_datetime,
+    }
+
+
+def _get_active_dts_backfill_task() -> ComplianceMissingMergeDtsBackfillTask | None:
+    """防止多个历史回填任务并行重复请求同一批 CR 关联接口。"""
+    return (
+        ComplianceMissingMergeDtsBackfillTask.objects.filter(
+            is_deleted=False,
+            status__in=[MISSING_MERGE_DTS_BACKFILL_STATUS_PENDING, MISSING_MERGE_DTS_BACKFILL_STATUS_RUNNING],
+        )
+        .order_by("-sys_create_datetime")
+        .first()
+    )
+
+
+def _chunked(values: Iterable[Any], size: int) -> Iterable[list[Any]]:
+    """按固定大小分批，控制历史回填时的内存和外部请求规模。"""
+    bucket: list[Any] = []
+    for value in values:
+        bucket.append(value)
+        if len(bucket) >= size:
+            yield bucket
+            bucket = []
+    if bucket:
+        yield bucket
+
+
+def execute_missing_merge_dts_backfill_task(task_id: str, user_id: str | None = None) -> dict:
+    """后台批量回填历史记录 DTS 快照；单批异常仅计入诊断并继续执行。"""
+    user = User.objects.filter(id=user_id).first() if user_id else None
+    task = get_object_or_404(ComplianceMissingMergeDtsBackfillTask, id=task_id, is_deleted=False)
+    task.status = MISSING_MERGE_DTS_BACKFILL_STATUS_RUNNING
+    task.started_at = _to_model_datetime(timezone.now())
+    task.error_message = ""
+    task.save()
+    resolver = MissingMergeDtsResolver()
+    diagnostics: dict[str, Any] = {"batches": 0, "errors": []}
+    counters = Counter()
+    queryset = ComplianceMissingMergeRecord.objects.filter(is_deleted=False).order_by("id")
+    try:
+        for records in _chunked(queryset.iterator(chunk_size=100), 100):
+            diagnostics["batches"] += 1
+            rows = [
+                {"project_id": item.project_id, "change_request_iid": item.change_request_iid}
+                for item in records
+            ]
+            try:
+                snapshots = resolver.resolve_rows(rows)
+            except Exception as exc:  # noqa: BLE001 - 本批失败不阻断剩余历史数据回填。
+                logger.exception("Missing merge DTS backfill batch failed")
+                counters["failed"] += len(records)
+                diagnostics["errors"].append(str(exc))
+                continue
+            for item in records:
+                dts_key = (_clean_text(item.project_id), _clean_text(item.change_request_iid))
+                snapshot = {} if not all(dts_key) else snapshots.get(dts_key)
+                if snapshot is None:
+                    # 关联接口异常时不覆盖历史快照，下次回填再尝试。
+                    counters["failed"] += 1
+                    continue
+                item.dts_no = _clean_text(snapshot.get("dts_no"))
+                item.dts_title = _clean_text(snapshot.get("dts_title"))
+                item.dts_status_name = _clean_text(snapshot.get("dts_status_name"))
+                _apply_audit_fields(item, user)
+                item.save(update_fields=["dts_no", "dts_title", "dts_status_name", "sys_modifier", "sys_update_datetime"])
+                counters["scanned"] += 1
+                if item.dts_no:
+                    counters["linked"] += 1
+                if item.dts_status_name:
+                    counters["status_resolved"] += 1
+        task.status = MISSING_MERGE_DTS_BACKFILL_STATUS_SUCCESS
+    except Exception as exc:  # noqa: BLE001 - 任务级异常必须落库。
+        logger.exception("Missing merge DTS backfill failed")
+        task.status = MISSING_MERGE_DTS_BACKFILL_STATUS_FAILED
+        task.error_message = str(exc)
+    task.finished_at = _to_model_datetime(timezone.now())
+    task.scanned_count = counters["scanned"]
+    task.linked_count = counters["linked"]
+    task.status_resolved_count = counters["status_resolved"]
+    task.failed_count = counters["failed"]
+    task.diagnostics = diagnostics
+    task.save()
+    return serialize_dts_backfill_task(task)
+
+
+def _start_dts_backfill_thread(task_id: str, user_id: str | None) -> None:
+    """在线程中执行历史 DTS 回填，避免运维触发请求等待全部记录完成。"""
+    def _worker() -> None:
+        close_old_connections()
+        try:
+            execute_missing_merge_dts_backfill_task(task_id, user_id)
+        finally:
+            close_old_connections()
+
+    threading.Thread(target=_worker, name=f"code-compliance-dts-backfill-{task_id}", daemon=True).start()
+
+
+def run_missing_merge_dts_backfill(user) -> dict:
+    """创建并异步执行历史 DTS 回填任务；运行中任务直接复用。"""
+    active_task = _get_active_dts_backfill_task()
+    if active_task:
+        return {"accepted": False, "message": "已有 DTS 历史回填任务正在执行", "task": serialize_dts_backfill_task(active_task)}
+    task = ComplianceMissingMergeDtsBackfillTask.objects.create(
+        status=MISSING_MERGE_DTS_BACKFILL_STATUS_PENDING,
+        requested_by=user if getattr(user, "id", None) else None,
+    )
+    _apply_audit_fields(task, user, is_create=True)
+    task.save()
+    _start_dts_backfill_thread(str(task.id), _audit_user_id(user))
+    return {"accepted": True, "message": "DTS 历史回填任务已提交", "task": serialize_dts_backfill_task(task)}
+
+
+def get_missing_merge_dts_backfill_task(task_id: str) -> dict:
+    """读取单条历史 DTS 回填任务。"""
+    task = get_object_or_404(ComplianceMissingMergeDtsBackfillTask, id=task_id, is_deleted=False)
+    return serialize_dts_backfill_task(task)
 
 
 def list_filter_options() -> dict:
@@ -1015,6 +1159,7 @@ def _execute_scan(
         return counters
 
     client = CodeComplianceCRClient()
+    dts_resolver = MissingMergeDtsResolver()
     per_page = DEFAULT_PAGE_SIZE
 
     for group_id, org_pairs in _group_pairs_by_organization(pairs).items():
@@ -1055,6 +1200,18 @@ def _execute_scan(
             for project_rows in branch_rows.values()
             for row in project_rows.values()
         )
+        missing_entries: list[tuple[ScanPair, dict[str, Any]]] = []
+        for pair in org_pairs:
+            trunk_rows = branch_project_rows[pair.trunk_branch].get(pair.repository.project_id, {})
+            release_rows = branch_project_rows[pair.release_branch].get(pair.repository.project_id, {})
+            for change_key in set(trunk_rows) - set(release_rows):
+                missing_entries.append((pair, trunk_rows[change_key]))
+        # DTS 关联按当前组织的待入库 CR 批量解析，避免同一 CR 在多个配对中重复请求。
+        dts_snapshots = dts_resolver.resolve_rows(row for _, row in missing_entries)
+        diagnostics["groups"][-1]["dts_candidate_count"] = len(missing_entries)
+        diagnostics["groups"][-1]["dts_linked_count"] = len(
+            {item.get("dts_no") for item in dts_snapshots.values() if item.get("dts_no")}
+        )
         # 同一组织的一批项目共用数据湖请求结果，再按 project_id 分流到具体代码库。
         for pair in org_pairs:
             trunk_rows = branch_project_rows[pair.trunk_branch].get(pair.repository.project_id, {})
@@ -1065,12 +1222,16 @@ def _execute_scan(
 
             counters.detected_count += len(missing_keys)
             for change_key in sorted(missing_keys):
+                row = trunk_rows[change_key]
+                dts_key = (_clean_text(row.get("project_id")), _clean_text(row.get("change_request_iid")))
                 created = _upsert_missing_record(
                     user=user,
                     task=task,
                     pair=pair,
-                    row=trunk_rows[change_key],
+                    row=row,
                     author_assignments=author_assignments,
+                    # IID 缺失代表当前 CR 无法关联 DTS，应清空已有快照；有 IID 但请求失败则保留旧值。
+                    dts_snapshot={} if not all(dts_key) else dts_snapshots.get(dts_key),
                 )
                 if created:
                     counters.created_count += 1
@@ -1223,6 +1384,7 @@ def _upsert_missing_record(
     pair: ScanPair,
     row: dict[str, Any],
     author_assignments: dict[str, AuthorPlAssignment] | None = None,
+    dts_snapshot: dict[str, str] | None = None,
 ) -> bool:
     """新增或更新单条漏合风险，已忽略记录只刷新 CR 信息不改处理状态。"""
     now = _to_model_datetime(timezone.now())
@@ -1259,6 +1421,13 @@ def _upsert_missing_record(
         "detected_at": now,
         "is_deleted": False,
     }
+    if dts_snapshot is not None:
+        # 每次成功关联查询按当前结果覆盖快照；单次接口失败时保留旧数据，避免误清空。
+        defaults.update(
+            dts_no=_clean_text(dts_snapshot.get("dts_no")),
+            dts_title=_clean_text(dts_snapshot.get("dts_title")),
+            dts_status_name=_clean_text(dts_snapshot.get("dts_status_name")),
+        )
 
     item = ComplianceMissingMergeRecord.objects.filter(**lookup).first()
     created = item is None

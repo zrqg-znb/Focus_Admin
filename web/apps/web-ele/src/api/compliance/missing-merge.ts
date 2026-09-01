@@ -47,6 +47,9 @@ export interface MissingMergeRecordItem {
   change_request_iid: string;
   description: string;
   detected_at: string;
+  dts_no: string;
+  dts_status_name: string;
+  dts_title: string;
   handle_remark: string;
   handled_at?: null | string;
   handled_by_id?: null | string;

@@ -6,6 +6,8 @@ from ninja import Query, Router
 from . import missing_merge_services as services
 from .missing_merge_schemas import (
     MissingMergeRecordOut,
+    MissingMergeDtsBackfillRunOut,
+    MissingMergeDtsBackfillTaskOut,
     MissingMergeRecordStatusIn,
     MissingMergeOptionsOut,
     MissingMergePlDashboardOut,
@@ -173,3 +175,15 @@ def run_missing_merge_scan(request, payload: MissingMergeScanRunIn):
 def get_missing_merge_scan_task(request, task_id: str):
     """读取单条漏合检测任务详情。"""
     return services.get_scan_task(task_id)
+
+
+@router.post("/dts-backfill-tasks/run", response=MissingMergeDtsBackfillRunOut, summary="触发漏合风险DTS回填")
+def run_missing_merge_dts_backfill(request):
+    """提交历史漏合风险 DTS 关联回填任务，后台异步执行。"""
+    return services.run_missing_merge_dts_backfill(request.auth)
+
+
+@router.get("/dts-backfill-tasks/{task_id}", response=MissingMergeDtsBackfillTaskOut, summary="获取漏合风险DTS回填任务")
+def get_missing_merge_dts_backfill_task(request, task_id: str):
+    """读取历史 DTS 回填任务进度和诊断信息。"""
+    return services.get_missing_merge_dts_backfill_task(task_id)

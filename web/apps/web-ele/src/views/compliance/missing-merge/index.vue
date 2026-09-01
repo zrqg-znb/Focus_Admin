@@ -739,6 +739,18 @@ onMounted(async () => {
           <span>{{ formatAuthorDisplay(row) }}</span>
         </template>
 
+        <template #cell-dts_no="{ row }">
+          <span :title="row.dts_title || row.dts_no">{{ row.dts_no || '-' }}</span>
+        </template>
+
+        <template #cell-dts_status_name="{ row }">
+          <ElTag v-if="row.dts_status_name" effect="plain" type="info">
+            {{ row.dts_status_name }}
+          </ElTag>
+          <span v-else-if="row.dts_no" class="text-[var(--el-text-color-secondary)]">未查询到</span>
+          <span v-else>-</span>
+        </template>
+
         <template #cell-author_pl_group_name="{ row }">
           <ElTag
             :type="row.author_pl_group_name === '非底软领域' ? 'info' : 'primary'"
@@ -816,6 +828,13 @@ onMounted(async () => {
           </ElDescriptionsItem>
           <ElDescriptionsItem label="创建人">
             {{ formatAuthorDisplay(currentRecord) }}
+          </ElDescriptionsItem>
+          <ElDescriptionsItem label="关联DTS">
+            {{ currentRecord.dts_no || '-' }}
+            <span v-if="currentRecord.dts_title" class="text-[var(--el-text-color-secondary)]">（{{ currentRecord.dts_title }}）</span>
+          </ElDescriptionsItem>
+          <ElDescriptionsItem label="DTS状态">
+            {{ currentRecord.dts_no ? (currentRecord.dts_status_name || '未查询到') : '-' }}
           </ElDescriptionsItem>
           <ElDescriptionsItem label="PL组归属">
             {{ currentRecord.author_pl_group_name || '非底软领域' }}

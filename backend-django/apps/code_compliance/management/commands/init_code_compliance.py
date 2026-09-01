@@ -366,6 +366,13 @@ PERMISSION_SEEDS = {
             "api_path": "/api/code-compliance/missing-merges/scan-tasks/run",
             "http_method": "POST",
         },
+        {
+            "name": "漏合风险DTS回填接口",
+            "code": "code_compliance:api:missing_merge:dts_backfill",
+            "permission_type": 1,
+            "api_path": "/api/code-compliance/missing-merges/dts-backfill-tasks*",
+            "http_method": "ALL",
+        },
     ],
     "missing_merge_task": [
         {"name": "查看同步任务历史", "code": "code_compliance:missing_merge_task:view", "permission_type": 0},

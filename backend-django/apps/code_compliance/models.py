@@ -364,6 +364,17 @@ MISSING_MERGE_SCAN_STATUS_CHOICES = (
     (MISSING_MERGE_SCAN_STATUS_FAILED, "失败"),
 )
 
+MISSING_MERGE_DTS_BACKFILL_STATUS_PENDING = "pending"
+MISSING_MERGE_DTS_BACKFILL_STATUS_RUNNING = "running"
+MISSING_MERGE_DTS_BACKFILL_STATUS_SUCCESS = "success"
+MISSING_MERGE_DTS_BACKFILL_STATUS_FAILED = "failed"
+MISSING_MERGE_DTS_BACKFILL_STATUS_CHOICES = (
+    (MISSING_MERGE_DTS_BACKFILL_STATUS_PENDING, "待执行"),
+    (MISSING_MERGE_DTS_BACKFILL_STATUS_RUNNING, "执行中"),
+    (MISSING_MERGE_DTS_BACKFILL_STATUS_SUCCESS, "成功"),
+    (MISSING_MERGE_DTS_BACKFILL_STATUS_FAILED, "失败"),
+)
+
 MISSING_MERGE_OPERATION_DETECTED = "detected"
 MISSING_MERGE_OPERATION_MANUAL_HANDLE = "manual_handle"
 MISSING_MERGE_OPERATION_AUTO_CLOSED = "auto_closed"
@@ -542,6 +553,9 @@ class ComplianceMissingMergeRecord(RootModel):
         verbose_name="创建人PL组快照",
         help_text="创建人所属 PL 资源组名称快照；未识别时为非底软领域",
     )
+    dts_no = models.CharField(max_length=128, blank=True, default="", db_index=True, verbose_name="关联DTS单号")
+    dts_title = models.CharField(max_length=500, blank=True, default="", verbose_name="关联DTS标题")
+    dts_status_name = models.CharField(max_length=255, blank=True, default="", verbose_name="关联DTS状态")
     detected_at = models.DateTimeField(
         db_index=True,
         verbose_name="漏合识别时间",
@@ -665,6 +679,45 @@ class ComplianceMissingMergeScanTask(RootModel):
 
     def __str__(self):
         return f"{self.trigger_type}:{self.status}:{self.merged_after}"
+
+
+class ComplianceMissingMergeDtsBackfillTask(RootModel):
+    """历史漏合风险 DTS 关联回填任务。"""
+
+    status = models.CharField(
+        max_length=32,
+        choices=MISSING_MERGE_DTS_BACKFILL_STATUS_CHOICES,
+        default=MISSING_MERGE_DTS_BACKFILL_STATUS_PENDING,
+        db_index=True,
+        verbose_name="任务状态",
+    )
+    requested_by = models.ForeignKey(
+        "core.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="missing_merge_dts_backfill_tasks",
+        db_constraint=False,
+        verbose_name="发起人",
+    )
+    started_at = models.DateTimeField(null=True, blank=True, verbose_name="开始时间")
+    finished_at = models.DateTimeField(null=True, blank=True, verbose_name="结束时间")
+    scanned_count = models.IntegerField(default=0, verbose_name="扫描记录数")
+    linked_count = models.IntegerField(default=0, verbose_name="关联DTS数")
+    status_resolved_count = models.IntegerField(default=0, verbose_name="状态命中数")
+    failed_count = models.IntegerField(default=0, verbose_name="失败数")
+    diagnostics = models.JSONField(default=dict, blank=True, verbose_name="回填诊断")
+    error_message = models.TextField(blank=True, default="", verbose_name="错误信息")
+
+    class Meta:
+        db_table = "compliance_missing_merge_dts_backfill_task"
+        ordering = ("-sys_create_datetime",)
+        verbose_name = "漏合风险DTS回填任务"
+        verbose_name_plural = verbose_name
+        indexes = [models.Index(fields=["status", "sys_create_datetime"], name="cc_mm_dts_task_status_idx")]
+
+    def __str__(self):
+        return f"dts-backfill:{self.status}:{self.id}"
 
 
 class ComplianceMissingMergeOperationLog(RootModel):

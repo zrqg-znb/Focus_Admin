@@ -19,6 +19,9 @@
 | `CODE_COMPLIANCE_CR_API_TOKEN` | Bearer Token，可为空 |
 | `CODE_COMPLIANCE_CR_API_HEADERS_JSON` | 额外请求头 JSON 对象 |
 | `CODE_COMPLIANCE_CR_FORCE_MOCK` | 是否强制 mock |
+| `CODE_COMPLIANCE_DTS_RELATION_API_URL_TEMPLATE` | CR 关联 DTS 的 GET URL 模板，默认 GitLab 风格项目级路径 |
+| `CODE_COMPLIANCE_DTS_STATUS_API_URL` | DTS 批量状态查询 POST URL |
+| `CODE_COMPLIANCE_DTS_FORCE_MOCK` | DTS 关联与状态接口是否使用开发期 mock |
 
 请求参数由 client 统一校验和格式化：
 
@@ -66,8 +69,11 @@ client 先以 `only_count=True` 获取统计数量，再以 `only_count=False` �
 5. 对同批 CR 创建人批量加载 Focus 用户和启用 PL 组映射，避免逐条查询。
 6. 对每个代码库的主干-发布组合执行集合差异：`trunk_change_keys - release_change_keys`。
 7. 差集写入或更新 `ComplianceMissingMergeRecord`，同步刷新作者用户与 PL 组归属快照。
-8. 发布分支已出现的历史 `open` 风险自动标记为 `fixed`。
-9. 扫描结果写入 `ComplianceMissingMergeScanTask`。
+8. 对待入库 CR 按 `project_id + change_request_iid` 查询关联项，只使用首项且仅接受 `DTS` 前缀单号；优先从 DTS 统计快照读取状态，未命中才批量请求 DTS 状态接口。
+9. 发布分支已出现的历史 `open` 风险自动标记为 `fixed`。
+10. 扫描结果写入 `ComplianceMissingMergeScanTask`。
+
+漏合记录保存 `dts_no`、`dts_title`、`dts_status_name` 快照。CR 没有关联、关联首项不是 DTS 时会清空旧快照；关联单号存在但快照和上游状态接口均未返回时保留单号，前端显示“未查询到”。历史记录可通过 `POST /dts-backfill-tasks/run` 异步回填，任务运行中重复提交会复用已有任务。
 
 手动同步采用进程内 daemon thread 异步执行：接口只创建 `pending` 任务并立即返回，后台线程负责把任务流转为 `running/success/failed`。如果服务进程重启，正在执行的线程不做跨进程恢复；这是本期不引入 Celery/RQ 的约束。手动提交前会检查是否已有 `pending/running` 漏合同步任务，存在时不创建新任务，直接返回当前任务用于页面提示。
 
@@ -86,6 +92,8 @@ client 先以 `only_count=True` 获取统计数量，再以 `only_count=False` �
 | GET | `/scan-tasks` | 分页查询扫描任务历史，支持状态、触发方式和时间范围筛选 |
 | GET | `/scan-tasks/{id}` | 查询单条扫描任务详情 |
 | POST | `/scan-tasks/run` | 手动提交扫描任务，立即返回 `{ accepted, message, task }` |
+| POST | `/dts-backfill-tasks/run` | 异步提交历史漏合风险 DTS 回填任务 |
+| GET | `/dts-backfill-tasks/{id}` | 查询 DTS 回填任务进度和诊断 |
 
 `/records` 和 `/pl-dashboard` 均支持 `pl_group_ids` 筛选，多个 ID 使用逗号分隔。特殊值 `unknown` 表示 `非底软领域`，与真实 PL 组多选时按并集命中，随后再与状态、时间、组织/代码库等筛选条件取交集。
 
@@ -103,8 +111,8 @@ client 先以 `only_count=True` 获取统计数量，再以 `only_count=False` �
 - 顶部展示最近一次同步任务摘要。
 - 顶部通过 `风险列表 / PL组看板` 分段切换，两个视图共用同一组筛选条件。
 - 支持按关键词、状态、组织/代码库级联、创建人、PL 组、主干分支、发布分支、合入时间、识别时间筛选；PL 组选项直接复用核心 PL 组列表接口，并追加 `非底软领域`。
-- 表格展示漏合 CR、状态、PL 组、代码库、组织、分支配对、创建人、合入时间、识别时间和代码行变化。
-- 详情抽屉展示 CR 描述、链接、分支配对、Focus 用户、PL 组归属和处理备注。
+- 表格展示漏合 CR、状态、PL 组、代码库、组织、分支配对、创建人、关联 DTS、DTS 状态、合入时间、识别时间和代码行变化。
+- 详情抽屉展示 CR 描述、链接、分支配对、Focus 用户、PL 组归属、关联 DTS 和处理备注。
 - 状态弹窗支持 `未处理/已补合/已忽略` 更新。
 - 手动同步弹窗支持选择时间范围、组织和代码库；提交后只等待任务创建结果，不等待完整扫描。
 - PL 组看板按 `merged_at` 所属 ISO 自然周展示各 PL 组漏合趋势；未传合入时间范围时默认展示最近 12 个自然周。`merged_at` 为空的记录进入汇总和 PL 组明细，但不进入周趋势，并通过 `missing_merged_at_count` 标识。

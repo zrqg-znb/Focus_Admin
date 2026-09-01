@@ -61,6 +61,18 @@ export function useMissingMergeColumns(): ZqTableGridOptions<MissingMergeRecordI
       width: 190,
     },
     {
+      key: 'dts_no',
+      dataKey: 'dts_no',
+      title: 'DTS单号',
+      width: 170,
+    },
+    {
+      key: 'dts_status_name',
+      dataKey: 'dts_status_name',
+      title: 'DTS状态',
+      width: 180,
+    },
+    {
       key: 'author_username',
       dataKey: 'author_username',
       title: '创建人',

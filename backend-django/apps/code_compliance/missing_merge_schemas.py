@@ -48,6 +48,9 @@ class MissingMergeRecordOut(Schema):
     author_user_name: str
     author_pl_group_id: Optional[str] = None
     author_pl_group_name: str
+    dts_no: str
+    dts_title: str
+    dts_status_name: str
     detected_at: datetime
     status: str
     status_label: str
@@ -103,6 +106,27 @@ class MissingMergeScanRunOut(Schema):
     accepted: bool
     message: str
     task: MissingMergeScanTaskOut
+
+
+class MissingMergeDtsBackfillTaskOut(Schema):
+    id: str
+    status: str
+    status_label: str
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    scanned_count: int
+    linked_count: int
+    status_resolved_count: int
+    failed_count: int
+    diagnostics: dict = Field(default_factory=dict)
+    error_message: str
+    sys_create_datetime: Optional[datetime] = None
+
+
+class MissingMergeDtsBackfillRunOut(Schema):
+    accepted: bool
+    message: str
+    task: MissingMergeDtsBackfillTaskOut
 
 
 class MissingMergePlGroupOptionOut(Schema):

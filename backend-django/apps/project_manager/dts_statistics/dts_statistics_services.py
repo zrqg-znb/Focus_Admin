@@ -2902,6 +2902,35 @@ def _load_snapshot_rows(meta: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def get_dts_snapshot_statuses(dts_nos: Iterable[str]) -> dict[str, dict[str, str]]:
+    """从当前 DTS 统计快照中按单号读取标题和状态，供其他模块优先复用缓存。"""
+    wanted = {_clean_text(item) for item in dts_nos if _clean_text(item)}
+    if not wanted:
+        return {}
+    result: dict[str, dict[str, str]] = {}
+    # 两个产品快照独立保存；其中一个快照不可用不应影响另一个产品的命中。
+    for product_id in _SUPPORTED_PRODUCT_IDS:
+        meta = _get_snapshot_meta(product_id)
+        if not meta:
+            continue
+        try:
+            rows = _load_snapshot_rows(meta)
+        except Exception as exc:  # noqa: BLE001 - 快照过期时由调用方降级到上游状态接口。
+            logger.warning("Read DTS snapshot for code compliance failed product_id=%s error=%s", product_id, exc)
+            continue
+        for row in rows:
+            dts_no = _clean_text(row.get("dtsBizNo"))
+            if dts_no not in wanted or dts_no in result:
+                continue
+            result[dts_no] = {
+                "dts_title": _strip_html_text(row.get("briefDesc")) or _clean_text(row.get("briefDesc")),
+                "dts_status_name": _clean_text(row.get("dtsStatusName")),
+            }
+        if len(result) == len(wanted):
+            break
+    return result
+
+
 def _validate_snapshot_query_window(
     query: DtsStatisticsQuerySchema | DtsStatisticsExportSchema,
     snapshot: dict[str, Any],
