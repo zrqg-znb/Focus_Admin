@@ -35,6 +35,7 @@ MENU_SEEDS = [
     MenuSeed('skill_optimizer_editor', 'agent_tools', 'SkillOptimizer', 'Skill 自进化', '/agent-tools/skill-optimizer', '/agent-tools/skill-optimizer/workbench/index', auth_code='agent-tools:skill-optimizer:workbench', hide_in_menu=True),
     MenuSeed('skill_optimizer_records', 'agent_tools', 'SkillOptimizerRecords', 'Skill自进化记录', '/agent-tools/skill-optimizer/records', '/agent-tools/skill-optimizer/records/index', auth_code='agent-tools:skill-optimizer:records', hide_in_menu=True),
     MenuSeed('agent_tools_providers', 'agent_tools', 'AgentToolsModelConfig', '模型配置', '/agent-tools/model-config', '/agent-tools/providers/index', auth_code='agent-tools:providers'),
+    MenuSeed('code_quality_governance', 'agent_tools', 'CodeQualityGovernance', '代码问题治理', '/agent-tools/code-quality-governance', '/agent-tools/code-quality-governance/index', auth_code='agent-tools:code-quality-governance'),
 ]
 
 PERMISSIONS = {
@@ -59,6 +60,18 @@ PERMISSIONS = {
         ('更新模型档案', 'agent-tools:providers:api:update', 1, '/api/agent-tools/providers/:id', 'PUT'),
         ('测试模型档案', 'agent-tools:providers:api:test', 1, '/api/agent-tools/providers/:id/test', 'POST'),
     ],
+    'code_quality_governance': [
+        ('代码问题治理查看', 'agent-tools:code-quality-governance:view', 0, None, 'GET'),
+        ('项目列表', 'agent-tools:code-quality-governance:api:projects:list', 1, '/api/agent-tools/code-quality-governance/projects', 'GET'),
+        ('项目维护', 'agent-tools:code-quality-governance:api:projects:write', 1, '/api/agent-tools/code-quality-governance/projects', 'ALL'),
+        ('责任田列表', 'agent-tools:code-quality-governance:api:responsibilities:list', 1, '/api/agent-tools/code-quality-governance/responsibilities', 'GET'),
+        ('责任田维护', 'agent-tools:code-quality-governance:api:responsibilities:write', 1, '/api/agent-tools/code-quality-governance/responsibilities', 'ALL'),
+        ('项目责任田关联维护', 'agent-tools:code-quality-governance:api:links:write', 1, '/api/agent-tools/code-quality-governance/project-responsibilities', 'ALL'),
+        ('扫描结果接入', 'agent-tools:code-quality-governance:api:reports:ingest', 1, '/api/agent-tools/code-quality-governance/reports', 'POST'),
+        ('扫描结果查看', 'agent-tools:code-quality-governance:api:findings:list', 1, '/api/agent-tools/code-quality-governance/findings', 'GET'),
+        ('屏蔽申请', 'agent-tools:code-quality-governance:api:shield:apply', 1, '/api/agent-tools/code-quality-governance/shield-applications', 'POST'),
+        ('屏蔽审批', 'agent-tools:code-quality-governance:api:shield:audit', 1, '/api/agent-tools/code-quality-governance/shield-applications/:id/approve', 'POST'),
+    ],
 }
 
 
@@ -81,8 +94,8 @@ class Command(BaseCommand):
         self._seed_permissions(menus, operator)
         user_role, _ = Role.objects.update_or_create(code='tools_user', defaults={'name': 'AI 辅助工具用户', 'description': '使用已授权的 AI 辅助工具', 'role_type': 1, 'status': True, 'priority': 50, 'sys_creator': operator, 'sys_modifier': operator})
         admin_role, _ = Role.objects.update_or_create(code='tools_admin', defaults={'name': 'AI 辅助工具管理员', 'description': '维护模型档案和 AI 辅助工具', 'role_type': 1, 'status': True, 'priority': 50, 'sys_creator': operator, 'sys_modifier': operator})
-        user_menus = [menus['agent_tools'], menus['skill_optimizer_workbench'], menus['skill_optimizer_editor'], menus['agent_tools_providers']]
-        user_permissions = Permission.objects.filter(code__startswith='agent-tools:skill-optimizer:') | Permission.objects.filter(code__startswith='agent-tools:providers:')
+        user_menus = [menus['agent_tools'], menus['skill_optimizer_workbench'], menus['skill_optimizer_editor'], menus['agent_tools_providers'], menus['code_quality_governance']]
+        user_permissions = Permission.objects.filter(code__startswith='agent-tools:skill-optimizer:') | Permission.objects.filter(code__startswith='agent-tools:providers:') | Permission.objects.filter(code__startswith='agent-tools:code-quality-governance:')
         user_role.menu.add(*user_menus)
         user_role.permission.add(*user_permissions)
         admin_role.menu.add(*menus.values())

@@ -106,6 +106,7 @@ INSTALLED_APPS = [
     'apps.deepaudit',
     'apps.environment_management',
     'apps.agent_tools',
+    'apps.agent_tools.code_quality_governance',
 ]
 
 TEMPLATES = [
