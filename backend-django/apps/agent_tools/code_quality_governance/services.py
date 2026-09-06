@@ -20,6 +20,7 @@ from .models import (
     GovernanceScanReport,
     GovernanceShieldApplication,
     GovernanceShieldAuditLog,
+    GovernanceCaretakerAuditLog,
 )
 from .parsers import ParsedReport, parse_report
 
@@ -45,7 +46,7 @@ def _scope(project_id: str, responsibility_id: str, *, active_only: bool = True)
     if active_only:
         filters['is_active'] = True
     return get_object_or_404(
-        GovernanceProjectResponsibility.objects.select_related('project', 'responsibility').prefetch_related('responsibility__approvers'),
+        GovernanceProjectResponsibility.objects.select_related('project', 'responsibility').prefetch_related('responsibility__caretakers'),
         **filters,
     )
 
@@ -53,19 +54,19 @@ def _scope(project_id: str, responsibility_id: str, *, active_only: bool = True)
 def _serialize_project(item: GovernanceProject) -> dict[str, Any]:
     """序列化项目。"""
     return {
-        'id': str(item.id), 'name': item.name, 'code': item.code, 'repository': item.repository,
-        'branch': item.branch, 'description': item.description, 'is_active': item.is_active,
+        'id': str(item.id), 'name': item.name, 'code': item.code, 'description': item.description,
+        'is_active': item.is_active,
         'created_at': item.sys_create_datetime.isoformat() if item.sys_create_datetime else None,
     }
 
 
 def _serialize_responsibility(item: GovernanceResponsibility) -> dict[str, Any]:
     """序列化责任田。"""
-    approvers = list(item.approvers.all())
+    caretakers = list(item.caretakers.all())
     return {
         'id': str(item.id), 'name': item.name, 'code': item.code, 'description': item.description,
-        'is_active': item.is_active, 'owner': _display_user(item.owner),
-        'approvers': [_display_user(user) for user in approvers],
+        'is_active': item.is_active, 'caretakers': [_display_user(user) for user in caretakers],
+        'caretaker_count': len(caretakers),
     }
 
 
@@ -75,6 +76,10 @@ def _serialize_link(item: GovernanceProjectResponsibility) -> dict[str, Any]:
         'id': str(item.id), 'project_id': str(item.project_id), 'project_name': item.project.name,
         'responsibility_id': str(item.responsibility_id), 'responsibility_name': item.responsibility.name,
         'is_active': item.is_active, 'remark': item.remark,
+        'finding_count': item.finding_count, 'normal_count': item.normal_count,
+        'pending_count': item.pending_count, 'pending_application_count': item.pending_application_count,
+        'shielded_count': item.shielded_count, 'last_scan_at': item.last_scan_at.isoformat() if item.last_scan_at else None,
+        'last_scan_status': item.last_scan_status,
     }
 
 
@@ -87,12 +92,15 @@ def list_projects(page: int, page_size: int, keyword: str = '') -> dict[str, Any
 
 
 def save_project(user: User, project_id: str | None, payload) -> dict[str, Any]:
-    """创建或更新治理项目。"""
+    """创建或更新治理项目，并在新建时完成初始治理范围配置。"""
     item = get_object_or_404(GovernanceProject, id=project_id, is_deleted=False) if project_id else GovernanceProject(sys_creator=user)
-    item.name, item.code, item.repository, item.branch = payload.name.strip(), payload.code.strip(), payload.repository.strip(), payload.branch.strip() or 'master'
+    item.name, item.code = payload.name.strip(), payload.code.strip()
     item.description, item.is_active, item.sys_modifier = payload.description.strip(), payload.is_active, user
     try:
-        item.save()
+        with transaction.atomic():
+            item.save()
+            if not project_id and payload.initial_responsibility_ids:
+                onboard_project(user, str(item.id), payload.initial_responsibility_ids)
     except Exception as exc:
         if 'unique' in str(exc).lower() or 'duplicate' in str(exc).lower():
             raise HttpError(409, '项目编码已存在') from exc
@@ -110,25 +118,32 @@ def delete_project(user: User, project_id: str) -> dict[str, str]:
 
 def list_responsibilities(page: int, page_size: int, keyword: str = '') -> dict[str, Any]:
     """分页查询责任田。"""
-    queryset = GovernanceResponsibility.objects.filter(is_deleted=False).select_related('owner').prefetch_related('approvers').order_by('name')
+    queryset = GovernanceResponsibility.objects.filter(is_deleted=False).prefetch_related('caretakers').order_by('name')
     if keyword.strip():
         queryset = queryset.filter(Q(name__icontains=keyword.strip()) | Q(code__icontains=keyword.strip()))
     return _page([_serialize_responsibility(item) for item in queryset], page, page_size)
 
 
 def save_responsibility(user: User, responsibility_id: str | None, payload) -> dict[str, Any]:
-    """创建或更新责任田及审批人员。"""
+    """创建或更新责任田及看护人。"""
     item = get_object_or_404(GovernanceResponsibility, id=responsibility_id, is_deleted=False) if responsibility_id else GovernanceResponsibility(sys_creator=user)
     item.name, item.code = payload.name.strip(), payload.code.strip()
     item.description, item.is_active, item.sys_modifier = payload.description.strip(), payload.is_active, user
-    item.owner = User.objects.filter(id=payload.owner_id, is_deleted=False).first() if payload.owner_id else None
     try:
         with transaction.atomic():
             item.save()
-            approvers = list(User.objects.filter(id__in=payload.approver_ids, is_deleted=False))
-            if len(approvers) != len(set(payload.approver_ids)):
-                raise HttpError(400, '存在无效的审批人员')
-            item.approvers.set(approvers)
+            caretakers = list(User.objects.filter(id__in=payload.caretaker_ids, is_deleted=False))
+            if len(caretakers) != len(set(payload.caretaker_ids)):
+                raise HttpError(400, '存在无效的看护人')
+            old_ids = set(item.caretakers.values_list('id', flat=True))
+            item.caretakers.set(caretakers)
+            for caretaker in caretakers:
+                if caretaker.id not in old_ids:
+                    _write_caretaker_log(item, caretaker, user, 'add', '随责任田资料保存添加')
+            for caretaker_id in old_ids - {user.id for user in caretakers}:
+                caretaker = User.objects.filter(id=caretaker_id).first()
+                if caretaker:
+                    _write_caretaker_log(item, caretaker, user, 'remove', '随责任田资料保存移除')
     except HttpError:
         raise
     except Exception as exc:
@@ -171,17 +186,109 @@ def save_link(user: User, link_id: str | None, payload) -> dict[str, Any]:
 
 
 def delete_link(user: User, link_id: str) -> dict[str, str]:
-    """软删除项目责任田关联。"""
+    """停用项目责任田关联并保留历史聚合数据。"""
     item = get_object_or_404(GovernanceProjectResponsibility, id=link_id, is_deleted=False)
-    item.is_deleted, item.sys_modifier = True, user
-    item.save(update_fields=['is_deleted', 'sys_modifier', 'sys_update_datetime'])
+    item.is_active, item.sys_modifier = False, user
+    item.save(update_fields=['is_active', 'sys_modifier', 'sys_update_datetime'])
     return {'id': str(item.id)}
+
+
+def onboard_project(user: User, project_id: str, responsibility_ids: list[str]) -> list[dict[str, Any]]:
+    """为新项目建立初始治理范围，重复关系保持幂等。"""
+    project = get_object_or_404(GovernanceProject, id=project_id, is_deleted=False)
+    responsibilities = list(GovernanceResponsibility.objects.filter(id__in=responsibility_ids, is_deleted=False))
+    if len(responsibilities) != len(set(responsibility_ids)):
+        raise HttpError(400, '初始责任田中存在无效数据')
+    result = []
+    with transaction.atomic():
+        for responsibility in responsibilities:
+            link, _ = GovernanceProjectResponsibility.objects.get_or_create(
+                project=project, responsibility=responsibility,
+                defaults={'sys_creator': user, 'sys_modifier': user, 'is_active': True},
+            )
+            if not link.is_active:
+                link.is_active, link.sys_modifier = True, user
+                link.save(update_fields=['is_active', 'sys_modifier', 'sys_update_datetime'])
+            result.append(_serialize_link(link))
+    return result
+
+
+def batch_save_links(user: User, payload) -> list[dict[str, Any]]:
+    """在矩阵中批量建立项目与责任田关系。"""
+    projects = list(GovernanceProject.objects.filter(id__in=payload.project_ids, is_deleted=False))
+    responsibilities = list(GovernanceResponsibility.objects.filter(id__in=payload.responsibility_ids, is_deleted=False))
+    if len(projects) != len(set(payload.project_ids)) or len(responsibilities) != len(set(payload.responsibility_ids)):
+        raise HttpError(400, '批量关联包含无效的项目或责任田')
+    result = []
+    with transaction.atomic():
+        for project in projects:
+            for responsibility in responsibilities:
+                link, _ = GovernanceProjectResponsibility.objects.get_or_create(
+                    project=project, responsibility=responsibility,
+                    defaults={'remark': payload.remark.strip(), 'sys_creator': user, 'sys_modifier': user},
+                )
+                if not link.is_active:
+                    link.is_active, link.sys_modifier = True, user
+                    link.save(update_fields=['is_active', 'sys_modifier', 'sys_update_datetime'])
+                result.append(_serialize_link(link))
+    return result
+
+
+def matrix_data() -> dict[str, Any]:
+    """返回项目责任田矩阵及其风险聚合信息。"""
+    projects = list(GovernanceProject.objects.filter(is_deleted=False, is_active=True).order_by('name'))
+    responsibilities = list(GovernanceResponsibility.objects.filter(is_deleted=False, is_active=True).order_by('name'))
+    links = GovernanceProjectResponsibility.objects.filter(is_deleted=False).select_related('project', 'responsibility')
+    link_map = {(str(item.project_id), str(item.responsibility_id)): _serialize_link(item) for item in links}
+    return {
+        'projects': [{'id': str(item.id), 'name': item.name, 'code': item.code} for item in projects],
+        'responsibilities': [{'id': str(item.id), 'name': item.name, 'code': item.code} for item in responsibilities],
+        'cells': list(link_map.values()),
+    }
+
+
+def _write_caretaker_log(responsibility, caretaker, operator, action: str, comment: str):
+    """记录看护人变更，便于责任边界追溯。"""
+    return GovernanceCaretakerAuditLog.objects.create(
+        responsibility=responsibility, caretaker=caretaker, operator=operator,
+        action=action, comment=comment, sys_creator=operator, sys_modifier=operator,
+    )
+
+
+def update_caretaker(user: User, responsibility_id: str, caretaker_id: str, action: str, comment: str = '') -> dict[str, Any]:
+    """增删责任田看护人并记录审计日志。"""
+    responsibility = get_object_or_404(GovernanceResponsibility, id=responsibility_id, is_deleted=False)
+    caretaker = get_object_or_404(User, id=caretaker_id, is_deleted=False, user_status=1)
+    with transaction.atomic():
+        if action == 'add':
+            responsibility.caretakers.add(caretaker)
+        elif action == 'remove':
+            responsibility.caretakers.remove(caretaker)
+        else:
+            raise HttpError(400, '看护人操作只能是 add 或 remove')
+        _write_caretaker_log(responsibility, caretaker, user, action, comment.strip())
+    return _serialize_responsibility(responsibility)
 
 
 def _report_counts(parsed: ParsedReport) -> dict[str, int]:
     """从实际解析结果生成五级严重度统计。"""
     counts = Counter(item.severity for item in parsed.findings)
     return {f'{severity}_count': counts.get(severity, 0) for severity in ('blocker', 'critical', 'major', 'minor', 'info')}
+
+
+def refresh_scope_aggregate(scope: GovernanceProjectResponsibility) -> None:
+    """刷新关系单元格快照，避免项目和责任田详情重复扫描明细表。"""
+    findings = GovernanceFinding.objects.filter(project_responsibility=scope, is_deleted=False)
+    applications = GovernanceShieldApplication.objects.filter(project_responsibility=scope, is_deleted=False, status='Pending')
+    report = GovernanceScanReport.objects.filter(project_responsibility=scope, is_deleted=False).order_by('-sys_create_datetime').first()
+    scope.finding_count = findings.count()
+    scope.normal_count = findings.filter(shield_status__in=['Normal', 'Rejected']).count()
+    scope.pending_count = findings.filter(shield_status='Pending').count()
+    scope.shielded_count = findings.filter(shield_status='Shielded').count()
+    scope.pending_application_count = applications.count()
+    scope.last_scan_at = report.sys_create_datetime if report else None
+    scope.last_scan_status = report.status if report else ''
+    scope.save(update_fields=['finding_count', 'normal_count', 'pending_count', 'shielded_count', 'pending_application_count', 'last_scan_at', 'last_scan_status', 'sys_update_datetime'])
 
 
 def _serialize_finding(item: GovernanceFinding, *, occurrence: GovernanceFindingOccurrence | None = None) -> dict[str, Any]:
@@ -263,9 +370,11 @@ def ingest_report(user: User, project_id: str, responsibility_id: str, tool_name
                     legacy_fingerprints=finding_data.legacy_fingerprints, confidence=finding_data.confidence,
                     raw_finding=finding_data.raw_finding, sys_creator=user, sys_modifier=user,
                 )
+            refresh_scope_aggregate(scope)
     except Exception as exc:
         report.status, report.error_message, report.completed_at = 'failed', str(exc), timezone.now()
         report.save(update_fields=['status', 'error_message', 'completed_at', 'sys_update_datetime'])
+        refresh_scope_aggregate(scope)
         if isinstance(exc, ValueError):
             raise HttpError(422, str(exc)) from exc
         raise
@@ -331,6 +440,7 @@ def get_finding(finding_id: str) -> dict[str, Any]:
     occurrence = finding.occurrences.select_related('report').order_by('-sys_create_datetime').first()
     result = _serialize_finding(finding, occurrence=occurrence)
     result['applications'] = [_serialize_application(item) for item in finding.shield_applications.select_related('applicant', 'approver')]
+    result['occurrences'] = [_serialize_finding(finding, occurrence=item) for item in finding.occurrences.select_related('report').order_by('-sys_create_datetime')[:30]]
     return result
 
 
@@ -403,8 +513,8 @@ def create_application(user: User, payload) -> list[dict[str, Any]]:
         if len(findings) != len(set(payload.finding_ids)):
             raise HttpError(404, '存在无效问题')
         for finding in findings:
-            if not finding.project_responsibility.responsibility.approvers.filter(id=approver.id, is_deleted=False).exists():
-                raise HttpError(400, f'审批人不在责任田「{finding.project_responsibility.responsibility.name}」审批范围内')
+            if not User.objects.filter(id=approver.id, is_deleted=False, user_status=1).exists():
+                raise HttpError(400, '指定审批人不是有效系统用户')
             if finding.shield_status == 'Shielded':
                 raise HttpError(400, '已屏蔽问题不能重复申请')
             if GovernanceShieldApplication.objects.filter(finding=finding, status='Pending', is_deleted=False).exists():
@@ -417,6 +527,8 @@ def create_application(user: User, payload) -> list[dict[str, Any]]:
             finding.save(update_fields=['shield_status', 'sys_modifier', 'sys_update_datetime'])
             GovernanceShieldAuditLog.objects.create(application=application, action='create', operator=user, from_status='', to_status='Pending', comment=payload.reason.strip(), sys_creator=user, sys_modifier=user)
             created.append(application)
+        for scope in {finding.project_responsibility for finding in findings}:
+            refresh_scope_aggregate(scope)
     return [_serialize_application(item) for item in created]
 
 
@@ -453,6 +565,7 @@ def audit_application(user: User, application_id: str, status: str, comment: str
         finding.shield_status, finding.sys_modifier = ('Shielded' if status == 'Approved' else 'Rejected'), user
         finding.save(update_fields=['shield_status', 'sys_modifier', 'sys_update_datetime'])
         GovernanceShieldAuditLog.objects.create(application=application, action='approve' if status == 'Approved' else 'reject', operator=user, from_status=old_status, to_status=status, comment=comment.strip(), sys_creator=user, sys_modifier=user)
+        refresh_scope_aggregate(application.project_responsibility)
     return _serialize_application(application)
 
 
@@ -466,3 +579,87 @@ def list_audit_logs(application_id: str) -> list[dict[str, Any]]:
     """返回屏蔽申请审计历史。"""
     logs = GovernanceShieldAuditLog.objects.filter(application_id=application_id, is_deleted=False).select_related('operator').order_by('sys_create_datetime')
     return [{'id': str(item.id), 'action': item.action, 'operator': _display_user(item.operator), 'from_status': item.from_status, 'to_status': item.to_status, 'comment': item.comment, 'created_at': item.sys_create_datetime.isoformat() if item.sys_create_datetime else None} for item in logs]
+
+
+def _scope_summary(scope: GovernanceProjectResponsibility) -> dict[str, Any]:
+    """序列化关系单元格，作为项目/责任田详情的统一聚合结构。"""
+    return _serialize_link(scope)
+
+
+def project_overview(project_id: str) -> dict[str, Any]:
+    """返回项目 360° 概览及责任田、扫描和问题聚合。"""
+    project = get_object_or_404(GovernanceProject, id=project_id, is_deleted=False)
+    links = list(GovernanceProjectResponsibility.objects.filter(project=project, is_deleted=False).select_related('responsibility').order_by('responsibility__name'))
+    reports = GovernanceScanReport.objects.filter(project_responsibility__project=project, is_deleted=False).select_related('project_responsibility__responsibility').order_by('-sys_create_datetime')[:10]
+    findings = GovernanceFinding.objects.filter(project_responsibility__project=project, is_deleted=False)
+    return {
+        'project': _serialize_project(project),
+        'finding_count': findings.count(),
+        'normal_count': findings.filter(shield_status__in=['Normal', 'Rejected']).count(),
+        'pending_application_count': GovernanceShieldApplication.objects.filter(project_responsibility__project=project, status='Pending', is_deleted=False).count(),
+        'severity': dict(findings.values('severity').annotate(count=Count('id')).values_list('severity', 'count')),
+        'responsibilities': [_scope_summary(item) for item in links],
+        'recent_reports': [serialize_report(item) for item in reports],
+    }
+
+
+def responsibility_overview(responsibility_id: str) -> dict[str, Any]:
+    """返回责任田 360° 概览及看护人、项目和问题聚合。"""
+    responsibility = get_object_or_404(GovernanceResponsibility.objects.prefetch_related('caretakers'), id=responsibility_id, is_deleted=False)
+    links = list(GovernanceProjectResponsibility.objects.filter(responsibility=responsibility, is_deleted=False).select_related('project').order_by('project__name'))
+    findings = GovernanceFinding.objects.filter(project_responsibility__responsibility=responsibility, is_deleted=False)
+    reports = GovernanceScanReport.objects.filter(project_responsibility__responsibility=responsibility, is_deleted=False).select_related('project_responsibility__project').order_by('-sys_create_datetime')[:10]
+    return {
+        'responsibility': _serialize_responsibility(responsibility),
+        'finding_count': findings.count(),
+        'normal_count': findings.filter(shield_status__in=['Normal', 'Rejected']).count(),
+        'pending_application_count': GovernanceShieldApplication.objects.filter(project_responsibility__responsibility=responsibility, status='Pending', is_deleted=False).count(),
+        'severity': dict(findings.values('severity').annotate(count=Count('id')).values_list('severity', 'count')),
+        'projects': [_scope_summary(item) for item in links],
+        'recent_reports': [serialize_report(item) for item in reports],
+    }
+
+
+def workbench_summary(user: User) -> dict[str, Any]:
+    """返回治理工作台首屏指标、待办、异常和风险排行。"""
+    projects = GovernanceProject.objects.filter(is_deleted=False, is_active=True)
+    responsibilities = GovernanceResponsibility.objects.filter(is_deleted=False, is_active=True)
+    links = GovernanceProjectResponsibility.objects.filter(is_deleted=False, is_active=True)
+    findings = GovernanceFinding.objects.filter(is_deleted=False)
+    applications = GovernanceShieldApplication.objects.filter(is_deleted=False, status='Pending')
+    reports = GovernanceScanReport.objects.filter(is_deleted=False)
+    risk_findings = findings.filter(shield_status__in=['Normal', 'Rejected'])
+    recent_reports = reports.filter(status='failed').order_by('-sys_create_datetime')[:5]
+    incomplete_reports = reports.filter(status='success', complete=False).order_by('-sys_create_datetime')[:5]
+    rank = list(risk_findings.values('project_responsibility__project__name').annotate(count=Count('id')).order_by('-count')[:8])
+    responsibility_rank = list(risk_findings.values('project_responsibility__responsibility__name').annotate(count=Count('id')).order_by('-count')[:8])
+    todos = applications.filter(approver=user).select_related('project_responsibility__project', 'project_responsibility__responsibility', 'finding', 'applicant').order_by('finding__severity', 'sys_create_datetime')[:8]
+    return {
+        'project_count': projects.count(), 'responsibility_count': responsibilities.count(), 'link_count': links.count(),
+        'finding_count': findings.count(), 'normal_count': risk_findings.count(), 'pending_application_count': applications.count(),
+        'shielded_count': findings.filter(shield_status='Shielded').count(),
+        'my_todo_count': applications.filter(approver=user).count(),
+        'risk_projects': [{'name': item['project_responsibility__project__name'], 'count': item['count']} for item in rank],
+        'risk_responsibilities': [{'name': item['project_responsibility__responsibility__name'], 'count': item['count']} for item in responsibility_rank],
+        'scan_exceptions': [serialize_report(item) for item in list(recent_reports) + list(incomplete_reports)],
+        'my_todos': [_serialize_application(item) for item in todos],
+        'recent_reports': [serialize_report(item) for item in reports.order_by('-sys_create_datetime')[:8]],
+    }
+
+
+def workbench_todos(user: User) -> dict[str, Any]:
+    """返回待我审批、我的申请和扫描异常的统一待办。"""
+    return {
+        'my_audit': list_applications(user, 1, 20, 'my_audit', 'Pending')['items'],
+        'my_apply': list_applications(user, 1, 20, 'my_apply')['items'],
+        'scan_exceptions': [serialize_report(item) for item in GovernanceScanReport.objects.filter(is_deleted=False).exclude(status='success', complete=True).order_by('-sys_create_datetime')[:20]],
+    }
+
+
+def workbench_risk_ranking() -> dict[str, Any]:
+    """返回项目和责任田待治理问题风险排行。"""
+    base = GovernanceFinding.objects.filter(is_deleted=False, shield_status__in=['Normal', 'Rejected'])
+    return {
+        'projects': list(base.values('project_responsibility__project_id', 'project_responsibility__project__name').annotate(count=Count('id')).order_by('-count')[:20]),
+        'responsibilities': list(base.values('project_responsibility__responsibility_id', 'project_responsibility__responsibility__name').annotate(count=Count('id')).order_by('-count')[:20]),
+    }

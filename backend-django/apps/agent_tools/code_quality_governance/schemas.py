@@ -8,10 +8,9 @@ class ProjectIn(Schema):
 
     name: str
     code: str
-    repository: str = ''
-    branch: str = 'master'
     description: str = ''
     is_active: bool = True
+    initial_responsibility_ids: list[str] = []
 
 
 class ResponsibilityIn(Schema):
@@ -19,8 +18,7 @@ class ResponsibilityIn(Schema):
 
     name: str
     code: str
-    owner_id: str | None = None
-    approver_ids: list[str] = []
+    caretaker_ids: list[str] = []
     description: str = ''
     is_active: bool = True
 
@@ -32,6 +30,21 @@ class ProjectResponsibilityIn(Schema):
     responsibility_id: str
     is_active: bool = True
     remark: str = ''
+
+
+class BatchProjectResponsibilityIn(Schema):
+    """矩阵批量建立项目责任田关系请求。"""
+
+    project_ids: list[str]
+    responsibility_ids: list[str]
+    remark: str = ''
+
+
+class CaretakerIn(Schema):
+    """新增责任田看护人请求。"""
+
+    user_id: str
+    comment: str = ''
 
 
 class ReportIn(Schema):
@@ -55,4 +68,3 @@ class AuditIn(Schema):
     """屏蔽申请审批请求。"""
 
     comment: str = ''
-

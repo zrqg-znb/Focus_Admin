@@ -7,7 +7,7 @@ from ninja.errors import HttpError
 from common.fu_auth import BearerAuth as GlobalAuth
 
 from . import services
-from .schemas import AuditIn, ProjectIn, ProjectResponsibilityIn, ReportIn, ResponsibilityIn, ShieldApplicationIn
+from .schemas import AuditIn, BatchProjectResponsibilityIn, CaretakerIn, ProjectIn, ProjectResponsibilityIn, ReportIn, ResponsibilityIn, ShieldApplicationIn
 
 
 router = Router(auth=GlobalAuth())
@@ -30,6 +30,24 @@ def projects(request, page: int = Query(1), pageSize: int = Query(20), keyword: 
     return services.list_projects(page, pageSize, keyword)
 
 
+@router.get('/workbench/summary', summary='治理工作台摘要')
+def workbench_summary(request):
+    """查询治理工作台指标、风险排行、扫描异常和我的待办。"""
+    return services.workbench_summary(_user(request))
+
+
+@router.get('/workbench/todos', summary='治理工作台待办')
+def workbench_todos(request):
+    """查询审批、申请和扫描异常统一待办。"""
+    return services.workbench_todos(_user(request))
+
+
+@router.get('/workbench/risk-ranking', summary='治理风险排行')
+def workbench_risk_ranking(request):
+    """查询项目和责任田待治理问题风险排行。"""
+    return services.workbench_risk_ranking()
+
+
 @router.post('/projects', summary='创建治理项目')
 def create_project(request, payload: ProjectIn):
     """创建独立的代码问题治理项目。"""
@@ -46,6 +64,18 @@ def update_project(request, project_id: str, payload: ProjectIn):
 def delete_project(request, project_id: str):
     """软删除代码问题治理项目。"""
     return services.delete_project(_user(request), project_id)
+
+
+@router.get('/projects/{project_id}/overview', summary='项目治理概览')
+def project_overview(request, project_id: str):
+    """查询项目基本资料、责任田、问题和扫描聚合。"""
+    return services.project_overview(project_id)
+
+
+@router.post('/projects/{project_id}/onboard', summary='配置项目治理范围')
+def onboard_project(request, project_id: str, payload: BatchProjectResponsibilityIn):
+    """为项目配置初始责任田治理范围。"""
+    return services.onboard_project(_user(request), project_id, payload.responsibility_ids)
 
 
 @router.get('/responsibilities', summary='责任田列表')
@@ -72,6 +102,24 @@ def delete_responsibility(request, responsibility_id: str):
     return services.delete_responsibility(_user(request), responsibility_id)
 
 
+@router.get('/responsibilities/{responsibility_id}/overview', summary='责任田治理概览')
+def responsibility_overview(request, responsibility_id: str):
+    """查询责任田看护人、项目、问题和扫描聚合。"""
+    return services.responsibility_overview(responsibility_id)
+
+
+@router.post('/responsibilities/{responsibility_id}/caretakers', summary='添加责任田看护人')
+def add_caretaker(request, responsibility_id: str, payload: CaretakerIn):
+    """添加责任田看护人并记录变更日志。"""
+    return services.update_caretaker(_user(request), responsibility_id, payload.user_id, 'add', payload.comment)
+
+
+@router.delete('/responsibilities/{responsibility_id}/caretakers/{user_id}', summary='移除责任田看护人')
+def remove_caretaker(request, responsibility_id: str, user_id: str):
+    """移除责任田看护人并记录变更日志。"""
+    return services.update_caretaker(_user(request), responsibility_id, user_id, 'remove')
+
+
 @router.get('/project-responsibilities', summary='项目责任田关联列表')
 def project_responsibilities(request, page: int = Query(1), pageSize: int = Query(20), keyword: str = Query('')):
     """分页查询项目责任田关联。"""
@@ -82,6 +130,18 @@ def project_responsibilities(request, page: int = Query(1), pageSize: int = Quer
 def create_project_responsibility(request, payload: ProjectResponsibilityIn):
     """创建项目责任田关联。"""
     return services.save_link(_user(request), None, payload)
+
+
+@router.get('/project-responsibilities/matrix', summary='项目责任田矩阵')
+def project_responsibility_matrix(request):
+    """查询项目责任田矩阵及关系风险聚合。"""
+    return services.matrix_data()
+
+
+@router.post('/project-responsibilities/batch', summary='批量建立项目责任田关联')
+def batch_project_responsibility(request, payload: BatchProjectResponsibilityIn):
+    """批量建立矩阵中的项目责任田关系。"""
+    return services.batch_save_links(_user(request), payload)
 
 
 @router.put('/project-responsibilities/{link_id}', summary='更新项目责任田关联')

@@ -42,7 +42,7 @@ class GovernanceProject(RootModel):
 
 
 class GovernanceResponsibility(RootModel):
-    """代码问题治理责任田及其负责人、审批人范围。"""
+    """代码问题治理责任田及其看护人。"""
 
     name = models.CharField(max_length=160, verbose_name='责任田名称')
     code = models.CharField(max_length=80, unique=True, verbose_name='责任田编码')
@@ -53,6 +53,10 @@ class GovernanceResponsibility(RootModel):
     approvers = models.ManyToManyField(
         'core.User', blank=True, related_name='governance_responsibility_approvers',
         verbose_name='审批人员',
+    )
+    caretakers = models.ManyToManyField(
+        'core.User', blank=True, related_name='governance_responsibility_caretakers',
+        verbose_name='看护人',
     )
     description = models.TextField(blank=True, default='', verbose_name='描述')
     is_active = models.BooleanField(default=True, db_index=True, verbose_name='是否启用')
@@ -73,6 +77,13 @@ class GovernanceProjectResponsibility(RootModel):
     )
     is_active = models.BooleanField(default=True, db_index=True, verbose_name='是否启用')
     remark = models.CharField(max_length=500, blank=True, default='', verbose_name='关联备注')
+    finding_count = models.PositiveIntegerField(default=0, verbose_name='问题数量')
+    normal_count = models.PositiveIntegerField(default=0, verbose_name='待治理数量')
+    pending_count = models.PositiveIntegerField(default=0, verbose_name='问题屏蔽申请中数量')
+    shielded_count = models.PositiveIntegerField(default=0, verbose_name='已屏蔽数量')
+    pending_application_count = models.PositiveIntegerField(default=0, verbose_name='待审批申请数量')
+    last_scan_at = models.DateTimeField(null=True, blank=True, verbose_name='最近扫描时间')
+    last_scan_status = models.CharField(max_length=20, blank=True, default='', verbose_name='最近扫描状态')
 
     class Meta:
         db_table = 'agent_tools_governance_project_responsibility'
@@ -228,3 +239,24 @@ class GovernanceShieldAuditLog(RootModel):
     class Meta:
         db_table = 'agent_tools_governance_shield_audit_log'
         ordering = ['sys_create_datetime']
+
+
+class GovernanceCaretakerAuditLog(RootModel):
+    """责任田看护人变更审计日志。"""
+
+    ACTION_CHOICES = (('add', '添加看护人'), ('remove', '移除看护人'))
+    responsibility = models.ForeignKey(
+        GovernanceResponsibility, on_delete=models.CASCADE, related_name='caretaker_audit_logs', verbose_name='责任田',
+    )
+    caretaker = models.ForeignKey(
+        'core.User', on_delete=models.PROTECT, related_name='governance_caretaker_audit_logs', verbose_name='看护人',
+    )
+    action = models.CharField(max_length=20, choices=ACTION_CHOICES, verbose_name='操作类型')
+    operator = models.ForeignKey(
+        'core.User', on_delete=models.PROTECT, related_name='governance_caretaker_operators', verbose_name='操作人',
+    )
+    comment = models.TextField(blank=True, default='', verbose_name='操作说明')
+
+    class Meta:
+        db_table = 'agent_tools_governance_caretaker_audit_log'
+        ordering = ['-sys_create_datetime']
