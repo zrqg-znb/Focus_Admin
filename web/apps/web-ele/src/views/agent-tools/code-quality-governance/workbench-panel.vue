@@ -1,15 +1,34 @@
 <!-- eslint-disable vue/html-closing-bracket-newline, vue/multiline-html-element-content-newline -->
 <script lang="ts" setup>
-import type { WorkbenchSummary } from '#/api/agent-tools/code-quality-governance';
+import type {
+  GovernanceProject,
+  GovernanceResponsibility,
+  WorkbenchSummary,
+} from '#/api/agent-tools/code-quality-governance';
 
 import { onMounted, ref } from 'vue';
 
-import { ElButton, ElCard, ElEmpty, ElStatistic, ElTag } from 'element-plus';
+import {
+  ElButton,
+  ElCard,
+  ElEmpty,
+  ElOption,
+  ElSelect,
+  ElStatistic,
+  ElTag,
+} from 'element-plus';
 
 import { getWorkbenchSummaryApi } from '#/api/agent-tools/code-quality-governance';
 
+const props = defineProps<{
+  projects: GovernanceProject[];
+  responsibilities: GovernanceResponsibility[];
+}>();
+
 const data = ref<WorkbenchSummary>();
 const loading = ref(false);
+const projectId = ref('');
+const responsibilityId = ref('');
 
 const metrics: {
   key:
@@ -37,7 +56,10 @@ const metrics: {
 async function load() {
   loading.value = true;
   try {
-    data.value = await getWorkbenchSummaryApi();
+    data.value = await getWorkbenchSummaryApi({
+      project_id: projectId.value || undefined,
+      responsibility_id: responsibilityId.value || undefined,
+    });
   } finally {
     loading.value = false;
   }
@@ -69,7 +91,37 @@ onMounted(load);
         <h2>治理工作台</h2>
         <p>先处理高风险问题和审批待办，再进入具体治理范围。</p>
       </div>
-      <ElButton :loading="loading" @click="load">刷新数据</ElButton>
+      <div class="heading-actions">
+        <ElSelect
+          v-model="projectId"
+          clearable
+          placeholder="全部项目"
+          class="scope-select"
+          @change="load"
+        >
+          <ElOption
+            v-for="item in props.projects"
+            :key="item.id"
+            :label="item.name"
+            :value="item.id"
+          />
+        </ElSelect>
+        <ElSelect
+          v-model="responsibilityId"
+          clearable
+          placeholder="全部责任田"
+          class="scope-select"
+          @change="load"
+        >
+          <ElOption
+            v-for="item in props.responsibilities"
+            :key="item.id"
+            :label="item.name"
+            :value="item.id"
+          />
+        </ElSelect>
+        <ElButton :loading="loading" @click="load">刷新数据</ElButton>
+      </div>
     </header>
 
     <div class="metric-grid">
@@ -129,6 +181,22 @@ onMounted(load);
       </ElCard>
 
       <ElCard shadow="never" class="work-card">
+        <template #header>高风险责任田</template>
+        <div v-if="data?.risk_responsibilities.length" class="rank-list">
+          <div
+            v-for="(row, index) in data.risk_responsibilities"
+            :key="row.name"
+            class="rank-row"
+          >
+            <i>{{ index + 1 }}</i>
+            <span>{{ row.name }}</span>
+            <strong>{{ row.count }}</strong>
+          </div>
+        </div>
+        <ElEmpty v-else description="暂无风险责任田" :image-size="56" />
+      </ElCard>
+
+      <ElCard shadow="never" class="work-card">
         <template #header>扫描异常与未完成</template>
         <div v-if="data?.scan_exceptions.length" class="exception-list">
           <div
@@ -149,6 +217,23 @@ onMounted(load);
           </div>
         </div>
         <ElEmpty v-else description="扫描运行正常" :image-size="56" />
+      </ElCard>
+
+      <ElCard shadow="never" class="work-card">
+        <template #header>最近扫描接入</template>
+        <div v-if="data?.recent_reports.length" class="rank-list">
+          <div
+            v-for="report in data.recent_reports"
+            :key="String(report.id)"
+            class="recent-report-row"
+          >
+            <span>
+              {{ report.project_name }} / {{ report.responsibility_name }}
+            </span>
+            <small>{{ report.tool_name }}</small>
+          </div>
+        </div>
+        <ElEmpty v-else description="暂无扫描记录" :image-size="56" />
       </ElCard>
     </div>
   </section>
@@ -181,6 +266,16 @@ h2 {
   font-size: 13px;
 }
 
+.heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scope-select {
+  width: 150px;
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -207,7 +302,7 @@ h2 {
 
 .workbench-grid {
   display: grid;
-  grid-template-columns: 1.2fr 1fr 1fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -278,6 +373,26 @@ b {
 .rank-row strong {
   margin-left: auto;
   color: var(--el-text-color-primary);
+}
+
+.recent-report-row {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--el-border-color-extra-light);
+}
+
+.recent-report-row span {
+  overflow: hidden;
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-report-row small {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 
 @media (max-width: 1100px) {

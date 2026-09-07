@@ -4,7 +4,6 @@ import type {
   GovernanceProject,
   GovernanceResponsibility,
   Overview,
-  UserOption,
 } from '#/api/agent-tools/code-quality-governance';
 
 import { computed, onMounted, ref } from 'vue';
@@ -12,14 +11,13 @@ import { computed, onMounted, ref } from 'vue';
 import {
   ElButton,
   ElCard,
+  ElCheckbox,
   ElDialog,
   ElEmpty,
   ElForm,
   ElFormItem,
   ElInput,
   ElMessage,
-  ElOption,
-  ElSelect,
   ElSwitch,
   ElTag,
   ElTransfer,
@@ -35,11 +33,11 @@ import {
   removeCaretakerApi,
   updateResponsibilityApi,
 } from '#/api/agent-tools/code-quality-governance';
+import UserSelector from '#/components/zq-form/user-selector/user-selector.vue';
 
 const props = defineProps<{
   projects: GovernanceProject[];
   refreshOptions: () => Promise<void>;
-  users: UserOption[];
 }>();
 
 const emit = defineEmits<{ changed: [] }>();
@@ -48,6 +46,8 @@ const rows = ref<GovernanceResponsibility[]>([]);
 const selected = ref<GovernanceResponsibility>();
 const overview = ref<Overview>();
 const keyword = ref('');
+const activeOnly = ref(false);
+const riskOnly = ref(false);
 const loading = ref(false);
 const detailLoading = ref(false);
 const dialog = ref(false);
@@ -66,10 +66,15 @@ const form = ref({
 
 const filtered = computed(() => {
   const value = keyword.value.trim().toLowerCase();
-  return rows.value.filter(
-    (item) =>
-      !value || `${item.name}${item.code}`.toLowerCase().includes(value),
-  );
+  return rows.value.filter((item) => {
+    const matchesKeyword =
+      !value || `${item.name}${item.code}`.toLowerCase().includes(value);
+    return (
+      matchesKeyword &&
+      (!activeOnly.value || item.is_active) &&
+      (!riskOnly.value || Boolean(item.normal_count))
+    );
+  });
 });
 
 const projectOptions = computed(() =>
@@ -244,6 +249,15 @@ onMounted(load);
             clearable
             placeholder="搜索责任田名称 / 编码"
           />
+          <div class="directory-filters">
+            <ElSwitch
+              v-model="activeOnly"
+              inline-prompt
+              active-text="启用"
+              inactive-text="全部"
+            />
+            <ElCheckbox v-model="riskOnly">只看有待治理问题</ElCheckbox>
+          </div>
         </template>
         <div v-if="filtered.length > 0" class="directory-list">
           <button
@@ -367,9 +381,9 @@ onMounted(load);
     <ElDialog
       v-model="dialog"
       :title="editing ? '编辑责任田' : '新建责任田'"
-      width="520px"
+      width="min(860px, 92vw)"
     >
-      <ElForm label-width="90px">
+      <ElForm label-width="96px" class="responsibility-form">
         <ElFormItem label="责任田名称" required
           ><ElInput v-model="form.name"
         /></ElFormItem>
@@ -383,19 +397,14 @@ onMounted(load);
           ><ElSwitch v-model="form.is_active"
         /></ElFormItem>
         <ElFormItem label="看护人">
-          <ElSelect
+          <UserSelector
             v-model="form.caretaker_ids"
             multiple
             class="full"
+            clearable
+            filterable
             placeholder="可选，后续可继续添加"
-          >
-            <ElOption
-              v-for="item in props.users"
-              :key="item.id"
-              :label="item.name"
-              :value="item.id"
-            />
-          </ElSelect>
+          />
         </ElFormItem>
       </ElForm>
       <template #footer>
@@ -406,22 +415,29 @@ onMounted(load);
       </template>
     </ElDialog>
 
-    <ElDialog v-model="caretakerDialog" title="添加看护人" width="420px">
-      <ElSelect v-model="caretakerId" class="full" placeholder="选择系统用户">
-        <ElOption
-          v-for="item in props.users"
-          :key="item.id"
-          :label="item.name"
-          :value="item.id"
-        />
-      </ElSelect>
+    <ElDialog
+      v-model="caretakerDialog"
+      title="添加看护人"
+      width="min(620px, 92vw)"
+    >
+      <UserSelector
+        v-model="caretakerId"
+        class="full"
+        clearable
+        filterable
+        placeholder="选择系统用户"
+      />
       <template #footer>
         <ElButton @click="caretakerDialog = false">取消</ElButton>
         <ElButton type="primary" @click="addCaretaker">添加</ElButton>
       </template>
     </ElDialog>
 
-    <ElDialog v-model="projectBindingDialog" title="配置关联项目" width="780px">
+    <ElDialog
+      v-model="projectBindingDialog"
+      title="配置关联项目"
+      width="min(860px, 92vw)"
+    >
       <div class="binding-intro">
         <b>为 {{ overview?.responsibility?.name }} 配置治理范围</b>
         <span>支持搜索项目名称或编码，并在一次操作中批量调整关联关系。</span>
@@ -486,6 +502,13 @@ h2 {
 .directory-list {
   display: grid;
   gap: 2px;
+}
+.directory-filters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
 }
 .directory-item {
   display: flex;
@@ -618,7 +641,7 @@ h3 {
   width: 100%;
 }
 .scope-transfer :deep(.el-transfer-panel) {
-  width: 300px;
+  width: min(340px, calc(50% - 32px));
 }
 .empty {
   height: 100%;
@@ -634,6 +657,19 @@ h3 {
   .detail-heading {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+@media (max-width: 640px) {
+  .scope-transfer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .scope-transfer :deep(.el-transfer-panel) {
+    width: 100%;
   }
 }
 </style>

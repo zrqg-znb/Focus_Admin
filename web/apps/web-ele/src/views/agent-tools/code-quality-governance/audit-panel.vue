@@ -1,6 +1,8 @@
 <!-- eslint-disable perfectionist/sort-named-imports, perfectionist/sort-union-types, vue/html-closing-bracket-newline, vue/multiline-html-element-content-newline -->
 <script lang="ts" setup>
 /* eslint-disable vue/html-closing-bracket-newline, vue/multiline-html-element-content-newline */
+import type { AuditTab } from './types';
+
 import type {
   Application,
   UserOption,
@@ -45,7 +47,7 @@ interface AuditLog {
   to_status?: string;
 }
 
-const auditTab = ref<'my_audit' | 'my_apply'>('my_audit');
+const auditTab = ref<AuditTab>('my_audit');
 const statusFilter = ref('');
 const auditVisible = ref(false);
 const detailVisible = ref(false);
@@ -140,10 +142,10 @@ const [ApplicationGrid, applicationGridApi] = useZqTable<Application>({
           page: { currentPage: number; pageSize: number };
         }) =>
           listApplicationsApi({
-            mode: auditTab.value,
+            ...getApplicationQuery(),
             page: page.currentPage,
             pageSize: page.pageSize,
-            status: statusFilter.value || undefined,
+            status: statusFilter.value || getApplicationQuery().status,
           }),
       },
     },
@@ -157,7 +159,24 @@ const [ApplicationGrid, applicationGridApi] = useZqTable<Application>({
   },
 });
 
+function getApplicationQuery() {
+  if (auditTab.value === 'approved') {
+    return { mode: 'all', status: 'Approved' };
+  }
+  if (auditTab.value === 'rejected') {
+    return { mode: 'all', status: 'Rejected' };
+  }
+  if (auditTab.value === 'my_audit') {
+    return { mode: 'my_audit', status: 'Pending' };
+  }
+  if (auditTab.value === 'my_apply') {
+    return { mode: 'my_apply', status: '' };
+  }
+  return { mode: 'all', status: '' };
+}
+
 function changeTab() {
+  statusFilter.value = '';
   void applicationGridApi.reload();
 }
 
@@ -200,6 +219,9 @@ onMounted(() => {
     <ElTabs v-model="auditTab" class="audit-tabs" @tab-change="changeTab">
       <ElTabPane label="待我审批" name="my_audit" />
       <ElTabPane label="我的申请" name="my_apply" />
+      <ElTabPane label="全部申请" name="all" />
+      <ElTabPane label="已通过" name="approved" />
+      <ElTabPane label="已驳回" name="rejected" />
     </ElTabs>
 
     <ApplicationGrid class="audit-grid">
@@ -286,8 +308,14 @@ onMounted(() => {
         <ElDescriptionsItem label="规则">{{
           currentApplication.rule_id
         }}</ElDescriptionsItem>
+        <ElDescriptionsItem label="严重级别">{{
+          currentApplication.severity
+        }}</ElDescriptionsItem>
         <ElDescriptionsItem label="文件">{{
           currentApplication.file_path
+        }}</ElDescriptionsItem>
+        <ElDescriptionsItem label="问题描述" :span="2">{{
+          currentApplication.message || '-'
         }}</ElDescriptionsItem>
         <ElDescriptionsItem label="申请理由" :span="2">{{
           currentApplication.reason

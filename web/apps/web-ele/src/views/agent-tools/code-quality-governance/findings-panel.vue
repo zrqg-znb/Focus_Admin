@@ -160,6 +160,13 @@ const [FindingGrid, findingGridApi] = useZqTable<Finding>({
         slots: { default: 'cell-status', header: 'header-status' },
       },
       {
+        key: 'has_pending_application',
+        dataKey: 'has_pending_application',
+        title: '屏蔽申请',
+        width: 110,
+        slots: { default: 'cell-application' },
+      },
+      {
         key: 'actions',
         dataKey: 'actions',
         title: '操作',
@@ -205,6 +212,10 @@ function handleSelection(rows: Finding[]) {
 function openApply() {
   if (selectedRows.value.length === 0) {
     ElMessage.warning('请选择需要申请屏蔽的问题');
+    return;
+  }
+  if (selectedRows.value.some((item) => item.has_pending_application)) {
+    ElMessage.warning('所选问题中存在待审批申请，不能重复提交');
     return;
   }
   const responsibilityNames = new Set(
@@ -325,6 +336,12 @@ onMounted(() => {
           {{ row.shield_status }}
         </ElTag>
       </template>
+      <template #cell-application="{ row }">
+        <ElTag v-if="row.has_pending_application" type="warning" size="small">
+          待审批
+        </ElTag>
+        <span v-else class="muted-text">—</span>
+      </template>
       <template #cell-actions="{ row }">
         <ElButton link type="primary" @click="showDetail(row)">详情</ElButton>
       </template>
@@ -390,7 +407,40 @@ onMounted(() => {
           <pre>{{ JSON.stringify(detail.raw_finding, null, 2) }}</pre>
         </ElDescriptionsItem>
       </ElDescriptions>
-      <ElEmpty v-else description="暂无问题详情" />
+      <div v-if="detail?.occurrences?.length" class="occurrence-history">
+        <div class="occurrence-history__title">
+          历史扫描轨迹（{{ detail.occurrences.length }} 次）
+        </div>
+        <div class="occurrence-history__list">
+          <div
+            v-for="occurrence in detail.occurrences"
+            :key="occurrence.occurrence_id"
+            class="occurrence-history__item"
+          >
+            <div>
+              <b>{{ occurrence.tool_name || '-' }}</b>
+              <span>
+                {{ occurrence.file_path || '-' }}：
+                {{ occurrence.start_line || 0 }}-
+                {{ occurrence.end_line || occurrence.start_line || 0 }}
+              </span>
+            </div>
+            <div>
+              <ElTag size="small" :type="severityType(occurrence.severity)">
+                {{ occurrence.severity }}
+              </ElTag>
+              <span>
+                {{
+                  occurrence.report_complete === false
+                    ? '未完成扫描'
+                    : '已完成扫描'
+                }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <ElEmpty v-if="!detail" description="暂无问题详情" />
     </ElDialog>
   </section>
 </template>
@@ -433,6 +483,10 @@ onMounted(() => {
   width: 260px;
 }
 
+.muted-text {
+  color: var(--el-text-color-placeholder);
+}
+
 .findings-grid {
   min-height: 0;
   flex: 1;
@@ -444,6 +498,46 @@ pre {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.occurrence-history {
+  margin-top: 18px;
+}
+
+.occurrence-history__title {
+  margin-bottom: 8px;
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.occurrence-history__list {
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.occurrence-history__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--el-border-color-extra-light);
+}
+
+.occurrence-history__item > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.occurrence-history__item b,
+.occurrence-history__item span {
+  color: var(--el-text-color-regular);
+  font-size: 12px;
+}
+
+.occurrence-history__item b {
+  color: var(--el-text-color-primary);
 }
 
 @media (max-width: 700px) {

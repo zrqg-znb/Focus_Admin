@@ -11,6 +11,7 @@ import { computed, onMounted, ref } from 'vue';
 import {
   ElButton,
   ElCard,
+  ElCheckbox,
   ElDialog,
   ElEmpty,
   ElForm,
@@ -44,6 +45,7 @@ const selected = ref<GovernanceProject>();
 const overview = ref<Overview>();
 const keyword = ref('');
 const activeOnly = ref(false);
+const riskOnly = ref(false);
 const loading = ref(false);
 const detailLoading = ref(false);
 const dialog = ref(false);
@@ -62,7 +64,11 @@ const filtered = computed(() => {
   return rows.value.filter((item) => {
     const matchesKeyword =
       !value || `${item.name}${item.code}`.toLowerCase().includes(value);
-    return matchesKeyword && (!activeOnly.value || item.is_active);
+    return (
+      matchesKeyword &&
+      (!activeOnly.value || item.is_active) &&
+      (!riskOnly.value || Boolean(item.normal_count))
+    );
   });
 });
 
@@ -224,6 +230,7 @@ onMounted(load);
               active-text="启用"
               inactive-text="全部"
             />
+            <ElCheckbox v-model="riskOnly">只看有待治理问题</ElCheckbox>
           </div>
         </template>
 
@@ -351,9 +358,9 @@ onMounted(load);
     <ElDialog
       v-model="dialog"
       :title="editing ? '编辑项目' : '新建项目'"
-      width="520px"
+      width="min(860px, 92vw)"
     >
-      <ElForm label-width="90px">
+      <ElForm label-width="96px" class="project-form">
         <ElFormItem label="项目名称" required
           ><ElInput v-model="form.name"
         /></ElFormItem>
@@ -389,7 +396,11 @@ onMounted(load);
       </template>
     </ElDialog>
 
-    <ElDialog v-model="onboarding" title="配置治理责任田" width="780px">
+    <ElDialog
+      v-model="onboarding"
+      title="配置治理责任田"
+      width="min(860px, 92vw)"
+    >
       <ElForm label-width="90px">
         <ElFormItem label="责任田" required>
           <ElTransfer
@@ -567,7 +578,7 @@ h3 {
   width: 100%;
 }
 .scope-transfer :deep(.el-transfer-panel) {
-  width: 300px;
+  width: min(340px, calc(50% - 32px));
 }
 .form-hint {
   display: block;
@@ -589,6 +600,19 @@ h3 {
   .detail-heading {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+@media (max-width: 640px) {
+  .scope-transfer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .scope-transfer :deep(.el-transfer-panel) {
+    width: 100%;
   }
 }
 </style>

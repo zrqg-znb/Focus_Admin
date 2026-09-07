@@ -56,6 +56,9 @@ def _serialize_project(item: GovernanceProject) -> dict[str, Any]:
     return {
         'id': str(item.id), 'name': item.name, 'code': item.code, 'description': item.description,
         'is_active': item.is_active,
+        'finding_count': getattr(item, 'finding_count', 0),
+        'normal_count': getattr(item, 'normal_count', 0),
+        'pending_application_count': getattr(item, 'pending_application_count', 0),
         'created_at': item.sys_create_datetime.isoformat() if item.sys_create_datetime else None,
     }
 
@@ -67,6 +70,9 @@ def _serialize_responsibility(item: GovernanceResponsibility) -> dict[str, Any]:
         'id': str(item.id), 'name': item.name, 'code': item.code, 'description': item.description,
         'is_active': item.is_active, 'caretakers': [_display_user(user) for user in caretakers],
         'caretaker_count': len(caretakers),
+        'finding_count': getattr(item, 'finding_count', 0),
+        'normal_count': getattr(item, 'normal_count', 0),
+        'pending_application_count': getattr(item, 'pending_application_count', 0),
     }
 
 
@@ -85,7 +91,29 @@ def _serialize_link(item: GovernanceProjectResponsibility) -> dict[str, Any]:
 
 def list_projects(page: int, page_size: int, keyword: str = '') -> dict[str, Any]:
     """分页查询治理项目。"""
-    queryset = GovernanceProject.objects.filter(is_deleted=False).order_by('name')
+    queryset = GovernanceProject.objects.filter(is_deleted=False).annotate(
+        finding_count=Count(
+            'responsibility_links__findings',
+            filter=Q(responsibility_links__findings__is_deleted=False),
+            distinct=True,
+        ),
+        normal_count=Count(
+            'responsibility_links__findings',
+            filter=Q(
+                responsibility_links__findings__is_deleted=False,
+                responsibility_links__findings__shield_status__in=['Normal', 'Rejected'],
+            ),
+            distinct=True,
+        ),
+        pending_application_count=Count(
+            'responsibility_links__shield_applications',
+            filter=Q(
+                responsibility_links__shield_applications__is_deleted=False,
+                responsibility_links__shield_applications__status='Pending',
+            ),
+            distinct=True,
+        ),
+    ).order_by('name')
     if keyword.strip():
         queryset = queryset.filter(Q(name__icontains=keyword.strip()) | Q(code__icontains=keyword.strip()))
     return _page([_serialize_project(item) for item in queryset], page, page_size)
@@ -118,7 +146,29 @@ def delete_project(user: User, project_id: str) -> dict[str, str]:
 
 def list_responsibilities(page: int, page_size: int, keyword: str = '') -> dict[str, Any]:
     """分页查询责任田。"""
-    queryset = GovernanceResponsibility.objects.filter(is_deleted=False).prefetch_related('caretakers').order_by('name')
+    queryset = GovernanceResponsibility.objects.filter(is_deleted=False).prefetch_related('caretakers').annotate(
+        finding_count=Count(
+            'project_links__findings',
+            filter=Q(project_links__findings__is_deleted=False),
+            distinct=True,
+        ),
+        normal_count=Count(
+            'project_links__findings',
+            filter=Q(
+                project_links__findings__is_deleted=False,
+                project_links__findings__shield_status__in=['Normal', 'Rejected'],
+            ),
+            distinct=True,
+        ),
+        pending_application_count=Count(
+            'project_links__shield_applications',
+            filter=Q(
+                project_links__shield_applications__is_deleted=False,
+                project_links__shield_applications__status='Pending',
+            ),
+            distinct=True,
+        ),
+    ).order_by('name')
     if keyword.strip():
         queryset = queryset.filter(Q(name__icontains=keyword.strip()) | Q(code__icontains=keyword.strip()))
     return _page([_serialize_responsibility(item) for item in queryset], page, page_size)
@@ -293,6 +343,12 @@ def refresh_scope_aggregate(scope: GovernanceProjectResponsibility) -> None:
 
 def _serialize_finding(item: GovernanceFinding, *, occurrence: GovernanceFindingOccurrence | None = None) -> dict[str, Any]:
     """序列化问题及最近命中详情。"""
+    occurrence_count = getattr(item, 'occurrence_count', None)
+    if occurrence_count is None:
+        occurrence_count = item.occurrences.filter(is_deleted=False).count()
+    pending_application_count = getattr(item, 'pending_application_count', None)
+    if pending_application_count is None:
+        pending_application_count = item.shield_applications.filter(is_deleted=False, status='Pending').count()
     row = {
         'id': str(item.id), 'project_id': str(item.project_responsibility.project_id),
         'project_name': item.project_responsibility.project.name,
@@ -304,6 +360,9 @@ def _serialize_finding(item: GovernanceFinding, *, occurrence: GovernanceFinding
         'latest_file_path': item.latest_file_path, 'latest_line': item.latest_line, 'latest_message': item.latest_message,
         'first_seen_at': item.first_seen_at.isoformat() if item.first_seen_at else None,
         'last_seen_at': item.last_seen_at.isoformat() if item.last_seen_at else None,
+        'occurrence_count': occurrence_count,
+        'pending_application_count': pending_application_count,
+        'has_pending_application': pending_application_count > 0,
     }
     if occurrence:
         row.update({
@@ -417,7 +476,17 @@ def get_report(report_id: str) -> dict[str, Any]:
 
 def list_findings(page: int, page_size: int, project_id: str = '', responsibility_id: str = '', tool_name: str = '', severity: str = '', shield_status: str = '', keyword: str = '') -> dict[str, Any]:
     """分页查询最近问题明细。"""
-    queryset = GovernanceFinding.objects.filter(is_deleted=False).select_related('project_responsibility__project', 'project_responsibility__responsibility')
+    queryset = GovernanceFinding.objects.filter(is_deleted=False).select_related('project_responsibility__project', 'project_responsibility__responsibility').annotate(
+        occurrence_count=Count('occurrences', filter=Q(occurrences__is_deleted=False), distinct=True),
+        pending_application_count=Count(
+            'shield_applications',
+            filter=Q(
+                shield_applications__is_deleted=False,
+                shield_applications__status='Pending',
+            ),
+            distinct=True,
+        ),
+    )
     if project_id:
         queryset = queryset.filter(project_responsibility__project_id=project_id)
     if responsibility_id:
@@ -620,14 +689,32 @@ def responsibility_overview(responsibility_id: str) -> dict[str, Any]:
     }
 
 
-def workbench_summary(user: User) -> dict[str, Any]:
+def workbench_summary(user: User, project_id: str = '', responsibility_id: str = '') -> dict[str, Any]:
     """返回治理工作台首屏指标、待办、异常和风险排行。"""
+    scope_filter = {}
+    link_filter = {}
+    if project_id:
+        scope_filter['project_responsibility__project_id'] = project_id
+        link_filter['project_id'] = project_id
+    if responsibility_id:
+        scope_filter['project_responsibility__responsibility_id'] = responsibility_id
+        link_filter['responsibility_id'] = responsibility_id
     projects = GovernanceProject.objects.filter(is_deleted=False, is_active=True)
     responsibilities = GovernanceResponsibility.objects.filter(is_deleted=False, is_active=True)
     links = GovernanceProjectResponsibility.objects.filter(is_deleted=False, is_active=True)
     findings = GovernanceFinding.objects.filter(is_deleted=False)
     applications = GovernanceShieldApplication.objects.filter(is_deleted=False, status='Pending')
     reports = GovernanceScanReport.objects.filter(is_deleted=False)
+    if project_id:
+        projects = projects.filter(id=project_id)
+        responsibilities = responsibilities.filter(project_links__project_id=project_id).distinct()
+    if responsibility_id:
+        responsibilities = responsibilities.filter(id=responsibility_id)
+        projects = projects.filter(responsibility_links__responsibility_id=responsibility_id).distinct()
+    links = links.filter(**link_filter)
+    findings = findings.filter(**scope_filter)
+    applications = applications.filter(**scope_filter)
+    reports = reports.filter(**scope_filter)
     risk_findings = findings.filter(shield_status__in=['Normal', 'Rejected'])
     recent_reports = reports.filter(status='failed').order_by('-sys_create_datetime')[:5]
     incomplete_reports = reports.filter(status='success', complete=False).order_by('-sys_create_datetime')[:5]

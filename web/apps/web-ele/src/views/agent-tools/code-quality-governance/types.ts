@@ -13,6 +13,13 @@ export type Section =
   | 'scan'
   | 'workbench';
 
+export type AuditTab =
+  | 'all'
+  | 'approved'
+  | 'my_apply'
+  | 'my_audit'
+  | 'rejected';
+
 export interface PageOptions {
   projects: GovernanceProject[];
   responsibilities: GovernanceResponsibility[];

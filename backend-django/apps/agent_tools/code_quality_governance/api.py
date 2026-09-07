@@ -31,9 +31,9 @@ def projects(request, page: int = Query(1), pageSize: int = Query(20), keyword: 
 
 
 @router.get('/workbench/summary', summary='治理工作台摘要')
-def workbench_summary(request):
+def workbench_summary(request, project_id: str = Query(''), responsibility_id: str = Query('')):
     """查询治理工作台指标、风险排行、扫描异常和我的待办。"""
-    return services.workbench_summary(_user(request))
+    return services.workbench_summary(_user(request), project_id, responsibility_id)
 
 
 @router.get('/workbench/todos', summary='治理工作台待办')
