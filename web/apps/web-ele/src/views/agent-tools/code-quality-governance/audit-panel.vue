@@ -1,6 +1,6 @@
-<!-- eslint-disable vue/html-closing-bracket-newline, vue/multiline-html-element-content-newline -->
+<!-- eslint-disable perfectionist/sort-named-imports, perfectionist/sort-union-types, vue/html-closing-bracket-newline, vue/multiline-html-element-content-newline -->
 <script lang="ts" setup>
-import type { AuditTab } from './types';
+/* eslint-disable vue/html-closing-bracket-newline, vue/multiline-html-element-content-newline */
 import type {
   Application,
   UserOption,
@@ -45,7 +45,7 @@ interface AuditLog {
   to_status?: string;
 }
 
-const auditTab = ref<AuditTab>('my_audit');
+const auditTab = ref<'my_audit' | 'my_apply'>('my_audit');
 const statusFilter = ref('');
 const auditVisible = ref(false);
 const detailVisible = ref(false);
@@ -321,7 +321,8 @@ onMounted(() => {
 <style scoped>
 .audit-panel {
   display: flex;
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
   flex-direction: column;
 }
 
@@ -343,7 +344,7 @@ onMounted(() => {
 }
 
 .audit-grid {
-  min-height: 560px;
+  min-height: 0;
   flex: 1;
 }
 

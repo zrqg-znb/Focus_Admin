@@ -1,5 +1,6 @@
-<!-- eslint-disable vue/html-closing-bracket-newline, vue/multiline-html-element-content-newline -->
+<!-- eslint-disable vue/html-closing-bracket-newline, vue/html-closing-bracket-spacing, vue/multiline-html-element-content-newline -->
 <script lang="ts" setup>
+/* eslint-disable vue/html-closing-bracket-newline */
 import { ref, watch } from 'vue';
 
 import { Filter } from '@element-plus/icons-vue';

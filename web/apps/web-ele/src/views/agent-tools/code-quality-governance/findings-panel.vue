@@ -1,5 +1,6 @@
-<!-- eslint-disable vue/html-closing-bracket-newline, vue/multiline-html-element-content-newline -->
+<!-- eslint-disable perfectionist/sort-imports, vue/html-closing-bracket-newline, vue/multiline-html-element-content-newline -->
 <script lang="ts" setup>
+/* eslint-disable vue/html-closing-bracket-newline, vue/multiline-html-element-content-newline */
 import type { FindingFilters } from './types';
 import type {
   Finding,
@@ -73,7 +74,7 @@ const selectedResponsibility = computed(() => {
 });
 
 const applyApprovers = computed<UserOption[]>(
-  () => selectedResponsibility.value?.approvers || [],
+  () => selectedResponsibility.value?.caretakers || [],
 );
 
 function statusType(status: string) {
@@ -397,7 +398,8 @@ onMounted(() => {
 <style scoped>
 .findings-panel {
   display: flex;
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
   flex-direction: column;
 }
 
@@ -432,7 +434,7 @@ onMounted(() => {
 }
 
 .findings-grid {
-  min-height: 560px;
+  min-height: 0;
   flex: 1;
 }
 
