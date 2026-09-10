@@ -7,6 +7,7 @@ Menu API - 菜单管理接口
 """
 from typing import List
 import logging
+from urllib.parse import urlparse
 from django.shortcuts import get_object_or_404
 from django.db.models import Q, Sum
 from django.core.cache import cache
@@ -95,7 +96,11 @@ def _filter_descendants_of_external_menus(menus):
             if not parent:
                 break
 
-            if parent.get('link') or parent.get('openInNewWindow'):
+            if (
+                parent.get('type') in ('link', 'external')
+                or parent.get('link')
+                or parent.get('openInNewWindow')
+            ):
                 should_exclude = True
                 break
 
@@ -105,6 +110,35 @@ def _filter_descendants_of_external_menus(menus):
             filtered.append(menu)
 
     return filtered
+
+
+def _validate_url(value, field_name):
+    """验证内嵌或外链地址，避免把无效地址写入动态路由。"""
+    if not value:
+        raise HttpError(400, f'{field_name}不能为空')
+    parsed = urlparse(value)
+    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+        raise HttpError(400, f'{field_name}必须是有效的 HTTP(S) 地址')
+
+
+def _normalize_menu_payload(payload, current=None):
+    """按菜单类型清理互斥字段并校验路由配置。"""
+    data = dict(payload)
+    menu_type = data.get('type') or getattr(current, 'type', None)
+
+    if menu_type == 'embedded':
+        _validate_url(data.get('iframeSrc') or getattr(current, 'iframeSrc', None), '内嵌地址')
+        data['link'] = None
+        data['openInNewWindow'] = False
+    elif menu_type in ('link', 'external'):
+        _validate_url(data.get('link') or getattr(current, 'link', None), '外链地址')
+        data['iframeSrc'] = None
+    elif menu_type in ('catalog', 'menu'):
+        data['link'] = None
+        data['iframeSrc'] = None
+        data['openInNewWindow'] = False
+
+    return data
 
 
 @router.post("/menu", response=MenuSchemaOut, summary="创建菜单")
@@ -129,7 +163,7 @@ def create_menu(request, data: MenuSchemaIn):
     if data.parent_id:
         parent = get_object_or_404(Menu, id=data.parent_id)
     
-    query_set = create(request, data, Menu)
+    query_set = create(request, _normalize_menu_payload(data.dict()), Menu)
     remove_menu_cache()
     return query_set
 
@@ -226,7 +260,7 @@ def update_menu(request, menu_id: str, data: MenuSchemaIn):
         if menu in parent.get_ancestors():
             raise HttpError(400, "不能将子菜单设置为父菜单，会形成循环引用")
     
-    instance = update(request, menu_id, data, Menu)
+    instance = update(request, menu_id, _normalize_menu_payload(data.dict(), menu), Menu)
     remove_menu_cache()
     return instance
 
@@ -251,6 +285,7 @@ def patch_menu(request, menu_id: str, data: MenuSchemaPatch):
     
     # 只更新提供的字段
     update_data = data.dict(exclude_unset=True)
+    update_data.pop('id', None)
     
     # 检查菜单名称是否已存在（排除自身）
     if 'name' in update_data and update_data['name']:
@@ -272,7 +307,8 @@ def patch_menu(request, menu_id: str, data: MenuSchemaPatch):
         if menu in parent.get_ancestors():
             raise HttpError(400, "不能将子菜单设置为父菜单，会形成循环引用")
     
-    # 更新字段
+    # 按菜单类型清理互斥字段后更新。
+    update_data = _normalize_menu_payload(update_data, menu)
     for field, value in update_data.items():
         setattr(menu, field, value)
     
@@ -308,7 +344,7 @@ def list_menu_tree(request, use_cache: bool = Query(True)):
         menu['child_count'] = menu_obj.get_child_count()
     
     # 转换为树形结构
-    menu_tree = list_to_route_v5(menu_list)
+    menu_tree = list_to_route_v5(menu_list, preserve_parent_id=True)
     
     # 缓存结果（仅在开启缓存时）
     if use_cache:
@@ -565,7 +601,9 @@ def get_menu_stats(request):
     type_choices = [
         ('catalog', '目录'),
         ('menu', '菜单'),
-        ('external', '外部链接'),
+        ('embedded', '内嵌'),
+        ('link', '外链'),
+        ('external', '历史外链'),
     ]
     for type_code, type_name in type_choices:
         count = Menu.objects.filter(type=type_code).count()

@@ -12,7 +12,7 @@ export interface Menu {
   title?: string;
   authCode?: string;
   path: string;
-  type: string;
+  type: MenuType;
   component?: string;
   redirect?: string;
   activePath?: string;
@@ -42,6 +42,8 @@ export interface Menu {
   sys_update_datetime?: string;
 }
 
+export type MenuType = 'catalog' | 'menu' | 'embedded' | 'link' | 'external';
+
 export interface MenuTreeNode extends Menu {
   children?: MenuTreeNode[];
 }
@@ -52,7 +54,7 @@ export interface MenuCreateInput {
   title?: string;
   authCode?: string;
   path: string;
-  type: string;
+  type: MenuType;
   component?: string;
   redirect?: string;
   activePath?: string;
@@ -95,9 +97,8 @@ export interface MenuListParams {
 
 export interface MenuStats {
   total_count: number;
-  type_counts: Record<string, number>;
+  type_stats: Record<string, number>;
   max_level: number;
-  type_choices: Array<[string, string]>;
 }
 
 /**

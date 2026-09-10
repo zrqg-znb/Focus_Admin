@@ -81,9 +81,12 @@ def list_to_tree(data):
     return root
 
 
-def list_to_route_v5(menus: list) -> list:
+def list_to_route_v5(menus: list, preserve_parent_id: bool = False) -> list:
     """
-    从菜单列表构建菜单树（已读取所有菜单数据的情况）
+    从菜单列表构建菜单树（已读取所有菜单数据的情况）。
+
+    管理菜单树需要保留 parent_id 供编辑表单回显，动态路由则继续移除
+    parent_id 这类数据库字段，避免把内部字段暴露给运行时路由。
     """
 
     # 创建 ID 到菜单数据的映射
@@ -94,6 +97,13 @@ def list_to_route_v5(menus: list) -> list:
 
     for menu in menus:
         pid = menu['parent_id']
+
+        # 动态路由必须有可注册的组件；内嵌页使用专用 iframe 视图，
+        # 外链使用基础布局作为占位，实际跳转由前端导航逻辑处理。
+        if menu.get('type') == 'embedded':
+            menu['component'] = 'IFrameView'
+        elif menu.get('type') in ('link', 'external') and not menu.get('component'):
+            menu['component'] = 'BasicLayout'
 
         # 添加 meta 字段
         meta = {}
@@ -107,13 +117,21 @@ def list_to_route_v5(menus: list) -> list:
             if field in menu and menu[field] is not None:
                 meta[field] = menu[field]
 
+        if menu.get('type') == 'external' and menu.get('link'):
+            meta['link'] = menu['link']
+
 
         if meta:
             menu['meta'] = meta
 
         # 移除不需要的字段
         for key in list(menu.keys()):
-            if key.endswith('_id') and key != 'id' and key != 'parentId':
+            if (
+                key.endswith('_id')
+                and key != 'id'
+                and key != 'parentId'
+                and not (preserve_parent_id and key == 'parent_id')
+            ):
                 menu.pop(key)
 
         # 找到父节点

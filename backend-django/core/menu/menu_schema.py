@@ -5,7 +5,7 @@ Menu Schema - 菜单数据验证模式
 """
 from typing import Optional, List
 from ninja import ModelSchema, Field, Schema
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 
 from common.fu_model import exclude_fields
 from common.fu_schema import FuFilters
@@ -48,9 +48,20 @@ class MenuSchemaIn(ModelSchema):
     @classmethod
     def validate_type(cls, v):
         """验证菜单类型"""
-        if v not in ['catalog', 'menu', 'external']:
-            raise ValueError('菜单类型必须为 catalog、menu 或 external')
+        if v not in ['catalog', 'menu', 'embedded', 'link', 'external']:
+            raise ValueError('菜单类型必须为 catalog、menu、embedded、link 或 external')
         return v
+
+    @model_validator(mode='after')
+    def validate_type_configuration(self):
+        """验证菜单类型与路由配置是否匹配。"""
+        if self.type == 'menu' and not self.component:
+            raise ValueError('菜单类型为 menu 时必须配置组件')
+        if self.type == 'embedded' and not self.iframeSrc:
+            raise ValueError('菜单类型为 embedded 时必须配置内嵌地址')
+        if self.type in ['link', 'external'] and not self.link:
+            raise ValueError('菜单类型为 link 或 external 时必须配置外链地址')
+        return self
     
     @field_validator('order', check_fields=False)
     @classmethod
@@ -84,6 +95,9 @@ class MenuSchemaPatch(Schema):
     is_hidden: Optional[bool] = None
     permission: Optional[str] = None
     meta: Optional[dict] = None
+    link: Optional[str] = None
+    iframeSrc: Optional[str] = None
+    openInNewWindow: Optional[bool] = None
     
     @field_validator('name')
     @classmethod
@@ -110,8 +124,8 @@ class MenuSchemaPatch(Schema):
     @classmethod
     def validate_type(cls, v):
         """验证菜单类型"""
-        if v is not None and v not in ['catalog', 'menu', 'external']:
-            raise ValueError('菜单类型必须为 catalog、menu 或 external')
+        if v is not None and v not in ['catalog', 'menu', 'embedded', 'link', 'external']:
+            raise ValueError('菜单类型必须为 catalog、menu、embedded、link 或 external')
         return v
     
     @field_validator('order')
@@ -229,4 +243,3 @@ class MenuCheckOut(Schema):
     """检查结果输出"""
     exists: bool = Field(..., description="是否已存在")
     message: Optional[str] = Field(None, description="提示信息")
-

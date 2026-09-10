@@ -303,6 +303,11 @@ function getFormSchema(
     {
       component: 'Input',
       dependencies: {
+        rules: (values) => {
+          return ['embedded', 'link'].includes(values.type)
+            ? z.string().url($t('ui.formRules.invalidURL'))
+            : null;
+        },
         show: (values) => {
           return ['embedded', 'link'].includes(values.type);
         },
@@ -310,7 +315,6 @@ function getFormSchema(
       },
       fieldName: 'linkSrc',
       label: $t('menu.linkSrc'),
-      rules: z.string().url($t('ui.formRules.invalidURL')),
     },
     {
       component: 'Input',
@@ -578,8 +582,16 @@ async function onUpdate() {
       const data = (await formApi.getValues()) as any;
       if (data.type === 'link') {
         data.link = data.linkSrc;
+        data.iframeSrc = null;
+        data.openInNewWindow = true;
       } else if (data.type === 'embedded') {
         data.iframeSrc = data.linkSrc;
+        data.link = null;
+        data.openInNewWindow = false;
+      } else {
+        data.link = null;
+        data.iframeSrc = null;
+        data.openInNewWindow = false;
       }
       delete data.linkSrc;
 
